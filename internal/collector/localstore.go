@@ -367,7 +367,20 @@ const (
 	// BlockedReasonTranscriptTooLarge means the transcript exceeds the
 	// collection size limit (Options.MaxTranscriptBytes).
 	BlockedReasonTranscriptTooLarge BlockedReason = "transcript_too_large"
+	// BlockedReasonTranscriptMissing means the native transcript is no longer
+	// on disk. Every supported application deletes its own transcripts on its
+	// own schedule (Claude Code after cleanupPeriodDays, 30 by default) while
+	// this archive retains sessions for far longer, so a session outliving its
+	// transcript is the steady state, not a failure. Unlike the other reasons
+	// this one can end: if the file comes back, the next scan clears the block.
+	BlockedReasonTranscriptMissing BlockedReason = "transcript_missing"
 )
+
+// recoverable reports whether a block can end without the session changing:
+// only a missing file can reappear. A rewritten or oversize transcript stays
+// rewritten or oversize until its content changes, which clears the block
+// through the normal comparison instead.
+func (r BlockedReason) recoverable() bool { return r == BlockedReasonTranscriptMissing }
 
 // publishedState is the small local cache of what was last built for a
 // session: the exact source bundle (so a later scan can detect "no
@@ -380,6 +393,9 @@ type publishedState struct {
 	Status        CacheStatus          `json:"status"`
 	// BlockedReason is set only while Status is CacheStatusBlocked.
 	BlockedReason BlockedReason `json:"blocked_reason,omitempty"`
+	// PreBlockStatus is the status a recoverable block replaced, so clearing
+	// that block restores what was true before it rather than guessing.
+	PreBlockStatus CacheStatus `json:"pre_block_status,omitempty"`
 	// LastPublished survives a newer rate-limited or declined candidate so
 	// compaction checks and retention always have the actual remote baseline.
 	LastPublished *publishedSnapshot `json:"last_published,omitempty"`
@@ -467,7 +483,41 @@ func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.
 		// published, so the snapshot records only when, not a second copy.
 		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true}
 	}
-	return local.Write(s.publishedPath(archiveSessionID), publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, LastPublished: last, MetadataBytes: publicationMetadata(existing.MetadataBytes, metadata)})
+	preBlock := existing.PreBlockStatus
+	switch {
+	case status != CacheStatusBlocked:
+		preBlock = ""
+	case existing.Status != CacheStatusBlocked:
+		preBlock = existing.Status
+	}
+	return local.Write(s.publishedPath(archiveSessionID), publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, LastPublished: last, MetadataBytes: publicationMetadata(existing.MetadataBytes, metadata)})
+}
+
+// ClearRecoverableBlock ends a block whose condition has passed — today only a
+// transcript that came back — by restoring the status the block replaced. It
+// exists because a returning transcript whose content is byte-identical to the
+// cached bundle produces no change for the normal comparison to act on, so
+// without this the gap would be reported forever. A block with no recorded
+// previous status is left alone: there was no cached evidence before it, so
+// the first real candidate replaces the whole state anyway.
+func (s *LocalStore) ClearRecoverableBlock(archiveSessionID string) (CacheStatus, bool, error) {
+	var state publishedState
+	err := local.Read(s.publishedPath(archiveSessionID), &state)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
+	}
+	if state.Status != CacheStatusBlocked || !state.BlockedReason.recoverable() || state.PreBlockStatus == "" || state.PreBlockStatus == CacheStatusBlocked {
+		return state.Status, false, nil
+	}
+	restored := state.PreBlockStatus
+	state.Status, state.BlockedReason, state.PreBlockStatus = restored, "", ""
+	if err := local.Write(s.publishedPath(archiveSessionID), state); err != nil {
+		return "", false, fmt.Errorf("clear block %q: %w", archiveSessionID, err)
+	}
+	return restored, true, nil
 }
 
 // LoadBlocked reports whether a session is in CacheStatusBlocked and why.

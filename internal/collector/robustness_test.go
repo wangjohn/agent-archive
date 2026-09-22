@@ -58,6 +58,118 @@ func mtime(t *testing.T, path string) time.Time {
 	return info.ModTime()
 }
 
+// Claude Code deletes transcripts after cleanupPeriodDays while this archive
+// keeps sessions for 90 days, so a published session losing its transcript is
+// the steady state. It must be a recorded gap, written once, that keeps the
+// published snapshot and clears on its own if the file ever comes back.
+func TestMissingTranscriptBlocksOnceKeepsSnapshotAndRecovers(t *testing.T) {
+	dir := t.TempDir()
+	local := newTestStore(t)
+	remote := storage.NewMemoryStore()
+	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	reg := registration(t, path)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	runAt(t, local, remote, t0)
+	published, publishedAt, _, err := local.LoadLastPublished(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataBefore := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	// A stop hook fired just before the application cleaned up.
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", t0.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	result := runAt(t, local, remote, t0.Add(time.Hour))
+	if len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatalf("a missing transcript must be a gap, not an error: %#v", result)
+	}
+	if reason, blocked, err := local.LoadBlocked(reg.ArchiveSessionID); err != nil || !blocked || reason != BlockedReasonTranscriptMissing {
+		t.Fatalf("reason=%q blocked=%t err=%v", reason, blocked, err)
+	}
+	if requests, _ := local.LoadRequests(); len(requests) != 0 {
+		t.Fatalf("the request was left pending forever: %#v", requests)
+	}
+	status, err := local.LoadStatus()
+	if err != nil || status.LastError != "" || status.PendingCount != 0 {
+		t.Fatalf("status=%#v err=%v", status, err)
+	}
+	kept, keptAt, found, err := local.LoadLastPublished(reg.ArchiveSessionID)
+	if err != nil || !found || !keptAt.Equal(publishedAt) {
+		t.Fatalf("the last published snapshot was not kept: found=%t at=%s err=%v", found, keptAt, err)
+	}
+	if same, _ := bundleEvidenceEqual(kept, published); !same {
+		t.Fatal("the last published snapshot changed")
+	}
+
+	// Recorded once: later passes neither error nor rewrite the cache.
+	cachePath := local.publishedPath(reg.ArchiveSessionID)
+	before := mtime(t, cachePath)
+	for pass := 2; pass <= 3; pass++ {
+		if result := runAt(t, local, remote, t0.Add(time.Duration(pass)*time.Hour)); len(result.Errors) != 0 {
+			t.Fatalf("pass %d: %#v", pass, result)
+		}
+	}
+	if !mtime(t, cachePath).Equal(before) {
+		t.Fatal("the gap was rewritten on every pass")
+	}
+
+	// The same file comes back: the gap is over even though nothing changed,
+	// and nothing is republished.
+	writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	result = runAt(t, local, remote, t0.Add(4*time.Hour))
+	if len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {
+		t.Fatal("the gap outlived the missing file")
+	}
+	if _, _, status, _, _ := local.LoadPublished(reg.ArchiveSessionID); status != CacheStatusPublished {
+		t.Fatalf("status after recovery = %q, want the status the block replaced", status)
+	}
+	if after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); !after.CapturedAt.Equal(metadataBefore.CapturedAt) {
+		t.Fatal("recovery republished an unchanged session")
+	}
+
+	// New activity after recovery publishes as usual.
+	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"user","content":"more"}}`)
+	if result := runAt(t, local, remote, t0.Add(5*time.Hour)); len(result.Published) != 1 {
+		t.Fatalf("new evidence after recovery did not publish: %#v", result)
+	}
+}
+
+// The transcript is missing before anything was ever captured, then appears.
+func TestMissingTranscriptBeforeFirstCaptureRecoversWhenFileAppears(t *testing.T) {
+	dir := t.TempDir()
+	local := newTestStore(t)
+	remote := storage.NewMemoryStore()
+	path := filepath.Join(dir, "later.jsonl")
+	reg := registration(t, path)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	if result := runAt(t, local, remote, t0); len(result.Errors) != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != BlockedReasonTranscriptMissing {
+		t.Fatalf("reason=%q blocked=%t", reason, blocked)
+	}
+	writeTranscript(t, dir, "later.jsonl", codexTranscript)
+	if result := runAt(t, local, remote, t0.Add(time.Hour)); len(result.Published) != 1 {
+		t.Fatalf("the transcript appeared but was not captured: %#v", result)
+	}
+	if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {
+		t.Fatal("still blocked after capture")
+	}
+}
+
 // While a session sits in its normal published state, the published cache
 // holds its bundle once. A newer candidate that differs gets its own copy, and
 // the actually-published baseline survives it intact.

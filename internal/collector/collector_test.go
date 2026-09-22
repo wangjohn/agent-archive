@@ -202,7 +202,10 @@ func TestRunRateLimitsRepublishAndReusesFirstDetectedCapturedAt(t *testing.T) {
 func TestRunLeavesRequestPendingOnScanErrorAndIsolatesOtherSessions(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	badReg := registration(t, filepath.Join(dir, "does-not-exist.jsonl"))
+	// A transcript with no recognized safe records fails the filter on every
+	// pass. (A missing transcript used to stand in here; it is now a recorded
+	// capture gap instead of an error, see TestMissingTranscript*.)
+	badReg := registration(t, writeTranscript(t, dir, "unsafe.jsonl", `{"type":"unrecognized_record"}`+"\n"))
 	badReg.ArchiveSessionID = "bad-session"
 	if err := local.SaveRegistration(badReg); err != nil {
 		t.Fatal(err)

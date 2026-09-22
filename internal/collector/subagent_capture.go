@@ -146,9 +146,17 @@ func markPublishedSubagent(local *LocalStore, reg archive.SessionRegistration) e
 	if _, found, err := local.LoadRegistration(reg.ParentSessionID); err != nil || !found {
 		return err
 	}
-	parent, _, _, found, err := local.LoadPublished(reg.ParentSessionID)
+	parent, _, parentStatus, found, err := local.LoadPublished(reg.ParentSessionID)
 	if err != nil {
 		return err
+	}
+	if found && parentStatus == CacheStatusBlocked {
+		// A blocked parent cannot republish, and blocking acknowledges its
+		// request, so a notification written now would be written and
+		// discarded again on every pass for as long as the gap lasts. The link
+		// is announced once the parent is unblocked and its cached bundle
+		// still lacks it.
+		return nil
 	}
 	if found {
 		for _, link := range parent.LinkedSessions {

@@ -328,6 +328,14 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 			// keep the last published snapshot instead of failing every pass.
 			return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonTranscriptTooLarge, nil)
 		}
+		if errors.Is(err, os.ErrNotExist) {
+			// The application deleted its own transcript. Retention keeps
+			// sessions for far longer than any of them keep their logs, so
+			// this is the ordinary end state of every archived session, not a
+			// failure: record it as a capture gap once, keep the last
+			// published snapshot, and let a returning file clear it.
+			return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonTranscriptMissing, nil)
+		}
 		// Unsafe format: never upload; the last published snapshot, if any,
 		// remains untouched and readable.
 		return outcomeSkipped, fmt.Errorf("filter transcript: %w", err)
@@ -339,6 +347,19 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 	prevBundle, _, prevStatus, havePrev, err := local.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
 		return outcomeSkipped, fmt.Errorf("load published cache: %w", err)
+	}
+	if havePrev && prevStatus == CacheStatusBlocked {
+		// The transcript is readable again. A file that comes back carrying
+		// exactly what was already captured produces no change for the
+		// comparison below to act on, so the gap has to be retired here or it
+		// would be reported for the rest of the session's life.
+		restored, cleared, err := local.ClearRecoverableBlock(reg.ArchiveSessionID)
+		if err != nil {
+			return outcomeSkipped, err
+		}
+		if cleared {
+			prevStatus = restored
+		}
 	}
 
 	lastPublished, lastPublishedAt, haveLastPublished, err := local.LoadLastPublished(reg.ArchiveSessionID)
