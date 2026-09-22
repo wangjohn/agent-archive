@@ -203,3 +203,82 @@ absent transcript paths; Codex and Claude across `resume`, `compact`,
 `setup_in_progress` diagnostic in `status --json` and its absence for
 unconfigured paths and non-start events. `go build`, `go vet`, `gofmt -l`, and
 `go test -race ./...` are clean.
+
+## PR B1 — Privacy filter v3
+
+Filter version `3`, adapter version `0.3.0`. Metadata and source schema
+versions are unchanged; `nativeEvidenceExtends` already treats a version change
+as not-a-rewrite, so republishing after this upgrade is safe and older bundles
+stay readable at their recorded filter version.
+
+Four changes in `internal/archive/adapters.go` and `internal/evidence/skills.go`:
+
+1. **Tool evidence is retained.** The key allowlist is no longer applied inside
+   a tool-argument subtree (`input`, `arguments`, `tool_input`, and Codex's
+   `payload.input`), so Edit `old_string`/`new_string`, Agent `prompt`, Skill
+   `args`, Grep `pattern`, Bash `timeout`, and MCP arguments survive. Added to
+   the allowlist: `tool_use_id`, `is_error`, `stop_reason`, `usage`,
+   `sessionId`, `requestId`, `gitBranch`, and the Codex token-accounting keys
+   `info`, `total_token_usage`, `last_token_usage`, `turn_token_usage`,
+   `thread_token_usage`, `last_agent_message`, `thread_id`, `root_turn_id`,
+   `started_at_ms`, `completed_at_ms`. `usage` and the four `*_token_usage`
+   subtrees retain numbers only. New record types: Codex `token_usage_record`
+   and Cursor `turn_ended`. `toolUseResult` stays excluded as duplicate
+   content. Value policy is unchanged everywhere.
+2. **Omissions are visible.** The per-field `unknown_field_omitted` gaps
+   collapse into one gap whose detail lists the distinct omitted key names,
+   sorted and capped at 64. Names only; a truncated list says so.
+3. **Injected instructions are stripped.** `<system-reminder>`,
+   `<user_instructions>`, and `<environment_context>` blocks are removed from
+   string content with a `hidden_instruction_omitted` gap; an unterminated
+   block drops everything from its opening tag. The rest of the message stays.
+4. **Skill snapshot bodies are capped** at 16 KB with `original_bytes`
+   recorded; the inventory and the hash of the whole original file are
+   unchanged. Content-addressed snapshot objects remain deferred.
+
+Fixtures (synthetic) under `internal/archive/testdata/`:
+`claude-tool-evidence.jsonl` (assistant Edit `tool_use` with `usage` and
+`stop_reason`, user `tool_result` with `tool_use_id`/`is_error` plus a
+`toolUseResult`, user prompt with a `<system-reminder>`),
+`codex-tool-and-usage.jsonl` (user message with `<user_instructions>` and
+`<environment_context>`, `custom_tool_call`, `custom_tool_call_output`,
+`token_usage_record`), `cursor-turn.jsonl` (`{role, message:{content}}` user
+and assistant records and a `turn_ended` record).
+
+Tests in `internal/archive/filter_v3_test.go` cover each fixture's retained and
+dropped keys, a secret inside an Edit `new_string` still being redacted, a
+blocked key and the 64 KB cap still applying inside tool arguments, the omitted
+key names appearing once and capped without leaking values, unterminated and
+whole-message instruction blocks, and the declared capture provenance.
+`internal/evidence/skills_test.go` now asserts the 16 KB body cap and
+`original_bytes`.
+
+Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`,
+and `gofmt -l .` all clean. `internal/cli`, `internal/collector`,
+`internal/reader`, and `internal/retention` needed no changes for the version
+bumps. Parser work (Cursor turns, corrected counts, tool linkage in the
+normalized view) is PR B2 and is not in this change.
+
+Review additions (same PR, same filter version, before any bundle was written
+with filter 3):
+
+- Instruction-block stripping is now depth-aware. The regex form ended a
+  `<system-reminder>` at the first closing tag, so a block nested inside a
+  block of the same kind leaked the outer block's tail. Blocks are now scanned
+  to their matching close, counting nesting; an unterminated block still drops
+  everything after its opening tag.
+- Tool-argument deny list: `text`/`value`/`values` are dropped for typing and
+  form-submitting tools (`type`, `form_input`, `computer`, `key`,
+  `enter_verification_code`, `autofill_credential`, MCP names ending in one of
+  those, or names ending `_type`/`_input`/`_fill`), and any argument whose key
+  contains `password`, `secret`, `token`, `credential`, `api_key`, `apikey`,
+  `cookie`, or `authorization` is dropped for every tool. Key names are
+  reported once in a `sensitive_or_hidden_field_omitted` gap.
+- Value-level redaction now also covers PEM private key blocks, JWTs, URL
+  userinfo, GitHub tokens, and Slack tokens. The assignment pattern's known
+  false-positive class (`token = parse(x)`) is documented, not narrowed.
+- Tests in `internal/archive/filter_v3_review_test.go` cover nested and
+  multiple blocks, the deny list for Claude and Cursor shapes and for
+  supplemental evidence, each credential shape, a negative set of ordinary
+  code, and byte-identical output across repeated scans of each fixture.
+- `docs/install.md` no longer describes filter 2 / adapter 0.2.0 as current.

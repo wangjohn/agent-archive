@@ -374,7 +374,8 @@ conversation content. Missing links report pending, unavailable, or
 unavailable-or-expired; one missing child does not block the parent. Links do not
 extend retention. Children are never downloaded recursively.
 
-This adds optional fields to schema version 1, filter version 2, adapter 0.2.0,
-and parser 0.5.0. Existing bundles remain readable. Claude is fixture-tested;
+This adds optional fields to schema version 1 and parser 0.5.0; the current
+filter version is 3 and adapter 0.3.0 (see `docs/agent-archive-privacy.md`).
+Existing bundles remain readable. Claude is fixture-tested;
 real app capture is pending. Codex/Cursor child capture and native skill
 eligibility remain unavailable rather than inferred from incomplete evidence.
