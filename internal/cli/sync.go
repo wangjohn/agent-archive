@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -24,6 +25,10 @@ func runSyncCommand(_ []string, stdout, stderr io.Writer, env Env) int {
 			fmt.Fprintln(stderr, "agent-archive: sync: another sync is already running")
 		default:
 			fmt.Fprintf(stderr, "agent-archive: sync: %v\n", err)
+			// A Keychain failure has one specific fix; say which.
+			if action := credentials.RecoveryAction(err); action != "" {
+				fmt.Fprintln(stderr, "agent-archive: sync: "+action)
+			}
 		}
 		return 1
 	}

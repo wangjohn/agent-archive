@@ -446,3 +446,68 @@ read and no listing, that `show` without a harness does not list, and that
 
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.
+
+## PR A3 — CLI correctness
+
+No schema, filter, parser, or adapter version changes. `config.json` gains one
+optional field, `installed_executable`.
+
+1. **Uninstall purge finishes.** `uninstall --delete-local-data` now releases
+   `hooks.lock`, `collector.lock` and `setup.lock` (each release idempotent,
+   so a deferred second release cannot unlock a reused descriptor), removes
+   the lock files, and removes the data directory when nothing unrelated is
+   left in it; unrelated files still keep the directory and are named. A
+   Keychain that is unavailable or refuses a delete no longer aborts after
+   hooks and the LaunchAgent are gone: local files are removed anyway, and the
+   uninstall reports as incomplete, naming the Keychain service and the
+   account names it could not delete with the recovery for that failure.
+   Those names are opaque Keychain references, not secrets; they are printed
+   deliberately, because once `config.json` is gone nothing else records them.
+
+   Review decision on the "never print credential references" rule: a
+   reference is `setup-` plus 32 hex characters from `crypto/rand`
+   (`local.ID`); it names a Keychain item and reveals nothing about the
+   account, bucket, or secret, and after the purge it is the only handle the
+   user has on the item. Uninstall therefore prints the service, the count,
+   and one exact `security delete-generic-password -s agent-archive -a <ref>`
+   command per item. The advice is uninstall-specific (unlock the Keychain,
+   then run the command or use Keychain Access); it never points at `sync` or
+   `setup`, which have nothing to act on after a purge. Every other command
+   keeps the rule. Lock files are unlinked while still held and released
+   afterwards, so a process that opens one during the purge gets a fresh
+   inode of its own instead of acquiring an unlinked one after the release.
+2. **Hooks check uses the installed path.** Setup records the executable it
+   wrote into the hooks and LaunchAgent as `installed_executable`, in the same
+   transaction. Status checks hooks against it, falling back to the running
+   executable for configurations written before this field.
+3. **Keychain failures are distinct.** A platform-independent
+   `errorForOSStatus` maps `errSecItemNotFound` to `ErrKeychainItemNotFound`
+   (still an `ErrMissingCredential`), `errSecInteractionNotAllowed` and
+   `errSecAuthFailed` to `ErrKeychainLocked` (still an `ErrUnavailable`), and
+   anything else to `KeychainStatusError` with its result code.
+   `keychain_darwin.go` asserts at compile time that the Go-side codes equal
+   the framework's. `kSecUseAuthenticationUIFail` is kept, so a background
+   process never prompts. `sync` prints, and status's next action gives, one
+   recovery per failure; status matches the text recorded in `status.json`.
+4. **Only typed 404s are missing objects.** `isNotFound` accepts
+   `types.NoSuchKey`, `types.NotFound`, or an HTTP response error with status
+   404, and never matches error text. A 404 whose code is `NoSuchBucket` stays
+   an error, since a missing bucket is misconfiguration, not an absent object.
+5. **Trust is explained.** Status keeps `trust: "unknown"` and the human
+   output now says trust is granted inside each app and is not observable from
+   local files.
+
+Tests: `internal/credentials/keychain_errors_test.go` (result-code mapping and
+distinct, wrap-proof recovery text, with no real Keychain);
+`internal/storage/not_found_test.go` (typed evidence only, and through the SDK
+against a fake server: a missing key is `ErrNotFound`, a 403 saying "not
+found" and a missing bucket are not); `internal/cli/cli_correctness_test.go`
+(a purge leaves no files or directory; a refused or unavailable Keychain still
+purges and names what it left; hooks read as installed when status runs from a
+different path, with the fallback for older configurations; sync and status
+give the locked, missing, and other recoveries and no Keychain advice for a
+network failure; the trust explanation). `TestUninstallLeavesFilesItDidNotCreate`
+now expects only the user's file to remain, since the lock files are removed.
+
+Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
+and `gofmt -l .` clean.

@@ -73,6 +73,18 @@ import (
 	"unsafe"
 )
 
+// The Go-side result codes in keychain_errors.go must equal the framework's.
+// Each array length is zero only when they match; any difference fails the
+// build rather than silently mis-mapping a Keychain failure.
+var (
+	_ [C.errSecItemNotFound - osStatusItemNotFound]struct{}
+	_ [osStatusItemNotFound - C.errSecItemNotFound]struct{}
+	_ [C.errSecInteractionNotAllowed - osStatusInteractionNotAllowed]struct{}
+	_ [osStatusInteractionNotAllowed - C.errSecInteractionNotAllowed]struct{}
+	_ [C.errSecAuthFailed - osStatusAuthFailed]struct{}
+	_ [osStatusAuthFailed - C.errSecAuthFailed]struct{}
+)
+
 // KeychainStore uses Security.framework directly. It never invokes the
 // `security` command, which would expose a secret through argv or shell logs.
 type KeychainStore struct{ service string }
@@ -100,10 +112,7 @@ func (s *KeychainStore) Save(ctx context.Context, reference string, value R2Cred
 	defer C.free(unsafe.Pointer(cReference))
 	status := C.aa_keychain_save(cService, cReference, unsafe.Pointer(&encoded[0]), C.size_t(len(encoded)))
 	runtime.KeepAlive(encoded)
-	if status != 0 {
-		return ErrUnavailable
-	}
-	return nil
+	return errorForOSStatus(int(status))
 }
 
 func (s *KeychainStore) Load(ctx context.Context, reference string) (R2Credentials, error) {
@@ -118,9 +127,11 @@ func (s *KeychainStore) Load(ctx context.Context, reference string) (R2Credentia
 	defer C.free(unsafe.Pointer(cReference))
 	var data unsafe.Pointer
 	var length C.size_t
+	// kSecUseAuthenticationUIFail (see aa_keychain_get) keeps a background
+	// process from ever prompting; a locked Keychain is reported instead.
 	status := C.aa_keychain_get(cService, cReference, &data, &length)
-	if status != 0 {
-		return R2Credentials{}, ErrUnavailable
+	if err := errorForOSStatus(int(status)); err != nil {
+		return R2Credentials{}, err
 	}
 	defer C.aa_keychain_free(data)
 	return DecodeSecret(C.GoBytes(data, C.int(length)))
@@ -136,10 +147,8 @@ func (s *KeychainStore) Delete(ctx context.Context, reference string) error {
 	cService, cReference := C.CString(s.service), C.CString(reference)
 	defer C.free(unsafe.Pointer(cService))
 	defer C.free(unsafe.Pointer(cReference))
-	if status := C.aa_keychain_delete(cService, cReference); status != 0 {
-		return ErrUnavailable
-	}
-	return nil
+	// aa_keychain_delete already treats an absent item as deleted.
+	return errorForOSStatus(int(C.aa_keychain_delete(cService, cReference)))
 }
 
 var _ CredentialStore = (*KeychainStore)(nil)
