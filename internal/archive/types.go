@@ -15,8 +15,9 @@ const (
 	MetadataSchemaVersion = 1
 	// FilterVersion 3 keeps tool arguments and tool-result linkage, reports the
 	// key names it could not keep, and strips injected instruction blocks from
-	// message text. See docs/agent-archive-privacy.md.
-	FilterVersion = "3"
+	// message text. Filter 4 also retains Claude Code's isMeta flag and strips
+	// the text of every isMeta record. See docs/agent-archive-privacy.md.
+	FilterVersion = "4"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

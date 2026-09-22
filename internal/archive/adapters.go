@@ -29,7 +29,7 @@ func (e *FilterError) Error() string { return "unsafe source format: " + e.Reaso
 
 var ErrUnsafeSourceFormat = &FilterError{Reason: "no recognized safe records"}
 
-const adapterVersion = "0.3.0"
+const adapterVersion = "0.4.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -38,7 +38,7 @@ const maxOmittedKeyNames = 64
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
-const DefaultParserVersion = "0.6.0"
+const DefaultParserVersion = "0.7.0"
 
 // NewAdapter returns a privacy-first adapter by canonical harness name.
 func NewAdapter(name string) (Adapter, error) {
@@ -300,6 +300,11 @@ var allowedKeys = map[string]bool{
 	"info": true, "total_token_usage": true, "last_token_usage": true,
 	"turn_token_usage": true, "thread_token_usage": true, "last_agent_message": true,
 	"thread_id": true, "root_turn_id": true, "completed_at_ms": true, "started_at_ms": true,
+	// Filter 4: Claude Code marks harness-written user records (an expanded
+	// skill or slash command, a local-command caveat) with isMeta. The flag is
+	// what tells a parser such a record is not a human prompt; the record's
+	// text itself is stripped (see stripMetaRecordText).
+	"ismeta": true,
 }
 
 // toolArgumentKeys name the subtrees which carry a tool call's own arguments.
@@ -484,6 +489,9 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 			continue
 		}
 		recognized++
+		if stripMetaRecordText(raw) {
+			addGap("hidden_instruction_omitted", lineNo, "meta record text omitted")
+		}
 		state := sanitizeState{record: lineNo, addGap: addGap, omittedKey: omittedKeys.add, deniedKey: deniedKeys.add}
 		safe, keep := sanitizeObject(raw, &state)
 		if !keep {
@@ -511,6 +519,75 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	}
 	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
 	return result, nil
+}
+
+// isMetaRecord reports whether a native record is one Claude Code marked as
+// harness-written with isMeta: true.
+func isMetaRecord(record map[string]any) bool {
+	flag, ok := record["isMeta"].(bool)
+	return ok && flag
+}
+
+// stripMetaRecordText removes the text of an isMeta record before it is
+// sanitized, and reports whether anything was removed. Such a record carries a
+// harness-expanded skill or slash command, or a local-command caveat: injected
+// instruction text, like a <system-reminder> block, not something a person
+// wrote. The record itself, its ids, its parent link, and the isMeta flag are
+// kept so the conversation's parent chain survives; string content and text
+// blocks are removed, and any other block is left to the ordinary rules. A
+// message left with nothing but its role still keeps the record.
+func stripMetaRecordText(record map[string]any) bool {
+	if !isMetaRecord(record) {
+		return false
+	}
+	stripped := stripContentText(record)
+	if message, ok := record["message"].(map[string]any); ok {
+		if stripContentText(message) {
+			stripped = true
+		}
+		if len(message) == 0 {
+			delete(record, "message")
+		}
+	}
+	return stripped
+}
+
+// stripContentText removes string content and text blocks from one object's
+// "content", dropping the key when nothing is left.
+func stripContentText(holder map[string]any) bool {
+	content, present := holder["content"]
+	if !present {
+		return false
+	}
+	switch value := content.(type) {
+	case string:
+		delete(holder, "content")
+		return true
+	case []any:
+		kept := make([]any, 0, len(value))
+		stripped := false
+		for _, raw := range value {
+			switch block := raw.(type) {
+			case string:
+				stripped = true
+			case map[string]any:
+				if textBlockTypes[strings.ToLower(strings.TrimSpace(firstString(block, "type")))] {
+					stripped = true
+					continue
+				}
+				kept = append(kept, block)
+			default:
+				kept = append(kept, raw)
+			}
+		}
+		if len(kept) == 0 {
+			delete(holder, "content")
+		} else {
+			holder["content"] = kept
+		}
+		return stripped
+	}
+	return false
 }
 
 func appendUniqueString(values []string, candidate string) []string {
