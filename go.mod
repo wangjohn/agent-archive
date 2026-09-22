@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.8
 	github.com/aws/aws-sdk-go-v2/credentials v1.17.61
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.82.0
+	github.com/aws/smithy-go v1.22.4
 	golang.org/x/term v0.30.0
 )
 
@@ -24,6 +25,5 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.25.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.29.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.16 // indirect
-	github.com/aws/smithy-go v1.22.4 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 )
