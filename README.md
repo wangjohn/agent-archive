@@ -23,6 +23,7 @@ building from source and uninstalling, are in [docs/install.md](docs/install.md)
 - `agent-archive sync` runs one collection and upload pass now.
 - `agent-archive pause` and `agent-archive resume` suspend and restore scheduled work.
 - `agent-archive list` and `agent-archive show` inspect archived sessions from the bucket, metadata first.
+- `agent-archive handoff` prints a session as a prompt another coding agent can continue from, on this Mac or another.
 - `agent-archive uninstall` removes hooks and the collector while keeping local evidence and credentials; `--delete-local-data` explicitly removes owned local data after confirmation. It never touches the bucket.
 
 Run `agent-archive` alone for a short command guide, or `agent-archive COMMAND --help` for examples.

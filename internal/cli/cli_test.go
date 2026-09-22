@@ -18,6 +18,9 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		UserHomeDir: func() (string, error) { return userHome, nil },
 		Home:        func() (string, error) { return home, nil },
 		Now:         func() time.Time { return now },
+		// Tests must not see the real environment: run inside an agent,
+		// CLAUDE_CODE_SESSION_ID would change what `handoff --latest` skips.
+		LookupEnv: func(string) (string, bool) { return "", false },
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storage.NewMemoryStore(), nil
 		},

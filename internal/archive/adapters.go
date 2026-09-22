@@ -29,7 +29,7 @@ func (e *FilterError) Error() string { return "unsafe source format: " + e.Reaso
 
 var ErrUnsafeSourceFormat = &FilterError{Reason: "no recognized safe records"}
 
-const adapterVersion = "0.5.0"
+const adapterVersion = "0.6.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -38,7 +38,7 @@ const maxOmittedKeyNames = 64
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
-const DefaultParserVersion = "0.8.0"
+const DefaultParserVersion = "0.9.0"
 
 // NewAdapter returns a privacy-first adapter by canonical harness name.
 func NewAdapter(name string) (Adapter, error) {
@@ -155,11 +155,12 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 // injectedInstructionOpen matches the opening tag of a block a harness injects
 // into an otherwise ordinary message: Claude Code wraps CLAUDE.md, hook output,
 // and memory in <system-reminder>, and Codex writes AGENTS.md inside
-// <user_instructions> and machine details inside <environment_context>. They
-// are instructions to the model, not something the user wrote, so they are
+// <user_instructions>, machine details inside <environment_context>, and a
+// catalog of uninstalled plugins inside <recommended_plugins>. They are
+// instructions to the model, not something the user wrote, so they are
 // stripped from string content wherever they appear. Untagged instruction text
 // is deliberately not guessed at.
-var injectedInstructionOpen = regexp.MustCompile(`<(system-reminder|user_instructions|environment_context)\b[^>]*>`)
+var injectedInstructionOpen = regexp.MustCompile(`<(system-reminder|user_instructions|environment_context|recommended_plugins)\b[^>]*>`)
 
 // injectedInstructionOpenByTag finds a further opening tag of one specific
 // kind, so a block nested inside a block of the same kind extends the outer
@@ -168,6 +169,7 @@ var injectedInstructionOpenByTag = map[string]*regexp.Regexp{
 	"system-reminder":     regexp.MustCompile(`<system-reminder\b[^>]*>`),
 	"user_instructions":   regexp.MustCompile(`<user_instructions\b[^>]*>`),
 	"environment_context": regexp.MustCompile(`<environment_context\b[^>]*>`),
+	"recommended_plugins": regexp.MustCompile(`<recommended_plugins\b[^>]*>`),
 }
 
 // stripInjectedInstructions removes every injected instruction block from one
@@ -312,6 +314,12 @@ var allowedKeys = map[string]bool{
 	// summary's text is kept: it is model output, useful for a handoff. Both
 	// are admitted as booleans only (see booleanFlagKeys).
 	"iscompactsummary": true, "isvisibleintranscriptonly": true,
+	// Filter 6: Claude Code says who produced a user record. A person's prompt
+	// carries origin.kind "human"; a background-task completion carries
+	// "task-notification" and promptSource "system". origin is retained only
+	// as its kind string (see originKindOnly) and promptSource only as a
+	// string, so a parser can tell a notification from a prompt.
+	"origin": true, "promptsource": true,
 }
 
 // booleanFlagKeys are allowed only as the boolean flag the harness writes. Any
@@ -837,6 +845,21 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 		case !allowedKeys[lower] && !state.extraAllowed[lower]:
 			state.omitField(key)
 			continue
+		case lower == "origin":
+			// Filter 6 admits origin only as {kind: <string>}. Every other
+			// member is omitted by name without being inspected further.
+			kind, ok := originKindOnly(value, state)
+			if !ok {
+				state.omitField(key)
+				continue
+			}
+			out[key] = kind
+			continue
+		case lower == "promptsource":
+			if _, isString := value.(string); !isString {
+				state.omitField(key)
+				continue
+			}
 		case booleanFlagKeys[lower]:
 			// Filter 4 admits isMeta, and filter 5 isCompactSummary and
 			// isVisibleInTranscriptOnly, only as the boolean flag Claude Code
@@ -876,6 +899,30 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 		}
 	}
 	return out, true
+}
+
+// originKindOnly reduces a Claude Code origin object to {kind: <string>},
+// reporting every other member as omitted. It keeps nothing when origin is not
+// an object or has no string kind.
+func originKindOnly(value any, state *sanitizeState) (map[string]any, bool) {
+	origin, ok := value.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	for key := range origin {
+		if key != "kind" {
+			state.omitField(key)
+		}
+	}
+	kind, ok := origin["kind"].(string)
+	if !ok || strings.TrimSpace(kind) == "" {
+		return nil, false
+	}
+	safe, keep := sanitizeValue(kind, state)
+	if !keep {
+		return nil, false
+	}
+	return map[string]any{"kind": safe}, true
 }
 
 func isHiddenChannel(value string) bool {

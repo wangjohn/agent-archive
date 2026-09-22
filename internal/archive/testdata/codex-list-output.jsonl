@@ -1,0 +1,9 @@
+{"type":"turn_context","id":"turn-1","model":"gpt-6-astra","model_provider":"openai","reasoning_effort":"high"}
+{"type":"response_item","timestamp":"2026-09-17T11:33:20Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<recommended_plugins>\nHere is a list of plugins that are available but not installed.\n\n- Airtable (airtable@openai-curated-remote)\n- Spotify (spotify@openai-curated-remote)\n</recommended_plugins>"}]}}
+{"type":"response_item","timestamp":"2026-09-17T11:33:21Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>\n  <cwd>/Users/someone/project</cwd>\n</environment_context>"}]}}
+{"type":"response_item","timestamp":"2026-09-17T11:33:22Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Which docs cover remote pairing?"}]}}
+{"type":"response_item","timestamp":"2026-09-17T11:33:25Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_fn_1","arguments":"{\"cmd\":\"ls docs\"}"}}
+{"type":"response_item","timestamp":"2026-09-17T11:33:26Z","payload":{"type":"function_call_output","call_id":"call_fn_1","output":[{"type":"input_text","text":"Wall time: 0.2 seconds\nOutput:"},{"type":"input_text","text":"remote.md\nsetup.md"}]}}
+{"type":"response_item","timestamp":"2026-09-17T11:33:27Z","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call_custom_1","input":"*** Begin Patch\n*** End Patch"}}
+{"type":"response_item","timestamp":"2026-09-17T11:33:28Z","payload":{"type":"custom_tool_call_output","call_id":"call_custom_1","output":[{"type":"input_text","text":"Script completed\nOutput:\n"},{"type":"input_text","text":"Done."}]}}
+{"type":"response_item","timestamp":"2026-09-17T11:33:30Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"docs/remote.md covers it."}]}}

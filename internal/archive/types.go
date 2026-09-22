@@ -19,8 +19,9 @@ const (
 	// the text of every isMeta record. Filter 5 retains Claude Code's
 	// compact_boundary system record (type, subtype, ids, timestamp only) and
 	// the isCompactSummary and isVisibleInTranscriptOnly flags, as booleans.
+	// Filter 6 retains Claude Code's origin (as {kind}) and promptSource.
 	// See docs/agent-archive-privacy.md.
-	FilterVersion = "5"
+	FilterVersion = "6"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

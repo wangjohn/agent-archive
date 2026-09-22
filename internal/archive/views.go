@@ -78,6 +78,11 @@ const (
 	// neither a prompt nor a message. Filters before 5 dropped the flag, so
 	// in their bundles it still reads as a prompt.
 	TurnKindCompactSummary TurnKind = "compact_summary"
+	// TurnKindHarnessNotification is a user record the harness produced on
+	// its own, such as Claude Code's background-task completion notice
+	// (origin.kind "task-notification"). Filter 6 retains origin; an older
+	// bundle cannot tell such a record from a prompt.
+	TurnKindHarnessNotification TurnKind = "harness_notification"
 )
 
 // TurnModelSource names where a NormalizedTurn's model attribution came from.
@@ -148,6 +153,14 @@ type NormalizedToolCall struct {
 	ResultRecordIndex *int  `json:"result_record_index,omitempty"`
 	IsError           *bool `json:"is_error,omitempty"`
 	OutputBytes       *int  `json:"output_bytes,omitempty"`
+
+	// raw is the retained native object this call was read from, and
+	// resultText the retained output of the result linked to it. They are
+	// kept from the single toolActivity walk for BuildHandoff, which needs a
+	// custom tool's raw string input and the result text; neither is part of
+	// the published view.
+	raw        map[string]any
+	resultText string
 }
 
 // NormalizedToolResult is a tool result observed in the source, before it is
@@ -157,6 +170,10 @@ type NormalizedToolResult struct {
 	CallID      string `json:"call_id,omitempty"`
 	IsError     bool   `json:"is_error,omitempty"`
 	OutputBytes int    `json:"output_bytes"`
+
+	// text is the retained output OutputBytes measures; see
+	// NormalizedToolCall.resultText.
+	text string
 }
 
 // ParseNormalized derives a narrow view from already-filtered source. The
@@ -257,6 +274,9 @@ func refineUserKind(record map[string]any, kind TurnKind, text string) TurnKind 
 	if isMetaRecord(record) {
 		return TurnKindHarnessMeta
 	}
+	if isHarnessOrigin(record) {
+		return TurnKindHarnessNotification
+	}
 	trimmed := strings.TrimSpace(text)
 	for _, candidate := range harnessTextKinds {
 		if strings.HasPrefix(trimmed, "<"+candidate.tag+">") {
@@ -264,6 +284,24 @@ func refineUserKind(record map[string]any, kind TurnKind, text string) TurnKind 
 		}
 	}
 	return kind
+}
+
+// harnessOriginKinds are the origin.kind values Claude Code is known to write
+// on user records it produced itself. It is an allowlist on purpose: an
+// origin kind not listed here, including "human" and any kind a later version
+// adds, leaves the record a prompt, so an unfamiliar kind can never silently
+// drop something the person sent.
+var harnessOriginKinds = map[string]bool{"task-notification": true}
+
+// isHarnessOrigin reports whether a record's origin.kind names a known
+// harness-produced record (a background-task notification). A record with no
+// origin, which every pre-filter-6 bundle is, is not reclassified.
+func isHarnessOrigin(record map[string]any) bool {
+	origin, ok := record["origin"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return harnessOriginKinds[strings.ToLower(strings.TrimSpace(firstString(origin, "kind")))]
 }
 
 // resolveSlashCommands decides which typed slash commands were prompts. A
@@ -385,6 +423,7 @@ func linkToolResults(calls []NormalizedToolCall, results []NormalizedToolResult)
 		calls[index].ResultRecordIndex = &recordIndex
 		calls[index].IsError = &isError
 		calls[index].OutputBytes = &outputBytes
+		calls[index].resultText = result.text
 		linked[index] = true
 	}
 	for _, result := range results {
@@ -481,7 +520,7 @@ func toolActivity(record map[string]any, index int, model, reasoning string) ([]
 			if isToolInvocation {
 				calls = append(calls, toolCallCandidate{call: NormalizedToolCall{
 					RecordIndex: index, CallID: firstString(item, "call_id", "id"), ParentID: parent,
-					Model: model, Reasoning: reasoning, Name: tool, Input: arguments,
+					Model: model, Reasoning: reasoning, Name: tool, Input: arguments, raw: item,
 				}})
 			}
 			if kind == "item_completed" {
@@ -489,15 +528,16 @@ func toolActivity(record map[string]any, index int, model, reasoning string) ([]
 					calls = append(calls, toolCallCandidate{completionEcho: true, call: NormalizedToolCall{
 						RecordIndex: index, CallID: firstString(completed, "call_id", "id"), ParentID: parent,
 						Model: model, Reasoning: reasoning, Name: firstString(completed, "name", "tool_name"),
-						Input: toolArguments(completed),
+						Input: toolArguments(completed), raw: completed,
 					}})
 				}
 			}
 			if toolResultTypes[kind] {
 				isError, _ := item["is_error"].(bool)
+				output := toolResultOutput(item)
 				results = append(results, NormalizedToolResult{
 					RecordIndex: index, CallID: firstString(item, "call_id", "tool_use_id"),
-					IsError: isError, OutputBytes: len(toolResultOutput(item)),
+					IsError: isError, OutputBytes: len(output), text: output,
 				})
 			}
 			if isToolInvocation && strings.EqualFold(tool, "skill") {
@@ -557,10 +597,15 @@ func toolArguments(item map[string]any) map[string]any {
 }
 
 // toolResultOutput returns the retained output text of one tool result, whose
-// length is what OutputBytes reports.
+// length is what OutputBytes reports. Current Codex writes a function or custom
+// tool's output as a list of {type: input_text, text} blocks rather than one
+// string; their text is joined the same way message content is.
 func toolResultOutput(item map[string]any) string {
-	if output, ok := item["output"].(string); ok {
+	switch output := item["output"].(type) {
+	case string:
 		return output
+	case []any, map[string]any:
+		return contentText(output)
 	}
 	if content, present := item["content"]; present {
 		return contentText(content)

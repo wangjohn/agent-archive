@@ -1097,3 +1097,173 @@ Limits:
   registration step takes the lock separately. If retention forgets the
   session in between, that evidence is dropped as `ErrSessionNotRegistered`,
   as it already was.
+
+## PR H1 — Handoff prerequisites: notifications, plugin catalog, Codex output
+
+Filter version `6`, adapter version `0.6.0`, parser version `0.9.0` (PR C4 took filter 5 / parser 0.8.0 first). Metadata
+schema version 1 is unchanged. Found by probing real Claude Code, Codex, and
+Cursor transcripts for `docs/agent-archive-handoff-spec.md`; every fixture is
+synthetic.
+
+1. **Task notifications are not prompts.** Claude Code writes a background
+   task's completion as a user record with `origin.kind: "task-notification"`
+   and `promptSource: "system"`; typed prompts carry `origin.kind: "human"`.
+   On the probed review session 12 of 20 counted prompts were notifications.
+   Filter 6 retains `origin` as `{kind}` only and `promptSource` as a string;
+   the parser classifies a user record whose `origin.kind` is a known harness
+   kind (`task-notification`; an allowlist, so an unfamiliar kind stays a
+   prompt) as `harness_notification`, which is not counted as a turn and does
+   not end a slash command's scan for its reply. A record with no `origin`
+   (every filter-5 or older bundle) is classified as before.
+2. **Codex plugin catalog is not a prompt.** `<recommended_plugins>` joins the
+   injected-instruction tags, so the catalog Codex prepends to the first user
+   message is stripped and that message no longer counts as a prompt. An
+   audit of every leading tag in the Codex user messages on the probe machine
+   found only this tag and `<environment_context>`.
+3. **Codex list-shaped tool output.** Current Codex writes
+   `function_call_output.output` and `custom_tool_call_output.output` as a
+   list of `{type: input_text, text}` blocks. `toolResultOutput` handled only
+   strings, so every such result reported `output_bytes: 0`; it now joins the
+   blocks' text the way message content is joined.
+
+Not fixable from the record: the desktop app's "The app was quit while you
+were working…" message has `promptSource: "sdk"` and no `origin`, exactly like
+an SDK-submitted prompt, so it still counts as one (see
+`docs/capture-capabilities.md`).
+
+Fixtures: `claude-task-notification.jsonl` (a prompt, a reply, a notification
+whose `origin` carries an extra member, a reply), `codex-list-output.jsonl`
+(plugin catalog, environment context, a prompt, a function call and a custom
+tool call each with list output, a reply). Tests:
+`internal/archive/parser_v09_test.go`.
+
+## PR H2/H3 — `agent-archive handoff`
+
+Implements `docs/agent-archive-handoff-spec.md`.
+
+- **Builder and renderer** (`internal/archive/handoff.go`, pure).
+  `BuildHandoff` groups a filtered bundle's turns and tool calls by record
+  order into one exchange per human prompt; notifications, harness records,
+  and command output are skipped, and a `!` shell command is shown as a step.
+  It extracts the recorded directory (base name only) and branch, the last
+  assistant text, the last `TodoWrite`/`update_plan`/`todo_write` plan, and
+  the files named by editing calls (paths under the recorded directory made
+  relative; `apply_patch` headers read). Tool summaries never include edit
+  bodies; Codex `exec` scripts show the `exec_command` command they run.
+  Results are trimmed to 12 lines and 2,000 bytes, head and tail, without
+  splitting a character. Cursor's `<timestamp>`/`<user_query>` wrapper is
+  removed from prompts and Claude's `<synthetic>` model label is dropped.
+  `FitHandoff` applies the budget steps on a copy; `RenderHandoffMarkdown`
+  renders the layout in the spec, with fences longer than any backtick run
+  in a result.
+- **Budget change from the spec.** The spec protected the last three
+  exchanges outright. A real session is often one prompt followed by
+  hundreds of tool calls, which that rule could never trim, so the protected
+  tail is the last three exchanges' steps but no more than the last twenty
+  steps overall.
+- **Local source** (`internal/collector/snapshot.go`). `ReadLocalBundle`
+  filters a registration's transcript through the collector's own
+  `filterTranscript` (same size limit, same torn-record boundary, same Cursor
+  text fallback) and merges the hook evidence already published or pending,
+  taking no lock and writing nothing. `FilterTranscriptFile` does the same
+  for an unregistered file, using its modification time as the start time.
+- **Command** (`internal/cli/handoff.go`). Selection by ID (local
+  registration first, then the archive), `--latest` (local registrations by
+  transcript modification time, then archived sidecars whose project ID
+  matches the directory or its configured project, compared with and without
+  symlinks resolved), or `--file`. The saved full version lives in
+  `handoffs/`, pruned after 7 days by `handoff` and by each collector pass,
+  and listed in `localStateEntries` for uninstall.
+
+Tests: `internal/archive/handoff_test.go` (golden documents for one fixture
+per harness under `testdata/handoff/`, regenerated with `-update`; content
+checks; budget order, protected tail, single-exchange trimming, input not
+mutated; trimming helpers) and `internal/cli/handoff_test.go` (argument
+errors, not set up, local handoff without sync uploads nothing, `--latest`
+from a subdirectory, local/archive parity after sync, the no-match fallback
+list, full-version save and pruning, `--output` permissions and overwrite,
+`--file` without setup, uninstall ownership).
+
+Manual check: the built binary rendered copies of real Claude Code, Codex,
+and Cursor transcripts with `--file`. The 7.0 MB Claude review session came
+out at 117 KB with 53 older tool outputs dropped and the 142 KB full version
+saved; the Codex and Cursor sessions (20 KB and 60 KB) needed no trimming.
+The spec's acceptance check (paste a handoff into another agent and see
+whether it states the task and next step) was run on 2026-09-22; see "Live
+handoff check" below.
+
+Review fixes (15 findings from an extra-high-effort review, all on the
+branch):
+
+1. `--latest` skips the agent session running the command, named by
+   `CLAUDE_CODE_SESSION_ID` (observed) or `CODEX_THREAD_ID` (not yet
+   observed), locally and in the archive. `Env.LookupEnv` makes it testable.
+2. `--latest` passes over any local candidate it cannot use (no transcript,
+   empty, oversized, unsafe, or no prompt yet) instead of failing on it, and
+   skips archived sessions with zero turns.
+3. A Cursor text transcript (`native_text` only) renders from its
+   `user:`/`assistant:`/`tool:` sections instead of an empty document.
+4. Harness origin kinds are an allowlist (`task-notification`); any other
+   `origin.kind` stays a prompt.
+5. A session ID must pass `archive.MetadataObjectKey`'s safe-component check
+   before it names local files, so `../` cannot reach outside the data
+   directory.
+6. Tool calls and results are paired from the single `toolActivity` walk:
+   `NormalizedToolCall` carries its raw item and linked result text in
+   unexported fields, so several unidentified calls in one record each get
+   their own input and output.
+7. The workspace root is the first recorded cwd (where the session started),
+   not the last, which followed any `cd` into a subdirectory.
+8. With `--source auto`, any local failure falls back to the archive, and
+   both reasons are reported if that fails too.
+9. A plan call whose item list cannot be found no longer erases the earlier
+   plan; an explicit empty list still clears it.
+10. Session times never come from the moment the handoff was built: the
+    fallbacks are published metadata, then the registration's start and the
+    transcript's modification time.
+11. `--latest` matches a project whose root is the directory or contains it,
+    no longer one inside it, so running from ~ does not match every project.
+12. `FitHandoff` finds the smallest prefix of exchanges each step must cover
+    by binary search, a handful of measurements per step instead of one per
+    exchange (512 exchanges: at most 49 renders).
+13. A slash-command prompt renders as the command line (`/review-pr 12`),
+    not Claude Code's `<command-name>` tags.
+14. `rawToolItem` and `toolResultText`, which re-walked records the parser
+    had already walked, are removed (see 6).
+15. Without setup, `--file` never creates the data directory; a trimmed
+    handoff there says the full version was not saved.
+
+Each has a test in `internal/archive/handoff_test.go`,
+`internal/archive/parser_v09_test.go`, or `internal/cli/handoff_test.go`.
+
+After PR C4 merged, this branch was renumbered to filter 6 / adapter 0.6.0 /
+parser 0.9.0, and the handoff now shows a Claude Code compaction summary
+(`compact_summary`, whose text C4 keeps for this purpose) as a step where the
+compaction happened, since the agent continued from it rather than from the
+turns before it. It is shortened by the budget like agent text.
+`TestHandoffShowsCompactionSummaries` uses C4's `claude-compaction.jsonl`.
+
+### Live handoff check (2026-09-22)
+
+Handoffs rendered with `--file` from copies of three real transcripts were
+given to a receiving agent with no other context, which was told to run no
+tools and to state the goal, what was done, where it left off, its next
+step, and what it would verify first. Codex receivers ran `codex exec
+--ephemeral --sandbox read-only` from an empty directory (codex-cli
+0.155.0-alpha.9.2). The standalone Claude Code binary cannot use the desktop
+app's login from a subprocess, so the Claude receivers were fresh Claude
+subagents that read only the handoff file. Cursor has no headless agent here,
+so it was a source only.
+
+| Handoff | Size | Receiver | Result |
+|---|---|---|---|
+| Codex (5 prompts; remote-pairing error) | 20 KB | Claude | Correct: goal, the different-workspace cause, the re-pair step; next step "ask whether pairing worked" |
+| Claude Code (review orchestration; trimmed from 7 MB) | 108 KB | Codex | Correct: PR #13 in review, next step "check the review, merge, rebuild the binary", verify the Cursor test chat |
+| Cursor (41 prompts; blog post) | 62 KB | Claude | Correct, including the lost-work recovery; next step "ask whether the restored bullets match"; noted tool results are not recorded |
+| Cursor | 62 KB | Codex | Mostly correct; proposed finishing the "coding and []" bullet rather than confirming the recovery with the person first |
+
+All four named the current state correctly and chose a next step consistent
+with it. The one weaker answer came from a Cursor handoff, where no tool
+results are recorded; both receivers asked to check the file on disk first,
+as the preamble instructs.
+
