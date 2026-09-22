@@ -68,8 +68,17 @@ func TestAdaptersRetainVisibleSiblingBlocksAndDeriveModelToolMetadata(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metadata.Counts.Turns != nil || metadata.Counts.Messages == nil || *metadata.Counts.Messages != 1 || metadata.Counts.ToolCalls == nil || *metadata.Counts.ToolCalls != 1 {
+	// The fixture is one assistant response and one tool call with no human
+	// prompt: from parser 0.6 a parsed structured bundle reports a known zero
+	// rather than leaving the turn count unknown.
+	if metadata.Counts.Turns == nil || *metadata.Counts.Turns != 0 {
+		t.Fatalf("turns = %v", metadata.Counts.Turns)
+	}
+	if metadata.Counts.Messages == nil || *metadata.Counts.Messages != 1 || metadata.Counts.ToolCalls == nil || *metadata.Counts.ToolCalls != 1 {
 		t.Fatalf("metadata counts = %#v", metadata.Counts)
+	}
+	if metadata.Counts.ToolResults == nil || *metadata.Counts.ToolResults != 0 {
+		t.Fatalf("tool results = %v", metadata.Counts.ToolResults)
 	}
 	if len(metadata.Models) != 1 || metadata.Models[0].Attributes["gen_ai.request.model"] != "gpt-6-astra" {
 		t.Fatalf("metadata models = %#v", metadata.Models)
