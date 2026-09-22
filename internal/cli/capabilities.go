@@ -106,7 +106,13 @@ func captureCapabilityProfile(name string) captureCapabilities {
 		profile.Transcript = documented("Hooks provide transcript_path to the native JSONL transcript.")
 		profile.Lifecycle = documented("SessionStart, Stop, SessionEnd, and SubagentStop are documented.")
 	case "cursor":
-		profile.FreshStart = unavailable("sessionStart is documented for composer creation, but resume behavior has not been verified for an installed version.", "Run a version-specific fresh and resumed synthetic session before enabling new capture.")
+		// sessionStart alone does not distinguish a new composer conversation
+		// from a resumed one, and cursor_version is not evidence either. The
+		// documented transcript_path is: a transcript with no bytes at start
+		// time can only be a conversation that has not happened yet. A
+		// sessionStart that names no transcript (transcripts disabled) carries
+		// no proof and is still declined.
+		profile.FreshStart = documented("sessionStart provides transcript_path; a transcript that is absent or empty at start time distinguishes a new conversation from a resume, and one that already has bytes is treated as a resume.")
 		profile.Transcript = documented("Common hook input includes transcript_path, which may be null when transcripts are disabled.")
 		profile.Lifecycle = documented("sessionStart, stop, sessionEnd, afterAgentResponse, subagentStart, and subagentStop are documented.")
 	default:

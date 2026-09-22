@@ -19,12 +19,15 @@ func TestAmbiguousStartIsNotRegisteredAndDiagnosticIsContentFree(t *testing.T) {
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	// Both starts name a file that already holds a conversation, so neither is
+	// provably the beginning of one, whatever the harness reports.
+	resumed := writeTestTranscript(t, "resumed.jsonl", `{"type":"user"}`)
 	for _, tc := range []struct {
 		harness string
 		payload map[string]any
 	}{
-		{"codex", map[string]any{"hook_event_name": "SessionStart", "session_id": "private-codex-id", "cwd": "/work/widget", "transcript_path": "/private/transcript.jsonl"}},
-		{"cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "private-cursor-id", "workspace_roots": []any{"/work/widget"}, "transcript_path": "/private/cursor.jsonl"}},
+		{"codex", map[string]any{"hook_event_name": "SessionStart", "session_id": "private-codex-id", "cwd": "/work/widget", "transcript_path": resumed}},
+		{"cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "private-cursor-id", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}},
 	} {
 		if err := handleHookEvent(home, tc.harness, tc.payload, now); err != nil {
 			t.Fatal(err)
@@ -619,5 +622,98 @@ func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
 	}
 	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
 		t.Fatalf("a path outside every project was recorded: %#v", ds)
+	}
+}
+
+// Cursor's sessionStart carries conversation_id, cursor_version,
+// workspace_roots, and transcript_path, and no source field at all.
+func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		transcript func(t *testing.T) string
+		registered bool
+	}{
+		{"empty transcript is a fresh conversation", func(t *testing.T) string {
+			return writeTestTranscript(t, "cursor.jsonl", "")
+		}, true},
+		{"transcript not created yet is a fresh conversation", func(t *testing.T) string {
+			return filepath.Join(t.TempDir(), "not-created-yet.jsonl")
+		}, true},
+		{"transcript with bytes is a resume", func(t *testing.T) string {
+			return writeTestTranscript(t, "cursor.jsonl", "{\"role\":\"user\"}\n")
+		}, false},
+		{"no transcript path proves nothing", func(t *testing.T) string { return "" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+			now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			payload := map[string]any{
+				"hook_event_name": "sessionStart", "conversation_id": "conv-1",
+				"cursor_version": "1.7.2", "workspace_roots": []any{project},
+			}
+			if path := tc.transcript(t); path != "" {
+				payload["transcript_path"] = path
+			}
+			if err := handleHookEvent(home, "cursor", payload, now); err != nil {
+				t.Fatal(err)
+			}
+			store, _ := collector.NewLocalStore(home)
+			regs, _ := store.LoadRegistrations()
+			ds, _ := readCaptureDiagnostics(home)
+			if !tc.registered {
+				if len(regs) != 0 {
+					t.Fatalf("a Cursor resume was registered: %#v", regs)
+				}
+				if len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart {
+					t.Fatalf("diagnostics=%#v", ds)
+				}
+				return
+			}
+			if len(regs) != 1 || regs[0].Harness.Name != "cursor" || regs[0].Harness.Version != "1.7.2" {
+				t.Fatalf("a fresh Cursor conversation was not registered: %#v", regs)
+			}
+			if regs[0].ProjectRoot != project || len(ds) != 0 {
+				t.Fatalf("registration=%#v diagnostics=%#v", regs[0], ds)
+			}
+		})
+	}
+}
+
+// The transcript proof is a fallback for Codex and Claude, never an override:
+// a documented source still decides when it is present.
+func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, contents string
+		registered             bool
+	}{
+		{"resume with an empty transcript stays declined", "resume", "", false},
+		{"compact with an empty transcript stays declined", "compact", "", false},
+		{"startup with a non-empty transcript still registers", "startup", "{\"type\":\"user\"}\n", true},
+		{"missing source falls back to an empty transcript", "", "", true},
+		{"missing source with a non-empty transcript is declined", "", "{\"type\":\"user\"}\n", false},
+	} {
+		for _, harness := range []string{"codex", "claude"} {
+			t.Run(harness+": "+tc.name, func(t *testing.T) {
+				home, project := t.TempDir(), t.TempDir()
+				setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+				now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+				payload := map[string]any{
+					"hook_event_name": "SessionStart", "session_id": "native-1", "cwd": project,
+					"transcript_path": writeTestTranscript(t, "t.jsonl", tc.contents),
+				}
+				if tc.source != "" {
+					payload["source"] = tc.source
+				}
+				if err := handleHookEvent(home, harness, payload, now); err != nil {
+					t.Fatal(err)
+				}
+				store, _ := collector.NewLocalStore(home)
+				regs, _ := store.LoadRegistrations()
+				if tc.registered != (len(regs) == 1) {
+					t.Fatalf("registered=%t want %t: %#v", len(regs) == 1, tc.registered, regs)
+				}
+			})
+		}
 	}
 }

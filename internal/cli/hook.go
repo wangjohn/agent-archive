@@ -2,9 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -241,9 +243,6 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
-	// Codex and Claude document an explicit fresh-start source. Cursor's
-	// version field does not prove that an unknown session began after
-	// activation; until native start provenance is verified, leave it out.
 	if !provesFreshSessionStart(harness, payload) {
 		return recordCaptureDiagnostic(home, captureDiagnostic{
 			Code: diagnosticUnknownSessionStart, Harness: canonicalHarness(harness),
@@ -331,17 +330,54 @@ func canonicalHarness(harness string) string {
 	return harness
 }
 
+// provesFreshSessionStart reports whether this SessionStart is provably the
+// beginning of a conversation rather than the resumption of one that may
+// predate the project's activation.
+//
+// Codex and Claude Code document SessionStart.source: startup and clear begin
+// a conversation, resume and compact continue one. That evidence is decisive
+// when it is present.
+//
+// Cursor's sessionStart carries no equivalent field, so the proof is the
+// transcript itself and is harness-independent: at the true start of a
+// conversation the hook-provided transcript_path names a file that does not
+// exist yet or holds no bytes, while a resumed conversation points at a
+// transcript that already has content. The same proof is the fallback for a
+// Codex or Claude payload that carries no source at all. A payload that names
+// no transcript proves nothing and is still declined.
 func provesFreshSessionStart(harness string, payload map[string]any) bool {
 	switch canonicalHarness(harness) {
 	case "codex", "claude":
-		source, _ := payload["source"].(string)
-		switch strings.ToLower(strings.TrimSpace(source)) {
+		switch strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload, "source"))) {
 		case "startup", "clear":
 			return true
+		case "":
+			return emptyTranscriptProvesFreshStart(payload)
 		}
-
+		return false
+	case "cursor":
+		return emptyTranscriptProvesFreshStart(payload)
 	}
 	return false
+}
+
+// emptyTranscriptProvesFreshStart reports whether the hook named a transcript
+// that holds no conversation yet. Only "the file does not exist" and "the file
+// is empty" are proof; a permission error, a directory, or anything else the
+// hook cannot read leaves the start unproven. The transcript is never opened.
+func emptyTranscriptProvesFreshStart(payload map[string]any) bool {
+	path := firstNonEmptyString(payload, "transcript_path")
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return info.Size() == 0
 }
 
 func applyHarnessObservation(target *archive.Harness, harness string, payload map[string]any) {
