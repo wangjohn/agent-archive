@@ -353,12 +353,21 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		// exactly what was already captured produces no change for the
 		// comparison below to act on, so the gap has to be retired here or it
 		// would be reported for the rest of the session's life.
-		restored, cleared, err := local.ClearRecoverableBlock(reg.ArchiveSessionID)
+		restored, replayed, cleared, err := local.ClearRecoverableBlock(reg.ArchiveSessionID, now)
 		if err != nil {
 			return outcomeSkipped, err
 		}
 		if cleared {
 			prevStatus = restored
+		}
+		if replayed {
+			// Hook evidence acknowledged while the file was away is pending
+			// again, under a fresh token: pick it up now so it publishes with
+			// the recovery, and so the settled outcomes below acknowledge the
+			// request that actually carries it.
+			if req, _, err = local.ensureRequestToken(reg.ArchiveSessionID); err != nil {
+				return outcomeSkipped, fmt.Errorf("reload replayed request: %w", err)
+			}
 		}
 	}
 
@@ -433,6 +442,11 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 			if _, err := local.CompleteRequest(reg.ArchiveSessionID, req.Token); err != nil {
 				return outcomeSkipped, fmt.Errorf("complete unchanged request: %w", err)
 			}
+		}
+		if prevStatus == CacheStatusBlocked {
+			// Unchanged since a rewrite was recorded: still a gap, and a gap
+			// is re-evaluated on every pass rather than skipped on a stat.
+			return outcomeSkipped, nil
 		}
 		return outcomeSkipped, recordScanSignature(local, reg, transcriptStat, candidate, opts)
 	}
@@ -556,8 +570,16 @@ func blockSession(local *LocalStore, id string, req Request, reason BlockedReaso
 		}
 		alreadyBlocked = prevReason == reason && candidate == nil
 	}
-	if !alreadyBlocked {
-		if err := local.SaveBlocked(id, bundle, lastPublishedAt, reason); err != nil {
+	// A block that can end holds on to the hook evidence its acknowledgement
+	// would otherwise discard, so a final response that arrived just before
+	// the application deleted its transcript still publishes if the file
+	// comes back. A permanent block has nothing to hand it back to.
+	var held []archive.SupplementalEvidence
+	if reason.recoverable() {
+		held = req.HookEvidence
+	}
+	if !alreadyBlocked || len(held) > 0 {
+		if err := local.SaveBlocked(id, bundle, lastPublishedAt, reason, held...); err != nil {
 			return outcomeSkipped, fmt.Errorf("cache blocked session: %w", err)
 		}
 	}

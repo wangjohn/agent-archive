@@ -148,8 +148,10 @@ Invalid flags fail before a command starts. Exit codes are 0 for success/help,
   to overwrite a file edited outside setup during recovery.
 - A storage change is blocked while known work is pending. Sync the current
   destination first. Switching starts a new capture boundary: old sessions
-  stay with their destination and stop being collected or cleaned up by this
-  Mac. Old destination references and local evidence are retained.
+  stay published at their destination, which this Mac stops collecting into
+  or cleaning up. Their local evidence is kept until it ages past the
+  retention period, then removed from this Mac only; nothing is deleted from
+  either bucket on its behalf. Old destination references are retained.
 - Reducing retention shows the affected locally owned session count and
   cutoff before confirmation. The collector applies the resulting policy.
 

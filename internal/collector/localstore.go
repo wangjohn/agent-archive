@@ -396,6 +396,14 @@ type publishedState struct {
 	// PreBlockStatus is the status a recoverable block replaced, so clearing
 	// that block restores what was true before it rather than guessing.
 	PreBlockStatus CacheStatus `json:"pre_block_status,omitempty"`
+	// DeferredHookEvidence is hook evidence (a final response, a link) whose
+	// request was acknowledged while a recoverable block was in force. The
+	// transcript could not be read, so nothing could be built to carry it;
+	// rather than drop it, the block holds it and hands it back as request
+	// evidence the moment the transcript is readable again, so it publishes
+	// with the recovery. Set only while Status is CacheStatusBlocked with a
+	// recoverable reason.
+	DeferredHookEvidence []archive.SupplementalEvidence `json:"deferred_hook_evidence,omitempty"`
 	// LastPublished survives a newer rate-limited or declined candidate so
 	// compaction checks and retention always have the actual remote baseline.
 	LastPublished *publishedSnapshot `json:"last_published,omitempty"`
@@ -449,21 +457,24 @@ func (s *LocalStore) publishedPath(archiveSessionID string) string {
 // session, so the next scan can compare against it instead of rebuilding
 // from scratch. See CacheStatus for what each status means for retry.
 func (s *LocalStore) SavePublished(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, metadata ...[]byte) error {
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, status, "", metadata)
+	return s.savePublishedState(archiveSessionID, bundle, publishedAt, status, "", metadata, nil)
 }
 
 // SaveBlocked records a terminal capture gap for a session (see
 // CacheStatusBlocked). bundle is what the next scan compares against and
 // publishedAt is the last actual publish time, if any; the last published
-// snapshot itself is preserved exactly as SavePublished preserves it.
-func (s *LocalStore) SaveBlocked(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, reason BlockedReason) error {
+// snapshot itself is preserved exactly as SavePublished preserves it. For a
+// recoverable reason, deferred is hook evidence the block acknowledged and
+// must hand back when it clears; it accumulates across saves of the same
+// block and is dropped, having been handed back, by any other status.
+func (s *LocalStore) SaveBlocked(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, reason BlockedReason, deferred ...archive.SupplementalEvidence) error {
 	if reason == "" {
 		return errors.New("blocked reason is required")
 	}
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusBlocked, reason, nil)
+	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusBlocked, reason, nil, deferred)
 }
 
-func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata [][]byte) error {
+func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata [][]byte, deferred []archive.SupplementalEvidence) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -490,34 +501,62 @@ func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.
 	case existing.Status != CacheStatusBlocked:
 		preBlock = existing.Status
 	}
-	return local.Write(s.publishedPath(archiveSessionID), publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, LastPublished: last, MetadataBytes: publicationMetadata(existing.MetadataBytes, metadata)})
+	var held []archive.SupplementalEvidence
+	if status == CacheStatusBlocked && reason.recoverable() {
+		// The same block continuing keeps what it already holds; a block
+		// that replaces a settled state starts with only what arrived now.
+		if existing.Status == CacheStatusBlocked && existing.BlockedReason == reason {
+			held = existing.DeferredHookEvidence
+		}
+		held = archive.MergeSupplementalEvidence(held, deferred)
+	}
+	return local.Write(s.publishedPath(archiveSessionID), publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: publicationMetadata(existing.MetadataBytes, metadata)})
 }
 
 // ClearRecoverableBlock ends a block whose condition has passed — today only a
 // transcript that came back — by restoring the status the block replaced. It
 // exists because a returning transcript whose content is byte-identical to the
 // cached bundle produces no change for the normal comparison to act on, so
-// without this the gap would be reported forever. A block with no recorded
-// previous status is left alone: there was no cached evidence before it, so
-// the first real candidate replaces the whole state anyway.
-func (s *LocalStore) ClearRecoverableBlock(archiveSessionID string) (CacheStatus, bool, error) {
+// without this the gap would be reported forever.
+//
+// Hook evidence the block held on to (see publishedState.DeferredHookEvidence)
+// is handed back first, as an urgent request for the session, before the
+// state is rewritten: the request is the durable carrier the collector
+// already retries, so a crash at any point leaves the evidence pending
+// rather than lost, and a replay adds nothing the request already holds.
+// replayed reports that such a request was written, so the caller must
+// reload the session's request rather than act on the one it loaded before.
+//
+// A block with no recorded previous status is not rewritten: there was no
+// cached evidence before it, so the first real candidate replaces the whole
+// state anyway, and anything it held is replayed (idempotently) until then.
+func (s *LocalStore) ClearRecoverableBlock(archiveSessionID string, now time.Time) (restored CacheStatus, replayed, cleared bool, err error) {
 	var state publishedState
-	err := local.Read(s.publishedPath(archiveSessionID), &state)
+	err = local.Read(s.publishedPath(archiveSessionID), &state)
 	if errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
+		return "", false, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
+		return "", false, false, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
 	}
-	if state.Status != CacheStatusBlocked || !state.BlockedReason.recoverable() || state.PreBlockStatus == "" || state.PreBlockStatus == CacheStatusBlocked {
-		return state.Status, false, nil
+	if state.Status != CacheStatusBlocked || !state.BlockedReason.recoverable() {
+		return state.Status, false, false, nil
 	}
-	restored := state.PreBlockStatus
-	state.Status, state.BlockedReason, state.PreBlockStatus = restored, "", ""
+	if len(state.DeferredHookEvidence) > 0 {
+		if err := s.SaveRequest(archiveSessionID, "transcript-returned", now, state.DeferredHookEvidence...); err != nil {
+			return "", false, false, fmt.Errorf("replay evidence held while blocked %q: %w", archiveSessionID, err)
+		}
+		replayed = true
+	}
+	if state.PreBlockStatus == "" || state.PreBlockStatus == CacheStatusBlocked {
+		return state.Status, replayed, false, nil
+	}
+	restored = state.PreBlockStatus
+	state.Status, state.BlockedReason, state.PreBlockStatus, state.DeferredHookEvidence = restored, "", "", nil
 	if err := local.Write(s.publishedPath(archiveSessionID), state); err != nil {
-		return "", false, fmt.Errorf("clear block %q: %w", archiveSessionID, err)
+		return "", replayed, false, fmt.Errorf("clear block %q: %w", archiveSessionID, err)
 	}
-	return restored, true, nil
+	return restored, replayed, true, nil
 }
 
 // LoadBlocked reports whether a session is in CacheStatusBlocked and why.

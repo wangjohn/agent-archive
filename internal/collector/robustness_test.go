@@ -544,7 +544,10 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 	}
 
 	t.Logf("%d unchanged sessions of %d KB: short-circuit pass %s (%.2f ms/session); full re-read pass %s", sessions, size/1024, elapsed, float64(elapsed.Microseconds())/1000/float64(sessions), fullScan)
-	if elapsed >= time.Second {
+	// The wall-clock target is the plain run's number. Under the race
+	// detector on a loaded CI machine the same pass proves the same thing
+	// (nothing read, nothing written) without a deadline that can only flake.
+	if !raceEnabled && elapsed >= time.Second {
 		t.Fatalf("an unchanged pass took %s, want well under one second", elapsed)
 	}
 }
@@ -571,5 +574,163 @@ func TestPublishedCacheSizeIsAboutOneBundle(t *testing.T) {
 	}
 	if !bytes.Contains(raw, []byte(`"same_as_bundle": true`)) {
 		t.Fatal("the shared-copy marker is missing")
+	}
+}
+
+func evidenceKinds(evidence []archive.SupplementalEvidence) []string {
+	var kinds []string
+	for _, item := range evidence {
+		kinds = append(kinds, string(item.Kind))
+	}
+	return kinds
+}
+
+// A stop hook's final response can land moments before the application
+// deletes the transcript. Blocking acknowledges that request, so without care
+// the response is dropped on the floor. Instead the block holds it, and it
+// publishes when the file returns, even when the file returns byte-identical.
+func TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn(t *testing.T) {
+	dir := t.TempDir()
+	local := newTestStore(t)
+	remote := storage.NewMemoryStore()
+	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	reg := registration(t, path)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	runAt(t, local, remote, t0)
+	metadataBefore := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	final := archive.SupplementalEvidence{Kind: archive.EvidenceKindFinalResponse, ObservedAt: t0.Add(time.Hour), Provenance: "hook", Payload: map[string]any{"turn_id": "last"}}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", t0.Add(time.Hour), final); err != nil {
+		t.Fatal(err)
+	}
+	if result := runAt(t, local, remote, t0.Add(time.Hour)); len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if requests, _ := local.LoadRequests(); len(requests) != 0 {
+		t.Fatalf("the request was left pending: %#v", requests)
+	}
+	if state := readPublishedStateFile(t, local, reg.ArchiveSessionID); len(state.DeferredHookEvidence) != 1 {
+		t.Fatalf("the acknowledged evidence was dropped: %#v", state.DeferredHookEvidence)
+	}
+
+	// Still missing: a later request accumulates, and passes with nothing new
+	// neither error nor grow the held evidence.
+	feedback := archive.SupplementalEvidence{Kind: archive.EvidenceKindExplicitFeedback, ObservedAt: t0.Add(2 * time.Hour), Provenance: "user:agent-archive-feedback-file", Payload: map[string]any{"event_id": "fb-1", "text": "good", "source": "user"}}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "explicit_feedback", t0.Add(2*time.Hour), feedback); err != nil {
+		t.Fatal(err)
+	}
+	for pass := 2; pass <= 3; pass++ {
+		if result := runAt(t, local, remote, t0.Add(time.Duration(pass)*time.Hour)); len(result.Errors) != 0 || len(result.Published) != 0 {
+			t.Fatalf("pass %d: %#v", pass, result)
+		}
+	}
+	if state := readPublishedStateFile(t, local, reg.ArchiveSessionID); len(state.DeferredHookEvidence) != 2 {
+		t.Fatalf("held evidence = %v, want the final response and the feedback", evidenceKinds(state.DeferredHookEvidence))
+	}
+
+	// The identical file returns: the held evidence is what gets published.
+	writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	result := runAt(t, local, remote, t0.Add(4*time.Hour))
+	if len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("the held evidence did not publish with the recovery: %#v", result)
+	}
+	if requests, _ := local.LoadRequests(); len(requests) != 0 {
+		t.Fatalf("the replayed request was not acknowledged: %#v", requests)
+	}
+	published, _, found, err := local.LoadLastPublished(reg.ArchiveSessionID)
+	if err != nil || !found {
+		t.Fatalf("found=%t err=%v", found, err)
+	}
+	kinds := strings.Join(evidenceKinds(published.SupplementalEvidence), ",")
+	if !strings.Contains(kinds, string(archive.EvidenceKindFinalResponse)) || !strings.Contains(kinds, string(archive.EvidenceKindExplicitFeedback)) {
+		t.Fatalf("published evidence = %s", kinds)
+	}
+	state := readPublishedStateFile(t, local, reg.ArchiveSessionID)
+	if state.Status != CacheStatusPublished || len(state.DeferredHookEvidence) != 0 {
+		t.Fatalf("status=%q held=%d after recovery", state.Status, len(state.DeferredHookEvidence))
+	}
+	if after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); !after.CapturedAt.After(metadataBefore.CapturedAt) {
+		t.Fatal("new evidence did not move the capture time")
+	}
+
+	// Nothing is owed any more: the next pass is a stat skip.
+	if result := runAt(t, local, remote, t0.Add(5*time.Hour)); len(result.Published) != 0 || len(result.Skipped) != 1 {
+		t.Fatalf("result=%#v", result)
+	}
+}
+
+// The same, before anything was ever captured: the block has no previous
+// status to restore, so the first real candidate replaces it, and the held
+// evidence must still ride along.
+func TestHookEvidenceHeldBeforeFirstCapturePublishesWhenFileAppears(t *testing.T) {
+	dir := t.TempDir()
+	local := newTestStore(t)
+	remote := storage.NewMemoryStore()
+	reg := registration(t, filepath.Join(dir, "codex.jsonl"))
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	final := archive.SupplementalEvidence{Kind: archive.EvidenceKindFinalResponse, ObservedAt: t0, Provenance: "hook", Payload: map[string]any{"turn_id": "only"}}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", t0, final); err != nil {
+		t.Fatal(err)
+	}
+	if result := runAt(t, local, remote, t0); len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if state := readPublishedStateFile(t, local, reg.ArchiveSessionID); state.Status != CacheStatusBlocked || len(state.DeferredHookEvidence) != 1 {
+		t.Fatalf("status=%q held=%d", state.Status, len(state.DeferredHookEvidence))
+	}
+	writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	if result := runAt(t, local, remote, t0.Add(time.Hour)); len(result.Published) != 1 || len(result.Errors) != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	published, _, _, _ := local.LoadLastPublished(reg.ArchiveSessionID)
+	if kinds := evidenceKinds(published.SupplementalEvidence); len(kinds) != 1 || kinds[0] != string(archive.EvidenceKindFinalResponse) {
+		t.Fatalf("published evidence = %v", kinds)
+	}
+	if requests, _ := local.LoadRequests(); len(requests) != 0 {
+		t.Fatalf("requests left pending: %#v", requests)
+	}
+	if state := readPublishedStateFile(t, local, reg.ArchiveSessionID); state.Status != CacheStatusPublished || len(state.DeferredHookEvidence) != 0 {
+		t.Fatalf("status=%q held=%d", state.Status, len(state.DeferredHookEvidence))
+	}
+}
+
+// A recorded gap stays on the full path for as long as it lasts. The
+// "unchanged" exit is reachable for a rewritten transcript that then sits
+// untouched, and it must not leave a signature behind, or the gap would be
+// skipped on a stat from the second pass on.
+func TestUnchangedRewrittenTranscriptLeavesNoSignature(t *testing.T) {
+	local := newTestStore(t)
+	remote := storage.NewMemoryStore()
+	reg := settledSession(t, local, codexTranscript)
+	rewritten := strings.Replace(codexTranscript, "visible", "VISIBLE", 1)
+	if err := os.WriteFile(reg.TranscriptPath, []byte(rewritten), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moved := mtime(t, reg.TranscriptPath).Add(time.Second)
+	if err := os.Chtimes(reg.TranscriptPath, moved, moved); err != nil {
+		t.Fatal(err)
+	}
+	runAt(t, local, remote, time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC))
+	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != BlockedReasonTranscriptRewritten {
+		t.Fatalf("reason=%q blocked=%t", reason, blocked)
+	}
+	// Untouched since the rewrite: the full path runs and ends "unchanged".
+	if result := runAt(t, local, remote, time.Date(2026, 1, 3, 1, 0, 0, 0, time.UTC)); len(result.Errors) != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if _, found, _ := local.loadScanSignature(reg.ArchiveSessionID); found {
+		t.Fatal("a still-blocked session was signed as settled")
+	}
+	if unchanged, _ := unchangedSinceLastScan(local, reg, Options{MachineID: "m"}); unchanged {
+		t.Fatal("a recorded gap would be skipped on a stat")
 	}
 }

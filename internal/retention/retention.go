@@ -81,9 +81,10 @@ func (o Options) gracePeriod() time.Duration {
 type Result struct {
 	DeletedSnapshots int
 	DeletedSessions  []string
-	// PrunedSessions expired only locally: their evidence was published to a
-	// destination this machine no longer uses, so nothing was deleted from the
-	// current bucket.
+	// PrunedSessions expired only locally, with no call to the current bucket:
+	// nothing of theirs is in it, either because their evidence was published
+	// to a destination this machine no longer uses or because nothing was
+	// ever published (the transcript vanished before the first capture).
 	PrunedSessions []string
 	Errors         map[string]error
 }
@@ -125,7 +126,15 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		return fmt.Errorf("load published cache: %w", err)
 	}
 
-	locallyExpired := opts.SessionMaxAge > 0 && found && !bundle.Capture.CapturedAt.IsZero() && now.Sub(bundle.Capture.CapturedAt) >= opts.SessionMaxAge
+	// A session ages from its cached capture when it has one. A registration
+	// that never produced a capture (the transcript vanished before the first
+	// scan, or was never readable) ages from the session's own start instead;
+	// otherwise it would be the one kind of local state that never expires.
+	ageFrom := reg.SessionStartedAt
+	if found && !bundle.Capture.CapturedAt.IsZero() {
+		ageFrom = bundle.Capture.CapturedAt
+	}
+	locallyExpired := opts.SessionMaxAge > 0 && !ageFrom.IsZero() && now.Sub(ageFrom) >= opts.SessionMaxAge
 	if locallyExpired && (opts.Publishable == nil || opts.Publishable(reg)) {
 		// Unpublished work is not expired evidence. A session that crosses the
 		// retention boundary on the same pass its publication fails
@@ -156,6 +165,28 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		}
 		result.PrunedSessions = append(result.PrunedSessions, reg.ArchiveSessionID)
 		return nil
+	}
+
+	if locallyExpired {
+		// Nothing of this session can be in the bucket unless a publication
+		// was recorded, or one is still pending: a pending upload may have
+		// reached storage before its local acknowledgement did. Anything
+		// else is local state only, so it is forgotten without a remote call.
+		_, _, everPublished, err := local.LoadLastPublished(reg.ArchiveSessionID)
+		if err != nil {
+			return fmt.Errorf("load last published bundle: %w", err)
+		}
+		pending, err := local.HasPending(reg.ArchiveSessionID)
+		if err != nil {
+			return fmt.Errorf("check pending publication: %w", err)
+		}
+		if !everPublished && !pending {
+			if err := local.ForgetSession(reg.ArchiveSessionID, reg.NativeSessionID); err != nil {
+				return fmt.Errorf("forget never-published session: %w", err)
+			}
+			result.PrunedSessions = append(result.PrunedSessions, reg.ArchiveSessionID)
+			return nil
+		}
 	}
 
 	superseded, err := local.LoadSuperseded(reg.ArchiveSessionID)
@@ -189,7 +220,7 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		return fmt.Errorf("read current metadata before cleanup: %w", remoteErr)
 	}
 	// Protect evidence published remotely just before a local acknowledgement failed.
-	capturedAt := bundle.Capture.CapturedAt
+	capturedAt := ageFrom
 	if remoteErr == nil && metadata.CapturedAt.After(capturedAt) {
 		capturedAt = metadata.CapturedAt
 	}

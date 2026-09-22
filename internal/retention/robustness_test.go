@@ -3,6 +3,7 @@ package retention
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -289,5 +290,77 @@ func TestPreviousDestinationSessionIsPrunedLocallyWithoutTouchingTheBucket(t *te
 	// The previous bucket is not this machine's to clean any more.
 	if meta := fetchMetadata(t, previous, "codex", "old"); meta.SessionID != "old" {
 		t.Fatalf("previous destination was modified: %#v", meta)
+	}
+}
+
+// A registration that never produced a capture, because its transcript was
+// gone before the first scan, was the one kind of local state that never
+// expired: expiry was decided from a published cache it does not have. It
+// ages from the session's own start, and since nothing of it was ever
+// uploaded it is forgotten locally without a single call to the bucket.
+func TestNeverPublishedRegistrationExpiresLocallyWithoutTouchingTheBucket(t *testing.T) {
+	local := newTestStore(t)
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	// Scanned once with its transcript already gone: blocked before any capture.
+	if err := local.SaveRegistration(registration("gap", filepath.Join(t.TempDir(), "gone.jsonl"))); err != nil {
+		t.Fatal(err)
+	}
+	if result := collect(t, local, storage.NewMemoryStore(), t0); len(result.Errors) != 0 {
+		t.Fatalf("collect: %#v", result)
+	}
+	if _, blocked, _ := local.LoadBlocked("gap"); !blocked {
+		t.Fatal("expected a capture gap")
+	}
+	// Registered and never scanned at all: no cache of any kind.
+	if err := local.SaveRegistration(registration("bare", filepath.Join(t.TempDir(), "missing.jsonl"))); err != nil {
+		t.Fatal(err)
+	}
+
+	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	if result := sweep(t, local, store, t0.Add(89*24*time.Hour), Options{}); len(result.PrunedSessions) != 0 || len(result.DeletedSessions) != 0 || len(result.Errors) != 0 {
+		t.Fatalf("expired too early: %#v", result)
+	}
+	if registered(t, local) != 2 {
+		t.Fatal("expired too early")
+	}
+	result := sweep(t, local, store, t0.Add(91*24*time.Hour), Options{})
+	if len(result.PrunedSessions) != 2 || len(result.DeletedSessions) != 0 || len(result.Errors) != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if registered(t, local) != 0 {
+		t.Fatal("never-published registrations were kept forever")
+	}
+	if _, _, _, found, _ := local.LoadPublished("gap"); found {
+		t.Fatal("the gap's cache survived")
+	}
+	if calls := store.count(); calls != 0 {
+		t.Fatalf("the bucket was touched %d time(s) for sessions that never reached it", calls)
+	}
+}
+
+// Outstanding work defers a never-published registration's expiry exactly as
+// it defers a published one's, and only when the collector will do the work.
+func TestNeverPublishedRegistrationWaitsForPublishableWork(t *testing.T) {
+	local := newTestStore(t)
+	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	if err := local.SaveRegistration(registration("s1", filepath.Join(t.TempDir(), "missing.jsonl"))); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC).Add(91 * 24 * time.Hour)
+	if err := local.SaveRequest("s1", "stop", past); err != nil {
+		t.Fatal(err)
+	}
+	if result := sweep(t, local, store, past, Options{}); len(result.PrunedSessions) != 0 || len(result.Errors) != 0 {
+		t.Fatalf("expired a session with a pending request: %#v", result)
+	}
+	if requests, _ := local.LoadRequests(); len(requests) != 1 {
+		t.Fatalf("the request was deleted: %#v", requests)
+	}
+	result := sweep(t, local, store, past, Options{Publishable: func(archive.SessionRegistration) bool { return false }})
+	if len(result.PrunedSessions) != 1 || registered(t, local) != 0 {
+		t.Fatalf("an unpublishable never-published session escaped expiry: %#v", result)
+	}
+	if calls := store.count(); calls != 0 {
+		t.Fatalf("the bucket was touched %d time(s)", calls)
 	}
 }

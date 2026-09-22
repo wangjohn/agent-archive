@@ -112,7 +112,7 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 		if pending > 0 {
 			return fmt.Errorf("%d session(s) still pending at the current destination; run agent-archive sync before changing storage", pending)
 		}
-		fmt.Fprintln(p.out, "Changing destination starts a new capture boundary. Existing sessions and their local evidence stay with the previous destination; they will no longer be collected or cleaned up by this Mac.")
+		fmt.Fprintln(p.out, "Changing destination starts a new capture boundary. Existing sessions stay published at the previous destination, which this Mac will no longer collect into or clean up. Their local evidence is kept until it ages past the retention period, then removed from this Mac only.")
 	}
 	if next.RetentionDays < old.RetentionDays {
 		store := collector.OpenLocalStoreReadOnly(home)
