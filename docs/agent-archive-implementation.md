@@ -1097,3 +1097,42 @@ Limits:
   registration step takes the lock separately. If retention forgets the
   session in between, that evidence is dropped as `ErrSessionNotRegistered`,
   as it already was.
+
+## PR H1 — Handoff prerequisites: notifications, plugin catalog, Codex output
+
+Filter version `6`, adapter version `0.6.0`, parser version `0.9.0` (PR C4 took filter 5 / parser 0.8.0 first). Metadata
+schema version 1 is unchanged. Found by probing real Claude Code, Codex, and
+Cursor transcripts for `docs/agent-archive-handoff-spec.md`; every fixture is
+synthetic.
+
+1. **Task notifications are not prompts.** Claude Code writes a background
+   task's completion as a user record with `origin.kind: "task-notification"`
+   and `promptSource: "system"`; typed prompts carry `origin.kind: "human"`.
+   On the probed review session 12 of 20 counted prompts were notifications.
+   Filter 6 retains `origin` as `{kind}` only and `promptSource` as a string;
+   the parser classifies a user record whose `origin.kind` is present and not
+   `human` as `harness_notification`, which is not counted as a turn and does
+   not end a slash command's scan for its reply. A record with no `origin`
+   (every filter-5 or older bundle) is classified as before.
+2. **Codex plugin catalog is not a prompt.** `<recommended_plugins>` joins the
+   injected-instruction tags, so the catalog Codex prepends to the first user
+   message is stripped and that message no longer counts as a prompt. An
+   audit of every leading tag in the Codex user messages on the probe machine
+   found only this tag and `<environment_context>`.
+3. **Codex list-shaped tool output.** Current Codex writes
+   `function_call_output.output` and `custom_tool_call_output.output` as a
+   list of `{type: input_text, text}` blocks. `toolResultOutput` handled only
+   strings, so every such result reported `output_bytes: 0`; it now joins the
+   blocks' text the way message content is joined.
+
+Not fixable from the record: the desktop app's "The app was quit while you
+were working…" message has `promptSource: "sdk"` and no `origin`, exactly like
+an SDK-submitted prompt, so it still counts as one (see
+`docs/capture-capabilities.md`).
+
+Fixtures: `claude-task-notification.jsonl` (a prompt, a reply, a notification
+whose `origin` carries an extra member, a reply), `codex-list-output.jsonl`
+(plugin catalog, environment context, a prompt, a function call and a custom
+tool call each with list output, a reply). Tests:
+`internal/archive/parser_v08_test.go`.
+

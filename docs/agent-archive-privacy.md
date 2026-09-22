@@ -1,5 +1,24 @@
 # Privacy
 
+## Source filter version 6
+
+Filter 6 is filter 5 plus two narrow retentions and one more injected block.
+
+- **Retained:** Claude Code's `origin`, reduced to `{kind: <string>}`, and
+  `promptSource`, only as a string. A person's prompt carries
+  `origin.kind: "human"`; a background-task completion carries
+  `"task-notification"` and `promptSource: "system"`. Every other member of
+  `origin` is omitted and its name reported in the `unknown_field_omitted`
+  gap; an `origin` that is not an object, or has no string `kind`, and a
+  `promptSource` that is not a string, are omitted whole. The kept strings
+  still pass value redaction.
+- **Stripped:** Codex's `<recommended_plugins>…</recommended_plugins>` block,
+  a catalog of uninstalled plugins the harness prepends to the first user
+  message, is removed like `<environment_context>`, with the same
+  `hidden_instruction_omitted` gap.
+
+Every filter-5 rule below still applies.
+
 ## Source filter version 5
 
 Filter 5 is filter 4 plus what a parser needs to recognize a Claude Code

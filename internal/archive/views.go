@@ -78,6 +78,11 @@ const (
 	// neither a prompt nor a message. Filters before 5 dropped the flag, so
 	// in their bundles it still reads as a prompt.
 	TurnKindCompactSummary TurnKind = "compact_summary"
+	// TurnKindHarnessNotification is a user record the harness produced on
+	// its own, such as Claude Code's background-task completion notice
+	// (origin.kind "task-notification"). Filter 6 retains origin; an older
+	// bundle cannot tell such a record from a prompt.
+	TurnKindHarnessNotification TurnKind = "harness_notification"
 )
 
 // TurnModelSource names where a NormalizedTurn's model attribution came from.
@@ -257,6 +262,9 @@ func refineUserKind(record map[string]any, kind TurnKind, text string) TurnKind 
 	if isMetaRecord(record) {
 		return TurnKindHarnessMeta
 	}
+	if isHarnessOrigin(record) {
+		return TurnKindHarnessNotification
+	}
 	trimmed := strings.TrimSpace(text)
 	for _, candidate := range harnessTextKinds {
 		if strings.HasPrefix(trimmed, "<"+candidate.tag+">") {
@@ -264,6 +272,19 @@ func refineUserKind(record map[string]any, kind TurnKind, text string) TurnKind 
 		}
 	}
 	return kind
+}
+
+// isHarnessOrigin reports whether a record names an origin other than a
+// person. Claude Code writes origin.kind "human" on a typed prompt; any other
+// kind (a task notification) was produced by the harness. A record with no
+// origin, which every pre-filter-6 bundle is, is not reclassified.
+func isHarnessOrigin(record map[string]any) bool {
+	origin, ok := record["origin"].(map[string]any)
+	if !ok {
+		return false
+	}
+	kind := strings.TrimSpace(firstString(origin, "kind"))
+	return kind != "" && !strings.EqualFold(kind, "human")
 }
 
 // resolveSlashCommands decides which typed slash commands were prompts. A
@@ -557,10 +578,15 @@ func toolArguments(item map[string]any) map[string]any {
 }
 
 // toolResultOutput returns the retained output text of one tool result, whose
-// length is what OutputBytes reports.
+// length is what OutputBytes reports. Current Codex writes a function or custom
+// tool's output as a list of {type: input_text, text} blocks rather than one
+// string; their text is joined the same way message content is.
 func toolResultOutput(item map[string]any) string {
-	if output, ok := item["output"].(string); ok {
+	switch output := item["output"].(type) {
+	case string:
 		return output
+	case []any, map[string]any:
+		return contentText(output)
 	}
 	if content, present := item["content"]; present {
 		return contentText(content)
