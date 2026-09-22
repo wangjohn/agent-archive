@@ -148,20 +148,29 @@ func listPrefixFor(prefix, harness string) string {
 
 // readSidecars downloads and validates each listed sidecar with at most
 // listConcurrency requests in flight. Work is dispatched in key order and no
-// new work starts after a failure, so every sidecar before the first failing
-// one has been read and the lowest-index error is the one a sequential read
-// would have returned.
+// new work starts after a failure or once ctx is done, so every sidecar before
+// the first failing one has been read and the lowest-index error is the one a
+// sequential read would have returned. It returns only after every read it
+// started has finished, so no goroutine outlives the call, and a cancelled
+// ctx is reported even when the store itself ignores it.
 func readSidecars(ctx context.Context, store storage.ObjectStore, objects []storage.Object, cache *MetadataCache) ([]archive.Metadata, error) {
 	out := make([]archive.Metadata, len(objects))
 	errs := make([]error, len(objects))
 	var failed atomic.Bool
 	slots := make(chan struct{}, listConcurrency)
 	var wg sync.WaitGroup
+	dispatched := 0
 	for index, object := range objects {
-		if failed.Load() {
+		if failed.Load() || ctx.Err() != nil {
 			break
 		}
 		slots <- struct{}{}
+		// A failure may have landed while waiting for the slot.
+		if failed.Load() || ctx.Err() != nil {
+			<-slots
+			break
+		}
+		dispatched++
 		wg.Add(1)
 		go func(index int, object storage.Object) {
 			defer wg.Done()
@@ -180,6 +189,10 @@ func readSidecars(ctx context.Context, store storage.ObjectStore, objects []stor
 		if err != nil {
 			return nil, err
 		}
+	}
+	if dispatched < len(objects) {
+		// Dispatch stopped early without a read failing: ctx is done.
+		return nil, fmt.Errorf("read metadata: %w", ctx.Err())
 	}
 	return out, nil
 }

@@ -1,6 +1,8 @@
 package reader
 
 import (
+	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,7 +23,23 @@ import (
 // never authoritative: every failure to read or write it is a miss.
 //
 // Layout: AGENT_ARCHIVE_HOME/cache/metadata/<hex(object key)>.json, with both
-// directories 0700 and every file 0600 (written by local.WriteBytes).
+// directories 0700 and every file 0600. Files are written atomically (temp
+// file, then rename) but without fsync: the cache is rebuilt from the store
+// on any miss, so a copy lost to a crash costs one download, and each entry
+// carries a SHA-256 of its bytes so a torn or damaged file is a miss rather
+// than a wrong answer.
+//
+// Staleness: the bytes come from a Get that runs after the listing, so an
+// object rewritten in between would be stored under the old ETag. S3, R2 and
+// MinIO report the MD5 of a single-part object as its ETag (the collector
+// publishes sidecars with a single PutObject), so when the listed ETag is a
+// bare MD5 the bytes are only cached if they hash to it, which rules the race
+// out. An ETag in another form (a multipart "-N" suffix, SSE-KMS) cannot be
+// checked; such an entry could be wrong only if the object was rewritten
+// between the listing and the Get and then rewritten back to the listed
+// bytes before the next listing, at which point the next listing's ETag would
+// again match the entry. That window is accepted and `list --no-cache` is
+// always available.
 type MetadataCache struct {
 	dir string
 }
@@ -51,6 +69,7 @@ func OpenMetadataCache(home string) (*MetadataCache, error) {
 type metadataCacheEntry struct {
 	Key      string          `json:"key"`
 	ETag     string          `json:"etag"`
+	SHA256   string          `json:"sha256"`
 	Metadata json.RawMessage `json:"metadata"`
 }
 
@@ -63,9 +82,30 @@ func (c *MetadataCache) path(key string) (string, bool) {
 	return filepath.Join(c.dir, hex.EncodeToString([]byte(key))+".json"), true
 }
 
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// etagMatchesBytes reports whether the listed ETag can be checked against the
+// downloaded bytes and, if so, whether it matches. A bare 32-hex ETag is the
+// MD5 of a single-part object on S3-compatible stores; any other form (quoted
+// values are already trimmed by the store) is unverifiable and returns ok
+// without a match.
+func etagMatchesBytes(etag string, data []byte) (verifiable, matches bool) {
+	if len(etag) != 32 {
+		return false, false
+	}
+	if _, err := hex.DecodeString(etag); err != nil {
+		return false, false
+	}
+	sum := md5.Sum(data) //nolint:gosec // S3 ETag comparison, not a security hash
+	return true, strings.EqualFold(hex.EncodeToString(sum[:]), etag)
+}
+
 // get returns the cached sidecar bytes for key when they were cached under
-// exactly this ETag. An empty ETag never matches: without one nothing proves
-// the cached copy is current.
+// exactly this ETag and still hash to the digest recorded with them. An empty
+// ETag never matches: without one nothing proves the cached copy is current.
 func (c *MetadataCache) get(key, etag string) ([]byte, bool) {
 	path, ok := c.path(key)
 	if !ok || etag == "" {
@@ -75,24 +115,50 @@ func (c *MetadataCache) get(key, etag string) ([]byte, bool) {
 	if err := local.Read(path, &entry); err != nil {
 		return nil, false
 	}
-	if entry.Key != key || entry.ETag != etag || len(entry.Metadata) == 0 {
+	if entry.Key != key || entry.ETag != etag || len(entry.Metadata) == 0 || entry.SHA256 != sha256Hex(entry.Metadata) {
 		return nil, false
 	}
 	return entry.Metadata, true
 }
 
-// put caches one validated sidecar. It is best effort: a cache that cannot be
-// written only costs a download next time.
+// put caches one validated sidecar under the ETag the listing reported. When
+// that ETag is a checkable content hash, bytes which do not hash to it were
+// rewritten after the listing and are not cached. It is best effort: a cache
+// that cannot be written only costs a download next time.
 func (c *MetadataCache) put(key, etag string, data []byte) {
 	path, ok := c.path(key)
 	if !ok || etag == "" || !json.Valid(data) {
 		return
 	}
-	encoded, err := json.Marshal(metadataCacheEntry{Key: key, ETag: etag, Metadata: data})
+	if verifiable, matches := etagMatchesBytes(etag, data); verifiable && !matches {
+		return
+	}
+	encoded, err := json.Marshal(metadataCacheEntry{Key: key, ETag: etag, SHA256: sha256Hex(data), Metadata: data})
 	if err != nil {
 		return
 	}
-	_ = local.WriteBytes(path, encoded)
+	_ = writeCacheFile(path, encoded)
+}
+
+// writeCacheFile replaces path atomically with a 0600 file. Unlike
+// local.WriteBytes it does not fsync: this cache is disposable and rebuilt on
+// any miss, and the per-file fsync was the whole cost of a cold `list`.
+func writeCacheFile(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".pending-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if err = f.Chmod(0o600); err == nil {
+		_, err = f.Write(data)
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // evictUnlisted removes every cached sidecar under listPrefix which the

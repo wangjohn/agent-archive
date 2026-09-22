@@ -309,29 +309,56 @@ No schema, filter, parser, or adapter version changes: this only changes how
    downloaded again, and entries under the listed prefix that the listing no
    longer returns are deleted, which keeps the cache inside retention. A
    harness-scoped listing evicts only within its own prefix. Directories are
-   0700 and files 0600 (`local.WriteBytes`). The cache refuses any key that
-   is not a metadata sidecar, so it never holds source bundles, and any cache
-   failure is a miss, never a failed `list`. `list --no-cache` bypasses it.
-   `show` does not use it. `uninstall --delete-local-data` now treats `cache`
-   as agent-archive's own entry.
+   0700 and files 0600, written atomically (temp file, rename) by a writer
+   local to the cache that does not fsync: the cache is rebuilt from the
+   store on any miss, and each entry records a SHA-256 of its bytes so a torn
+   or altered file is a miss rather than a wrong answer. The cache refuses
+   any key that is not a metadata sidecar, so it never holds source bundles,
+   and any cache failure is a miss, never a failed `list`. `list --no-cache`
+   bypasses it. `show` does not use it. `uninstall --delete-local-data` now
+   treats `cache` as agent-archive's own entry.
 
-`storage.MemoryStore` now reports an ETag (the content's SHA-256) on `List`,
-as S3 and R2 do, so the cache is testable in memory.
+   Staleness: the bytes come from a Get that runs after the listing. S3, R2
+   and MinIO report a single-part object's MD5 as its ETag (the collector
+   publishes sidecars with one PutObject), so when the listed ETag is a bare
+   MD5 the bytes are cached only if they hash to it; bytes rewritten between
+   the listing and the download are not cached and are downloaded again next
+   time. An ETag in another form (multipart `-N`, SSE-KMS) cannot be checked
+   and is cached as listed; that entry could be wrong only if the object was
+   rewritten after the listing and rewritten back to the listed bytes before
+   the next listing. That residual window is accepted; `--no-cache` bypasses
+   it.
+
+`storage.MemoryStore` now reports an ETag on `List`: the bare MD5 of the
+bytes, as S3, R2 and MinIO do for a single-part object, so the cache and its
+ETag check are testable in memory. The fake S3 server in `storage_test.go`
+returns a quoted ETag and the round-trip test asserts the store trims it.
 
 Measured locally against the in-memory store with 300 sidecars: an uncached
-list takes about 1 ms, a cold cache about 1.3 s (every entry is written with
-`local.WriteBytes`, which fsyncs), and a warm cache about 3.5 ms. The cold
-cost is paid once per sidecar and is small next to a remote read.
+list takes about 1 ms, a cold cache about 25 ms, and a warm cache about 4 ms.
+(With `local.WriteBytes`, which fsyncs every file, the cold case was about
+1.3 s.)
+
+`readSidecars` stops dispatching when the caller's context is done and
+reports the cancellation even when the store ignores the context; without
+that a cancelled `list` could return a partial result with no error. It also
+re-checks for a failure after acquiring a slot, so no read starts after one.
 
 Tests: `internal/reader/performance_test.go` asserts the listed prefix for a
 harness filter, that only sidecars are read, the concurrency bound, first-error
-ordering, direct lookup with listing fallback and ambiguity, cache hits, ETag
+ordering, context cancellation (no read in flight after return, not every
+sidecar read, cancellation reported whether or not the store observes the
+context), direct lookup with listing fallback and ambiguity, cache hits, ETag
 refresh, eviction (including scoped eviction), permissions, metadata-only
-content, and recovery from a damaged entry.
+content, recovery from a damaged entry, refusal of bytes that do not hash to
+the listed ETag, caching under an unverifiable ETag, and a miss for an entry
+whose bytes were altered on disk.
 `internal/cli/inspect_performance_test.go` asserts that `show --harness` is one
 read and no listing, that `show` without a harness does not list, and that
 `list`, a repeated `list`, `list --no-cache`, and `list --harness` read 1, 0,
-1, and 0 sidecars.
+1, and 0 sidecars. `internal/cli/uninstall_test.go` asserts that
+`--delete-local-data` removes `cache/` and does not report it as a leftover.
+`internal/storage/storage_test.go` asserts the memory store's MD5 ETag.
 
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.

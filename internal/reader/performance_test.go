@@ -20,8 +20,11 @@ import (
 // in flight at once, and can fail or slow chosen reads.
 type countingStore struct {
 	*storage.MemoryStore
-	delay   time.Duration
-	failGet map[string]error
+	delay     time.Duration
+	failGet   map[string]error
+	swapGet   map[string][]byte // Get returns these bytes instead: the object changed after the listing
+	ignoreCtx bool              // a store which never observes cancellation
+	etagAs    func(string) string
 
 	mu          sync.Mutex
 	lists       []string
@@ -31,14 +34,20 @@ type countingStore struct {
 }
 
 func newCountingStore() *countingStore {
-	return &countingStore{MemoryStore: storage.NewMemoryStore(), failGet: map[string]error{}}
+	return &countingStore{MemoryStore: storage.NewMemoryStore(), failGet: map[string]error{}, swapGet: map[string][]byte{}}
 }
 
 func (s *countingStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
 	s.mu.Lock()
 	s.lists = append(s.lists, prefix)
 	s.mu.Unlock()
-	return s.MemoryStore.List(ctx, prefix)
+	objects, err := s.MemoryStore.List(ctx, prefix)
+	if s.etagAs != nil {
+		for i := range objects {
+			objects[i].ETag = s.etagAs(objects[i].ETag)
+		}
+	}
+	return objects, err
 }
 
 func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
@@ -49,6 +58,7 @@ func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
 		s.maxInFlight = s.inFlight
 	}
 	err := s.failGet[key]
+	swapped, swap := s.swapGet[key]
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -56,12 +66,29 @@ func (s *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
 		s.mu.Unlock()
 	}()
 	if s.delay > 0 {
-		time.Sleep(s.delay)
+		if s.ignoreCtx {
+			time.Sleep(s.delay)
+		} else {
+			select {
+			case <-time.After(s.delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
+	if swap {
+		return swapped, nil
+	}
 	return s.MemoryStore.Get(ctx, key)
+}
+
+func (s *countingStore) currentInFlight() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inFlight
 }
 
 func (s *countingStore) reset() {
@@ -196,6 +223,36 @@ func TestListReportsTheFirstFailingSidecarInKeyOrder(t *testing.T) {
 	}
 	if _, err := ListMetadata(context.Background(), store, "sessions", Filter{}); err == nil || !strings.Contains(err.Error(), keys[0]) {
 		t.Fatalf("invalid sidecar error = %v", err)
+	}
+}
+
+// Cancelling the caller's context stops the listing: reads still in flight
+// finish before ListMetadata returns (no goroutine outlives the call), no
+// further sidecar is read, and the cancellation is the reported error even
+// for a store which ignores the context.
+func TestListStopsOnContextCancelWithoutLeakingReads(t *testing.T) {
+	for _, ignoreCtx := range []bool{false, true} {
+		store := newCountingStore()
+		for i := 0; i < 40; i++ {
+			putSession(t, store, "codex", fmt.Sprintf("s%02d", i), baseTime)
+		}
+		store.delay = 20 * time.Millisecond
+		store.ignoreCtx = ignoreCtx
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(30 * time.Millisecond)
+			cancel()
+		}()
+		_, err := ListMetadata(ctx, store, "sessions", Filter{})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ignoreCtx=%v: err = %v, want context.Canceled", ignoreCtx, err)
+		}
+		if n := store.currentInFlight(); n != 0 {
+			t.Fatalf("ignoreCtx=%v: %d reads still in flight after return", ignoreCtx, n)
+		}
+		if _, gets := store.counts(); len(gets) == 40 {
+			t.Fatalf("ignoreCtx=%v: every sidecar was read despite cancellation", ignoreCtx)
+		}
 	}
 }
 
@@ -406,5 +463,136 @@ func TestMetadataCacheIsPrivateMetadataOnlyAndDisposable(t *testing.T) {
 	}
 	if _, gets := store.counts(); len(gets) != 1 || gets[0] != key {
 		t.Fatalf("damaged entry was not refreshed: %q", gets)
+	}
+}
+
+// A sidecar rewritten between the listing and the download must not be cached
+// under the listing's ETag. S3-compatible stores report a single-part object's
+// MD5 as its ETag, so bytes which do not hash to the listed ETag are refused;
+// the next listing downloads again and sees the true content.
+func TestMetadataCacheRefusesBytesThatDoNotMatchTheListedETag(t *testing.T) {
+	store := newCountingStore()
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := putSession(t, store, "codex", "s1", baseTime)
+	rewritten, _ := json.Marshal(archive.Metadata{
+		SchemaVersion: archive.MetadataSchemaVersion, SessionID: "s1", NativeSessionID: "native-s1",
+		MachineID: "machine", ProjectID: "project", Harness: archive.Harness{Name: "codex"}, CapturedAt: baseTime.Add(9 * time.Hour),
+		SourceBundle: archive.SourceReference{Key: "sessions/codex/s1/source." + fakeSourceSHA + ".json.gz", SHA256: fakeSourceSHA, CompressedBytes: 1},
+	})
+	store.swapGet[key] = rewritten
+	options := ListOptions{Cache: cache}
+	first, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, options)
+	if err != nil || len(first) != 1 || !first[0].CapturedAt.Equal(baseTime.Add(9*time.Hour)) {
+		t.Fatalf("raced listing = %#v err=%v", first, err)
+	}
+	if _, ok := cache.get(key, listedETag(t, store, key)); ok {
+		t.Fatal("bytes which do not hash to the listed ETag were cached")
+	}
+
+	delete(store.swapGet, key)
+	store.reset()
+	second, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, options)
+	if err != nil || len(second) != 1 || !second[0].CapturedAt.Equal(baseTime) {
+		t.Fatalf("listing after the race = %#v err=%v", second, err)
+	}
+	if _, gets := store.counts(); len(gets) != 1 {
+		t.Fatalf("listing after the race did not re-download: gets=%q", gets)
+	}
+	// Now the cached copy is the real one.
+	store.reset()
+	if _, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, options); err != nil {
+		t.Fatal(err)
+	}
+	if _, gets := store.counts(); len(gets) != 0 {
+		t.Fatalf("verified entry not reused: gets=%q", gets)
+	}
+}
+
+func listedETag(t *testing.T, store *countingStore, key string) string {
+	t.Helper()
+	objects, err := store.MemoryStore.List(context.Background(), key)
+	if err != nil || len(objects) != 1 {
+		t.Fatalf("List(%q) = %#v, %v", key, objects, err)
+	}
+	return objects[0].ETag
+}
+
+// An ETag which is not a bare MD5 (multipart, SSE-KMS) cannot be checked
+// against the bytes; the entry is still cached under it, which is the
+// documented residual window, and a changed ETag still refreshes.
+func TestMetadataCacheStillCachesUnderAnUnverifiableETag(t *testing.T) {
+	store := newCountingStore()
+	store.etagAs = func(etag string) string { return etag + "-2" }
+	cache, err := OpenMetadataCache(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	putSession(t, store, "codex", "s1", baseTime)
+	options := ListOptions{Cache: cache}
+	if _, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, options); err != nil {
+		t.Fatal(err)
+	}
+	store.reset()
+	if _, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, options); err != nil {
+		t.Fatal(err)
+	}
+	if _, gets := store.counts(); len(gets) != 0 {
+		t.Fatalf("unverifiable ETag was not cached: gets=%q", gets)
+	}
+	store.reset()
+	putSession(t, store, "codex", "s1", baseTime.Add(time.Hour))
+	if _, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, options); err != nil {
+		t.Fatal(err)
+	}
+	if _, gets := store.counts(); len(gets) != 1 {
+		t.Fatalf("changed unverifiable ETag not refreshed: gets=%q", gets)
+	}
+}
+
+// Every entry records a SHA-256 of its bytes: an entry whose bytes were
+// altered on disk (a torn write, or anything else) is a miss, even when it
+// still parses and still carries the listed ETag.
+func TestMetadataCacheEntryWithAlteredBytesIsAMiss(t *testing.T) {
+	store := newCountingStore()
+	home := t.TempDir()
+	cache, err := OpenMetadataCache(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := putSession(t, store, "codex", "s1", baseTime)
+	options := ListOptions{Cache: cache}
+	if _, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, options); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, "cache", "metadata", cacheFiles(t, home)[0])
+	var entry metadataCacheEntry
+	data, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(data, &entry) != nil {
+		t.Fatalf("read entry: %v", err)
+	}
+	if entry.SHA256 == "" || entry.ETag != listedETag(t, store, key) {
+		t.Fatalf("entry = %+v", entry)
+	}
+	entry.Metadata = json.RawMessage(strings.Replace(string(entry.Metadata), `"project"`, `"altered"`, 1))
+	altered, _ := json.Marshal(entry)
+	if err := os.WriteFile(path, altered, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store.reset()
+	results, err := ListMetadataWithOptions(context.Background(), store, "sessions", Filter{}, options)
+	if err != nil || len(results) != 1 || results[0].ProjectID != "project" {
+		t.Fatalf("altered entry was served: %#v err=%v", results, err)
+	}
+	if _, gets := store.counts(); len(gets) != 1 {
+		t.Fatalf("altered entry was not re-downloaded: gets=%q", gets)
+	}
+	// No temp file from the writer is left behind.
+	for _, name := range cacheFiles(t, home) {
+		if strings.HasPrefix(name, ".pending-") {
+			t.Fatalf("temp file left in cache: %q", name)
+		}
 	}
 }

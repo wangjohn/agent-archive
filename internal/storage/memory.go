@@ -32,10 +32,11 @@ func (s *MemoryStore) Put(ctx context.Context, key string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copyData := append([]byte(nil), data...)
-	// The ETag is a content hash, as a real store's is for a single-part
-	// upload: it changes exactly when the bytes change, which is what a
-	// reader's ETag-keyed cache relies on.
-	s.objects[key] = memoryObject{data: copyData, etag: sha256Hex(copyData), when: time.Now().UTC()}
+	// The ETag is the MD5 of the bytes, exactly what S3, R2 and MinIO report
+	// for a single-part upload: it changes when the bytes change, and a
+	// reader can check downloaded bytes against it, which the metadata cache
+	// relies on.
+	s.objects[key] = memoryObject{data: copyData, etag: md5Hex(copyData), when: time.Now().UTC()}
 	return nil
 }
 

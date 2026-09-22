@@ -1,8 +1,19 @@
 package storage
 
-import "crypto/sha256"
+import (
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
+)
 
 func sha256Sum(data []byte) [32]byte { return sha256.Sum256(data) }
+
+// md5Hex is the ETag an S3-compatible store reports for a single-part,
+// non-KMS object. It is an identity for ETag comparison, not a security hash.
+func md5Hex(data []byte) string {
+	sum := md5.Sum(data) //nolint:gosec
+	return hex.EncodeToString(sum[:])
+}
 
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
