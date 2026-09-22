@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +30,10 @@ type NormalizedView struct {
 	// Tokens holds whatever token accounting the harness exposed in the
 	// retained records. Absent accounting stays nil rather than zero.
 	Tokens TokenUsage
+	// CompactBoundaries and CompactSummaries count Claude Code's
+	// compact_boundary records and isCompactSummary records.
+	CompactBoundaries int
+	CompactSummaries  int
 }
 
 // TokenUsage sums the token accounting a harness exposed. Each field is nil
@@ -67,6 +72,12 @@ const (
 	// assistant answered before the next prompt, such as /model or /clear. A
 	// slash command the assistant answered is a TurnKindHumanPrompt.
 	TurnKindLocalCommand TurnKind = "local_command"
+	// TurnKindCompactSummary is the user record Claude Code writes after
+	// /compact or auto-compaction, marked isCompactSummary: a model-written
+	// summary of the earlier conversation. Its text is kept, but it is
+	// neither a prompt nor a message. Filters before 5 dropped the flag, so
+	// in their bundles it still reads as a prompt.
+	TurnKindCompactSummary TurnKind = "compact_summary"
 )
 
 // TurnModelSource names where a NormalizedTurn's model attribution came from.
@@ -172,6 +183,11 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 			codexModel, codexReasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
 			continue
 		}
+		if isCompactBoundary(record) {
+			// A marker only: filter 5 keeps its ids and timestamp, no text.
+			view.CompactBoundaries++
+			continue
+		}
 		accumulateTokens(record, &tokens)
 		calls, results, skillUses := toolActivity(record, i, codexModel, codexReasoning)
 		candidates = append(candidates, calls...)
@@ -185,6 +201,9 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 			return NormalizedView{}, &ParseError{Reason: "hidden role present in filtered source"}
 		}
 		kind = refineUserKind(record, kind, text)
+		if kind == TurnKindCompactSummary {
+			view.CompactSummaries++
+		}
 		turn := NormalizedTurn{RecordIndex: i, Role: role, Kind: kind, MessageID: nestedMessageID(record), Text: text, Provider: firstStringDeep(record, "model_provider"), ID: firstStringDeep(record, "id", "uuid"), ParentID: firstStringDeep(record, "parent_id", "parent_uuid", "parentUuid"), TurnID: firstStringDeep(record, "turn_id"), Timestamp: firstStringDeep(record, "timestamp", "created_at")}
 		if bundle.Capture.Harness.Name == "codex" {
 			turn.Model, turn.Reasoning, turn.ModelSource = codexModel, codexReasoning, TurnModelSourceTurnContext
@@ -232,6 +251,9 @@ func refineUserKind(record map[string]any, kind TurnKind, text string) TurnKind 
 	if kind != TurnKindHumanPrompt {
 		return kind
 	}
+	if isCompactSummaryRecord(record) {
+		return TurnKindCompactSummary
+	}
 	if isMetaRecord(record) {
 		return TurnKindHarnessMeta
 	}
@@ -250,6 +272,9 @@ func refineUserKind(record map[string]any, kind TurnKind, text string) TurnKind 
 // local-command output. So a slash command counts as a prompt only if an
 // assistant record follows before the next thing the person did, skipping
 // harness-written records (isMeta expansions, command output, tool results).
+// A compaction summary ends the scan without promoting: the conversation
+// before it is summarized away, so an assistant record after it cannot be an
+// answer to a command before it, and /compact itself is never a prompt.
 func resolveSlashCommands(turns []NormalizedTurn) {
 	for i := range turns {
 		if turns[i].Kind != TurnKindLocalCommand {
@@ -261,11 +286,39 @@ func resolveSlashCommands(turns []NormalizedTurn) {
 			case TurnKindAssistant:
 				turns[i].Kind = TurnKindHumanPrompt
 				break scan
-			case TurnKindHumanPrompt, TurnKindLocalCommand, TurnKindShellCommand:
+			case TurnKindHumanPrompt, TurnKindLocalCommand, TurnKindShellCommand, TurnKindCompactSummary:
 				break scan
 			}
 		}
 	}
+}
+
+// isCompactSummaryRecord reports whether a Claude Code user record is the
+// summary it writes after compaction. Only the boolean true that filter 5
+// retains counts.
+func isCompactSummaryRecord(record map[string]any) bool {
+	flag, ok := record["isCompactSummary"].(bool)
+	return ok && flag
+}
+
+// compactionsObservable reports whether a bundle can show how many times its
+// session was compacted: only a Claude Code bundle from filter 5 on retains the
+// compact_boundary record and the isCompactSummary flag. For anything else the
+// count is unknown, not zero.
+func compactionsObservable(bundle SourceBundle) bool {
+	if canonicalHarnessName(bundle.Capture.Harness.Name) != "claude" {
+		return false
+	}
+	version, err := strconv.Atoi(strings.TrimSpace(bundle.Capture.FilterVersion))
+	return err == nil && version >= 5
+}
+
+func canonicalHarnessName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "claude-code" {
+		return "claude"
+	}
+	return name
 }
 
 // nestedMessageID returns the id of the record's nested message object
@@ -918,6 +971,16 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 		metadata.Counts.UserShellCommands = &shellCommands
 		metadata.Counts.InputTokens, metadata.Counts.OutputTokens = view.Tokens.Input, view.Tokens.Output
 		metadata.Counts.CacheReadTokens, metadata.Counts.CacheWriteTokens = view.Tokens.CacheRead, view.Tokens.CacheWrite
+		if compactionsObservable(bundle) {
+			// Each compaction writes one boundary and one summary. Count
+			// boundaries; fall back to summaries only when no boundary was
+			// retained at all, so the same compaction is never counted twice.
+			compactions := view.CompactBoundaries
+			if compactions == 0 {
+				compactions = view.CompactSummaries
+			}
+			metadata.Counts.Compactions = &compactions
+		}
 	}
 	modelKeys := make([]string, 0, len(models))
 	for key := range models {

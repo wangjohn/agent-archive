@@ -1,5 +1,38 @@
 # Privacy
 
+## Source filter version 5
+
+Filter 5 is filter 4 plus what a parser needs to recognize a Claude Code
+compaction. After `/compact` or auto-compaction, Claude Code writes a system
+record with `subtype: "compact_boundary"`, then a user record marked
+`isCompactSummary: true` (usually also `isVisibleInTranscriptOnly: true`)
+whose text is a model-written summary of the conversation so far.
+
+- **Retained from the boundary:** `type`, `subtype`, `uuid`, `parentUuid`,
+  `logicalParentUuid` (the last record before the compaction), `sessionId`,
+  `timestamp`, and `isSidechain`, and nothing else. The record is rebuilt from
+  those typed values rather than passed through the ordinary filter, since a
+  system record is otherwise hidden whole. An id is kept only when it looks
+  like one (a string of at most 256 bytes with no whitespace and no tag
+  brackets, which the credential redaction below would leave unchanged, or
+  null), the timestamp only when it parses, and `isSidechain` only as a
+  boolean.
+  Everything else — the boundary's text, `compactMetadata` (trigger and token
+  count), `level`, `cwd`, `userType`, `version` — is dropped, and its key
+  names are listed in the `unknown_field_omitted` gap. Only the exact
+  `system`/`compact_boundary` shape is admitted, and only from Claude Code;
+  every other system record is still omitted whole.
+- **Retained on the summary:** `isCompactSummary` and
+  `isVisibleInTranscriptOnly`, as booleans only (the rule filter 4 applies to
+  `isMeta`; any other value under those names is omitted).
+- **Kept, unlike an `isMeta` record:** the summary's text. It is model output
+  describing the session, which is what a handoff to another agent needs. It
+  passes every value rule below (injected-instruction stripping, credential
+  redaction, the 64 KB cap) like any other message.
+
+The shape is taken from Claude Code's behavior; no transcript on the
+development machine has contained a compaction yet.
+
 ## Source filter version 4
 
 Filter 4 is filter 3 plus one rule for harness-written records. Claude Code

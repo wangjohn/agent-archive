@@ -29,7 +29,7 @@ func (e *FilterError) Error() string { return "unsafe source format: " + e.Reaso
 
 var ErrUnsafeSourceFormat = &FilterError{Reason: "no recognized safe records"}
 
-const adapterVersion = "0.4.0"
+const adapterVersion = "0.5.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -38,7 +38,7 @@ const maxOmittedKeyNames = 64
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
-const DefaultParserVersion = "0.7.0"
+const DefaultParserVersion = "0.8.0"
 
 // NewAdapter returns a privacy-first adapter by canonical harness name.
 func NewAdapter(name string) (Adapter, error) {
@@ -305,7 +305,18 @@ var allowedKeys = map[string]bool{
 	// what tells a parser such a record is not a human prompt; the record's
 	// text itself is stripped (see stripMetaRecordText).
 	"ismeta": true,
+	// Filter 5: after /compact or auto-compaction Claude Code writes a user
+	// record carrying a model-written summary of the earlier conversation,
+	// marked isCompactSummary (and usually isVisibleInTranscriptOnly). The
+	// flags tell a parser it is not a prompt. Unlike an isMeta record, the
+	// summary's text is kept: it is model output, useful for a handoff. Both
+	// are admitted as booleans only (see booleanFlagKeys).
+	"iscompactsummary": true, "isvisibleintranscriptonly": true,
 }
+
+// booleanFlagKeys are allowed only as the boolean flag the harness writes. Any
+// other value under one of these names is prose the allowlist never retained.
+var booleanFlagKeys = map[string]bool{"ismeta": true, "iscompactsummary": true, "isvisibleintranscriptonly": true}
 
 // toolArgumentKeys name the subtrees which carry a tool call's own arguments.
 // Filter 2 applied allowedKeys recursively inside them, which dropped every
@@ -483,6 +494,17 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 		result.SessionIDs = appendUniqueString(result.SessionIDs, firstString(raw, "session_id", "sessionId"))
 		result.AgentIDs = appendUniqueString(result.AgentIDs, firstString(raw, "agent_id", "agentId"))
 		kind, _ := raw["type"].(string)
+		if format == "claude-jsonl" && isCompactBoundary(raw) {
+			recognized++
+			encoded, err := json.Marshal(compactBoundaryRecord(raw, omittedKeys.add))
+			if err != nil {
+				return FilteredTranscript{}, &FilterError{Reason: "safe record cannot be encoded"}
+			}
+			result.Records = append(result.Records, encoded)
+			result.Boundary.RetainedRecords++
+			result.Boundary.RetainedBytes += len(encoded)
+			continue
+		}
 		cursorRoleContent := format == "cursor-jsonl" && kind == "" && firstString(raw, "role") != ""
 		if !knownTypes[kind] && !cursorRoleContent {
 			addGap("unknown_record_type", lineNo, "record omitted")
@@ -519,6 +541,74 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	}
 	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
 	return result, nil
+}
+
+// isCompactBoundary reports whether a Claude Code record is the marker it
+// writes where a conversation was compacted: exactly type "system" with
+// subtype "compact_boundary". Every other system record stays hidden.
+func isCompactBoundary(record map[string]any) bool {
+	kind, _ := record["type"].(string)
+	subtype, _ := record["subtype"].(string)
+	return kind == "system" && subtype == "compact_boundary"
+}
+
+// compactBoundaryIDKeys are the identifiers a compact_boundary record keeps
+// beside its type, subtype, and timestamp. logicalParentUuid is how Claude
+// Code links the boundary to the last record before the compaction.
+var compactBoundaryIDKeys = map[string]bool{"uuid": true, "parentUuid": true, "logicalParentUuid": true, "sessionId": true}
+
+// compactBoundaryRecord rebuilds a compact_boundary record from what filter 5
+// retains of it: type, subtype, its ids, its timestamp, and the isSidechain
+// flag (so a subagent's compaction inlined in a parent transcript is excluded
+// from the parent's counts like the rest of the subagent's records). Nothing
+// else of a system record is kept, text above all; each omitted key's name is
+// reported through omit. It is built from an allowlist of typed values rather
+// than sanitized, because a system record is otherwise hidden whole.
+func compactBoundaryRecord(raw map[string]any, omit func(string)) map[string]any {
+	out := map[string]any{"type": "system", "subtype": "compact_boundary"}
+	for key, value := range raw {
+		switch {
+		case key == "type" || key == "subtype":
+		case key == "timestamp":
+			if stamp, ok := value.(string); ok && !parseNativeTimestamp(map[string]any{"timestamp": stamp}).IsZero() {
+				out[key] = stamp
+			} else {
+				omit(key)
+			}
+		case compactBoundaryIDKeys[key]:
+			// An id is kept only when it looks like one (see
+			// looksLikeRecordID). A null parent is kept as null.
+			if value == nil {
+				out[key] = nil
+			} else if id, ok := value.(string); ok && looksLikeRecordID(id) {
+				out[key] = id
+			} else {
+				omit(key)
+			}
+		case key == "isSidechain":
+			if flag, ok := value.(bool); ok {
+				out[key] = flag
+			} else {
+				omit(key)
+			}
+		default:
+			omit(key)
+		}
+	}
+	return out
+}
+
+// looksLikeRecordID reports whether a string can be kept as a record id on a
+// rebuilt compact_boundary record: a short token with no whitespace and no
+// tag brackets, which the credential redaction would leave unchanged. The
+// boundary bypasses sanitizeObject, so this is what keeps its ids under the
+// same value rules as every other retained string.
+func looksLikeRecordID(value string) bool {
+	if value == "" || len(value) > 256 || strings.ContainsAny(value, " \t\r\n<>") {
+		return false
+	}
+	_, sensitive := redactSensitive(value)
+	return !sensitive
 }
 
 // isMetaRecord reports whether a native record is one Claude Code marked as
@@ -747,9 +837,10 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 		case !allowedKeys[lower] && !state.extraAllowed[lower]:
 			state.omitField(key)
 			continue
-		case lower == "ismeta":
-			// Filter 4 admits isMeta only as the boolean flag Claude Code
-			// writes. Any other value under that name is prose the allowlist
+		case booleanFlagKeys[lower]:
+			// Filter 4 admits isMeta, and filter 5 isCompactSummary and
+			// isVisibleInTranscriptOnly, only as the boolean flag Claude Code
+			// writes. Any other value under those names is prose the allowlist
 			// never retained, and stays omitted.
 			if _, isFlag := value.(bool); !isFlag {
 				state.omitField(key)
