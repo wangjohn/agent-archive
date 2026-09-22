@@ -143,9 +143,24 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 
 	switch kind {
 	case hookEventStart:
-		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, payload, now)
+		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
 	case hookEventTurnStart:
-		err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
+		registered := true
+		if canonicalHarness(harness) == "cursor" {
+			registered, err = hasRegistration(store, nativeSessionID)
+			if err != nil {
+				return err
+			}
+		}
+		if !registered {
+			// Cursor's desktop app fires no sessionStart for a new chat
+			// (observed on 3.21.13): its first hook is beforeSubmitPrompt.
+			// A never-seen conversation is registered there, under the
+			// same fresh-start proof a sessionStart would need.
+			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
+		} else {
+			err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
+		}
 	case hookEventSubagentStop:
 		err = handleSubagentStop(store, cfg, harness, nativeSessionID, eventName, payload, now)
 	case hookEventStop, hookEventResponse:
@@ -161,6 +176,12 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	return err
 }
 
+// startsCapture reports whether an event is one that can register a new
+// session: a start, or a Cursor first prompt (Cursor's app fires no start).
+func startsCapture(kind hookEventKind, harness string) bool {
+	return kind == hookEventStart || (kind == hookEventTurnStart && canonicalHarness(harness) == "cursor")
+}
+
 // recordSetupInProgress explains a session start that setup's own transaction
 // window swallowed. Without it an included project simply never registers the
 // session and `status` offers no reason, unlike the pre-activation and
@@ -171,7 +192,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 // behind an installation. recordCaptureDiagnostic rechecks inclusion under
 // that lock, so a project setup has just excluded and pruned stays pruned.
 func recordSetupInProgress(home string, kind hookEventKind, harness string, payload map[string]any, now time.Time) error {
-	if kind != hookEventStart {
+	if !startsCapture(kind, harness) {
 		return nil
 	}
 	cfg, found, err := config.Load(home)
@@ -180,6 +201,19 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 	}
 	if !found || !cfg.Archive.Enabled || cfg.Paused {
 		return nil
+	}
+	if kind == hookEventTurnStart {
+		// A Cursor prompt starts capture only for a never-seen chat. A
+		// registered chat's prompt is a continuation, which setup's window
+		// drops like any other activity; it is not a start to explain.
+		nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
+		if nativeSessionID == "" {
+			return nil
+		}
+		registered, err := hasRegistration(collector.OpenLocalStoreReadOnly(home), nativeSessionID)
+		if err != nil || registered {
+			return err
+		}
 	}
 	// Same rule as every other diagnostic: an excluded project, or a directory
 	// belonging to no configured project, never leaves its path on disk.
@@ -208,11 +242,72 @@ func handleSessionActivity(store *collector.LocalStore, harness, nativeSessionID
 	if !found || canonicalHarness(reg.Harness.Name) != canonicalHarness(harness) {
 		return nil
 	}
+	if eventName == "beforeSubmitPrompt" {
+		if err := adoptCursorTranscriptPath(store, &reg, harness, payload); err != nil {
+			return err
+		}
+	}
 	return saveLifecycleEvidence(store, archiveID, harness, strings.ToLower(eventName), payload, now)
 }
 
-func handleSessionStart(home string, store *collector.LocalStore, cfg config.Config, harness, nativeSessionID string, payload map[string]any, now time.Time) error {
+// hasRegistration reports whether a native session already has an accepted
+// registration. An index entry without a registration does not count.
+func hasRegistration(store *collector.LocalStore, nativeSessionID string) (bool, error) {
+	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
+	if err != nil {
+		return false, fmt.Errorf("look up archive session ID: %w", err)
+	}
+	if !found {
+		return false, nil
+	}
+	_, found, err = store.LoadRegistration(archiveID)
+	return found, err
+}
+
+// cursorTranscriptPath returns the transcript path a Cursor payload names for
+// this conversation, or "" when it names none the archive may read. Cursor
+// writes a chat's transcript to .../agent-transcripts/<id>/<id>.jsonl, so the
+// path must be absolute and its file name must be the conversation's own id;
+// anything else is not provably this conversation's transcript.
+func cursorTranscriptPath(payload map[string]any, conversationID string) string {
+	path := firstNonEmptyString(payload, "transcript_path")
+	if path == "" || conversationID == "" || !filepath.IsAbs(path) {
+		return ""
+	}
+	path = filepath.Clean(path)
+	if filepath.Base(path) != conversationID+".jsonl" {
+		return ""
+	}
+	return path
+}
+
+// adoptCursorTranscriptPath fills in a Cursor registration's transcript path
+// from a later event. A new desktop chat is registered at its first prompt,
+// when Cursor has not yet named the transcript (transcript_path is null);
+// afterAgentResponse and stop then carry it. A path already set is never
+// replaced, whatever a later payload says.
+func adoptCursorTranscriptPath(store *collector.LocalStore, reg *archive.SessionRegistration, harness string, payload map[string]any) error {
+	if canonicalHarness(harness) != "cursor" || reg.TranscriptPath != "" {
+		return nil
+	}
+	path := cursorTranscriptPath(payload, reg.NativeSessionID)
+	if path == "" {
+		return nil
+	}
+	reg.TranscriptPath = path
+	if err := store.SaveRegistration(*reg); err != nil {
+		return fmt.Errorf("record transcript path: %w", err)
+	}
+	return nil
+}
+
+func handleSessionStart(home string, store *collector.LocalStore, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
+	reason := strings.ToLower(eventName)
 	transcriptPath, _ := payload["transcript_path"].(string)
+	isCursor := canonicalHarness(harness) == "cursor"
+	if isCursor {
+		transcriptPath = cursorTranscriptPath(payload, nativeSessionID)
+	}
 	// A hook reports the session's working directory, which is only sometimes
 	// the configured project root: a Claude Code worktree lives in
 	// <project>/.claude/worktrees/<name>, and a session started from any
@@ -256,7 +351,8 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
 				return fmt.Errorf("session identity conflicts with the accepted registration")
 			}
-			if transcriptPath != "" {
+			// A Cursor path, once set, is never replaced by a different one.
+			if transcriptPath != "" && (!isCursor || existing.TranscriptPath == "") {
 				existing.TranscriptPath = transcriptPath
 			}
 			existing.RegisteredAt = now
@@ -264,7 +360,7 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			if err := store.SaveRegistration(existing); err != nil {
 				return err
 			}
-			return saveLifecycleEvidence(store, existing.ArchiveSessionID, harness, "sessionstart", payload, now)
+			return saveLifecycleEvidence(store, existing.ArchiveSessionID, harness, reason, payload, now)
 		}
 	}
 
@@ -307,7 +403,7 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 	if err := store.SaveRegistration(reg); err != nil {
 		return err
 	}
-	return saveLifecycleEvidence(store, archiveID, harness, "sessionstart", payload, now)
+	return saveLifecycleEvidence(store, archiveID, harness, reason, payload, now)
 }
 
 // configuredProjectActivationFor returns the configured project that owns
@@ -377,13 +473,17 @@ func canonicalHarness(harness string) string {
 // a conversation, resume and compact continue one. That evidence is decisive
 // when it is present.
 //
-// Cursor's sessionStart carries no equivalent field, so the proof is the
-// transcript itself and is harness-independent: at the true start of a
-// conversation the hook-provided transcript_path names a file that does not
-// exist yet or holds no bytes, while a resumed conversation points at a
-// transcript that already has content. The same proof is the fallback for a
-// Codex or Claude payload that carries no source at all. A payload that names
-// no transcript proves nothing and is still declined.
+// Cursor carries no equivalent field, so the proof is the transcript itself:
+// at the true start of a conversation the hook-provided transcript_path names
+// a file that does not exist yet or holds no bytes, while a resumed
+// conversation points at a transcript that already has content. Cursor's
+// desktop app (observed on 3.21.13) goes further: a new chat's first
+// beforeSubmitPrompt carries transcript_path null, and only afterAgentResponse
+// and stop name the file, while a resumed chat's first prompt already names
+// its existing transcript. So for Cursor a null or absent path is also proof.
+// The file-based proof is the fallback for a Codex or Claude payload that
+// carries no source at all; for those a payload that names no transcript
+// proves nothing and is still declined.
 func provesFreshSessionStart(harness string, payload map[string]any) bool {
 	switch canonicalHarness(harness) {
 	case "codex", "claude":
@@ -395,9 +495,28 @@ func provesFreshSessionStart(harness string, payload map[string]any) bool {
 		}
 		return false
 	case "cursor":
-		return emptyTranscriptProvesFreshStart(payload)
+		return cursorProvesFreshStart(payload)
 	}
 	return false
+}
+
+// cursorProvesFreshStart accepts a transcript_path that is null, absent, or
+// empty — the shape of a new desktop chat's first prompt — or one that names a
+// missing or empty file. A value that is present but not a string proves
+// nothing.
+func cursorProvesFreshStart(payload map[string]any) bool {
+	value, present := payload["transcript_path"]
+	if !present || value == nil {
+		return true
+	}
+	path, ok := value.(string)
+	if !ok {
+		return false
+	}
+	if path == "" {
+		return true
+	}
+	return emptyTranscriptProvesFreshStart(payload)
 }
 
 // emptyTranscriptProvesFreshStart reports whether the hook named a transcript
@@ -469,6 +588,11 @@ func handleSessionStop(store *collector.LocalStore, harness, nativeSessionID, ev
 	}
 	if canonicalHarness(registration.Harness.Name) != canonicalHarness(harness) {
 		return fmt.Errorf("session event does not match the accepted harness")
+	}
+	if eventName == "afterAgentResponse" || eventName == "stop" {
+		if err := adoptCursorTranscriptPath(store, &registration, harness, payload); err != nil {
+			return err
+		}
 	}
 	reason := strings.ToLower(eventName)
 	var evidence []archive.SupplementalEvidence

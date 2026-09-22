@@ -642,7 +642,10 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 		{"transcript with bytes is a resume", func(t *testing.T) string {
 			return writeTestTranscript(t, "cursor.jsonl", "{\"role\":\"user\"}\n")
 		}, false},
-		{"no transcript path proves nothing", func(t *testing.T) string { return "" }, false},
+		// Cursor's desktop app sends a new chat's first hook with
+		// transcript_path null (observed on 3.21.13): that is a fresh chat,
+		// registered now and given its path by a later hook.
+		{"no transcript path is a new desktop chat", func(t *testing.T) string { return "" }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, project := t.TempDir(), t.TempDir()

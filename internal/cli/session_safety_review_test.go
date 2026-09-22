@@ -15,7 +15,10 @@ func TestCursorVersionDoesNotProveSessionStart(t *testing.T) {
 	home := t.TempDir()
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
-	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "cursor_version": "99.0.0"}, at); err != nil {
+	// A resumed chat's transcript already has bytes; an arbitrary version
+	// beside it must not turn that into proof of a fresh start.
+	resumed := writeTestTranscript(t, "old.jsonl", "{\"role\":\"user\"}\n")
+	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "cursor_version": "99.0.0", "transcript_path": resumed}, at); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := collector.NewLocalStore(home)
@@ -136,7 +139,8 @@ func TestExcludedProjectDiagnosticLeavesStatus(t *testing.T) {
 	at := time.Now().UTC()
 	env := testEnv(t, home, at)
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
-	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}}, at); err != nil {
+	resumed := writeTestTranscript(t, "old.jsonl", "{\"role\":\"user\"}\n")
+	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}, at); err != nil {
 		t.Fatal(err)
 	}
 	var out strings.Builder
