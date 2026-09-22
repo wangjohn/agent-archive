@@ -288,8 +288,14 @@ func TestUninstallLeavesFilesItDidNotCreate(t *testing.T) {
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("agent-archive's own config must still be removed")
 	}
+	// The lock files are agent-archive's own and are removed too; the
+	// directory stays only because the foreign file is still in it.
 	entries, _ := os.ReadDir(home)
-	if len(entries) != 4 {
-		t.Fatalf("only the foreign file should remain, got %d entries", len(entries))
+	if len(entries) != 1 || entries[0].Name() != "my-notes.txt" {
+		names := []string{}
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("only the foreign file should remain, got %q", names)
 	}
 }

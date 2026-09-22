@@ -7,7 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
+	"syscall"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -43,6 +46,9 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	if err != nil {
 		return err
 	}
+	// A purge releases its locks early so it can delete the lock files; every
+	// release is idempotent so the deferred calls cannot unlock twice.
+	release = releaseOnce(release)
 	defer release()
 	if transactionPending(home) {
 		return fmt.Errorf("run agent-archive setup to recover the interrupted installation first")
@@ -88,11 +94,13 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	if err != nil {
 		return fmt.Errorf("another operation is finishing; retry uninstall: %w", err)
 	}
+	unlock = releaseOnce(unlock)
 	defer unlock()
 	releaseHooks, err := local.NamedLock(home, "hooks.lock")
 	if err != nil {
 		return err
 	}
+	releaseHooks = releaseOnce(releaseHooks)
 	defer releaseHooks()
 	// Reload after acquiring the lock; pause/resume may have completed meanwhile.
 	cfg, found, err = config.Load(home)
@@ -157,27 +165,96 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 		} else if e != nil && !os.IsNotExist(e) {
 			return e
 		}
-		if len(refs) > 0 {
-			kc, e := env.keychain()
-			if e != nil {
-				return e
-			}
-			for ref := range refs {
-				if e = kc.Delete(context.Background(), ref); e != nil && !errors.Is(e, credentials.ErrMissingCredential) {
-					return e
-				}
-			}
-		}
+		// A Keychain that cannot delete an item must not strand the rest of
+		// the purge: hooks and the LaunchAgent are already gone, so local
+		// files are still removed and the items left behind are named, since
+		// once config.json is gone nothing else records them.
+		undeleted, keychainErr := deleteCredentialRefs(env, refs)
 		leftovers, e := removeLocalState(home)
 		if e != nil {
 			return e
 		}
+		// Local state is gone; release the locks and remove their files, then
+		// the data directory itself if nothing unrelated remains in it.
+		releaseHooks()
+		unlock()
+		release()
+		removeLockFiles(home)
+		if len(leftovers) == 0 {
+			if e := os.Remove(home); e != nil && !os.IsNotExist(e) && !isDirectoryNotEmpty(e) {
+				return e
+			}
+		}
+		var problems []string
 		if len(leftovers) > 0 {
-			return fmt.Errorf("unrelated files were kept in %s: %s", home, strings.Join(leftovers, ", "))
+			problems = append(problems, fmt.Sprintf("unrelated files were kept in %s: %s", home, strings.Join(leftovers, ", ")))
+		}
+		if len(undeleted) > 0 {
+			problem := fmt.Sprintf("%d stored credential(s) could not be deleted from the Keychain (service %q, account(s) %s): %v", len(undeleted), credentials.KeychainService, strings.Join(undeleted, ", "), keychainErr)
+			if action := credentials.RecoveryAction(keychainErr); action != "" {
+				problem += ". " + action
+			}
+			problem += " To remove them yourself, open Keychain Access and delete those items."
+			problems = append(problems, problem)
+		}
+		if len(problems) > 0 {
+			return errors.New(strings.Join(problems, "; "))
 		}
 	}
 	fmt.Fprintln(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
 	return nil
+}
+
+// deleteCredentialRefs deletes every referenced Keychain item it can. It
+// returns the references it could not delete, sorted, with the first error;
+// an item that is already absent counts as deleted.
+func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	sorted := make([]string, 0, len(refs))
+	for ref := range refs {
+		sorted = append(sorted, ref)
+	}
+	sort.Strings(sorted)
+	kc, err := env.keychain()
+	if err != nil {
+		return sorted, err
+	}
+	var undeleted []string
+	var firstErr error
+	for _, ref := range sorted {
+		if e := kc.Delete(context.Background(), ref); e != nil && !errors.Is(e, credentials.ErrMissingCredential) {
+			undeleted = append(undeleted, ref)
+			if firstErr == nil {
+				firstErr = e
+			}
+		}
+	}
+	return undeleted, firstErr
+}
+
+// uninstallLockFiles are the lock files a purge removes once it has released
+// them. They are removed last: while held they are what keeps a hook,
+// collector, or setup from starting against a half-deleted directory.
+var uninstallLockFiles = []string{"hooks.lock", "collector.lock", "setup.lock"}
+
+func removeLockFiles(home string) {
+	for _, name := range uninstallLockFiles {
+		_ = os.Remove(filepath.Join(home, name))
+	}
+}
+
+func isDirectoryNotEmpty(err error) bool {
+	return errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST)
+}
+
+// releaseOnce makes a lock release safe to call more than once. Calling a
+// local.NamedLock release twice would unlock and close its file descriptor
+// again, by which time the number may belong to another open file.
+func releaseOnce(release func()) func() {
+	var once sync.Once
+	return func() { once.Do(release) }
 }
 
 // checkRemovableHome refuses to touch a data directory that is obviously
@@ -239,6 +316,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	if len(leftover) > 0 {
 		return leftover, nil
 	}
-	// Lock files remain to avoid replacing an inode still locked by another process.
+	// Lock files are skipped here because they are still held; uninstall
+	// removes them after releasing them (see removeLockFiles).
 	return nil, nil
 }
