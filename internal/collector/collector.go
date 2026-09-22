@@ -314,7 +314,12 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 	}
 
 	if reg.TranscriptPath == "" {
-		return outcomeSkipped, errors.New("registration has no transcript path")
+		// Not an error: a Cursor desktop chat is registered at its first
+		// prompt, before Cursor names its transcript, and a later hook fills
+		// the path in. Until then there is nothing to read. The session is
+		// retried every pass (unchangedSinceLastScan never skips it), any
+		// hook request stays queued, and nothing is recorded as a failure.
+		return outcomeSkipped, nil
 	}
 
 	adapter, err := archive.NewAdapter(reg.Harness.Name)
