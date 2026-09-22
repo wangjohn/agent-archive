@@ -114,7 +114,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 		return nil
 	}
 	if transactionPending(home) {
-		return nil
+		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
 	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", time.Second)
 	if lockErr != nil {
@@ -123,7 +123,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	defer unlock()
 	// Setup may have started while this hook was waiting for the lock.
 	if transactionPending(home) {
-		return nil
+		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
 	cfg, found, err := config.Load(home)
 	if err != nil {
@@ -152,6 +152,35 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 		return handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
 	}
 	return nil
+}
+
+// recordSetupInProgress explains a session start that setup's own transaction
+// window swallowed. Without it an included project simply never registers the
+// session and `status` offers no reason, unlike the pre-activation and
+// unknown-start cases. Setup holds hooks.lock while it commits, so this write
+// is deliberately lock-free and best effort: losing one bounded, content-free
+// diagnostic is better than holding up the user's turn behind an installation.
+func recordSetupInProgress(home string, kind hookEventKind, harness string, payload map[string]any, now time.Time) error {
+	if kind != hookEventStart {
+		return nil
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if !found || !cfg.Archive.Enabled || cfg.Paused {
+		return nil
+	}
+	// Same rule as every other diagnostic: an excluded project, or a directory
+	// belonging to no configured project, never leaves its path on disk.
+	project, owned := configuredProjectActivationFor(cfg, projectRoot(payload))
+	if !owned || !project.Included {
+		return nil
+	}
+	return recordCaptureDiagnostic(home, captureDiagnostic{
+		Code: diagnosticSetupInProgress, Harness: canonicalHarness(harness),
+		ProjectRoot: project.Root, ObservedAt: now,
+	})
 }
 
 func handleSessionActivity(store *collector.LocalStore, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {

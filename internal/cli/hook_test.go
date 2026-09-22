@@ -717,3 +717,60 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 		}
 	}
 }
+
+// A start that arrives while setup's transaction is open cannot be registered.
+// It must say so instead of disappearing.
+func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := map[string]any{
+		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+		"cwd": project, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
+	}
+	if err := handleHookEvent(home, "claude", start, now); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
+		t.Fatalf("a hook registered during a setup transaction: %#v", regs)
+	}
+	ds, err := readCaptureDiagnostics(home)
+	if err != nil || len(ds) != 1 || ds[0].Code != diagnosticSetupInProgress || ds[0].ProjectRoot != project || ds[0].Harness != "claude" {
+		t.Fatalf("diagnostics=%#v err=%v", ds, err)
+	}
+	raw, err := os.ReadFile(captureDiagnosticsPath(home))
+	if err != nil || bytes.Contains(raw, []byte("native-1")) || bytes.Contains(raw, []byte("transcript")) {
+		t.Fatalf("diagnostic leaked session identity: %s err=%v", raw, err)
+	}
+	var out bytes.Buffer
+	if code := runStatusCommand([]string{"--json"}, &out, os.Stderr, testEnv(t, home, now)); code != 0 {
+		t.Fatalf("status exit=%d output=%s", code, out.String())
+	}
+	if !strings.Contains(out.String(), diagnosticSetupInProgress) {
+		t.Fatalf("status --json omitted the diagnostic: %s", out.String())
+	}
+}
+
+func TestSetupInProgressLeavesNoDiagnosticForUnconfiguredPaths(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Outside every configured project, and a non-start event inside one.
+	outside := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "n1", "cwd": t.TempDir()}
+	if err := handleHookEvent(home, "claude", outside, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := handleHookEvent(home, "claude", map[string]any{"hook_event_name": "Stop", "session_id": "n1", "cwd": project}, now); err != nil {
+		t.Fatal(err)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+		t.Fatalf("diagnostics=%#v", ds)
+	}
+}
