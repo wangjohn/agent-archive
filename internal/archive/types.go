@@ -13,7 +13,10 @@ import (
 const (
 	SourceSchemaVersion   = 1
 	MetadataSchemaVersion = 1
-	FilterVersion         = "2"
+	// FilterVersion 3 keeps tool arguments and tool-result linkage, reports the
+	// key names it could not keep, and strips injected instruction blocks from
+	// message text. See docs/agent-archive-privacy.md.
+	FilterVersion = "3"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

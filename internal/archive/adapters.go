@@ -29,7 +29,11 @@ func (e *FilterError) Error() string { return "unsafe source format: " + e.Reaso
 
 var ErrUnsafeSourceFormat = &FilterError{Reason: "no recognized safe records"}
 
-const adapterVersion = "0.2.0"
+const adapterVersion = "0.3.0"
+
+// maxOmittedKeyNames bounds how many distinct omitted key names one filtered
+// transcript reports, so a pathological source cannot grow the gap list.
+const maxOmittedKeyNames = 64
 
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
@@ -59,7 +63,7 @@ func (CodexAdapter) Version() string { return adapterVersion }
 func (CodexAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "codex-jsonl", map[string]bool{
 		"session_meta": true, "turn_context": true, "response_item": true,
-		"event_msg": true, "message": true,
+		"event_msg": true, "message": true, "token_usage_record": true,
 	})
 }
 
@@ -85,7 +89,7 @@ func (CursorAdapter) Version() string { return adapterVersion }
 func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "cursor-jsonl", map[string]bool{
 		"session": true, "message": true, "tool_call": true, "tool_result": true,
-		"event": true,
+		"event": true, "turn_ended": true,
 	})
 }
 
@@ -148,6 +152,34 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	return result, nil
 }
 
+// injectedInstructionBlock matches the tagged blocks a harness injects into an
+// otherwise ordinary message: Claude Code wraps CLAUDE.md, hook output, and
+// memory in <system-reminder>, and Codex writes AGENTS.md inside
+// <user_instructions> and machine details inside <environment_context>. They
+// are instructions to the model, not something the user wrote, so they are
+// stripped from string content wherever they appear. Untagged instruction text
+// is deliberately not guessed at.
+var injectedInstructionBlock = regexp.MustCompile(`(?s)<system-reminder\b[^>]*>.*?</system-reminder>|<user_instructions\b[^>]*>.*?</user_instructions>|<environment_context\b[^>]*>.*?</environment_context>`)
+
+// injectedInstructionOpen finds an opening tag whose block never closed, which
+// a truncated or still-streaming record can produce. Everything from that tag
+// onwards is dropped rather than partly retained.
+var injectedInstructionOpen = regexp.MustCompile(`<(?:system-reminder|user_instructions|environment_context)\b[^>]*>`)
+
+// stripInjectedInstructions removes every injected instruction block from one
+// string. It reports whether anything was removed and returns the remaining
+// text, which is empty when the string held nothing else.
+func stripInjectedInstructions(value string) (bool, string) {
+	if !injectedInstructionOpen.MatchString(value) {
+		return false, value
+	}
+	remaining := injectedInstructionBlock.ReplaceAllString(value, "")
+	if open := injectedInstructionOpen.FindStringIndex(remaining); open != nil {
+		remaining = remaining[:open[0]]
+	}
+	return true, strings.TrimSpace(remaining)
+}
+
 var sensitiveValue = regexp.MustCompile(`(?i)(?:\bauthorization\b\s*:\s*bearer\s+[^\s,;]+|\b(?:api[_-]?key|access[_-]?key|secret|password|authorization|bearer|token)\b\s*[=:]\s*[^\s,;]+|\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{12,}\b)`)
 
 var allowedKeys = map[string]bool{
@@ -176,6 +208,34 @@ var allowedKeys = map[string]bool{
 	"is_sidechain": true, "issidechain": true,
 	"file_path":          true,
 	"archive_session_id": true, "relationship": true,
+	// Filter 3 additions. A tool result can only be joined back to the call it
+	// answers through tool_use_id, and a turn's own identity (sessionId,
+	// requestId, gitBranch) is what lets a reader place a record in its
+	// session and working branch. usage and the Codex *_token_usage subtrees
+	// are retained as numbers only (see numericSubtreeKeys).
+	"tool_use_id": true, "tooluseid": true, "is_error": true, "stop_reason": true,
+	"usage": true, "sessionid": true, "requestid": true, "gitbranch": true,
+	// Codex token accounting records.
+	"info": true, "total_token_usage": true, "last_token_usage": true,
+	"turn_token_usage": true, "thread_token_usage": true, "last_agent_message": true,
+	"thread_id": true, "root_turn_id": true, "completed_at_ms": true, "started_at_ms": true,
+}
+
+// toolArgumentKeys name the subtrees which carry a tool call's own arguments.
+// Filter 2 applied allowedKeys recursively inside them, which dropped every
+// Edit old_string/new_string, Agent prompt, Grep pattern, and MCP argument and
+// left tool evidence unusable. Inside these subtrees every argument name is
+// retained; blockedKeys, sensitiveValue redaction, the string cap, and the
+// hidden role/channel rules all still apply to the values. Codex's
+// payload.input is covered by the same "input" entry.
+var toolArgumentKeys = map[string]bool{"input": true, "arguments": true, "tool_input": true}
+
+// numericSubtreeKeys name subtrees retained for their numbers only: token
+// accounting carries no prose, so anything in them which is not a number (or a
+// nested object or array of numbers) is omitted with its key name recorded.
+var numericSubtreeKeys = map[string]bool{
+	"usage": true, "total_token_usage": true, "last_token_usage": true,
+	"turn_token_usage": true, "thread_token_usage": true,
 }
 
 // captureGapKeys are additionally allowed inside a capture_gap evidence
@@ -201,6 +261,11 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
 	lineNo, recognized := 0, 0
 	gapSet := map[string]bool{}
+	// Filter 2 collapsed every omission into one content-free gap, so a reader
+	// could not see what this filter version was unable to keep. Collect the
+	// distinct key names — names only, never values — and report them once.
+	omittedKeys := map[string]bool{}
+	omittedKeysCapped := false
 	addGap := func(code string, record int, detail string) {
 		key := fmt.Sprintf("%s:%s", code, detail)
 		if !gapSet[key] {
@@ -245,7 +310,16 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 			continue
 		}
 		recognized++
-		state := sanitizeState{record: lineNo, addGap: addGap}
+		state := sanitizeState{record: lineNo, addGap: addGap, omittedKey: func(key string) {
+			if omittedKeys[key] {
+				return
+			}
+			if len(omittedKeys) >= maxOmittedKeyNames {
+				omittedKeysCapped = true
+				return
+			}
+			omittedKeys[key] = true
+		}}
 		safe, keep := sanitizeObject(raw, &state)
 		if !keep {
 			continue
@@ -263,6 +337,18 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	}
 	if lineNo > 0 && recognized == 0 {
 		return FilteredTranscript{}, ErrUnsafeSourceFormat
+	}
+	if len(omittedKeys) > 0 {
+		names := make([]string, 0, len(omittedKeys))
+		for key := range omittedKeys {
+			names = append(names, key)
+		}
+		sort.Strings(names)
+		detail := "omitted keys: " + strings.Join(names, ", ")
+		if omittedKeysCapped {
+			detail += "; further key names omitted"
+		}
+		addGap("unknown_field_omitted", 0, detail)
 	}
 	sort.SliceStable(result.Gaps, func(i, j int) bool { return result.Gaps[i].Code < result.Gaps[j].Code })
 	return result, nil
@@ -322,6 +408,24 @@ type sanitizeState struct {
 	// shape. It applies at every depth of that payload, which is safe only
 	// because such payloads are flat maps this repository writes itself.
 	extraAllowed map[string]bool
+	// retainAllKeys is set while sanitizing a tool-argument subtree, where the
+	// argument names are the tool's own vocabulary and no allowlist can
+	// anticipate them. Value sanitization is unchanged.
+	retainAllKeys bool
+	// numericOnly is set while sanitizing a token-accounting subtree.
+	numericOnly bool
+	// omittedKey, when set, receives the name of each key the filter could not
+	// keep so the caller can report the distinct names once. Without it an
+	// omission falls back to the content-free unknown_field_omitted gap.
+	omittedKey func(string)
+}
+
+func (s *sanitizeState) omitField(key string) {
+	if s.omittedKey != nil {
+		s.omittedKey(key)
+		return
+	}
+	s.addGap("unknown_field_omitted", s.record, "field omitted")
 }
 
 func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bool) {
@@ -350,11 +454,27 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 			state.addGap("sensitive_or_hidden_field_omitted", state.record, "field omitted")
 			continue
 		}
-		if !allowedKeys[lower] && !state.extraAllowed[lower] {
-			state.addGap("unknown_field_omitted", state.record, "field omitted")
+		switch {
+		case state.numericOnly:
+			if !isNumericSubtreeValue(value) {
+				state.omitField(key)
+				continue
+			}
+		case state.retainAllKeys:
+			// A tool argument's own name is retained; its value is not trusted.
+		case !allowedKeys[lower] && !state.extraAllowed[lower]:
+			state.omitField(key)
 			continue
 		}
+		retainAll, numericOnly := state.retainAllKeys, state.numericOnly
+		switch {
+		case numericSubtreeKeys[lower]:
+			state.numericOnly, state.retainAllKeys = true, false
+		case toolArgumentKeys[lower] && !state.numericOnly:
+			state.retainAllKeys = true
+		}
 		safe, keep := sanitizeValue(value, state)
+		state.retainAllKeys, state.numericOnly = retainAll, numericOnly
 		if keep {
 			out[key] = safe
 		}
@@ -382,11 +502,30 @@ func isHiddenChannel(value string) bool {
 	return false
 }
 
+// isNumericSubtreeValue reports whether a value may appear in a numbers-only
+// subtree. Objects and arrays are admitted so the recursion can prune them;
+// everything else, including strings and booleans, is omitted there.
+func isNumericSubtreeValue(value any) bool {
+	switch value.(type) {
+	case float64, map[string]any, []any:
+		return true
+	default:
+		return false
+	}
+}
+
 func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 	switch v := value.(type) {
 	case nil, bool, float64:
 		return v, true
 	case string:
+		if injected, stripped := stripInjectedInstructions(v); injected {
+			state.addGap("hidden_instruction_omitted", state.record, "injected instruction block omitted")
+			if stripped == "" {
+				return nil, false
+			}
+			v = stripped
+		}
 		if sensitiveValue.MatchString(v) {
 			state.addGap("sensitive_content_redacted", state.record, "content redacted")
 			v = sensitiveValue.ReplaceAllString(v, "[REDACTED]")
@@ -402,6 +541,12 @@ func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 	case []any:
 		out := make([]any, 0, len(v))
 		for _, item := range v {
+			// An array inside a numbers-only subtree is filtered per element,
+			// since only sanitizeObject sees the key that admitted it.
+			if state.numericOnly && !isNumericSubtreeValue(item) {
+				state.addGap("unsupported_value_omitted", state.record, "value omitted")
+				continue
+			}
 			safe, keep := sanitizeValue(item, state)
 			if keep {
 				out = append(out, safe)
