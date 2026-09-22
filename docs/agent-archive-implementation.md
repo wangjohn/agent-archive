@@ -282,3 +282,56 @@ with filter 3):
   supplemental evidence, each credential shape, a negative set of ordinary
   code, and byte-identical output across repeated scans of each fixture.
 - `docs/install.md` no longer describes filter 2 / adapter 0.2.0 as current.
+
+## PR B3 — Reader performance
+
+No schema, filter, parser, or adapter version changes: this only changes how
+`list` and `show` reach the metadata they already read.
+
+1. **Scoped, concurrent listing.** `reader.ListMetadataWithOptions` lists
+   `sessions/<harness>/` when a harness filter is given instead of the whole
+   archive, skips every listed key that is not a `metadata.json` sidecar
+   before any download, and reads sidecars with at most 8 requests in flight.
+   Work is dispatched in key order and stops after a failure, so the error
+   reported is still the first failing sidecar in key order, exactly as the
+   sequential read reported it. Results stay newest capture first (now a
+   stable sort). `ListMetadata` keeps its signature.
+2. **Direct lookup for `show`.** `FindMetadataKeys` reads the sidecar key
+   under each harness this build publishes (`claude`, `codex`, `cursor`) and
+   lists the archive only if none exists, so a session under an unknown
+   harness is still found. Two hits stay ambiguous; a read error other than
+   not-found is returned rather than treated as absence. `show --harness` was
+   already one read and stays one read.
+3. **Disposable metadata cache.** `list` keeps a copy of each sidecar under
+   `AGENT_ARCHIVE_HOME/cache/metadata/`, one file per object key, stamped with
+   the ETag the listing reported. The listing still runs every time; a
+   sidecar whose ETag is unchanged is read from disk, a changed ETag is
+   downloaded again, and entries under the listed prefix that the listing no
+   longer returns are deleted, which keeps the cache inside retention. A
+   harness-scoped listing evicts only within its own prefix. Directories are
+   0700 and files 0600 (`local.WriteBytes`). The cache refuses any key that
+   is not a metadata sidecar, so it never holds source bundles, and any cache
+   failure is a miss, never a failed `list`. `list --no-cache` bypasses it.
+   `show` does not use it. `uninstall --delete-local-data` now treats `cache`
+   as agent-archive's own entry.
+
+`storage.MemoryStore` now reports an ETag (the content's SHA-256) on `List`,
+as S3 and R2 do, so the cache is testable in memory.
+
+Measured locally against the in-memory store with 300 sidecars: an uncached
+list takes about 1 ms, a cold cache about 1.3 s (every entry is written with
+`local.WriteBytes`, which fsyncs), and a warm cache about 3.5 ms. The cold
+cost is paid once per sidecar and is small next to a remote read.
+
+Tests: `internal/reader/performance_test.go` asserts the listed prefix for a
+harness filter, that only sidecars are read, the concurrency bound, first-error
+ordering, direct lookup with listing fallback and ambiguity, cache hits, ETag
+refresh, eviction (including scoped eviction), permissions, metadata-only
+content, and recovery from a damaged entry.
+`internal/cli/inspect_performance_test.go` asserts that `show --harness` is one
+read and no listing, that `show` without a harness does not list, and that
+`list`, a repeated `list`, `list --no-cache`, and `list --harness` read 1, 0,
+1, and 0 sidecars.
+
+Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
+and `gofmt -l .` clean.
