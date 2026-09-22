@@ -176,6 +176,17 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	return 0
 }
 
+// blockedReasonDetail explains a recorded capture gap. A missing transcript is
+// the ordinary end of an archived session's local life, not a defect, and it
+// is the one reason that can end on its own, so it does not borrow the
+// permanent wording the other reasons need.
+func blockedReasonDetail(reason collector.BlockedReason) string {
+	if reason == collector.BlockedReasonTranscriptMissing {
+		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
+	}
+	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
+}
+
 // versionSupportNote explains an unverified installed version in the text
 // status without changing the support state or reason code.
 func versionSupportNote(app appStatus) string {
@@ -341,7 +352,7 @@ func readStatus(env Env) (view statusView, err error) {
 				if e != nil {
 					return view, e
 				}
-				app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."})
+				app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: blockedReasonDetail(reason)})
 			}
 			if found {
 				if state != collector.CacheStatusBlocked {

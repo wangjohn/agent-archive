@@ -41,7 +41,7 @@ func NewLocalStore(home string) (*LocalStore, error) {
 	if strings.TrimSpace(home) == "" {
 		return nil, errors.New("local store home is required")
 	}
-	for _, dir := range []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "subagent-candidates"} {
+	for _, dir := range []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "scan-signatures", "subagent-candidates"} {
 		if err := os.MkdirAll(filepath.Join(home, dir), 0o700); err != nil {
 			return nil, fmt.Errorf("create local store directory %q: %w", dir, err)
 		}
@@ -367,7 +367,20 @@ const (
 	// BlockedReasonTranscriptTooLarge means the transcript exceeds the
 	// collection size limit (Options.MaxTranscriptBytes).
 	BlockedReasonTranscriptTooLarge BlockedReason = "transcript_too_large"
+	// BlockedReasonTranscriptMissing means the native transcript is no longer
+	// on disk. Every supported application deletes its own transcripts on its
+	// own schedule (Claude Code after cleanupPeriodDays, 30 by default) while
+	// this archive retains sessions for far longer, so a session outliving its
+	// transcript is the steady state, not a failure. Unlike the other reasons
+	// this one can end: if the file comes back, the next scan clears the block.
+	BlockedReasonTranscriptMissing BlockedReason = "transcript_missing"
 )
+
+// recoverable reports whether a block can end without the session changing:
+// only a missing file can reappear. A rewritten or oversize transcript stays
+// rewritten or oversize until its content changes, which clears the block
+// through the normal comparison instead.
+func (r BlockedReason) recoverable() bool { return r == BlockedReasonTranscriptMissing }
 
 // publishedState is the small local cache of what was last built for a
 // session: the exact source bundle (so a later scan can detect "no
@@ -380,6 +393,17 @@ type publishedState struct {
 	Status        CacheStatus          `json:"status"`
 	// BlockedReason is set only while Status is CacheStatusBlocked.
 	BlockedReason BlockedReason `json:"blocked_reason,omitempty"`
+	// PreBlockStatus is the status a recoverable block replaced, so clearing
+	// that block restores what was true before it rather than guessing.
+	PreBlockStatus CacheStatus `json:"pre_block_status,omitempty"`
+	// DeferredHookEvidence is hook evidence (a final response, a link) whose
+	// request was acknowledged while a recoverable block was in force. The
+	// transcript could not be read, so nothing could be built to carry it;
+	// rather than drop it, the block holds it and hands it back as request
+	// evidence the moment the transcript is readable again, so it publishes
+	// with the recovery. Set only while Status is CacheStatusBlocked with a
+	// recoverable reason.
+	DeferredHookEvidence []archive.SupplementalEvidence `json:"deferred_hook_evidence,omitempty"`
 	// LastPublished survives a newer rate-limited or declined candidate so
 	// compaction checks and retention always have the actual remote baseline.
 	LastPublished *publishedSnapshot `json:"last_published,omitempty"`
@@ -388,6 +412,41 @@ type publishedState struct {
 type publishedSnapshot struct {
 	Bundle      archive.SourceBundle `json:"bundle"`
 	PublishedAt time.Time            `json:"published_at"`
+	// SameAsBundle means the last published bundle is the one in Bundle, so
+	// this snapshot carries only its time. While a session sits in its normal
+	// published state the two are always identical, and a source bundle is by
+	// far the largest thing in this file: storing it once halves the file and
+	// the cost of every decode of it. Bundle is materialized here again the
+	// moment a different candidate (rate limited, declined, blocked) takes
+	// over publishedState.Bundle. State written before this field existed
+	// always carries its own copy, so it keeps working unchanged.
+	SameAsBundle bool `json:"same_as_bundle,omitempty"`
+}
+
+// resolveLastPublished returns the bundle actually made discoverable remotely,
+// expanding the shared-copy marker.
+func (p publishedState) resolveLastPublished() (archive.SourceBundle, time.Time, bool) {
+	if p.LastPublished == nil {
+		// Backward compatibility with state written before the separate ledger.
+		if p.Status == CacheStatusPublished {
+			return p.Bundle, p.PublishedAt, true
+		}
+		return archive.SourceBundle{}, time.Time{}, false
+	}
+	if p.LastPublished.SameAsBundle {
+		return p.Bundle, p.LastPublished.PublishedAt, true
+	}
+	return p.LastPublished.Bundle, p.LastPublished.PublishedAt, true
+}
+
+// detachedLastPublished gives the last published snapshot its own copy of the
+// bundle, for use when publishedState.Bundle is about to become a different
+// candidate. Called on every save that is not itself a publication.
+func (p publishedState) detachedLastPublished() *publishedSnapshot {
+	if p.LastPublished == nil || !p.LastPublished.SameAsBundle {
+		return p.LastPublished
+	}
+	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt}
 }
 
 func (s *LocalStore) publishedPath(archiveSessionID string) string {
@@ -398,28 +457,31 @@ func (s *LocalStore) publishedPath(archiveSessionID string) string {
 // session, so the next scan can compare against it instead of rebuilding
 // from scratch. See CacheStatus for what each status means for retry.
 func (s *LocalStore) SavePublished(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, metadata ...[]byte) error {
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, status, "", metadata)
+	return s.savePublishedState(archiveSessionID, bundle, publishedAt, status, "", metadata, nil)
 }
 
 // SaveBlocked records a terminal capture gap for a session (see
 // CacheStatusBlocked). bundle is what the next scan compares against and
 // publishedAt is the last actual publish time, if any; the last published
-// snapshot itself is preserved exactly as SavePublished preserves it.
-func (s *LocalStore) SaveBlocked(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, reason BlockedReason) error {
+// snapshot itself is preserved exactly as SavePublished preserves it. For a
+// recoverable reason, deferred is hook evidence the block acknowledged and
+// must hand back when it clears; it accumulates across saves of the same
+// block and is dropped, having been handed back, by any other status.
+func (s *LocalStore) SaveBlocked(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, reason BlockedReason, deferred ...archive.SupplementalEvidence) error {
 	if reason == "" {
 		return errors.New("blocked reason is required")
 	}
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusBlocked, reason, nil)
+	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusBlocked, reason, nil, deferred)
 }
 
-func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata [][]byte) error {
+func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata [][]byte, deferred []archive.SupplementalEvidence) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
 	var last *publishedSnapshot
 	var existing publishedState
 	if err := local.Read(s.publishedPath(archiveSessionID), &existing); err == nil {
-		last = existing.LastPublished
+		last = existing.detachedLastPublished()
 		if last == nil && existing.Status == CacheStatusPublished {
 			copy := publishedSnapshot{Bundle: existing.Bundle, PublishedAt: existing.PublishedAt}
 			last = &copy
@@ -428,9 +490,73 @@ func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.
 		return fmt.Errorf("read published state %q: %w", archiveSessionID, err)
 	}
 	if status == CacheStatusPublished {
-		last = &publishedSnapshot{Bundle: bundle, PublishedAt: publishedAt}
+		// The candidate becoming the current bundle is exactly what was just
+		// published, so the snapshot records only when, not a second copy.
+		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true}
 	}
-	return local.Write(s.publishedPath(archiveSessionID), publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, LastPublished: last, MetadataBytes: publicationMetadata(existing.MetadataBytes, metadata)})
+	preBlock := existing.PreBlockStatus
+	switch {
+	case status != CacheStatusBlocked:
+		preBlock = ""
+	case existing.Status != CacheStatusBlocked:
+		preBlock = existing.Status
+	}
+	var held []archive.SupplementalEvidence
+	if status == CacheStatusBlocked && reason.recoverable() {
+		// The same block continuing keeps what it already holds; a block
+		// that replaces a settled state starts with only what arrived now.
+		if existing.Status == CacheStatusBlocked && existing.BlockedReason == reason {
+			held = existing.DeferredHookEvidence
+		}
+		held = archive.MergeSupplementalEvidence(held, deferred)
+	}
+	return local.Write(s.publishedPath(archiveSessionID), publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: publicationMetadata(existing.MetadataBytes, metadata)})
+}
+
+// ClearRecoverableBlock ends a block whose condition has passed — today only a
+// transcript that came back — by restoring the status the block replaced. It
+// exists because a returning transcript whose content is byte-identical to the
+// cached bundle produces no change for the normal comparison to act on, so
+// without this the gap would be reported forever.
+//
+// Hook evidence the block held on to (see publishedState.DeferredHookEvidence)
+// is handed back first, as an urgent request for the session, before the
+// state is rewritten: the request is the durable carrier the collector
+// already retries, so a crash at any point leaves the evidence pending
+// rather than lost, and a replay adds nothing the request already holds.
+// replayed reports that such a request was written, so the caller must
+// reload the session's request rather than act on the one it loaded before.
+//
+// A block with no recorded previous status is not rewritten: there was no
+// cached evidence before it, so the first real candidate replaces the whole
+// state anyway, and anything it held is replayed (idempotently) until then.
+func (s *LocalStore) ClearRecoverableBlock(archiveSessionID string, now time.Time) (restored CacheStatus, replayed, cleared bool, err error) {
+	var state publishedState
+	err = local.Read(s.publishedPath(archiveSessionID), &state)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, false, nil
+	}
+	if err != nil {
+		return "", false, false, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
+	}
+	if state.Status != CacheStatusBlocked || !state.BlockedReason.recoverable() {
+		return state.Status, false, false, nil
+	}
+	if len(state.DeferredHookEvidence) > 0 {
+		if err := s.SaveRequest(archiveSessionID, "transcript-returned", now, state.DeferredHookEvidence...); err != nil {
+			return "", false, false, fmt.Errorf("replay evidence held while blocked %q: %w", archiveSessionID, err)
+		}
+		replayed = true
+	}
+	if state.PreBlockStatus == "" || state.PreBlockStatus == CacheStatusBlocked {
+		return state.Status, replayed, false, nil
+	}
+	restored = state.PreBlockStatus
+	state.Status, state.BlockedReason, state.PreBlockStatus, state.DeferredHookEvidence = restored, "", "", nil
+	if err := local.Write(s.publishedPath(archiveSessionID), state); err != nil {
+		return "", replayed, false, fmt.Errorf("clear block %q: %w", archiveSessionID, err)
+	}
+	return restored, replayed, true, nil
 }
 
 // LoadBlocked reports whether a session is in CacheStatusBlocked and why.
@@ -473,14 +599,8 @@ func (s *LocalStore) LoadLastPublished(archiveSessionID string) (bundle archive.
 	if readErr != nil {
 		return archive.SourceBundle{}, time.Time{}, false, fmt.Errorf("read published state %q: %w", archiveSessionID, readErr)
 	}
-	if state.LastPublished != nil {
-		return state.LastPublished.Bundle, state.LastPublished.PublishedAt, true, nil
-	}
-	// Backward compatibility with state written before the separate ledger.
-	if state.Status == CacheStatusPublished {
-		return state.Bundle, state.PublishedAt, true, nil
-	}
-	return archive.SourceBundle{}, time.Time{}, false, nil
+	bundle, publishedAt, found = state.resolveLastPublished()
+	return bundle, publishedAt, found, nil
 }
 
 // PendingPublication is one fully rendered publication transaction. Source
@@ -524,6 +644,24 @@ func (s *LocalStore) LoadPending(id string) (PendingPublication, bool, error) {
 		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, err)
 	}
 	return pending, true, nil
+}
+
+// HasPending reports whether a publication is still outstanding for a session
+// without decoding it. The pending file carries the compressed source bytes,
+// so a stat is the only way to ask this question cheaply enough to ask it for
+// every registered session on every pass.
+func (s *LocalStore) HasPending(id string) (bool, error) {
+	if !safeFileComponent(id) {
+		return false, errors.New("archive session ID is not a safe file name component")
+	}
+	_, err := os.Stat(s.pendingPath(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat pending publication %q: %w", id, err)
+	}
+	return true, nil
 }
 
 func (s *LocalStore) RemovePending(id string) error {
@@ -592,6 +730,78 @@ func (s *LocalStore) ScanPending(id string) (bool, error) {
 		return false, nil
 	}
 	return pending, err
+}
+
+// scanSignature is one session's "nothing to do" token: the exact size and
+// nanosecond modification time of the transcript the last completed scan
+// consumed, plus the versions that scan ran under. Its presence asserts that
+// the scan ended settled — published, declined, or unchanged — and never
+// blocked, so the next pass can skip the session on a matching stat alone.
+//
+// It lives in its own small file rather than inside the published cache
+// because reading it has to stay cheap: the published cache holds a whole
+// source bundle (hundreds of kilobytes), and decoding one per registered
+// session per pass is precisely the cost this token exists to remove.
+// Anything that invalidates the assertion removes the token (see
+// removeScanSignature's callers).
+type scanSignature struct {
+	TranscriptSize  int64 `json:"transcript_size"`
+	TranscriptMtime int64 `json:"transcript_mtime_unix_nano"`
+	// The derivation versions are part of the signature: a parser, filter, or
+	// adapter upgrade changes what an unchanged transcript would produce, so
+	// it must re-scan rather than skip.
+	ParserVersion  string `json:"parser_version"`
+	FilterVersion  string `json:"filter_version"`
+	AdapterVersion string `json:"adapter_version"`
+	// SourceFormat is the format the scan actually produced, which decides
+	// whether a stat is trustworthy evidence at all (see unchangedSinceLastScan).
+	SourceFormat string `json:"source_format,omitempty"`
+}
+
+func (s *LocalStore) scanSignaturePath(id string) string {
+	return filepath.Join(s.home, "scan-signatures", id+".json")
+}
+
+// saveScanSignature records the token, skipping the write (and its two fsyncs)
+// when nothing about it changed.
+func (s *LocalStore) saveScanSignature(id string, signature scanSignature) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	if existing, found, err := s.loadScanSignature(id); err != nil {
+		return err
+	} else if found && existing == signature {
+		return nil
+	}
+	return local.Write(s.scanSignaturePath(id), signature)
+}
+
+func (s *LocalStore) loadScanSignature(id string) (scanSignature, bool, error) {
+	if !safeFileComponent(id) {
+		return scanSignature{}, false, errors.New("archive session ID is not a safe file name component")
+	}
+	var signature scanSignature
+	err := local.Read(s.scanSignaturePath(id), &signature)
+	if errors.Is(err, os.ErrNotExist) {
+		return scanSignature{}, false, nil
+	}
+	if err != nil {
+		// A corrupt token is not a failure: it only means this session cannot
+		// be skipped, which is the safe answer.
+		return scanSignature{}, false, nil
+	}
+	return signature, true, nil
+}
+
+func (s *LocalStore) removeScanSignature(id string) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	err := os.Remove(s.scanSignaturePath(id))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove scan signature %q: %w", id, err)
+	}
+	return nil
 }
 
 func publicationMetadata(previous []byte, supplied [][]byte) []byte {

@@ -511,3 +511,151 @@ now expects only the user's file to remain, since the lock files are removed.
 
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.
+
+## PR A2 — Collector and retention robustness
+
+**Missing transcripts are a capture gap, not an error.** Claude Code deletes
+transcripts after `cleanupPeriodDays` (30 by default) while retention keeps
+sessions for 90, so a published session outliving its transcript is the steady
+state. `processSession` now treats `os.ErrNotExist` like the oversize case:
+`blockSession` with the new `BlockedReasonTranscriptMissing`, written once,
+keeping the last published snapshot and acknowledging any request. `status`
+lists it as a capture gap with its own explanation and no `Last error`, and
+`sync` no longer exits 1 for it. It is the one recoverable block. When the file
+returns, the cached state reverts to whatever status it had before the block
+(recorded as `pre_block_status`), because a returning file identical to what
+was captured produces no change for the normal comparison to clear it with. A
+blocked parent is no longer re-notified about a published child on every pass
+(each notification was written and then discarded by the block); the link is
+announced once the parent recovers.
+
+**Retention never expires unpublished work.** Whole-session expiry is skipped,
+silently, while a request or a pending publication exists for the session, and
+retried next pass. Once the work lands its capture time moves, so the session
+then expires on its own schedule with its evidence archived. The pending check
+is a stat (`LocalStore.HasPending`), never a decode of the pending source bytes.
+
+**Retention sweeps every registration this machine owns.** `Sweep` no longer
+takes `AcceptSession`. Two narrower predicates replace it. `CurrentDestination`
+is false only for a session that predates `DestinationSince`; its local state is
+pruned once it ages out, and not a single call reaches the current bucket for
+it. `Publishable` is the collector's `AcceptSession`, and it decides only
+whether outstanding work defers expiry. Without it, a session in an excluded
+project whose Stop hook left a request would be deferred forever, since the
+collector never processes it. An excluded project's published sessions now
+leave the bucket on schedule.
+
+**Unchanged sessions cost nothing.** Each pass fsynced the scan journal twice
+per session and decoded the cached bundle several times, whether or not
+anything changed. A completed scan that ends settled (published, declined, or
+unchanged) now leaves a small `scan-signatures/<id>.json`. It records the
+transcript's size and nanosecond mtime, taken before the read, plus the parser,
+filter, and adapter versions. The next pass skips the session on one stat when
+all of these hold: the signature matches, no request is pending, no
+publication is pending, and no interrupted scan is journaled. In that case
+nothing is opened, decoded, or written. A blocked session has no signature,
+because `blockSession` removes it, so every gap is re-evaluated each pass.
+Subagents are never skipped, because their publication also notifies a
+parent. The signature is a separate file because reading the published cache,
+a whole bundle, is exactly the cost being removed.
+
+Measured with `TestUnchangedSessionsCostNoWritesAndStayFast` (Apple Silicon,
+APFS, no race detector): 300 unchanged sessions of 400 KB take **25 ms per pass
+(0.08 ms/session)**, against **12.2 s** for the same pass re-reading every
+transcript. The test makes every published cache file unreadable during the
+pass (any read would fail a session). It also compares size and mtime of every
+file and directory under the home before and after, which catches a journal
+entry created and removed within the pass. The same test then proves the
+detector sees a full pass's writes. Only `status.json`, one write per pass, is
+excluded. Under `-race` it checks the same invariants on 20 sessions, because
+setup alone would take minutes.
+
+The published cache now stores the bundle once. While a session is in its
+normal published state, `last_published` carries only its time and
+`same_as_bundle: true`. It gets its own copy again the moment a different
+candidate (rate limited, declined, blocked) takes over the cached bundle, which
+is the only case `nativeEvidenceExtends` needs both. Files written with two
+copies still load.
+
+Residual risks and limits:
+
+- A transcript rewritten in place to exactly its previous byte length, whose
+  mtime is also restored to the same nanosecond, is indistinguishable by stat
+  and is skipped. No supported application does this, but it is not a proof.
+  `TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed` pins the case so it cannot
+  widen unnoticed. A Cursor text transcript (no per-record timestamps, compared
+  by prefix) is never skipped on a stat, and neither is any session with a
+  pending request. A filesystem that stores only second-resolution mtimes
+  weakens the guarantee to "same size, same second"; the nanosecond tests
+  skip themselves there.
+- A request that a hook writes mid-pass is seen on the next pass, as before.
+- Blocked sessions stay on the full path by design. For a missing transcript
+  that is one failed `open` per pass. A rewritten or oversize transcript is
+  still re-filtered every pass, as before this PR.
+- A missing transcript acknowledges its request, as the oversize case does.
+  Hook-only evidence in that request is not lost, though: see the review
+  notes below.
+- A never-published registration's retention clock is the session start; see
+  the review notes below.
+- User-visible: setup's destination-change wording was updated in review to
+  say that earlier sessions' local evidence is pruned after `RetentionDays`.
+
+Tests: `internal/collector/robustness_test.go` (missing transcript blocks once,
+keeps the snapshot, recovers on an identical and on a new file, and recovers
+when it first appears; single-copy cache and the older two-copy shape; every
+skip condition of the unchanged check, including a 1 ns mtime move and the
+pinned residual case; same-length rewrite detection; the timed no-writes pass),
+the blocked-parent notification test, `internal/retention/robustness_test.go`
+(expiry waits for a pending publication and for a request, then proceeds;
+unpublishable sessions expire despite outstanding work; every registration is
+swept; previous-destination pruning with zero bucket calls), and
+`internal/cli/retention_scope_test.go` (the same through `runOnePass`, plus
+`status` reporting the gap without an error). Two existing tests used a missing
+transcript to stand for a retryable error and now use a transcript with no
+recognized records; the legacy-metadata test now removes the scan signature,
+which real legacy state never has.
+
+Review (Fable 5.1) fixes on the branch:
+
+- **Hook evidence is held across a missing transcript.** `blockSession` for
+  the recoverable reason stores the acknowledged request's evidence in the
+  cache (`deferred_hook_evidence`), accumulating across requests while the
+  file is away and never rewriting the cache when nothing arrived. When the
+  transcript is readable again, `ClearRecoverableBlock` re-saves that evidence
+  as an urgent request *before* rewriting the state, so the request machinery
+  carries it durably (a crash at any point leaves it pending; a replay adds
+  nothing the request already holds), and `processSession` reloads the request
+  so the same pass publishes it. This works whether or not a capture preceded
+  the block. Tests: `TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn`
+  and `TestHookEvidenceHeldBeforeFirstCapturePublishesWhenFileAppears`.
+- **Never-published registrations expire.** Retention ages a session from its
+  cached capture when it has one and from `SessionStartedAt` otherwise. Once
+  expired, a session with no recorded publication and no pending publication
+  has nothing in any bucket, so it is forgotten locally with zero remote calls
+  (`PrunedSessions`); a pending publication may have reached storage, so that
+  case keeps the remote path. Outstanding work still defers expiry, only when
+  publishable. Tests: `TestNeverPublishedRegistrationExpiresLocallyWithoutTouchingTheBucket`
+  and `TestNeverPublishedRegistrationWaitsForPublishableWork`.
+- **A still-blocked session is never signed as settled.** The "unchanged"
+  exit of `processSession` is reachable for a rewritten transcript that then
+  sits untouched, and it wrote a scan signature, so a recorded gap was skipped
+  on a stat from the second pass on, contrary to the plan's skip conditions.
+  It now returns without a signature. Test:
+  `TestUnchangedRewrittenTranscriptLeavesNoSignature`.
+- The timed no-writes test asserts its one-second target only in the plain
+  run; under `-race` it still proves nothing was read or written, without a
+  wall-clock deadline that could flake on CI.
+- Setup's destination-change message and `docs/install.md` now say old
+  sessions stay published at the previous destination and their local
+  evidence is removed from this Mac after the retention period.
+
+Verified in review: retention reaches `deleteWholeSession` only through
+`locallyExpired`, which is false while publishable work is outstanding, and
+only after a metadata `Get` that returned success or `ErrNotFound`; any other
+storage error aborts before any delete. `ForgetSession` is reached only after
+that delete, or with zero bucket calls for a previous-destination or
+never-published session. A parser, filter, or adapter version change misses
+the scan signature and forces a full pass; the signature is written only at
+the unchanged, declined, and published exits. `LoadLastPublished`, the
+superseded-key reconstruction in `publishPending`, and `saveRepublishedMetadata`
+all resolve the single-copy marker, and the two-copy on-disk shape still loads.

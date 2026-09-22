@@ -30,7 +30,23 @@ import (
 
 // Options configures one Sweep call.
 type Options struct {
-	AcceptSession func(archive.SessionRegistration) bool
+	// CurrentDestination reports whether a registration's published evidence
+	// lives in the bucket this sweep is connected to. It deliberately is not
+	// the collector's AcceptSession: that decides what may still be published,
+	// and a session this machine has stopped publishing (its project was
+	// excluded, its application deselected) still owns objects here that must
+	// age out. Only a session captured before the machine's current storage
+	// destination was configured has its objects somewhere else; its local
+	// state is still pruned when it expires, but no delete is ever issued
+	// against the current bucket on its behalf. Nil means every registration
+	// belongs to the current destination.
+	CurrentDestination func(archive.SessionRegistration) bool
+	// Publishable is the collector's AcceptSession: whether this session's
+	// outstanding work will ever be published. It never decides whether a
+	// session is swept. It only decides whether a pending request or
+	// publication defers expiry, because deferring for work the collector
+	// will never do would keep that session forever. Nil means publishable.
+	Publishable func(archive.SessionRegistration) bool
 	// Now returns the current time. Defaults to time.Now.
 	Now func() time.Time
 	// GracePeriod bounds how long a superseded (no longer current) source
@@ -65,12 +81,20 @@ func (o Options) gracePeriod() time.Duration {
 type Result struct {
 	DeletedSnapshots int
 	DeletedSessions  []string
-	Errors           map[string]error
+	// PrunedSessions expired only locally, with no call to the current bucket:
+	// nothing of theirs is in it, either because their evidence was published
+	// to a destination this machine no longer uses or because nothing was
+	// ever published (the transcript vanished before the first capture).
+	PrunedSessions []string
+	Errors         map[string]error
 }
 
-// Sweep processes every session registered on this machine. One session's
-// failure is isolated in Result.Errors and left to retry on the next call,
-// like collector.Run.
+// Sweep processes every session registered on this machine, including ones the
+// collector would no longer publish: a registration this machine owns is the
+// only record that its remote objects exist, so skipping it would leave that
+// session's data and local state behind forever. One session's failure is
+// isolated in Result.Errors and left to retry on the next call, like
+// collector.Run.
 func Sweep(ctx context.Context, local *collector.LocalStore, store storage.ObjectStore, opts Options) (Result, error) {
 	now := opts.now()
 	result := Result{Errors: map[string]error{}}
@@ -79,28 +103,96 @@ func Sweep(ctx context.Context, local *collector.LocalStore, store storage.Objec
 	if err != nil {
 		return Result{}, fmt.Errorf("load registrations: %w", err)
 	}
+	// One directory read for the whole sweep, rather than one per session.
+	requests, err := local.LoadRequests()
+	if err != nil {
+		return Result{}, fmt.Errorf("load requests: %w", err)
+	}
+	requested := make(map[string]bool, len(requests))
+	for _, req := range requests {
+		requested[req.ArchiveSessionID] = true
+	}
 	for _, reg := range registrations {
-		if opts.AcceptSession != nil && !opts.AcceptSession(reg) {
-			continue
-		}
-		if err := sweepSession(ctx, local, store, reg, opts, now, &result); err != nil {
+		if err := sweepSession(ctx, local, store, reg, opts, now, requested, &result); err != nil {
 			result.Errors[reg.ArchiveSessionID] = err
 		}
 	}
 	return result, nil
 }
 
-func sweepSession(ctx context.Context, local *collector.LocalStore, store storage.ObjectStore, reg archive.SessionRegistration, opts Options, now time.Time, result *Result) error {
+func sweepSession(ctx context.Context, local *collector.LocalStore, store storage.ObjectStore, reg archive.SessionRegistration, opts Options, now time.Time, requested map[string]bool, result *Result) error {
 	bundle, _, _, found, err := local.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
 		return fmt.Errorf("load published cache: %w", err)
+	}
+
+	// A session ages from its cached capture when it has one. A registration
+	// that never produced a capture (the transcript vanished before the first
+	// scan, or was never readable) ages from the session's own start instead;
+	// otherwise it would be the one kind of local state that never expires.
+	ageFrom := reg.SessionStartedAt
+	if found && !bundle.Capture.CapturedAt.IsZero() {
+		ageFrom = bundle.Capture.CapturedAt
+	}
+	locallyExpired := opts.SessionMaxAge > 0 && !ageFrom.IsZero() && now.Sub(ageFrom) >= opts.SessionMaxAge
+	if locallyExpired && (opts.Publishable == nil || opts.Publishable(reg)) {
+		// Unpublished work is not expired evidence. A session that crosses the
+		// retention boundary on the same pass its publication fails
+		// transiently would otherwise have its new source, its pending
+		// publication, its request, and that request's hook evidence all
+		// deleted together, silently. Say nothing and retry next pass: either
+		// the publication lands and the session expires with its evidence
+		// intact, or it keeps failing and reports itself as a failure. A
+		// session the collector no longer publishes is not deferred: its
+		// outstanding work will never be done, so waiting on it would keep
+		// the session forever.
+		unfinished, err := hasUnfinishedWork(local, requested, reg.ArchiveSessionID)
+		if err != nil {
+			return err
+		}
+		locallyExpired = !unfinished
+	}
+
+	// A session captured before this machine's current destination was
+	// configured has no objects in this bucket. Its local state still ages
+	// out; nothing is deleted remotely, here or in the bucket it came from.
+	if opts.CurrentDestination != nil && !opts.CurrentDestination(reg) {
+		if !locallyExpired {
+			return nil
+		}
+		if err := local.ForgetSession(reg.ArchiveSessionID, reg.NativeSessionID); err != nil {
+			return fmt.Errorf("forget session from a previous destination: %w", err)
+		}
+		result.PrunedSessions = append(result.PrunedSessions, reg.ArchiveSessionID)
+		return nil
+	}
+
+	if locallyExpired {
+		// Nothing of this session can be in the bucket unless a publication
+		// was recorded, or one is still pending: a pending upload may have
+		// reached storage before its local acknowledgement did. Anything
+		// else is local state only, so it is forgotten without a remote call.
+		_, _, everPublished, err := local.LoadLastPublished(reg.ArchiveSessionID)
+		if err != nil {
+			return fmt.Errorf("load last published bundle: %w", err)
+		}
+		pending, err := local.HasPending(reg.ArchiveSessionID)
+		if err != nil {
+			return fmt.Errorf("check pending publication: %w", err)
+		}
+		if !everPublished && !pending {
+			if err := local.ForgetSession(reg.ArchiveSessionID, reg.NativeSessionID); err != nil {
+				return fmt.Errorf("forget never-published session: %w", err)
+			}
+			result.PrunedSessions = append(result.PrunedSessions, reg.ArchiveSessionID)
+			return nil
+		}
 	}
 
 	superseded, err := local.LoadSuperseded(reg.ArchiveSessionID)
 	if err != nil {
 		return fmt.Errorf("load superseded sources: %w", err)
 	}
-	locallyExpired := opts.SessionMaxAge > 0 && found && !bundle.Capture.CapturedAt.IsZero() && now.Sub(bundle.Capture.CapturedAt) >= opts.SessionMaxAge
 	// Skip the remote round trip when this pass could not delete anything:
 	// the predecessor stays in the ledger forever, so without this every
 	// session ever republished would cost one GET per sync indefinitely.
@@ -128,12 +220,15 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		return fmt.Errorf("read current metadata before cleanup: %w", remoteErr)
 	}
 	// Protect evidence published remotely just before a local acknowledgement failed.
-	capturedAt := bundle.Capture.CapturedAt
+	capturedAt := ageFrom
 	if remoteErr == nil && metadata.CapturedAt.After(capturedAt) {
 		capturedAt = metadata.CapturedAt
 	}
 
-	if opts.SessionMaxAge > 0 && found && !capturedAt.IsZero() && now.Sub(capturedAt) >= opts.SessionMaxAge {
+	// locallyExpired already carries SessionMaxAge, the cached capture time,
+	// and the unfinished-work deferral; remote metadata can only make
+	// capturedAt later, so it can only withdraw expiry, never grant it.
+	if locallyExpired && !capturedAt.IsZero() && now.Sub(capturedAt) >= opts.SessionMaxAge {
 		if err := deleteWholeSession(ctx, store, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
 			return fmt.Errorf("delete session: %w", err)
 		}
@@ -183,6 +278,21 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		result.DeletedSnapshots++
 	}
 	return nil
+}
+
+// hasUnfinishedWork reports whether the collector still owes this session a
+// publication: a request a hook left behind, or a publication built and not
+// yet accepted by storage. Either one means evidence exists that expiry would
+// destroy before it was ever archived.
+func hasUnfinishedWork(local *collector.LocalStore, requested map[string]bool, archiveSessionID string) (bool, error) {
+	if requested[archiveSessionID] {
+		return true, nil
+	}
+	pending, err := local.HasPending(archiveSessionID)
+	if err != nil {
+		return false, fmt.Errorf("check pending publication: %w", err)
+	}
+	return pending, nil
 }
 
 // anySupersededExpirable reports whether a sweep could delete at least one
