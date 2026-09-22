@@ -292,8 +292,8 @@ func checkRemovableHome(home, userHome string) error {
 // (and reported), never silently deleted.
 var localStateEntries = []string{
 	"config.json", "setup-draft.json", "setup-transaction.json",
-	"registrations", "requests", "request-locks", "published", "pending", "sessions", "superseded", "pending-scans", "subagent-candidates",
-	"status.json", "storage-health.json", "capture-diagnostics.json", "application-versions.json",
+	"registrations", "requests", "request-locks", "published", "pending", "sessions", "superseded", "pending-scans", "scan-signatures", "subagent-candidates",
+	"status.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"collector.lock", "collector.log", "collector-error.log",
 	"cache",
 }

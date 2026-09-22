@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -24,6 +27,41 @@ func (k *failingDeleteKeychain) Delete(context.Context, string) error { return k
 
 func TestUninstallPurgeLeavesNoFilesOrDirectory(t *testing.T) {
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
+	var stdout, stderr bytes.Buffer
+	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		entries, _ := os.ReadDir(home)
+		names := []string{}
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("data directory survived the purge (err=%v) with %q", err, names)
+	}
+}
+
+// The purge must know every entry the running system creates, not only the
+// ones setup does: the collector's scan signatures (created by every
+// collector.NewLocalStore) and the diagnostics lock (created by the first
+// diagnostic a hook records).
+func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
+	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
+	if _, err := collector.NewLocalStore(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "scan-signatures", "session.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, _ := config.Load(home)
+	if err := recordCaptureDiagnostic(home, captureDiagnostic{Code: diagnosticSetupInProgress, Harness: "codex", ProjectRoot: cfg.Archive.Projects[0].Root, ObservedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"scan-signatures", diagnosticsLockName, "capture-diagnostics.json"} {
+		if _, err := os.Stat(filepath.Join(home, name)); err != nil {
+			t.Fatalf("test precondition: %s was not created: %v", name, err)
+		}
+	}
 	var stdout, stderr bytes.Buffer
 	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
