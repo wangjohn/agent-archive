@@ -19,6 +19,22 @@ works for an installed application version.
   lifecycle hooks. Agent Archive reads the macOS bundle version rather than
   substituting the separately versioned Agent CLI: <https://cursor.com/docs/hooks>.
 
+Cursor fresh-start capture is `documented` rather than `unavailable`, but the
+evidence is the documented `transcript_path`, not `sessionStart` semantics and
+not `cursor_version`. A transcript that is absent or empty when `sessionStart`
+fires can only belong to a conversation that has not happened yet; one that
+already holds bytes is a resume and is declined. The same proof is the fallback
+for a Codex or Claude `SessionStart` that carries no `source`, where a `source`
+that is present still decides. A `sessionStart` that names no transcript
+(transcripts disabled), or a path that is not absolute, carries no proof and is
+still declined with a capture diagnostic. This is a claim about the documented
+payload, not about any installed Cursor version. In particular, the timing —
+that the transcript is still absent or empty when `sessionStart` fires — has not
+been observed against a live Cursor; an installed version that writes its first
+record before the hook runs would have every start declined (safely, with a
+diagnostic) rather than captured. Support stays `unverified` until a session
+from an observed version is published and read back.
+
 `documented` means the vendor exposes the named evidence. `unavailable` means
 the payload is insufficient for the archive claim. Installed-version support
 remains `unverified` until a session from that observed version is published
