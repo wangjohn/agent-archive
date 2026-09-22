@@ -337,7 +337,8 @@ type SemanticConventionsInfo struct {
 // ToolResults counts observed tool results, which are the records a harness
 // writes in the user role but no human sent. The token counts are summed from
 // whatever the harness exposed (Claude `message.usage`, Codex
-// `turn_token_usage`) and stay nil when it exposed nothing.
+// `turn_token_usage`) and stay nil when it exposed nothing; usage repeated
+// across the streamed records of one Claude `message.id` is counted once.
 type Counts struct {
 	Turns            *int `json:"turns,omitempty"`
 	Messages         *int `json:"messages,omitempty"`

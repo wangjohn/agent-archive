@@ -154,7 +154,7 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 			codexModel, codexReasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
 			continue
 		}
-		accumulateTokens(record, bundle.Capture.Harness.Name, &tokens)
+		accumulateTokens(record, &tokens)
 		calls, results, skillUses := toolActivity(record, i, codexModel, codexReasoning)
 		candidates = append(candidates, calls...)
 		view.ToolResults = append(view.ToolResults, results...)
@@ -480,9 +480,18 @@ func classifyContent(role string, content any) (string, TurnKind, bool) {
 	return "", "", false
 }
 
+// textBlockTypes name the content blocks whose only payload is text. When the
+// filter strips such a block's text — an injected <system-reminder> or
+// <user_instructions> block is the common case — the block survives as a bare
+// `{type: "text"}` that carries nothing a person sent.
+var textBlockTypes = map[string]bool{"text": true, "input_text": true, "output_text": true, "": true}
+
 // visibleContent reports a message's text, how many tool results it carries,
 // and how many other blocks it carries. Tool-result text is deliberately not
-// folded into the message text: it is the tool speaking, not the author.
+// folded into the message text: it is the tool speaking, not the author. A
+// text block left empty by the filter counts as nothing at all; otherwise a
+// tool-result record with a stripped reminder beside it, or a prompt that was
+// only injected instructions, would still count as a human prompt.
 func visibleContent(content any) (string, int, int) {
 	switch value := content.(type) {
 	case string:
@@ -511,7 +520,11 @@ func visibleContent(content any) (string, int, int) {
 			case toolInvocationTypes[kind]:
 				other++
 			default:
-				if text := contentText(block); text != "" {
+				text := contentText(block)
+				if text == "" && textBlockTypes[kind] {
+					continue
+				}
+				if text != "" {
 					parts = append(parts, text)
 				}
 				other++
@@ -554,47 +567,76 @@ func firstString(record map[string]any, keys ...string) string {
 	return ""
 }
 
-// tokenTotals accumulates whatever token accounting the retained records
-// expose. A field stays nil until a record reports it, so "no accounting" is
-// never published as zero tokens.
-type tokenTotals struct{ input, output, cacheRead, cacheWrite *int }
-
-func (t *tokenTotals) add(target **int, source map[string]any, keys ...string) {
-	for _, key := range keys {
-		value, ok := source[key].(float64)
-		if !ok {
-			continue
-		}
-		total := int(value)
-		if *target != nil {
-			total += **target
-		}
-		*target = &total
-		return
-	}
+// tokenTotals collects whatever token accounting the retained records expose,
+// keyed by the message the accounting belongs to. Claude Code writes one JSONL
+// record per content block of a single API message, and every one of those
+// records repeats the same `message.id` and the same `message.usage`; adding
+// each record's usage would count one response as many. The latest record seen
+// for a message id replaces the earlier ones. Accounting with no message
+// identity (Codex's `turn_token_usage`) is summed as it comes.
+type tokenTotals struct {
+	byMessage map[string]map[string]any
+	anonymous []map[string]any
 }
 
+func (t *tokenTotals) observe(usage map[string]any, messageID string) {
+	if messageID == "" {
+		t.anonymous = append(t.anonymous, usage)
+		return
+	}
+	if t.byMessage == nil {
+		t.byMessage = map[string]map[string]any{}
+	}
+	t.byMessage[messageID] = usage
+}
+
+// usage sums the collected accounting. A field stays nil until some record
+// reports it, so "no accounting" is never published as zero tokens.
 func (t tokenTotals) usage() TokenUsage {
-	return TokenUsage{Input: t.input, Output: t.output, CacheRead: t.cacheRead, CacheWrite: t.cacheWrite}
+	var out TokenUsage
+	add := func(target **int, source map[string]any, keys ...string) {
+		for _, key := range keys {
+			value, ok := source[key].(float64)
+			if !ok {
+				continue
+			}
+			total := int(value)
+			if *target != nil {
+				total += **target
+			}
+			*target = &total
+			return
+		}
+	}
+	sources := append([]map[string]any(nil), t.anonymous...)
+	for _, source := range t.byMessage {
+		sources = append(sources, source)
+	}
+	for _, source := range sources {
+		add(&out.Input, source, "input_tokens", "prompt_tokens")
+		add(&out.Output, source, "output_tokens", "completion_tokens")
+		add(&out.CacheRead, source, "cache_read_input_tokens", "cached_input_tokens")
+		add(&out.CacheWrite, source, "cache_creation_input_tokens")
+	}
+	return out
 }
 
-// accumulateTokens folds one record's token accounting into the running
-// totals: Claude stamps `message.usage` on each assistant record and Codex
-// writes `turn_token_usage` on each token_usage_record. Cumulative
-// (`total_token_usage`) and thread-wide figures are deliberately ignored, so
-// the sum stays additive across records.
-func accumulateTokens(record map[string]any, harness string, totals *tokenTotals) {
-	usage := firstMapDeep(record, "usage")
+// accumulateTokens records one record's token accounting: Claude stamps
+// `message.usage` on each assistant record and Codex writes `turn_token_usage`
+// on each token_usage_record. Cumulative (`total_token_usage`) and thread-wide
+// figures are deliberately ignored, so the sum stays additive across records.
+// The accounting is attributed to the `id` of the object that carries it
+// (Claude's `message.id`), which is what lets repeated streamed records of one
+// message count once.
+func accumulateTokens(record map[string]any, totals *tokenTotals) {
+	usage, owner := firstMapDeepOwner(record, "usage")
 	if usage == nil {
-		usage = firstMapDeep(record, "turn_token_usage")
+		usage, owner = firstMapDeepOwner(record, "turn_token_usage")
 	}
 	if usage == nil {
 		return
 	}
-	totals.add(&totals.input, usage, "input_tokens", "prompt_tokens")
-	totals.add(&totals.output, usage, "output_tokens", "completion_tokens")
-	totals.add(&totals.cacheRead, usage, "cache_read_input_tokens", "cached_input_tokens")
-	totals.add(&totals.cacheWrite, usage, "cache_creation_input_tokens")
+	totals.observe(usage, firstString(owner, "id"))
 }
 
 // nativeTurnEnd reads Cursor's own end-of-turn record. Cursor has no lifecycle
@@ -625,18 +667,21 @@ func nativeTurnEnd(bundle SourceBundle) (MetadataState, TurnOutcome, bool) {
 	return state, outcome, found
 }
 
-func firstMapDeep(record map[string]any, key string) map[string]any {
+// firstMapDeepOwner finds the first object stored under key, searching the
+// record and then its nested message/payload/item/event objects, and also
+// returns the object that holds it.
+func firstMapDeepOwner(record map[string]any, key string) (map[string]any, map[string]any) {
 	if value, ok := record[key].(map[string]any); ok {
-		return value
+		return value, record
 	}
 	for _, nested := range []string{"message", "payload", "item", "event"} {
 		if child, ok := record[nested].(map[string]any); ok {
-			if value := firstMapDeep(child, key); value != nil {
-				return value
+			if value, owner := firstMapDeepOwner(child, key); value != nil {
+				return value, owner
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func firstStringDeep(record map[string]any, keys ...string) string {

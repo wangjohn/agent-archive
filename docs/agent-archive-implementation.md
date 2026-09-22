@@ -338,5 +338,34 @@ unknown, and `internal/cli/linked_review_test.go` checks for `"hook_finals"`
 instead of `"turns":` to prove the metadata-only path prints no normalized view
 (`counts.turns` now appears in metadata).
 
+Review fixes (on the branch, before merge):
+
+- **Streamed usage counted once per message.** Claude Code writes one JSONL
+  record per content block of a single API message, and each record repeats
+  the same `message.id` and `message.usage`; summing per record counted one
+  response as many. Token accounting is now attributed to the `id` of the
+  object that carries it (`message.id`), the latest record for an id replaces
+  the earlier ones, and only accounting with no identity (Codex
+  `turn_token_usage`) is summed as it comes.
+- **A stripped injected block is not a prompt.** Filter 3 removes the text of
+  a `<system-reminder>`/`<user_instructions>` block, but an array-shaped
+  message keeps the bare `{type: "text"}` block, which the parser counted as
+  non-tool-result content. That made a tool-result record with a reminder
+  beside it, or a prompt that was only injected instructions, a human prompt.
+  A text-carrying block (`text`, `input_text`, `output_text`, or untyped)
+  with no retained text now counts as nothing.
+- Fixture `claude-streamed-usage.jsonl` covers both shapes; tests also pin
+  that a Codex injected-only `input_text` prompt is ignored and that a bundle
+  holding native text leaves every structure-derived count, the token counts
+  included, unknown.
+
+Left open: `counts.messages` and per-model `turn_count` still count each
+streamed Claude record, so an assistant message split into text and tool-use
+records counts twice; the plan defines messages as records, so this is noted
+rather than changed. Codex dedupe keys on `call_id`/`item.id` as planned; if a
+real rollout's `item_completed` item carries an id unrelated to the call's
+`call_id`, the same work is counted twice, which only a real transcript can
+confirm.
+
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.

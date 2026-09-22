@@ -319,3 +319,86 @@ func TestParserV06StillRejectsHiddenRoles(t *testing.T) {
 		t.Fatalf("hidden role accepted: %v", err)
 	}
 }
+
+// Claude Code writes one JSONL record per content block of a single API
+// message; every record repeats the same message.id and the same usage. The
+// response's tokens must be counted once, not once per record. The same
+// fixture carries the two shapes in which a stripped injected block survives
+// as an empty text block: beside a tool result, and as a whole prompt.
+// Neither is a human prompt.
+func TestParserV06CountsStreamedUsageOncePerMessage(t *testing.T) {
+	view, metadata := parsedFixture(t, "claude", "claude-streamed-usage.jsonl")
+	countIs(t, "input tokens", metadata.Counts.InputTokens, 30)
+	countIs(t, "output tokens", metadata.Counts.OutputTokens, 12)
+	countIs(t, "cache read tokens", metadata.Counts.CacheReadTokens, 2)
+	countIs(t, "cache write tokens", metadata.Counts.CacheWriteTokens, 1)
+
+	countIs(t, "turns", metadata.Counts.Turns, 1)
+	countIs(t, "messages", metadata.Counts.Messages, 4)
+	countIs(t, "tool calls", metadata.Counts.ToolCalls, 1)
+	countIs(t, "tool results", metadata.Counts.ToolResults, 1)
+	for _, turn := range view.Turns {
+		if turn.Role == "user" && turn.RecordIndex != 0 && turn.Kind == TurnKindHumanPrompt {
+			t.Errorf("record %d holds no human text but was classified as a prompt: %#v", turn.RecordIndex, turn)
+		}
+	}
+	if len(view.ToolCalls) != 1 || view.ToolCalls[0].ResultRecordIndex == nil || *view.ToolCalls[0].ResultRecordIndex != 3 {
+		t.Fatalf("tool linkage = %#v", view.ToolCalls)
+	}
+}
+
+// A Codex prompt that was only injected instructions is stripped to an empty
+// input_text block by the filter and must not count as a prompt either.
+func TestParserV06IgnoresCodexInjectedOnlyPrompts(t *testing.T) {
+	input := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\nAGENTS.md: keep it small.\n</user_instructions>"}]}}` + "\n" +
+		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\nAGENTS.md: keep it small.\n</user_instructions>\n\nAdd a test."}]}}` + "\n"
+	adapter, err := NewAdapter("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, err := adapter.FilterJSONL(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registration()
+	reg.Harness = Harness{Name: "codex"}
+	bundle, err := NewSourceBundle(reg, adapter, filtered, time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := ParseNormalized(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Turns) != 1 || view.Turns[0].RecordIndex != 1 || view.Turns[0].Kind != TurnKindHumanPrompt || view.Turns[0].Text != "Add a test." {
+		t.Fatalf("turns = %#v", view.Turns)
+	}
+}
+
+// Native text is retained because its structure is unproven, so a bundle
+// holding any leaves every structure-derived count unknown, the new token and
+// tool-result counts included.
+func TestParserV06TextBundlesLeaveCountsUnknown(t *testing.T) {
+	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
+	bundle := SourceBundle{
+		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: adapterVersion, SourceFormat: "claude-jsonl", FilterVersion: FilterVersion, CapturedAt: now},
+		NativeRecords: []map[string]any{
+			{"type": "user", "message": map[string]any{"role": "user", "content": "please check it"}},
+			{"type": "assistant", "message": map[string]any{"id": "msg_1", "role": "assistant", "usage": map[string]any{"input_tokens": float64(3)}, "content": []any{map[string]any{"type": "text", "text": "done"}}}},
+		},
+		NativeText: []TextTranscript{{Format: "text", Content: "an unparsed line"}},
+	}
+	reference := SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64)}
+	metadata, err := BuildMetadata(bundle, "machine", now, now, reference, ParserInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := metadata.Counts
+	if counts.Turns != nil || counts.Messages != nil || counts.ToolCalls != nil || counts.ToolResults != nil || counts.InputTokens != nil || counts.OutputTokens != nil || counts.CacheReadTokens != nil || counts.CacheWriteTokens != nil {
+		t.Fatalf("a text bundle published structure-derived counts: %#v", counts)
+	}
+	if counts.ExplicitFeedback == nil {
+		t.Fatal("explicit feedback is evidence-derived and should stay known")
+	}
+}
