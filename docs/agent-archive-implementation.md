@@ -1188,8 +1188,9 @@ Manual check: the built binary rendered copies of real Claude Code, Codex,
 and Cursor transcripts with `--file`. The 7.0 MB Claude review session came
 out at 117 KB with 53 older tool outputs dropped and the 142 KB full version
 saved; the Codex and Cursor sessions (20 KB and 60 KB) needed no trimming.
-Not yet done: pasting a handoff into another agent and checking it states
-the task and next step, which the spec names as the acceptance criterion.
+The spec's acceptance check (paste a handoff into another agent and see
+whether it states the task and next step) was run on 2026-09-22; see "Live
+handoff check" below.
 
 Review fixes (15 findings from an extra-high-effort review, all on the
 branch):
@@ -1241,4 +1242,28 @@ parser 0.9.0, and the handoff now shows a Claude Code compaction summary
 compaction happened, since the agent continued from it rather than from the
 turns before it. It is shortened by the budget like agent text.
 `TestHandoffShowsCompactionSummaries` uses C4's `claude-compaction.jsonl`.
+
+### Live handoff check (2026-09-22)
+
+Handoffs rendered with `--file` from copies of three real transcripts were
+given to a receiving agent with no other context, which was told to run no
+tools and to state the goal, what was done, where it left off, its next
+step, and what it would verify first. Codex receivers ran `codex exec
+--ephemeral --sandbox read-only` from an empty directory (codex-cli
+0.155.0-alpha.9.2). The standalone Claude Code binary cannot use the desktop
+app's login from a subprocess, so the Claude receivers were fresh Claude
+subagents that read only the handoff file. Cursor has no headless agent here,
+so it was a source only.
+
+| Handoff | Size | Receiver | Result |
+|---|---|---|---|
+| Codex (5 prompts; remote-pairing error) | 20 KB | Claude | Correct: goal, the different-workspace cause, the re-pair step; next step "ask whether pairing worked" |
+| Claude Code (review orchestration; trimmed from 7 MB) | 108 KB | Codex | Correct: PR #13 in review, next step "check the review, merge, rebuild the binary", verify the Cursor test chat |
+| Cursor (41 prompts; blog post) | 62 KB | Claude | Correct, including the lost-work recovery; next step "ask whether the restored bullets match"; noted tool results are not recorded |
+| Cursor | 62 KB | Codex | Mostly correct; proposed finishing the "coding and []" bullet rather than confirming the recovery with the person first |
+
+All four named the current state correctly and chose a next step consistent
+with it. The one weaker answer came from a Cursor handoff, where no tool
+results are recorded; both receivers asked to check the file on disk first,
+as the preamble instructs.
 
