@@ -356,3 +356,179 @@ func TestProtectedStart(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// testBundle wraps native records in a filtered-shape bundle for one harness.
+func testBundle(harness string, records ...map[string]any) SourceBundle {
+	return SourceBundle{
+		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		Capture:       SourceCapture{Harness: Harness{Name: harness}, AdapterName: harness, AdapterVersion: adapterVersion, SourceFormat: harness + "-jsonl", FilterVersion: FilterVersion, CapturedAt: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)},
+		NativeRecords: records,
+	}
+}
+
+func toolSteps(h Handoff) []*HandoffToolCall {
+	var out []*HandoffToolCall
+	for _, exchange := range h.Exchanges {
+		for _, step := range exchange.Steps {
+			if step.Tool != nil {
+				out = append(out, step.Tool)
+			}
+		}
+	}
+	return out
+}
+
+// Calls and results without ids in one record are paired by position, each
+// with its own raw item and its own output — not all with the first.
+func TestHandoffPairsUnidentifiedCallsInOneRecordByPosition(t *testing.T) {
+	bundle := testBundle("cursor",
+		map[string]any{"role": "user", "message": map[string]any{"content": "go"}},
+		map[string]any{"role": "assistant", "message": map[string]any{"content": []any{
+			map[string]any{"type": "tool_use", "name": "exec", "input": "ls widget"},
+			map[string]any{"type": "tool_use", "name": "exec", "input": "go vet ./widget"},
+		}}},
+		map[string]any{"role": "user", "message": map[string]any{"content": []any{
+			map[string]any{"type": "tool_result", "content": "size.go"},
+			map[string]any{"type": "tool_result", "content": "vet: clean"},
+		}}},
+	)
+	h, err := BuildHandoff(bundle, nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := toolSteps(h)
+	if len(tools) != 2 || tools[0].Summary != "ls widget" || tools[1].Summary != "go vet ./widget" {
+		t.Fatalf("summaries = %#v", tools)
+	}
+	if tools[0].Result != "size.go" || tools[1].Result != "vet: clean" {
+		t.Fatalf("results = %q, %q", tools[0].Result, tools[1].Result)
+	}
+}
+
+// The directory is where the session started; a later `cd` recorded in cwd
+// must not make paths relative to a subdirectory.
+func TestHandoffUsesTheStartingDirectory(t *testing.T) {
+	record := func(cwd string, content any) map[string]any {
+		return map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": content}}
+	}
+	bundle := testBundle("claude",
+		map[string]any{"type": "user", "cwd": "/repo", "message": map[string]any{"role": "user", "content": "fix it"}},
+		record("/repo", []any{map[string]any{"type": "tool_use", "id": "t1", "name": "Edit", "input": map[string]any{"file_path": "/repo/docs/a.md"}}}),
+		record("/repo/internal/archive", []any{map[string]any{"type": "tool_use", "id": "t2", "name": "Edit", "input": map[string]any{"file_path": "/repo/internal/archive/views.go"}}}),
+	)
+	h, err := BuildHandoff(bundle, nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Workspace.Directory != "repo" || strings.Join(h.FilesTouched, ",") != "docs/a.md,internal/archive/views.go" {
+		t.Fatalf("workspace = %#v files = %v", h.Workspace, h.FilesTouched)
+	}
+}
+
+// A plan call whose items cannot be read leaves the earlier plan; an explicit
+// empty list clears it.
+func TestHandoffPlanSurvivesAnUnreadablePlanCall(t *testing.T) {
+	plan := func(id string, input map[string]any) map[string]any {
+		return map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": id, "name": "TodoWrite", "input": input}}}}
+	}
+	prompt := map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": "go"}}
+	first := plan("p1", map[string]any{"todos": []any{map[string]any{"content": "Ship it", "status": "pending"}}})
+	h, err := BuildHandoff(testBundle("claude", prompt, first, plan("p2", map[string]any{"unknown": true})), nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Plan) != 1 || h.Plan[0].Text != "Ship it" {
+		t.Fatalf("plan erased: %#v", h.Plan)
+	}
+	h, err = BuildHandoff(testBundle("claude", prompt, first, plan("p3", map[string]any{"todos": []any{}})), nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Plan) != 0 {
+		t.Fatalf("explicit empty plan did not clear: %#v", h.Plan)
+	}
+}
+
+// With no timestamps in the records, times come only from the caller or from
+// published metadata — never from the moment the bundle was built.
+func TestHandoffDoesNotInventActivityTimes(t *testing.T) {
+	bundle := testBundle("cursor", map[string]any{"role": "user", "message": map[string]any{"content": "hello"}})
+	h, err := BuildHandoff(bundle, nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Session.StartedAt != nil || h.Session.LastActivityAt != nil {
+		t.Fatalf("invented times: %v %v", h.Session.StartedAt, h.Session.LastActivityAt)
+	}
+	mtime := time.Date(2026, 9, 15, 8, 0, 0, 0, time.UTC)
+	h, _ = BuildHandoff(bundle, nil, HandoffOptions{LastActivityAt: mtime})
+	if h.Session.LastActivityAt == nil || !h.Session.LastActivityAt.Equal(mtime) {
+		t.Fatalf("caller's time not used: %v", h.Session.LastActivityAt)
+	}
+	captured := time.Date(2026, 9, 16, 9, 0, 0, 0, time.UTC)
+	h, _ = BuildHandoff(bundle, &Metadata{CapturedAt: captured}, HandoffOptions{LastActivityAt: mtime})
+	if !h.Session.LastActivityAt.Equal(captured) {
+		t.Fatalf("published capture time not preferred: %v", h.Session.LastActivityAt)
+	}
+}
+
+func TestCleanPromptRestoresSlashCommands(t *testing.T) {
+	for in, want := range map[string]string{
+		"<command-message>review-pr</command-message>\n<command-name>/review-pr</command-name>\n<command-args>12</command-args>": "/review-pr 12",
+		"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>":           "/model",
+		"<timestamp>Mon</timestamp>\n<user_query>\nhi\n</user_query>":                                                            "hi",
+		"please explain <command-name> tags": "please explain <command-name> tags",
+	} {
+		if got := cleanPrompt(in); got != want {
+			t.Errorf("cleanPrompt(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A Cursor text transcript has role sections instead of records; it still
+// renders its exchanges.
+func TestHandoffRendersCursorTextTranscripts(t *testing.T) {
+	filtered, err := CursorAdapter{}.FilterText(strings.NewReader("user: Tighten the intro.\nassistant: Reading it.\ntool: intro.md: 3 lines\nassistant: Done; the first sentence is shorter.\nuser: thanks\n"), time.Date(2026, 9, 22, 9, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registration()
+	reg.Harness = Harness{Name: "cursor"}
+	bundle, err := NewSourceBundle(reg, CursorAdapter{}, filtered, time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := BuildHandoff(bundle, nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Exchanges) != 2 || h.Exchanges[0].Prompt != "Tighten the intro." || h.Exchanges[1].Prompt != "thanks" {
+		t.Fatalf("exchanges = %#v", h.Exchanges)
+	}
+	if steps := h.Exchanges[0].Steps; len(steps) != 3 || steps[1].Tool == nil || steps[1].Tool.Result != "intro.md: 3 lines" {
+		t.Fatalf("steps = %#v", steps)
+	}
+	if h.LeftOff != "Done; the first sentence is shorter." {
+		t.Fatalf("left off = %q", h.LeftOff)
+	}
+}
+
+// Fitting a large session takes a handful of measurements per step, not one
+// per exchange.
+func TestFitHandoffMeasuresLogarithmically(t *testing.T) {
+	h := bigHandoff(512)
+	calls := 0
+	fit, ok := FitHandoff(h, 2_000_000, func(x Handoff) int { calls++; return markdownSize(x) })
+	if !ok {
+		t.Fatalf("did not fit: %d", markdownSize(fit))
+	}
+	if calls > 4*(2+10)+1 {
+		t.Fatalf("%d measurements for 512 exchanges", calls)
+	}
+	// Trimming stops partway through the conversation rather than applying
+	// the last step to every exchange.
+	e := fit.Elisions[len(fit.Elisions)-1]
+	if e.First != 1 || e.Last >= 512-handoffKeptExchanges {
+		t.Fatalf("elision = %#v", e)
+	}
+}

@@ -75,9 +75,10 @@ excludes them from its own message, turn, and tool counts.
 
 ## User records the harness wrote
 
-Claude Code marks who produced a user record. Filter 5 keeps `origin.kind`
-and `promptSource`, and a record whose `origin.kind` is present and not
-`human` (a background-task notification) is not counted as a prompt. The
+Claude Code marks who produced a user record. Filter 6 keeps `origin.kind`
+and `promptSource`, and a record whose `origin.kind` is a known harness kind
+(`task-notification`, a background-task notification) is not counted as a
+prompt. Any other kind, including one a later version adds, stays a prompt. The
 Claude desktop app also submits "The app was quit while you were working.
 Please continue from where you left off" after a restart. That record has
 `promptSource: "sdk"` and no `origin`, the same as a prompt submitted through

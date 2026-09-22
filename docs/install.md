@@ -255,10 +255,15 @@ A session registered on this Mac is read from its transcript as it is now, so
 a handoff right after you stop needs no sync and works while collection is
 paused; nothing is uploaded. Otherwise the session is downloaded from the
 archive, which is how a second Mac hands off a session from the first.
-`--source local|archive` forces one or the other. `--latest` names its choice
-on stderr. On another Mac it matches the project only when the repository is
-checked out at the same path; when nothing matches it lists the five most
-recent archived sessions with the command for each. Uncommitted changes stay
+`--source local|archive` forces one or the other; with neither, a local
+transcript that cannot be read falls back to the archive's copy. `--latest`
+names its choice on stderr, passes over sessions with no prompt yet, and,
+when run by an agent that names its own session (Claude Code does, through
+`CLAUDE_CODE_SESSION_ID`), skips that session. It matches the current
+directory's project, not projects beneath it. On another Mac it matches the
+project only when the repository is checked out at the same path; when
+nothing matches it lists the five most recent archived sessions with the
+command for each. Uncommitted changes stay
 on the machine that made them, so push a branch before continuing elsewhere.
 
 Output is limited to 120,000 bytes (about 30k tokens; `--max-bytes`, `0` for
@@ -269,7 +274,9 @@ steps) and every prompt are kept. When anything is trimmed, the untrimmed
 version is saved under the data directory in `handoffs/` (mode 0600, removed
 after 7 days and by `uninstall --delete-local-data`) and its path is named at
 the end, so the receiving agent can read what was omitted. Everything printed
-has passed the same privacy filter as the archive. Cursor transcripts record
+has passed the same privacy filter as the archive. `--file` without setup
+never creates the data directory, so a trimmed `--file` handoff there is not
+saved in full; use `--max-bytes 0` to print all of it. Cursor transcripts record
 no tool results, so a Cursor handoff says so and shows none.
 
 ### Add explicit feedback
@@ -427,7 +434,7 @@ unavailable-or-expired; one missing child does not block the parent. Links do no
 extend retention. Children are never downloaded recursively.
 
 This adds optional fields to schema version 1 and parser 0.5.0; the current
-filter version is 5, adapter 0.5.0, and parser 0.8.0 (see
+filter version is 6, adapter 0.6.0, and parser 0.9.0 (see
 `docs/agent-archive-privacy.md`).
 Existing bundles remain readable. Claude is fixture-tested;
 real app capture is pending. Codex/Cursor child capture and native skill

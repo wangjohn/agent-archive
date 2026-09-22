@@ -302,3 +302,105 @@ func TestUninstallOwnsHandoffDirectory(t *testing.T) {
 	}
 	t.Fatalf("localStateEntries does not include %q", handoffDir)
 }
+
+// Run inside an agent, --latest skips the session running the command: it is
+// always the newest, and handing an agent its own conversation is useless.
+func TestHandoffLatestSkipsTheCallingAgentSession(t *testing.T) {
+	f := newHandoffFixture(t, true)
+	f.env.LookupEnv = func(key string) (string, bool) {
+		if key == "CLAUDE_CODE_SESSION_ID" {
+			return "native-1", true
+		}
+		return "", false
+	}
+	out, errOut, code := runHandoff(t, f.env, "--latest")
+	if code != 1 || out != "" || !strings.Contains(errOut, "no session for") {
+		t.Fatalf("the calling session was not skipped: code=%d stderr=%s", code, errOut)
+	}
+	// An explicit ID is still honored.
+	if _, errOut, code := runHandoff(t, f.env, f.id); code != 0 {
+		t.Fatalf("explicit ID: code=%d stderr=%s", code, errOut)
+	}
+}
+
+// A newer session that has only just started (empty transcript, no prompt)
+// is passed over for the older one with content, rather than failing.
+func TestHandoffLatestPassesOverSessionsWithoutPrompts(t *testing.T) {
+	f := newHandoffFixture(t, false)
+	fresh := filepath.Join(f.project, "fresh.jsonl")
+	if err := os.WriteFile(fresh, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-2", "cwd": f.project, "transcript_path": fresh}
+	if err := handleHookEvent(f.home, "codex", payload, f.env.now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(fresh, later, later); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := runHandoff(t, f.env, "--latest")
+	if code != 0 || !strings.Contains(errOut, "using codex session "+f.id) || !strings.Contains(out, "Fix the flaky widget test.") {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+}
+
+func TestHandoffRejectsUnsafeSessionIDs(t *testing.T) {
+	f := newHandoffFixture(t, false)
+	for _, id := range []string{"../registrations/x", "a/b", "..", "."} {
+		if _, errOut, code := runHandoff(t, f.env, id); code != 2 || !strings.Contains(errOut, "not an archive session ID") {
+			t.Errorf("%q: code=%d stderr=%s", id, code, errOut)
+		}
+	}
+}
+
+// When the local transcript exists but cannot be used, --source auto falls
+// back to the archive's published copy.
+func TestHandoffFallsBackToArchiveWhenLocalTranscriptIsUnusable(t *testing.T) {
+	f := newHandoffFixture(t, true)
+	if err := os.WriteFile(filepath.Join(f.project, "codex.jsonl"), []byte("not json at all\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := runHandoff(t, f.env, f.id)
+	if code != 0 || !strings.Contains(out, "source: archive") || !strings.Contains(out, "Fix the flaky widget test.") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	if _, errOut, code := runHandoff(t, f.env, f.id, "--source", "local"); code != 1 || errOut == "" {
+		t.Fatalf("--source local must report the local failure: code=%d", code)
+	}
+}
+
+// Running from a parent directory does not pick up the projects beneath it.
+func TestHandoffLatestFromAParentDirectoryDoesNotMatchChildProjects(t *testing.T) {
+	f := newHandoffFixture(t, true)
+	_, errOut, code := runHandoff(t, f.env, "--latest", "--project", filepath.Dir(f.project))
+	if code != 1 || !strings.Contains(errOut, "no session for") {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+}
+
+// Without setup, --file never creates the data directory, even when the
+// output is trimmed.
+func TestHandoffFileWithoutSetupDoesNotCreateTheDataDirectory(t *testing.T) {
+	var transcript strings.Builder
+	transcript.WriteString(`{"type":"user","uuid":"u1","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"go"}}` + "\n")
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&transcript, `{"type":"assistant","uuid":"a%d","timestamp":"2026-01-02T00:00:01Z","message":{"id":"m%d","role":"assistant","content":[{"type":"tool_use","id":"t%d","name":"Bash","input":{"command":"echo %d"}}]}}`+"\n", i, i, i, i)
+		fmt.Fprintf(&transcript, `{"type":"user","uuid":"r%d","timestamp":"2026-01-02T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t%d","content":"%s"}]}}`+"\n", i, i, strings.Repeat("x", 500))
+	}
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(transcript.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(t.TempDir(), "never-set-up")
+	out, errOut, code := runHandoff(t, testEnv(t, home, time.Now()), "--file", path, "--harness", "claude", "--max-bytes", "6000")
+	if code != 0 || !strings.Contains(out, "Omitted to fit") || strings.Contains(out, "Full record") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	if !strings.Contains(errOut, "not saved") {
+		t.Fatalf("stderr does not explain the missing full version: %s", errOut)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("data directory created: %v", err)
+	}
+}

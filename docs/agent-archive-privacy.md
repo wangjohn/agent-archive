@@ -7,7 +7,8 @@ Filter 6 is filter 5 plus two narrow retentions and one more injected block.
 - **Retained:** Claude Code's `origin`, reduced to `{kind: <string>}`, and
   `promptSource`, only as a string. A person's prompt carries
   `origin.kind: "human"`; a background-task completion carries
-  `"task-notification"` and `promptSource: "system"`. Every other member of
+  `"task-notification"` and `promptSource: "system"`; only that known kind is
+  treated as harness-written, and any other kind stays a prompt. Every other member of
   `origin` is omitted and its name reported in the `unknown_field_omitted`
   gap; an `origin` that is not an object, or has no string `kind`, and a
   `promptSource` that is not a string, are omitted whole. The kept strings

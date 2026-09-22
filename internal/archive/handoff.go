@@ -43,6 +43,12 @@ type HandoffOptions struct {
 	ToolResultBytes int
 	// Source names where the bundle came from ("local", "archive", "file").
 	Source string
+	// StartedAt and LastActivityAt are fallbacks the caller knows (a
+	// registration's start, a transcript's modification time), used only
+	// when no retained record carries a timestamp. Neither is ever inferred
+	// from the time the handoff is built.
+	StartedAt      time.Time
+	LastActivityAt time.Time
 }
 
 func (o HandoffOptions) resultLines() int {
@@ -205,12 +211,22 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 			addModel(model.Attributes["gen_ai.request.model"])
 		}
 		h.Session.State, h.Session.TurnOutcome = metadata.State, metadata.TurnOutcome
-		if first.IsZero() && !metadata.StartedAt.IsZero() {
+		if first.IsZero() {
 			first = metadata.StartedAt
 		}
+		// A published capture is taken from the transcript as it stood, so
+		// its capture time bounds the last activity it shows. A bundle built
+		// just now has no such meaning, which is why CapturedAt itself is
+		// never used.
+		if last.IsZero() {
+			last = metadata.CapturedAt
+		}
 	}
-	if last.IsZero() && !bundle.Capture.CapturedAt.IsZero() {
-		last = bundle.Capture.CapturedAt
+	if first.IsZero() {
+		first = opts.StartedAt
+	}
+	if last.IsZero() {
+		last = opts.LastActivityAt
 	}
 	if !first.IsZero() {
 		t := first.UTC()
@@ -222,6 +238,12 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 	}
 
 	h.Gaps = countGaps(bundle.Capture.Gaps)
+	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
+		// A Cursor text transcript: role sections, no records to walk.
+		h.Exchanges, h.LeftOff = textTranscriptExchanges(bundle.NativeText, opts)
+		h.ToolResultsUnavailable = false
+		return h, nil
+	}
 	events := handoffEvents(view)
 	files := fileSet{}
 	root := workspaceRoot(bundle)
@@ -252,7 +274,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 			continue
 		}
 		call := event.call
-		raw := rawToolItem(bundle.NativeRecords[call.RecordIndex], call.CallID)
+		raw := call.raw
 		name := call.Name
 		if name == "" {
 			name = firstString(raw, "type")
@@ -270,7 +292,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 			tool.IsError = *call.IsError
 		}
 		if call.ResultRecordIndex != nil {
-			text := toolResultText(bundle.NativeRecords[*call.ResultRecordIndex], call.CallID)
+			text := call.resultText
 			tool.ResultBytes = len(text)
 			tool.ResultLines = lineCount(text)
 			tool.Result = trimResult(text, opts.resultLines(), opts.resultBytes())
@@ -286,6 +308,65 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 	flush()
 	h.FilesTouched = files.list
 	return h, nil
+}
+
+// textSectionPrefixes are the role prefixes CursorAdapter.FilterText keeps.
+var textSectionPrefixes = []string{"user:", "assistant:", "tool:"}
+
+// textTranscriptExchanges reads the role sections of a filtered text
+// transcript: a "user:" section starts an exchange, an "assistant:" section is
+// agent text, and a "tool:" section is tool output. Continuation lines belong
+// to the section above them.
+func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]HandoffExchange, string) {
+	exchanges := []HandoffExchange{}
+	current := &HandoffExchange{}
+	leftOff := ""
+	role, body := "", []string{}
+	flushSection := func() {
+		text := strings.TrimSpace(strings.Join(body, "\n"))
+		switch role {
+		case "user:":
+			if current.Prompt != "" || len(current.Steps) > 0 {
+				exchanges = append(exchanges, *current)
+			}
+			current = &HandoffExchange{Prompt: cleanPrompt(text)}
+		case "assistant:":
+			if text != "" {
+				current.Steps = append(current.Steps, HandoffStep{Kind: "text", Text: text})
+				leftOff = text
+			}
+		case "tool:":
+			if text != "" {
+				current.Steps = append(current.Steps, HandoffStep{Kind: "tool", Tool: &HandoffToolCall{
+					Name: "tool", Summary: firstLine(text, handoffSummaryCap),
+					Result: trimResult(text, opts.resultLines(), opts.resultBytes()), ResultLines: lineCount(text), ResultBytes: len(text),
+				}})
+			}
+		}
+		role, body = "", body[:0]
+	}
+	for _, transcript := range texts {
+		for _, line := range strings.Split(transcript.Content, "\n") {
+			lower := strings.ToLower(strings.TrimSpace(line))
+			started := false
+			for _, prefix := range textSectionPrefixes {
+				if strings.HasPrefix(lower, prefix) {
+					flushSection()
+					role, started = prefix, true
+					body = append(body, strings.TrimSpace(strings.TrimSpace(line)[len(prefix):]))
+					break
+				}
+			}
+			if !started && role != "" {
+				body = append(body, line)
+			}
+		}
+		flushSection()
+	}
+	if current.Prompt != "" || len(current.Steps) > 0 {
+		exchanges = append(exchanges, *current)
+	}
+	return exchanges, leftOff
 }
 
 // handoffEvent is one turn or one tool call, in record order.
@@ -315,8 +396,8 @@ func handoffEvents(view NormalizedView) []handoffEvent {
 	return events
 }
 
-// recordedWorkspace returns the last cwd and git branch the transcript
-// recorded. The directory is reduced to its base name.
+// recordedWorkspace returns the directory the session started in, reduced to
+// its base name, and the last git branch the transcript recorded.
 func recordedWorkspace(bundle SourceBundle) HandoffWorkspace {
 	var out HandoffWorkspace
 	if root := workspaceRoot(bundle); root != "" {
@@ -331,9 +412,13 @@ func recordedWorkspace(bundle SourceBundle) HandoffWorkspace {
 	return out
 }
 
+// workspaceRoot is the first working directory the transcript recorded: where
+// the session started, normally the project root. Claude Code stamps every
+// record with the shell's current directory, which follows a `cd`, so a later
+// cwd can be a subdirectory that would make every relative path wrong.
 func workspaceRoot(bundle SourceBundle) string {
-	for i := len(bundle.NativeRecords) - 1; i >= 0; i-- {
-		if cwd := firstStringDeep(bundle.NativeRecords[i], "cwd"); cwd != "" {
+	for _, record := range bundle.NativeRecords {
+		if cwd := firstStringDeep(record, "cwd"); cwd != "" {
 			return path.Clean(cwd)
 		}
 	}
@@ -356,13 +441,31 @@ func countGaps(gaps []CaptureGap) []HandoffGap {
 // cursorTimestamp matches the <timestamp> line Cursor prepends to a prompt.
 var cursorTimestamp = regexp.MustCompile(`(?s)^\s*<timestamp>.*?</timestamp>\s*`)
 
-// cleanPrompt removes the wrapper Cursor puts around what the person typed
-// (<timestamp>…</timestamp> then <user_query>…</user_query>), leaving the
-// query itself. Other prompts are only trimmed.
+// slashCommandName and slashCommandArgs read the tags Claude Code writes for a
+// typed slash command: <command-name>/review-pr</command-name>,
+// <command-message>…</command-message>, <command-args>12</command-args>.
+var (
+	slashCommandName = regexp.MustCompile(`(?s)<command-name>(.*?)</command-name>`)
+	slashCommandArgs = regexp.MustCompile(`(?s)<command-args>(.*?)</command-args>`)
+)
+
+// cleanPrompt shows a prompt as the person typed it. It removes the wrapper
+// Cursor puts around a query (<timestamp>…</timestamp> then
+// <user_query>…</user_query>), and turns Claude Code's slash-command tags
+// back into the command line (/review-pr 12). Other prompts are only trimmed.
 func cleanPrompt(text string) string {
 	text = cursorTimestamp.ReplaceAllString(strings.TrimSpace(text), "")
 	if strings.HasPrefix(text, "<user_query>") && strings.HasSuffix(text, "</user_query>") {
 		text = stripHarnessTag(text, "user_query")
+	}
+	if strings.HasPrefix(strings.TrimSpace(text), "<command-") {
+		if name := slashCommandName.FindStringSubmatch(text); name != nil {
+			command := strings.TrimSpace(name[1])
+			if args := slashCommandArgs.FindStringSubmatch(text); args != nil && strings.TrimSpace(args[1]) != "" {
+				command += " " + strings.TrimSpace(args[1])
+			}
+			return command
+		}
 	}
 	return strings.TrimSpace(text)
 }
@@ -373,69 +476,6 @@ func stripHarnessTag(text, tag string) string {
 	text = strings.TrimSpace(text)
 	text = strings.TrimPrefix(text, "<"+tag+">")
 	return strings.TrimSuffix(text, "</"+tag+">")
-}
-
-// rawToolItem finds the retained native object for one tool call inside its
-// record: the invocation block whose call_id or id matches, or, without an
-// id, the first invocation block. It is how a summary reaches a raw string
-// input (Codex custom tools) or a command that toolArguments cannot decode.
-func rawToolItem(record map[string]any, callID string) map[string]any {
-	var found map[string]any
-	var walk func(any)
-	walk = func(value any) {
-		if found != nil {
-			return
-		}
-		switch item := value.(type) {
-		case map[string]any:
-			kind := strings.ToLower(strings.TrimSpace(firstString(item, "type")))
-			if toolInvocationTypes[kind] || completedItemTypes[kind] {
-				if callID == "" || firstString(item, "call_id", "id") == callID {
-					found = item
-					return
-				}
-			}
-			for _, child := range item {
-				walk(child)
-			}
-		case []any:
-			for _, child := range item {
-				walk(child)
-			}
-		}
-	}
-	walk(record)
-	return found
-}
-
-// toolResultText returns the retained output of the result answering callID
-// inside one record, or of the first result when callID is empty.
-func toolResultText(record map[string]any, callID string) string {
-	text, found := "", false
-	var walk func(any)
-	walk = func(value any) {
-		if found {
-			return
-		}
-		switch item := value.(type) {
-		case map[string]any:
-			if toolResultTypes[strings.ToLower(strings.TrimSpace(firstString(item, "type")))] {
-				if callID == "" || firstString(item, "call_id", "tool_use_id") == callID {
-					text, found = toolResultOutput(item), true
-					return
-				}
-			}
-			for _, child := range item {
-				walk(child)
-			}
-		case []any:
-			for _, child := range item {
-				walk(child)
-			}
-		}
-	}
-	walk(record)
-	return text
 }
 
 func lineCount(text string) int {
@@ -675,17 +715,25 @@ func (s *fileSet) add(file string) {
 
 // planItems reads a plan-writing call: Claude's TodoWrite {todos: [{content,
 // status}]}, Codex's update_plan {plan: [{step, status}]}, and Cursor's
-// todo_write. It returns nil for any other call.
+// todo_write. It returns nil for any other call, and for a plan call whose
+// item list it cannot find.
 func planItems(name string, input map[string]any) []HandoffPlanItem {
 	if !planToolNames[strings.ToLower(name)] {
 		return nil
 	}
 	var list []any
+	found := false
 	for _, key := range []string{"todos", "plan", "items"} {
 		if value, ok := input[key].([]any); ok {
-			list = value
+			list, found = value, true
 			break
 		}
+	}
+	if !found {
+		// Arguments that did not decode, or a shape this reader does not
+		// know, say nothing about the plan; they must not erase an earlier
+		// one. An explicit empty list does clear it.
+		return nil
 	}
 	items := []HandoffPlanItem{}
 	for _, raw := range list {
@@ -704,12 +752,18 @@ func planItems(name string, input map[string]any) []HandoffPlanItem {
 
 // FitHandoff returns a copy of h trimmed until measure(copy) is at most
 // maxBytes, applying the budget steps in order and recording each in
-// Elisions. The protected tail — steps in the last handoffKeptExchanges
-// exchanges, but no more than the last handoffKeptSteps steps, so one long
-// autonomous exchange can still be trimmed — is never touched by the first
-// three steps. Prompts are only ever truncated, and LeftOff is never
-// trimmed. fits is false when the result is still over budget after every
-// step. maxBytes <= 0 means no budget.
+// Elisions. Each step is applied to the oldest exchanges first, and to no more
+// of them than needed. The protected tail — steps in the last
+// handoffKeptExchanges exchanges, but no more than the last handoffKeptSteps
+// steps, so one long autonomous exchange can still be trimmed — is never
+// touched by the first three steps. Prompts are only ever truncated, and
+// LeftOff is never trimmed. fits is false when the result is still over
+// budget after every step. maxBytes <= 0 means no budget.
+//
+// Each step's effect only grows with the number of exchanges it is applied
+// to, so the smallest sufficient prefix is found by binary search: a handful
+// of measurements per step rather than one per exchange, which matters when
+// measure renders a multi-megabyte session.
 func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bool) {
 	out := cloneHandoff(h)
 	if maxBytes <= 0 || measure(out) <= maxBytes {
@@ -724,45 +778,90 @@ func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bo
 		{HandoffElisionAssistantText, shortenAssistantText},
 	}
 	for _, step := range steps {
-		elision := HandoffElision{Kind: step.kind}
-		for i := 0; i < len(out.Exchanges) && measure(out) > maxBytes; i++ {
-			limit := protectedStart(out.Exchanges, handoffKeptExchanges, handoffKeptSteps)[i]
-			var n int
-			out.Exchanges[i].Steps, n = step.apply(out.Exchanges[i].Steps, limit)
-			if n > 0 {
-				if elision.First == 0 {
-					elision.First = i + 1
+		// Protection is computed once, before the step: a step only changes
+		// steps outside the protected tail, so the tail it computes stays
+		// the same while the step runs.
+		limits := protectedStart(out.Exchanges, handoffKeptExchanges, handoffKeptSteps)
+		apply := func(k int) (Handoff, HandoffElision) {
+			trial := cloneHandoff(out)
+			elision := HandoffElision{Kind: step.kind}
+			for i := 0; i < k; i++ {
+				var n int
+				trial.Exchanges[i].Steps, n = step.apply(trial.Exchanges[i].Steps, limits[i])
+				if n > 0 {
+					if elision.First == 0 {
+						elision.First = i + 1
+					}
+					elision.Last, elision.Count = i+1, elision.Count+n
 				}
-				elision.Last, elision.Count = i+1, elision.Count+n
 			}
+			return trial, elision
 		}
+		trial, elision, fits := smallestFittingPrefix(len(out.Exchanges), maxBytes, measure, apply)
+		out = trial
 		if elision.Count > 0 {
 			out.Elisions = append(out.Elisions, elision)
 		}
-		if measure(out) <= maxBytes {
+		if fits {
 			return out, true
 		}
 	}
 	// Prompts are truncated, never dropped, and every exchange is eligible.
-	elision := HandoffElision{Kind: HandoffElisionPromptText}
-	for i := range out.Exchanges {
-		if measure(out) <= maxBytes {
-			break
-		}
-		exchange := &out.Exchanges[i]
-		if len(exchange.Prompt) > handoffPromptCap {
-			exchange.Prompt = truncateUTF8(exchange.Prompt, handoffPromptCap)
-			exchange.PromptTruncated = true
-			if elision.First == 0 {
-				elision.First = i + 1
+	apply := func(k int) (Handoff, HandoffElision) {
+		trial := cloneHandoff(out)
+		elision := HandoffElision{Kind: HandoffElisionPromptText}
+		for i := 0; i < k; i++ {
+			exchange := &trial.Exchanges[i]
+			if len(exchange.Prompt) > handoffPromptCap {
+				exchange.Prompt = truncateUTF8(exchange.Prompt, handoffPromptCap)
+				exchange.PromptTruncated = true
+				if elision.First == 0 {
+					elision.First = i + 1
+				}
+				elision.Last, elision.Count = i+1, elision.Count+1
 			}
-			elision.Last, elision.Count = i+1, elision.Count+1
 		}
+		return trial, elision
 	}
+	trial, elision, fits := smallestFittingPrefix(len(out.Exchanges), maxBytes, measure, apply)
+	out = trial
 	if elision.Count > 0 {
 		out.Elisions = append(out.Elisions, elision)
 	}
-	return out, measure(out) <= maxBytes
+	return out, fits
+}
+
+// smallestFittingPrefix applies a step to the first k exchanges for the
+// smallest k whose result fits, or to all n when none does. apply(k) must not
+// modify its input and its result size must not grow with k. The returned
+// handoff does not yet carry the step's elision.
+func smallestFittingPrefix(n, maxBytes int, measure func(Handoff) int, apply func(k int) (Handoff, HandoffElision)) (Handoff, HandoffElision, bool) {
+	all, allElision := apply(n)
+	if measure(withElision(all, allElision)) > maxBytes {
+		return all, allElision, false
+	}
+	lo, hi := 1, n // the answer is in [lo, hi]; apply(hi) fits
+	best, bestElision := all, allElision
+	for lo < hi {
+		mid := (lo + hi) / 2
+		trial, elision := apply(mid)
+		if measure(withElision(trial, elision)) <= maxBytes {
+			hi, best, bestElision = mid, trial, elision
+		} else {
+			lo = mid + 1
+		}
+	}
+	return best, bestElision, true
+}
+
+// withElision is h as it will render once elision is recorded, so a
+// measurement includes the footer line that describes it.
+func withElision(h Handoff, elision HandoffElision) Handoff {
+	if elision.Count == 0 {
+		return h
+	}
+	h.Elisions = append(append([]HandoffElision(nil), h.Elisions...), elision)
+	return h
 }
 
 // protectedStart returns, for each exchange, the index of its first

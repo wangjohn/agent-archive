@@ -106,11 +106,20 @@ pick is visible:
 
 1. **Local registrations.** `collector.OpenLocalStoreReadOnly(home)` then
    `LoadRegistrations()`. Keep registrations whose `ProjectRoot` equals the
-   project directory or contains it (after `local.ResolveExistingSymlinks`),
-   match `--harness`, and exclude subagent registrations
-   (`ParentSessionID != ""`). Order by the transcript file's modification
-   time, falling back to `RegisteredAt`. This is what makes a same-machine
-   switch immediate.
+   project directory or contains it (compared with and without symlinks
+   resolved; a root inside the directory does not count, so running from ~
+   does not match every project), match `--harness`, and exclude subagent
+   registrations (`ParentSessionID != ""`). Order by the transcript file's
+   modification time, falling back to `RegisteredAt`, and take the first
+   that yields a bundle with a prompt: a session with no transcript yet, an
+   unreadable or oversized one, or one that has only just started is passed
+   over, never allowed to stop the search. This is what makes a
+   same-machine switch immediate.
+
+   Run inside an agent, the newest session is the one running the command.
+   `--latest` skips any session whose native ID the environment names:
+   `CLAUDE_CODE_SESSION_ID` (observed in Claude Code) and `CODEX_THREAD_ID`
+   (read if present, not yet observed). An explicit ID is always honored.
 2. **Archive.** If no local registration matches (another machine, or
    `--source archive`), list metadata with `reader.ListMetadataWithOptions`
    and keep sidecars whose `ProjectID == archive.ProjectID(projectRoot)`,
@@ -156,8 +165,20 @@ shared, so the two paths cannot render differently.
   last line.
 - **archive** — `reader.RefreshAndLoad` on the metadata key, exactly as
   `show --normalized` does, including its `ErrRefreshRequired` message.
-- **auto** — local when available, otherwise archive. The header records
-  which one was used.
+- **auto** — local when available, otherwise archive. Any local failure
+  (missing, unreadable, oversized, or unsafe transcript) falls back to the
+  archive's published copy; if that fails too, both reasons are reported.
+  The header records which one was used.
+
+A session ID is accepted only if it is made of the characters archive
+session IDs use (`archive.MetadataObjectKey` validates it), because it names
+local files and bucket keys.
+
+Session times come from the transcript's own timestamps, then published
+metadata (start and capture time), then what this machine knows (the
+registration's start, the transcript's modification time). The time the
+handoff is built is never used. A Cursor text transcript, which has role
+sections rather than records, is rendered from those sections.
 
 `--file PATH --harness NAME` is the local path without a registration: it
 filters an arbitrary native transcript. It exists so a same-machine switch
@@ -356,8 +377,8 @@ front, not what it can reach.
 
 ## Prerequisite parser and filter fixes (PR H1)
 
-Found by the probe; none are in C1's scope. Bumps to filter 5 / adapter
-0.5.0 / parser 0.8.0 after C1 lands.
+Found by the probe; none are in C1's or C4's scope. Bumps to filter 6 /
+adapter 0.6.0 / parser 0.9.0 (C4 took filter 5 / parser 0.8.0 first).
 
 1. **Codex list-shaped tool output.** `function_call_output.output` and
    `custom_tool_call_output.output` are lists of `{type: input_text, text}`
@@ -370,8 +391,10 @@ Found by the probe; none are in C1's scope. Bumps to filter 5 / adapter
    prompts carry `origin.kind: "human"`. On the probed session 12 of 20
    "prompts" were notifications. Allowlist `origin` (only its `kind`
    string) and `promptSource`, and classify a user record whose
-   `origin.kind` is present and not `human` as a new
-   `TurnKindHarnessNotification`, not a prompt. Filter-4 bundles lack the
+   `origin.kind` is a known harness kind (`task-notification`) as a new
+   `TurnKindHarnessNotification`, not a prompt. The list is an allowlist:
+   an origin kind not on it stays a prompt, so a kind a later version adds
+   can never silently drop something the person sent. Filter-5 and older bundles lack the
    field and keep today's behavior.
 3. **Codex injected context counted as the first prompt.** Codex prepends a
    user message holding `<recommended_plugins>…</recommended_plugins>`
@@ -439,7 +462,7 @@ Found by the probe; none are in C1's scope. Bumps to filter 5 / adapter
   sessions, marks this machine versus another, and contains no transcript
   text.
 - **H1**: fixtures for each of the three fixes, and parser-version gating
-  so filter-4 bundles classify as before.
+  so filter-5 and older bundles classify as before.
 - **Live check** (not CI): with the recipe in the local e2e notes, publish
   copies of one real transcript per harness to MinIO, run
   `handoff ID --source archive` and `handoff --file PATH`, and paste each

@@ -72,6 +72,17 @@ type Env struct {
 	// Defaults to credentials.NewKeychainStore, which is only available on
 	// a darwin+cgo build.
 	Keychain func() (credentials.CredentialStore, error)
+	// LookupEnv reads the process environment. `handoff --latest` uses it to
+	// recognize the agent session it is running inside. Defaults to
+	// os.LookupEnv.
+	LookupEnv func(string) (string, bool)
+}
+
+func (e Env) lookupEnv(key string) (string, bool) {
+	if e.LookupEnv != nil {
+		return e.LookupEnv(key)
+	}
+	return os.LookupEnv(key)
 }
 
 func (e Env) home() (string, error) {

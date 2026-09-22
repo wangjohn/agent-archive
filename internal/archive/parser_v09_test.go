@@ -9,7 +9,7 @@ import (
 // Claude Code writes a background task's completion as a user record whose
 // origin.kind is "task-notification". It is not a prompt; the person's own
 // prompt carries origin.kind "human" and still is one.
-func TestParserV08TaskNotificationIsNotAPrompt(t *testing.T) {
+func TestParserV09TaskNotificationIsNotAPrompt(t *testing.T) {
 	view, metadata := parsedFixture(t, "claude", "claude-task-notification.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	kinds := turnKinds(view)
@@ -18,9 +18,9 @@ func TestParserV08TaskNotificationIsNotAPrompt(t *testing.T) {
 	}
 }
 
-// Filter 5 keeps origin only as its kind string and promptSource only as a
+// Filter 6 keeps origin only as its kind string and promptSource only as a
 // string; every other origin member is omitted and reported by name.
-func TestFilterV5RetainsOnlyOriginKindAndPromptSource(t *testing.T) {
+func TestFilterV6RetainsOnlyOriginKindAndPromptSource(t *testing.T) {
 	filtered, err := ClaudeAdapter{}.FilterJSONL(bytes.NewReader(fixture(t, "claude-task-notification.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestFilterV5RetainsOnlyOriginKindAndPromptSource(t *testing.T) {
 }
 
 // A non-object origin, or one without a string kind, is omitted whole.
-func TestFilterV5DropsMalformedOrigin(t *testing.T) {
+func TestFilterV6DropsMalformedOrigin(t *testing.T) {
 	input := `{"type":"user","uuid":"u1","origin":"human","message":{"role":"user","content":"hi"}}
 {"type":"user","uuid":"u2","origin":{"kind":7},"promptSource":{"x":1},"message":{"role":"user","content":"hi"}}
 `
@@ -62,7 +62,7 @@ func TestFilterV5DropsMalformedOrigin(t *testing.T) {
 // Current Codex writes function and custom tool output as a list of
 // input_text blocks. Its size must be measured, not reported as zero, and
 // the injected <recommended_plugins> catalog must not become a prompt.
-func TestParserV08CodexListOutputAndInjectedPlugins(t *testing.T) {
+func TestParserV09CodexListOutputAndInjectedPlugins(t *testing.T) {
 	view, metadata := parsedFixture(t, "codex", "codex-list-output.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "tool calls", metadata.Counts.ToolCalls, 2)
@@ -76,5 +76,32 @@ func TestParserV08CodexListOutputAndInjectedPlugins(t *testing.T) {
 		if strings.Contains(turn.Text, "Airtable") || strings.Contains(turn.Text, "recommended_plugins") {
 			t.Fatalf("plugin catalog retained as %s: %q", turn.Kind, turn.Text)
 		}
+	}
+}
+
+// Only known harness origin kinds are reclassified. An origin kind this parser
+// has never seen — a queued or remote prompt in some later version — stays a
+// prompt rather than being silently dropped.
+func TestParserV09UnknownOriginKindStaysAPrompt(t *testing.T) {
+	input := `{"type":"user","uuid":"u1","timestamp":"2026-09-22T18:40:00Z","origin":{"kind":"queued-prompt"},"message":{"role":"user","content":"Also update the docs."}}
+{"type":"user","uuid":"u2","timestamp":"2026-09-22T18:41:00Z","origin":{"kind":"Task-Notification"},"message":{"role":"user","content":"<task-notification>done</task-notification>"}}
+`
+	filtered, err := ClaudeAdapter{}.FilterJSONL(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registration()
+	reg.Harness = Harness{Name: "claude"}
+	bundle, err := NewSourceBundle(reg, ClaudeAdapter{}, filtered, reg.SessionStartedAt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := ParseNormalized(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := turnKinds(view)
+	if kinds[0] != TurnKindHumanPrompt || kinds[1] != TurnKindHarnessNotification {
+		t.Fatalf("turn kinds = %#v", kinds)
 	}
 }

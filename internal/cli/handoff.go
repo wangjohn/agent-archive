@@ -43,7 +43,18 @@ type handoffTarget struct {
 	source   string
 	// describe is the stderr line naming a --latest choice.
 	describe string
+	// startedAt and lastActivityAt are what this machine knows about a local
+	// session (its registration, its transcript's modification time), used
+	// only where the transcript records no timestamps.
+	startedAt, lastActivityAt time.Time
 }
+
+// currentSessionEnv names environment variables an agent sets for the commands
+// it runs, holding its own native session ID. `--latest` skips that session:
+// run from inside an agent, the newest session is always the one asking.
+// CLAUDE_CODE_SESSION_ID is observed in Claude Code; CODEX_THREAD_ID is read
+// if present but has not been observed.
+var currentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
 
 // runHandoffCommand implements `agent-archive handoff`. It prints transcript
 // content, which the command itself is the explicit request for; every
@@ -119,6 +130,13 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if *file != "" && *source == "archive" {
 		return usageError("--file reads a local transcript; --source archive does not apply")
 	}
+	// The ID names local files and bucket keys; only the characters archive
+	// session IDs are made of are accepted, so it cannot reach outside them.
+	if sessionID != "" {
+		if _, err := archive.MetadataObjectKey("claude", sessionID); err != nil {
+			return usageError(fmt.Sprintf("%q is not an archive session ID (see `agent-archive list`)", sessionID))
+		}
+	}
 
 	home, err := env.readHome()
 	if err != nil {
@@ -139,7 +157,7 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			fmt.Fprintln(stdout, notSetUpMessage)
 			return 0
 		}
-		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source}
+		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source, skip: currentSessions(env)}
 		if *latest {
 			dir := *project
 			if dir == "" {
@@ -160,7 +178,7 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintf(stderr, "handoff: using %s\n", target.describe)
 	}
 
-	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source})
+	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt})
 	if err != nil {
 		fmt.Fprintf(stderr, "agent-archive: handoff: %v\n", err)
 		return 1
@@ -179,7 +197,13 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	h.FullRecordPath = fullPath
 	fitted, fits := archive.FitHandoff(h, *maxBytes, func(h archive.Handoff) int { return len(render(h)) })
 	if len(fitted.Elisions) > 0 {
-		if err := local.WriteBytes(fullPath, full); err != nil {
+		// The data directory exists once setup has run. `--file` works
+		// without setup, and must not create it just to hold a copy of a
+		// transcript nobody opted in to archiving.
+		if _, statErr := os.Stat(home); statErr != nil {
+			fmt.Fprintln(stderr, "agent-archive: handoff: note: output was trimmed and, without setup, the untrimmed version is not saved; use --max-bytes 0 for all of it")
+			fitted.FullRecordPath = ""
+		} else if err := local.WriteBytes(fullPath, full); err != nil {
 			fmt.Fprintf(stderr, "agent-archive: handoff: warning: could not save the untrimmed handoff: %v\n", err)
 			fitted.FullRecordPath = ""
 		}
@@ -245,7 +269,55 @@ func handoffFromFile(path, harness string, env Env) (handoffTarget, error) {
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	return handoffTarget{bundle: bundle, source: "file"}, nil
+	return handoffTarget{bundle: bundle, source: "file", lastActivityAt: info.ModTime()}, nil
+}
+
+// errNotRegisteredHere means a session ID has no registration on this machine,
+// which is expected for a session captured elsewhere and not worth reporting
+// beside an archive error.
+var errNotRegisteredHere = errors.New("no session registered on this machine")
+
+// currentSessions returns the native session IDs of the agent this command is
+// running inside, if it says.
+func currentSessions(env Env) map[string]bool {
+	ids := map[string]bool{}
+	for _, key := range currentSessionEnv {
+		if value, ok := env.lookupEnv(key); ok && strings.TrimSpace(value) != "" {
+			ids[strings.TrimSpace(value)] = true
+		}
+	}
+	return ids
+}
+
+// localTarget builds a handoff target from a registration's transcript.
+func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTarget, error) {
+	bundle, err := collector.ReadLocalBundle(r.home, reg, r.env.now().UTC())
+	if err != nil {
+		return handoffTarget{}, err
+	}
+	target := handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt}
+	if info, err := os.Stat(reg.TranscriptPath); err == nil {
+		target.lastActivityAt = info.ModTime()
+	}
+	return target, nil
+}
+
+// hasPrompt reports whether a bundle holds anything the person said, so
+// `--latest` passes over a session that has only just started.
+func hasPrompt(bundle archive.SourceBundle) bool {
+	if len(bundle.NativeText) > 0 {
+		return true
+	}
+	view, err := archive.ParseNormalized(bundle)
+	if err != nil {
+		return false
+	}
+	for _, turn := range view.Turns {
+		if turn.Kind == archive.TurnKindHumanPrompt {
+			return true
+		}
+	}
+	return false
 }
 
 type handoffResolver struct {
@@ -255,28 +327,44 @@ type handoffResolver struct {
 	cfg     config.Config
 	harness string
 	source  string
+	// skip holds native session IDs `--latest` must pass over: the agent
+	// session running the command.
+	skip map[string]bool
 }
 
 // byID resolves an explicit archive session ID: the local registration first
 // (fresh, and available while paused or offline), then the archive.
 func (r handoffResolver) byID(id string) (handoffTarget, error) {
+	// localErr is why the local transcript could not be used; with --source
+	// auto the archive's published copy is tried next, and both reasons are
+	// reported if it fails too.
+	var localErr error
 	if r.source != "archive" {
 		reg, found, err := collector.OpenLocalStoreReadOnly(r.home).LoadRegistration(id)
-		if err != nil {
-			return handoffTarget{}, err
-		}
-		if found && (r.harness == "" || reg.Harness.Name == r.harness) {
-			bundle, err := collector.ReadLocalBundle(r.home, reg, r.env.now().UTC())
+		switch {
+		case err != nil:
+			localErr = err
+		case found && (r.harness == "" || reg.Harness.Name == r.harness):
+			target, err := r.localTarget(reg)
 			if err == nil {
-				return handoffTarget{bundle: bundle, source: "local"}, nil
+				return target, nil
 			}
-			if r.source == "local" || !errors.Is(err, collector.ErrNoTranscript) {
-				return handoffTarget{}, err
-			}
-		} else if r.source == "local" {
-			return handoffTarget{}, fmt.Errorf("no session %q registered on this machine", id)
+			localErr = err
+		default:
+			localErr = fmt.Errorf("%w: %q", errNotRegisteredHere, id)
+		}
+		if r.source == "local" {
+			return handoffTarget{}, localErr
 		}
 	}
+	target, err := r.archiveByID(id)
+	if err != nil && localErr != nil && !errors.Is(localErr, errNotRegisteredHere) {
+		return handoffTarget{}, fmt.Errorf("local transcript: %v; archive: %w", localErr, err)
+	}
+	return target, err
+}
+
+func (r handoffResolver) archiveByID(id string) (handoffTarget, error) {
 	store, err := r.env.openStore(r.cfg)
 	if err != nil {
 		return handoffTarget{}, fmt.Errorf("open storage: %w", err)
@@ -316,7 +404,7 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 		}
 		var candidates []candidate
 		for _, reg := range regs {
-			if reg.ParentSessionID != "" || reg.SubagentID != "" || !sameProject(reg.ProjectRoot, dir) {
+			if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[reg.NativeSessionID] || !sameProject(reg.ProjectRoot, dir) {
 				continue
 			}
 			if r.harness != "" && reg.Harness.Name != r.harness {
@@ -329,19 +417,31 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 			candidates = append(candidates, candidate{reg, active})
 		}
 		sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].active.After(candidates[j].active) })
+		// A candidate that cannot be used — no transcript yet, an empty or
+		// oversized one, or one with no prompt because it has only just
+		// started — is passed over for the next, never allowed to stop the
+		// search.
+		var skipped []string
 		for _, c := range candidates {
-			bundle, err := collector.ReadLocalBundle(r.home, c.reg, now.UTC())
-			if errors.Is(err, collector.ErrNoTranscript) {
-				continue
+			target, err := r.localTarget(c.reg)
+			if err == nil && !hasPrompt(target.bundle) {
+				err = errors.New("no prompt yet")
 			}
 			if err != nil {
-				return handoffTarget{}, err
+				if !errors.Is(err, collector.ErrNoTranscript) {
+					skipped = append(skipped, fmt.Sprintf("%s (%v)", c.reg.ArchiveSessionID, err))
+				}
+				continue
 			}
-			describe := fmt.Sprintf("%s session %s, active %s (this machine)", c.reg.Harness.Name, c.reg.ArchiveSessionID, relativeAge(now, c.active))
-			return handoffTarget{bundle: bundle, source: "local", describe: describe}, nil
+			target.describe = fmt.Sprintf("%s session %s, active %s (this machine)", c.reg.Harness.Name, c.reg.ArchiveSessionID, relativeAge(now, c.active))
+			return target, nil
 		}
 		if r.source == "local" {
-			return handoffTarget{}, fmt.Errorf("no session for %s is registered on this machine with a readable transcript", dir)
+			message := fmt.Sprintf("no session for %s is registered on this machine with a readable transcript", dir)
+			if len(skipped) > 0 {
+				message += "; passed over: " + strings.Join(skipped, ", ")
+			}
+			return handoffTarget{}, errors.New(message)
 		}
 	}
 
@@ -357,7 +457,7 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].CapturedAt.After(sessions[j].CapturedAt) })
 	projectIDs := r.projectIDs(dir)
 	for _, m := range sessions {
-		if !projectIDs[m.ProjectID] {
+		if !projectIDs[m.ProjectID] || r.skip[m.NativeSessionID] || (m.Counts.Turns != nil && *m.Counts.Turns == 0) {
 			continue
 		}
 		key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
@@ -370,16 +470,18 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	return handoffTarget{}, r.noMatch(dir, sessions, now)
 }
 
-// sameProject reports whether a project root and a directory name the same
-// project: equal, or one inside the other, compared both as written and with
-// symlinks resolved (macOS's /var is /private/var).
+// sameProject reports whether dir belongs to the project at root: it is the
+// root or inside it, compared both as written and with symlinks resolved
+// (macOS's /var is /private/var). A root inside dir does not count, so
+// running from a parent directory such as ~ does not pick up every project
+// beneath it.
 func sameProject(root, dir string) bool {
 	if root == "" || dir == "" {
 		return false
 	}
 	for _, a := range pathForms(root) {
 		for _, b := range pathForms(dir) {
-			if a == b || strings.HasPrefix(b, a+string(filepath.Separator)) || strings.HasPrefix(a, b+string(filepath.Separator)) {
+			if a == b || strings.HasPrefix(b, strings.TrimSuffix(a, string(filepath.Separator))+string(filepath.Separator)) {
 				return true
 			}
 		}

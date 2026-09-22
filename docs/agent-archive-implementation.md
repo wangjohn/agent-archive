@@ -1110,8 +1110,9 @@ synthetic.
    and `promptSource: "system"`; typed prompts carry `origin.kind: "human"`.
    On the probed review session 12 of 20 counted prompts were notifications.
    Filter 6 retains `origin` as `{kind}` only and `promptSource` as a string;
-   the parser classifies a user record whose `origin.kind` is present and not
-   `human` as `harness_notification`, which is not counted as a turn and does
+   the parser classifies a user record whose `origin.kind` is a known harness
+   kind (`task-notification`; an allowlist, so an unfamiliar kind stays a
+   prompt) as `harness_notification`, which is not counted as a turn and does
    not end a slash command's scan for its reply. A record with no `origin`
    (every filter-5 or older bundle) is classified as before.
 2. **Codex plugin catalog is not a prompt.** `<recommended_plugins>` joins the
@@ -1134,7 +1135,7 @@ Fixtures: `claude-task-notification.jsonl` (a prompt, a reply, a notification
 whose `origin` carries an extra member, a reply), `codex-list-output.jsonl`
 (plugin catalog, environment context, a prompt, a function call and a custom
 tool call each with list output, a reply). Tests:
-`internal/archive/parser_v08_test.go`.
+`internal/archive/parser_v09_test.go`.
 
 ## PR H2/H3 — `agent-archive handoff`
 
@@ -1189,4 +1190,48 @@ out at 117 KB with 53 older tool outputs dropped and the 142 KB full version
 saved; the Codex and Cursor sessions (20 KB and 60 KB) needed no trimming.
 Not yet done: pasting a handoff into another agent and checking it states
 the task and next step, which the spec names as the acceptance criterion.
+
+Review fixes (15 findings from an extra-high-effort review, all on the
+branch):
+
+1. `--latest` skips the agent session running the command, named by
+   `CLAUDE_CODE_SESSION_ID` (observed) or `CODEX_THREAD_ID` (not yet
+   observed), locally and in the archive. `Env.LookupEnv` makes it testable.
+2. `--latest` passes over any local candidate it cannot use (no transcript,
+   empty, oversized, unsafe, or no prompt yet) instead of failing on it, and
+   skips archived sessions with zero turns.
+3. A Cursor text transcript (`native_text` only) renders from its
+   `user:`/`assistant:`/`tool:` sections instead of an empty document.
+4. Harness origin kinds are an allowlist (`task-notification`); any other
+   `origin.kind` stays a prompt.
+5. A session ID must pass `archive.MetadataObjectKey`'s safe-component check
+   before it names local files, so `../` cannot reach outside the data
+   directory.
+6. Tool calls and results are paired from the single `toolActivity` walk:
+   `NormalizedToolCall` carries its raw item and linked result text in
+   unexported fields, so several unidentified calls in one record each get
+   their own input and output.
+7. The workspace root is the first recorded cwd (where the session started),
+   not the last, which followed any `cd` into a subdirectory.
+8. With `--source auto`, any local failure falls back to the archive, and
+   both reasons are reported if that fails too.
+9. A plan call whose item list cannot be found no longer erases the earlier
+   plan; an explicit empty list still clears it.
+10. Session times never come from the moment the handoff was built: the
+    fallbacks are published metadata, then the registration's start and the
+    transcript's modification time.
+11. `--latest` matches a project whose root is the directory or contains it,
+    no longer one inside it, so running from ~ does not match every project.
+12. `FitHandoff` finds the smallest prefix of exchanges each step must cover
+    by binary search, a handful of measurements per step instead of one per
+    exchange (512 exchanges: at most 49 renders).
+13. A slash-command prompt renders as the command line (`/review-pr 12`),
+    not Claude Code's `<command-name>` tags.
+14. `rawToolItem` and `toolResultText`, which re-walked records the parser
+    had already walked, are removed (see 6).
+15. Without setup, `--file` never creates the data directory; a trimmed
+    handoff there says the full version was not saved.
+
+Each has a test in `internal/archive/handoff_test.go`,
+`internal/archive/parser_v09_test.go`, or `internal/cli/handoff_test.go`.
 
