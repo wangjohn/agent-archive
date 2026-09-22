@@ -179,8 +179,18 @@ func runOnePass(env Env, quietOnBusy bool) (collector.Result, error) {
 	}
 
 	sweepResult, sweepErr := retention.Sweep(context.Background(), localStore, objectStore, retention.Options{
-		Now:           env.Now,
-		AcceptSession: cfg.AcceptSession,
+		Now: env.Now,
+		// Retention sweeps every session this machine registered, including
+		// ones cfg.AcceptSession no longer admits for publication: an excluded
+		// project's already-published sessions still own objects in this
+		// bucket and must age out of it. Only a session that predates the
+		// current destination published somewhere else, and for those the
+		// sweep prunes local state without touching this bucket.
+		CurrentDestination: func(reg archive.SessionRegistration) bool {
+			return cfg.DestinationSince.IsZero() || !reg.SessionStartedAt.Before(cfg.DestinationSince)
+		},
+		// Outstanding work defers expiry only when the collector will do it.
+		Publishable:   cfg.AcceptSession,
 		SessionMaxAge: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
 	})
 	if sweepErr != nil {
