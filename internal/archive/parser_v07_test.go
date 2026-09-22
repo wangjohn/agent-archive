@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -256,4 +257,99 @@ func mustJSON(t *testing.T, value any) []byte {
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+// Only a CommandExecution whose source is exactly unified_exec_startup is the
+// startup shell. Another completed item type, or another source, is a tool
+// call the model made.
+func TestParserV07StartupShellExclusionIsExact(t *testing.T) {
+	for _, item := range []map[string]any{
+		{"type": "McpToolCall", "source": "unified_exec_startup", "id": "x"},
+		{"type": "CommandExecution", "source": "UNIFIED_EXEC_STARTUP", "id": "x"},
+		{"type": "CommandExecution", "source": "model", "id": "x"},
+		{"type": "CommandExecution", "id": "x"},
+	} {
+		if isCodexStartupShell(item) {
+			t.Errorf("excluded as the startup shell: %#v", item)
+		}
+	}
+	if !isCodexStartupShell(map[string]any{"type": "CommandExecution", "source": "unified_exec_startup", "id": "x"}) {
+		t.Error("the startup shell was not recognized")
+	}
+}
+
+// A harness tag is recognized by prefix after leading whitespace, in string
+// content or a text block alike; a prompt that merely mentions a tag is still
+// a prompt.
+func TestParserV07HarnessTagsAreRecognizedByPrefixOnly(t *testing.T) {
+	now := time.Date(2026, 9, 22, 16, 0, 0, 0, time.UTC)
+	user := func(content any) map[string]any {
+		return map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}}
+	}
+	bundle := SourceBundle{
+		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: adapterVersion, SourceFormat: "claude-jsonl", FilterVersion: FilterVersion, CapturedAt: now},
+		NativeRecords: []map[string]any{
+			user("  \n<bash-input>ls</bash-input>"),
+			user([]any{map[string]any{"type": "text", "text": "\t<local-command-stdout>x</local-command-stdout>"}}),
+			user("Why does <bash-input> appear in my transcript?"),
+			user("Please explain the <command-name> tag"),
+		},
+	}
+	view, err := ParseNormalized(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := turnKinds(view)
+	want := map[int]TurnKind{0: TurnKindShellCommand, 1: TurnKindCommandOutput, 2: TurnKindHumanPrompt, 3: TurnKindHumanPrompt}
+	for index, kind := range want {
+		if kinds[index] != kind {
+			t.Errorf("record %d kind = %q, want %q", index, kinds[index], kind)
+		}
+	}
+}
+
+// Filtering, bundling, and deriving metadata for each new fixture is
+// deterministic: repeated scans produce byte-identical compressed bundles and
+// metadata.
+func TestParserV07FixturesScanDeterministically(t *testing.T) {
+	now := time.Date(2026, 9, 22, 18, 0, 0, 0, time.UTC)
+	for _, name := range []string{"claude-local-command.jsonl", "claude-shell-command.jsonl", "claude-skill-command.jsonl", "claude-streamed-response.jsonl", "codex-startup-shell.jsonl"} {
+		harness := "claude"
+		var adapter Adapter = ClaudeAdapter{}
+		if strings.HasPrefix(name, "codex") {
+			harness, adapter = "codex", CodexAdapter{}
+		}
+		var bundles, metadatas [][]byte
+		for i := 0; i < 3; i++ {
+			filtered, err := adapter.FilterJSONL(bytes.NewReader(fixture(t, name)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reg := registration()
+			reg.Harness = Harness{Name: harness}
+			bundle, err := NewSourceBundle(reg, adapter, filtered, now, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			compressed, err := BuildCompressedSource(bundle)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reference := SourceReference{Key: "sessions/" + harness + "/a/source." + compressed.SHA256 + ".json.gz", SHA256: compressed.SHA256}
+			metadata, err := BuildMetadata(bundle, "m", now, now, reference, ParserInfo{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			bundles, metadatas = append(bundles, compressed.Bytes), append(metadatas, mustJSON(t, metadata))
+		}
+		for i := 1; i < len(bundles); i++ {
+			if !bytes.Equal(bundles[0], bundles[i]) {
+				t.Errorf("%s: compressed bundle differs between scans", name)
+			}
+			if !bytes.Equal(metadatas[0], metadatas[i]) {
+				t.Errorf("%s: metadata differs between scans", name)
+			}
+		}
+	}
 }

@@ -8,15 +8,18 @@ command, the caveat it adds before local-command output — with
 `isMeta: true`. Their text is instruction text the harness injected, the same
 kind as a `<system-reminder>` block, not something the person wrote.
 
-- **Retained:** the `isMeta` flag, and the record itself with its ids
-  (`uuid`, `parentUuid`, `sessionId`, and the rest of the ordinary allowlist),
-  so parent chains through the record survive and a parser can tell the record
-  is not a human prompt.
-- **Stripped:** the record's string content and every text block in it,
-  before any other filtering, with a `hidden_instruction_omitted` gap whose
-  detail is `meta record text omitted`. A non-text block (for example a tool
-  result) is left to the ordinary rules. A record whose `isMeta` is absent or
-  false is untouched.
+- **Retained:** the `isMeta` flag, only as a boolean (a string or object
+  under that key is prose the allowlist never kept and is still omitted), and
+  the record itself with its ids (`uuid`, `parentUuid`, `sessionId`, and the
+  rest of the ordinary allowlist), so parent chains through the record
+  survive and a parser can tell the record is not a human prompt.
+- **Stripped:** the record's string content and every text block in it, at
+  every depth, before any other filtering, with a `hidden_instruction_omitted`
+  gap whose detail is `meta record text omitted`. A non-text block (for
+  example a tool result) keeps its shape and identifiers (`tool_use_id`,
+  `is_error`) but loses its own `text` and its nested content text, and is
+  then left to the ordinary rules. A record whose `isMeta` is absent or false
+  is untouched.
 
 The typed slash command itself (`<command-name>/review-pr</command-name>`) and
 local-command output (`<local-command-stdout>`) are not `isMeta` and are kept

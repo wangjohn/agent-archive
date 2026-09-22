@@ -706,11 +706,29 @@ edge cases, records without ids, and the filter-3 regeneration test).
 `TestFilterVersionIsDeclaredInCaptureProvenance` now checks the build's own
 versions instead of filter 3's literals.
 
+Review fixes (on the branch, before merge): the `isMeta` allowlist entry
+admits only a boolean, so a string or object under that key stays omitted
+wherever the ordinary allowlist applies (tool-argument subtrees were already
+retained whole under filter 3 and are unchanged); an `isMeta` record's text is
+stripped at every depth, so a tool result or unknown block inside it keeps its
+identifiers but loses its own `text` and nested content text; and the Codex
+startup exclusion matches only a `CommandExecution` whose `source` is exactly
+`unified_exec_startup`, never another completed item type or a
+case-variant source. Tests: `TestFilterV4RetainsIsMetaOnlyAsABoolean`,
+`TestFilterV4StripsNestedTextInMetaRecords`,
+`TestParserV07StartupShellExclusionIsExact`,
+`TestParserV07HarnessTagsAreRecognizedByPrefixOnly` (leading whitespace,
+text blocks, and prompts that merely mention a tag), and
+`TestParserV07FixturesScanDeterministically` (three scans of each new fixture
+give byte-identical compressed bundles and metadata).
+
 Left open: tag recognition is by prefix of the record's text, so a person
 whose prompt literally begins with one of these tags would not be counted; the
 tags are harness-reserved and the probe found them only in harness records.
 Codex and Cursor report `user_shell_commands: 0`, since neither writes these
-shapes.
+shapes. A Claude Code compaction summary (`isCompactSummary: true`, no
+`isMeta`) is still a user record with text and so still counts as a prompt;
+retaining that flag would be a further filter change and is not part of C1.
 
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.

@@ -277,10 +277,13 @@ func nestedMessageID(record map[string]any) string {
 	return ""
 }
 
-// isCodexStartupShell reports whether a completed CommandExecution is Codex
-// starting its own shell for the session rather than a command the model ran.
+// isCodexStartupShell reports whether a completed item is Codex starting its
+// own shell for the session rather than a command the model ran. Only a
+// CommandExecution whose source is exactly "unified_exec_startup" qualifies;
+// any other completed item, and a CommandExecution from any other source,
+// is still a tool call.
 func isCodexStartupShell(item map[string]any) bool {
-	return strings.EqualFold(strings.TrimSpace(firstString(item, "source")), "unified_exec_startup")
+	return strings.EqualFold(strings.TrimSpace(firstString(item, "type")), "commandexecution") && firstString(item, "source") == "unified_exec_startup"
 }
 
 // dedupeToolCalls drops the completion echo a harness writes for a call it

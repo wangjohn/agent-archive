@@ -85,3 +85,61 @@ func TestFilterV4MetaStrippingKeepsNonTextBlocks(t *testing.T) {
 		t.Fatalf("non-meta record changed: %#v", records[1])
 	}
 }
+
+// The isMeta allowlist entry admits only the boolean flag. A string or object
+// under that key is prose filter 3 never retained, and filter 4 must not start
+// retaining it anywhere the ordinary allowlist applies.
+func TestFilterV4RetainsIsMetaOnlyAsABoolean(t *testing.T) {
+	input := `{"type":"user","uuid":"m1","timestamp":"2026-09-22T10:00:00Z","isMeta":"prose under the flag name","message":{"role":"user","content":"hi","isMeta":{"note":"nested prose under the flag name"}}}` + "\n" +
+		`{"type":"user","uuid":"m2","timestamp":"2026-09-22T10:00:01Z","isMeta":true,"message":{"role":"user","content":"expanded"}}`
+	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := string(bytes.Join(filtered.Records, []byte("\n")))
+	if strings.Contains(joined, "prose under the flag name") {
+		t.Fatalf("a non-boolean isMeta was retained: %s", joined)
+	}
+	records := decodeRecords(t, filtered)
+	if _, kept := records[0]["isMeta"]; kept {
+		t.Fatalf("string isMeta kept: %#v", records[0])
+	}
+	if _, kept := child(t, records[0], "message")["isMeta"]; kept {
+		t.Fatalf("object isMeta kept: %#v", records[0])
+	}
+	if records[1]["isMeta"] != true {
+		t.Fatalf("boolean isMeta lost: %#v", records[1])
+	}
+}
+
+// Text is stripped from an isMeta record at every depth: a tool result inside
+// it keeps its identifiers but loses its nested content text, and a block of
+// an unknown type loses its own text.
+func TestFilterV4StripsNestedTextInMetaRecords(t *testing.T) {
+	input := `{"type":"user","uuid":"m1","timestamp":"2026-09-22T10:00:00Z","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"expanded instructions"},{"type":"tool_result","tool_use_id":"toolu_1","is_error":false,"content":[{"type":"text","text":"nested tool text"},{"type":"text","text":"more nested text"}]},{"type":"tool_result","tool_use_id":"toolu_2","content":"string tool text"},{"type":"other","text":"loose text","name":"kept"}]}}`
+	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := string(bytes.Join(filtered.Records, []byte("\n")))
+	for _, text := range []string{"expanded instructions", "nested tool text", "more nested text", "string tool text", "loose text"} {
+		if strings.Contains(joined, text) {
+			t.Fatalf("meta record text %q survived: %s", text, joined)
+		}
+	}
+	records := decodeRecords(t, filtered)
+	blocks, _ := child(t, records[0], "message")["content"].([]any)
+	if len(blocks) != 3 {
+		t.Fatalf("meta record blocks = %#v", blocks)
+	}
+	first := blocks[0].(map[string]any)
+	if first["type"] != "tool_result" || first["tool_use_id"] != "toolu_1" || first["is_error"] != false {
+		t.Fatalf("tool result lost its identifiers: %#v", first)
+	}
+	if _, kept := first["content"]; kept {
+		t.Fatalf("tool result kept nested content: %#v", first)
+	}
+	if third := blocks[2].(map[string]any); third["name"] != "kept" {
+		t.Fatalf("non-text field of an unknown block lost: %#v", third)
+	}
+}

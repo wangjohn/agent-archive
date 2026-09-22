@@ -534,8 +534,11 @@ func isMetaRecord(record map[string]any) bool {
 // instruction text, like a <system-reminder> block, not something a person
 // wrote. The record itself, its ids, its parent link, and the isMeta flag are
 // kept so the conversation's parent chain survives; string content and text
-// blocks are removed, and any other block is left to the ordinary rules. A
-// message left with nothing but its role still keeps the record.
+// blocks are removed at every depth of the content. Any other block keeps its
+// shape and identifiers (a tool result keeps its tool_use_id and is_error),
+// loses its own text and nested content text, and is then left to the
+// ordinary rules. A message left with nothing but its role still keeps the
+// record.
 func stripMetaRecordText(record map[string]any) bool {
 	if !isMetaRecord(record) {
 		return false
@@ -553,7 +556,10 @@ func stripMetaRecordText(record map[string]any) bool {
 }
 
 // stripContentText removes string content and text blocks from one object's
-// "content", dropping the key when nothing is left.
+// "content", dropping the key when nothing is left. A block that survives
+// (a tool result, for instance) is stripped the same way: its own "text" and
+// its nested "content" text go too, so no text of the harness-written record
+// remains at any depth.
 func stripContentText(holder map[string]any) bool {
 	content, present := holder["content"]
 	if !present {
@@ -563,6 +569,8 @@ func stripContentText(holder map[string]any) bool {
 	case string:
 		delete(holder, "content")
 		return true
+	case map[string]any:
+		return stripBlockText(value)
 	case []any:
 		kept := make([]any, 0, len(value))
 		stripped := false
@@ -574,6 +582,9 @@ func stripContentText(holder map[string]any) bool {
 				if textBlockTypes[strings.ToLower(strings.TrimSpace(firstString(block, "type")))] {
 					stripped = true
 					continue
+				}
+				if stripBlockText(block) {
+					stripped = true
 				}
 				kept = append(kept, block)
 			default:
@@ -588,6 +599,20 @@ func stripContentText(holder map[string]any) bool {
 		return stripped
 	}
 	return false
+}
+
+// stripBlockText removes a non-text block's own "text" string and the text
+// of its nested "content", recursively.
+func stripBlockText(block map[string]any) bool {
+	stripped := false
+	if _, isText := block["text"].(string); isText {
+		delete(block, "text")
+		stripped = true
+	}
+	if stripContentText(block) {
+		stripped = true
+	}
+	return stripped
 }
 
 func appendUniqueString(values []string, candidate string) []string {
@@ -722,6 +747,14 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 		case !allowedKeys[lower] && !state.extraAllowed[lower]:
 			state.omitField(key)
 			continue
+		case lower == "ismeta":
+			// Filter 4 admits isMeta only as the boolean flag Claude Code
+			// writes. Any other value under that name is prose the allowlist
+			// never retained, and stays omitted.
+			if _, isFlag := value.(bool); !isFlag {
+				state.omitField(key)
+				continue
+			}
 		}
 		retainAll, numericOnly, toolName := state.retainAllKeys, state.numericOnly, state.toolName
 		switch {
