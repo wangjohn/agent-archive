@@ -774,3 +774,79 @@ func TestSetupInProgressLeavesNoDiagnosticForUnconfiguredPaths(t *testing.T) {
 		t.Fatalf("diagnostics=%#v", ds)
 	}
 }
+
+// A continuation of a worktree session reports the worktree directory again.
+// It must match the registration made under the configured root, keep the
+// original start time, and leave no diagnostic. The project is configured
+// under a symlinked spelling while the hook reports the resolved one, so the
+// match has to go through resolved paths on both sides.
+func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
+	home, real := t.TempDir(), t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	setUpTestConfig(t, home, alias, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	worktree := filepath.Join(real, ".claude", "worktrees", "feature-a")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	transcript := filepath.Join(t.TempDir(), "not-created-yet.jsonl")
+	start := map[string]any{
+		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+		"cwd": worktree, "transcript_path": transcript,
+	}
+	if err := handleHookEvent(home, "claude", start, started); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].ProjectRoot != alias || regs[0].ProjectID != archive.ProjectID(alias) {
+		t.Fatalf("a worktree start under a symlinked project did not register under the configured spelling: %#v", regs)
+	}
+	for _, source := range []string{"resume", "compact"} {
+		continuation := map[string]any{
+			"hook_event_name": "SessionStart", "source": source, "session_id": "native-1",
+			"cwd": worktree, "transcript_path": transcript,
+		}
+		if err := handleHookEvent(home, "claude", continuation, started.Add(time.Hour)); err != nil {
+			t.Fatalf("%s from the worktree conflicted with its own registration: %v", source, err)
+		}
+	}
+	regs, _ = store.LoadRegistrations()
+	if len(regs) != 1 || !regs[0].SessionStartedAt.Equal(started) || regs[0].ProjectRoot != alias {
+		t.Fatalf("continuations changed the registration: %#v", regs)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+		t.Fatalf("continuations left a diagnostic: %#v", ds)
+	}
+}
+
+// A relative transcript path would be resolved against the hook process's
+// working directory, where it never exists, so "not found" would pass as
+// proof. Only an absolute path can carry the proof.
+func TestRelativeTranscriptPathProvesNothing(t *testing.T) {
+	for _, path := range []string{"transcript.jsonl", "~/transcript.jsonl", filepath.Join("sessions", "transcript.jsonl")} {
+		if emptyTranscriptProvesFreshStart(map[string]any{"transcript_path": path}) {
+			t.Fatalf("%q was accepted as proof of a fresh start", path)
+		}
+	}
+	home, project := t.TempDir(), t.TempDir()
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	payload := map[string]any{
+		"hook_event_name": "sessionStart", "conversation_id": "conv-1",
+		"workspace_roots": []any{project}, "transcript_path": "not-created-yet.jsonl",
+	}
+	if err := handleHookEvent(home, "cursor", payload, now); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
+		t.Fatalf("a relative transcript path registered a session: %#v", regs)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart {
+		t.Fatalf("diagnostics=%#v", ds)
+	}
+}

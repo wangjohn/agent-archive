@@ -394,9 +394,14 @@ func provesFreshSessionStart(harness string, payload map[string]any) bool {
 // that holds no conversation yet. Only "the file does not exist" and "the file
 // is empty" are proof; a permission error, a directory, or anything else the
 // hook cannot read leaves the start unproven. The transcript is never opened.
+//
+// Only an absolute path can be checked: a relative one would be resolved
+// against the hook process's own working directory, where the transcript is
+// never found, and "not found" would then pass as proof of a start that never
+// happened. Harnesses document absolute transcript paths.
 func emptyTranscriptProvesFreshStart(payload map[string]any) bool {
 	path := firstNonEmptyString(payload, "transcript_path")
-	if path == "" {
+	if path == "" || !filepath.IsAbs(path) {
 		return false
 	}
 	info, err := os.Stat(path)
