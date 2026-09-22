@@ -225,6 +225,10 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 			next.Archive.Projects[i].ActivatedAt = env.now().UTC()
 		}
 	}
+	// Record the exact path the hooks and LaunchAgent are about to run, so
+	// status checks them against it rather than against whatever path status
+	// was later started through. It is written with the same transaction.
+	next.InstalledExecutable = executable
 	changes, err := hooks.Plan(userHome, executable, next.Harnesses)
 	if err != nil {
 		return err
