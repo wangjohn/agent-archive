@@ -100,8 +100,12 @@ func TestStatusChecksHooksAgainstTheInstalledExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.InstalledExecutable != "/opt/agent-archive/bin/agent-archive" {
-		t.Fatalf("setup recorded executable %q", cfg.InstalledExecutable)
+	installed, err := env.executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.InstalledExecutable != installed {
+		t.Fatalf("setup recorded executable %q, want %q", cfg.InstalledExecutable, installed)
 	}
 
 	// status run through a different path (a shim, a symlink, a copy).
@@ -135,7 +139,7 @@ func TestStatusChecksHooksAgainstTheInstalledExecutable(t *testing.T) {
 			t.Fatalf("fallback: %s hooks = %q", app, state)
 		}
 	}
-	env.Executable = func() (string, error) { return "/opt/agent-archive/bin/agent-archive", nil }
+	env.Executable = func() (string, error) { return installed, nil }
 	for app, state := range hooksByApp() {
 		if state != "installed" {
 			t.Fatalf("fallback with the installed path: %s hooks = %q", app, state)

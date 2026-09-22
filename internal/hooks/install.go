@@ -1,10 +1,12 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -186,6 +188,64 @@ func LaunchAgent(executable, dataHome string) ([]byte, error) {
 <key>StandardErrorPath</key><string>%s</string>
 </dict></plist>
 `, LaunchLabel, escape(executable), escape(dataHome), escape(filepath.Join(dataHome, "collector.log")), escape(filepath.Join(dataHome, "collector-error.log")))), nil
+}
+
+// LaunchAgentProgram returns the executable a LaunchAgent plist runs: the
+// first ProgramArguments string. It reads any well-formed plist, not only one
+// LaunchAgent wrote, and reports an error when there is no program to read.
+func LaunchAgentProgram(plist []byte) (string, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(plist))
+	decoder.Strict = false
+	var (
+		lastKey      string
+		inArguments  bool
+		readingKey   bool
+		readingValue bool
+		text         strings.Builder
+	)
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return "", errors.New("LaunchAgent has no ProgramArguments")
+		}
+		if err != nil {
+			return "", fmt.Errorf("read LaunchAgent: %w", err)
+		}
+		switch t := token.(type) {
+		case xml.StartElement:
+			switch t.Name.Local {
+			case "key":
+				readingKey = true
+				text.Reset()
+			case "array":
+				inArguments = lastKey == "ProgramArguments"
+			case "string":
+				readingValue = inArguments
+				text.Reset()
+			}
+		case xml.CharData:
+			if readingKey || readingValue {
+				text.Write(t)
+			}
+		case xml.EndElement:
+			switch t.Name.Local {
+			case "key":
+				readingKey = false
+				lastKey = strings.TrimSpace(text.String())
+			case "string":
+				if readingValue {
+					if program := strings.TrimSpace(text.String()); program != "" {
+						return program, nil
+					}
+					return "", errors.New("LaunchAgent program is empty")
+				}
+			case "array":
+				if inArguments {
+					return "", errors.New("LaunchAgent ProgramArguments is empty")
+				}
+			}
+		}
+	}
 }
 
 // Installed checks the complete expected configuration without changing it.
