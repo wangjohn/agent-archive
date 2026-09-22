@@ -1,3 +1,61 @@
+# Privacy
+
+## Source filter version 3
+
+The source filter decides what leaves this machine. Filter 3 keeps the tool
+evidence a reader needs and removes instruction text the harness injected into
+a message. It does not relax any value rule: `blockedKeys`, `sensitiveValue`
+redaction, the 64 KB string cap, the hidden role/channel rules, and the
+exclusion of `encrypted_content`, `base_instructions`, `state`,
+`thread_settings`, `rate_limits`, and `attachment` all still apply inside every
+newly retained subtree.
+
+Retained, in addition to filter 2:
+
+- **Tool arguments.** Inside a tool-argument subtree — `input`, `arguments`,
+  `tool_input`, and Codex's `payload.input` — every argument name is retained,
+  because the names belong to the tool and no allowlist can anticipate them.
+  This is what restores Edit `old_string`/`new_string`, Agent `prompt`, Skill
+  `args`, Grep `pattern`, Bash `timeout`, and MCP tool arguments. Values are
+  sanitized exactly as before, so a credential inside an Edit body is still
+  redacted and an oversized argument is still capped.
+- **Tool-result linkage and turn identity.** `tool_use_id`, `is_error`,
+  `stop_reason`, `sessionId`, `requestId`, and `gitBranch`.
+- **Token accounting, numbers only.** `usage` (Claude) and Codex's `info`,
+  `total_token_usage`, `last_token_usage`, `turn_token_usage`,
+  `thread_token_usage`, `last_agent_message`, `thread_id`, `root_turn_id`,
+  `started_at_ms`, and `completed_at_ms`. Inside the four `*_token_usage`
+  subtrees and `usage`, anything that is not a number is omitted.
+- **Record types.** Codex `token_usage_record` and Cursor `turn_ended`.
+
+`toolUseResult` is deliberately not retained: it duplicates the tool result
+already kept in the message content.
+
+Stripped:
+
+- **Injected instruction blocks.** Claude Code wraps CLAUDE.md, hook output,
+  and memory in `<system-reminder>…</system-reminder>` inside user content, and
+  Codex writes AGENTS.md inside `<user_instructions>…</user_instructions>` and
+  machine details inside `<environment_context>…</environment_context>`. Those
+  blocks are removed from string content wherever they appear and a
+  `hidden_instruction_omitted` gap is recorded; the rest of the message is
+  kept. An opening tag whose block never closed drops everything after it.
+  Untagged instruction text is not guessed at.
+
+Omissions are now visible. A filtered transcript records one
+`unknown_field_omitted` gap whose detail lists the distinct key names the
+filter could not keep — names only, never values — sorted and capped at 64,
+with a note when more were seen.
+
+Skill snapshots embedded in supplemental evidence keep their inventory entry
+(name, sha256 of the whole original file, scope) but the archived body is
+capped at 16 KB, with `original_bytes` recording the real size and `truncated`
+marking the cut. Moving bodies to content-addressed objects is deferred.
+
+Redaction is best effort in both directions: a legitimate value that looks like
+a credential is redacted, and a tool argument that happens to contain one of
+the instruction tags above loses that span. Both are recorded as gaps.
+
 # Bucket privacy evidence
 
 Setup tests object access and inspects native bucket public-access controls separately. Successful uploads do not prove a bucket is private. Inspection uses existing credentials, is read-only, and has a five-second total deadline. Failure or missing inspection permission does not require administrator credentials.
