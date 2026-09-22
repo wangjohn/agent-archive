@@ -195,7 +195,8 @@ func checkRemovableHome(home, userHome string) error {
 // localStateEntries is every top-level entry agent-archive creates under its
 // data directory: internal/config's config.json, collector.LocalStore's
 // per-session directories, the lineage ledger, local.Lock's lock file, the
-// collector status file, and the LaunchAgent's log files. Keep it in sync
+// collector status file, the LaunchAgent's log files, and `list`'s disposable
+// metadata cache (reader.OpenMetadataCache). Keep it in sync
 // with those packages; an entry missing here is left behind by uninstall
 // (and reported), never silently deleted.
 var localStateEntries = []string{
@@ -203,6 +204,7 @@ var localStateEntries = []string{
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "superseded", "pending-scans", "subagent-candidates",
 	"status.json", "storage-health.json", "capture-diagnostics.json", "application-versions.json",
 	"collector.lock", "collector.log", "collector-error.log",
+	"cache",
 }
 
 // removeLocalState deletes agent-archive's own entries under home (see

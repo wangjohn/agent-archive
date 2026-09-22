@@ -17,6 +17,7 @@ type MemoryStore struct {
 
 type memoryObject struct {
 	data []byte
+	etag string
 	when time.Time
 }
 
@@ -31,7 +32,11 @@ func (s *MemoryStore) Put(ctx context.Context, key string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copyData := append([]byte(nil), data...)
-	s.objects[key] = memoryObject{data: copyData, when: time.Now().UTC()}
+	// The ETag is the MD5 of the bytes, exactly what S3, R2 and MinIO report
+	// for a single-part upload: it changes when the bytes change, and a
+	// reader can check downloaded bytes against it, which the metadata cache
+	// relies on.
+	s.objects[key] = memoryObject{data: copyData, etag: md5Hex(copyData), when: time.Now().UTC()}
 	return nil
 }
 
@@ -64,7 +69,7 @@ func (s *MemoryStore) List(ctx context.Context, prefix string) ([]Object, error)
 	objects := make([]Object, 0, len(keys))
 	for _, key := range keys {
 		obj := s.objects[key]
-		objects = append(objects, Object{Key: key, Size: int64(len(obj.data)), LastModified: obj.when})
+		objects = append(objects, Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
 	}
 	return objects, nil
 }
