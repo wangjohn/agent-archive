@@ -36,12 +36,17 @@ Agent Archive therefore registers a never-seen Cursor conversation at its first
 transcript that already has bytes is a resume and is declined with a capture
 diagnostic. The transcript path is recorded later, from `beforeSubmitPrompt`,
 `afterAgentResponse`, or `stop`, only when it is absolute and named
-`<conversation_id>.jsonl`, and it is never replaced once set; until then the
-collector treats the chat as waiting, not failed. `cursor_version` is not
-evidence either way. For a Codex or Claude `SessionStart` with no `source`, an
-empty or absent transcript file is still the fallback proof, and a payload that
-names no transcript still proves nothing. Support stays `unverified` until a
-session from an observed version is published and read back.
+`<conversation_id>.jsonl`, and it is never replaced once set; until then, and
+while the named file still holds no bytes, the collector treats the chat as
+waiting, not failed. `cursor_version` is not evidence either way. For a Codex
+or Claude `SessionStart` with no `source`, an empty or absent transcript file
+is still the fallback proof, and a payload that names no transcript still
+proves nothing. Not observed on 3.21.13: `sessionStart` and the subagent
+events, and whether the transcript already holds the turn when
+`afterAgentResponse` names it (a late write is read on the next pass). The
+name rule relies on `session_id` equalling `conversation_id`, as it did.
+Support stays `unverified` until a session from an observed version is
+published and read back.
 
 `documented` means the vendor exposes the named evidence. `unavailable` means
 the payload is insufficient for the archive claim. Installed-version support

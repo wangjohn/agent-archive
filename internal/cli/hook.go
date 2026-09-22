@@ -114,7 +114,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 		return nil
 	}
 	if transactionPending(home) {
-		return recordSetupInProgress(home, startsCapture(kind, harness), harness, payload, now)
+		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
 	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", time.Second)
 	if lockErr != nil {
@@ -123,7 +123,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	defer unlock()
 	// Setup may have started while this hook was waiting for the lock.
 	if transactionPending(home) {
-		return recordSetupInProgress(home, startsCapture(kind, harness), harness, payload, now)
+		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
 	cfg, found, err := config.Load(home)
 	if err != nil {
@@ -179,8 +179,8 @@ func startsCapture(kind hookEventKind, harness string) bool {
 // unknown-start cases. Setup holds hooks.lock while it commits, so this write
 // is deliberately lock-free and best effort: losing one bounded, content-free
 // diagnostic is better than holding up the user's turn behind an installation.
-func recordSetupInProgress(home string, starts bool, harness string, payload map[string]any, now time.Time) error {
-	if !starts {
+func recordSetupInProgress(home string, kind hookEventKind, harness string, payload map[string]any, now time.Time) error {
+	if !startsCapture(kind, harness) {
 		return nil
 	}
 	cfg, found, err := config.Load(home)
@@ -189,6 +189,19 @@ func recordSetupInProgress(home string, starts bool, harness string, payload map
 	}
 	if !found || !cfg.Archive.Enabled || cfg.Paused {
 		return nil
+	}
+	if kind == hookEventTurnStart {
+		// A Cursor prompt starts capture only for a never-seen chat. A
+		// registered chat's prompt is a continuation, which setup's window
+		// drops like any other activity; it is not a start to explain.
+		nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
+		if nativeSessionID == "" {
+			return nil
+		}
+		registered, err := hasRegistration(collector.OpenLocalStoreReadOnly(home), nativeSessionID)
+		if err != nil || registered {
+			return err
+		}
 	}
 	// Same rule as every other diagnostic: an excluded project, or a directory
 	// belonging to no configured project, never leaves its path on disk.
