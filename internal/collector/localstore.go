@@ -68,6 +68,78 @@ func (s *LocalStore) SaveRegistration(reg archive.SessionRegistration) error {
 	return local.Write(s.registrationPath(reg.ArchiveSessionID), reg)
 }
 
+// UpdateRegistration changes an existing registration under the per-session
+// request lock, the lock retention holds while it forgets a session. It loads
+// the registration under that lock and reports found=false, without calling
+// update, when the registration is gone: a hook that looked the session up
+// before the lock must then treat it as never seen. Otherwise update edits the
+// loaded registration and it is saved; an error from update saves nothing and
+// is returned as is.
+//
+// A plain load then SaveRegistration from a hook could write the registration
+// back after retention forgot it, leaving it without its native-session index
+// entry, so the session's next start would be given a second archive ID.
+func (s *LocalStore) UpdateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error) (found bool, err error) {
+	if !safeFileComponent(archiveSessionID) {
+		return false, errors.New("archive session ID is not a safe file name component")
+	}
+	unlock, err := s.lockRequest(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	reg, found, err := s.LoadRegistration(archiveSessionID)
+	if err != nil || !found {
+		return false, err
+	}
+	if err := update(&reg); err != nil {
+		return true, err
+	}
+	return true, s.SaveRegistration(reg)
+}
+
+// RegisterNewSession assigns (or reuses) the archive session ID indexed for a
+// native session and saves the registration build returns for it, under that
+// ID's request lock. Under the lock it rechecks that the index still maps the
+// native session to that ID: retention may have been forgetting a previous
+// registration of the same native session, whose index entry the lookup saw
+// just before retention removed it. Reusing that ID would leave the new
+// registration with no index entry. If the entry changed or disappeared, a
+// fresh ID is assigned and the check repeats.
+func (s *LocalStore) RegisterNewSession(nativeSessionID string, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		id, _, err := s.EnsureArchiveSessionID(nativeSessionID)
+		if err != nil {
+			return archive.SessionRegistration{}, err
+		}
+		reg, saved, err := s.registerUnderLock(nativeSessionID, id, build)
+		if err != nil || saved {
+			return reg, err
+		}
+	}
+	return archive.SessionRegistration{}, errors.New("session index kept changing while registering; this start was not recorded")
+}
+
+func (s *LocalStore) registerUnderLock(nativeSessionID, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
+	unlock, err := s.lockRequest(id)
+	if err != nil {
+		return archive.SessionRegistration{}, false, err
+	}
+	defer unlock()
+	current, found, err := s.ArchiveSessionID(nativeSessionID)
+	if err != nil || !found || current != id {
+		return archive.SessionRegistration{}, false, err
+	}
+	reg := build(id)
+	if reg.ArchiveSessionID != id || reg.NativeSessionID != nativeSessionID {
+		return archive.SessionRegistration{}, false, errors.New("registration does not match the session index")
+	}
+	if err := s.SaveRegistration(reg); err != nil {
+		return archive.SessionRegistration{}, false, err
+	}
+	return reg, true, nil
+}
+
 func (s *LocalStore) registrationPath(archiveSessionID string) string {
 	return filepath.Join(s.home, "registrations", archiveSessionID+".json")
 }

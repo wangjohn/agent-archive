@@ -285,7 +285,11 @@ func cursorTranscriptPath(payload map[string]any, conversationID string) string 
 // from a later event. A new desktop chat is registered at its first prompt,
 // when Cursor has not yet named the transcript (transcript_path is null);
 // afterAgentResponse and stop then carry it. A path already set is never
-// replaced, whatever a later payload says.
+// replaced, whatever a later payload says. The write goes through
+// UpdateRegistration, under the lock retention forgets a session with, so a
+// chat forgotten meanwhile is not written back without its index entry; that
+// is reported as collector.ErrSessionNotRegistered, which handleHookEvent
+// treats as the quiet outcome of the race.
 func adoptCursorTranscriptPath(store *collector.LocalStore, reg *archive.SessionRegistration, harness string, payload map[string]any) error {
 	if canonicalHarness(harness) != "cursor" || reg.TranscriptPath != "" {
 		return nil
@@ -294,9 +298,18 @@ func adoptCursorTranscriptPath(store *collector.LocalStore, reg *archive.Session
 	if path == "" {
 		return nil
 	}
-	reg.TranscriptPath = path
-	if err := store.SaveRegistration(*reg); err != nil {
+	found, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
+		if current.TranscriptPath == "" {
+			current.TranscriptPath = path
+		}
+		*reg = *current
+		return nil
+	})
+	if err != nil {
 		return fmt.Errorf("record transcript path: %w", err)
+	}
+	if !found {
+		return collector.ErrSessionNotRegistered
 	}
 	return nil
 }
@@ -326,19 +339,15 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 		return fmt.Errorf("look up archive session ID: %w", err)
 	}
 	if found {
-		existing, regFound, err := store.LoadRegistration(existingID)
-		if err != nil {
-			return fmt.Errorf("load existing registration: %w", err)
-		}
-		if !regFound {
-			// The session index points at a registration we no longer have
-			// (e.g. it was never eligible). Fall through to re-evaluate as
-			// if this were the first time we've seen this native session.
-		} else {
-			// A continuation of a session we already registered: keep its
-			// original start time and just refresh what may have changed.
-			if !cfg.AcceptSession(existing) {
-				return nil
+		// A continuation of a session we already registered: keep its
+		// original start time and just refresh what may have changed. The
+		// load, the checks, and the save all happen under the lock retention
+		// forgets a session with, so a resume at the moment of expiry cannot
+		// write the registration back after retention removed it together
+		// with its index entry.
+		updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
+			if !cfg.AcceptSession(*existing) {
+				return errContinuationDeclined
 			}
 			// Claude Code's hook cwd follows the session's working
 			// directory (a persisted `cd`), so a continuation may report a
@@ -346,10 +355,10 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			// identity: only a different harness or a different configured
 			// project is a conflict.
 			if canonicalHarness(existing.Harness.Name) != canonicalHarness(harness) {
-				return fmt.Errorf("session identity conflicts with the accepted registration")
+				return errSessionIdentityConflict
 			}
 			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
-				return fmt.Errorf("session identity conflicts with the accepted registration")
+				return errSessionIdentityConflict
 			}
 			// A Cursor path, once set, is never replaced by a different one.
 			if transcriptPath != "" && (!isCursor || existing.TranscriptPath == "") {
@@ -357,11 +366,20 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			}
 			existing.RegisteredAt = now
 			applyHarnessObservation(&existing.Harness, harness, payload)
-			if err := store.SaveRegistration(existing); err != nil {
-				return err
-			}
-			return saveLifecycleEvidence(store, existing.ArchiveSessionID, harness, reason, payload, now)
+			return nil
+		})
+		switch {
+		case errors.Is(err, errContinuationDeclined):
+			return nil
+		case err != nil:
+			return err
+		case updated:
+			return saveLifecycleEvidence(store, existingID, harness, reason, payload, now)
 		}
+		// The index points at a registration we no longer have: it was never
+		// eligible, or retention forgot it while this hook waited for the
+		// lock. Either way this native session is treated as never seen, and
+		// the fresh-start rules below decide whether it registers again.
 	}
 
 	// A directory inside no configured project, and an excluded project, are
@@ -384,27 +402,37 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
-	archiveID, _, err := store.EnsureArchiveSessionID(nativeSessionID)
-	if err != nil {
-		return fmt.Errorf("assign archive session ID: %w", err)
-	}
 	observedHarness := archive.Harness{Name: strings.ToLower(strings.TrimSpace(harness))}
 	applyHarnessObservation(&observedHarness, harness, payload)
-	reg := archive.SessionRegistration{
-		ArchiveSessionID: archiveID,
-		NativeSessionID:  nativeSessionID,
-		ProjectID:        archive.ProjectID(root),
-		ProjectRoot:      root,
-		Harness:          observedHarness,
-		TranscriptPath:   transcriptPath,
-		SessionStartedAt: now,
-		RegisteredAt:     now,
+	// RegisterNewSession saves under the archive ID's request lock and
+	// rechecks the index there, so an index entry retention is removing
+	// right now is never reused for a registration that would outlive it.
+	reg, err := store.RegisterNewSession(nativeSessionID, func(archiveID string) archive.SessionRegistration {
+		return archive.SessionRegistration{
+			ArchiveSessionID: archiveID,
+			NativeSessionID:  nativeSessionID,
+			ProjectID:        archive.ProjectID(root),
+			ProjectRoot:      root,
+			Harness:          observedHarness,
+			TranscriptPath:   transcriptPath,
+			SessionStartedAt: now,
+			RegisteredAt:     now,
+		}
+	})
+	if err != nil {
+		return fmt.Errorf("register session: %w", err)
 	}
-	if err := store.SaveRegistration(reg); err != nil {
-		return err
-	}
-	return saveLifecycleEvidence(store, archiveID, harness, reason, payload, now)
+	return saveLifecycleEvidence(store, reg.ArchiveSessionID, harness, reason, payload, now)
 }
+
+var (
+	// errContinuationDeclined: the registration exists but the current
+	// configuration no longer accepts it. The hook records nothing.
+	errContinuationDeclined = errors.New("continuation not accepted by the current configuration")
+	// errSessionIdentityConflict: a different harness or configured project
+	// claims an accepted registration's native session.
+	errSessionIdentityConflict = errors.New("session identity conflicts with the accepted registration")
+)
 
 // configuredProjectActivationFor returns the configured project that owns
 // root: the project whose root is root itself or its nearest configured
