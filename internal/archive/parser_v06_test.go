@@ -334,7 +334,10 @@ func TestParserV06CountsStreamedUsageOncePerMessage(t *testing.T) {
 	countIs(t, "cache write tokens", metadata.Counts.CacheWriteTokens, 1)
 
 	countIs(t, "turns", metadata.Counts.Turns, 1)
-	countIs(t, "messages", metadata.Counts.Messages, 4)
+	// Parser 0.7 counts distinct assistant message ids: the two streamed
+	// records of msg_1 are one message (parser 0.6 counted them as two and
+	// reported 4).
+	countIs(t, "messages", metadata.Counts.Messages, 3)
 	countIs(t, "tool calls", metadata.Counts.ToolCalls, 1)
 	countIs(t, "tool results", metadata.Counts.ToolResults, 1)
 	for _, turn := range view.Turns {

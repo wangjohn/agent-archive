@@ -1,0 +1,6 @@
+{"type":"turn_context","id":"turn-1","model":"gpt-6-astra","model_provider":"openai","reasoning_effort":"high"}
+{"type":"event_msg","timestamp":"2026-09-22T14:00:00Z","payload":{"type":"item_completed","item":{"id":"item_startup_1","type":"CommandExecution","source":"unified_exec_startup","command":"/bin/zsh -l","status":"completed"}}}
+{"type":"response_item","timestamp":"2026-09-22T14:00:03Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Run the widget tests."}]}}
+{"type":"response_item","timestamp":"2026-09-22T14:00:05Z","payload":{"type":"local_shell_call","call_id":"call_tests_1","status":"completed","action":{"type":"exec","command":["go","test","./..."]}}}
+{"type":"event_msg","timestamp":"2026-09-22T14:00:09Z","payload":{"type":"item_completed","item":{"id":"call_tests_1","type":"CommandExecution","command":"go test ./...","status":"completed"}}}
+{"type":"event_msg","timestamp":"2026-09-22T14:00:10Z","payload":{"type":"item_completed","item":{"id":"item_model_cmd_1","type":"CommandExecution","source":"model","command":"go vet ./...","status":"completed"}}}

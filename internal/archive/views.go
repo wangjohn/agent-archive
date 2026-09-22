@@ -52,6 +52,21 @@ const (
 	TurnKindAssistant   TurnKind = "assistant"
 	// TurnKindToolResult is a record whose content is only tool results.
 	TurnKindToolResult TurnKind = "tool_result"
+	// TurnKindHarnessMeta is a user record the harness wrote and marked
+	// isMeta (an expanded skill or command). Filter 4 strips its text, so it
+	// usually does not appear at all; a filter-3 bundle cannot tell it apart.
+	TurnKindHarnessMeta TurnKind = "harness_meta"
+	// TurnKindCommandOutput is the output of a local command or a `!` shell
+	// command (<local-command-stdout>, <local-command-stderr>,
+	// <local-command-caveat>, <bash-stdout>, <bash-stderr>).
+	TurnKindCommandOutput TurnKind = "command_output"
+	// TurnKindShellCommand is a `!` shell command the person ran directly
+	// (<bash-input>). It counts as counts.user_shell_commands.
+	TurnKindShellCommand TurnKind = "shell_command"
+	// TurnKindLocalCommand is a typed slash command (<command-name>) which no
+	// assistant answered before the next prompt, such as /model or /clear. A
+	// slash command the assistant answered is a TurnKindHumanPrompt.
+	TurnKindLocalCommand TurnKind = "local_command"
 )
 
 // TurnModelSource names where a NormalizedTurn's model attribution came from.
@@ -64,9 +79,12 @@ const (
 )
 
 type NormalizedTurn struct {
-	RecordIndex   int             `json:"record_index"`
-	Role          string          `json:"role"`
-	Kind          TurnKind        `json:"kind,omitempty"`
+	RecordIndex int      `json:"record_index"`
+	Role        string   `json:"role"`
+	Kind        TurnKind `json:"kind,omitempty"`
+	// MessageID is the id of the API message a record belongs to (Claude's
+	// message.id). Several streamed records can share one.
+	MessageID     string          `json:"message_id,omitempty"`
 	Text          string          `json:"text,omitempty"`
 	Model         string          `json:"model,omitempty"`
 	ResponseModel string          `json:"response_model,omitempty"`
@@ -166,7 +184,8 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 		if isHiddenRole(role) {
 			return NormalizedView{}, &ParseError{Reason: "hidden role present in filtered source"}
 		}
-		turn := NormalizedTurn{RecordIndex: i, Role: role, Kind: kind, Text: text, Provider: firstStringDeep(record, "model_provider"), ID: firstStringDeep(record, "id", "uuid"), ParentID: firstStringDeep(record, "parent_id", "parent_uuid", "parentUuid"), TurnID: firstStringDeep(record, "turn_id"), Timestamp: firstStringDeep(record, "timestamp", "created_at")}
+		kind = refineUserKind(record, kind, text)
+		turn := NormalizedTurn{RecordIndex: i, Role: role, Kind: kind, MessageID: nestedMessageID(record), Text: text, Provider: firstStringDeep(record, "model_provider"), ID: firstStringDeep(record, "id", "uuid"), ParentID: firstStringDeep(record, "parent_id", "parent_uuid", "parentUuid"), TurnID: firstStringDeep(record, "turn_id"), Timestamp: firstStringDeep(record, "timestamp", "created_at")}
 		if bundle.Capture.Harness.Name == "codex" {
 			turn.Model, turn.Reasoning, turn.ModelSource = codexModel, codexReasoning, TurnModelSourceTurnContext
 		} else if bundle.Capture.Harness.Name == "claude" {
@@ -176,11 +195,92 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 		}
 		view.Turns = append(view.Turns, turn)
 	}
+	resolveSlashCommands(view.Turns)
 	view.ToolCalls = dedupeToolCalls(candidates)
 	linkToolResults(view.ToolCalls, view.ToolResults)
 	view.Tokens = tokens.usage()
 	view.HookFinals = reconcileHookFinals(bundle, view.Turns)
 	return view, nil
+}
+
+// harnessTextKinds classify a user record by the tag its text starts with.
+// These records are written by the harness around something the person did,
+// not typed as a prompt: Claude Code wraps a `!` shell command in
+// <bash-input>, its output in <bash-stdout>/<bash-stderr>, a local command's
+// output in <local-command-stdout>/<local-command-stderr>, the note it adds
+// before local-command output in <local-command-caveat>, and a typed slash
+// command in <command-name>/<command-message>/<command-args>.
+var harnessTextKinds = []struct {
+	tag  string
+	kind TurnKind
+}{
+	{"bash-input", TurnKindShellCommand},
+	{"bash-stdout", TurnKindCommandOutput},
+	{"bash-stderr", TurnKindCommandOutput},
+	{"local-command-stdout", TurnKindCommandOutput},
+	{"local-command-stderr", TurnKindCommandOutput},
+	{"local-command-caveat", TurnKindCommandOutput},
+	{"command-name", TurnKindLocalCommand},
+	{"command-message", TurnKindLocalCommand},
+	{"command-args", TurnKindLocalCommand},
+}
+
+// refineUserKind reclassifies a record that looked like a human prompt but was
+// written by the harness. A slash command is provisionally a local command;
+// resolveSlashCommands promotes it to a prompt if the assistant answered it.
+func refineUserKind(record map[string]any, kind TurnKind, text string) TurnKind {
+	if kind != TurnKindHumanPrompt {
+		return kind
+	}
+	if isMetaRecord(record) {
+		return TurnKindHarnessMeta
+	}
+	trimmed := strings.TrimSpace(text)
+	for _, candidate := range harnessTextKinds {
+		if strings.HasPrefix(trimmed, "<"+candidate.tag+">") {
+			return candidate.kind
+		}
+	}
+	return kind
+}
+
+// resolveSlashCommands decides which typed slash commands were prompts. A
+// slash command that expands into a skill or custom command is answered by the
+// assistant; a local one such as /model or /clear is answered only by
+// local-command output. So a slash command counts as a prompt only if an
+// assistant record follows before the next thing the person did, skipping
+// harness-written records (isMeta expansions, command output, tool results).
+func resolveSlashCommands(turns []NormalizedTurn) {
+	for i := range turns {
+		if turns[i].Kind != TurnKindLocalCommand {
+			continue
+		}
+	scan:
+		for _, next := range turns[i+1:] {
+			switch next.Kind {
+			case TurnKindAssistant:
+				turns[i].Kind = TurnKindHumanPrompt
+				break scan
+			case TurnKindHumanPrompt, TurnKindLocalCommand, TurnKindShellCommand:
+				break scan
+			}
+		}
+	}
+}
+
+// nestedMessageID returns the id of the record's nested message object
+// (Claude's message.id), which streamed records of one response share.
+func nestedMessageID(record map[string]any) string {
+	if message, ok := record["message"].(map[string]any); ok {
+		return firstString(message, "id")
+	}
+	return ""
+}
+
+// isCodexStartupShell reports whether a completed CommandExecution is Codex
+// starting its own shell for the session rather than a command the model ran.
+func isCodexStartupShell(item map[string]any) bool {
+	return strings.EqualFold(strings.TrimSpace(firstString(item, "source")), "unified_exec_startup")
 }
 
 // dedupeToolCalls drops the completion echo a harness writes for a call it
@@ -329,7 +429,7 @@ func toolActivity(record map[string]any, index int, model, reasoning string) ([]
 				}})
 			}
 			if kind == "item_completed" {
-				if completed, ok := item["item"].(map[string]any); ok && completedItemTypes[strings.ToLower(strings.TrimSpace(firstString(completed, "type")))] {
+				if completed, ok := item["item"].(map[string]any); ok && completedItemTypes[strings.ToLower(strings.TrimSpace(firstString(completed, "type")))] && !isCodexStartupShell(completed) {
 					calls = append(calls, toolCallCandidate{completionEcho: true, call: NormalizedToolCall{
 						RecordIndex: index, CallID: firstString(completed, "call_id", "id"), ParentID: parent,
 						Model: model, Reasoning: reasoning, Name: firstString(completed, "name", "tool_name"),
@@ -748,7 +848,8 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 			metadata.TurnOutcome = outcome
 		}
 	}
-	prompts, messages := 0, 0
+	prompts, messages, shellCommands := 0, 0, 0
+	assistantMessages := map[string]bool{}
 	models := map[string]*ModelSummary{}
 	for _, turn := range view.Turns {
 		switch turn.Kind {
@@ -756,9 +857,21 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 			prompts++
 			messages++
 		case TurnKindAssistant:
+			// One streamed response is several records sharing message.id:
+			// it is one message, and one turn for its model.
+			if turn.MessageID != "" {
+				if assistantMessages[turn.MessageID] {
+					continue
+				}
+				assistantMessages[turn.MessageID] = true
+			}
 			messages++
+		case TurnKindShellCommand:
+			shellCommands++
+			continue
 		default:
-			// A tool result is not a message any author sent.
+			// A tool result, command output, an unanswered slash command, or a
+			// harness-written record is not a message any author sent.
 			continue
 		}
 		if turn.Role != "user" && turn.Role != "assistant" {
@@ -799,6 +912,7 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 		metadata.Counts.Messages = &messages
 		metadata.Counts.ToolCalls = &toolCalls
 		metadata.Counts.ToolResults = &toolResults
+		metadata.Counts.UserShellCommands = &shellCommands
 		metadata.Counts.InputTokens, metadata.Counts.OutputTokens = view.Tokens.Input, view.Tokens.Output
 		metadata.Counts.CacheReadTokens, metadata.Counts.CacheWriteTokens = view.Tokens.CacheRead, view.Tokens.CacheWrite
 	}
