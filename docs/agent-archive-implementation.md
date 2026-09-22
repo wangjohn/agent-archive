@@ -659,3 +659,58 @@ the scan signature and forces a full pass; the signature is written only at
 the unchanged, declined, and published exits. `LoadLastPublished`, the
 superseded-key reconstruction in `publishPending`, and `saveRepublishedMetadata`
 all resolve the single-copy marker, and the two-copy on-disk shape still loads.
+
+## PR C1 — Prompt and message accuracy
+
+Filter version `4`, adapter version `0.4.0`, parser version `0.7.0`. Metadata
+schema version 1 is unchanged; `counts.user_shell_commands` is a new optional
+count. The Claude shapes below follow a structural probe of real transcripts
+(tags and flags only); every fixture is synthetic.
+
+1. **Codex startup shell.** An `item_completed` `CommandExecution` with
+   `source: "unified_exec_startup"` is Codex starting the session's shell, and
+   is no longer a tool call. A `CommandExecution` from any other source is
+   still counted, and still deduplicated against its `response_item`.
+2. **Streamed responses.** Claude Code writes one record per content block,
+   all sharing `message.id`. `counts.messages` and each model's `turn_count`
+   count distinct assistant message ids; a record without an id counts on its
+   own. This closes the B2 review's open note, and that fixture's message
+   count drops from 4 to 3. `NormalizedTurn` gains `message_id`.
+3. **Harness records are not prompts.** Filter 4 retains `isMeta` and strips
+   the text of every `isMeta` record (a `hidden_instruction_omitted` gap), so
+   an expanded skill or command is no longer archived and no longer visible as
+   a turn; its ids and parent link survive. The parser classifies user records
+   by their leading tag: `<local-command-stdout|stderr|caveat>` and
+   `<bash-stdout|stderr>` are `command_output`, `<bash-input>` is a
+   `shell_command` counted in `counts.user_shell_commands`, and an `isMeta`
+   record that still has content is `harness_meta`. A
+   `<command-name>`/`<command-message>`/`<command-args>` slash command is a
+   prompt only if an assistant record follows before the next prompt, slash
+   command, or shell command (skipping harness records and tool results);
+   otherwise, as for `/model` or `/clear`, it is a `local_command`.
+
+Filter-3 bundles still regenerate. They lack the `isMeta` flag and keep the
+expansion text, so a skill expansion stands in for its slash command: the
+synthetic compatibility session gives 2 turns and 4 messages under parser 0.7
+(parser 0.6 gave 8 and 11), and the same session captured under filter 4 gives
+identical counts.
+
+Fixtures: `codex-startup-shell.jsonl`, `claude-streamed-response.jsonl`
+(three records of one `message.id`), `claude-local-command.jsonl` (`/model`
+with caveat and stdout, no reply), `claude-skill-command.jsonl` (slash command,
+`isMeta` expansion, reply), `claude-shell-command.jsonl` (`!` command and its
+output). Tests: `internal/archive/filter_v4_test.go` (the flag and ids are
+kept, only text is stripped, non-meta records are untouched) and
+`internal/archive/parser_v07_test.go` (each item, slash-command resolution
+edge cases, records without ids, and the filter-3 regeneration test).
+`TestFilterVersionIsDeclaredInCaptureProvenance` now checks the build's own
+versions instead of filter 3's literals.
+
+Left open: tag recognition is by prefix of the record's text, so a person
+whose prompt literally begins with one of these tags would not be counted; the
+tags are harness-reserved and the probe found them only in harness records.
+Codex and Cursor report `user_shell_commands: 0`, since neither writes these
+shapes.
+
+Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
+and `gofmt -l .` clean.
