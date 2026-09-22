@@ -17,9 +17,13 @@ const HandoffVersion = 1
 // DefaultHandoffMaxBytes is the default output budget, about 30k tokens.
 const DefaultHandoffMaxBytes = 120_000
 
-// handoffKeptExchanges is how many of the most recent exchanges the budget
-// never trims.
-const handoffKeptExchanges = 3
+// handoffKeptExchanges and handoffKeptSteps bound the protected tail the
+// budget never trims: steps in the last three exchanges, but at most the last
+// twenty steps, so a single long exchange can still be trimmed.
+const (
+	handoffKeptExchanges = 3
+	handoffKeptSteps     = 20
+)
 
 const (
 	handoffAssistantTextCap = 300
@@ -110,15 +114,13 @@ type HandoffExchange struct {
 	PromptTruncated bool          `json:"prompt_truncated,omitempty"`
 	Timestamp       string        `json:"timestamp,omitempty"`
 	Steps           []HandoffStep `json:"steps,omitempty"`
-	// CollapsedTools replaces the exchange's tool-call steps once the budget
-	// has collapsed them, e.g. "14 tool calls: Bash ×9, Read ×5".
-	CollapsedTools string `json:"collapsed_tools,omitempty"`
 }
 
-// HandoffStep is assistant text, a tool call, or a shell command the person
-// ran directly.
+// HandoffStep is assistant text, a tool call, a shell command the person ran
+// directly, or — once the budget has collapsed tool calls — a count of them
+// such as "14 tool calls: Bash ×9, Read ×5".
 type HandoffStep struct {
-	Kind          string           `json:"kind"` // "text", "tool", or "shell"
+	Kind          string           `json:"kind"` // "text", "tool", "shell", or "collapsed"
 	Text          string           `json:"text,omitempty"`
 	TextTruncated bool             `json:"text_truncated,omitempty"`
 	Tool          *HandoffToolCall `json:"tool,omitempty"`
@@ -702,19 +704,20 @@ func planItems(name string, input map[string]any) []HandoffPlanItem {
 
 // FitHandoff returns a copy of h trimmed until measure(copy) is at most
 // maxBytes, applying the budget steps in order and recording each in
-// Elisions. The last handoffKeptExchanges exchanges, the person's prompts
-// (beyond truncation), and LeftOff are never removed. fits is false when the
-// result is still over budget after every step. maxBytes <= 0 means no
-// budget.
+// Elisions. The protected tail — steps in the last handoffKeptExchanges
+// exchanges, but no more than the last handoffKeptSteps steps, so one long
+// autonomous exchange can still be trimmed — is never touched by the first
+// three steps. Prompts are only ever truncated, and LeftOff is never
+// trimmed. fits is false when the result is still over budget after every
+// step. maxBytes <= 0 means no budget.
 func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bool) {
 	out := cloneHandoff(h)
 	if maxBytes <= 0 || measure(out) <= maxBytes {
 		return out, true
 	}
-	trimmable := len(out.Exchanges) - handoffKeptExchanges
 	steps := []struct {
 		kind  string
-		apply func(*HandoffExchange) int
+		apply func(steps []HandoffStep, limit int) ([]HandoffStep, int)
 	}{
 		{HandoffElisionToolOutput, dropToolOutput},
 		{HandoffElisionToolCalls, collapseToolCalls},
@@ -722,8 +725,11 @@ func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bo
 	}
 	for _, step := range steps {
 		elision := HandoffElision{Kind: step.kind}
-		for i := 0; i < trimmable && measure(out) > maxBytes; i++ {
-			if n := step.apply(&out.Exchanges[i]); n > 0 {
+		for i := 0; i < len(out.Exchanges) && measure(out) > maxBytes; i++ {
+			limit := protectedStart(out.Exchanges, handoffKeptExchanges, handoffKeptSteps)[i]
+			var n int
+			out.Exchanges[i].Steps, n = step.apply(out.Exchanges[i].Steps, limit)
+			if n > 0 {
 				if elision.First == 0 {
 					elision.First = i + 1
 				}
@@ -759,26 +765,55 @@ func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bo
 	return out, measure(out) <= maxBytes
 }
 
-func dropToolOutput(exchange *HandoffExchange) int {
+// protectedStart returns, for each exchange, the index of its first
+// protected step: steps from there on belong to the protected tail. A step is
+// protected when its exchange is among the last keptExchanges and it is among
+// the last keptSteps steps of the whole conversation.
+func protectedStart(exchanges []HandoffExchange, keptExchanges, keptSteps int) []int {
+	starts := make([]int, len(exchanges))
+	remaining := keptSteps
+	for i := len(exchanges) - 1; i >= 0; i-- {
+		n := len(exchanges[i].Steps)
+		switch {
+		case i < len(exchanges)-keptExchanges || remaining == 0:
+			starts[i] = n
+		case n <= remaining:
+			starts[i] = 0
+			remaining -= n
+		default:
+			starts[i] = n - remaining
+			remaining = 0
+		}
+	}
+	return starts
+}
+
+func dropToolOutput(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 	n := 0
-	for _, step := range exchange.Steps {
+	for _, step := range steps[:limit] {
 		if step.Tool != nil && step.Tool.Result != "" {
 			step.Tool.Result, step.Tool.ResultOmitted = "", true
 			n++
 		}
 	}
-	return n
+	return steps, n
 }
 
-func collapseToolCalls(exchange *HandoffExchange) int {
+// collapseToolCalls replaces the tool-call steps before limit with one
+// "collapsed" step, at the position of the first, that counts them by name.
+func collapseToolCalls(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 	counts := map[string]int{}
 	var order []string
-	kept := exchange.Steps[:0:0]
-	total := 0
-	for _, step := range exchange.Steps {
-		if step.Tool == nil {
-			kept = append(kept, step)
+	out := make([]HandoffStep, 0, len(steps))
+	at, total := -1, 0
+	for i, step := range steps {
+		if i >= limit || step.Tool == nil {
+			out = append(out, step)
 			continue
+		}
+		if at < 0 {
+			at = len(out)
+			out = append(out, HandoffStep{Kind: "collapsed"})
 		}
 		if counts[step.Tool.Name] == 0 {
 			order = append(order, step.Tool.Name)
@@ -787,7 +822,7 @@ func collapseToolCalls(exchange *HandoffExchange) int {
 		total++
 	}
 	if total == 0 {
-		return 0
+		return steps, 0
 	}
 	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
 	parts := make([]string, 0, len(order))
@@ -798,22 +833,21 @@ func collapseToolCalls(exchange *HandoffExchange) int {
 	if total == 1 {
 		noun = "tool call"
 	}
-	exchange.CollapsedTools = fmt.Sprintf("%d %s: %s", total, noun, strings.Join(parts, ", "))
-	exchange.Steps = kept
-	return total
+	out[at].Text = fmt.Sprintf("%d %s: %s", total, noun, strings.Join(parts, ", "))
+	return out, total
 }
 
-func shortenAssistantText(exchange *HandoffExchange) int {
+func shortenAssistantText(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 	n := 0
-	for i := range exchange.Steps {
-		step := &exchange.Steps[i]
+	for i := range steps[:limit] {
+		step := &steps[i]
 		if step.Kind == "text" && len(step.Text) > handoffAssistantTextCap {
 			step.Text = truncateUTF8(step.Text, handoffAssistantTextCap)
 			step.TextTruncated = true
 			n++
 		}
 	}
-	return n
+	return steps, n
 }
 
 // cloneHandoff copies everything FitHandoff mutates.
@@ -967,10 +1001,13 @@ func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
 					inTools = true
 				}
 				renderTool(&b, step.Tool)
+			case "collapsed":
+				if !inTools {
+					b.WriteString("\n")
+					inTools = true
+				}
+				fmt.Fprintf(&b, "- %s\n", step.Text)
 			}
-		}
-		if exchange.CollapsedTools != "" {
-			fmt.Fprintf(&b, "\n- %s\n", exchange.CollapsedTools)
 		}
 	}
 

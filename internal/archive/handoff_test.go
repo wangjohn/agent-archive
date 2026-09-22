@@ -226,8 +226,8 @@ func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
 	if strings.Join(kinds, ",") != strings.Join(want, ",") {
 		t.Fatalf("elision order = %v, want %v", kinds, want)
 	}
-	if fit.Exchanges[0].CollapsedTools != "3 tool calls: Bash ×3" {
-		t.Fatalf("collapsed = %q", fit.Exchanges[0].CollapsedTools)
+	if steps := fit.Exchanges[0].Steps; len(steps) != 2 || steps[1].Kind != "collapsed" || steps[1].Text != "3 tool calls: Bash ×3" {
+		t.Fatalf("collapsed = %#v", steps)
 	}
 	for _, exchange := range fit.Exchanges {
 		if exchange.Prompt == "" {
@@ -322,5 +322,37 @@ func TestHandoffJSONRoundTrips(t *testing.T) {
 	}
 	if back.Version != HandoffVersion || back.Session.Source != "archive" {
 		t.Fatalf("session = %#v", back.Session)
+	}
+}
+
+// One long autonomous exchange is still trimmed: only its last
+// handoffKeptSteps steps are protected.
+func TestFitHandoffTrimsASingleLongExchange(t *testing.T) {
+	h := bigHandoff(1)
+	for i := 0; i < 60; i++ {
+		h.Exchanges[0].Steps = append(h.Exchanges[0].Steps, HandoffStep{Kind: "tool", Tool: &HandoffToolCall{Name: "Read", Summary: fmt.Sprint(i), Result: strings.Repeat("r", 1500)}})
+	}
+	fit, ok := FitHandoff(h, 40_000, markdownSize)
+	if !ok {
+		t.Fatalf("a single exchange could not be fitted: %d bytes", markdownSize(fit))
+	}
+	steps := fit.Exchanges[0].Steps
+	tail := steps[len(steps)-handoffKeptSteps:]
+	for _, step := range tail {
+		if step.Tool == nil || step.Tool.Result == "" {
+			t.Fatalf("a protected step was trimmed: %#v", step)
+		}
+	}
+	if steps[1].Tool == nil || !steps[1].Tool.ResultOmitted {
+		t.Fatalf("an early step kept its output: %#v", steps[1])
+	}
+}
+
+func TestProtectedStart(t *testing.T) {
+	ex := func(n int) HandoffExchange { return HandoffExchange{Steps: make([]HandoffStep, n)} }
+	got := protectedStart([]HandoffExchange{ex(5), ex(5), ex(4), ex(30), ex(2)}, 3, 20)
+	want := []int{5, 5, 4, 12, 0}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
