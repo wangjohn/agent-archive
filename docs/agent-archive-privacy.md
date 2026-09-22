@@ -52,6 +52,61 @@ Skill snapshots embedded in supplemental evidence keep their inventory entry
 capped at 16 KB, with `original_bytes` recording the real size and `truncated`
 marking the cut. Moving bodies to content-addressed objects is deferred.
 
+### Tool-argument deny list
+
+Retaining tool arguments wholesale has two exceptions, applied at every depth
+of a tool-argument subtree. In both cases the argument's key name is recorded
+in a `sensitive_or_hidden_field_omitted` gap (`omitted tool argument keys: …`,
+sorted, capped at 64, names only) and the value is never retained.
+
+- **Typed or submitted text.** An argument named `text`, `value`, or `values`
+  is dropped when the tool's name (`name` or `tool_name` beside the argument
+  subtree, compared case-insensitively) is `type`, `form_input`, `computer`,
+  `key`, `enter_verification_code`, or `autofill_credential`; ends with `_`
+  followed by one of those (an MCP tool such as `mcp__browser__computer`); or
+  ends with `_type`, `_input`, or `_fill`. These tools send their text outward
+  into a browser field, a terminal, or a device, and a login form's contents
+  are exactly what a transcript must not keep. `Edit`, `Write`, and other tools
+  keep their `text`/`value` arguments.
+- **Credential-named arguments.** For every tool, an argument whose lowercase
+  key contains `password`, `secret`, `token`, `credential`, `api_key`,
+  `apikey`, `cookie`, or `authorization` is dropped. This is a substring rule,
+  broader than `blockedKeys`, and it knowingly catches budgets such as
+  `max_tokens`. An argument object whose members were all dropped is pruned
+  with them.
+
+Codex `custom_tool_call.input` and `function_call.arguments` are JSON encoded
+as one string, so the deny list cannot see their keys; the string still passes
+every value-level redaction below.
+
+### Value-level redaction
+
+Every retained string, at every depth, passes these patterns. A match is
+replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
+
+- Assignments of `api_key`, `access_key`, `secret`, `password`,
+  `authorization`, `bearer`, or `token` to a value (`name=value`, `name: value`,
+  `Authorization: Bearer …`), AWS access key IDs (`AKIA…`), and Anthropic/OpenAI
+  style `sk-` keys.
+- PEM private key blocks: `-----BEGIN … PRIVATE KEY-----` through the next
+  `-----END … -----`, or to the end of the string when the END line is missing.
+  Certificates and public keys are not redacted.
+- JWTs: three base64url segments, the first beginning with `eyJ`.
+- URL userinfo: in `scheme://user:pass@host` (or `scheme://user@host`) the
+  userinfo is replaced and the scheme and host are kept.
+- GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) and
+  Slack tokens (`xox[baprs]-`).
+
+Known false positives. The assignment pattern cannot tell a credential from
+code: `token = parse(x)` and `password: required` are redacted, and
+`token := parse(x)` loses its left-hand side. This is accepted rather than
+narrowed, because the cost of a missed credential is higher than the cost of a
+redacted identifier in an archived transcript; a reader sees the
+`sensitive_content_redacted` gap and can consult the original source if it
+still exists. Words that merely contain a trigger (`tokens`, `secretary`,
+`password_policy`) do not match, because the pattern requires a whole word
+followed by `=` or `:`.
+
 Redaction is best effort in both directions: a legitimate value that looks like
 a credential is redacted, and a tool argument that happens to contain one of
 the instruction tags above loses that span. Both are recorded as gaps.

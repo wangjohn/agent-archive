@@ -209,3 +209,27 @@ and `gofmt -l .` all clean. `internal/cli`, `internal/collector`,
 `internal/reader`, and `internal/retention` needed no changes for the version
 bumps. Parser work (Cursor turns, corrected counts, tool linkage in the
 normalized view) is PR B2 and is not in this change.
+
+Review additions (same PR, same filter version, before any bundle was written
+with filter 3):
+
+- Instruction-block stripping is now depth-aware. The regex form ended a
+  `<system-reminder>` at the first closing tag, so a block nested inside a
+  block of the same kind leaked the outer block's tail. Blocks are now scanned
+  to their matching close, counting nesting; an unterminated block still drops
+  everything after its opening tag.
+- Tool-argument deny list: `text`/`value`/`values` are dropped for typing and
+  form-submitting tools (`type`, `form_input`, `computer`, `key`,
+  `enter_verification_code`, `autofill_credential`, MCP names ending in one of
+  those, or names ending `_type`/`_input`/`_fill`), and any argument whose key
+  contains `password`, `secret`, `token`, `credential`, `api_key`, `apikey`,
+  `cookie`, or `authorization` is dropped for every tool. Key names are
+  reported once in a `sensitive_or_hidden_field_omitted` gap.
+- Value-level redaction now also covers PEM private key blocks, JWTs, URL
+  userinfo, GitHub tokens, and Slack tokens. The assignment pattern's known
+  false-positive class (`token = parse(x)`) is documented, not narrowed.
+- Tests in `internal/archive/filter_v3_review_test.go` cover nested and
+  multiple blocks, the deny list for Claude and Cursor shapes and for
+  supplemental evidence, each credential shape, a negative set of ordinary
+  code, and byte-identical output across repeated scans of each fixture.
+- `docs/install.md` no longer describes filter 2 / adapter 0.2.0 as current.
