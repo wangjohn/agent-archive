@@ -25,7 +25,7 @@
     "skills_available": {"type": "array", "items": {"$ref": "#/$defs/skill"}},
     "skills_used": {"type": "array", "items": {"type": "object"}},
     "skill_detection": {"enum": ["observed_none", "partial", "unavailable", "observed"]},
-    "counts": {"type": "object", "properties":{"turns":{"type":"integer"},"messages":{"type":"integer"},"tool_calls":{"type":"integer"},"explicit_feedback":{"type":"integer"}}},
+    "counts": {"type": "object", "description": "Every count is optional: an absent count is unknown, never zero. From parser 0.6.0 'turns' counts human prompts (a user record with text or any non-tool-result content), 'messages' counts those prompts plus assistant records, and 'tool_results' counts observed tool results. The token counts are summed from whatever the harness exposed and are absent when it exposed none.", "properties":{"turns":{"type":"integer","minimum":0},"messages":{"type":"integer","minimum":0},"tool_calls":{"type":"integer","minimum":0},"tool_results":{"type":"integer","minimum":0},"explicit_feedback":{"type":"integer","minimum":0},"input_tokens":{"type":"integer","minimum":0},"output_tokens":{"type":"integer","minimum":0},"cache_read_tokens":{"type":"integer","minimum":0},"cache_write_tokens":{"type":"integer","minimum":0}}},
     "capture_gaps": {"type": "array", "items": {"type": "object"}},
     "source_bundle": {"type": "object", "additionalProperties": false, "required": ["key", "sha256", "compressed_bytes"], "properties": {"key": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "compressed_bytes": {"type": "integer", "minimum": 0}}},
     "parent_session_id": {"type": "string", "minLength": 1},

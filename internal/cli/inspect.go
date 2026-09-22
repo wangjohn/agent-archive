@@ -252,7 +252,7 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if code := printJSON(stdout, stderr, metadataWithLinks(ctx, store, metadata)); code != 0 {
 		return code
 	}
-	return printJSON(stdout, stderr, normalizedOutput{Turns: view.Turns, ToolCalls: view.ToolCalls, HookFinals: view.HookFinals})
+	return printJSON(stdout, stderr, normalizedOutput{Turns: view.Turns, ToolCalls: view.ToolCalls, ToolResults: view.ToolResults, HookFinals: view.HookFinals})
 }
 
 // Preserve the sidecar fields while exposing live link availability separately.
@@ -275,10 +275,16 @@ func metadataWithLinks(ctx context.Context, store storage.ObjectStore, metadata 
 // archive.NormalizedView, which carries no JSON tags of its own.
 // NativeSkillUses is left out: it is an intermediate deriveSkills folds into
 // the metadata's skills_used, which the sidecar printed first already shows.
+//
+// Each tool call carries the tool's name, its retained arguments, and the
+// result it was linked to (record index, error flag, and retained output
+// size). tool_results lists the results themselves, including any the parser
+// could not safely link to a call.
 type normalizedOutput struct {
-	Turns      []archive.NormalizedTurn          `json:"turns"`
-	ToolCalls  []archive.NormalizedToolCall      `json:"tool_calls"`
-	HookFinals []archive.HookFinalReconciliation `json:"hook_finals"`
+	Turns       []archive.NormalizedTurn          `json:"turns"`
+	ToolCalls   []archive.NormalizedToolCall      `json:"tool_calls"`
+	ToolResults []archive.NormalizedToolResult    `json:"tool_results"`
+	HookFinals  []archive.HookFinalReconciliation `json:"hook_finals"`
 }
 
 // locateMetadataKey resolves an archive session ID to its metadata sidecar
