@@ -367,6 +367,148 @@ real rollout's `item_completed` item carries an id unrelated to the call's
 `call_id`, the same work is counted twice, which only a real transcript can
 confirm.
 
+## PR B3 — Reader performance
+
+No schema, filter, parser, or adapter version changes: this only changes how
+`list` and `show` reach the metadata they already read.
+
+1. **Scoped, concurrent listing.** `reader.ListMetadataWithOptions` lists
+   `sessions/<harness>/` when a harness filter is given instead of the whole
+   archive, skips every listed key that is not a `metadata.json` sidecar
+   before any download, and reads sidecars with at most 8 requests in flight.
+   Work is dispatched in key order and stops after a failure, so the error
+   reported is still the first failing sidecar in key order, exactly as the
+   sequential read reported it. Results stay newest capture first (now a
+   stable sort). `ListMetadata` keeps its signature.
+2. **Direct lookup for `show`.** `FindMetadataKeys` reads the sidecar key
+   under each harness this build publishes (`claude`, `codex`, `cursor`) and
+   lists the archive only if none exists, so a session under an unknown
+   harness is still found. Two hits stay ambiguous; a read error other than
+   not-found is returned rather than treated as absence. `show --harness` was
+   already one read and stays one read.
+3. **Disposable metadata cache.** `list` keeps a copy of each sidecar under
+   `AGENT_ARCHIVE_HOME/cache/metadata/`, one file per object key, stamped with
+   the ETag the listing reported. The listing still runs every time; a
+   sidecar whose ETag is unchanged is read from disk, a changed ETag is
+   downloaded again, and entries under the listed prefix that the listing no
+   longer returns are deleted, which keeps the cache inside retention. A
+   harness-scoped listing evicts only within its own prefix. Directories are
+   0700 and files 0600, written atomically (temp file, rename) by a writer
+   local to the cache that does not fsync: the cache is rebuilt from the
+   store on any miss, and each entry records a SHA-256 of its bytes so a torn
+   or altered file is a miss rather than a wrong answer. The cache refuses
+   any key that is not a metadata sidecar, so it never holds source bundles,
+   and any cache failure is a miss, never a failed `list`. `list --no-cache`
+   bypasses it. `show` does not use it. `uninstall --delete-local-data` now
+   treats `cache` as agent-archive's own entry.
+
+   Staleness: the bytes come from a Get that runs after the listing. S3, R2
+   and MinIO report a single-part object's MD5 as its ETag (the collector
+   publishes sidecars with one PutObject), so when the listed ETag is a bare
+   MD5 the bytes are cached only if they hash to it; bytes rewritten between
+   the listing and the download are not cached and are downloaded again next
+   time. An ETag in another form (multipart `-N`, SSE-KMS) cannot be checked
+   and is cached as listed; that entry could be wrong only if the object was
+   rewritten after the listing and rewritten back to the listed bytes before
+   the next listing. That residual window is accepted; `--no-cache` bypasses
+   it.
+
+`storage.MemoryStore` now reports an ETag on `List`: the bare MD5 of the
+bytes, as S3, R2 and MinIO do for a single-part object, so the cache and its
+ETag check are testable in memory. The fake S3 server in `storage_test.go`
+returns a quoted ETag and the round-trip test asserts the store trims it.
+
+Measured locally against the in-memory store with 300 sidecars: an uncached
+list takes about 1 ms, a cold cache about 25 ms, and a warm cache about 4 ms.
+(With `local.WriteBytes`, which fsyncs every file, the cold case was about
+1.3 s.)
+
+`readSidecars` stops dispatching when the caller's context is done and
+reports the cancellation even when the store ignores the context; without
+that a cancelled `list` could return a partial result with no error. It also
+re-checks for a failure after acquiring a slot, so no read starts after one.
+
+Tests: `internal/reader/performance_test.go` asserts the listed prefix for a
+harness filter, that only sidecars are read, the concurrency bound, first-error
+ordering, context cancellation (no read in flight after return, not every
+sidecar read, cancellation reported whether or not the store observes the
+context), direct lookup with listing fallback and ambiguity, cache hits, ETag
+refresh, eviction (including scoped eviction), permissions, metadata-only
+content, recovery from a damaged entry, refusal of bytes that do not hash to
+the listed ETag, caching under an unverifiable ETag, and a miss for an entry
+whose bytes were altered on disk.
+`internal/cli/inspect_performance_test.go` asserts that `show --harness` is one
+read and no listing, that `show` without a harness does not list, and that
+`list`, a repeated `list`, `list --no-cache`, and `list --harness` read 1, 0,
+1, and 0 sidecars. `internal/cli/uninstall_test.go` asserts that
+`--delete-local-data` removes `cache/` and does not report it as a leftover.
+`internal/storage/storage_test.go` asserts the memory store's MD5 ETag.
+
+Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
+and `gofmt -l .` clean.
+
+## PR A3 — CLI correctness
+
+No schema, filter, parser, or adapter version changes. `config.json` gains one
+optional field, `installed_executable`.
+
+1. **Uninstall purge finishes.** `uninstall --delete-local-data` now releases
+   `hooks.lock`, `collector.lock` and `setup.lock` (each release idempotent,
+   so a deferred second release cannot unlock a reused descriptor), removes
+   the lock files, and removes the data directory when nothing unrelated is
+   left in it; unrelated files still keep the directory and are named. A
+   Keychain that is unavailable or refuses a delete no longer aborts after
+   hooks and the LaunchAgent are gone: local files are removed anyway, and the
+   uninstall reports as incomplete, naming the Keychain service and the
+   account names it could not delete with the recovery for that failure.
+   Those names are opaque Keychain references, not secrets; they are printed
+   deliberately, because once `config.json` is gone nothing else records them.
+
+   Review decision on the "never print credential references" rule: a
+   reference is `setup-` plus 32 hex characters from `crypto/rand`
+   (`local.ID`); it names a Keychain item and reveals nothing about the
+   account, bucket, or secret, and after the purge it is the only handle the
+   user has on the item. Uninstall therefore prints the service, the count,
+   and one exact `security delete-generic-password -s agent-archive -a <ref>`
+   command per item. The advice is uninstall-specific (unlock the Keychain,
+   then run the command or use Keychain Access); it never points at `sync` or
+   `setup`, which have nothing to act on after a purge. Every other command
+   keeps the rule. Lock files are unlinked while still held and released
+   afterwards, so a process that opens one during the purge gets a fresh
+   inode of its own instead of acquiring an unlinked one after the release.
+2. **Hooks check uses the installed path.** Setup records the executable it
+   wrote into the hooks and LaunchAgent as `installed_executable`, in the same
+   transaction. Status checks hooks against it, falling back to the running
+   executable for configurations written before this field.
+3. **Keychain failures are distinct.** A platform-independent
+   `errorForOSStatus` maps `errSecItemNotFound` to `ErrKeychainItemNotFound`
+   (still an `ErrMissingCredential`), `errSecInteractionNotAllowed` and
+   `errSecAuthFailed` to `ErrKeychainLocked` (still an `ErrUnavailable`), and
+   anything else to `KeychainStatusError` with its result code.
+   `keychain_darwin.go` asserts at compile time that the Go-side codes equal
+   the framework's. `kSecUseAuthenticationUIFail` is kept, so a background
+   process never prompts. `sync` prints, and status's next action gives, one
+   recovery per failure; status matches the text recorded in `status.json`.
+4. **Only typed 404s are missing objects.** `isNotFound` accepts
+   `types.NoSuchKey`, `types.NotFound`, or an HTTP response error with status
+   404, and never matches error text. A 404 whose code is `NoSuchBucket` stays
+   an error, since a missing bucket is misconfiguration, not an absent object.
+5. **Trust is explained.** Status keeps `trust: "unknown"` and the human
+   output now says trust is granted inside each app and is not observable from
+   local files.
+
+Tests: `internal/credentials/keychain_errors_test.go` (result-code mapping and
+distinct, wrap-proof recovery text, with no real Keychain);
+`internal/storage/not_found_test.go` (typed evidence only, and through the SDK
+against a fake server: a missing key is `ErrNotFound`, a 403 saying "not
+found" and a missing bucket are not); `internal/cli/cli_correctness_test.go`
+(a purge leaves no files or directory; a refused or unavailable Keychain still
+purges and names what it left; hooks read as installed when status runs from a
+different path, with the fallback for older configurations; sync and status
+give the locked, missing, and other recoveries and no Keychain advice for a
+network failure; the trust explanation). `TestUninstallLeavesFilesItDidNotCreate`
+now expects only the user's file to remain, since the lock files are removed.
+
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.
 

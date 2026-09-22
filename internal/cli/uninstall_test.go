@@ -288,8 +288,38 @@ func TestUninstallLeavesFilesItDidNotCreate(t *testing.T) {
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("agent-archive's own config must still be removed")
 	}
+	// The lock files are agent-archive's own and are removed too; the
+	// directory stays only because the foreign file is still in it.
 	entries, _ := os.ReadDir(home)
-	if len(entries) != 4 {
-		t.Fatalf("only the foreign file should remain, got %d entries", len(entries))
+	if len(entries) != 1 || entries[0].Name() != "my-notes.txt" {
+		names := []string{}
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("only the foreign file should remain, got %q", names)
+	}
+}
+
+// `list` keeps a disposable metadata cache under the data directory;
+// --delete-local-data must remove it as agent-archive's own state rather than
+// report it as a leftover.
+func TestUninstallDeleteLocalDataRemovesTheMetadataCache(t *testing.T) {
+	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
+	cacheDir := filepath.Join(home, "cache", "metadata")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "00.json"), []byte(`{"key":"sessions/codex/x/metadata.json"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "cache")); !os.IsNotExist(err) {
+		t.Fatalf("cache directory survived uninstall: err=%v", err)
+	}
+	if strings.Contains(stderr.String(), "cache") {
+		t.Fatalf("cache reported as a leftover:\n%s", stderr.String())
 	}
 }

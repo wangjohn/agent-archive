@@ -1,5 +1,7 @@
 // Package reader lists private metadata and reads selected source bundles into
-// memory. It intentionally creates no normalized persistence or local cache.
+// memory. It creates no normalized persistence. The only thing it may keep on
+// disk is the disposable metadata cache (see MetadataCache); source bundles
+// are never written locally.
 package reader
 
 import (
@@ -13,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -65,28 +69,153 @@ func (l Limits) uncompressed() int {
 	return 128 << 20
 }
 
+// Harnesses are the harness segments this build publishes metadata under:
+// every sidecar key is "sessions/<harness>/<id>/metadata.json".
+var Harnesses = []string{"claude", "codex", "cursor"}
+
+// listConcurrency bounds how many sidecars a listing downloads at once. The
+// sidecars are small and independent, so a sequential read spends almost all
+// of its time waiting on round trips; eight keeps a slow link busy without
+// flooding a provider.
+const listConcurrency = 8
+
+// ListOptions tunes ListMetadataWithOptions. The zero value reads every
+// matching sidecar from the store.
+type ListOptions struct {
+	// Cache, when set, serves a sidecar whose listed ETag is unchanged from
+	// local disk instead of downloading it, and forgets sidecars which are
+	// no longer listed. It holds metadata only.
+	Cache *MetadataCache
+}
+
 // ListMetadata reads only metadata sidecars and applies filters without
 // downloading transcript bundles.
 func ListMetadata(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter) ([]archive.Metadata, error) {
-	objects, err := store.List(ctx, prefix)
+	return ListMetadataWithOptions(ctx, store, prefix, filter, ListOptions{})
+}
+
+// ListMetadataWithOptions is ListMetadata with an optional local cache. A
+// harness filter narrows the listing to that harness's own prefix, keys which
+// are not sidecars are skipped before any download, and sidecars are read with
+// bounded concurrency. Results are ordered newest capture first, and the first
+// sidecar in key order which cannot be read or validated fails the listing, as
+// a sequential read would.
+func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
+	listPrefix := listPrefixFor(prefix, filter.Harness)
+	objects, err := store.List(ctx, listPrefix)
 	if err != nil {
 		return nil, err
 	}
-	var results []archive.Metadata
+	sidecars := make([]storage.Object, 0, len(objects))
 	for _, object := range objects {
-		if !strings.HasSuffix(object.Key, "/metadata.json") {
-			continue
+		if strings.HasSuffix(object.Key, "/metadata.json") {
+			sidecars = append(sidecars, object)
 		}
-		metadata, err := ReadMetadata(ctx, store, object.Key)
-		if err != nil {
-			return nil, err
-		}
+	}
+	loaded, err := readSidecars(ctx, store, sidecars, options.Cache)
+	if err != nil {
+		return nil, err
+	}
+	if options.Cache != nil {
+		options.Cache.evictUnlisted(listPrefix, sidecars)
+	}
+	var results []archive.Metadata
+	for _, metadata := range loaded {
 		if matches(metadata, filter) {
 			results = append(results, metadata)
 		}
 	}
-	sort.Slice(results, func(i, j int) bool { return results[i].CapturedAt.After(results[j].CapturedAt) })
+	sort.SliceStable(results, func(i, j int) bool { return results[i].CapturedAt.After(results[j].CapturedAt) })
 	return results, nil
+}
+
+// listPrefixFor narrows a listing to one harness's sessions. A harness value
+// that cannot be a key segment lists the whole prefix instead, which is what
+// every harness filter did before, so it still matches nothing rather than
+// becoming an error.
+func listPrefixFor(prefix, harness string) string {
+	if harness == "" {
+		return prefix
+	}
+	if _, err := archive.MetadataObjectKey(harness, "probe"); err != nil {
+		return prefix
+	}
+	if trimmed := strings.TrimSuffix(prefix, "/"); trimmed != "" {
+		return trimmed + "/" + harness + "/"
+	}
+	return harness + "/"
+}
+
+// readSidecars downloads and validates each listed sidecar with at most
+// listConcurrency requests in flight. Work is dispatched in key order and no
+// new work starts after a failure or once ctx is done, so every sidecar before
+// the first failing one has been read and the lowest-index error is the one a
+// sequential read would have returned. It returns only after every read it
+// started has finished, so no goroutine outlives the call, and a cancelled
+// ctx is reported even when the store itself ignores it.
+func readSidecars(ctx context.Context, store storage.ObjectStore, objects []storage.Object, cache *MetadataCache) ([]archive.Metadata, error) {
+	out := make([]archive.Metadata, len(objects))
+	errs := make([]error, len(objects))
+	var failed atomic.Bool
+	slots := make(chan struct{}, listConcurrency)
+	var wg sync.WaitGroup
+	dispatched := 0
+	for index, object := range objects {
+		if failed.Load() || ctx.Err() != nil {
+			break
+		}
+		slots <- struct{}{}
+		// A failure may have landed while waiting for the slot.
+		if failed.Load() || ctx.Err() != nil {
+			<-slots
+			break
+		}
+		dispatched++
+		wg.Add(1)
+		go func(index int, object storage.Object) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			metadata, err := readListedSidecar(ctx, store, object, cache)
+			if err != nil {
+				errs[index] = err
+				failed.Store(true)
+				return
+			}
+			out[index] = metadata
+		}(index, object)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	if dispatched < len(objects) {
+		// Dispatch stopped early without a read failing: ctx is done.
+		return nil, fmt.Errorf("read metadata: %w", ctx.Err())
+	}
+	return out, nil
+}
+
+// readListedSidecar serves an unchanged sidecar from the cache and otherwise
+// downloads it. Only a sidecar which decoded and validated is cached, and a
+// cache entry which no longer decodes is treated as a miss.
+func readListedSidecar(ctx context.Context, store storage.ObjectStore, object storage.Object, cache *MetadataCache) (archive.Metadata, error) {
+	if data, ok := cache.get(object.Key, object.ETag); ok {
+		if metadata, err := decodeMetadata(object.Key, data); err == nil {
+			return metadata, nil
+		}
+	}
+	data, err := store.Get(ctx, object.Key)
+	if err != nil {
+		return archive.Metadata{}, fmt.Errorf("read metadata %q: %w", object.Key, err)
+	}
+	metadata, err := decodeMetadata(object.Key, data)
+	if err != nil {
+		return archive.Metadata{}, err
+	}
+	cache.put(object.Key, object.ETag, data)
+	return metadata, nil
 }
 
 // ReadMetadata reads and validates one metadata sidecar by its object key.
@@ -96,6 +225,10 @@ func ReadMetadata(ctx context.Context, store storage.ObjectStore, key string) (a
 	if err != nil {
 		return archive.Metadata{}, fmt.Errorf("read metadata %q: %w", key, err)
 	}
+	return decodeMetadata(key, data)
+}
+
+func decodeMetadata(key string, data []byte) (archive.Metadata, error) {
 	var metadata archive.Metadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return archive.Metadata{}, fmt.Errorf("decode metadata %q: %w", key, err)
@@ -107,21 +240,39 @@ func ReadMetadata(ctx context.Context, store storage.ObjectStore, key string) (a
 }
 
 // FindMetadataKeys returns the metadata sidecar keys under prefix that
-// belong to one archive session ID, in key order. The harness segment of a
-// key is not known to a caller that only has the ID, so this lists keys
-// rather than deriving one with archive.MetadataObjectKey; it downloads
-// nothing. More than one result means the same ID was published under more
-// than one harness, which a caller should treat as ambiguous.
+// belong to one archive session ID, in key order. A caller that only has the
+// ID does not know its harness segment, so the sidecar key is tried under
+// each harness this build publishes (Harnesses) with a direct read, and only
+// if none exists is the prefix listed — a listing is proportional to the whole
+// archive, three reads are not. It returns keys only; the probe reads are not
+// kept. More than one result means the same ID was published under more than
+// one harness, which a caller should treat as ambiguous. A read error other
+// than not-found is returned rather than falling back.
 func FindMetadataKeys(ctx context.Context, store storage.ObjectStore, prefix, archiveSessionID string) ([]string, error) {
 	if archiveSessionID == "" || strings.Contains(archiveSessionID, "/") {
 		return nil, fmt.Errorf("invalid archive session ID %q", archiveSessionID)
+	}
+	if _, err := archive.MetadataObjectKey(Harnesses[0], archiveSessionID); err != nil {
+		return nil, fmt.Errorf("invalid archive session ID %q", archiveSessionID)
+	}
+	var keys []string
+	for _, harness := range Harnesses {
+		key := strings.TrimPrefix(listPrefixFor(prefix, harness)+archiveSessionID+"/metadata.json", "/")
+		if _, err := store.Get(ctx, key); err == nil {
+			keys = append(keys, key)
+		} else if !errors.Is(err, storage.ErrNotFound) {
+			return nil, fmt.Errorf("read metadata %q: %w", key, err)
+		}
+	}
+	if len(keys) > 0 {
+		sort.Strings(keys)
+		return keys, nil
 	}
 	objects, err := store.List(ctx, prefix)
 	if err != nil {
 		return nil, err
 	}
 	suffix := "/" + archiveSessionID + "/metadata.json"
-	var keys []string
 	for _, object := range objects {
 		if strings.HasSuffix(object.Key, suffix) {
 			keys = append(keys, object.Key)

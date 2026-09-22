@@ -80,11 +80,37 @@ func TestS3StoreFakeHTTPRoundTrip(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Key != "sessions/id/source" {
 		t.Fatalf("List = %#v, %v", items, err)
 	}
+	// S3 quotes the ETag; the store reports the bare MD5 of a single-part
+	// object, which the reader's metadata cache checks bytes against.
+	if items[0].ETag != md5Hex(payload) {
+		t.Fatalf("List ETag = %q, want bare %q", items[0].ETag, md5Hex(payload))
+	}
 	if err := store.Delete(context.Background(), "sessions/id/source"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Get(context.Background(), "sessions/id/source"); err != ErrNotFound {
 		t.Fatalf("missing Get error = %v", err)
+	}
+}
+
+// MemoryStore stands in for S3 and R2 in reader tests, so its ETag must
+// behave like theirs for a single-part object: the bare MD5 of the bytes.
+func TestMemoryStoreListsAnMD5ETag(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+	if err := store.Put(ctx, "sessions/a/metadata.json", []byte(`{"v":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.List(ctx, "sessions/")
+	if err != nil || len(items) != 1 || items[0].ETag != md5Hex([]byte(`{"v":1}`)) {
+		t.Fatalf("List = %#v, %v", items, err)
+	}
+	if err := store.Put(ctx, "sessions/a/metadata.json", []byte(`{"v":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := store.List(ctx, "sessions/")
+	if after[0].ETag == items[0].ETag || after[0].ETag != md5Hex([]byte(`{"v":2}`)) {
+		t.Fatalf("ETag did not follow the content: %q then %q", items[0].ETag, after[0].ETag)
 	}
 }
 
@@ -157,6 +183,7 @@ func writeListResponse(w http.ResponseWriter, objects map[string][]byte, prefix 
 	type content struct {
 		Key  string `xml:"Key"`
 		Size int    `xml:"Size"`
+		ETag string `xml:"ETag"`
 	}
 	type result struct {
 		XMLName  xml.Name  `xml:"ListBucketResult"`
@@ -165,7 +192,7 @@ func writeListResponse(w http.ResponseWriter, objects map[string][]byte, prefix 
 	var out result
 	for key, value := range objects {
 		if strings.HasPrefix(key, prefix) {
-			out.Contents = append(out.Contents, content{Key: key, Size: len(value)})
+			out.Contents = append(out.Contents, content{Key: key, Size: len(value), ETag: `"` + md5Hex(value) + `"`})
 		}
 	}
 	w.Header().Set("Content-Type", "application/xml")

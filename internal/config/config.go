@@ -40,6 +40,12 @@ type Config struct {
 	// Harnesses lists which applications setup installed hooks for
 	// (values match archive.Harness.Name: "codex", "claude", "cursor").
 	Harnesses []string `json:"harnesses,omitempty"`
+	// InstalledExecutable is the executable path setup wrote into the hooks
+	// and the LaunchAgent. Status checks the installed hooks against this
+	// path rather than whichever path status itself was run through (a
+	// symlink, a Homebrew shim, a copied binary); a configuration written
+	// before this field existed falls back to the running executable.
+	InstalledExecutable string `json:"installed_executable,omitempty"`
 	// RequireSkillUse opts out of the spec's default (capture sessions with
 	// no detected skill use too, to preserve comparison evidence). The zero
 	// value (false) matches that default, so a config that predates this

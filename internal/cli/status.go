@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -136,6 +137,9 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			gaps = fmt.Sprintf("; %d with a capture gap", len(app.CaptureGaps))
 		}
 		fmt.Fprintf(stdout, "%s: %s (%d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Sessions, gaps, app.Hooks)
+		if app.Trust == "unknown" {
+			fmt.Fprintln(stdout, "  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
+		}
 		fmt.Fprintf(stdout, "  Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
 		if app.Capabilities.FreshStart.State == "unavailable" {
 			fmt.Fprintf(stdout, "  Fresh-start capture: unavailable. %s\n", app.Capabilities.FreshStart.NextAction)
@@ -458,7 +462,12 @@ func readStatus(env Env) (view statusView, err error) {
 	if err != nil {
 		return view, err
 	}
-	executable, executableErr := env.executable()
+	// Hooks are checked against the path setup installed, not the path this
+	// status process runs from; older configurations fall back to the latter.
+	executable, executableErr := cfg.InstalledExecutable, error(nil)
+	if executable == "" {
+		executable, executableErr = env.executable()
+	}
 	discovered, err := readApplicationDiscoveries(home)
 	if err != nil {
 		// Advisory only: a damaged observation file degrades installed
@@ -543,6 +552,11 @@ func readStatus(env Env) (view statusView, err error) {
 	if view.Collector.LastError != "" {
 		view.State = "Needs attention"
 		view.Next = "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
+		// A Keychain failure has one specific fix; status.json keeps only
+		// the error text, so it is recognized from that.
+		if action := credentials.RecoveryActionForMessage(view.Collector.LastError); action != "" {
+			view.Next = action
+		}
 	}
 	if cfg.Paused {
 		view.State = "Paused"
