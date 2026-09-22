@@ -7,12 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
 
@@ -199,13 +202,32 @@ func trimStorePrefix(key, prefix string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(key, prefix), "/")
 }
 
+// isNotFound reports whether err means the object does not exist. It trusts
+// only typed evidence: the SDK's NoSuchKey or NotFound error, or an HTTP
+// response whose status is 404. Error text is never matched, so a failure
+// whose message merely mentions "not found" (a 403, a DNS failure, a
+// misconfigured endpoint) stays an error instead of reading as a missing
+// object. A 404 whose code is NoSuchBucket names a missing bucket, which is a
+// configuration problem, not an absent object.
 func isNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
 	var noSuchKey *types.NoSuchKey
-	if errors.As(err, &noSuchKey) {
+	var notFound *types.NotFound
+	if errors.As(err, &noSuchKey) || errors.As(err, &notFound) {
 		return true
 	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "nosuchkey") || strings.Contains(message, "not found") || strings.Contains(message, "status code: 404")
+	var noSuchBucket *types.NoSuchBucket
+	if errors.As(err, &noSuchBucket) {
+		return false
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchBucket" {
+		return false
+	}
+	var response *smithyhttp.ResponseError
+	return errors.As(err, &response) && response.HTTPStatusCode() == http.StatusNotFound
 }
 
 func sha256Bytes(data []byte) [32]byte {
