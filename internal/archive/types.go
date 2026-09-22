@@ -16,8 +16,11 @@ const (
 	// FilterVersion 3 keeps tool arguments and tool-result linkage, reports the
 	// key names it could not keep, and strips injected instruction blocks from
 	// message text. Filter 4 also retains Claude Code's isMeta flag and strips
-	// the text of every isMeta record. See docs/agent-archive-privacy.md.
-	FilterVersion = "4"
+	// the text of every isMeta record. Filter 5 retains Claude Code's
+	// compact_boundary system record (type, subtype, ids, timestamp only) and
+	// the isCompactSummary and isVisibleInTranscriptOnly flags, as booleans.
+	// See docs/agent-archive-privacy.md.
+	FilterVersion = "5"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -353,11 +356,16 @@ type Counts struct {
 	// Code's `!` commands, recorded as <bash-input>). They are neither prompts
 	// nor model tool calls.
 	UserShellCommands *int `json:"user_shell_commands,omitempty"`
-	ExplicitFeedback  *int `json:"explicit_feedback,omitempty"`
-	InputTokens       *int `json:"input_tokens,omitempty"`
-	OutputTokens      *int `json:"output_tokens,omitempty"`
-	CacheReadTokens   *int `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens  *int `json:"cache_write_tokens,omitempty"`
+	// Compactions counts how many times Claude Code compacted the session
+	// (/compact or auto-compaction), from its compact_boundary records, or
+	// from its compaction summaries when no boundary was retained. It is
+	// known only for Claude Code bundles from filter 5 on.
+	Compactions      *int `json:"compactions,omitempty"`
+	ExplicitFeedback *int `json:"explicit_feedback,omitempty"`
+	InputTokens      *int `json:"input_tokens,omitempty"`
+	OutputTokens     *int `json:"output_tokens,omitempty"`
+	CacheReadTokens  *int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
 }
 
 type ModelSummary struct {

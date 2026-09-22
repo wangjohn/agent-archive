@@ -204,7 +204,7 @@ func TestParserV07RegeneratesFilterThreeBundlesNoWorse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a filter 3 bundle no longer parses: %v", err)
 	}
-	if old.FilterVersion != "3" || old.Parser.Version != "0.7.0" {
+	if old.FilterVersion != "3" || old.Parser.Version != DefaultParserVersion {
 		t.Fatalf("provenance = filter %q parser %q", old.FilterVersion, old.Parser.Version)
 	}
 	// Two things the person did were prompts (the /review-pr command and
