@@ -732,3 +732,79 @@ retaining that flag would be a further filter change and is not part of C1.
 
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.
+
+## PR C4 — Compaction summaries
+
+Filter 5, adapter 0.5.0, parser 0.8.0.
+
+After `/compact` or auto-compaction, Claude Code writes a
+`{"type":"system","subtype":"compact_boundary"}` record and then a user
+record marked `isCompactSummary: true` (usually also
+`isVisibleInTranscriptOnly: true`) whose text is a model-written summary of
+the earlier conversation. Filter 4 dropped the boundary as an unknown record
+type and the flags as unknown keys, so parser 0.7 counted each summary as a
+human prompt and a message.
+
+**Filter 5.** Keeps exactly the `compact_boundary` record: `type`, `subtype`,
+its ids, a parseable timestamp, and `isSidechain`. It is rebuilt from typed
+values, and nothing else of the record is kept (see
+`docs/agent-archive-privacy.md`). The flag `isSidechain` goes slightly beyond
+the plan's list, for one reason: without it, a subagent's compaction inlined
+in its parent transcript would count toward the parent's compactions. Every
+other system record is still hidden, and only the Claude adapter admits the
+boundary. `isCompactSummary` and `isVisibleInTranscriptOnly` are retained as
+booleans only, under the same rule the #8 review gave `isMeta`. The summary's
+own text is kept.
+
+**Parser 0.8.**
+- A user record with `isCompactSummary: true` is turn kind `compact_summary`.
+  `show --normalized` prints it with its text, and it counts as neither a
+  prompt, a message, nor a model turn.
+- The summary ends the scan that decides whether a slash command was
+  answered, so `/compact` is never promoted to a prompt, even when an
+  auto-continued assistant record follows.
+- `counts.compactions` counts boundary records, or summaries when no boundary
+  was retained, so each compaction counts once.
+- The count is reported only for Claude Code bundles from filter 5 on. For
+  filters 2–4, which could not observe compaction, and for other harnesses,
+  it is absent (unknown), not zero.
+- Filter 2/3/4 bundles still parse with parser 0.7's counts: nothing in them
+  marks the summary, so it still reads as a prompt.
+
+`schemas/metadata.schema.json` gains `counts.compactions`.
+
+**Rewrite protection.** Compaction appends the boundary and summary to the
+same JSONL file, so filtered records extend the published ones and
+`nativeEvidenceExtends` lets the session publish normally. A collector test
+proves this with the fixture. A second test pins the fallback: if a
+compaction ever rewrote the earlier records instead, the session would be
+recorded as a `transcript_rewritten` gap rather than overwritten. A filter or
+adapter version change is already not a rewrite, so sessions captured under
+filter 4 republish under filter 5.
+
+Tests:
+- `internal/archive/compaction_filter_test.go`:
+  - the boundary keeps exactly its identity keys, and none of its text or
+    metadata leaks;
+  - the summary keeps its text and flags;
+  - non-boolean flags are omitted and reported;
+  - an ordinary system record stays hidden;
+  - a malformed boundary keeps only its type and subtype;
+  - Codex does not admit the boundary.
+- `internal/archive/compaction_parser_test.go`:
+  - fixture kinds and counts: two prompts, five messages, two compactions,
+    three model turns;
+  - filter 2/3/4 bundles with unchanged counts and unknown compactions;
+  - Codex reports none, and an uncompacted filter-5 session reports zero;
+  - one count per compaction, the summary fallback, and the sidechain
+    exclusion;
+  - `/compact` is not promoted across the summary.
+- `internal/collector/compaction_test.go`: the appended compaction publishes,
+  and a rewriting one is recorded as a gap.
+
+Not verified: no transcript on the development machine contains a compaction,
+so both the record shapes and the claim that compaction appends rather than
+rewrites come from Claude Code's behavior, not from an observed file. The
+fixture is synthetic. The first real compacted session should be checked
+with `show --normalized` for the `compact_summary` kind and a nonzero
+`counts.compactions`.
