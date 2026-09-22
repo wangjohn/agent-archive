@@ -143,28 +143,37 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 
 	switch kind {
 	case hookEventStart:
-		return handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
+		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
 	case hookEventTurnStart:
+		registered := true
 		if canonicalHarness(harness) == "cursor" {
-			registered, err := hasRegistration(store, nativeSessionID)
+			registered, err = hasRegistration(store, nativeSessionID)
 			if err != nil {
 				return err
 			}
-			if !registered {
-				// Cursor's desktop app fires no sessionStart for a new chat
-				// (observed on 3.21.13): its first hook is beforeSubmitPrompt.
-				// A never-seen conversation is registered there, under the
-				// same fresh-start proof a sessionStart would need.
-				return handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
-			}
 		}
-		return handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
+		if !registered {
+			// Cursor's desktop app fires no sessionStart for a new chat
+			// (observed on 3.21.13): its first hook is beforeSubmitPrompt.
+			// A never-seen conversation is registered there, under the
+			// same fresh-start proof a sessionStart would need.
+			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
+		} else {
+			err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
+		}
 	case hookEventSubagentStop:
-		return handleSubagentStop(store, cfg, harness, nativeSessionID, eventName, payload, now)
+		err = handleSubagentStop(store, cfg, harness, nativeSessionID, eventName, payload, now)
 	case hookEventStop, hookEventResponse:
-		return handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
+		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
 	}
-	return nil
+	// Retention can forget a session between this hook's registration lookup
+	// and its request write; the store then refuses the write so no orphan
+	// request is left. That is the intended outcome of the race, not a fault
+	// to report on the user's turn.
+	if errors.Is(err, collector.ErrSessionNotRegistered) {
+		return nil
+	}
+	return err
 }
 
 // startsCapture reports whether an event is one that can register a new
@@ -176,9 +185,12 @@ func startsCapture(kind hookEventKind, harness string) bool {
 // recordSetupInProgress explains a session start that setup's own transaction
 // window swallowed. Without it an included project simply never registers the
 // session and `status` offers no reason, unlike the pre-activation and
-// unknown-start cases. Setup holds hooks.lock while it commits, so this write
-// is deliberately lock-free and best effort: losing one bounded, content-free
-// diagnostic is better than holding up the user's turn behind an installation.
+// unknown-start cases. Setup holds hooks.lock while it commits, so this path
+// never waits for it. The write takes only diagnostics.lock, for at most
+// hookDiagnosticsWait, and drops the diagnostic on timeout: losing one
+// bounded, content-free diagnostic is better than holding up the user's turn
+// behind an installation. recordCaptureDiagnostic rechecks inclusion under
+// that lock, so a project setup has just excluded and pruned stays pruned.
 func recordSetupInProgress(home string, kind hookEventKind, harness string, payload map[string]any, now time.Time) error {
 	if !startsCapture(kind, harness) {
 		return nil

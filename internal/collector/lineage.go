@@ -87,6 +87,42 @@ func (s *LocalStore) RemoveSuperseded(archiveSessionID, key string) error {
 	return local.Write(s.supersededPath(archiveSessionID), out)
 }
 
+// ForgetIdleSession forgets a session under its request lock, the same lock a
+// hook holds while it writes a request. Retention decides a session has
+// expired from a snapshot taken earlier in the sweep; a hook can write a
+// request for it after that snapshot. When deferForWork is set, the pending
+// work is checked again under the lock, and a session that now has a request
+// or a pending publication is kept (forgotten reports false) so the collector
+// publishes that evidence. A session the collector no longer publishes is
+// forgotten regardless: its work would never be done.
+func (s *LocalStore) ForgetIdleSession(archiveSessionID, nativeSessionID string, deferForWork bool) (forgotten bool, err error) {
+	if !safeFileComponent(archiveSessionID) {
+		return false, errors.New("archive session ID is not a safe file name component")
+	}
+	unlock, err := s.lockRequest(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	if deferForWork {
+		_, requested, err := s.loadRequest(archiveSessionID)
+		if err != nil {
+			return false, err
+		}
+		pending, err := s.HasPending(archiveSessionID)
+		if err != nil {
+			return false, err
+		}
+		if requested || pending {
+			return false, nil
+		}
+	}
+	if err := s.ForgetSession(archiveSessionID, nativeSessionID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // SessionDir is the per-session directory under the collector-owned
 // sessions/ tree where other packages keep session-scoped evidence (the CLI's
 // read-back verification record, for one). ForgetSession clears it.
@@ -99,7 +135,13 @@ func (s *LocalStore) SessionDir(archiveSessionID string) string {
 // scan markers, superseded-source ledger, per-session evidence directory,
 // and native-session index entry. A caller uses this only after successfully
 // deleting that session's metadata and every source object from storage
-// (whole-session retention); it never touches storage itself.
+// (whole-session retention); it never touches storage itself. Retention calls
+// it through ForgetIdleSession, under the request lock.
+//
+// The registration and request are removed before the request lock file.
+// The lock is a flock on that file's inode, so once the file is unlinked a
+// waiting hook can lock a fresh one; by then the registration is already
+// gone, and saveRequest refuses to write for an unregistered session.
 func (s *LocalStore) ForgetSession(archiveSessionID, nativeSessionID string) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")

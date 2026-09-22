@@ -53,13 +53,29 @@ func (f *fakeKeychain) Delete(_ context.Context, reference string) error {
 	return nil
 }
 
+// testExecutable creates a real, runnable stand-in for the installed
+// agent-archive binary. status checks that the executable setup recorded
+// still exists and can run, so a fixed fictional path would read as broken.
+func testExecutable(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "bin", "agent-archive")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func setupTestEnv(t *testing.T, home, userHome string, keychain *fakeKeychain, now time.Time) Env {
 	t.Helper()
 	env := testEnv(t, home, now)
 	env.AWSProfiles = func() ([]AWSProfile, error) { return nil, nil }
 	env.WorkingDir = func() (string, error) { return "", errors.New("no current project") }
 	env.UserHomeDir = func() (string, error) { return userHome, nil }
-	env.Executable = func() (string, error) { return "/opt/agent-archive/bin/agent-archive", nil }
+	executable := testExecutable(t)
+	env.Executable = func() (string, error) { return executable, nil }
 	env.DetectHarnesses = func(string) []string { return nil }
 	env.DiscoverApplications = func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} }
 	state := "missing"
