@@ -174,12 +174,15 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 		if e != nil {
 			return e
 		}
-		// Local state is gone; release the locks and remove their files, then
-		// the data directory itself if nothing unrelated remains in it.
+		// Local state is gone. Unlink the lock files while they are still
+		// held, so a hook, collector, or setup that opens one from now on
+		// creates a fresh inode it owns outright instead of acquiring this
+		// one after its release; then release them and remove the directory
+		// itself if nothing unrelated remains in it.
+		removeLockFiles(home)
 		releaseHooks()
 		unlock()
 		release()
-		removeLockFiles(home)
 		if len(leftovers) == 0 {
 			if e := os.Remove(home); e != nil && !os.IsNotExist(e) && !isDirectoryNotEmpty(e) {
 				return e
@@ -190,11 +193,21 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 			problems = append(problems, fmt.Sprintf("unrelated files were kept in %s: %s", home, strings.Join(leftovers, ", ")))
 		}
 		if len(undeleted) > 0 {
-			problem := fmt.Sprintf("%d stored credential(s) could not be deleted from the Keychain (service %q, account(s) %s): %v", len(undeleted), credentials.KeychainService, strings.Join(undeleted, ", "), keychainErr)
-			if action := credentials.RecoveryAction(keychainErr); action != "" {
-				problem += ". " + action
+			// The account names are opaque random references
+			// ("setup-<hex>", see setup.go) that reveal nothing about the
+			// stored secret, and after this purge nothing else records them,
+			// so they are printed here on purpose (see the PR A3 ledger
+			// entry). The recovery is uninstall-specific: there is no
+			// configuration left to sync or re-run setup against.
+			commands := make([]string, 0, len(undeleted))
+			for _, ref := range undeleted {
+				commands = append(commands, fmt.Sprintf("security delete-generic-password -s %s -a %s", credentials.KeychainService, ref))
 			}
-			problem += " To remove them yourself, open Keychain Access and delete those items."
+			problem := fmt.Sprintf("%d stored credential(s) could not be deleted from Keychain service %q: %v", len(undeleted), credentials.KeychainService, keychainErr)
+			if errors.Is(keychainErr, credentials.ErrKeychainLocked) {
+				problem += ". Unlock the login Keychain (log in, or open Keychain Access)"
+			}
+			problem += fmt.Sprintf(". To remove them yourself, run: %s; or delete those items in Keychain Access", strings.Join(commands, " && "))
 			problems = append(problems, problem)
 		}
 		if len(problems) > 0 {
@@ -234,9 +247,10 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 	return undeleted, firstErr
 }
 
-// uninstallLockFiles are the lock files a purge removes once it has released
-// them. They are removed last: while held they are what keeps a hook,
-// collector, or setup from starting against a half-deleted directory.
+// uninstallLockFiles are the lock files a purge unlinks after every other
+// local entry is gone and while it still holds them: held, they are what
+// keeps a hook, collector, or setup from acting on a half-deleted directory,
+// and unlinking before release means a later opener gets its own inode.
 var uninstallLockFiles = []string{"hooks.lock", "collector.lock", "setup.lock"}
 
 func removeLockFiles(home string) {

@@ -64,10 +64,25 @@ func TestUninstallPurgeContinuesPastKeychainFailure(t *testing.T) {
 				t.Fatalf("an undeleted credential must make uninstall incomplete: code=%d stderr=%s", code, stderr.String())
 			}
 			message := stderr.String()
-			for _, want := range []string{ref, `service "agent-archive"`, "Keychain Access", "Unlock the login Keychain"} {
+			// The recovery names the service, the count, and the exact
+			// command per opaque reference; it must not send the user to
+			// sync or setup, which no longer exist after a purge.
+			for _, want := range []string{
+				`1 stored credential(s) could not be deleted from Keychain service "agent-archive"`,
+				"security delete-generic-password -s agent-archive -a " + ref,
+				"Keychain Access", "Unlock the login Keychain",
+			} {
 				if !strings.Contains(message, want) {
 					t.Errorf("stderr must mention %q:\n%s", want, message)
 				}
+			}
+			for _, reject := range []string{"agent-archive sync", "agent-archive setup"} {
+				if strings.Contains(message, reject) {
+					t.Errorf("stderr must not suggest %q after a purge:\n%s", reject, message)
+				}
+			}
+			if !strings.HasPrefix(ref, "setup-") || len(ref) != len("setup-")+32 {
+				t.Fatalf("credential reference %q is not the opaque setup-<hex> form the output relies on", ref)
 			}
 			if strings.Contains(stdout.String()+message, "supersecret") {
 				t.Fatal("uninstall output contains a secret")

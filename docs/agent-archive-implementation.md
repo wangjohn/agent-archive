@@ -386,6 +386,19 @@ optional field, `installed_executable`.
    account names it could not delete with the recovery for that failure.
    Those names are opaque Keychain references, not secrets; they are printed
    deliberately, because once `config.json` is gone nothing else records them.
+
+   Review decision on the "never print credential references" rule: a
+   reference is `setup-` plus 32 hex characters from `crypto/rand`
+   (`local.ID`); it names a Keychain item and reveals nothing about the
+   account, bucket, or secret, and after the purge it is the only handle the
+   user has on the item. Uninstall therefore prints the service, the count,
+   and one exact `security delete-generic-password -s agent-archive -a <ref>`
+   command per item. The advice is uninstall-specific (unlock the Keychain,
+   then run the command or use Keychain Access); it never points at `sync` or
+   `setup`, which have nothing to act on after a purge. Every other command
+   keeps the rule. Lock files are unlinked while still held and released
+   afterwards, so a process that opens one during the purge gets a fresh
+   inode of its own instead of acquiring an unlinked one after the release.
 2. **Hooks check uses the installed path.** Setup records the executable it
    wrote into the hooks and LaunchAgent as `installed_executable`, in the same
    transaction. Status checks hooks against it, falling back to the running
