@@ -6,11 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -24,6 +28,49 @@ func (k *failingDeleteKeychain) Delete(context.Context, string) error { return k
 
 func TestUninstallPurgeLeavesNoFilesOrDirectory(t *testing.T) {
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
+	var stdout, stderr bytes.Buffer
+	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		entries, _ := os.ReadDir(home)
+		names := []string{}
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("data directory survived the purge (err=%v) with %q", err, names)
+	}
+}
+
+// The purge must know every entry the running system creates, not only the
+// ones setup does: the collector's directories (created by every
+// collector.NewLocalStore), the lineage ledger and reader cache (created on
+// first use), and the diagnostics lock (created by the first diagnostic a
+// hook records).
+func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
+	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "scan-signatures", "session.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordSuperseded("session", "sessions/codex/session/source.old.json.gz", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.OpenMetadataCache(home); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, _ := config.Load(home)
+	if err := recordCaptureDiagnostic(home, captureDiagnostic{Code: diagnosticSetupInProgress, Harness: "codex", ProjectRoot: cfg.Archive.Projects[0].Root, ObservedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"scan-signatures", "superseded", "cache", diagnosticsLockName, "capture-diagnostics.json"} {
+		if _, err := os.Stat(filepath.Join(home, name)); err != nil {
+			t.Fatalf("test precondition: %s was not created: %v", name, err)
+		}
+	}
 	var stdout, stderr bytes.Buffer
 	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -100,8 +147,12 @@ func TestStatusChecksHooksAgainstTheInstalledExecutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.InstalledExecutable != "/opt/agent-archive/bin/agent-archive" {
-		t.Fatalf("setup recorded executable %q", cfg.InstalledExecutable)
+	installed, err := env.executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.InstalledExecutable != installed {
+		t.Fatalf("setup recorded executable %q, want %q", cfg.InstalledExecutable, installed)
 	}
 
 	// status run through a different path (a shim, a symlink, a copy).
@@ -135,7 +186,7 @@ func TestStatusChecksHooksAgainstTheInstalledExecutable(t *testing.T) {
 			t.Fatalf("fallback: %s hooks = %q", app, state)
 		}
 	}
-	env.Executable = func() (string, error) { return "/opt/agent-archive/bin/agent-archive", nil }
+	env.Executable = func() (string, error) { return installed, nil }
 	for app, state := range hooksByApp() {
 		if state != "installed" {
 			t.Fatalf("fallback with the installed path: %s hooks = %q", app, state)

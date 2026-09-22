@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -468,6 +469,17 @@ func readStatus(env Env) (view statusView, err error) {
 	if executable == "" {
 		executable, executableErr = env.executable()
 	}
+	// Every installed hook runs the executable setup recorded. If that file
+	// was moved or deleted, the hook configuration still matches exactly, so
+	// comparing it alone would report healthy hooks that fail on every event.
+	// An uninstalled archive has no hooks left to break.
+	binaryProblem := ""
+	if cfg.InstalledExecutable != "" && cfg.Archive.Enabled {
+		binaryProblem = executableProblem(cfg.InstalledExecutable)
+	}
+	if binaryProblem != "" {
+		view.Warnings = append(view.Warnings, fmt.Sprintf("The agent-archive executable that setup installed at %s is %s; every app hook runs it, so capture has stopped.", cfg.InstalledExecutable, binaryProblem))
+	}
 	discovered, err := readApplicationDiscoveries(home)
 	if err != nil {
 		// Advisory only: a damaged observation file degrades installed
@@ -493,6 +505,8 @@ func readStatus(env Env) (view statusView, err error) {
 		view.Apps[i].VersionSupport, view.Apps[i].VersionSupportReason = installedVersionSupportDetail(appDiscovery, view.Apps[i].verifiedHarnessVersions)
 		installed, e := hooks.Installed(userHome, executable, view.Apps[i].Name)
 		switch {
+		case binaryProblem != "":
+			view.Apps[i].Hooks = hooksBroken
 		case e != nil || executableErr != nil:
 			view.Apps[i].Hooks = "unknown"
 		case !installed:
@@ -503,6 +517,20 @@ func readStatus(env Env) (view statusView, err error) {
 	}
 	plist := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
 	view.Background = env.jobState(plist)
+	// launchd reports a job whose program is gone as loaded (it only fails
+	// when it fires), so read the program the LaunchAgent actually runs.
+	backgroundProgram, backgroundProblem := "", ""
+	if cfg.Archive.Enabled {
+		if data, err := os.ReadFile(plist); err == nil {
+			if program, err := hooks.LaunchAgentProgram(data); err == nil {
+				backgroundProgram, backgroundProblem = program, executableProblem(program)
+			}
+		}
+	}
+	if backgroundProblem != "" {
+		view.Background = backgroundBroken
+		view.Warnings = append(view.Warnings, fmt.Sprintf("The background collector's LaunchAgent runs %s, which is %s, so scheduled collection has stopped.", backgroundProgram, backgroundProblem))
+	}
 	view.State = "Ready"
 	view.Next = "Keep working. Run agent-archive list to inspect archived sessions."
 	if len(view.Apps) == 0 {
@@ -562,6 +590,17 @@ func readStatus(env Env) (view statusView, err error) {
 		view.State = "Paused"
 		view.Next = "Run agent-archive resume when ready. Registered sessions can catch up after resume."
 	}
+	// A moved or deleted binary is the root cause of every symptom above (a
+	// stale scan, a failing hook), and pausing does not stop the apps from
+	// running hooks that now fail, so it outranks all of them.
+	if binaryProblem != "" || backgroundProblem != "" {
+		moved := cfg.InstalledExecutable
+		if binaryProblem == "" {
+			moved = backgroundProgram
+		}
+		view.State = "Needs attention"
+		view.Next = fmt.Sprintf("agent-archive is no longer usable at %s. Run agent-archive setup from the binary's new location to point the hooks and background collector at it.", moved)
+	}
 	if !cfg.Archive.Enabled {
 		view.State = "Not installed"
 		view.Next = "Local data is kept. Run agent-archive setup to reinstall."
@@ -572,6 +611,31 @@ func readStatus(env Env) (view statusView, err error) {
 	}
 	return view, nil
 }
+
+const (
+	// hooksBroken: the hook configuration is in place but runs an executable
+	// that no longer exists or cannot be run.
+	hooksBroken = "broken"
+	// backgroundBroken: the LaunchAgent is in place but runs such an executable.
+	backgroundBroken = "broken"
+)
+
+// executableProblem says why path cannot be run, or "" when it can.
+func executableProblem(path string) string {
+	info, err := os.Stat(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "missing"
+	case err != nil:
+		return "unreadable"
+	case !info.Mode().IsRegular():
+		return "not a regular file"
+	case info.Mode().Perm()&0o111 == 0:
+		return "not executable"
+	}
+	return ""
+}
+
 func formatTimeOrNever(t time.Time) string {
 	if t.IsZero() {
 		return "never"

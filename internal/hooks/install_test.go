@@ -7,6 +7,30 @@ import (
 	"testing"
 )
 
+// status reads back the program a LaunchAgent runs to notice a moved binary,
+// so the reader must agree with the writer, including XML-escaped paths.
+func TestLaunchAgentProgramReadsWhatLaunchAgentWrites(t *testing.T) {
+	for _, executable := range []string{"/Applications/agent-archive", "/Users/someone/Tools & Bin/agent-archive <v2>"} {
+		plist, err := LaunchAgent(executable, "/Users/someone/.local/share/agent-archive")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := LaunchAgentProgram(plist)
+		if err != nil || got != executable {
+			t.Fatalf("read %q (err %v), want %q", got, err, executable)
+		}
+	}
+	for name, plist := range map[string]string{
+		"no ProgramArguments": `<plist><dict><key>Label</key><string>x</string><key>Program</key><string>/bin/true</string></dict></plist>`,
+		"empty arguments":     `<plist><dict><key>ProgramArguments</key><array></array></dict></plist>`,
+		"not a plist":         `{"ProgramArguments": ["/bin/true"]}`,
+	} {
+		if got, err := LaunchAgentProgram([]byte(plist)); err == nil {
+			t.Errorf("%s: read %q, want an error", name, got)
+		}
+	}
+}
+
 func TestPlanApplyAndRollback(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude/settings.json")

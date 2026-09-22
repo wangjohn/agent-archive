@@ -859,6 +859,9 @@ func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
 func TestForgetSessionRemovesRequestLock(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	if err := store.SaveRegistration(registration(t, "/unused")); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.SaveRequest("session-1", "stop", now); err != nil {
 		t.Fatal(err)
 	}
@@ -943,6 +946,11 @@ func TestRunIgnoresIncompleteFinalJSONLRecord(t *testing.T) {
 
 func TestSaveRequestCoalescesReasonsAndEvidence(t *testing.T) {
 	local := newTestStore(t)
+	reg := registration(t, "/unused")
+	reg.ArchiveSessionID = "s1"
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	e1 := archive.SupplementalEvidence{Kind: archive.EvidenceKindFinalResponse, ObservedAt: t0, Provenance: "hook", Payload: map[string]any{"a": 1}}
 	if err := local.SaveRequest("s1", "stop", t0, e1); err != nil {

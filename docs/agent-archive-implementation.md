@@ -730,8 +730,211 @@ shapes. A Claude Code compaction summary (`isCompactSummary: true`, no
 `isMeta`) is still a user record with text and so still counts as a prompt;
 retaining that flag would be a further filter change and is not part of C1.
 
+## PR C3 — Cursor first-prompt registration
+
+No schema, filter, parser, or adapter version changes. Based on a live check of
+the Cursor desktop app 3.21.13 (Cursor's Hooks output): a new Agent chat fires
+no `sessionStart`; its first hook is `beforeSubmitPrompt` with
+`transcript_path` null, then `afterAgentResponse` and `stop` name
+`~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl`. A resumed
+chat's first prompt already names its non-empty transcript, and `sessionEnd`
+can fire mid-turn. The PR A1 `sessionStart` rule therefore never registered a
+Cursor app chat.
+
+1. **Registration at the first prompt.** A never-seen Cursor conversation is
+   registered at `beforeSubmitPrompt`, and still at `sessionStart`, when
+   `transcript_path` is null, absent, or names an absolute missing or empty
+   file. A non-empty transcript is a resume, declined with
+   `session_start_unknown` for included projects only; a directory outside
+   every project records nothing. `session_started_at` is the first hook's
+   time, and the lifecycle evidence names the real event
+   (`beforesubmitprompt`), never a fabricated start. A setup-in-progress
+   diagnostic is recorded for a Cursor first prompt as for a start.
+2. **Transcript path from later events.** A registration with no path takes
+   it from a later `beforeSubmitPrompt`, `afterAgentResponse`, or `stop`, only
+   when the path is absolute and named `<conversation_id>.jsonl`; a path, once
+   set, is never replaced. The same name rule applies to a path offered at
+   registration, so a mismatched path can never be recorded first and then
+   become unreplaceable.
+3. **Waiting, not failed.** The collector skips a registration with no path
+   without error: no `LastError`, not counted as failed, any queued request
+   kept, retried every pass, and published on the first pass after the path
+   arrives.
+4. Codex and Claude Code are unchanged. `docs/capture-capabilities.md`,
+   `docs/agent-archive-session-eligibility.md`, and the Cursor capability
+   text in `status` describe the observed 3.21.13 behavior.
+
+Tests: `internal/cli/cursor_first_prompt_test.go` (a new chat registers at a
+null-path first prompt, a sync while waiting records no error, the response
+and stop supply the path, and the next sync publishes; a resumed chat is
+declined with the diagnostic; wrong-name, relative, and non-`.jsonl` paths are
+ignored and a set path is never replaced; Codex and Claude prompts still
+register nothing) and `internal/collector/waiting_transcript_test.go`. Three
+existing tests that asserted "a Cursor start with no path proves nothing" now
+give their resume a non-empty transcript, or expect the new registration.
+
+Review (C3): the fresh-start proof also accepts a path to a file that exists
+but holds no bytes, and a sync in that state failed every pass ("filtered
+transcript has no retained evidence", `LastError` set) — reachable through a
+`sessionStart` that names the file, and through a later event that names it
+before Cursor flushes the first record. `processSession` now treats an empty
+transcript with no publication yet as the same waiting state: no error, the
+request kept, re-read next pass. A file emptied after a publication is still
+a rewrite. Tests added: `TestRegistrationWithEmptyTranscriptIsWaitingNotFailed`
+(collector); overlapping first-prompt, response and stop hooks register once
+under `hooks.lock`; a waiting chat shows in `status` as
+"hook observed; waiting for capture" with no error; a later prompt (and a
+`sessionStart`) on a registered chat keeps `session_started_at`; a chat in an
+excluded project nested inside an included one records nothing at any event
+(A1 nearest-ancestor resolution of `workspace_roots`). Docs now list what
+3.21.13 did not show.
+
+Left open: retention treats any queued request, including deferred hook
+evidence, as unfinished work. A Cursor chat with transcripts disabled
+registers, never receives a path, and keeps a request, so its registration
+and hook evidence (including any final-response text) stay local instead of
+expiring with retention. Suggested fix, in retention: a request for a
+registration with no transcript path does not block expiry. The same chat
+counts as pending in `status`, and `setup` refuses a storage-destination
+change while any session is pending, so such a chat also blocks that change
+until it is cleared. Also fixed in review: during a `setup` transaction, a
+Cursor `beforeSubmitPrompt` for an already-registered chat recorded the
+setup-in-progress diagnostic as if it were a start; `recordSetupInProgress`
+now checks, lock-free, whether the chat is registered and explains only a
+never-seen chat's first prompt.
+
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.
+
+## PR C2 — Status and race fixes
+
+**Moved or deleted binary.** Every installed hook and the LaunchAgent run the
+executable setup recorded in `installed_executable`. When that file was moved
+or deleted, the hook configuration still matched exactly, so `status` called
+the hooks installed. launchd also reports a job whose program is gone as
+loaded, so the background looked healthy while every hook and every scheduled
+collection failed. `status` now checks that `installed_executable` exists, is
+a regular file, and is executable. If it is not:
+
+- every app's hooks are `broken` (JSON `hooks: "broken"`);
+- a warning names the path and why;
+- the next action is to rerun `agent-archive setup` from the binary's new
+  location.
+
+It also reads the program the LaunchAgent plist actually runs, using
+`hooks.LaunchAgentProgram`, which sits next to the plist writer and
+round-trips XML-escaped paths. When that program is gone, the background is
+reported as `broken`. This also catches a LaunchAgent left pointing at an
+older install while the hooks are fine.
+
+The moved binary outranks every other next action except an uninstalled
+archive or a pending setup recovery. That includes pause, because pausing
+does not stop the apps from running hooks that now fail. An uninstalled
+archive reports nothing, since deleting the binary is the expected last step.
+Test environments now install a real stand-in executable instead of a
+fictional `/opt` path.
+
+**Retention and hook requests.** Retention decided a session had expired
+from a snapshot of pending requests taken at the start of the sweep. A hook
+request written between that snapshot and `ForgetSession` was deleted with
+the session. All three forget paths (whole-session expiry, never-published
+pruning, previous-destination pruning) now go through
+`LocalStore.ForgetIdleSession`. It takes the per-session request lock hooks
+hold while writing, rechecks for a request or pending publication under it,
+and keeps a session that gained work. A session the collector no longer
+publishes is forgotten regardless, as before.
+
+The remote deletion stays outside the lock, because a hook waits for that
+lock on the user's turn. If a request arrives during it, the objects are
+already gone, but the next collector pass republishes the whole session with
+that evidence (every publication is complete, not a delta). If the request
+added nothing, the pass acknowledges it and the next sweep finishes the
+expiry.
+
+The other side of the protocol: `saveRequest` refuses, under the lock, to
+write for a session whose registration is gone (`ErrSessionNotRegistered`).
+Otherwise a hook that looked the registration up just before it was forgotten
+would leave an orphan request that nothing reads. `ForgetSession` removes the
+registration before it unlinks the lock file. The lock is a `flock` on that
+file's inode, so a hook that locks the fresh file afterwards always finds the
+registration gone.
+
+**Diagnostics.** Every capture-diagnostic write and setup's post-commit prune
+now take `diagnostics.lock`. The hook side waits at most 50 ms and drops the
+diagnostic on timeout; the prune waits up to 2 s. A lock alone would not have
+been enough. The hook decided the project was included from a configuration
+snapshot that can predate setup's commit, so under the lock it rereads the
+committed configuration and drops a diagnostic for a project that is no
+longer included. Setup prunes after it commits, so either order is safe: a
+hook that writes first is pruned, and a hook that writes second sees the
+exclusion. The hook path gains only that bounded wait plus one small config
+read, and only when a diagnostic is recorded.
+
+**Uninstall.** PR A2's `scan-signatures/` directory, which every collector
+pass creates, was missing from uninstall's owned entries. On `main` a
+`--delete-local-data` purge after even one sync exited 1 with "Uninstall
+incomplete: unrelated files were kept … scan-signatures". It and
+`diagnostics.lock` are now owned entries.
+
+Tests:
+
+- `internal/cli/moved_binary_test.go`: deleted, moved, and non-executable
+  binaries through `readStatus`, `status --json`, and text output; the moved
+  binary outranking pause; nothing reported after uninstall; a background-only
+  break naming the LaunchAgent's own path.
+- `internal/hooks`: the plist reader round-trips `LaunchAgent` output and
+  rejects plists with no program.
+- `internal/collector/forget_test.go`: the locked recheck for a request, a
+  pending publication, and an unpublishable session; no orphan request after
+  a forget.
+- `internal/retention/request_race_test.go`: a hook request injected between
+  the snapshot and the forget, by running the hook inside the first remote
+  delete, is kept and republished with its evidence. A 30-round concurrent
+  race of a hook against a sweep checks the invariant: a request
+  `SaveRequest` reported as written is never lost, and a refused one leaves
+  nothing behind.
+- `internal/cli/diagnostics_lock_test.go`: the stale-snapshot resurrection
+  case, deterministically; the bounded wait and drop; the prune waiting for a
+  holder; a 40-round concurrent commit-and-prune race against two hooks.
+  Removing the recheck fails it on resurrection, and removing the lock fails
+  it on lost updates.
+- A purge test that runs collector and diagnostic state, which fails without
+  the uninstall fix.
+
+Limits:
+
+- **The 50 ms drop happens on a real machine.** Under fsync load a hook can
+  find the lock held past 50 ms and drop its diagnostic. The race test raises
+  that wait for itself, so it measures lost updates alone.
+- **Race tests are probabilistic.** How rounds split between interleavings
+  varies by machine and race-detector mode; the deterministic tests cover
+  each interleaving that matters.
+- **Only the plist's program path is checked.** `status` does not check
+  whether launchd has the current plist loaded.
+
+Review fixes on the same branch:
+
+- **Subagent candidate whose parent was forgotten.** `rejectSubagentCandidate`
+  notifies the parent through `SaveRequest`; with the new orphan guard that
+  write is refused for a parent retention has forgotten, and the candidate
+  was then never acknowledged, so the collector reported the same permanent
+  condition on every pass. The refusal is now treated as "nobody to notify"
+  and the candidate is acknowledged after one report.
+- **Hook exit.** A hook whose request write is refused because retention
+  forgot the session between its lookup and its write already exited 0; it
+  now also says nothing, since that is the race's intended outcome.
+- **Transcript-less registrations and retention.** Cursor (PR C3) registers a
+  chat at its first prompt, before a transcript path exists, and the path
+  normally arrives with a later hook; with the app's transcripts disabled it
+  never does. A queued request for such a registration (it can carry
+  last-message text) counted as unfinished work, so the session never
+  expired. Once the session itself is older than the retention window, a
+  request no longer defers expiry for a registration with no transcript
+  path; it is forgotten locally under the same request lock, with zero
+  bucket calls, since it can never have published. Registrations without a
+  path can exist on `main` already (`hook.go` allows an empty path).
+- The purge test also exercises the lineage ledger and the reader cache;
+  `docs/install.md` names the `broken` hook and background states.
 
 ## PR C4 — Compaction summaries
 

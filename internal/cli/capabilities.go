@@ -106,15 +106,14 @@ func captureCapabilityProfile(name string) captureCapabilities {
 		profile.Transcript = documented("Hooks provide transcript_path to the native JSONL transcript.")
 		profile.Lifecycle = documented("SessionStart, Stop, SessionEnd, and SubagentStop are documented.")
 	case "cursor":
-		// sessionStart alone does not distinguish a new composer conversation
-		// from a resumed one, and cursor_version is not evidence either. The
-		// documented transcript_path is: a transcript with no bytes at start
-		// time can only be a conversation that has not happened yet. A
-		// sessionStart that names no transcript (transcripts disabled) carries
-		// no proof and is still declined.
-		profile.FreshStart = documented("sessionStart provides transcript_path; a transcript that is absent or empty at start time distinguishes a new conversation from a resume, and one that already has bytes is treated as a resume.")
-		profile.Transcript = documented("Common hook input includes transcript_path, which may be null when transcripts are disabled.")
-		profile.Lifecycle = documented("sessionStart, stop, sessionEnd, afterAgentResponse, subagentStart, and subagentStop are documented.")
+		// Observed on the desktop app 3.21.13: a new chat fires no
+		// sessionStart; its first hook is beforeSubmitPrompt with
+		// transcript_path null, and afterAgentResponse and stop then name the
+		// transcript. A resumed chat's first prompt already names its
+		// non-empty transcript. cursor_version is not evidence either way.
+		profile.FreshStart = documented("A never-seen chat is registered at its first beforeSubmitPrompt (or sessionStart) when transcript_path is null, absent, or names a missing or empty file; a transcript that already has bytes is a resume and is declined. Observed on Cursor 3.21.13.")
+		profile.Transcript = documented("A new chat's first prompt carries transcript_path null; afterAgentResponse and stop name ~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl, which is recorded only when it matches the conversation id. Observed on Cursor 3.21.13.")
+		profile.Lifecycle = documented("beforeSubmitPrompt, afterAgentResponse, stop, and sessionEnd fire for a desktop chat (sessionEnd can fire mid-turn); sessionStart, subagentStart, and subagentStop are documented.")
 	default:
 		unknown := capabilityEvidence{State: "unknown", Evidence: "No capability contract is registered."}
 		return captureCapabilities{unknown, unknown, unknown, unknown, unknown, unknown}

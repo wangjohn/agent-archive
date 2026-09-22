@@ -314,7 +314,12 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 	}
 
 	if reg.TranscriptPath == "" {
-		return outcomeSkipped, errors.New("registration has no transcript path")
+		// Not an error: a Cursor desktop chat is registered at its first
+		// prompt, before Cursor names its transcript, and a later hook fills
+		// the path in. Until then there is nothing to read. The session is
+		// retried every pass (unchangedSinceLastScan never skips it), any
+		// hook request stays queued, and nothing is recorded as a failure.
+		return outcomeSkipped, nil
 	}
 
 	adapter, err := archive.NewAdapter(reg.Harness.Name)
@@ -339,6 +344,20 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		// Unsafe format: never upload; the last published snapshot, if any,
 		// remains untouched and readable.
 		return outcomeSkipped, fmt.Errorf("filter transcript: %w", err)
+	}
+	if transcriptStat.Size == 0 {
+		// The application has created the file but written no record yet:
+		// the fresh-start proof accepts exactly this state, so it is the
+		// same waiting as having no path at all, one step later. Nothing has
+		// been captured, so there is nothing to block or fail; the request
+		// stays queued and the next pass reads whatever has arrived. A file
+		// emptied after a publication is a rewrite, which the comparison
+		// below still reports rather than waits on.
+		if _, _, published, err := local.LoadLastPublished(reg.ArchiveSessionID); err != nil {
+			return outcomeSkipped, fmt.Errorf("load last published bundle: %w", err)
+		} else if !published {
+			return outcomeSkipped, nil
+		}
 	}
 	if err := validateSubagentTranscript(reg, filtered); err != nil {
 		return outcomeSkipped, err
