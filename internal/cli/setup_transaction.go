@@ -154,7 +154,7 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 		}
 		fmt.Fprintln(p.out, "Changing destination starts a new capture boundary. Existing sessions stay published at the previous destination, which this Mac will no longer collect into or clean up. Their local evidence is kept until it ages past the retention period, then removed from this Mac only.")
 		if waiting > 0 {
-			fmt.Fprintf(p.out, "%d session(s) never received a transcript (for example a Cursor chat with transcripts turned off) and captured nothing. They stay behind this boundary and will not be captured at the new destination either.\n", waiting)
+			fmt.Fprintf(p.out, "%d session(s) never received a transcript (for example a Cursor chat with transcripts turned off) and published nothing. They stay behind this boundary and will not be captured at the new destination either.\n", waiting)
 		}
 	}
 	if next.RetentionDays < old.RetentionDays {

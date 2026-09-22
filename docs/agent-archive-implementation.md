@@ -1080,10 +1080,19 @@ Tests:
 
 Limits:
 
-- **Race tests are probabilistic.** The deterministic tests hold the lock
-  themselves and give the hook 100 ms to reach it. If the hook arrives later,
-  the test still passes but exercises a different ordering; the invariant it
-  checks holds in every ordering.
+- **Which ordering the race tests exercise depends on timing.** The
+  interleaving tests hold the lock themselves and give the hook 100 ms to
+  reach it. If the hook arrives later, the test still passes but exercises a
+  different ordering; the invariant it checks holds in every ordering, and
+  no assertion depends on elapsed time.
+- **Stale lock files.** A hook that loses the race creates a fresh
+  `request-locks/<id>.lock` for the forgotten ID (the lock helper opens with
+  `O_CREATE`), and nothing removes it, since the ID is never registered
+  again. It is an empty file; `saveRequest` left the same remnant before
+  this PR. A hook can also end up holding a `flock` on the unlinked inode
+  while another holds the fresh file, but only for an ID whose every record
+  was removed before the unlink, and every holder rechecks those records
+  under the lock, so neither can write anything for that ID.
 - **Dropped lifecycle evidence.** A hook's lifecycle evidence write after the
   registration step takes the lock separately. If retention forgets the
   session in between, that evidence is dropped as `ErrSessionNotRegistered`,
