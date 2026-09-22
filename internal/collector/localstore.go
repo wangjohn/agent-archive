@@ -156,6 +156,26 @@ func (s *LocalStore) SaveEvidence(archiveSessionID, reason string, observedAt ti
 	return s.saveRequest(archiveSessionID, reason, observedAt, true, evidence...)
 }
 
+// ErrSessionNotRegistered is returned when a request is written for a session
+// whose registration no longer exists, typically because retention forgot it
+// between the caller's own lookup and the write.
+var ErrSessionNotRegistered = errors.New("session is no longer registered")
+
+// lockRequest takes the per-session request lock. Hooks writing a request,
+// the collector acknowledging one, and retention forgetting the session all
+// hold it, so none of them can interleave with another.
+func (s *LocalStore) lockRequest(archiveSessionID string) (func(), error) {
+	unlock, err := local.NamedLockWait(s.home, requestLockName(archiveSessionID), time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("lock request %q: %w", archiveSessionID, err)
+	}
+	return unlock, nil
+}
+
+func requestLockName(archiveSessionID string) string {
+	return filepath.Join("request-locks", archiveSessionID+".lock")
+}
+
 // saveRequest always assigns a fresh token, even for deferred evidence: the
 // token is what CompleteRequest checks, so a hook that lands while a scan is
 // publishing the previous token keeps its evidence pending for the next
@@ -169,11 +189,19 @@ func (s *LocalStore) saveRequest(archiveSessionID, reason string, requestedAt ti
 	if requestedAt.IsZero() {
 		return errors.New("requested_at is required")
 	}
-	unlock, err := local.NamedLockWait(s.home, filepath.Join("request-locks", archiveSessionID+".lock"), time.Second)
+	unlock, err := s.lockRequest(archiveSessionID)
 	if err != nil {
-		return fmt.Errorf("lock request %q: %w", archiveSessionID, err)
+		return err
 	}
 	defer unlock()
+	// Retention forgets a session under this same lock. A caller that looked
+	// the registration up before taking the lock may be writing for a session
+	// that is gone now; its request would be an orphan nothing ever reads.
+	if _, err := os.Stat(s.registrationPath(archiveSessionID)); errors.Is(err, os.ErrNotExist) {
+		return ErrSessionNotRegistered
+	} else if err != nil {
+		return fmt.Errorf("check registration %q: %w", archiveSessionID, err)
+	}
 	existing, found, err := s.loadRequest(archiveSessionID)
 	if err != nil {
 		return err
@@ -257,7 +285,7 @@ func (s *LocalStore) loadRequest(archiveSessionID string) (Request, bool, error)
 // migration cannot overwrite a concurrent hook update. found is false when
 // the request disappeared between listing and upgrade.
 func (s *LocalStore) ensureRequestToken(archiveSessionID string) (Request, bool, error) {
-	unlock, err := local.NamedLockWait(s.home, filepath.Join("request-locks", archiveSessionID+".lock"), time.Second)
+	unlock, err := local.NamedLockWait(s.home, requestLockName(archiveSessionID), time.Second)
 	if err != nil {
 		return Request{}, false, fmt.Errorf("lock request %q: %w", archiveSessionID, err)
 	}
@@ -313,7 +341,7 @@ func (s *LocalStore) CompleteRequest(archiveSessionID, coveredToken string) (boo
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
-	unlock, err := local.NamedLockWait(s.home, filepath.Join("request-locks", archiveSessionID+".lock"), time.Second)
+	unlock, err := local.NamedLockWait(s.home, requestLockName(archiveSessionID), time.Second)
 	if err != nil {
 		return false, fmt.Errorf("lock request %q: %w", archiveSessionID, err)
 	}

@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -43,7 +46,44 @@ func readCaptureDiagnostics(home string) ([]captureDiagnostic, error) {
 	return diagnostics, nil
 }
 
+const (
+	// diagnosticsLockName serializes every read-modify-write of
+	// capture-diagnostics.json: each hook-side record and setup's prune.
+	diagnosticsLockName = "diagnostics.lock"
+	// pruneDiagnosticsWait is setup's wait. Holders keep the lock for one
+	// small file write, so this only has to outlast a burst of hooks.
+	pruneDiagnosticsWait = 2 * time.Second
+)
+
+// hookDiagnosticsWait bounds how long a hook waits for diagnostics.lock. A
+// diagnostic is advisory, and a hook runs on the user's turn, so on timeout
+// the diagnostic is dropped rather than the turn delayed. A variable only so
+// a race test can rule out timeout drops and observe lost updates alone.
+var hookDiagnosticsWait = 50 * time.Millisecond
+
+// recordCaptureDiagnostic adds a diagnostic under diagnostics.lock, or drops it
+// if the lock is not free within hookDiagnosticsWait. Under the lock it rereads
+// the configuration: the caller decided the project was included from a
+// snapshot, and setup may have excluded it and pruned its diagnostics since.
+// Checking against the committed configuration, under the same lock the prune
+// takes, means a pruned project's diagnostic can never come back, whichever
+// of the two runs first.
 func recordCaptureDiagnostic(home string, diagnostic captureDiagnostic) error {
+	unlock, err := local.NamedLockWait(home, diagnosticsLockName, hookDiagnosticsWait)
+	if errors.Is(err, local.ErrBusy) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("lock capture diagnostics: %w", err)
+	}
+	defer unlock()
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if !found || len(includedCaptureDiagnostics([]captureDiagnostic{diagnostic}, cfg.Archive.Projects)) == 0 {
+		return nil
+	}
 	diagnostics, err := readCaptureDiagnostics(home)
 	if err != nil {
 		return err
@@ -84,8 +124,15 @@ func includedCaptureDiagnostics(diagnostics []captureDiagnostic, projects []arch
 }
 
 // pruneCaptureDiagnostics drops stored diagnostics for projects that are no
-// longer included, so an excluded path is not kept on disk either.
+// longer included, so an excluded path is not kept on disk either. Setup
+// calls it after committing the configuration those projects come from; see
+// recordCaptureDiagnostic for why that order plus the shared lock is enough.
 func pruneCaptureDiagnostics(home string, projects []archive.ProjectActivation) error {
+	unlock, err := local.NamedLockWait(home, diagnosticsLockName, pruneDiagnosticsWait)
+	if err != nil {
+		return fmt.Errorf("lock capture diagnostics: %w", err)
+	}
+	defer unlock()
 	diagnostics, err := readCaptureDiagnostics(home)
 	if err != nil {
 		return err

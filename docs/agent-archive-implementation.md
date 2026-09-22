@@ -732,3 +732,133 @@ retaining that flag would be a further filter change and is not part of C1.
 
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.
+
+## PR C2 — Status and race fixes
+
+**Moved or deleted binary.** Every installed hook and the LaunchAgent run the
+executable setup recorded in `installed_executable`. When that file was moved
+or deleted, the hook configuration still matched exactly, so `status` called
+the hooks installed. launchd also reports a job whose program is gone as
+loaded, so the background looked healthy while every hook and every scheduled
+collection failed. `status` now checks that `installed_executable` exists, is
+a regular file, and is executable. If it is not:
+
+- every app's hooks are `broken` (JSON `hooks: "broken"`);
+- a warning names the path and why;
+- the next action is to rerun `agent-archive setup` from the binary's new
+  location.
+
+It also reads the program the LaunchAgent plist actually runs, using
+`hooks.LaunchAgentProgram`, which sits next to the plist writer and
+round-trips XML-escaped paths. When that program is gone, the background is
+reported as `broken`. This also catches a LaunchAgent left pointing at an
+older install while the hooks are fine.
+
+The moved binary outranks every other next action except an uninstalled
+archive or a pending setup recovery. That includes pause, because pausing
+does not stop the apps from running hooks that now fail. An uninstalled
+archive reports nothing, since deleting the binary is the expected last step.
+Test environments now install a real stand-in executable instead of a
+fictional `/opt` path.
+
+**Retention and hook requests.** Retention decided a session had expired
+from a snapshot of pending requests taken at the start of the sweep. A hook
+request written between that snapshot and `ForgetSession` was deleted with
+the session. All three forget paths (whole-session expiry, never-published
+pruning, previous-destination pruning) now go through
+`LocalStore.ForgetIdleSession`. It takes the per-session request lock hooks
+hold while writing, rechecks for a request or pending publication under it,
+and keeps a session that gained work. A session the collector no longer
+publishes is forgotten regardless, as before.
+
+The remote deletion stays outside the lock, because a hook waits for that
+lock on the user's turn. If a request arrives during it, the objects are
+already gone, but the next collector pass republishes the whole session with
+that evidence (every publication is complete, not a delta). If the request
+added nothing, the pass acknowledges it and the next sweep finishes the
+expiry.
+
+The other side of the protocol: `saveRequest` refuses, under the lock, to
+write for a session whose registration is gone (`ErrSessionNotRegistered`).
+Otherwise a hook that looked the registration up just before it was forgotten
+would leave an orphan request that nothing reads. `ForgetSession` removes the
+registration before it unlinks the lock file. The lock is a `flock` on that
+file's inode, so a hook that locks the fresh file afterwards always finds the
+registration gone.
+
+**Diagnostics.** Every capture-diagnostic write and setup's post-commit prune
+now take `diagnostics.lock`. The hook side waits at most 50 ms and drops the
+diagnostic on timeout; the prune waits up to 2 s. A lock alone would not have
+been enough. The hook decided the project was included from a configuration
+snapshot that can predate setup's commit, so under the lock it rereads the
+committed configuration and drops a diagnostic for a project that is no
+longer included. Setup prunes after it commits, so either order is safe: a
+hook that writes first is pruned, and a hook that writes second sees the
+exclusion. The hook path gains only that bounded wait plus one small config
+read, and only when a diagnostic is recorded.
+
+**Uninstall.** PR A2's `scan-signatures/` directory, which every collector
+pass creates, was missing from uninstall's owned entries. On `main` a
+`--delete-local-data` purge after even one sync exited 1 with "Uninstall
+incomplete: unrelated files were kept … scan-signatures". It and
+`diagnostics.lock` are now owned entries.
+
+Tests:
+
+- `internal/cli/moved_binary_test.go`: deleted, moved, and non-executable
+  binaries through `readStatus`, `status --json`, and text output; the moved
+  binary outranking pause; nothing reported after uninstall; a background-only
+  break naming the LaunchAgent's own path.
+- `internal/hooks`: the plist reader round-trips `LaunchAgent` output and
+  rejects plists with no program.
+- `internal/collector/forget_test.go`: the locked recheck for a request, a
+  pending publication, and an unpublishable session; no orphan request after
+  a forget.
+- `internal/retention/request_race_test.go`: a hook request injected between
+  the snapshot and the forget, by running the hook inside the first remote
+  delete, is kept and republished with its evidence. A 30-round concurrent
+  race of a hook against a sweep checks the invariant: a request
+  `SaveRequest` reported as written is never lost, and a refused one leaves
+  nothing behind.
+- `internal/cli/diagnostics_lock_test.go`: the stale-snapshot resurrection
+  case, deterministically; the bounded wait and drop; the prune waiting for a
+  holder; a 40-round concurrent commit-and-prune race against two hooks.
+  Removing the recheck fails it on resurrection, and removing the lock fails
+  it on lost updates.
+- A purge test that runs collector and diagnostic state, which fails without
+  the uninstall fix.
+
+Limits:
+
+- **The 50 ms drop happens on a real machine.** Under fsync load a hook can
+  find the lock held past 50 ms and drop its diagnostic. The race test raises
+  that wait for itself, so it measures lost updates alone.
+- **Race tests are probabilistic.** How rounds split between interleavings
+  varies by machine and race-detector mode; the deterministic tests cover
+  each interleaving that matters.
+- **Only the plist's program path is checked.** `status` does not check
+  whether launchd has the current plist loaded.
+
+Review fixes on the same branch:
+
+- **Subagent candidate whose parent was forgotten.** `rejectSubagentCandidate`
+  notifies the parent through `SaveRequest`; with the new orphan guard that
+  write is refused for a parent retention has forgotten, and the candidate
+  was then never acknowledged, so the collector reported the same permanent
+  condition on every pass. The refusal is now treated as "nobody to notify"
+  and the candidate is acknowledged after one report.
+- **Hook exit.** A hook whose request write is refused because retention
+  forgot the session between its lookup and its write already exited 0; it
+  now also says nothing, since that is the race's intended outcome.
+- **Transcript-less registrations and retention.** Cursor (PR C3) registers a
+  chat at its first prompt, before a transcript path exists, and the path
+  normally arrives with a later hook; with the app's transcripts disabled it
+  never does. A queued request for such a registration (it can carry
+  last-message text) counted as unfinished work, so the session never
+  expired. Once the session itself is older than the retention window, a
+  request no longer defers expiry for a registration with no transcript
+  path; it is forgotten locally under the same request lock, with zero
+  bucket calls, since it can never have published. Registrations without a
+  path can exist on `main` already (`hook.go` allows an empty path).
+- The purge test also exercises the lineage ledger and the reader cache;
+  `docs/install.md` names the `broken` hook and background states.
