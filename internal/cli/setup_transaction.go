@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -66,46 +67,85 @@ func destinationEqual(a, b credentials.Config) bool {
 	}
 	return a.Provider == b.Provider && a.Bucket == b.Bucket && strings.Trim(a.Prefix, "/") == strings.Trim(b.Prefix, "/") && endpoint(a) == endpoint(b)
 }
+
+// pendingSessions counts every accepted session with work outstanding, a
+// session waiting for its transcript included: status reports it as pending,
+// because from the user's side it is.
 func pendingSessions(home string, cfg config.Config) (int, error) {
+	blocking, waiting, err := pendingSessionCounts(home, cfg)
+	return blocking + waiting, err
+}
+
+// pendingSessionCounts splits the pending sessions in two. waiting counts
+// registrations with no transcript path that have never published and have
+// no publication in flight: a Cursor chat whose transcript never arrived
+// (transcripts turned off, for example). Nothing of such a session can be
+// published anywhere until a path arrives, so its queued request is not work
+// a sync could finish. blocking counts everything else.
+func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int, err error) {
 	store := collector.OpenLocalStoreReadOnly(home)
 
 	regs, err := store.LoadRegistrations()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	reqs, err := store.LoadRequests()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	requested := map[string]bool{}
 	for _, r := range reqs {
 		requested[r.ArchiveSessionID] = true
 	}
-	count := 0
 	for _, r := range regs {
 		if !cfg.AcceptSession(r) {
 			continue
 		}
 		_, _, state, found, err := store.LoadPublished(r.ArchiveSessionID)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		scanPending, err := store.ScanPending(r.ArchiveSessionID)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
-		if scanPending || requested[r.ArchiveSessionID] || !found || state == collector.CacheStatusRateLimited {
-			count++
+		if !(scanPending || requested[r.ArchiveSessionID] || !found || state == collector.CacheStatusRateLimited) {
+			continue
+		}
+		idle, err := waitingForTranscript(store, r)
+		if err != nil {
+			return 0, 0, err
+		}
+		if idle {
+			waiting++
+		} else {
+			blocking++
 		}
 	}
-	return count, nil
+	return blocking, waiting, nil
+}
+
+// waitingForTranscript reports whether a registration has no transcript path,
+// has never published, and has no publication in flight.
+func waitingForTranscript(store *collector.LocalStore, r archive.SessionRegistration) (bool, error) {
+	if r.TranscriptPath != "" {
+		return false, nil
+	}
+	_, _, published, err := store.LoadLastPublished(r.ArchiveSessionID)
+	if err != nil || published {
+		return false, err
+	}
+	pending, err := store.HasPending(r.ArchiveSessionID)
+	return !pending, err
 }
 func reviewChanges(home string, old, next config.Config, p *prompter, env Env) error {
 	if old.MachineID == "" {
 		return nil
 	}
 	if !destinationEqual(old.Storage, next.Storage) {
-		pending, err := pendingSessions(home, old)
+		// A session still waiting for its transcript has nothing a sync could
+		// publish, so it must not hold the user at the old destination.
+		pending, waiting, err := pendingSessionCounts(home, old)
 		if err != nil {
 			return err
 		}
@@ -113,6 +153,9 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 			return fmt.Errorf("%d session(s) still pending at the current destination; run agent-archive sync before changing storage", pending)
 		}
 		fmt.Fprintln(p.out, "Changing destination starts a new capture boundary. Existing sessions stay published at the previous destination, which this Mac will no longer collect into or clean up. Their local evidence is kept until it ages past the retention period, then removed from this Mac only.")
+		if waiting > 0 {
+			fmt.Fprintf(p.out, "%d session(s) never received a transcript (for example a Cursor chat with transcripts turned off) and captured nothing. They stay behind this boundary and will not be captured at the new destination either.\n", waiting)
+		}
 	}
 	if next.RetentionDays < old.RetentionDays {
 		store := collector.OpenLocalStoreReadOnly(home)
@@ -181,7 +224,10 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		}
 	}
 	if old.MachineID != "" && !destinationEqual(old.Storage, next.Storage) {
-		pending, err := pendingSessions(home, old)
+		// The same rule as reviewChanges: a session waiting for its
+		// transcript does not block the change, and like any unpublished
+		// session it falls behind the new DestinationSince.
+		pending, _, err := pendingSessionCounts(home, old)
 		if err != nil {
 			return err
 		}
