@@ -34,7 +34,7 @@
   "$defs": {
     "harness": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string"}, "version": {"type": "string"}, "mode": {"type": "string"}}},
     "boundary": {"type": "object", "additionalProperties": false, "required": ["retained_records", "retained_bytes"], "properties": {"retained_records": {"type": "integer", "minimum": 0}, "retained_bytes": {"type": "integer", "minimum": 0}}},
-    "gap": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}, "record": {"type": "integer", "minimum": 1}, "detail": {"type": "string"}}},
+    "gap": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}, "record": {"type": "integer", "minimum": 1}, "detail": {"type": "string", "description": "Archive-authored description of the omission. Never a transcript value. From filter version 3 the single unknown_field_omitted gap carries the distinct omitted key names, sorted and capped, as 'omitted keys: a, b, c'."}}},
     "supplemental": {"type": "object", "additionalProperties": false, "required": ["kind", "observed_at", "provenance", "payload"], "properties": {"kind": {"type": "string"}, "observed_at": {"type": "string", "format": "date-time"}, "provenance": {"type": "string"}, "payload": {"type": "object"}}},
     "linked_session": {"type": "object", "additionalProperties": false, "required": ["session_id", "relationship", "status", "observed_at"], "properties": {"session_id": {"type": "string", "minLength": 1}, "relationship": {"const": "subagent"}, "status": {"enum": ["pending", "published", "unavailable"]}, "observed_at": {"type": "string", "format": "date-time"}}}
   }

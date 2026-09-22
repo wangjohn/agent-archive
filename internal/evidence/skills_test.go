@@ -52,7 +52,7 @@ func TestObserveSkillsLabelsTruncatedSnapshotWithoutClaimingRedaction(t *testing
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	original := []byte("---\nname: long\n---\n" + strings.Repeat("plain instruction text\n", 4096)) // ~96 KiB, over the 64 KiB text cap
+	original := []byte("---\nname: long\n---\n" + strings.Repeat("plain instruction text\n", 4096)) // ~96 KiB, over the 16 KiB snapshot cap
 	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), original, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -67,11 +67,24 @@ func TestObserveSkillsLabelsTruncatedSnapshotWithoutClaimingRedaction(t *testing
 		}
 	}
 	digest := sha256.Sum256(original)
-	if snapshot == nil || snapshot["sha256"] != hex.EncodeToString(digest[:]) || len(snapshot["snapshot"].(string)) >= len(original) {
-		t.Fatalf("snapshot=%#v", snapshot)
+	if snapshot == nil || snapshot["sha256"] != hex.EncodeToString(digest[:]) {
+		t.Fatalf("snapshot hash=%v", snapshot["sha256"])
 	}
-	if snapshot["truncated"] != true || snapshot["redacted"] != false || fmt.Sprint(snapshot["gaps"]) != "[content_truncated]" {
-		t.Fatalf("truncation mislabeled: %#v", snapshot)
+	// The body is capped at 16 KiB; the hash still covers the whole file and
+	// the original size is recorded, so a reader knows what it is missing.
+	if body := snapshot["snapshot"].(string); len(body) != maxSnapshotBodyBytes {
+		t.Fatalf("snapshot body = %d bytes, want the %d byte cap", len(body), maxSnapshotBodyBytes)
+	}
+	if snapshot["original_bytes"] != float64(len(original)) {
+		t.Fatalf("original_bytes=%v, want %d", snapshot["original_bytes"], len(original))
+	}
+	// The cap is applied before filtering, so this is our own truncation, not
+	// a filter gap: "gaps" reports only what the privacy filter changed.
+	if snapshot["truncated"] != true || snapshot["redacted"] != false {
+		t.Fatalf("truncation mislabeled: truncated=%v redacted=%v", snapshot["truncated"], snapshot["redacted"])
+	}
+	if _, reported := snapshot["gaps"]; reported {
+		t.Fatalf("filter gaps reported for an unfiltered body: %v", snapshot["gaps"])
 	}
 }
 

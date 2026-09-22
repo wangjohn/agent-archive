@@ -25,8 +25,14 @@ func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
 	if !strings.Contains(captureCapabilityProfile("claude").SubagentLinkage.Evidence, "unverified") {
 		t.Fatal("fixture coverage claimed live verification")
 	}
-	if got := captureCapabilityProfile("cursor").FreshStart.State; got != "unavailable" {
-		t.Fatalf("Cursor start=%s", got)
+	// Cursor fresh start rests on the documented transcript_path, not on
+	// cursor_version or on an unverified reading of sessionStart semantics.
+	cursorStart := captureCapabilityProfile("cursor").FreshStart
+	if cursorStart.State != "documented" || !strings.Contains(cursorStart.Evidence, "transcript_path") {
+		t.Fatalf("Cursor start=%#v", cursorStart)
+	}
+	if strings.Contains(cursorStart.Evidence, "cursor_version") {
+		t.Fatal("Cursor fresh start claimed a version field as evidence")
 	}
 }
 

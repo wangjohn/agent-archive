@@ -1,0 +1,3 @@
+{"role":"user","message":{"content":[{"type":"text","text":"Summarize the failing widget test."}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"read_file","input":{"path":"internal/widget/widget_test.go","offset":1,"limit":120}}]}}
+{"type":"turn_ended","status":"completed"}

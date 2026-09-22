@@ -13,7 +13,10 @@ import (
 const (
 	SourceSchemaVersion   = 1
 	MetadataSchemaVersion = 1
-	FilterVersion         = "2"
+	// FilterVersion 3 keeps tool arguments and tool-result linkage, reports the
+	// key names it could not keep, and strips injected instruction blocks from
+	// message text. See docs/agent-archive-privacy.md.
+	FilterVersion = "3"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
@@ -327,11 +330,25 @@ type SemanticConventionsInfo struct {
 
 // Counts intentionally uses pointers: nil means unavailable, rather than an
 // invented zero after a partial or failed parse.
+//
+// Turns counts human prompts only: a user record which carries text or any
+// non-tool-result content. Messages counts those prompts plus assistant
+// records, including assistant records whose only content is a tool call.
+// ToolResults counts observed tool results, which are the records a harness
+// writes in the user role but no human sent. The token counts are summed from
+// whatever the harness exposed (Claude `message.usage`, Codex
+// `turn_token_usage`) and stay nil when it exposed nothing; usage repeated
+// across the streamed records of one Claude `message.id` is counted once.
 type Counts struct {
 	Turns            *int `json:"turns,omitempty"`
 	Messages         *int `json:"messages,omitempty"`
 	ToolCalls        *int `json:"tool_calls,omitempty"`
+	ToolResults      *int `json:"tool_results,omitempty"`
 	ExplicitFeedback *int `json:"explicit_feedback,omitempty"`
+	InputTokens      *int `json:"input_tokens,omitempty"`
+	OutputTokens     *int `json:"output_tokens,omitempty"`
+	CacheReadTokens  *int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
 }
 
 type ModelSummary struct {

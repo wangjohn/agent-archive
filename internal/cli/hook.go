@@ -2,9 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -112,7 +114,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 		return nil
 	}
 	if transactionPending(home) {
-		return nil
+		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
 	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", time.Second)
 	if lockErr != nil {
@@ -121,7 +123,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	defer unlock()
 	// Setup may have started while this hook was waiting for the lock.
 	if transactionPending(home) {
-		return nil
+		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
 	cfg, found, err := config.Load(home)
 	if err != nil {
@@ -152,6 +154,35 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	return nil
 }
 
+// recordSetupInProgress explains a session start that setup's own transaction
+// window swallowed. Without it an included project simply never registers the
+// session and `status` offers no reason, unlike the pre-activation and
+// unknown-start cases. Setup holds hooks.lock while it commits, so this write
+// is deliberately lock-free and best effort: losing one bounded, content-free
+// diagnostic is better than holding up the user's turn behind an installation.
+func recordSetupInProgress(home string, kind hookEventKind, harness string, payload map[string]any, now time.Time) error {
+	if kind != hookEventStart {
+		return nil
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if !found || !cfg.Archive.Enabled || cfg.Paused {
+		return nil
+	}
+	// Same rule as every other diagnostic: an excluded project, or a directory
+	// belonging to no configured project, never leaves its path on disk.
+	project, owned := configuredProjectActivationFor(cfg, projectRoot(payload))
+	if !owned || !project.Included {
+		return nil
+	}
+	return recordCaptureDiagnostic(home, captureDiagnostic{
+		Code: diagnosticSetupInProgress, Harness: canonicalHarness(harness),
+		ProjectRoot: project.Root, ObservedAt: now,
+	})
+}
+
 func handleSessionActivity(store *collector.LocalStore, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
 	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
 	if err != nil {
@@ -172,14 +203,17 @@ func handleSessionActivity(store *collector.LocalStore, harness, nativeSessionID
 
 func handleSessionStart(home string, store *collector.LocalStore, cfg config.Config, harness, nativeSessionID string, payload map[string]any, now time.Time) error {
 	transcriptPath, _ := payload["transcript_path"].(string)
+	// A hook reports the session's working directory, which is only sometimes
+	// the configured project root: a Claude Code worktree lives in
+	// <project>/.claude/worktrees/<name>, and a session started from any
+	// subdirectory reports that subdirectory. Resolve the configured project
+	// that owns it and register under the configured spelling, so the project
+	// ID, the activation boundary, and later continuations all agree with the
+	// configuration rather than with the directory the user happened to be in.
+	owner, owned := configuredProjectActivationFor(cfg, projectRoot(payload))
 	root := projectRoot(payload)
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		for _, project := range cfg.Archive.Projects {
-			if configured, err := filepath.EvalSymlinks(project.Root); err == nil && configured == resolved {
-				root = project.Root
-				break
-			}
-		}
+	if owned {
+		root = owner.Root
 	}
 
 	existingID, found, err := store.ArchiveSessionID(nativeSessionID)
@@ -224,15 +258,9 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 		}
 	}
 
-	// Ignore excluded projects without persisting their paths in diagnostics.
-	included := false
-	for _, project := range cfg.Archive.Projects {
-		if project.Included && filepath.Clean(project.Root) == filepath.Clean(root) {
-			included = true
-			break
-		}
-	}
-	if !included {
+	// A directory inside no configured project, and an excluded project, are
+	// both ignored without persisting their paths in diagnostics.
+	if !owned || !owner.Included {
 		return nil
 	}
 	// The diagnostic names the most specific reason capture was declined:
@@ -244,9 +272,6 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
-	// Codex and Claude document an explicit fresh-start source. Cursor's
-	// version field does not prove that an unknown session began after
-	// activation; until native start provenance is verified, leave it out.
 	if !provesFreshSessionStart(harness, payload) {
 		return recordCaptureDiagnostic(home, captureDiagnostic{
 			Code: diagnosticUnknownSessionStart, Harness: canonicalHarness(harness),
@@ -275,24 +300,36 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 	return saveLifecycleEvidence(store, archiveID, harness, "sessionstart", payload, now)
 }
 
-// configuredProjectFor returns the configured project root that owns root:
-// root itself or its nearest configured ancestor, comparing resolved paths so
-// a symlinked checkout still maps to the project it was registered under.
-// The returned root is the configured spelling, which registrations store.
-func configuredProjectFor(cfg config.Config, root string) (string, bool) {
+// configuredProjectActivationFor returns the configured project that owns
+// root: the project whose root is root itself or its nearest configured
+// ancestor, comparing resolved paths so a symlinked checkout still maps to the
+// project it was registered under. The nearest ancestor wins, so a project
+// nested inside another keeps its own identity (and its own inclusion
+// decision). Excluded projects take part in the match: an excluded project
+// nested in an included one must stay excluded rather than falling through to
+// its parent.
+func configuredProjectActivationFor(cfg config.Config, root string) (archive.ProjectActivation, bool) {
 	if root == "" {
-		return "", false
+		return archive.ProjectActivation{}, false
 	}
 	candidate := resolvedPath(root)
-	best, bestLen, found := "", -1, false
+	var best archive.ProjectActivation
+	bestLen, found := -1, false
 	for _, project := range cfg.Archive.Projects {
 		configured := resolvedPath(project.Root)
 		if !pathWithin(candidate, configured) || len(configured) <= bestLen {
 			continue
 		}
-		best, bestLen, found = project.Root, len(configured), true
+		best, bestLen, found = project, len(configured), true
 	}
 	return best, found
+}
+
+// configuredProjectFor returns the owning project's configured root spelling,
+// which is what registrations store.
+func configuredProjectFor(cfg config.Config, root string) (string, bool) {
+	project, found := configuredProjectActivationFor(cfg, root)
+	return project.Root, found
 }
 
 func resolvedPath(path string) string {
@@ -322,17 +359,59 @@ func canonicalHarness(harness string) string {
 	return harness
 }
 
+// provesFreshSessionStart reports whether this SessionStart is provably the
+// beginning of a conversation rather than the resumption of one that may
+// predate the project's activation.
+//
+// Codex and Claude Code document SessionStart.source: startup and clear begin
+// a conversation, resume and compact continue one. That evidence is decisive
+// when it is present.
+//
+// Cursor's sessionStart carries no equivalent field, so the proof is the
+// transcript itself and is harness-independent: at the true start of a
+// conversation the hook-provided transcript_path names a file that does not
+// exist yet or holds no bytes, while a resumed conversation points at a
+// transcript that already has content. The same proof is the fallback for a
+// Codex or Claude payload that carries no source at all. A payload that names
+// no transcript proves nothing and is still declined.
 func provesFreshSessionStart(harness string, payload map[string]any) bool {
 	switch canonicalHarness(harness) {
 	case "codex", "claude":
-		source, _ := payload["source"].(string)
-		switch strings.ToLower(strings.TrimSpace(source)) {
+		switch strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload, "source"))) {
 		case "startup", "clear":
 			return true
+		case "":
+			return emptyTranscriptProvesFreshStart(payload)
 		}
-
+		return false
+	case "cursor":
+		return emptyTranscriptProvesFreshStart(payload)
 	}
 	return false
+}
+
+// emptyTranscriptProvesFreshStart reports whether the hook named a transcript
+// that holds no conversation yet. Only "the file does not exist" and "the file
+// is empty" are proof; a permission error, a directory, or anything else the
+// hook cannot read leaves the start unproven. The transcript is never opened.
+//
+// Only an absolute path can be checked: a relative one would be resolved
+// against the hook process's own working directory, where the transcript is
+// never found, and "not found" would then pass as proof of a start that never
+// happened. Harnesses document absolute transcript paths.
+func emptyTranscriptProvesFreshStart(payload map[string]any) bool {
+	path := firstNonEmptyString(payload, "transcript_path")
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return info.Size() == 0
 }
 
 func applyHarnessObservation(target *archive.Harness, harness string, payload map[string]any) {

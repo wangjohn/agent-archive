@@ -30,7 +30,10 @@ func TestShowKeepsParentReadableWhenChildIsGone(t *testing.T) {
 	if code := Run([]string{"show", id}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), `"unavailable_or_expired"`) || strings.Contains(out.String(), `"turns":`) {
+	// `"hook_finals"` appears only in the normalized view, which this
+	// metadata-only invocation must not print. (It replaces a `"turns":`
+	// check, which parser 0.6 also emits inside `counts`.)
+	if !strings.Contains(out.String(), `"unavailable_or_expired"`) || strings.Contains(out.String(), `"hook_finals"`) {
 		t.Fatalf("bad metadata-only output: %s", out.String())
 	}
 	var decoded archive.Metadata

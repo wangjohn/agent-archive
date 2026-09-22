@@ -255,18 +255,30 @@ func pairStatusEnv(t *testing.T, home, userHome string, now time.Time, apps ...s
 	return env
 }
 
-func TestStatusDoesNotSuggestImpossibleCursorCapture(t *testing.T) {
+// Cursor fresh-start capture is no longer impossible: an absent or empty
+// transcript at sessionStart proves a new conversation. Status must therefore
+// ask the user for the one thing that will actually produce a capture — a new
+// session — instead of the old "this cannot work yet" wording.
+func TestStatusSuggestsCursorCaptureOnceFreshStartIsProvable(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	cfg := pairTestConfig(now, []string{"cursor"}, project)
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	view, err := readStatus(pairStatusEnv(t, home, userHome, now, "cursor"))
+	env := pairStatusEnv(t, home, userHome, now, "cursor")
+	view, err := readStatus(env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(view.Next, "then start a new session") || !strings.Contains(view.Next, "version-specific") {
-		t.Fatalf("unsupported capability action: %q", view.Next)
+	if capability := view.Apps[0].Capabilities.FreshStart; capability.State != "documented" {
+		t.Fatalf("Cursor fresh-start capability: %#v", capability)
+	}
+	if !strings.Contains(view.Next, "then start a new session") {
+		t.Fatalf("status did not ask for the session that would prove capture: %q", view.Next)
+	}
+	var out strings.Builder
+	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "Fresh-start capture: unavailable") {
+		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 }

@@ -155,6 +155,221 @@ review edits, cancellation/EOF, and home/symlink normalization. The full Go race
 suite, Go vet, skill validation, and 15 legacy Python tests passed; the final CLI
 regressions and both unsigned macOS builds were also verified.
 
+## PR A1 — Session registration
+
+Three registration defects, all in `internal/cli`.
+
+**Worktrees and subdirectories.** `handleSessionStart` required the hook `cwd`
+to equal a configured project root exactly, while continuations already
+resolved the owning project. A Claude Code session in
+`<project>/.claude/worktrees/<name>`, or in any subdirectory, therefore never
+registered, left no diagnostic, and made its later `Stop` a no-op. New
+registrations now resolve the owning project with the same nearest-configured-
+ancestor rule, register under the configured root spelling, and derive the
+project ID, eligibility, and activation check from it. The nearest ancestor
+wins, so a configured project nested inside an included one keeps its own
+exclusion. A working directory inside no configured project stays silent.
+`config.AcceptSession` needed no change: registrations already store the
+configured spelling it compares against.
+
+**Cursor fresh starts.** `provesFreshSessionStart` accepted only a Codex or
+Claude `source` of `startup`/`clear`, so no Cursor session could ever register.
+A second, harness-independent proof was added: the hook-provided
+`transcript_path` names a file that is absent or empty, which only a
+conversation that has not happened yet can do. A transcript with bytes is a
+resume and keeps the existing `session_start_unknown` diagnostic. The proof
+applies to Cursor, and as a fallback to Codex and Claude when `source` is
+missing; a present `source` still decides. A start with no `transcript_path`,
+or a transcript that cannot be stat'd, proves nothing. The transcript is never
+opened and its path never reaches a diagnostic. Cursor's `fresh_start`
+capability moves from `unavailable` to `documented`, citing `transcript_path`
+rather than `cursor_version`, and `status` now asks for the new session that
+would prove capture instead of declaring it impossible.
+
+**Setup-in-progress starts.** `handleHookEvent` returned silently while a setup
+transaction was open. It now records a content-free `setup_in_progress` capture
+diagnostic for included projects, matching the pre-activation and unknown-start
+cases. The write is lock-free and best effort because setup holds `hooks.lock`
+while it commits; a harness's turn is never delayed behind an installation.
+Only session starts record it, and excluded or unconfigured paths still record
+nothing.
+
+Tests (`internal/cli`): worktree and subdirectory starts register under the
+parent project and their `Stop` produces a request; a nested excluded project
+is not captured through its parent; a sibling directory outside every project
+is silent; the Cursor proof across empty, not-yet-created, non-empty, and
+absent transcript paths; Codex and Claude across `resume`, `compact`,
+`startup`, and missing `source` with empty and non-empty transcripts; the
+`setup_in_progress` diagnostic in `status --json` and its absence for
+unconfigured paths and non-start events. `go build`, `go vet`, `gofmt -l`, and
+`go test -race ./...` are clean.
+
+## PR B1 — Privacy filter v3
+
+Filter version `3`, adapter version `0.3.0`. Metadata and source schema
+versions are unchanged; `nativeEvidenceExtends` already treats a version change
+as not-a-rewrite, so republishing after this upgrade is safe and older bundles
+stay readable at their recorded filter version.
+
+Four changes in `internal/archive/adapters.go` and `internal/evidence/skills.go`:
+
+1. **Tool evidence is retained.** The key allowlist is no longer applied inside
+   a tool-argument subtree (`input`, `arguments`, `tool_input`, and Codex's
+   `payload.input`), so Edit `old_string`/`new_string`, Agent `prompt`, Skill
+   `args`, Grep `pattern`, Bash `timeout`, and MCP arguments survive. Added to
+   the allowlist: `tool_use_id`, `is_error`, `stop_reason`, `usage`,
+   `sessionId`, `requestId`, `gitBranch`, and the Codex token-accounting keys
+   `info`, `total_token_usage`, `last_token_usage`, `turn_token_usage`,
+   `thread_token_usage`, `last_agent_message`, `thread_id`, `root_turn_id`,
+   `started_at_ms`, `completed_at_ms`. `usage` and the four `*_token_usage`
+   subtrees retain numbers only. New record types: Codex `token_usage_record`
+   and Cursor `turn_ended`. `toolUseResult` stays excluded as duplicate
+   content. Value policy is unchanged everywhere.
+2. **Omissions are visible.** The per-field `unknown_field_omitted` gaps
+   collapse into one gap whose detail lists the distinct omitted key names,
+   sorted and capped at 64. Names only; a truncated list says so.
+3. **Injected instructions are stripped.** `<system-reminder>`,
+   `<user_instructions>`, and `<environment_context>` blocks are removed from
+   string content with a `hidden_instruction_omitted` gap; an unterminated
+   block drops everything from its opening tag. The rest of the message stays.
+4. **Skill snapshot bodies are capped** at 16 KB with `original_bytes`
+   recorded; the inventory and the hash of the whole original file are
+   unchanged. Content-addressed snapshot objects remain deferred.
+
+Fixtures (synthetic) under `internal/archive/testdata/`:
+`claude-tool-evidence.jsonl` (assistant Edit `tool_use` with `usage` and
+`stop_reason`, user `tool_result` with `tool_use_id`/`is_error` plus a
+`toolUseResult`, user prompt with a `<system-reminder>`),
+`codex-tool-and-usage.jsonl` (user message with `<user_instructions>` and
+`<environment_context>`, `custom_tool_call`, `custom_tool_call_output`,
+`token_usage_record`), `cursor-turn.jsonl` (`{role, message:{content}}` user
+and assistant records and a `turn_ended` record).
+
+Tests in `internal/archive/filter_v3_test.go` cover each fixture's retained and
+dropped keys, a secret inside an Edit `new_string` still being redacted, a
+blocked key and the 64 KB cap still applying inside tool arguments, the omitted
+key names appearing once and capped without leaking values, unterminated and
+whole-message instruction blocks, and the declared capture provenance.
+`internal/evidence/skills_test.go` now asserts the 16 KB body cap and
+`original_bytes`.
+
+Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`,
+and `gofmt -l .` all clean. `internal/cli`, `internal/collector`,
+`internal/reader`, and `internal/retention` needed no changes for the version
+bumps. Parser work (Cursor turns, corrected counts, tool linkage in the
+normalized view) is PR B2 and is not in this change.
+
+Review additions (same PR, same filter version, before any bundle was written
+with filter 3):
+
+- Instruction-block stripping is now depth-aware. The regex form ended a
+  `<system-reminder>` at the first closing tag, so a block nested inside a
+  block of the same kind leaked the outer block's tail. Blocks are now scanned
+  to their matching close, counting nesting; an unterminated block still drops
+  everything after its opening tag.
+- Tool-argument deny list: `text`/`value`/`values` are dropped for typing and
+  form-submitting tools (`type`, `form_input`, `computer`, `key`,
+  `enter_verification_code`, `autofill_credential`, MCP names ending in one of
+  those, or names ending `_type`/`_input`/`_fill`), and any argument whose key
+  contains `password`, `secret`, `token`, `credential`, `api_key`, `apikey`,
+  `cookie`, or `authorization` is dropped for every tool. Key names are
+  reported once in a `sensitive_or_hidden_field_omitted` gap.
+- Value-level redaction now also covers PEM private key blocks, JWTs, URL
+  userinfo, GitHub tokens, and Slack tokens. The assignment pattern's known
+  false-positive class (`token = parse(x)`) is documented, not narrowed.
+- Tests in `internal/archive/filter_v3_review_test.go` cover nested and
+  multiple blocks, the deny list for Claude and Cursor shapes and for
+  supplemental evidence, each credential shape, a negative set of ordinary
+  code, and byte-identical output across repeated scans of each fixture.
+- `docs/install.md` no longer describes filter 2 / adapter 0.2.0 as current.
+
+## PR B2 — Parser v0.6
+
+`DefaultParserVersion` is `0.6.0`. Metadata schema version 1 is unchanged: the
+new counts are optional fields, and metadata written by an older parser stays
+valid. Stacks on PR B1; a bundle captured under filter 2 still parses, with the
+fields this parser added simply absent.
+
+1. **Cursor sessions no longer derive zero turns.** `visibleMessage` now also
+   reads a record which carries `role` at the top level and `content` under
+   `message`, which is Cursor's shape. `turn_outcome` and the lifecycle state
+   come from a native `turn_ended` record when the hook evidence left them
+   unknown; an observed hook stop, interrupt, or closure still wins.
+2. **Counts mean what they say.** `counts.turns` counts human prompts (a user
+   record with text or any non-tool-result content), `counts.messages` counts
+   those prompts plus assistant records — including assistant records whose
+   only content is a tool call — and the new `counts.tool_results` counts
+   observed tool results. A user record carrying only `tool_result` blocks was
+   previously counted as both a message and a turn, which is what made a
+   four-prompt session report twenty-eight turns. A parsed structured bundle
+   now reports a known zero instead of leaving a count unknown.
+3. **Codex tool calls are recognized.** `custom_tool_call`, `local_shell_call`
+   and `item_completed` items of type `CommandExecution`, `McpToolCall` and
+   `Extension` join `tool_use`, `tool_call` and `function_call`. An
+   `item_completed` whose call was already reported by its own record is
+   dropped, keyed on `call_id`/`item.id`, so the same work is counted once.
+4. **The normalized view carries tool evidence.** `NormalizedToolCall` gains
+   `name`, `input` (the retained argument object, decoded when a harness
+   encodes it as a JSON string), `result_record_index`, `is_error` and
+   `output_bytes`, linked by `tool_use_id` (Claude), `call_id` (Codex), or
+   position (Cursor). Position is used only when no call in the bundle carries
+   an identity; elsewhere an unmatched result stays unlinked rather than being
+   attached to the wrong call. `NormalizedView.ToolResults` lists the results
+   themselves, and `show --normalized` prints both.
+5. **Token usage reaches metadata.** `counts.input_tokens`,
+   `output_tokens`, `cache_read_tokens` and `cache_write_tokens` are summed
+   from Claude `message.usage` and Codex `turn_token_usage` (cumulative and
+   thread-wide figures are ignored so the sum stays additive) and stay nil when
+   the harness exposed nothing.
+
+Fixtures: the B1 fixtures are reused; `codex-tool-events.jsonl` (turn context,
+`local_shell_call`, and `item_completed` events of each recognized item type,
+one of them an echo of the shell call) and `claude-tool-only-assistant.jsonl`
+(a prompt, a tool-use-only assistant record with `usage`, its `tool_result`,
+and a text reply) cover the shapes B1 did not.
+
+Tests live in `internal/archive/parser_v06_test.go`: counts and turn kinds per
+harness, Claude and Codex result linkage with arguments, Codex event dedupe,
+Cursor turns and outcome, positional linkage, refusal to mislink an unknown
+call ID, hook evidence outranking a native turn end, filter-2 regeneration, and
+the retained hidden-role rejection. Two existing assertions changed with the
+new definitions: the Codex fixture's turn count is now a known `0` rather than
+unknown, and `internal/cli/linked_review_test.go` checks for `"hook_finals"`
+instead of `"turns":` to prove the metadata-only path prints no normalized view
+(`counts.turns` now appears in metadata).
+
+Review fixes (on the branch, before merge):
+
+- **Streamed usage counted once per message.** Claude Code writes one JSONL
+  record per content block of a single API message, and each record repeats
+  the same `message.id` and `message.usage`; summing per record counted one
+  response as many. Token accounting is now attributed to the `id` of the
+  object that carries it (`message.id`), the latest record for an id replaces
+  the earlier ones, and only accounting with no identity (Codex
+  `turn_token_usage`) is summed as it comes.
+- **A stripped injected block is not a prompt.** Filter 3 removes the text of
+  a `<system-reminder>`/`<user_instructions>` block, but an array-shaped
+  message keeps the bare `{type: "text"}` block, which the parser counted as
+  non-tool-result content. That made a tool-result record with a reminder
+  beside it, or a prompt that was only injected instructions, a human prompt.
+  A text-carrying block (`text`, `input_text`, `output_text`, or untyped)
+  with no retained text now counts as nothing.
+- Fixture `claude-streamed-usage.jsonl` covers both shapes; tests also pin
+  that a Codex injected-only `input_text` prompt is ignored and that a bundle
+  holding native text leaves every structure-derived count, the token counts
+  included, unknown.
+
+Left open: `counts.messages` and per-model `turn_count` still count each
+streamed Claude record, so an assistant message split into text and tool-use
+records counts twice; the plan defines messages as records, so this is noted
+rather than changed. Codex dedupe keys on `call_id`/`item.id` as planned; if a
+real rollout's `item_completed` item carries an id unrelated to the call's
+`call_id`, the same work is counted twice, which only a real transcript can
+confirm.
+
+Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
+and `gofmt -l .` clean.
+
 ## PR A2 — Collector and retention robustness
 
 **Missing transcripts are a capture gap, not an error.** Claude Code deletes

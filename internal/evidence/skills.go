@@ -21,6 +21,13 @@ const (
 	maxSkillsPerRoot = 256
 	maxSkillBytes    = 1 << 20
 	maxSnapshotBytes = 4 << 20
+	// maxSnapshotBodyBytes caps one archived SKILL.md body. Every session's
+	// evidence embeds the bodies of the skills installed when it ran, so an
+	// uncapped body is repeated in every bundle. The inventory entry (name,
+	// sha256, scope) and the recorded original size stay complete, and the
+	// sha256 remains the hash of the whole original file. Moving bodies to
+	// content-addressed objects is deferred.
+	maxSnapshotBodyBytes = 16 << 10
 )
 
 // SkillOptions identifies the only filesystem locations a background
@@ -171,7 +178,13 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		digest := sha256.Sum256(original)
 		hash := hex.EncodeToString(digest[:])
 		payload["sha256"] = hash // hash of original bytes, before filtering
-		payload["snapshot"] = string(original)
+		body := string(original)
+		if len(body) > maxSnapshotBodyBytes {
+			body = body[:maxSnapshotBodyBytes]
+			payload["truncated"] = true
+		}
+		payload["snapshot"] = body
+		payload["original_bytes"] = float64(len(original))
 		payload["redacted"] = false
 		filtered, gaps, err := archive.FilterSupplementalEvidence([]archive.SupplementalEvidence{{
 			Kind: archive.EvidenceKindSkillSnapshot, ObservedAt: observedAt, Provenance: provenance, Payload: payload,
