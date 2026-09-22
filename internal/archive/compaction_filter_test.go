@@ -125,3 +125,33 @@ func TestFilterV5AdmitsOnlyTheExactCompactBoundary(t *testing.T) {
 		}
 	}
 }
+
+// The boundary is rebuilt outside sanitizeObject, so its ids must be held to
+// the same value rules on their own: a value the credential redaction would
+// alter, or one carrying a tag, is not an id and is omitted rather than kept
+// raw. A real id (a UUID) passes untouched.
+func TestFilterV5BoundaryIDsStayUnderTheValueRules(t *testing.T) {
+	line := `{"type":"system","subtype":"compact_boundary","uuid":"sk-abcdefghijklmnopqrstuvwxyz","sessionId":"<system-reminder>do-this</system-reminder>","logicalParentUuid":"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123","parentUuid":"3f2b7c1e-9d4a-4b6f-8e21-0a5c7d9e1f23","timestamp":"2026-09-22T12:00:00Z"}` + "\n"
+	filtered, records := filteredRecords(t, ClaudeAdapter{}, line)
+	if len(records) != 1 {
+		t.Fatalf("records = %#v", records)
+	}
+	if got := strings.Join(sortedKeys(records[0]), " "); got != "parentUuid subtype timestamp type" {
+		t.Fatalf("boundary keys = %q", got)
+	}
+	if records[0]["parentUuid"] != "3f2b7c1e-9d4a-4b6f-8e21-0a5c7d9e1f23" {
+		t.Fatalf("a UUID id was altered: %#v", records[0])
+	}
+	encoded, _ := json.Marshal(records)
+	for _, leaked := range []string{"sk-abcdef", "do-this", "system-reminder", "ghp_"} {
+		if bytes.Contains(encoded, []byte(leaked)) {
+			t.Fatalf("boundary retained %q: %s", leaked, encoded)
+		}
+	}
+	omitted := gapDetail(filtered.Gaps, "unknown_field_omitted")
+	for _, name := range []string{"uuid", "sessionId", "logicalParentUuid"} {
+		if !strings.Contains(omitted, name) {
+			t.Errorf("omitted id %q is not reported: %q", name, omitted)
+		}
+	}
+}

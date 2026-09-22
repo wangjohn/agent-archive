@@ -13,8 +13,10 @@ whose text is a model-written summary of the conversation so far.
   `timestamp`, and `isSidechain`, and nothing else. The record is rebuilt from
   those typed values rather than passed through the ordinary filter, since a
   system record is otherwise hidden whole. An id is kept only when it looks
-  like one (a string of at most 256 bytes with no whitespace, or null), the
-  timestamp only when it parses, and `isSidechain` only as a boolean.
+  like one (a string of at most 256 bytes with no whitespace and no tag
+  brackets, which the credential redaction below would leave unchanged, or
+  null), the timestamp only when it parses, and `isSidechain` only as a
+  boolean.
   Everything else — the boundary's text, `compactMetadata` (trigger and token
   count), `level`, `cwd`, `userType`, `version` — is dropped, and its key
   names are listed in the `unknown_field_omitted` gap. Only the exact

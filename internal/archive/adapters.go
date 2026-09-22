@@ -576,11 +576,11 @@ func compactBoundaryRecord(raw map[string]any, omit func(string)) map[string]any
 				omit(key)
 			}
 		case compactBoundaryIDKeys[key]:
-			// An id is kept only when it looks like one: a short token with
-			// no whitespace. A null parent is kept as null.
+			// An id is kept only when it looks like one (see
+			// looksLikeRecordID). A null parent is kept as null.
 			if value == nil {
 				out[key] = nil
-			} else if id, ok := value.(string); ok && id != "" && len(id) <= 256 && !strings.ContainsAny(id, " \t\r\n") {
+			} else if id, ok := value.(string); ok && looksLikeRecordID(id) {
 				out[key] = id
 			} else {
 				omit(key)
@@ -596,6 +596,19 @@ func compactBoundaryRecord(raw map[string]any, omit func(string)) map[string]any
 		}
 	}
 	return out
+}
+
+// looksLikeRecordID reports whether a string can be kept as a record id on a
+// rebuilt compact_boundary record: a short token with no whitespace and no
+// tag brackets, which the credential redaction would leave unchanged. The
+// boundary bypasses sanitizeObject, so this is what keeps its ids under the
+// same value rules as every other retained string.
+func looksLikeRecordID(value string) bool {
+	if value == "" || len(value) > 256 || strings.ContainsAny(value, " \t\r\n<>") {
+		return false
+	}
+	_, sensitive := redactSensitive(value)
+	return !sensitive
 }
 
 // isMetaRecord reports whether a native record is one Claude Code marked as
