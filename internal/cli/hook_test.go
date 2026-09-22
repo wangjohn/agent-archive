@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -18,12 +19,15 @@ func TestAmbiguousStartIsNotRegisteredAndDiagnosticIsContentFree(t *testing.T) {
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	// Both starts name a file that already holds a conversation, so neither is
+	// provably the beginning of one, whatever the harness reports.
+	resumed := writeTestTranscript(t, "resumed.jsonl", `{"type":"user"}`)
 	for _, tc := range []struct {
 		harness string
 		payload map[string]any
 	}{
-		{"codex", map[string]any{"hook_event_name": "SessionStart", "session_id": "private-codex-id", "cwd": "/work/widget", "transcript_path": "/private/transcript.jsonl"}},
-		{"cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "private-cursor-id", "workspace_roots": []any{"/work/widget"}, "transcript_path": "/private/cursor.jsonl"}},
+		{"codex", map[string]any{"hook_event_name": "SessionStart", "session_id": "private-codex-id", "cwd": "/work/widget", "transcript_path": resumed}},
+		{"cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "private-cursor-id", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}},
 	} {
 		if err := handleHookEvent(home, tc.harness, tc.payload, now); err != nil {
 			t.Fatal(err)
@@ -488,5 +492,361 @@ func TestRunHookCommandNeverFailsOnMalformedInput(t *testing.T) {
 	code := runHookCommand([]string{"--harness", "codex"}, strings.NewReader("not json"), &errOut, env)
 	if code != 0 {
 		t.Fatalf("hook must never fail the harness's turn: code=%d stderr=%s", code, errOut.String())
+	}
+}
+
+// writeTestTranscript creates a transcript file with the given contents (empty
+// for a conversation that has not started yet) and returns its path.
+func writeTestTranscript(t *testing.T, name, contents string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A Claude Code worktree lives at <project>/.claude/worktrees/<name>, and a
+// session can also start in any subdirectory. Both belong to the configured
+// project: they must register under its root, and their later Stop must
+// produce a publication request rather than silently finding no registration.
+func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.T) {
+	for _, tc := range []struct{ name, relative string }{
+		{"worktree", filepath.Join(".claude", "worktrees", "feature-a")},
+		{"subdirectory", filepath.Join("internal", "cli")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+			cwd := filepath.Join(project, tc.relative)
+			if err := os.MkdirAll(cwd, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			start := map[string]any{
+				"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+				"cwd": cwd, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
+			}
+			if err := handleHookEvent(home, "claude", start, now); err != nil {
+				t.Fatal(err)
+			}
+			store, _ := collector.NewLocalStore(home)
+			regs, err := store.LoadRegistrations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(regs) != 1 {
+				t.Fatalf("a start in %s did not register: %#v", tc.relative, regs)
+			}
+			if regs[0].ProjectRoot != project || regs[0].ProjectID != archive.ProjectID(project) {
+				t.Fatalf("registered under the working directory instead of the configured project: %#v", regs[0])
+			}
+			if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+				t.Fatalf("an accepted start left a diagnostic: %#v", ds)
+			}
+			// The consequence this guards: an unregistered start makes every
+			// later lifecycle event a no-op, so the session is never published.
+			stop := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1"}
+			if err := handleHookEvent(home, "claude", stop, now.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			requests, err := store.LoadRequests()
+			if err != nil || len(requests) != 1 {
+				t.Fatalf("stop did not request publication: %#v err=%v", requests, err)
+			}
+		})
+	}
+}
+
+// The nearest configured ancestor owns the directory, so a project nested
+// inside an included one keeps its own (here: excluded) decision.
+func TestNestedExcludedProjectKeepsItsOwnExclusion(t *testing.T) {
+	home, parent := t.TempDir(), t.TempDir()
+	nested := filepath.Join(parent, "vendor", "secret")
+	if err := os.MkdirAll(filepath.Join(nested, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	activated := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cfg := config.Config{
+		MachineID: "machine-1", Storage: credentialsTestConfig(),
+		Archive: archive.Config{
+			SchemaVersion: 1, MachineID: "machine-1", Enabled: true,
+			Projects: []archive.ProjectActivation{
+				{ProjectID: archive.ProjectID(parent), Root: parent, Included: true, ActivatedAt: activated},
+				{ProjectID: archive.ProjectID(nested), Root: nested, Included: false, ActivatedAt: activated},
+			},
+		},
+	}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	start := map[string]any{
+		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+		"cwd": filepath.Join(nested, "sub"), "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
+	}
+	if err := handleHookEvent(home, "claude", start, now); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 0 {
+		t.Fatalf("an excluded nested project was captured through its parent: %#v", regs)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+		t.Fatalf("an excluded project left its path on disk: %#v", ds)
+	}
+}
+
+func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	// A sibling of the project, not a descendant: string prefix matching alone
+	// would wrongly claim it.
+	outside := project + "-other"
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := map[string]any{
+		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+		"cwd": outside, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
+	}
+	if err := handleHookEvent(home, "claude", start, now); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 0 {
+		t.Fatalf("a directory outside every project registered: %#v", regs)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+		t.Fatalf("a path outside every project was recorded: %#v", ds)
+	}
+}
+
+// Cursor's sessionStart carries conversation_id, cursor_version,
+// workspace_roots, and transcript_path, and no source field at all.
+func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		transcript func(t *testing.T) string
+		registered bool
+	}{
+		{"empty transcript is a fresh conversation", func(t *testing.T) string {
+			return writeTestTranscript(t, "cursor.jsonl", "")
+		}, true},
+		{"transcript not created yet is a fresh conversation", func(t *testing.T) string {
+			return filepath.Join(t.TempDir(), "not-created-yet.jsonl")
+		}, true},
+		{"transcript with bytes is a resume", func(t *testing.T) string {
+			return writeTestTranscript(t, "cursor.jsonl", "{\"role\":\"user\"}\n")
+		}, false},
+		{"no transcript path proves nothing", func(t *testing.T) string { return "" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+			now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			payload := map[string]any{
+				"hook_event_name": "sessionStart", "conversation_id": "conv-1",
+				"cursor_version": "1.7.2", "workspace_roots": []any{project},
+			}
+			if path := tc.transcript(t); path != "" {
+				payload["transcript_path"] = path
+			}
+			if err := handleHookEvent(home, "cursor", payload, now); err != nil {
+				t.Fatal(err)
+			}
+			store, _ := collector.NewLocalStore(home)
+			regs, _ := store.LoadRegistrations()
+			ds, _ := readCaptureDiagnostics(home)
+			if !tc.registered {
+				if len(regs) != 0 {
+					t.Fatalf("a Cursor resume was registered: %#v", regs)
+				}
+				if len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart {
+					t.Fatalf("diagnostics=%#v", ds)
+				}
+				return
+			}
+			if len(regs) != 1 || regs[0].Harness.Name != "cursor" || regs[0].Harness.Version != "1.7.2" {
+				t.Fatalf("a fresh Cursor conversation was not registered: %#v", regs)
+			}
+			if regs[0].ProjectRoot != project || len(ds) != 0 {
+				t.Fatalf("registration=%#v diagnostics=%#v", regs[0], ds)
+			}
+		})
+	}
+}
+
+// The transcript proof is a fallback for Codex and Claude, never an override:
+// a documented source still decides when it is present.
+func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
+	for _, tc := range []struct {
+		name, source, contents string
+		registered             bool
+	}{
+		{"resume with an empty transcript stays declined", "resume", "", false},
+		{"compact with an empty transcript stays declined", "compact", "", false},
+		{"startup with a non-empty transcript still registers", "startup", "{\"type\":\"user\"}\n", true},
+		{"missing source falls back to an empty transcript", "", "", true},
+		{"missing source with a non-empty transcript is declined", "", "{\"type\":\"user\"}\n", false},
+	} {
+		for _, harness := range []string{"codex", "claude"} {
+			t.Run(harness+": "+tc.name, func(t *testing.T) {
+				home, project := t.TempDir(), t.TempDir()
+				setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+				now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+				payload := map[string]any{
+					"hook_event_name": "SessionStart", "session_id": "native-1", "cwd": project,
+					"transcript_path": writeTestTranscript(t, "t.jsonl", tc.contents),
+				}
+				if tc.source != "" {
+					payload["source"] = tc.source
+				}
+				if err := handleHookEvent(home, harness, payload, now); err != nil {
+					t.Fatal(err)
+				}
+				store, _ := collector.NewLocalStore(home)
+				regs, _ := store.LoadRegistrations()
+				if tc.registered != (len(regs) == 1) {
+					t.Fatalf("registered=%t want %t: %#v", len(regs) == 1, tc.registered, regs)
+				}
+			})
+		}
+	}
+}
+
+// A start that arrives while setup's transaction is open cannot be registered.
+// It must say so instead of disappearing.
+func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := map[string]any{
+		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+		"cwd": project, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
+	}
+	if err := handleHookEvent(home, "claude", start, now); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
+		t.Fatalf("a hook registered during a setup transaction: %#v", regs)
+	}
+	ds, err := readCaptureDiagnostics(home)
+	if err != nil || len(ds) != 1 || ds[0].Code != diagnosticSetupInProgress || ds[0].ProjectRoot != project || ds[0].Harness != "claude" {
+		t.Fatalf("diagnostics=%#v err=%v", ds, err)
+	}
+	raw, err := os.ReadFile(captureDiagnosticsPath(home))
+	if err != nil || bytes.Contains(raw, []byte("native-1")) || bytes.Contains(raw, []byte("transcript")) {
+		t.Fatalf("diagnostic leaked session identity: %s err=%v", raw, err)
+	}
+	var out bytes.Buffer
+	if code := runStatusCommand([]string{"--json"}, &out, os.Stderr, testEnv(t, home, now)); code != 0 {
+		t.Fatalf("status exit=%d output=%s", code, out.String())
+	}
+	if !strings.Contains(out.String(), diagnosticSetupInProgress) {
+		t.Fatalf("status --json omitted the diagnostic: %s", out.String())
+	}
+}
+
+func TestSetupInProgressLeavesNoDiagnosticForUnconfiguredPaths(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Outside every configured project, and a non-start event inside one.
+	outside := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "n1", "cwd": t.TempDir()}
+	if err := handleHookEvent(home, "claude", outside, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := handleHookEvent(home, "claude", map[string]any{"hook_event_name": "Stop", "session_id": "n1", "cwd": project}, now); err != nil {
+		t.Fatal(err)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+		t.Fatalf("diagnostics=%#v", ds)
+	}
+}
+
+// A continuation of a worktree session reports the worktree directory again.
+// It must match the registration made under the configured root, keep the
+// original start time, and leave no diagnostic. The project is configured
+// under a symlinked spelling while the hook reports the resolved one, so the
+// match has to go through resolved paths on both sides.
+func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
+	home, real := t.TempDir(), t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	setUpTestConfig(t, home, alias, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	worktree := filepath.Join(real, ".claude", "worktrees", "feature-a")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	transcript := filepath.Join(t.TempDir(), "not-created-yet.jsonl")
+	start := map[string]any{
+		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+		"cwd": worktree, "transcript_path": transcript,
+	}
+	if err := handleHookEvent(home, "claude", start, started); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].ProjectRoot != alias || regs[0].ProjectID != archive.ProjectID(alias) {
+		t.Fatalf("a worktree start under a symlinked project did not register under the configured spelling: %#v", regs)
+	}
+	for _, source := range []string{"resume", "compact"} {
+		continuation := map[string]any{
+			"hook_event_name": "SessionStart", "source": source, "session_id": "native-1",
+			"cwd": worktree, "transcript_path": transcript,
+		}
+		if err := handleHookEvent(home, "claude", continuation, started.Add(time.Hour)); err != nil {
+			t.Fatalf("%s from the worktree conflicted with its own registration: %v", source, err)
+		}
+	}
+	regs, _ = store.LoadRegistrations()
+	if len(regs) != 1 || !regs[0].SessionStartedAt.Equal(started) || regs[0].ProjectRoot != alias {
+		t.Fatalf("continuations changed the registration: %#v", regs)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+		t.Fatalf("continuations left a diagnostic: %#v", ds)
+	}
+}
+
+// A relative transcript path would be resolved against the hook process's
+// working directory, where it never exists, so "not found" would pass as
+// proof. Only an absolute path can carry the proof.
+func TestRelativeTranscriptPathProvesNothing(t *testing.T) {
+	for _, path := range []string{"transcript.jsonl", "~/transcript.jsonl", filepath.Join("sessions", "transcript.jsonl")} {
+		if emptyTranscriptProvesFreshStart(map[string]any{"transcript_path": path}) {
+			t.Fatalf("%q was accepted as proof of a fresh start", path)
+		}
+	}
+	home, project := t.TempDir(), t.TempDir()
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	payload := map[string]any{
+		"hook_event_name": "sessionStart", "conversation_id": "conv-1",
+		"workspace_roots": []any{project}, "transcript_path": "not-created-yet.jsonl",
+	}
+	if err := handleHookEvent(home, "cursor", payload, now); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
+		t.Fatalf("a relative transcript path registered a session: %#v", regs)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart {
+		t.Fatalf("diagnostics=%#v", ds)
 	}
 }

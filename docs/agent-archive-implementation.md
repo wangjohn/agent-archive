@@ -154,3 +154,52 @@ cover the short path, manual project fallback, profile switching, provider help,
 review edits, cancellation/EOF, and home/symlink normalization. The full Go race
 suite, Go vet, skill validation, and 15 legacy Python tests passed; the final CLI
 regressions and both unsigned macOS builds were also verified.
+
+## PR A1 — Session registration
+
+Three registration defects, all in `internal/cli`.
+
+**Worktrees and subdirectories.** `handleSessionStart` required the hook `cwd`
+to equal a configured project root exactly, while continuations already
+resolved the owning project. A Claude Code session in
+`<project>/.claude/worktrees/<name>`, or in any subdirectory, therefore never
+registered, left no diagnostic, and made its later `Stop` a no-op. New
+registrations now resolve the owning project with the same nearest-configured-
+ancestor rule, register under the configured root spelling, and derive the
+project ID, eligibility, and activation check from it. The nearest ancestor
+wins, so a configured project nested inside an included one keeps its own
+exclusion. A working directory inside no configured project stays silent.
+`config.AcceptSession` needed no change: registrations already store the
+configured spelling it compares against.
+
+**Cursor fresh starts.** `provesFreshSessionStart` accepted only a Codex or
+Claude `source` of `startup`/`clear`, so no Cursor session could ever register.
+A second, harness-independent proof was added: the hook-provided
+`transcript_path` names a file that is absent or empty, which only a
+conversation that has not happened yet can do. A transcript with bytes is a
+resume and keeps the existing `session_start_unknown` diagnostic. The proof
+applies to Cursor, and as a fallback to Codex and Claude when `source` is
+missing; a present `source` still decides. A start with no `transcript_path`,
+or a transcript that cannot be stat'd, proves nothing. The transcript is never
+opened and its path never reaches a diagnostic. Cursor's `fresh_start`
+capability moves from `unavailable` to `documented`, citing `transcript_path`
+rather than `cursor_version`, and `status` now asks for the new session that
+would prove capture instead of declaring it impossible.
+
+**Setup-in-progress starts.** `handleHookEvent` returned silently while a setup
+transaction was open. It now records a content-free `setup_in_progress` capture
+diagnostic for included projects, matching the pre-activation and unknown-start
+cases. The write is lock-free and best effort because setup holds `hooks.lock`
+while it commits; a harness's turn is never delayed behind an installation.
+Only session starts record it, and excluded or unconfigured paths still record
+nothing.
+
+Tests (`internal/cli`): worktree and subdirectory starts register under the
+parent project and their `Stop` produces a request; a nested excluded project
+is not captured through its parent; a sibling directory outside every project
+is silent; the Cursor proof across empty, not-yet-created, non-empty, and
+absent transcript paths; Codex and Claude across `resume`, `compact`,
+`startup`, and missing `source` with empty and non-empty transcripts; the
+`setup_in_progress` diagnostic in `status --json` and its absence for
+unconfigured paths and non-start events. `go build`, `go vet`, `gofmt -l`, and
+`go test -race ./...` are clean.

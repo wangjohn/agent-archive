@@ -13,6 +13,9 @@ import (
 const (
 	diagnosticUnknownSessionStart = "session_start_unknown"
 	diagnosticPreActivationStart  = "session_started_before_activation"
+	// diagnosticSetupInProgress records a start that arrived while setup's own
+	// transaction was open. Hooks do not register anything in that window.
+	diagnosticSetupInProgress = "setup_in_progress"
 )
 
 // captureDiagnostic is deliberately content-free. It records only the
@@ -100,6 +103,8 @@ func captureDiagnosticMessage(code string) string {
 		return "the session start could not be established"
 	case diagnosticPreActivationStart:
 		return "the session start does not meet the project activation boundary"
+	case diagnosticSetupInProgress:
+		return "setup was still in progress, so the session was not registered; start a new session"
 	default:
 		return "capture evidence was not accepted"
 	}
