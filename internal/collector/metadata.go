@@ -151,7 +151,7 @@ func liveTranscriptChanged(store *LocalStore, reg archive.SessionRegistration, l
 	if err != nil {
 		return false
 	}
-	filtered, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
+	filtered, _, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
 	if err != nil {
 		return false
 	}
@@ -188,11 +188,14 @@ func (s *LocalStore) saveRepublishedMetadata(id string, pending PendingPublicati
 	if err := local.Read(s.publishedPath(id), &state); err != nil {
 		return err
 	}
-	state.LastPublished = &publishedSnapshot{Bundle: pending.Bundle, PublishedAt: at}
 	state.MetadataBytes = pending.MetadataBytes
 	state.PublishedAt = at
 	if state.Status == CacheStatusPublished {
+		// The current bundle is the republished one, so the snapshot shares it.
 		state.Bundle = pending.Bundle
+		state.LastPublished = &publishedSnapshot{PublishedAt: at, SameAsBundle: true}
+	} else {
+		state.LastPublished = &publishedSnapshot{Bundle: pending.Bundle, PublishedAt: at}
 	}
 	return local.Write(s.publishedPath(id), state)
 }

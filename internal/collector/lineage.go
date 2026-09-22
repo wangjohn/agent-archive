@@ -113,6 +113,7 @@ func (s *LocalStore) ForgetSession(archiveSessionID, nativeSessionID string) err
 		s.publishedPath(archiveSessionID),
 		s.pendingPath(archiveSessionID),
 		filepath.Join(s.home, "pending-scans", archiveSessionID+".json"),
+		s.scanSignaturePath(archiveSessionID),
 		filepath.Join(s.home, "request-locks", archiveSessionID+".lock"),
 		s.supersededPath(archiveSessionID),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),

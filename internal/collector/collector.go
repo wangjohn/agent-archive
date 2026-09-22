@@ -133,6 +133,18 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		result.Scanned++
 		req := requestsByID[reg.ArchiveSessionID]
 
+		if req.Token == "" {
+			unchanged, err := unchangedSinceLastScan(local, reg, opts)
+			if err != nil {
+				return result, fmt.Errorf("check transcript for changes: %w", err)
+			}
+			if unchanged {
+				// Nothing to read, nothing to compare, nothing to journal.
+				result.Skipped = append(result.Skipped, reg.ArchiveSessionID)
+				continue
+			}
+		}
+
 		if err := local.SetScanPending(reg.ArchiveSessionID, true); err != nil {
 			return result, fmt.Errorf("journal pending scan: %w", err)
 		}
@@ -192,6 +204,81 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 	return result, nil
 }
 
+// cursorTextSourceFormat labels a Cursor transcript captured as plain text.
+const cursorTextSourceFormat = "cursor-text"
+
+// unchangedSinceLastScan answers the spec's "transcript changed?" question
+// without opening, reading, parsing, or journaling anything: one stat of the
+// transcript plus two tiny local files. It is the difference between a pass
+// costing time proportional to every session this machine has ever registered
+// and one costing time proportional to the sessions that actually moved.
+//
+// It says yes only when all of the following hold, because each of them is a
+// way an unchanged file can still owe work:
+//
+//   - The last completed scan left a signature (see scanSignature). A blocked
+//     session has none, so a capture gap is always re-evaluated.
+//   - The transcript is a regular file whose size and nanosecond modification
+//     time both still match that signature.
+//   - The parser, filter, and adapter versions still match, so an upgrade
+//     re-derives every session instead of skipping it.
+//   - No publication is pending and no interrupted scan is journaled.
+//   - The session is not a subagent, whose publication also notifies a parent.
+//
+// The caller has already established that no hook request is pending.
+//
+// The residual risk is a transcript rewritten in place to exactly its previous
+// byte length within the same nanosecond. Nanosecond mtimes make that
+// essentially unreachable for a real application, but it is not a proof, so a
+// Cursor text transcript — which has no per-record timestamps and is compared
+// by prefix, making a silent in-place edit hardest to detect downstream — is
+// never skipped on a stat alone.
+func unchangedSinceLastScan(local *LocalStore, reg archive.SessionRegistration, opts Options) (bool, error) {
+	if reg.TranscriptPath == "" || reg.ParentSessionID != "" {
+		return false, nil
+	}
+	signature, found, err := local.loadScanSignature(reg.ArchiveSessionID)
+	if err != nil || !found {
+		return false, err
+	}
+	if signature.SourceFormat == cursorTextSourceFormat {
+		return false, nil
+	}
+	adapter, err := archive.NewAdapter(reg.Harness.Name)
+	if err != nil {
+		return false, nil
+	}
+	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapter.Version() {
+		return false, nil
+	}
+	info, err := os.Stat(reg.TranscriptPath)
+	if err != nil || !info.Mode().IsRegular() {
+		return false, nil
+	}
+	if statTranscript(info) != (transcriptFileInfo{Size: signature.TranscriptSize, Mtime: signature.TranscriptMtime}) {
+		return false, nil
+	}
+	if scanPending, err := local.ScanPending(reg.ArchiveSessionID); err != nil || scanPending {
+		return false, err
+	}
+	pending, err := local.HasPending(reg.ArchiveSessionID)
+	if err != nil || pending {
+		return false, err
+	}
+	return true, nil
+}
+
+// recordScanSignature marks a session settled at the transcript bytes this
+// scan consumed, so the next pass can skip it. It is written only at an exit
+// that owes no further work.
+func recordScanSignature(local *LocalStore, reg archive.SessionRegistration, stat transcriptFileInfo, bundle archive.SourceBundle, opts Options) error {
+	return local.saveScanSignature(reg.ArchiveSessionID, scanSignature{
+		TranscriptSize: stat.Size, TranscriptMtime: stat.Mtime,
+		ParserVersion: opts.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
+		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
+	})
+}
+
 type sessionOutcome int
 
 const (
@@ -234,7 +321,7 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	filtered, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
+	filtered, transcriptStat, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
 	if err != nil {
 		if errors.Is(err, errTranscriptTooLarge) {
 			// The file will not shrink by retrying: record the gap once and
@@ -326,7 +413,7 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 				return outcomeSkipped, fmt.Errorf("complete unchanged request: %w", err)
 			}
 		}
-		return outcomeSkipped, nil
+		return outcomeSkipped, recordScanSignature(local, reg, transcriptStat, candidate, opts)
 	}
 
 	// A blocked candidate is itself the rewritten evidence, so it must never
@@ -385,7 +472,7 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 				return outcomeSkipped, fmt.Errorf("complete declined request: %w", err)
 			}
 		}
-		return outcomeSkipped, nil
+		return outcomeSkipped, recordScanSignature(local, reg, transcriptStat, candidate, opts)
 	}
 
 	metadataBytes, err := json.Marshal(metadata)
@@ -411,7 +498,11 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		}
 		return outcomeRateLimited, nil
 	}
-	return publishPending(ctx, local, store, reg.ArchiveSessionID, pending, now, opts)
+	outcome, err := publishPending(ctx, local, store, reg.ArchiveSessionID, pending, now, opts)
+	if err != nil || outcome != outcomePublished {
+		return outcome, err
+	}
+	return outcome, recordScanSignature(local, reg, transcriptStat, candidate, opts)
 }
 
 // blockSession records a terminal capture gap for one session and completes
@@ -448,6 +539,12 @@ func blockSession(local *LocalStore, id string, req Request, reason BlockedReaso
 		if err := local.SaveBlocked(id, bundle, lastPublishedAt, reason); err != nil {
 			return outcomeSkipped, fmt.Errorf("cache blocked session: %w", err)
 		}
+	}
+	// A recorded gap is re-evaluated on every pass, never skipped on a stat:
+	// the condition that caused it (a deleted file above all) can end without
+	// the transcript itself changing.
+	if err := local.removeScanSignature(id); err != nil {
+		return outcomeSkipped, err
 	}
 	if req.Token != "" {
 		if _, err := local.CompleteRequest(id, req.Token); err != nil {
@@ -517,36 +614,54 @@ func publishPending(ctx context.Context, local *LocalStore, store storage.Object
 // an error wrapping errTranscriptTooLarge.
 var errTranscriptTooLarge = errors.New("transcript exceeds collection limit")
 
-func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, error) {
+// transcriptFileInfo is the identity of the exact file bytes one scan read:
+// its size and its modification time at nanosecond resolution. Second
+// resolution would not be enough, because an application can rewrite a
+// transcript in place within the same second; see unchangedSinceLastScan.
+type transcriptFileInfo struct {
+	Size  int64
+	Mtime int64
+}
+
+func statTranscript(info os.FileInfo) transcriptFileInfo {
+	return transcriptFileInfo{Size: info.Size(), Mtime: info.ModTime().UnixNano()}
+}
+
+func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
 	file, err := os.Open(reg.TranscriptPath)
 	if err != nil {
-		return archive.FilteredTranscript{}, fmt.Errorf("open transcript: %w", err)
+		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return archive.FilteredTranscript{}, fmt.Errorf("stat transcript: %w", err)
+		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("stat transcript: %w", err)
 	}
+	// Taken before any read, so it describes the bytes this scan is about to
+	// consume. A write that lands afterwards moves the mtime and is therefore
+	// seen as a change by the next pass, which is the conservative direction.
+	stat := statTranscript(info)
 	boundary := info.Size()
 	if boundary > maxBytes {
-		return archive.FilteredTranscript{}, fmt.Errorf("%w of %d bytes", errTranscriptTooLarge, maxBytes)
+		return archive.FilteredTranscript{}, stat, fmt.Errorf("%w of %d bytes", errTranscriptTooLarge, maxBytes)
 	}
 	if boundary < 0 {
-		return archive.FilteredTranscript{}, errors.New("transcript has invalid size")
+		return archive.FilteredTranscript{}, stat, errors.New("transcript has invalid size")
 	}
 	jsonBoundary, err := completeJSONLBoundary(file, boundary)
 	if err != nil {
-		return archive.FilteredTranscript{}, fmt.Errorf("find complete transcript boundary: %w", err)
+		return archive.FilteredTranscript{}, stat, fmt.Errorf("find complete transcript boundary: %w", err)
 	}
 	filtered, err := adapter.FilterJSONL(io.NewSectionReader(file, 0, jsonBoundary))
 	if err == nil {
-		return filtered, nil
+		return filtered, stat, nil
 	}
 	cursorAdapter, ok := adapter.(archive.CursorAdapter)
 	if !ok || !errors.Is(err, archive.ErrUnsafeSourceFormat) {
-		return archive.FilteredTranscript{}, err
+		return archive.FilteredTranscript{}, stat, err
 	}
-	return cursorAdapter.FilterText(io.NewSectionReader(file, 0, boundary), reg.SessionStartedAt)
+	filtered, err = cursorAdapter.FilterText(io.NewSectionReader(file, 0, boundary), reg.SessionStartedAt)
+	return filtered, stat, err
 }
 
 // completeJSONLBoundary ignores a final record while the harness is still

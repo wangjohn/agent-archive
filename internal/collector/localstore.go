@@ -41,7 +41,7 @@ func NewLocalStore(home string) (*LocalStore, error) {
 	if strings.TrimSpace(home) == "" {
 		return nil, errors.New("local store home is required")
 	}
-	for _, dir := range []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "subagent-candidates"} {
+	for _, dir := range []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "scan-signatures", "subagent-candidates"} {
 		if err := os.MkdirAll(filepath.Join(home, dir), 0o700); err != nil {
 			return nil, fmt.Errorf("create local store directory %q: %w", dir, err)
 		}
@@ -388,6 +388,41 @@ type publishedState struct {
 type publishedSnapshot struct {
 	Bundle      archive.SourceBundle `json:"bundle"`
 	PublishedAt time.Time            `json:"published_at"`
+	// SameAsBundle means the last published bundle is the one in Bundle, so
+	// this snapshot carries only its time. While a session sits in its normal
+	// published state the two are always identical, and a source bundle is by
+	// far the largest thing in this file: storing it once halves the file and
+	// the cost of every decode of it. Bundle is materialized here again the
+	// moment a different candidate (rate limited, declined, blocked) takes
+	// over publishedState.Bundle. State written before this field existed
+	// always carries its own copy, so it keeps working unchanged.
+	SameAsBundle bool `json:"same_as_bundle,omitempty"`
+}
+
+// resolveLastPublished returns the bundle actually made discoverable remotely,
+// expanding the shared-copy marker.
+func (p publishedState) resolveLastPublished() (archive.SourceBundle, time.Time, bool) {
+	if p.LastPublished == nil {
+		// Backward compatibility with state written before the separate ledger.
+		if p.Status == CacheStatusPublished {
+			return p.Bundle, p.PublishedAt, true
+		}
+		return archive.SourceBundle{}, time.Time{}, false
+	}
+	if p.LastPublished.SameAsBundle {
+		return p.Bundle, p.LastPublished.PublishedAt, true
+	}
+	return p.LastPublished.Bundle, p.LastPublished.PublishedAt, true
+}
+
+// detachedLastPublished gives the last published snapshot its own copy of the
+// bundle, for use when publishedState.Bundle is about to become a different
+// candidate. Called on every save that is not itself a publication.
+func (p publishedState) detachedLastPublished() *publishedSnapshot {
+	if p.LastPublished == nil || !p.LastPublished.SameAsBundle {
+		return p.LastPublished
+	}
+	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt}
 }
 
 func (s *LocalStore) publishedPath(archiveSessionID string) string {
@@ -419,7 +454,7 @@ func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.
 	var last *publishedSnapshot
 	var existing publishedState
 	if err := local.Read(s.publishedPath(archiveSessionID), &existing); err == nil {
-		last = existing.LastPublished
+		last = existing.detachedLastPublished()
 		if last == nil && existing.Status == CacheStatusPublished {
 			copy := publishedSnapshot{Bundle: existing.Bundle, PublishedAt: existing.PublishedAt}
 			last = &copy
@@ -428,7 +463,9 @@ func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.
 		return fmt.Errorf("read published state %q: %w", archiveSessionID, err)
 	}
 	if status == CacheStatusPublished {
-		last = &publishedSnapshot{Bundle: bundle, PublishedAt: publishedAt}
+		// The candidate becoming the current bundle is exactly what was just
+		// published, so the snapshot records only when, not a second copy.
+		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true}
 	}
 	return local.Write(s.publishedPath(archiveSessionID), publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, LastPublished: last, MetadataBytes: publicationMetadata(existing.MetadataBytes, metadata)})
 }
@@ -473,14 +510,8 @@ func (s *LocalStore) LoadLastPublished(archiveSessionID string) (bundle archive.
 	if readErr != nil {
 		return archive.SourceBundle{}, time.Time{}, false, fmt.Errorf("read published state %q: %w", archiveSessionID, readErr)
 	}
-	if state.LastPublished != nil {
-		return state.LastPublished.Bundle, state.LastPublished.PublishedAt, true, nil
-	}
-	// Backward compatibility with state written before the separate ledger.
-	if state.Status == CacheStatusPublished {
-		return state.Bundle, state.PublishedAt, true, nil
-	}
-	return archive.SourceBundle{}, time.Time{}, false, nil
+	bundle, publishedAt, found = state.resolveLastPublished()
+	return bundle, publishedAt, found, nil
 }
 
 // PendingPublication is one fully rendered publication transaction. Source
@@ -524,6 +555,24 @@ func (s *LocalStore) LoadPending(id string) (PendingPublication, bool, error) {
 		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, err)
 	}
 	return pending, true, nil
+}
+
+// HasPending reports whether a publication is still outstanding for a session
+// without decoding it. The pending file carries the compressed source bytes,
+// so a stat is the only way to ask this question cheaply enough to ask it for
+// every registered session on every pass.
+func (s *LocalStore) HasPending(id string) (bool, error) {
+	if !safeFileComponent(id) {
+		return false, errors.New("archive session ID is not a safe file name component")
+	}
+	_, err := os.Stat(s.pendingPath(id))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat pending publication %q: %w", id, err)
+	}
+	return true, nil
 }
 
 func (s *LocalStore) RemovePending(id string) error {
@@ -592,6 +641,78 @@ func (s *LocalStore) ScanPending(id string) (bool, error) {
 		return false, nil
 	}
 	return pending, err
+}
+
+// scanSignature is one session's "nothing to do" token: the exact size and
+// nanosecond modification time of the transcript the last completed scan
+// consumed, plus the versions that scan ran under. Its presence asserts that
+// the scan ended settled — published, declined, or unchanged — and never
+// blocked, so the next pass can skip the session on a matching stat alone.
+//
+// It lives in its own small file rather than inside the published cache
+// because reading it has to stay cheap: the published cache holds a whole
+// source bundle (hundreds of kilobytes), and decoding one per registered
+// session per pass is precisely the cost this token exists to remove.
+// Anything that invalidates the assertion removes the token (see
+// removeScanSignature's callers).
+type scanSignature struct {
+	TranscriptSize  int64 `json:"transcript_size"`
+	TranscriptMtime int64 `json:"transcript_mtime_unix_nano"`
+	// The derivation versions are part of the signature: a parser, filter, or
+	// adapter upgrade changes what an unchanged transcript would produce, so
+	// it must re-scan rather than skip.
+	ParserVersion  string `json:"parser_version"`
+	FilterVersion  string `json:"filter_version"`
+	AdapterVersion string `json:"adapter_version"`
+	// SourceFormat is the format the scan actually produced, which decides
+	// whether a stat is trustworthy evidence at all (see unchangedSinceLastScan).
+	SourceFormat string `json:"source_format,omitempty"`
+}
+
+func (s *LocalStore) scanSignaturePath(id string) string {
+	return filepath.Join(s.home, "scan-signatures", id+".json")
+}
+
+// saveScanSignature records the token, skipping the write (and its two fsyncs)
+// when nothing about it changed.
+func (s *LocalStore) saveScanSignature(id string, signature scanSignature) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	if existing, found, err := s.loadScanSignature(id); err != nil {
+		return err
+	} else if found && existing == signature {
+		return nil
+	}
+	return local.Write(s.scanSignaturePath(id), signature)
+}
+
+func (s *LocalStore) loadScanSignature(id string) (scanSignature, bool, error) {
+	if !safeFileComponent(id) {
+		return scanSignature{}, false, errors.New("archive session ID is not a safe file name component")
+	}
+	var signature scanSignature
+	err := local.Read(s.scanSignaturePath(id), &signature)
+	if errors.Is(err, os.ErrNotExist) {
+		return scanSignature{}, false, nil
+	}
+	if err != nil {
+		// A corrupt token is not a failure: it only means this session cannot
+		// be skipped, which is the safe answer.
+		return scanSignature{}, false, nil
+	}
+	return signature, true, nil
+}
+
+func (s *LocalStore) removeScanSignature(id string) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	err := os.Remove(s.scanSignaturePath(id))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove scan signature %q: %w", id, err)
+	}
+	return nil
 }
 
 func publicationMetadata(previous []byte, supplied [][]byte) []byte {

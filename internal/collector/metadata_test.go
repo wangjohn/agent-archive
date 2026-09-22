@@ -258,6 +258,12 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 	if err := local.cacheMetadata(reg.ArchiveSessionID, nil); err != nil {
 		t.Fatal(err)
 	}
+	// State written before metadata was cached also predates scan signatures;
+	// without this the session would be skipped as unchanged, which a real
+	// legacy install never is.
+	if err := local.removeScanSignature(reg.ArchiveSessionID); err != nil {
+		t.Fatal(err)
+	}
 	published.Parser.Status = archive.ParserStatusFailed
 	putMetadata(t, remote, reg, published)
 
