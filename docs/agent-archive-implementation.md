@@ -1011,3 +1011,89 @@ rewrites come from Claude Code's behavior, not from an observed file. The
 fixture is synthetic. The first real compacted session should be checked
 with `show --normalized` for the `compact_summary` kind and a nonzero
 `counts.compactions`.
+
+## PR C5 — Registration races
+
+**Resume during expiry.** `handleSessionStart`'s continuation path loaded a
+registration and saved it back without the per-session request lock that
+retention's `ForgetIdleSession` holds. A session resumed at the instant
+retention forgot it could be written back after retention removed both the
+registration and its native-session index entry. The session's next start
+then found no index entry and got a second archive ID, and the first
+registration was left unreachable. Cursor's transcript-path adoption had the
+same load-then-save shape. Two collector helpers now take the lock around the
+whole read-check-write:
+
+- **`UpdateRegistration`** loads the registration under the lock. When it is
+  gone it reports `found=false` without calling the update, and the hook
+  treats the session as never seen: the ordinary fresh-start rules decide. A
+  resume is declined with its `session_start_unknown` diagnostic; a provable
+  fresh start (a Claude Code `/clear`) registers again under a fresh ID. An
+  error from the update saves nothing.
+- **`RegisterNewSession`** saves a new registration under its archive ID's
+  lock, after rechecking that the native-session index still points at that
+  ID. If the entry changed or disappeared, it assigns a fresh ID. This closes
+  the same window for a fresh start that found an index entry retention was
+  about to remove.
+
+`ForgetSession` now unlinks the request lock file last, after the
+native-session index. The lock is a `flock` on that file's inode, so
+unlinking it lets a waiting hook lock a fresh file at once. Everything a hook
+rechecks under the lock must therefore already be gone; before this change
+the index outlived the lock file.
+
+**Waiting Cursor chats at a destination change.** A Cursor chat whose
+transcript never arrives (transcripts turned off) registers at its first
+prompt and keeps a queued request, but it can publish nothing until a path
+arrives. Setup counted that request as pending work and refused to change the
+storage destination, leaving the user stuck on the current bucket.
+`pendingSessionCounts` now separates registrations with no transcript path,
+no publication, and nothing in flight:
+
+- The destination guard in `reviewChanges` and `applySetup` counts only the
+  other pending sessions.
+- `status` and uninstall still count the waiting chat as pending.
+- After the change it falls behind the new `DestinationSince` like any
+  unpublished session: the collector no longer accepts it, and retention
+  prunes it locally.
+- Setup's destination-change message says so when there are any.
+
+Tests:
+
+- `internal/cli/registration_race_test.go`:
+  - a resume interleaved deterministically with a forget is declined and
+    explained;
+  - a `/clear` in the same interleaving registers under a fresh ID;
+  - a 30-round concurrent start-versus-forget race checks that every
+    registration stays reachable from its index.
+
+  All three fail against `main`'s hook and collector.
+- `internal/collector/register_race_test.go`:
+  - `UpdateRegistration` reports a forgotten session and saves nothing on
+    error;
+  - `RegisterNewSession` does not reuse an index entry being forgotten.
+- `internal/cli/destination_waiting_test.go`:
+  - a waiting Cursor chat does not block a storage change, is explained, and
+    falls behind the boundary (this fails against `main` with "1 session(s)
+    still pending");
+  - a chat with a transcript that has not published still blocks.
+
+Limits:
+
+- **Which ordering the race tests exercise depends on timing.** The
+  interleaving tests hold the lock themselves and give the hook 100 ms to
+  reach it. If the hook arrives later, the test still passes but exercises a
+  different ordering; the invariant it checks holds in every ordering, and
+  no assertion depends on elapsed time.
+- **Stale lock files.** A hook that loses the race creates a fresh
+  `request-locks/<id>.lock` for the forgotten ID (the lock helper opens with
+  `O_CREATE`), and nothing removes it, since the ID is never registered
+  again. It is an empty file; `saveRequest` left the same remnant before
+  this PR. A hook can also end up holding a `flock` on the unlinked inode
+  while another holds the fresh file, but only for an ID whose every record
+  was removed before the unlink, and every holder rechecks those records
+  under the lock, so neither can write anything for that ID.
+- **Dropped lifecycle evidence.** A hook's lifecycle evidence write after the
+  registration step takes the lock separately. If retention forgets the
+  session in between, that evidence is dropped as `ErrSessionNotRegistered`,
+  as it already was.

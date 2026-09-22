@@ -150,7 +150,11 @@ Invalid flags fail before a command starts. Exit codes are 0 for success/help,
   recovery is incomplete, status says so; rerun setup to recover. It refuses
   to overwrite a file edited outside setup during recovery.
 - A storage change is blocked while known work is pending. Sync the current
-  destination first. Switching starts a new capture boundary: old sessions
+  destination first. A session that never received a transcript (a Cursor
+  chat with transcripts turned off) has nothing a sync could publish, so it
+  does not block the change; status still lists it as pending until the
+  switch, after which it stays behind the boundary and is not captured at
+  the new destination. Switching starts a new capture boundary: old sessions
   stay published at their destination, which this Mac stops collecting into
   or cleaning up. Their local evidence is kept until it ages past the
   retention period, then removed from this Mac only; nothing is deleted from

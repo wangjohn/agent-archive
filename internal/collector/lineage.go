@@ -138,10 +138,12 @@ func (s *LocalStore) SessionDir(archiveSessionID string) string {
 // (whole-session retention); it never touches storage itself. Retention calls
 // it through ForgetIdleSession, under the request lock.
 //
-// The registration and request are removed before the request lock file.
-// The lock is a flock on that file's inode, so once the file is unlinked a
-// waiting hook can lock a fresh one; by then the registration is already
-// gone, and saveRequest refuses to write for an unregistered session.
+// Every record, the native-session index included, is removed before the
+// request lock file. The lock is a flock on that file's inode, so once the
+// file is unlinked a waiting hook can lock a fresh one; by then the
+// registration and the index entry are already gone, so saveRequest refuses
+// to write for the session, UpdateRegistration reports it forgotten, and
+// RegisterNewSession assigns a fresh archive ID instead of reusing this one.
 func (s *LocalStore) ForgetSession(archiveSessionID, nativeSessionID string) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
@@ -156,13 +158,17 @@ func (s *LocalStore) ForgetSession(archiveSessionID, nativeSessionID string) err
 		s.pendingPath(archiveSessionID),
 		filepath.Join(s.home, "pending-scans", archiveSessionID+".json"),
 		s.scanSignaturePath(archiveSessionID),
-		filepath.Join(s.home, "request-locks", archiveSessionID+".lock"),
 		s.supersededPath(archiveSessionID),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
 	}
 	if nativeSessionID != "" {
 		paths = append(paths, nativeSessionIndexPath(s.home, nativeSessionID))
 	}
+	// The request lock goes last. Unlinking it lets a waiting hook lock a
+	// fresh file at once, so everything a hook rechecks under that lock (the
+	// registration, the request, and the native-session index a new
+	// registration would reuse) must already be gone by then.
+	paths = append(paths, filepath.Join(s.home, "request-locks", archiveSessionID+".lock"))
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove %q: %w", path, err)
