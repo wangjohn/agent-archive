@@ -532,3 +532,39 @@ func TestFitHandoffMeasuresLogarithmically(t *testing.T) {
 		t.Fatalf("elision = %#v", e)
 	}
 }
+
+// A compaction summary is shown where it happened: after /compact the agent
+// worked from it, not from the turns before it.
+func TestHandoffShowsCompactionSummaries(t *testing.T) {
+	filtered, err := ClaudeAdapter{}.FilterJSONL(bytes.NewReader(fixture(t, "claude-compaction.jsonl")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := registration()
+	reg.Harness = Harness{Name: "claude"}
+	bundle, err := NewSourceBundle(reg, ClaudeAdapter{}, filtered, reg.SessionStartedAt, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := BuildHandoff(bundle, nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summaries int
+	for _, exchange := range h.Exchanges {
+		for _, step := range exchange.Steps {
+			if step.Kind == "summary" && step.Text != "" {
+				summaries++
+			}
+		}
+		if strings.Contains(exchange.Prompt, "This session is being continued") {
+			t.Fatalf("compaction summary rendered as a prompt: %q", exchange.Prompt)
+		}
+	}
+	if summaries == 0 {
+		t.Fatalf("no compaction summary in the handoff: %#v", h.Exchanges)
+	}
+	if !strings.Contains(string(RenderHandoffMarkdown(h, HandoffRenderOptions{})), "**Conversation compacted.**") {
+		t.Fatal("summary not rendered")
+	}
+}

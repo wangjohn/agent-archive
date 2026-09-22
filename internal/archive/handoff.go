@@ -123,10 +123,11 @@ type HandoffExchange struct {
 }
 
 // HandoffStep is assistant text, a tool call, a shell command the person ran
-// directly, or — once the budget has collapsed tool calls — a count of them
-// such as "14 tool calls: Bash ×9, Read ×5".
+// directly, the summary Claude Code wrote when the session was compacted, or —
+// once the budget has collapsed tool calls — a count of them such as
+// "14 tool calls: Bash ×9, Read ×5".
 type HandoffStep struct {
-	Kind          string           `json:"kind"` // "text", "tool", "shell", or "collapsed"
+	Kind          string           `json:"kind"` // "text", "tool", "shell", "summary", or "collapsed"
 	Text          string           `json:"text,omitempty"`
 	TextTruncated bool             `json:"text_truncated,omitempty"`
 	Tool          *HandoffToolCall `json:"tool,omitempty"`
@@ -269,6 +270,13 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 			case TurnKindShellCommand:
 				if command := strings.TrimSpace(stripHarnessTag(turn.Text, "bash-input")); command != "" {
 					current.Steps = append(current.Steps, HandoffStep{Kind: "shell", Text: command})
+				}
+			case TurnKindCompactSummary:
+				// After /compact the agent worked from this model-written
+				// summary rather than the turns before it, so the receiving
+				// agent should see it where it happened.
+				if text := strings.TrimSpace(turn.Text); text != "" {
+					current.Steps = append(current.Steps, HandoffStep{Kind: "summary", Text: text})
 				}
 			}
 			continue
@@ -940,7 +948,7 @@ func shortenAssistantText(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 	n := 0
 	for i := range steps[:limit] {
 		step := &steps[i]
-		if step.Kind == "text" && len(step.Text) > handoffAssistantTextCap {
+		if (step.Kind == "text" || step.Kind == "summary") && len(step.Text) > handoffAssistantTextCap {
 			step.Text = truncateUTF8(step.Text, handoffAssistantTextCap)
 			step.TextTruncated = true
 			n++
@@ -1093,6 +1101,13 @@ func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
 				inTools = false
 			case "shell":
 				fmt.Fprintf(&b, "\n**Person ran:** `%s`\n", firstLine(step.Text, handoffSummaryCap))
+				inTools = false
+			case "summary":
+				text := step.Text
+				if step.TextTruncated {
+					text += " …(shortened)"
+				}
+				fmt.Fprintf(&b, "\n**Conversation compacted.** The agent continued from this summary:\n\n%s", quote(text))
 				inTools = false
 			case "tool":
 				if !inTools {

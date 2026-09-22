@@ -233,7 +233,8 @@ the same as `status`.
 
 `handoff` prints a session as a prompt another coding agent can pick up from:
 where it left off, the latest plan, files touched, then every prompt with the
-agent's replies, one-line tool-call summaries, and trimmed tool output. Edit
+agent's replies, one-line tool-call summaries, trimmed tool output, and any
+summary Claude Code wrote when the session was compacted. Edit
 bodies are left out; the receiving agent should read the files as they are
 now.
 

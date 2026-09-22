@@ -1235,3 +1235,10 @@ branch):
 Each has a test in `internal/archive/handoff_test.go`,
 `internal/archive/parser_v09_test.go`, or `internal/cli/handoff_test.go`.
 
+After PR C4 merged, this branch was renumbered to filter 6 / adapter 0.6.0 /
+parser 0.9.0, and the handoff now shows a Claude Code compaction summary
+(`compact_summary`, whose text C4 keeps for this purpose) as a step where the
+compaction happened, since the agent continued from it rather than from the
+turns before it. It is shortened by the budget like agent text.
+`TestHandoffShowsCompactionSummaries` uses C4's `claude-compaction.jsonl`.
+
