@@ -1136,3 +1136,57 @@ whose `origin` carries an extra member, a reply), `codex-list-output.jsonl`
 tool call each with list output, a reply). Tests:
 `internal/archive/parser_v08_test.go`.
 
+## PR H2/H3 — `agent-archive handoff`
+
+Implements `docs/agent-archive-handoff-spec.md`.
+
+- **Builder and renderer** (`internal/archive/handoff.go`, pure).
+  `BuildHandoff` groups a filtered bundle's turns and tool calls by record
+  order into one exchange per human prompt; notifications, harness records,
+  and command output are skipped, and a `!` shell command is shown as a step.
+  It extracts the recorded directory (base name only) and branch, the last
+  assistant text, the last `TodoWrite`/`update_plan`/`todo_write` plan, and
+  the files named by editing calls (paths under the recorded directory made
+  relative; `apply_patch` headers read). Tool summaries never include edit
+  bodies; Codex `exec` scripts show the `exec_command` command they run.
+  Results are trimmed to 12 lines and 2,000 bytes, head and tail, without
+  splitting a character. Cursor's `<timestamp>`/`<user_query>` wrapper is
+  removed from prompts and Claude's `<synthetic>` model label is dropped.
+  `FitHandoff` applies the budget steps on a copy; `RenderHandoffMarkdown`
+  renders the layout in the spec, with fences longer than any backtick run
+  in a result.
+- **Budget change from the spec.** The spec protected the last three
+  exchanges outright. A real session is often one prompt followed by
+  hundreds of tool calls, which that rule could never trim, so the protected
+  tail is the last three exchanges' steps but no more than the last twenty
+  steps overall.
+- **Local source** (`internal/collector/snapshot.go`). `ReadLocalBundle`
+  filters a registration's transcript through the collector's own
+  `filterTranscript` (same size limit, same torn-record boundary, same Cursor
+  text fallback) and merges the hook evidence already published or pending,
+  taking no lock and writing nothing. `FilterTranscriptFile` does the same
+  for an unregistered file, using its modification time as the start time.
+- **Command** (`internal/cli/handoff.go`). Selection by ID (local
+  registration first, then the archive), `--latest` (local registrations by
+  transcript modification time, then archived sidecars whose project ID
+  matches the directory or its configured project, compared with and without
+  symlinks resolved), or `--file`. The saved full version lives in
+  `handoffs/`, pruned after 7 days by `handoff` and by each collector pass,
+  and listed in `localStateEntries` for uninstall.
+
+Tests: `internal/archive/handoff_test.go` (golden documents for one fixture
+per harness under `testdata/handoff/`, regenerated with `-update`; content
+checks; budget order, protected tail, single-exchange trimming, input not
+mutated; trimming helpers) and `internal/cli/handoff_test.go` (argument
+errors, not set up, local handoff without sync uploads nothing, `--latest`
+from a subdirectory, local/archive parity after sync, the no-match fallback
+list, full-version save and pruning, `--output` permissions and overwrite,
+`--file` without setup, uninstall ownership).
+
+Manual check: the built binary rendered copies of real Claude Code, Codex,
+and Cursor transcripts with `--file`. The 7.0 MB Claude review session came
+out at 117 KB with 53 older tool outputs dropped and the 142 KB full version
+saved; the Codex and Cursor sessions (20 KB and 60 KB) needed no trimming.
+Not yet done: pasting a handoff into another agent and checking it states
+the task and next step, which the spec names as the acceptance criterion.
+

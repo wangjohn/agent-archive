@@ -87,6 +87,7 @@ func runOnePass(env Env, quietOnBusy bool) (collector.Result, error) {
 		return collector.Result{}, fmt.Errorf("acquire lock: %w", err)
 	}
 	defer unlock()
+	pruneHandoffs(home, env.now())
 	if transactionPending(home) {
 		return collector.Result{}, fmt.Errorf("setup needs recovery; run agent-archive setup")
 	}

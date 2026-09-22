@@ -1,8 +1,8 @@
 // Package cli implements the agent-archive command-line interface: the
 // hidden `_hook` and `_collect` entry points a real installation's hooks
 // and LaunchAgent invoke, and the user-facing
-// setup/status/sync/pause/resume/uninstall and read-only list/show
-// commands. It is the only package that touches process-level state
+// setup/status/sync/pause/resume/uninstall, read-only list/show, and
+// handoff commands. It is the only package that touches process-level state
 // (args, stdio, the real clock, the real home directory) directly; every
 // other package in this module stays free of that so it can be tested
 // without a real environment.
@@ -167,6 +167,9 @@ Inspect history
   agent-archive show ID     Read a session's metadata
   agent-archive feedback ID Add explicit feedback from a local file
 
+Switch agents
+  agent-archive handoff     Continue a session in another coding agent
+
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
 
@@ -225,6 +228,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runShowCommand(args[1:], stdout, stderr, env)
 	case "feedback":
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
+	case "handoff":
+		return runHandoffCommand(args[1:], stdout, stderr, env)
 	default:
 		fmt.Fprintf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2

@@ -229,6 +229,49 @@ ID was somehow published under more than one harness, pass `--harness` to
 pick one. Both commands print `Not set up.` and exit 0 before setup has run,
 the same as `status`.
 
+### Continue a session in another agent
+
+`handoff` prints a session as a prompt another coding agent can pick up from:
+where it left off, the latest plan, files touched, then every prompt with the
+agent's replies, one-line tool-call summaries, and trimmed tool output. Edit
+bodies are left out; the receiving agent should read the files as they are
+now.
+
+```sh
+# Continue in Claude Code what you started in Codex, in the same repository
+claude "$(agent-archive handoff --latest --harness codex)"
+
+# Continue in Codex what you started in Claude Code
+codex "$(agent-archive handoff --latest --harness claude)"
+
+# A specific session, from `list`, written to a file
+agent-archive handoff <archive-session-id> --output /tmp/handoff.md
+
+# A transcript the archive never captured, on this Mac; needs no setup
+agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness codex
+```
+
+A session registered on this Mac is read from its transcript as it is now, so
+a handoff right after you stop needs no sync and works while collection is
+paused; nothing is uploaded. Otherwise the session is downloaded from the
+archive, which is how a second Mac hands off a session from the first.
+`--source local|archive` forces one or the other. `--latest` names its choice
+on stderr. On another Mac it matches the project only when the repository is
+checked out at the same path; when nothing matches it lists the five most
+recent archived sessions with the command for each. Uncommitted changes stay
+on the machine that made them, so push a branch before continuing elsewhere.
+
+Output is limited to 120,000 bytes (about 30k tokens; `--max-bytes`, `0` for
+no limit). Over the limit, older tool output is dropped first, then older tool
+calls are collapsed to counts, then older agent messages are shortened, then
+long prompts are truncated. The last three exchanges (up to their last twenty
+steps) and every prompt are kept. When anything is trimmed, the untrimmed
+version is saved under the data directory in `handoffs/` (mode 0600, removed
+after 7 days and by `uninstall --delete-local-data`) and its path is named at
+the end, so the receiving agent can read what was omitted. Everything printed
+has passed the same privacy filter as the archive. Cursor transcripts record
+no tool results, so a Cursor handoff says so and shows none.
+
 ### Add explicit feedback
 
 Write your assessment to a private UTF-8 text file, then attach it to a session

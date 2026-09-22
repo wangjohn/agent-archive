@@ -78,6 +78,29 @@ Print session metadata as JSON. --normalized explicitly downloads and verifies
 its source bundle and prints conversation content as well.
 Example: agent-archive show SESSION_ID --normalized
 `,
+	"handoff": `Usage: agent-archive handoff ID|--latest|--file PATH [options]
+
+Print a session as a prompt another coding agent can continue from. This
+prints conversation content, filtered as it is for the archive: injected
+instructions and credentials removed, tool output trimmed, edit bodies left
+out. A session on this machine is read from its transcript now, without
+waiting for a sync; otherwise it is downloaded from the archive.
+  --latest              The most recent session for the project
+  --project DIR         Project for --latest (default: current directory)
+  --harness NAME        claude, codex, or cursor
+  --file PATH           Render a native transcript directly (needs --harness);
+                        works for sessions the archive never captured
+  --source auto|local|archive
+  --max-bytes N         Output limit, default 120000 (about 30k tokens); 0 for
+                        no limit. When trimmed, the full version is saved in
+                        the data directory for 7 days and its path is named
+                        at the end
+  --format markdown|json
+  --output FILE         Write to FILE (mode 0600); --force replaces it
+  --no-preamble         Omit the note addressed to the receiving agent
+Example: claude "$(agent-archive handoff --latest --harness codex)"
+Example: codex "$(agent-archive handoff --latest --harness claude)"
+`,
 	"feedback": `Usage: agent-archive feedback ID --file PATH
 
 Attach an explicit user assessment to a locally captured session. The file is
@@ -121,7 +144,7 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 			return true, 0
 		}
 	}
-	if cmd == "list" || cmd == "show" || cmd == "feedback" {
+	if cmd == "list" || cmd == "show" || cmd == "feedback" || cmd == "handoff" {
 		return false, 0
 	} // Their parsers validate before I/O.
 	allowed := ""

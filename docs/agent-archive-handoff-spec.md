@@ -1,6 +1,6 @@
 # `agent-archive handoff` — engineering spec
 
-Status: ready for implementation. Written 2026-09-22 from a probe of real
+Status: implemented (PRs H1–H3). Written 2026-09-22 from a probe of real
 Claude Code, Codex, and Cursor transcripts run through filter 3 / parser
 0.6.0. Depends on PR C1 (`fix/prompt-accuracy`, parser 0.7 / filter 4) being
 merged first; see [Sequencing](#sequencing).
@@ -312,12 +312,16 @@ Stop hook (see [Later](#later-phase-2)).
 Render, measure, and if over `MaxBytes` apply these steps in order,
 re-measuring after each, until it fits:
 
-1. Drop tool result text, oldest exchange first, keeping the last 3
-   exchanges' results.
-2. Collapse tool-call lines to a count (`- 14 tool calls: Bash ×9, Read ×5`),
-   oldest exchange first, keeping the last 3 exchanges.
-3. Replace assistant text with its first 300 chars, oldest first, keeping
-   the last 3 exchanges and "Where it left off".
+The first three steps never touch the protected tail: the steps of the last
+3 exchanges, but no more than the last 20 steps overall. (Protecting three
+whole exchanges would leave a session of one prompt and hundreds of tool
+calls untrimmable.)
+
+1. Drop tool result text, oldest first.
+2. Collapse tool-call lines to a count (`- 14 tool calls: Bash ×9, Read ×5`)
+   at the position of the first collapsed call, oldest first.
+3. Replace assistant text with its first 300 chars, oldest first. "Where it
+   left off" is never shortened.
 4. Truncate person prompts longer than 2,000 chars to their first 2,000,
    oldest first. Prompts are never dropped.
 5. If still over, emit it anyway and warn on stderr with the final size.
@@ -401,6 +405,7 @@ Found by the probe; none are in C1's scope. Bumps to filter 5 / adapter
 | `internal/archive/handoff.go` | `HandoffOptions`, `Handoff` types, `BuildHandoff`, budget, `RenderHandoffMarkdown` |
 | `internal/archive/views.go` | `toolResultText`; H1 fixes |
 | `internal/archive/adapters.go` | H1 allowlist and injected-tag changes |
+| `internal/collector/snapshot.go` | `ReadLocalBundle` and `FilterTranscriptFile`: the collector's own filtering, read-only |
 | `internal/cli/handoff.go` | flag parsing, selection and fallback list, content source, output, full-version save and pruning |
 | `internal/cli/collect.go` | prune `handoffs/` files older than 7 days on each collector pass |
 | `internal/cli/uninstall.go` | add `handoffs` to `localStateEntries` so `--delete-local-data` removes it |
