@@ -765,3 +765,27 @@ Limits:
   each interleaving that matters.
 - **Only the plist's program path is checked.** `status` does not check
   whether launchd has the current plist loaded.
+
+Review fixes on the same branch:
+
+- **Subagent candidate whose parent was forgotten.** `rejectSubagentCandidate`
+  notifies the parent through `SaveRequest`; with the new orphan guard that
+  write is refused for a parent retention has forgotten, and the candidate
+  was then never acknowledged, so the collector reported the same permanent
+  condition on every pass. The refusal is now treated as "nobody to notify"
+  and the candidate is acknowledged after one report.
+- **Hook exit.** A hook whose request write is refused because retention
+  forgot the session between its lookup and its write already exited 0; it
+  now also says nothing, since that is the race's intended outcome.
+- **Transcript-less registrations and retention.** Cursor (PR C3) registers a
+  chat at its first prompt, before a transcript path exists, and the path
+  normally arrives with a later hook; with the app's transcripts disabled it
+  never does. A queued request for such a registration (it can carry
+  last-message text) counted as unfinished work, so the session never
+  expired. Once the session itself is older than the retention window, a
+  request no longer defers expiry for a registration with no transcript
+  path; it is forgotten locally under the same request lock, with zero
+  bucket calls, since it can never have published. Registrations without a
+  path can exist on `main` already (`hook.go` allows an empty path).
+- The purge test also exercises the lineage ledger and the reader cache;
+  `docs/install.md` names the `broken` hook and background states.

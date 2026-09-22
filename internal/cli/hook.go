@@ -143,15 +143,22 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 
 	switch kind {
 	case hookEventStart:
-		return handleSessionStart(home, store, cfg, harness, nativeSessionID, payload, now)
+		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, payload, now)
 	case hookEventTurnStart:
-		return handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
+		err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
 	case hookEventSubagentStop:
-		return handleSubagentStop(store, cfg, harness, nativeSessionID, eventName, payload, now)
+		err = handleSubagentStop(store, cfg, harness, nativeSessionID, eventName, payload, now)
 	case hookEventStop, hookEventResponse:
-		return handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
+		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
 	}
-	return nil
+	// Retention can forget a session between this hook's registration lookup
+	// and its request write; the store then refuses the write so no orphan
+	// request is left. That is the intended outcome of the race, not a fault
+	// to report on the user's turn.
+	if errors.Is(err, collector.ErrSessionNotRegistered) {
+		return nil
+	}
+	return err
 }
 
 // recordSetupInProgress explains a session start that setup's own transaction

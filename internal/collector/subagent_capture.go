@@ -120,7 +120,10 @@ func rejectSubagentCandidate(local *LocalStore, candidate SubagentCandidate, cod
 	if err != nil {
 		return err
 	}
-	if err := local.SaveRequest(candidate.ParentArchiveSessionID, code, candidate.ObservedAt, evidence); err != nil {
+	// A parent retention has forgotten has nobody left to notify. The
+	// candidate is still acknowledged: retrying it would report the same
+	// permanent condition on every pass.
+	if err := local.SaveRequest(candidate.ParentArchiveSessionID, code, candidate.ObservedAt, evidence); err != nil && !errors.Is(err, ErrSessionNotRegistered) {
 		return err
 	}
 	if err := local.acknowledgeSubagentCandidate(candidate); err != nil {

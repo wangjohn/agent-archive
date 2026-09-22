@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -42,22 +43,30 @@ func TestUninstallPurgeLeavesNoFilesOrDirectory(t *testing.T) {
 }
 
 // The purge must know every entry the running system creates, not only the
-// ones setup does: the collector's scan signatures (created by every
-// collector.NewLocalStore) and the diagnostics lock (created by the first
-// diagnostic a hook records).
+// ones setup does: the collector's directories (created by every
+// collector.NewLocalStore), the lineage ledger and reader cache (created on
+// first use), and the diagnostics lock (created by the first diagnostic a
+// hook records).
 func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
-	if _, err := collector.NewLocalStore(home); err != nil {
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "scan-signatures", "session.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordSuperseded("session", "sessions/codex/session/source.old.json.gz", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reader.OpenMetadataCache(home); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, _ := config.Load(home)
 	if err := recordCaptureDiagnostic(home, captureDiagnostic{Code: diagnosticSetupInProgress, Harness: "codex", ProjectRoot: cfg.Archive.Projects[0].Root, ObservedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"scan-signatures", diagnosticsLockName, "capture-diagnostics.json"} {
+	for _, name := range []string{"scan-signatures", "superseded", "cache", diagnosticsLockName, "capture-diagnostics.json"} {
 		if _, err := os.Stat(filepath.Join(home, name)); err != nil {
 			t.Fatalf("test precondition: %s was not created: %v", name, err)
 		}

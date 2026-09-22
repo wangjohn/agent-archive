@@ -110,6 +110,9 @@ Macs are supported.
    Status distinguishes waiting for a session, observed hooks, local capture,
    and published sources with verified checksums. Background `loaded` means
    launchd knows the scheduled job; `running` means a pass is executing.
+   Hooks or background `broken` means the configuration is in place but runs
+   an agent-archive executable that has since been moved, deleted, or made
+   non-executable; rerun `agent-archive setup` from the binary's new location.
    Configuration alone never establishes capture or trust. Status uses local
    evidence and a read-only launchd check, without downloading conversations.
    `status --json` separates configured, hook-observed, captured, published,
