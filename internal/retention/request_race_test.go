@@ -157,3 +157,49 @@ func TestConcurrentHookRequestIsNeverLostToExpiry(t *testing.T) {
 	}
 	t.Logf("%d rounds: request kept the session %d times, arrived after it was forgotten %d times", rounds, kept, forgotten)
 }
+
+// A registration that never received a transcript path can never be
+// captured, so a request queued for it is not work the collector will do.
+// Once the session is older than the retention window, that request no
+// longer defers expiry: the session is forgotten locally, with zero bucket
+// calls, and the request's hook text goes with it. The same request on a
+// registration with a transcript path still defers expiry.
+func TestQueuedRequestDoesNotKeepATranscriptlessSessionPastRetention(t *testing.T) {
+	dir := t.TempDir()
+	local := newTestStore(t)
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	withPath := registration("with-path", writeTranscript(t, dir, "with-path.jsonl", codexTranscript))
+	withoutPath := registration("no-path", "")
+	for _, reg := range []archive.SessionRegistration{withPath, withoutPath} {
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+		if err := local.SaveRequest(reg.ArchiveSessionID, "stop", t0.Add(time.Minute), finalResponse(t, t0.Add(time.Minute))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+
+	// Inside the window nothing expires, request or not.
+	if result := sweep(t, local, store, t0.Add(retentionWindow-time.Hour), Options{}); len(result.PrunedSessions) != 0 || len(result.Errors) != 0 {
+		t.Fatalf("expired inside the retention window: %#v", result)
+	}
+
+	result := sweep(t, local, store, t0.Add(retentionWindow+time.Hour), Options{})
+	if len(result.Errors) != 0 || len(result.PrunedSessions) != 1 || result.PrunedSessions[0] != "no-path" || len(result.DeletedSessions) != 0 {
+		t.Fatalf("result=%#v, want only no-path pruned", result)
+	}
+	if store.count() != 0 {
+		t.Fatalf("a never-captured session cost %d bucket calls", store.count())
+	}
+	if _, found, _ := local.LoadRegistration("no-path"); found {
+		t.Fatal("the transcript-less registration survived past retention")
+	}
+	if _, found, _ := local.LoadRegistration("with-path"); !found {
+		t.Fatal("the request stopped deferring expiry for a session the collector can still capture")
+	}
+	requests, err := local.LoadRequests()
+	if err != nil || len(requests) != 1 || requests[0].ArchiveSessionID != "with-path" {
+		t.Fatalf("requests=%#v err=%v; the forgotten session's request must go with it", requests, err)
+	}
+}

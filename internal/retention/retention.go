@@ -135,8 +135,21 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		ageFrom = bundle.Capture.CapturedAt
 	}
 	locallyExpired := opts.SessionMaxAge > 0 && !ageFrom.IsZero() && now.Sub(ageFrom) >= opts.SessionMaxAge
-	publishable := opts.Publishable == nil || opts.Publishable(reg)
-	if locallyExpired && publishable {
+	// deferForWork says whether a queued request or pending publication
+	// postpones expiry: only when the collector will actually do that work.
+	// A session it no longer publishes is one case. A registration that never
+	// received a transcript path is the other: Cursor registers a chat at its
+	// first prompt and the path normally arrives with a later hook, but with
+	// the app's transcripts disabled it never does, so nothing can ever be
+	// captured for it. Once such a session is itself older than the retention
+	// window, its request (which can carry hook text) stops deferring expiry;
+	// otherwise the registration and that text would stay on this machine
+	// forever. It never published, so forgetting it needs no bucket call.
+	deferForWork := opts.Publishable == nil || opts.Publishable(reg)
+	if reg.TranscriptPath == "" && opts.SessionMaxAge > 0 && !reg.SessionStartedAt.IsZero() && now.Sub(reg.SessionStartedAt) >= opts.SessionMaxAge {
+		deferForWork = false
+	}
+	if locallyExpired && deferForWork {
 		// Unpublished work is not expired evidence. A session that crosses the
 		// retention boundary on the same pass its publication fails
 		// transiently would otherwise have its new source, its pending
@@ -161,7 +174,7 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		if !locallyExpired {
 			return nil
 		}
-		forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, publishable)
+		forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork)
 		if err != nil {
 			return fmt.Errorf("forget session from a previous destination: %w", err)
 		}
@@ -185,7 +198,7 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 			return fmt.Errorf("check pending publication: %w", err)
 		}
 		if !everPublished && !pending {
-			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, publishable)
+			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork)
 			if err != nil {
 				return fmt.Errorf("forget never-published session: %w", err)
 			}
@@ -247,7 +260,7 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		// publication is the whole session, not a delta), or, if the request
 		// added nothing, acknowledges it and the next sweep finishes the
 		// expiry.
-		forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, publishable)
+		forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork)
 		if err != nil {
 			return fmt.Errorf("forget session: %w", err)
 		}
