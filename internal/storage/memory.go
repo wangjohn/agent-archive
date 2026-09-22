@@ -17,6 +17,7 @@ type MemoryStore struct {
 
 type memoryObject struct {
 	data []byte
+	etag string
 	when time.Time
 }
 
@@ -31,7 +32,10 @@ func (s *MemoryStore) Put(ctx context.Context, key string, data []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	copyData := append([]byte(nil), data...)
-	s.objects[key] = memoryObject{data: copyData, when: time.Now().UTC()}
+	// The ETag is a content hash, as a real store's is for a single-part
+	// upload: it changes exactly when the bytes change, which is what a
+	// reader's ETag-keyed cache relies on.
+	s.objects[key] = memoryObject{data: copyData, etag: sha256Hex(copyData), when: time.Now().UTC()}
 	return nil
 }
 
@@ -64,7 +68,7 @@ func (s *MemoryStore) List(ctx context.Context, prefix string) ([]Object, error)
 	objects := make([]Object, 0, len(keys))
 	for _, key := range keys {
 		obj := s.objects[key]
-		objects = append(objects, Object{Key: key, Size: int64(len(obj.data)), LastModified: obj.when})
+		objects = append(objects, Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
 	}
 	return objects, nil
 }
