@@ -157,9 +157,12 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 // recordSetupInProgress explains a session start that setup's own transaction
 // window swallowed. Without it an included project simply never registers the
 // session and `status` offers no reason, unlike the pre-activation and
-// unknown-start cases. Setup holds hooks.lock while it commits, so this write
-// is deliberately lock-free and best effort: losing one bounded, content-free
-// diagnostic is better than holding up the user's turn behind an installation.
+// unknown-start cases. Setup holds hooks.lock while it commits, so this path
+// never waits for it. The write takes only diagnostics.lock, for at most
+// hookDiagnosticsWait, and drops the diagnostic on timeout: losing one
+// bounded, content-free diagnostic is better than holding up the user's turn
+// behind an installation. recordCaptureDiagnostic rechecks inclusion under
+// that lock, so a project setup has just excluded and pruned stays pruned.
 func recordSetupInProgress(home string, kind hookEventKind, harness string, payload map[string]any, now time.Time) error {
 	if kind != hookEventStart {
 		return nil
