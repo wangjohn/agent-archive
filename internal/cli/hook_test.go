@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -488,5 +489,135 @@ func TestRunHookCommandNeverFailsOnMalformedInput(t *testing.T) {
 	code := runHookCommand([]string{"--harness", "codex"}, strings.NewReader("not json"), &errOut, env)
 	if code != 0 {
 		t.Fatalf("hook must never fail the harness's turn: code=%d stderr=%s", code, errOut.String())
+	}
+}
+
+// writeTestTranscript creates a transcript file with the given contents (empty
+// for a conversation that has not started yet) and returns its path.
+func writeTestTranscript(t *testing.T, name, contents string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// A Claude Code worktree lives at <project>/.claude/worktrees/<name>, and a
+// session can also start in any subdirectory. Both belong to the configured
+// project: they must register under its root, and their later Stop must
+// produce a publication request rather than silently finding no registration.
+func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.T) {
+	for _, tc := range []struct{ name, relative string }{
+		{"worktree", filepath.Join(".claude", "worktrees", "feature-a")},
+		{"subdirectory", filepath.Join("internal", "cli")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, project := t.TempDir(), t.TempDir()
+			setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+			cwd := filepath.Join(project, tc.relative)
+			if err := os.MkdirAll(cwd, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			start := map[string]any{
+				"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+				"cwd": cwd, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
+			}
+			if err := handleHookEvent(home, "claude", start, now); err != nil {
+				t.Fatal(err)
+			}
+			store, _ := collector.NewLocalStore(home)
+			regs, err := store.LoadRegistrations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(regs) != 1 {
+				t.Fatalf("a start in %s did not register: %#v", tc.relative, regs)
+			}
+			if regs[0].ProjectRoot != project || regs[0].ProjectID != archive.ProjectID(project) {
+				t.Fatalf("registered under the working directory instead of the configured project: %#v", regs[0])
+			}
+			if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+				t.Fatalf("an accepted start left a diagnostic: %#v", ds)
+			}
+			// The consequence this guards: an unregistered start makes every
+			// later lifecycle event a no-op, so the session is never published.
+			stop := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1"}
+			if err := handleHookEvent(home, "claude", stop, now.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			requests, err := store.LoadRequests()
+			if err != nil || len(requests) != 1 {
+				t.Fatalf("stop did not request publication: %#v err=%v", requests, err)
+			}
+		})
+	}
+}
+
+// The nearest configured ancestor owns the directory, so a project nested
+// inside an included one keeps its own (here: excluded) decision.
+func TestNestedExcludedProjectKeepsItsOwnExclusion(t *testing.T) {
+	home, parent := t.TempDir(), t.TempDir()
+	nested := filepath.Join(parent, "vendor", "secret")
+	if err := os.MkdirAll(filepath.Join(nested, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	activated := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	cfg := config.Config{
+		MachineID: "machine-1", Storage: credentialsTestConfig(),
+		Archive: archive.Config{
+			SchemaVersion: 1, MachineID: "machine-1", Enabled: true,
+			Projects: []archive.ProjectActivation{
+				{ProjectID: archive.ProjectID(parent), Root: parent, Included: true, ActivatedAt: activated},
+				{ProjectID: archive.ProjectID(nested), Root: nested, Included: false, ActivatedAt: activated},
+			},
+		},
+	}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	start := map[string]any{
+		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+		"cwd": filepath.Join(nested, "sub"), "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
+	}
+	if err := handleHookEvent(home, "claude", start, now); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 0 {
+		t.Fatalf("an excluded nested project was captured through its parent: %#v", regs)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+		t.Fatalf("an excluded project left its path on disk: %#v", ds)
+	}
+}
+
+func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	// A sibling of the project, not a descendant: string prefix matching alone
+	// would wrongly claim it.
+	outside := project + "-other"
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := map[string]any{
+		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+		"cwd": outside, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
+	}
+	if err := handleHookEvent(home, "claude", start, now); err != nil {
+		t.Fatal(err)
+	}
+	store, _ := collector.NewLocalStore(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 0 {
+		t.Fatalf("a directory outside every project registered: %#v", regs)
+	}
+	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+		t.Fatalf("a path outside every project was recorded: %#v", ds)
 	}
 }

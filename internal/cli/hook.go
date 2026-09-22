@@ -172,14 +172,17 @@ func handleSessionActivity(store *collector.LocalStore, harness, nativeSessionID
 
 func handleSessionStart(home string, store *collector.LocalStore, cfg config.Config, harness, nativeSessionID string, payload map[string]any, now time.Time) error {
 	transcriptPath, _ := payload["transcript_path"].(string)
+	// A hook reports the session's working directory, which is only sometimes
+	// the configured project root: a Claude Code worktree lives in
+	// <project>/.claude/worktrees/<name>, and a session started from any
+	// subdirectory reports that subdirectory. Resolve the configured project
+	// that owns it and register under the configured spelling, so the project
+	// ID, the activation boundary, and later continuations all agree with the
+	// configuration rather than with the directory the user happened to be in.
+	owner, owned := configuredProjectActivationFor(cfg, projectRoot(payload))
 	root := projectRoot(payload)
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		for _, project := range cfg.Archive.Projects {
-			if configured, err := filepath.EvalSymlinks(project.Root); err == nil && configured == resolved {
-				root = project.Root
-				break
-			}
-		}
+	if owned {
+		root = owner.Root
 	}
 
 	existingID, found, err := store.ArchiveSessionID(nativeSessionID)
@@ -224,15 +227,9 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 		}
 	}
 
-	// Ignore excluded projects without persisting their paths in diagnostics.
-	included := false
-	for _, project := range cfg.Archive.Projects {
-		if project.Included && filepath.Clean(project.Root) == filepath.Clean(root) {
-			included = true
-			break
-		}
-	}
-	if !included {
+	// A directory inside no configured project, and an excluded project, are
+	// both ignored without persisting their paths in diagnostics.
+	if !owned || !owner.Included {
 		return nil
 	}
 	// The diagnostic names the most specific reason capture was declined:
@@ -275,24 +272,36 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 	return saveLifecycleEvidence(store, archiveID, harness, "sessionstart", payload, now)
 }
 
-// configuredProjectFor returns the configured project root that owns root:
-// root itself or its nearest configured ancestor, comparing resolved paths so
-// a symlinked checkout still maps to the project it was registered under.
-// The returned root is the configured spelling, which registrations store.
-func configuredProjectFor(cfg config.Config, root string) (string, bool) {
+// configuredProjectActivationFor returns the configured project that owns
+// root: the project whose root is root itself or its nearest configured
+// ancestor, comparing resolved paths so a symlinked checkout still maps to the
+// project it was registered under. The nearest ancestor wins, so a project
+// nested inside another keeps its own identity (and its own inclusion
+// decision). Excluded projects take part in the match: an excluded project
+// nested in an included one must stay excluded rather than falling through to
+// its parent.
+func configuredProjectActivationFor(cfg config.Config, root string) (archive.ProjectActivation, bool) {
 	if root == "" {
-		return "", false
+		return archive.ProjectActivation{}, false
 	}
 	candidate := resolvedPath(root)
-	best, bestLen, found := "", -1, false
+	var best archive.ProjectActivation
+	bestLen, found := -1, false
 	for _, project := range cfg.Archive.Projects {
 		configured := resolvedPath(project.Root)
 		if !pathWithin(candidate, configured) || len(configured) <= bestLen {
 			continue
 		}
-		best, bestLen, found = project.Root, len(configured), true
+		best, bestLen, found = project, len(configured), true
 	}
 	return best, found
+}
+
+// configuredProjectFor returns the owning project's configured root spelling,
+// which is what registrations store.
+func configuredProjectFor(cfg config.Config, root string) (string, bool) {
+	project, found := configuredProjectActivationFor(cfg, root)
+	return project.Root, found
 }
 
 func resolvedPath(path string) string {
