@@ -66,6 +66,10 @@ Find sessions using metadata; does not download conversation content.
                                  value stays accepted for forward compatibility.
   --since DATE|AGE               For example 2026-01-31 or 7d
   --complete                     Require complete parser coverage
+  --no-cache                     Download every metadata sidecar instead of
+                                 reusing unchanged ones from the local
+                                 metadata cache (metadata only; never
+                                 conversation content)
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
 	"show": `Usage: agent-archive show ID [--harness NAME] [--normalized]

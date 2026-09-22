@@ -66,7 +66,8 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, bool, error) {
 
 // runListCommand implements `agent-archive list`. It reads only metadata
 // sidecars (reader.ListMetadata downloads no source bundle) and prints only
-// metadata fields, so its output can never contain transcript content.
+// metadata fields, so its output can never contain transcript content. It
+// reuses unchanged sidecars from the local metadata cache unless --no-cache.
 func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -77,6 +78,7 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	skillUsage := fs.String("skill-usage", string(reader.SkillUsageUsed), "with --skill/--skill-sha256: used, available, or eligible_no_use")
 	since := fs.String("since", "", "only sessions captured at or after this date (2026-01-31), RFC 3339 time, or age (7d, 12h)")
 	complete := fs.Bool("complete", false, "only sessions with complete parser coverage and no capture gaps")
+	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -131,7 +133,7 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintln(stdout, notSetUpMessage)
 		return 0
 	}
-	sessions, err := reader.ListMetadata(context.Background(), store, archiveSessionsPrefix, filter)
+	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, filter, reader.ListOptions{Cache: listCache(env, *noCache)})
 	if err != nil {
 		fmt.Fprintf(stderr, "agent-archive: list: %v\n", err)
 		return 1
@@ -151,6 +153,25 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	fmt.Fprintf(stdout, "%d session(s).\n", len(sessions))
 	return 0
+}
+
+// listCache opens the disposable metadata cache `list` uses to skip
+// downloading sidecars whose ETag has not changed. It holds metadata only.
+// The cache is an optimization, so a data directory or cache that cannot be
+// opened means an uncached listing, never a failed one.
+func listCache(env Env, disabled bool) *reader.MetadataCache {
+	if disabled {
+		return nil
+	}
+	home, err := env.home()
+	if err != nil {
+		return nil
+	}
+	cache, err := reader.OpenMetadataCache(home)
+	if err != nil {
+		return nil
+	}
+	return cache
 }
 
 func validLowerSHA256(value string) bool {
@@ -261,9 +282,10 @@ type normalizedOutput struct {
 }
 
 // locateMetadataKey resolves an archive session ID to its metadata sidecar
-// key. With a harness the key is derived directly (one Get, no listing);
-// without one the archive is listed for the ID, and the same ID published
-// under more than one harness is reported as ambiguous rather than guessed.
+// key. With a harness the key is derived directly (the caller's one Get, no
+// listing); without one each known harness's key is read directly, the archive
+// is listed only if none exists, and the same ID published under more than
+// one harness is reported as ambiguous rather than guessed.
 func locateMetadataKey(ctx context.Context, store storage.ObjectStore, harness, sessionID string) (string, error) {
 	if harness != "" {
 		key, err := archive.MetadataObjectKey(harness, sessionID)
