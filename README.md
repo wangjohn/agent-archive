@@ -41,9 +41,10 @@ go vet ./...
 VERSION=dev ./scripts/build-release.sh
 ```
 
-CI runs the tests on Ubuntu and macOS. Pushing a `vX.Y.Z` tag builds and
-publishes a release, signed and notarized when the Apple credentials described
-in [docs/install.md](docs/install.md#signing-and-notarization) are configured.
+CI runs the tests on Ubuntu and macOS. Pushing a `vX.Y.Z` tag builds, signs,
+notarizes, and publishes a release. The release job fails before building unless
+the Apple signing secrets and the `APPLE_SIGNING_ENABLED` repository variable
+described in [docs/install.md](docs/install.md#signing-and-notarization) are set.
 
 ## History
 
