@@ -282,3 +282,90 @@ with filter 3):
   supplemental evidence, each credential shape, a negative set of ordinary
   code, and byte-identical output across repeated scans of each fixture.
 - `docs/install.md` no longer describes filter 2 / adapter 0.2.0 as current.
+
+## PR B2 — Parser v0.6
+
+`DefaultParserVersion` is `0.6.0`. Metadata schema version 1 is unchanged: the
+new counts are optional fields, and metadata written by an older parser stays
+valid. Stacks on PR B1; a bundle captured under filter 2 still parses, with the
+fields this parser added simply absent.
+
+1. **Cursor sessions no longer derive zero turns.** `visibleMessage` now also
+   reads a record which carries `role` at the top level and `content` under
+   `message`, which is Cursor's shape. `turn_outcome` and the lifecycle state
+   come from a native `turn_ended` record when the hook evidence left them
+   unknown; an observed hook stop, interrupt, or closure still wins.
+2. **Counts mean what they say.** `counts.turns` counts human prompts (a user
+   record with text or any non-tool-result content), `counts.messages` counts
+   those prompts plus assistant records — including assistant records whose
+   only content is a tool call — and the new `counts.tool_results` counts
+   observed tool results. A user record carrying only `tool_result` blocks was
+   previously counted as both a message and a turn, which is what made a
+   four-prompt session report twenty-eight turns. A parsed structured bundle
+   now reports a known zero instead of leaving a count unknown.
+3. **Codex tool calls are recognized.** `custom_tool_call`, `local_shell_call`
+   and `item_completed` items of type `CommandExecution`, `McpToolCall` and
+   `Extension` join `tool_use`, `tool_call` and `function_call`. An
+   `item_completed` whose call was already reported by its own record is
+   dropped, keyed on `call_id`/`item.id`, so the same work is counted once.
+4. **The normalized view carries tool evidence.** `NormalizedToolCall` gains
+   `name`, `input` (the retained argument object, decoded when a harness
+   encodes it as a JSON string), `result_record_index`, `is_error` and
+   `output_bytes`, linked by `tool_use_id` (Claude), `call_id` (Codex), or
+   position (Cursor). Position is used only when no call in the bundle carries
+   an identity; elsewhere an unmatched result stays unlinked rather than being
+   attached to the wrong call. `NormalizedView.ToolResults` lists the results
+   themselves, and `show --normalized` prints both.
+5. **Token usage reaches metadata.** `counts.input_tokens`,
+   `output_tokens`, `cache_read_tokens` and `cache_write_tokens` are summed
+   from Claude `message.usage` and Codex `turn_token_usage` (cumulative and
+   thread-wide figures are ignored so the sum stays additive) and stay nil when
+   the harness exposed nothing.
+
+Fixtures: the B1 fixtures are reused; `codex-tool-events.jsonl` (turn context,
+`local_shell_call`, and `item_completed` events of each recognized item type,
+one of them an echo of the shell call) and `claude-tool-only-assistant.jsonl`
+(a prompt, a tool-use-only assistant record with `usage`, its `tool_result`,
+and a text reply) cover the shapes B1 did not.
+
+Tests live in `internal/archive/parser_v06_test.go`: counts and turn kinds per
+harness, Claude and Codex result linkage with arguments, Codex event dedupe,
+Cursor turns and outcome, positional linkage, refusal to mislink an unknown
+call ID, hook evidence outranking a native turn end, filter-2 regeneration, and
+the retained hidden-role rejection. Two existing assertions changed with the
+new definitions: the Codex fixture's turn count is now a known `0` rather than
+unknown, and `internal/cli/linked_review_test.go` checks for `"hook_finals"`
+instead of `"turns":` to prove the metadata-only path prints no normalized view
+(`counts.turns` now appears in metadata).
+
+Review fixes (on the branch, before merge):
+
+- **Streamed usage counted once per message.** Claude Code writes one JSONL
+  record per content block of a single API message, and each record repeats
+  the same `message.id` and `message.usage`; summing per record counted one
+  response as many. Token accounting is now attributed to the `id` of the
+  object that carries it (`message.id`), the latest record for an id replaces
+  the earlier ones, and only accounting with no identity (Codex
+  `turn_token_usage`) is summed as it comes.
+- **A stripped injected block is not a prompt.** Filter 3 removes the text of
+  a `<system-reminder>`/`<user_instructions>` block, but an array-shaped
+  message keeps the bare `{type: "text"}` block, which the parser counted as
+  non-tool-result content. That made a tool-result record with a reminder
+  beside it, or a prompt that was only injected instructions, a human prompt.
+  A text-carrying block (`text`, `input_text`, `output_text`, or untyped)
+  with no retained text now counts as nothing.
+- Fixture `claude-streamed-usage.jsonl` covers both shapes; tests also pin
+  that a Codex injected-only `input_text` prompt is ignored and that a bundle
+  holding native text leaves every structure-derived count, the token counts
+  included, unknown.
+
+Left open: `counts.messages` and per-model `turn_count` still count each
+streamed Claude record, so an assistant message split into text and tool-use
+records counts twice; the plan defines messages as records, so this is noted
+rather than changed. Codex dedupe keys on `call_id`/`item.id` as planned; if a
+real rollout's `item_completed` item carries an id unrelated to the call's
+`call_id`, the same work is counted twice, which only a real transcript can
+confirm.
+
+Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
+and `gofmt -l .` clean.
