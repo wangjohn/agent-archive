@@ -730,5 +730,55 @@ shapes. A Claude Code compaction summary (`isCompactSummary: true`, no
 `isMeta`) is still a user record with text and so still counts as a prompt;
 retaining that flag would be a further filter change and is not part of C1.
 
+## PR C3 — Cursor first-prompt registration
+
+No schema, filter, parser, or adapter version changes. Based on a live check of
+the Cursor desktop app 3.21.13 (Cursor's Hooks output): a new Agent chat fires
+no `sessionStart`; its first hook is `beforeSubmitPrompt` with
+`transcript_path` null, then `afterAgentResponse` and `stop` name
+`~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl`. A resumed
+chat's first prompt already names its non-empty transcript, and `sessionEnd`
+can fire mid-turn. The PR A1 `sessionStart` rule therefore never registered a
+Cursor app chat.
+
+1. **Registration at the first prompt.** A never-seen Cursor conversation is
+   registered at `beforeSubmitPrompt`, and still at `sessionStart`, when
+   `transcript_path` is null, absent, or names an absolute missing or empty
+   file. A non-empty transcript is a resume, declined with
+   `session_start_unknown` for included projects only; a directory outside
+   every project records nothing. `session_started_at` is the first hook's
+   time, and the lifecycle evidence names the real event
+   (`beforesubmitprompt`), never a fabricated start. A setup-in-progress
+   diagnostic is recorded for a Cursor first prompt as for a start.
+2. **Transcript path from later events.** A registration with no path takes
+   it from a later `beforeSubmitPrompt`, `afterAgentResponse`, or `stop`, only
+   when the path is absolute and named `<conversation_id>.jsonl`; a path, once
+   set, is never replaced. The same name rule applies to a path offered at
+   registration, so a mismatched path can never be recorded first and then
+   become unreplaceable.
+3. **Waiting, not failed.** The collector skips a registration with no path
+   without error: no `LastError`, not counted as failed, any queued request
+   kept, retried every pass, and published on the first pass after the path
+   arrives.
+4. Codex and Claude Code are unchanged. `docs/capture-capabilities.md`,
+   `docs/agent-archive-session-eligibility.md`, and the Cursor capability
+   text in `status` describe the observed 3.21.13 behavior.
+
+Tests: `internal/cli/cursor_first_prompt_test.go` (a new chat registers at a
+null-path first prompt, a sync while waiting records no error, the response
+and stop supply the path, and the next sync publishes; a resumed chat is
+declined with the diagnostic; wrong-name, relative, and non-`.jsonl` paths are
+ignored and a set path is never replaced; Codex and Claude prompts still
+register nothing) and `internal/collector/waiting_transcript_test.go`. Three
+existing tests that asserted "a Cursor start with no path proves nothing" now
+give their resume a non-empty transcript, or expect the new registration.
+
+Left open: retention treats any queued request, including deferred hook
+evidence, as unfinished work. A Cursor chat with transcripts disabled
+registers, never receives a path, and keeps a request, so its registration
+and hook evidence (including any final-response text) stay local instead of
+expiring with retention. Suggested fix, in retention: a request for a
+registration with no transcript path does not block expiry.
+
 Local verification: `go build ./...`, `go vet ./...`, `go test -race ./...`
 and `gofmt -l .` clean.
