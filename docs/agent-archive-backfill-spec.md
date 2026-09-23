@@ -1,0 +1,694 @@
+# `agent-archive backfill` — engineering spec
+
+Status: proposed. Written 2026-09-23 against `main` at `50087bf` (filter 6,
+adapter 0.6.0, parser 0.9.0, source bundle schema 2). The native stores were
+probed on a working Mac for their layout and field names only, never their
+content. Phase 1 imports transcript files. Phase 2 adds Cursor chats that exist
+only in Cursor's SQLite database.
+
+## Problem
+
+The archive captures only sessions that start after their project is activated
+([session eligibility](agent-archive-session-eligibility.md)). Earlier
+sessions are invisible to `list`, `show`, `handoff`, and retros. So are
+sessions the hooks declined: resumed old conversations, projects that weren't
+included yet, and apps without hooks. That history is still on disk, for now.
+
+The probe Mac held 31 Claude Code sessions (plus 101 subagent transcripts), 1
+Codex session, 3 Cursor transcript files, and 7 Cursor database chats: the same
+3, plus 1 draft and 3 empty ones. None existed only in the database there, but
+the database holds timestamps and tool results that the 3 files lack. The 24
+Claude project folders turned out to be 6 repositories, 11 of their worktrees,
+5 desktop scratch chats, and 2 temporary directories. So getting each session
+to the right project is central to this work.
+
+**Before this ships:** by default, Claude Code deletes transcripts older than
+30 days, every day. Anyone who wants more history must set
+`"cleanupPeriodDays": 365` in `~/.claude/settings.json` now. The archive never
+changes app settings.
+
+## Goals
+
+1. `agent-archive backfill` with no arguments imports every session on this
+   Mac. It says so plainly, and first shows each project with its session
+   count per app. Nothing is written until the person confirms.
+2. Imported sessions go through the same filter, bundle, metadata, retention,
+   `list`, `show`, and `handoff` code as hook-captured ones.
+3. Correct project attribution. Worktrees fold into their repository, and the
+   home directory never silently becomes a catch-all project.
+4. Idempotent, crash-safe, and reversible with one command.
+5. Existing guarantees hold. Nothing old is uploaded without an explicit
+   decision. An import never counts as proof that hooks work. Retention never
+   orphans objects.
+6. Readers can tell an imported session from a captured one, and can see what
+   evidence the import lacks.
+
+**Non-goals:**
+- Re-importing sessions this Mac already registered (see
+  [Re-admission](#re-admission)).
+- Deduplicating content that Claude Code copies into forked sessions.
+- Linking Codex sub-threads to their parents.
+- Importing from other Macs, from backups, or from non-default store paths
+  such as `CLAUDE_CONFIG_DIR` and `CODEX_HOME`.
+- Installing hooks or changing app settings.
+- A "never delete" retention setting. Setup currently maps `0` days to 90.
+
+## Command
+
+```
+agent-archive backfill [flags]    import sessions
+agent-archive backfill history    list past imports
+agent-archive backfill undo [ID]  remove the latest import, or import ID
+```
+
+| Flag | Meaning |
+|---|---|
+| `--harness NAME`, `--project DIR` | Limit to `claude`, `codex`, or `cursor`, or to one project. Both can be repeated. The project directory does not need to exist. |
+| `--since DATE`, `--until DATE` | Filter on session start, as local `YYYY-MM-DD`, inclusive. |
+| `--include-home`, `--include-temp` | Import sessions from the home directory or from temporary directories, which are skipped by default ([Project resolution](#project-resolution)). |
+| `--include-removed` | Import sessions that retention or `undo` removed earlier. |
+| `--dry-run [--json]` | Print the plan and exit. Nothing is written, locally or remotely. |
+| `--yes` | Skip the confirmation. Required when stdin is not a terminal. |
+| `--background` | Register the sessions and exit. The scheduled collector uploads them. |
+
+Backfill requires a completed setup. It refuses to run while collection is
+paused or a setup transaction is pending; `--dry-run` works in both cases. It
+exits `0` when the import completes, when there is nothing to import, or when
+the person declines, and `1` on any failure.
+
+### The default run
+
+Counts are illustrative.
+
+```
+$ agent-archive backfill
+Looking for Claude Code, Codex, and Cursor sessions on this Mac… 35 found.
+Checking storage… ready.
+
+Backfill imports every session found on this Mac into
+s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
+
+PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL
+~/agent-archive                            9      1       1     11  already included
+~/levenshtein                              5      –       –      5  will be added
+~/agent-skills                             4      –       –      4  will be added
+~/GoodProse                                2      –       –      2  will be added
+~/personal-website                         –      –       1      1  will be added
+
+Not a repository:
+Claude desktop scratch chats               5      –       –      5  will be added
+  Chats started without a folder. New ones will be captured too.
+
+Total: 28 sessions (plus 101 subagent transcripts), 25 MB,
+       started 2026-09-17 to 2026-09-23.
+
+Not imported:
+   3  already in the archive
+   2  run from temporary directories            add --include-temp
+   1  Cursor chat stored only in Cursor's database (a later release)
+   1  Cursor chat whose project could not be determined
+
+If you continue:
+  • 5 projects are added, and new Claude Code sessions in them are captured.
+    New Codex and Cursor sessions need those apps added in setup.
+  • Retention is 90 days, so these sessions are deleted on 2026-12-22.
+    Choose `edit` to keep them longer.
+  • Undo any time with `agent-archive backfill undo`.
+
+Import 28 sessions from 6 projects? [y/N/edit]
+```
+
+- **Scope sentence.** It names the bucket and says "every session found on
+  this Mac". When filters are set, it says "sessions matching" and lists
+  them instead.
+- **Answers.** The default is No. `edit` asks for a new retention period,
+  which applies to the whole archive, then shows the plan again.
+- **Deletion date.** All imports are captured at about the same time, so
+  they expire together, and the plan shows that date.
+- **Rows.** Rows are sorted by total and then by path. Paths are never
+  truncated. A missing folder is marked `(folder no longer exists)`.
+- **Not imported.** Every non-zero [skip reason](#skip-reasons) is listed,
+  with the flag that overrides it, if there is one.
+- **Privacy.** No transcript path, native ID, or content is ever printed.
+
+After confirming, the command prints `Added 5 projects. Registered 28 sessions
+and 101 subagent transcripts as import 2026-09-23-1.` It then shows an upload
+progress bar and ends with a summary and `list --imported`. Ctrl-C is safe:
+registered sessions persist locally, and the next collector pass uploads them.
+`--background` stops after registering.
+
+`--dry-run --json` prints the same plan with these top-level keys:
+`destination`, `filters`, `projects` (each has `root`, `kind`, `status`,
+`exists`, per-app `sessions`, `subagents`, `bytes`, and first and last start),
+`skipped` (a count for each reason), `apps_without_hooks`, `retention_days`,
+`expires_on`, and `storage_checked`.
+
+### `history` and `undo`
+
+`history` lists each import with its ID, date, session count, projects added,
+and upload state.
+
+`undo [ID] [--project DIR] [--yes]` removes the most recent import, or the one
+with the given ID from `history`. It first shows what it will do. For example:
+delete 28 sessions and 101 subagents from the bucket, including 2 that were
+resumed since and have newer content; exclude the 5 projects the import
+added; and leave hook-captured sessions and the apps' own files alone. It then
+asks `[y/N]`. On a yes:
+
+- It holds `setup.lock` and `collector.lock` for the whole run, so nothing
+  can be republished while it deletes.
+- Each session is deleted as whole-session retention deletes one: metadata
+  first, then sources, using `deleteWholeSession`, which moves where both can
+  call it. Then the session is forgotten locally and a removal record with
+  reason `undo` is written ([Removal records](#removal-records)). A failure
+  leaves the session registered, so running undo again finishes the job.
+- Projects the import added are marked `Included: false`, and setup can
+  reverse that. Projects that were already included stay as they were.
+- `--project` limits the undo to one project.
+
+## Admission model
+
+### The problem
+
+`SessionRegistration.SessionStartedAt` does two jobs:
+
+1. It records when the conversation began: `metadata.started_at`, subagent
+   ordering, handoff times, and the Cursor text first event.
+2. It decides which boundary the session falls on. `Config.AcceptSession`
+   rejects a session that starts before its project's `ActivatedAt` or before
+   `DestinationSince` ([config.go:103](../internal/config/config.go)).
+   Retention compares it with `DestinationSince` to decide whether the
+   session's objects are in the current bucket
+   ([collect.go:190](../internal/cli/collect.go)).
+
+For a hook session the two times are equal. For an import they are months
+apart.
+
+### Fields
+
+```go
+// AdmittedAt is when this machine took ownership of the session: the
+// boundary for project activation and storage destination. Hooks set it at
+// registration and backfill sets it to the import time. Empty on older
+// registrations.
+AdmittedAt time.Time `json:"admitted_at,omitempty"`
+
+// Origin is how the session entered the archive. Set once.
+Origin SessionOrigin `json:"origin,omitempty"`
+
+// StartedAtSource says where SessionStartedAt came from.
+StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
+
+// ImportBatch is the backfill run that registered the session.
+ImportBatch string `json:"import_batch,omitempty"`
+```
+
+`SessionOrigin` and `StartedAtSource` are typed strings, following
+`MetadataState`. An empty value means the
+hook value, so older registrations decode unchanged:
+
+```go
+type SessionOrigin string
+
+const (
+	SessionOriginHook   SessionOrigin = "hook"
+	SessionOriginImport SessionOrigin = "import"
+)
+
+type StartedAtSource string
+
+const (
+	StartedAtSourceHook           StartedAtSource = "hook"            // when the hook fired
+	StartedAtSourceTranscript     StartedAtSource = "transcript"      // earliest native record
+	StartedAtSourceFileCreated    StartedAtSource = "file_created"    // file birth time; format has no timestamps
+	StartedAtSourceCursorComposer StartedAtSource = "cursor_composer" // phase 2: composerData.createdAt
+)
+```
+
+Every boundary check goes through one accessor:
+
+```go
+// Admitted is the boundary time. Registrations older than AdmittedAt were
+// all hook-registered, so their start is their admission.
+func (r SessionRegistration) Admitted() time.Time {
+	if !r.AdmittedAt.IsZero() {
+		return r.AdmittedAt
+	}
+	return r.SessionStartedAt
+}
+```
+
+`SessionStartedAt` keeps only its first job, and for imports it holds the true
+start. Old registrations need no migration, because the fallback reproduces
+today's behaviour. Hooks set `AdmittedAt = SessionStartedAt = now`, so hook
+behaviour is unchanged.
+
+| Site | After |
+|---|---|
+| `AcceptSession`, project activation | `Admitted()` |
+| `AcceptSession` destination check, and retention's `CurrentDestination` | `Admitted()`, or `DestinationID` once [B1b](#destination-id-b1b) lands |
+| `AcceptSession` app check | `Harnesses`, plus `ImportedHarnesses` for imports ([Apps without hooks](#apps-without-hooks)) |
+| Retention age before a first capture, and with no transcript path (`retention.go:133`, `:149`) | `Admitted()`. Without this, an import with a two-year-old start whose first upload fails is expired and pruned at once. |
+| `Eligible` (hook fresh start), `BuildMetadata`, Cursor text first event, subagent ordering, handoff | Unchanged. These want the true start. |
+| Status `HookObserved`, app verification, skill inventory observer | `SessionOriginHook` only |
+
+A guard test fails if non-test code compares `SessionStartedAt` with
+`ActivatedAt` or `DestinationSince` anywhere outside `Admitted()`. This
+matters because a missed site fails silently: the collector skips the session,
+or retention leaves its objects behind.
+
+### Destination ID (B1b)
+
+Deciding which bucket a session belongs to by comparing times is a guess, and a
+clock change can make it wrong. B1b records the bucket directly:
+`DestinationID` is a hash of provider, endpoint, bucket, and prefix, never of
+credentials. `AcceptSession` and `CurrentDestination` compare it when it is
+set, and fall back to comparing times when it is empty. No migration is
+needed. Project activation stays a time comparison, because it really is a
+question of time. B1b is optional, but re-admission requires it.
+
+### Alternatives considered
+
+| Option | Why not |
+|---|---|
+| `SessionStartedAt = now` for imports | Needs no code changes, but the data is wrong: `started_at` is false, `list` sorts old sessions as new, handoff times are false, and every imported subagent is rejected because it appears to start before its parent. |
+| Move `ActivatedAt` or `DestinationSince` back in time | Widens the boundary for every session, not just the confirmed ones. It resets app verification, and claims sessions that were published to an earlier bucket. |
+| `ImportedAt` alone | Works through a fallback, but one field then means both "was imported" and "when admitted". Re-admission would need a second field anyway. |
+
+### Remaining downsides
+
+- **Two times per session.** Future code must pick the right one. The
+  accessor, the guard test, and the table above (which moves into the
+  eligibility doc) contain this.
+- **Before/after comparisons.** The archive no longer begins at activation,
+  so comparing before and after a skill was adopted could silently include
+  imports. Metadata `origin` and `list --imported` let readers exclude them.
+- **Imports expire together.** Retention ages a session from its capture time
+  ([retention.go:134](../internal/retention/retention.go)). The plan shows the
+  date and offers `edit`.
+- **Less exact start times.** An import's start is its earliest record, or
+  for a Cursor file its birth time, which a copy or restore resets.
+  `started_at_source` says which applies.
+- **Clock dependence.** `AdmittedAt` is stamped under `setup.lock`. Backfill
+  aborts if `AdmittedAt` is earlier than `DestinationSince` or than any target
+  project's `ActivatedAt`. A session whose start is later than the import is
+  skipped with `start_in_future`.
+
+### Re-admission
+
+A registration that exists but is no longer accepted stays that way. This
+covers sessions behind an earlier bucket, and sessions in a project that was
+excluded and then re-included. Backfill reports these as
+`registered_not_admitted`. Admitting one again would mean re-stamping
+`AdmittedAt` and `DestinationID` and resetting the published cache and the
+superseded-source ledger. Otherwise the collector sees nothing new to publish,
+and retention deletes keys that belong to another bucket. A later
+`--readmit` could do this; the fields above leave room for it.
+
+### Apps without hooks
+
+`Config.Harnesses` lists the apps that have hooks installed, and
+`AcceptSession` rejects every other app. A new `ImportedHarnesses` list admits
+imports only, for apps that were imported without hooks. Backfill adds apps to
+it, and the plan says so. Setup shows the list, and removing an app there stops
+publication of that app's imports. Installing an app's hooks moves it to
+`Harnesses`.
+
+## Import batches
+
+Imported sessions are stored exactly like captured ones: the same
+`sessions/<harness>/<archive id>/source.<sha>.jsonl.gz` bundles and
+`metadata.json` in the same bucket, read by the same `list`, `show`, and
+retention code. Only metadata sets them apart: `origin`, `imported_at`, and
+`started_at_source` ([Evidence imports lack](#evidence-imports-lack)).
+
+The import batch is local bookkeeping, and nothing about it is uploaded. Each
+confirmed run writes `imports/<date>-<n>.json` under the archive home, with:
+
+- start and completion times
+- the filters and `--include-*` flags used
+- `destination_id`
+- the projects and apps it added
+- its archive session IDs
+
+The file never holds native IDs or paths. Registrations point back through
+`ImportBatch`. `history`, `undo`, and `status` read these files, and
+`uninstall --delete-local-data` removes them.
+
+## Removal records
+
+Retention's `ForgetSession` deletes the session's entry in the native session
+index ([lineage.go:147](../internal/collector/lineage.go)). Without some other
+record, the next backfill would import the session again. Codex keeps its
+files forever, so the result would be a 90-day cycle of import and delete.
+
+When retention or `undo` forgets a session, it writes
+`forgotten/<sha256(app + "\x00" + native ID)>.json` containing
+`{app, reason, at}`. Backfill skips a session with such a record, as
+`removed_by_retention` or `removed_by_undo`, unless `--include-removed` is
+set. Hooks are unaffected. Sessions removed by retention before this change
+have no record and can be imported once more; the release notes say so.
+
+## Project resolution
+
+Each session resolves to one project root or to a skip reason. The first
+matching rule wins.
+
+1. **Working directory.** Claude Code: the `cwd` of the first record that
+   has one. Codex: `session_meta.payload.cwd`. Cursor: see
+   [Discovery](#discovery).
+2. **Configured project.** If a configured project owns the directory, use
+   it. "Owns" means the nearest configured ancestor on resolved paths, the
+   same rule hooks use (`configuredProjectActivationFor`). If that project is
+   excluded, skip with `excluded_project`. An exclusion always beats the
+   default.
+3. **Worktree.** If walking up from the directory finds a `.git` file, follow
+   `gitdir:` and `commondir` to the main repository. If the directory no
+   longer exists, `<repo>/.claude/worktrees/<name>` still maps to `<repo>` by
+   its path. A missing Codex or Cursor worktree can't be mapped that way, and
+   is skipped with `worktree_unresolved`. Backfill never runs `git`.
+4. **Repository.** If walking up finds a `.git` directory, use its parent.
+   The walk stops at home.
+5. **Claude desktop scratch chats.** Anything under
+   `~/Library/Application Support/Claude/scratch-workspaces/` becomes that one
+   folder as a project. Because the nearest ancestor wins, future scratch chats
+   are captured too, and the plan says so.
+6. **Temporary directories.** `/tmp`, `/private/tmp`, `/var/folders`, and
+   `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
+   each directory becomes its own project. These sessions are mostly tool
+   runs whose folders are gone.
+7. **Home and above.** Home, `/`, `/Users`, and anything else above home are
+   skipped with `home_directory`. With `--include-home`, home becomes a
+   project, and the plan warns that it will then capture every future session
+   under home that isn't in a nearer project.
+8. **Anything else** becomes its own project, whether or not it still exists.
+
+Existing paths have their symlinks resolved, as hooks do. The project ID is
+`archive.ProjectID(root)`, so imports and later hook sessions share it. A new
+project is added with `Included: true`, and its `ActivatedAt` is the import
+time. From then on it behaves like any project included in setup.
+
+## Discovery
+
+Discovery is read-only. It never follows a path found inside a transcript. The
+plan runs each app's existing adapter over the whole transcript, as the
+collector will, so the plan's counts are what gets imported. Transcripts that
+would become permanently blocked registrations are skipped instead: those the
+adapter refuses, those over `archive.MaxRecordBytes`, and those with no
+conversation. Only counts, times, and sizes are kept.
+
+The plan uses `min(8, max(2, runtime.NumCPU()/2))` workers. Filtering is
+CPU-bound and scales almost linearly with workers. On an 18-core Mac, the
+Claude adapter processed 519 MB of real transcripts at these rates:
+
+| Workers | Throughput | Peak heap |
+|---|---|---|
+| 1 | 30 MB/s | 15 MB |
+| 4 | 104 MB/s | 21 MB |
+| 8 | 183 MB/s | 32 MB |
+| 18 | 316 MB/s | 56 MB |
+
+Eight workers read 5 GB of history in about 30 seconds, and using every core
+would cost the person's machine more than it saves. Upload, which is sequential
+and network-bound, is the slower phase either way. Memory stays small because
+the adapter streams. The only guard needed stops two files near the 64 MiB
+limit from being read at once: workers share a 128 MiB cap on transcript bytes
+being read at the same time, so a file that doesn't fit waits for room.
+
+| | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| Files | `~/.claude/projects/*/*.jsonl` | `~/.codex/sessions/**/rollout-*.jsonl` and `~/.codex/archived_sessions/rollout-*.jsonl`; `sessions/` wins if a file is in both | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`, plus the text form |
+| Native ID | File stem. Must equal the records' `sessionId`. | `session_meta.payload.id`. Must equal `session_id` (when present) and the UUID in the file name. | `<id>`, which is what hooks register |
+| Start | Earliest record (`transcript`) | `session_meta` timestamp, else earliest record (`transcript`) | File birth time (`file_created`). Records have no timestamps. |
+| Project | `cwd` | `payload.cwd` | Slug match, below |
+
+- **Identity.** An ID mismatch is skipped with `identity_mismatch`.
+  Acceptance must confirm that hooks register Codex sessions under
+  `payload.id`, because deduplication against hook registrations depends on
+  it.
+- **Codex sources.** Every source is imported (`cli`, `vscode`, `exec`, and so
+  on). `source` and `originator` are recorded as `applyHarnessObservation`
+  does.
+- **Claude subagents.** For each imported parent, backfill reads
+  `<slug>/<session>/subagents/agent-<id>.jsonl`. It writes a
+  `SubagentCandidate` with `ObservedAt` set to the import time and
+  `Origin: SessionOriginImport`, plus the pending linked-session evidence that
+  `handleSubagentStop` writes. The existing materialize step validates and
+  registers the child, with two changes: the child copies the parent's
+  `AdmittedAt`, `Origin`, and `ImportBatch`, and an imported child gets no
+  `subagentstop` lifecycle evidence, because no hook fired.
+- **Cursor slugs.** The folder slug is the path with `/` replaced by `-`,
+  which can't be reversed reliably. Instead, each candidate path is converted
+  with Cursor's rule and compared with the slug. Candidates come from
+  configured roots, roots resolved from Claude Code and Codex sessions, the
+  `folder` in Cursor's `workspaceStorage/*/workspace.json`, and finally a walk
+  of the file system that tries each `-` as `/`. Exactly one match is
+  required; otherwise the session is `project_unknown`.
+- **Cursor database count.** Phase 1 opens `state.vscdb` read-only only to
+  count database-only chats: `composerData:*` entries with headers, not
+  drafts, and no file on disk. They are reported as `cursor_database_only`.
+
+## Skip reasons
+
+Every session found is either imported or has exactly one reason. When
+several reasons apply, the first in this list wins.
+
+| Code | Override |
+|---|---|
+| `already_archived` | — |
+| `registered_not_admitted` | future `--readmit` |
+| `removed_by_undo`, `removed_by_retention` | `--include-removed` |
+| `filtered_out` (shown only when filters are set) | — |
+| `excluded_project` | `setup` |
+| `home_directory` | `--include-home` |
+| `temporary_directory` | `--include-temp` |
+| `project_unknown`, `worktree_unresolved`, `identity_mismatch` | — |
+| `empty`, `unsafe_format`, `too_large` (over 64 MiB), `start_in_future` | — |
+| `cursor_database_only` | phase 2 |
+
+## Evidence imports lack
+
+Hook-captured sessions also carry lifecycle events (`Stop`, `SessionEnd`), the
+final-response text, and the skill inventory observed while the session ran.
+Imports get none of these:
+
+- **Lifecycle.** None is created. `metadata.state` comes from the transcript
+  (`nativeTurnEnd`).
+- **Skills.** The skill inventory observer does not run. Today's skills
+  attached to an old session would be false evidence. `skills_available` is
+  empty.
+- **Capture gap.** Metadata records `imported_without_hook_evidence`.
+
+Three optional metadata fields are added, both in `Metadata` and in
+`schemas/metadata.schema.json`: `origin`, `imported_at` (the `AdmittedAt` of
+an import), and `started_at_source`. All three are omitted for hook sessions,
+so existing metadata is byte-identical and the parser version stays the same.
+The source bundle doesn't change either: a transcript hashes the same whether
+a hook or backfill registered it.
+
+## Registration and concurrency
+
+The lock order stays `setup.lock` → `collector.lock` → `hooks.lock`. A hook
+waits at most one second for `hooks.lock`, then drops its event
+([hook.go:119](../internal/cli/hook.go)). So backfill holds `hooks.lock` for
+only a few milliseconds at a time.
+
+1. **Plan.** No locks. Record a fingerprint of `config.json`.
+2. **Check storage.** Run `storage.VerifyAccess`. On failure, stop before the
+   prompt and print `credentials.RecoveryAction`. `--dry-run` skips this.
+3. **Confirm.**
+4. **Commit the configuration.** Take `setup.lock` and hold it until exit.
+   Reload the configuration. Abort if its fingerprint changed ("run backfill
+   again"), if it is paused, or if a setup transaction is pending. Stamp
+   `AdmittedAt` and check the clock. Take `collector.lock` and then
+   `hooks.lock`. Write the new projects, `ImportedHarnesses`, any retention
+   edit, and the batch file. Release both locks.
+5. **Register** in batches of at most 50 sessions or 100 ms:
+   - Take `hooks.lock` and reload the configuration. Stop if paused, and skip
+     anything no longer admitted.
+   - For each session, re-stat the transcript and skip it if it's gone. Call
+     `RegisterNewSession`. If the native index already has the session, a
+     hook or another run got there first, so count it `already_archived`.
+     Otherwise save a request with reason `backfill`.
+   - Release `hooks.lock`.
+   - Subagent candidates follow their parent.
+6. **Upload.** Unless `--background` is set, run `runOnePass` repeatedly,
+   exactly as `sync` does, until the batch has no pending work or a pass makes
+   no progress. Progress is reported through a new
+   `collector.Options.Progress` callback.
+
+Other properties:
+
+- **Ordering.** `collector.Run` handles pending sessions oldest-start first,
+  so the transcripts Claude Code will delete next are uploaded first.
+- **Crash safety.** A crash after step 4 leaves projects added and nothing
+  registered; a rerun finishes the job. A crash during step 5 leaves some
+  sessions registered, each with a request, so the collector uploads those and
+  a rerun registers the rest. A crash during step 6 loses nothing.
+- **Plan freeze.** The import is exactly the confirmed plan, keyed by native
+  ID. Sessions that appear after the plan are not included.
+- **Scale.** An unchanged session costs one stat per pass. Retention calls the
+  bucket only when something can be deleted. Thousands of imports therefore
+  add only local work to the 60-second pass, though a parser upgrade re-reads
+  them all.
+
+## Status, list, and privacy
+
+- **`status`** adds an "Imported" line: sessions imported, sessions waiting to
+  upload, and the last import. `status --json` adds `imported_sessions`,
+  `imported_pending`, and `last_import`. Imports never count toward an app's
+  `HookObserved`, its verification, or "waiting for first session".
+- **Verification.** Read-back verification still runs on imports, but it
+  never promotes an app to `verified_by_capture`.
+- **`list` and `show`.** `list` marks imports and gains `--imported` and
+  `--hook-captured`. `show` prints `origin`, `imported_at`, and
+  `started_at_source`.
+- **Privacy.** The plan shows only project roots and counts. Paths, native
+  IDs, and content are never printed, logged, or written to diagnostics, and
+  skips produce no diagnostics. Native stores are opened read-only. Setup
+  exclusions always win.
+
+## Phase 2: Cursor database chats
+
+Cursor's `globalStorage/state.vscdb` (table `cursorDiskKV`) holds:
+
+- **`composerData:<id>`, one per chat.** Fields include `createdAt`,
+  `lastUpdatedAt`, `workspaceIdentifier` (empty on 4 of the 7 probed chats),
+  and ordered message headers in `fullConversationHeadersOnly`. Also
+  `subagentComposerIds`, `modelConfig`, `usageData`, `isDraft`, and `_v`.
+- **`bubbleId:<chat>:<message>`, one per message.** Fields include `type`,
+  `text`, `toolResults`, `tokenCount`, `modelInfo`, timestamps, and large
+  context fields.
+- **`agentKv:blob:<hash>`, content blobs.** These may be encrypted, since
+  chats carry a `blobEncryptionKey`.
+
+For chats that also have a file on disk, the database holds timestamps and tool
+results the file lacks. Phase 2 still imports only chats that have no file:
+
+1. **One source per session.** New registration fields `SourceKind` (a typed
+   string: `SourceKindFile` or `SourceKindCursorSQLite`) and `SourceKey` (the
+   chat ID) are fixed at registration. A `SourceKindCursorSQLite` session never
+   adopts a hook's `transcript_path`. Otherwise a resumed chat would switch
+   formats and fail `nativeEvidenceExtends`.
+2. **The file wins when both exist.** It is what hooks capture live.
+   Upgrading file sessions to the richer database source is a separate
+   decision.
+3. **Snapshot reads.** Copy the database with SQLite's online backup API to a
+   `0600` file under the archive home, read the copy, and delete it. Retry
+   `SQLITE_BUSY`, and fail the pass rather than read partially. Never use
+   `immutable=1`, which can read torn pages while Cursor writes.
+4. **`modernc.org/sqlite`, a pure-Go driver.** It keeps CI and tests free of
+   cgo. `mattn/go-sqlite3` would also work, because release builds already
+   use cgo. Shelling out to `/usr/bin/sqlite3` is rejected because its output
+   and version are uncontrolled.
+5. **`CursorComposerAdapter`, with a new allowlist.** It keeps role, text,
+   tool calls and results (through the existing tool filter), model, token
+   counts, and timestamps. It drops context payloads such as
+   `codebaseContextChunks`, `attachedCodeChunks`, `originalFileStates`,
+   `diffHistories`, `images`, `consoleLogs`, and `recentlyViewedFiles`.
+   Source format `cursor-composer`, a filter version bump, and golden tests
+   from synthetic chats.
+6. **Fail closed.** An unknown `_v` is `unsafe_format`. Missing message rows
+   add a `cursor_bubble_missing` gap with a count; the probe had 432 headers
+   and only 415 message rows, all in chats that also have a file. Blobs are not read, and add
+   `cursor_blob_content_unavailable`.
+7. **Change detection.** The scan signature is `(lastUpdatedAt, header count,
+   last message ID)`. The database file itself changes constantly, so its
+   stat is useless here.
+8. **Project and start.** The project comes from `workspaceIdentifier.uri`,
+   then `workspace.json`, then message `workspaceUris`, and otherwise the chat
+   is `project_unknown`. The start is `createdAt`
+   (`started_at_source = cursor_composer`).
+9. **Subagents.** `subagentComposerIds` become linked sessions. This comes
+   last and can be deferred.
+10. **Unverified until checked live.** Support stays `unverified` until one
+    database-only chat is published and read back on a live Cursor, with its
+    version recorded.
+
+The collector reads each registration through a small `sourceReader`
+interface (`Signature()`, `Open()`), and today's file code becomes its first
+implementation.
+
+## Code layout
+
+| Area | Change |
+|---|---|
+| `internal/archive/types.go` | New fields and `Admitted()`. B1b adds `DestinationID`; phase 2 adds `SourceKind` and `SourceKey`. |
+| `internal/config`, `internal/cli/hook.go` | `ImportedHarnesses` and `AcceptSession` via `Admitted()`. Hooks set `AdmittedAt` and `Origin`. |
+| `internal/retention` | `Admitted()`, removal records, and a shared `deleteWholeSession` |
+| `internal/collector` | Origin-aware skill observer and subagent lifecycle, `Progress`, oldest-first ordering |
+| `internal/archive/views.go`, `schemas/` | Metadata fields and the capture gap |
+| `internal/backfill` (new) | Discovery, resolution, plan, commit, batches, and undo. Pure over an injected file system and clock. |
+| `internal/cli` | `backfill.go` (new), plus origin-aware status, verification, list, show, and setup |
+| docs | The eligibility doc gains an "Imported sessions" section and the use-site table. The main spec and install.md point to this command where they say history is not imported. |
+
+## Tests
+
+- **Admission.** Cover every combination of origin, activation, destination,
+  and app list. A legacy registration behaves exactly as today. Include the
+  guard test.
+- **Retention.**
+  - An import with an old start and a failed first upload is not expired
+    early.
+  - After a bucket change, imports belong to the previous bucket, by time or
+    by `DestinationID` once B1b lands.
+  - Removal records are honored, and overridden by `--include-removed`.
+- **Hook resume of an import.** It is accepted, keeps `SessionStartedAt`,
+  `AdmittedAt`, and `Origin`, and updates the path.
+- **Resolution.** Table tests over a fake file system cover:
+  - worktrees, present and missing
+  - the nearest ancestor, and excluded projects
+  - home, `/`, and temporary directories, with and without their flags
+  - scratch chats
+  - Cursor slugs with no match, one match, two matches (`a-b/c` against
+    `a/b-c`), and a match found only through `workspace.json`
+  - identity mismatches
+- **Command.** Golden output for the plan, a filtered plan, `--json`, every
+  skip reason, `history`, and `undo`. Also:
+  - No terminal and no `--yes` means a refusal.
+  - Declining changes nothing, locally or in the bucket.
+  - `edit` updates the deletion date.
+  - A failed storage check stops before the prompt.
+  - A second run is a no-op.
+  - A configuration change during the prompt aborts, and pause refuses.
+  - A hook fired mid-registration succeeds within its one-second wait (real
+    flock, as in `diagnostics_lock_test.go`).
+  - Crashes injected between steps converge on rerun.
+  - Subagents inherit the import fields and carry no hook lifecycle evidence.
+  - Hook metadata is byte-identical to before.
+- **Undo.** It deletes metadata before sources, then forgets, writes removal
+  records, and excludes only the projects the import added. `--project`
+  limits its scope. A partial failure finishes on rerun. It cannot race a
+  collector pass.
+- **End to end,** using the local MinIO recipe with copies of real
+  transcripts:
+  - plan counts match the native ground truth
+  - `list --imported` matches the plan
+  - read-back verifies
+  - no app is promoted by imports
+  - `undo` restores the bucket
+
+## Sequencing
+
+| PR | Scope |
+|---|---|
+| B1 | Admission model: fields, `Admitted()`, `ImportedHarnesses`, use sites, removal records, origin-aware status and verification, metadata. No command. |
+| B1b | `DestinationID`. Optional, but required before `--readmit`. |
+| B2 | Discovery and `backfill --dry-run [--json]`. Read-only and useful on its own. |
+| B3 | Import: storage check, retention `edit`, commit, batches, registration, subagents, ordering, progress, `--background`, `history`, `list --imported` |
+| B4 | Undo. Ships in the same release as B3. |
+| B5 | Docs and live acceptance on the probe Mac |
+| B6–B9 | Phase 2: snapshot reader and driver; composer adapter; `sourceReader` and source fields; discovery and live Cursor acceptance |
+
+## Open questions
+
+1. **Home and temporary directories.** They are skipped by default, the only
+   gap in "everything". Adding home as a project would silently capture
+   everything under it. Recommendation: keep this default; one flag reverses
+   it.
+2. **Added projects capture new sessions.** The alternative is an import-only
+   project state, which would need a third inclusion state and a matching hook
+   rule. Recommendation: capture, as specified. The plan states it.
+3. **Keeping sessions forever.** A "never delete" retention setting is more
+   useful once imports exist. Recommendation: propose it separately, after
+   B3.
