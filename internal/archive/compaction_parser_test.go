@@ -44,7 +44,7 @@ func TestParserV08CompactionSummariesAreNotPrompts(t *testing.T) {
 
 func claudeBundle(filterVersion string, records []map[string]any) SourceBundle {
 	return SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture:       SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: adapterVersion, SourceFormat: "claude-jsonl", FilterVersion: filterVersion, CapturedAt: time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)},
 		NativeRecords: records,
 	}
@@ -53,7 +53,7 @@ func claudeBundle(filterVersion string, records []map[string]any) SourceBundle {
 func metadataOf(t *testing.T, bundle SourceBundle) Metadata {
 	t.Helper()
 	at := bundle.Capture.CapturedAt
-	metadata, err := BuildMetadata(bundle, "m", at, at, SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
+	metadata, err := BuildMetadata(bundle, "m", at, at, SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
 	if err != nil {
 		t.Fatalf("filter %s bundle does not parse: %v", bundle.Capture.FilterVersion, err)
 	}

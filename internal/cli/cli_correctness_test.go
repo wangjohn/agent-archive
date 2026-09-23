@@ -56,7 +56,7 @@ func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "scan-signatures", "session.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordSuperseded("session", "sessions/codex/session/source.old.json.gz", time.Now()); err != nil {
+	if err := store.RecordSuperseded("session", "sessions/codex/session/source.old.jsonl.gz", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reader.OpenMetadataCache(home); err != nil {

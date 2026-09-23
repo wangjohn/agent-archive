@@ -220,12 +220,12 @@ One session has one readable, derived metadata document and compressed source sn
 ```text
 sessions/<harness>/<archive-session-id>/
   metadata.json
-  source.<sha256>.json.gz
+  source.<sha256>.jsonl.gz
 ```
 
 All object keys shown are relative to the configured bucket prefix. There are no date or machine parent directories. Machine identity and dates are metadata. A copied conversation on another machine gets a different archive ID and may link to the original; this prevents competing writers.
 
-Use UTF-8 JSON, gzip, and a published JSON Schema with `schema_version`. Use OpenTelemetry GenAI attribute names where their meanings match observed data. Pin the adopted conventions revision. This archive is not an OTLP export and does not require CloudEvents envelopes.
+Use UTF-8 JSON, gzip, and a published JSON Schema with `schema_version`. Metadata is one JSON document; a source bundle is gzip of newline-delimited JSON (source schema 2, described below), so it can be read one record at a time. Use OpenTelemetry GenAI attribute names where their meanings match observed data. Pin the adopted conventions revision. This archive is not an OTLP export and does not require CloudEvents envelopes.
 
 ### Metadata sidecar
 
@@ -288,7 +288,7 @@ The following is illustrative. IDs, versions, and hashes are shortened examples.
   },
   "capture_gaps": ["actual_response_model_not_exposed"],
   "source_bundle": {
-    "key": "sessions/codex/archive-123/source.abc123.json.gz",
+    "key": "sessions/codex/archive-123/source.abc123.jsonl.gz",
     "sha256": "abc123",
     "compressed_bytes": 48216
   }
@@ -305,13 +305,14 @@ This preserves the ability to fix a parser or ask new questions about retained f
 
 ### Compressed source bundle
 
-Use a small versioned JSON envelope containing:
+A source bundle is `source.<sha256>.jsonl.gz`: gzip of newline-delimited JSON, one object per line, each with a `kind` discriminator (source schema 2, `schemas/source-bundle.schema.json`). The lines appear in this order:
 
-- `schema_version` and archive session identity.
-- `capture`: application and adapter versions, source format, capture boundary, filter version, and known gaps.
-- `native_records`: filtered native transcript records in source order, preserving their native field names and structure rather than converting them into a universal message schema.
-- `supplemental_evidence`: filtered hook-only observations, explicit feedback, observed harness configuration, skill inventories, and available skill snapshots, each with provenance and observation time.
-- Optional linked subagent sources in the same envelope, identified separately from the parent transcript.
+1. One `header` line, first and only once: `schema_version` (2) and archive session identity; `capture` (application and adapter versions, source format, capture boundary, filter version, and known gaps); optional `parent_session_id` and `linked_sessions`; and `counts` of each kind of line that follows.
+2. One `native_record` line per filtered native transcript record, in source order, carrying the record under `record` with its native field names and structure rather than converting it into a universal message schema.
+3. One `native_text` line per filtered text transcript (`format`, `content`).
+4. One `supplemental_evidence` line per filtered hook-only observation, explicit feedback, observed harness configuration, skill inventory, or skill snapshot, carrying the evidence (its own `kind`, provenance, and observation time) under `evidence`.
+
+Linked subagent sources are separate sessions, identified in the header, not inlined. Serialization is deterministic, the SHA-256 is over the exact compressed bytes, and a reader verifies size and hash before streaming the lines through a gzip reader with a per-line cap (64 MiB plus 1 MiB of envelope). The header must be first and appear once, and its counts must match the lines read; anything else is an error. Schema 1, a single JSON document at `source.<sha256>.json.gz`, predates release and is not read.
 
 Source content is not an untouched dump or byte-for-byte backup. Filtering removes excluded content and can impose explicit size limits. Record removed categories and truncation without reproducing sensitive values. Redacted or omitted information cannot be recovered through a later parser. Unknown record types or fields must pass the privacy policy before preservation; never upload unrecognized content merely to retain everything.
 

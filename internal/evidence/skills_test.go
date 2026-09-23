@@ -161,8 +161,8 @@ func TestObserveSkillsAbsentRootsAreScopedAndLeaveUseKnowledgeUnknown(t *testing
 			t.Fatalf("observation=%#v", item)
 		}
 	}
-	bundle := archive.SourceBundle{SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: archive.SourceCapture{Harness: archive.Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: archive.FilterVersion, CapturedAt: now}, SupplementalEvidence: got}
-	metadata, err := archive.BuildMetadata(bundle, "machine", now, now, archive.SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64)}, archive.ParserInfo{})
+	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: archive.SourceCapture{Harness: archive.Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: archive.FilterVersion, CapturedAt: now}, SupplementalEvidence: got}
+	metadata, err := archive.BuildMetadata(bundle, "machine", now, now, archive.SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, archive.ParserInfo{})
 	if err != nil || metadata.SkillDetection != archive.SkillDetectionUnavailable || len(metadata.SkillsUsed) != 0 {
 		t.Fatalf("metadata=%#v err=%v", metadata, err)
 	}

@@ -310,15 +310,14 @@ func supplementalPayloadEqual(a, b map[string]any) bool {
 	return aErr == nil && bErr == nil && bytes.Equal(aJSON, bJSON)
 }
 
-// BuildCompressedSource serializes a bundle canonically and uses gzip headers
-// that are independent of the wall clock and host platform.
+// BuildCompressedSource serializes a bundle canonically as schema-2 JSONL
+// (see EncodeSource) and uses gzip headers that are independent of the wall
+// clock and host platform, so identical evidence yields identical bytes and
+// the same SHA-256. Lines are streamed into the compressor; the uncompressed
+// document is never held whole.
 func BuildCompressedSource(bundle SourceBundle) (CompressedSource, error) {
 	if err := validateBundle(bundle); err != nil {
 		return CompressedSource{}, err
-	}
-	plain, err := json.Marshal(bundle)
-	if err != nil {
-		return CompressedSource{}, fmt.Errorf("marshal source bundle: %w", err)
 	}
 	var output bytes.Buffer
 	writer, err := gzip.NewWriterLevel(&output, gzip.DefaultCompression)
@@ -329,7 +328,7 @@ func BuildCompressedSource(bundle SourceBundle) (CompressedSource, error) {
 	// while remaining independent of capture and wall-clock time.
 	writer.Header.ModTime = time.Unix(1, 0).UTC()
 	writer.Header.OS = 255
-	if _, err = writer.Write(plain); err != nil {
+	if err = EncodeSource(writer, bundle); err != nil {
 		return CompressedSource{}, err
 	}
 	if err = writer.Close(); err != nil {
@@ -364,7 +363,7 @@ func SourceObjectKey(bundle SourceBundle, sha256 string) (string, error) {
 	if !isLowerHexSHA256(sha256) {
 		return "", errors.New("source sha256 must be 64 lowercase hexadecimal characters")
 	}
-	return fmt.Sprintf("sessions/%s/%s/source.%s.json.gz", bundle.Capture.Harness.Name, bundle.ArchiveSessionID, sha256), nil
+	return fmt.Sprintf("sessions/%s/%s/source.%s.jsonl.gz", bundle.Capture.Harness.Name, bundle.ArchiveSessionID, sha256), nil
 }
 
 // ProjectID deterministically derives a stable project identifier from a

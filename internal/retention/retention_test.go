@@ -386,7 +386,7 @@ func TestRetentionProtectsNewerRemoteCaptureAndClockRollbackPredecessor(t *testi
 func pointCurrentAt(t *testing.T, store storage.ObjectStore, id, key string) {
 	t.Helper()
 	metadata := fetchMetadata(t, store, "codex", id)
-	sha := strings.TrimSuffix(strings.TrimPrefix(key, fmt.Sprintf("sessions/codex/%s/source.", id)), ".json.gz")
+	sha := strings.TrimSuffix(strings.TrimPrefix(key, fmt.Sprintf("sessions/codex/%s/source.", id)), ".jsonl.gz")
 	if len(sha) != 64 {
 		t.Fatalf("unexpected source key %q", key)
 	}
@@ -416,7 +416,7 @@ func TestSweepKeepsTruePredecessorAfterContentReversion(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	a := publishTwice(t, local, store, "s1", t.TempDir(), t0) // ledger [A]; current B
 	b := fetchMetadata(t, store, "codex", "s1").SourceBundle.Key
-	c := fmt.Sprintf("sessions/codex/s1/source.%s.json.gz", strings.Repeat("c", 64))
+	c := fmt.Sprintf("sessions/codex/s1/source.%s.jsonl.gz", strings.Repeat("c", 64))
 
 	// Content reverts to A, superseding B; then C supersedes A again.
 	t2 := t0.Add(time.Hour)

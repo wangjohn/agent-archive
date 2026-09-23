@@ -11,7 +11,9 @@ import (
 )
 
 const (
-	SourceSchemaVersion   = 1
+	// SourceSchemaVersion 2 is the JSONL source bundle (source.<sha256>.jsonl.gz);
+	// see source_jsonl.go. Schema 1, a single JSON document, is not read.
+	SourceSchemaVersion   = 2
 	MetadataSchemaVersion = 1
 	// FilterVersion 3 keeps tool arguments and tool-result linkage, reports the
 	// key names it could not keep, and strips injected instruction blocks from
