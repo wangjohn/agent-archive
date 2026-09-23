@@ -112,3 +112,28 @@ func TestCursorTextAppendExtendsAndTruncationIsARewrite(t *testing.T) {
 		t.Fatalf("a truncated text transcript was not a rewrite: reason=%q blocked=%t", reason, blocked)
 	}
 }
+
+// An edit inside an already-published section, even one that keeps the file
+// the same length, means the published snapshot is no longer a prefix of the
+// file: it is a rewrite, not new activity.
+func TestCursorTextMidSectionEditIsARewrite(t *testing.T) {
+	local := newTestStore(t)
+	remote := storage.NewMemoryStore()
+	content := cursorTextTranscript(100, 1000)
+	path := cursorTextSession(t, local, content)
+	at := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	if result := runAt(t, local, remote, at); len(result.Published) != 1 {
+		t.Fatalf("first publication: %#v", result)
+	}
+	edited := strings.Replace(content, "answer 50 ", "answer 5x ", 1)
+	if len(edited) != len(content) || edited == content {
+		t.Fatal("the edit must change bytes without changing the length")
+	}
+	writeTranscript(t, dirOf(path), baseOf(path), edited)
+	if result := runAt(t, local, remote, at.Add(time.Hour)); len(result.Published) != 0 || len(result.Errors) != 0 {
+		t.Fatalf("result = %#v", result)
+	}
+	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != BlockedReasonTranscriptRewritten {
+		t.Fatalf("a mid-section edit was not a rewrite: reason=%q blocked=%t", reason, blocked)
+	}
+}

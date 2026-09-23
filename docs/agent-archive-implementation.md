@@ -1505,8 +1505,15 @@ D1's golden hashes still match every fixture.
 - A section appended to a transcript over 64 KB extends the published text
   and publishes.
 - A truncated file is still a `transcript_rewritten` gap.
-- A still-growing last section keeps its sanitized prefix. When it passes
-  64 KB it stays truncated at the same 64 KB, and later sections follow it.
+- A still-growing last section normally keeps its sanitized prefix: when it
+  passes 64 KB it stays truncated at the same 64 KB, and later sections
+  follow it. The prefix is not guaranteed while the tail is mid-write, since
+  the sanitizer's output is not a prefix-stable function of a growing string
+  (a credential that only matches once its last bytes land, or an injected
+  block whose stripping trims the section's surrounding whitespace, change
+  bytes already published). A text transcript has no record boundary to
+  stop at, so this remains a known false-`transcript_rewritten` class for
+  the text path, unchanged from filter 6.
 
 Tests:
 - `internal/archive/text_limits_test.go`:
@@ -1526,3 +1533,23 @@ Tests:
   transcript published, the second because the appended section was never
   published.
 - The existing Cursor text and handoff golden tests pass unchanged.
+
+**Review.** No functional defect found against the spec. Tests added:
+- `internal/archive`: a credential on a continuation line is redacted and an
+  injected block spanning continuation lines is stripped from a text section
+  (the stripper reaches text sections through `sanitizeValue`, as it does
+  JSONL strings); a hidden section that directly follows a visible one, one
+  with a different case or leading whitespace, and one that is the last
+  section are omitted with their continuation lines; recording each gap once
+  keeps the two distinct `hidden_instruction_omitted` details, the redaction
+  gap, and the structure gap; an unclosed injected block drops only its own
+  section; a transcript of only hidden sections is refused.
+- `internal/collector`: a same-length edit inside a published section is a
+  `transcript_rewritten` gap.
+- `BenchmarkCursorTextFilterFiveMegabytes`: 5.4 MB in about 350 ms, 35 MB
+  allocated, peak heap about 32 MB, linear in the input. 95% of the time is
+  the credential regexes in `redactSensitive`, shared with the JSONL path;
+  the section split and join are not measurable.
+
+The `status` detail for `record_size_limit` now also names a plain-text
+transcript as a whole, which is the unit the limit bounds on the text path.

@@ -142,3 +142,85 @@ func TestHandoffOfALargeCursorTextTranscriptReachesTheEnd(t *testing.T) {
 		t.Fatalf("left off = %.40q", h.LeftOff)
 	}
 }
+
+// Sanitizing applies to every retained line of a section, not only its role
+// line: a credential on a continuation line is redacted, and an injected
+// instruction block that spans continuation lines is stripped, as it is from
+// JSONL string content. Hidden sections never leak: one that directly follows
+// a visible section, one whose prefix varies in case or leading whitespace,
+// and one that is the last section, with all of their continuation lines.
+// Recording each gap once does not hide distinct gaps: the two
+// hidden_instruction_omitted details, the redaction, and the structure gap
+// are all reported.
+func TestCursorTextSanitizesContinuationLinesAndOmitsHiddenTail(t *testing.T) {
+	input := strings.Join([]string{
+		"user: hello",
+		"  token=synthetic-continuation-secret",
+		"SYSTEM: hidden one",
+		"hidden continuation one",
+		"assistant: ok <system-reminder>",
+		"injected line",
+		"</system-reminder> visible tail",
+		"tool: result",
+		"  Thinking: hidden two",
+		"hidden continuation two",
+	}, "\n") + "\n"
+	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := filtered.Text[0]
+	if want := "user: hello\n  [REDACTED]\nassistant: ok  visible tail\ntool: result"; text != want {
+		t.Fatalf("text = %q, want %q", text, want)
+	}
+	for _, leaked := range []string{"hidden", "injected", "synthetic-continuation-secret"} {
+		if strings.Contains(text, leaked) {
+			t.Fatalf("retained text contains %q", leaked)
+		}
+	}
+	details := map[string]bool{}
+	for _, gap := range filtered.Gaps {
+		if gap.Code == "hidden_instruction_omitted" {
+			details[gap.Detail] = true
+		}
+	}
+	if len(details) != 2 || !details["text section omitted"] || !details["injected instruction block omitted"] {
+		t.Fatalf("hidden_instruction_omitted details = %v", details)
+	}
+	if gapsWithCode(filtered.Gaps, "sensitive_content_redacted") != 1 || gapsWithCode(filtered.Gaps, "text_structure_partial") != 1 {
+		t.Fatalf("gaps = %#v", filtered.Gaps)
+	}
+}
+
+// An injected block that never closes drops the rest of its own section, as
+// it does for a JSONL string, and no more: the sections after it are kept.
+func TestCursorTextUnclosedInjectedBlockDropsOnlyItsSection(t *testing.T) {
+	input := "user: a\nassistant: b <system-reminder>\nnever closed\nuser: c\nassistant: d\n"
+	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "user: a\nassistant: b\nuser: c\nassistant: d"; filtered.Text[0] != want {
+		t.Fatalf("text = %q, want %q", filtered.Text[0], want)
+	}
+}
+
+// A transcript of only hidden sections retains nothing and is refused.
+func TestCursorTextOnlyHiddenSectionsIsNotRetainable(t *testing.T) {
+	_, err := (CursorAdapter{}).FilterText(strings.NewReader("system: secret\nmore secret\n"), textStart)
+	var ferr *FilterError
+	if !errors.As(err, &ferr) {
+		t.Fatalf("err = %v, want a FilterError", err)
+	}
+}
+
+func BenchmarkCursorTextFilterFiveMegabytes(b *testing.B) {
+	input := cursorTextSession(2600, 2000)
+	b.SetBytes(int64(len(input)))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
