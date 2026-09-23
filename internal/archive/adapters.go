@@ -2,6 +2,7 @@ package archive
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,26 @@ type FilterError struct{ Reason string }
 func (e *FilterError) Error() string { return "unsafe source format: " + e.Reason }
 
 var ErrUnsafeSourceFormat = &FilterError{Reason: "no recognized safe records"}
+
+// ErrRecordTooLarge means one JSONL record is longer than MaxRecordBytes. It is
+// a FilterError like any other refusal, distinct so a caller can record it as
+// the capture gap it is rather than a malformed transcript.
+var ErrRecordTooLarge = &FilterError{Reason: "record exceeds the record size limit"}
+
+// MaxRecordBytes is the largest single JSONL record the filter reads, and the
+// collector's transcript size ceiling is defined from it (see
+// collector.DefaultMaxTranscriptBytes), so any record inside a transcript the
+// collector accepts can be read. Filter 4 and earlier stopped at 2 MB, which
+// refused whole Claude Code sessions whose tool results are a few megabytes
+// before filtering (the bulk is in toolUseResult, which the filter drops).
+//
+// Reading one record costs memory in proportion to its size: the scanner's
+// buffer and the decoded JSON value both hold it, several times over at the
+// limit. See docs/agent-archive-implementation.md for the measured ceiling.
+const MaxRecordBytes = 64 * 1024 * 1024
+
+// maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
+var maxRecordBytes = MaxRecordBytes
 
 const adapterVersion = "0.6.0"
 
@@ -454,8 +475,12 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	result := FilteredTranscript{Format: format, NativeStartComplete: true}
 	scanner := bufio.NewScanner(r)
 	// Individual native JSONL records can contain tool output. A hard limit keeps
-	// filtering bounded; exceeding it is unsafe rather than silently truncated.
-	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	// filtering bounded; exceeding it is refused rather than silently
+	// truncated. The buffer holds a record plus its newline, so a record of
+	// exactly maxRecordBytes is still read. bufio.Scanner allows the larger of
+	// its maximum and the initial buffer's capacity, so the initial buffer
+	// must not exceed the limit either.
+	scanner.Buffer(make([]byte, min(64*1024, maxRecordBytes+1)), maxRecordBytes+1)
 	lineNo, recognized := 0, 0
 	gapSet := map[string]bool{}
 	// Filter 2 collapsed every omission into one content-free gap, so a reader
@@ -476,7 +501,9 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 	for scanner.Scan() {
 		lineNo++
 		line := scanner.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
+		// bytes.TrimSpace, not strings.TrimSpace(string(line)): the same test
+		// without copying a record that can be tens of megabytes.
+		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
 		var raw map[string]any
@@ -536,7 +563,10 @@ func filterJSONL(r io.Reader, format string, knownTypes map[string]bool) (Filter
 		result.Boundary.RetainedBytes += len(encoded)
 	}
 	if err := scanner.Err(); err != nil {
-		return FilteredTranscript{}, &FilterError{Reason: "record exceeds safe size limit or transcript cannot be read"}
+		if errors.Is(err, bufio.ErrTooLong) {
+			return FilteredTranscript{}, ErrRecordTooLarge
+		}
+		return FilteredTranscript{}, &FilterError{Reason: "transcript cannot be read"}
 	}
 	if lineNo > 0 && recognized == 0 {
 		return FilteredTranscript{}, ErrUnsafeSourceFormat

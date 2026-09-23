@@ -467,6 +467,9 @@ const (
 	// BlockedReasonTranscriptTooLarge means the transcript exceeds the
 	// collection size limit (Options.MaxTranscriptBytes).
 	BlockedReasonTranscriptTooLarge BlockedReason = "transcript_too_large"
+	// BlockedReasonRecordTooLarge means one record of the transcript is longer
+	// than archive.MaxRecordBytes, so the transcript cannot be read whole.
+	BlockedReasonRecordTooLarge BlockedReason = "record_size_limit"
 	// BlockedReasonTranscriptMissing means the native transcript is no longer
 	// on disk. Every supported application deletes its own transcripts on its
 	// own schedule (Claude Code after cleanupPeriodDays, 30 by default) while
