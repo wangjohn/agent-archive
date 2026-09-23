@@ -227,6 +227,15 @@ func TestSourceBundleJSONLRejectsMalformedStreams(t *testing.T) {
 		{"final line without newline", gzipBytes(t, []byte(headerLine(1, 0, 0)+"\n"+recordLine)), DecodeOptions{}, "truncated"},
 		{"future schema", gzipLines(t, strings.Replace(headerLine(0, 0, 0), `"schema_version":2`, `"schema_version":3`, 1)), DecodeOptions{}, "unsupported source schema version 3"},
 		{"uncompressed limit", valid, DecodeOptions{MaxUncompressedBytes: 64}, ErrSourceTooLarge.Error()},
+		{"trailing bytes after the gzip stream", append(append([]byte{}, valid...), "trailing garbage bytes"...), DecodeOptions{}, "trailing bytes after its gzip stream"},
+		// Fewer trailing bytes than a gzip header is indistinguishable from a
+		// cut-off second gzip member, so it is reported as truncation.
+		{"trailing bytes shorter than a gzip header", append(append([]byte{}, valid...), "tail"...), DecodeOptions{}, "source is truncated"},
+		{"line 1 is a JSON number", gzipLines(t, `42`), DecodeOptions{}, "line 1 is not a JSON object"},
+		{"line 1 is a JSON array", gzipLines(t, `[]`, recordLine), DecodeOptions{}, "line 1 is not a JSON object"},
+		{"line 2 is a JSON string", gzipLines(t, headerLine(1, 0, 0), `"native_record"`), DecodeOptions{}, "line 2 is not a JSON object"},
+		{"line 2 is null", gzipLines(t, headerLine(1, 0, 0), `null`), DecodeOptions{}, "line 2 is not a JSON object"},
+		{"blank line", gzipLines(t, headerLine(1, 0, 0), ``, recordLine), DecodeOptions{}, "line 2 is not a JSON object"},
 	}
 	for _, c := range cases {
 		_, err := ReadSourceBundle(bytes.NewReader(c.input), c.options)
@@ -236,6 +245,91 @@ func TestSourceBundleJSONLRejectsMalformedStreams(t *testing.T) {
 	}
 	if _, err := ReadSourceBundle(bytes.NewReader(valid), DecodeOptions{}); err != nil {
 		t.Fatalf("the valid control stream failed: %v", err)
+	}
+}
+
+// The line cap is inclusive on the decode side exactly as it is on the encode
+// side: a line of exactly the cap decodes, one byte more does not.
+func TestDecodeSourceLineCapIsExact(t *testing.T) {
+	const limit = 4096
+	lineOf := func(n int) string {
+		prefix, suffix := `{"kind":"native_record","record":{"text":"`, `"}}`
+		return prefix + strings.Repeat("x", n-len(prefix)-len(suffix)) + suffix
+	}
+	if got := len(lineOf(limit)); got != limit {
+		t.Fatalf("test line is %d bytes, want %d", got, limit)
+	}
+	options := DecodeOptions{MaxLineBytes: limit}
+	if _, err := ReadSourceBundle(bytes.NewReader(gzipLines(t, headerLine(1, 0, 0), lineOf(limit))), options); err != nil {
+		t.Fatalf("a line of exactly %d bytes was refused: %v", limit, err)
+	}
+	_, err := ReadSourceBundle(bytes.NewReader(gzipLines(t, headerLine(1, 0, 0), lineOf(limit+1))), options)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("line 2 exceeds the %d byte line limit", limit)) {
+		t.Fatalf("a line of %d bytes: err = %v", limit+1, err)
+	}
+	// An over-long line that is also the last, unterminated one is refused
+	// as well: as over-long once it overflows the buffer, or as truncated
+	// when EOF arrives first (one byte over the cap fits the buffer).
+	for _, n := range []int{limit + 1, 2 * limit} {
+		_, err = ReadSourceBundle(bytes.NewReader(gzipBytes(t, []byte(headerLine(1, 0, 0)+"\n"+lineOf(n)))), options)
+		if err == nil || !(strings.Contains(err.Error(), "line limit") || strings.Contains(err.Error(), "truncated")) {
+			t.Fatalf("unterminated %d byte line: err = %v", n, err)
+		}
+	}
+}
+
+// Hitting the total cap in the middle of a line reports the cap, not a
+// truncated stream.
+func TestDecodeSourceReportsTotalCapHitMidLine(t *testing.T) {
+	stream := gzipBytes(t, []byte(headerLine(1, 0, 0)+"\n"+recordLine))
+	_, err := ReadSourceBundle(bytes.NewReader(stream), DecodeOptions{MaxUncompressedBytes: 64})
+	if !errors.Is(err, ErrSourceTooLarge) || err.Error() != ErrSourceTooLarge.Error() {
+		t.Fatalf("err = %v, want exactly %v", err, ErrSourceTooLarge)
+	}
+}
+
+// The views built on a bundle are identical whether the bundle came from
+// memory or through the compressed JSONL decoder: the normalized view for
+// every fixture, and the handoff document for each harness's golden file.
+func TestSourceBundleJSONLPreservesNormalizedAndHandoffViews(t *testing.T) {
+	throughDecoder := func(t *testing.T, bundle SourceBundle) SourceBundle {
+		t.Helper()
+		compressed, err := BuildCompressedSource(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := ReadSourceBundle(bytes.NewReader(compressed.Bytes), DecodeOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+	for name, bundle := range fixtureBundles(t) {
+		want, err := ParseNormalized(bundle)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got, err := ParseNormalized(throughDecoder(t, bundle))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if canonicalJSON(t, got) != canonicalJSON(t, want) {
+			t.Fatalf("%s: normalized view differs after decoding", name)
+		}
+	}
+	for _, harness := range []string{"claude", "codex", "cursor"} {
+		h, err := BuildHandoff(throughDecoder(t, handoffBundle(t, harness)), nil, HandoffOptions{Source: "local"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := RenderHandoffMarkdown(h, HandoffRenderOptions{Preamble: true})
+		want, err := os.ReadFile(filepath.Join("testdata", "handoff", harness+".md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("handoff for %s differs from its golden file after decoding", harness)
+		}
 	}
 }
 
@@ -333,6 +427,9 @@ func TestFixtureBundlesCoverEveryHarnessPrefix(t *testing.T) {
 				t.Errorf("fixture directory %s is not covered by the round-trip test", entry.Name())
 			}
 			continue
+		}
+		if !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue // e.g. filter-golden.json, which is not a native transcript
 		}
 		prefix := strings.SplitN(entry.Name(), "-", 2)[0]
 		if _, err := NewAdapter(prefix); err != nil {

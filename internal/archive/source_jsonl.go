@@ -29,15 +29,11 @@ const (
 	SourceLineSupplementalEvidence = "supplemental_evidence"
 )
 
-// sourceRecordBytes bounds the size of one native record in a source bundle.
-// It equals the record size limit PR D1 introduces as archive.MaxRecordBytes
-// (the collector's maximum transcript size, 64 MiB); until that constant
-// exists it is defined here, and should then be replaced by it.
-const sourceRecordBytes = 64 << 20
-
 // MaxSourceLineBytes bounds one decoded source line: the largest native
-// record plus room for the line's own envelope and JSON escaping overhead.
-const MaxSourceLineBytes = sourceRecordBytes + 1<<20
+// record the filter reads (MaxRecordBytes, which also bounds the transcripts
+// the collector accepts) plus room for the line's own envelope and JSON
+// escaping overhead.
+const MaxSourceLineBytes = MaxRecordBytes + 1<<20
 
 // SourceCounts records how many lines of each kind follow the header.
 type SourceCounts struct {
@@ -189,7 +185,10 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 	if initial > maxLine {
 		initial = maxLine
 	}
-	scanner.Buffer(make([]byte, 0, initial), maxLine)
+	// The scanner must buffer a line and its newline together, so a line of
+	// exactly maxLine bytes (the largest the encoder writes) needs one byte
+	// more than the cap; one of maxLine+1 bytes still fails.
+	scanner.Buffer(make([]byte, 0, initial), maxLine+1)
 
 	var header *SourceHeader
 	var seen SourceCounts
@@ -207,10 +206,16 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 			if lineNo == 1 && json.Unmarshal(raw, &probe) == nil && probe.Kind == "" && probe.SchemaVersion != nil {
 				return fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
 			}
-			if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
+			switch err := scanner.Err(); {
+			case errors.Is(err, ErrSourceTooLarge):
+				return err
+			case err != nil:
 				return fmt.Errorf("source is truncated: %w", err)
 			}
 			return fmt.Errorf("source is truncated: %w", errUnterminatedLine)
+		}
+		if trimmed := bytes.TrimLeft(raw, " \t\r"); len(trimmed) == 0 || trimmed[0] != '{' {
+			return fmt.Errorf("source line %d is not a JSON object", lineNo)
 		}
 		if err := json.Unmarshal(raw, &probe); err != nil {
 			if lineNo == 1 {
@@ -300,6 +305,10 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 			return err
 		case errors.Is(err, io.ErrUnexpectedEOF):
 			return fmt.Errorf("source is truncated: %w", err)
+		case errors.Is(err, gzip.ErrHeader):
+			// NewReader already accepted the first gzip header, so a header
+			// error here means bytes followed the end of the gzip stream.
+			return fmt.Errorf("source has trailing bytes after its gzip stream: %w", err)
 		}
 		return fmt.Errorf("read source: %w", err)
 	}
