@@ -43,7 +43,7 @@ func TestSourceFirstPublicationReusesVerifiedSource(t *testing.T) {
 	store := NewMemoryStore()
 	source := []byte(`{"schema_version":1}`)
 	metadata := []byte(`{"source":"source.abc"}`)
-	key := "sessions/codex/id/source." + SHA256Hex(source) + ".json.gz"
+	key := "sessions/codex/id/source." + SHA256Hex(source) + ".jsonl.gz"
 	if err := PutSourceThenMetadata(context.Background(), store, key, "sessions/codex/id/metadata.json", source, metadata, RetryPolicy{MaxAttempts: 1}); err != nil {
 		t.Fatal(err)
 	}

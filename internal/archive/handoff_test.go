@@ -360,7 +360,7 @@ func TestProtectedStart(t *testing.T) {
 // testBundle wraps native records in a filtered-shape bundle for one harness.
 func testBundle(harness string, records ...map[string]any) SourceBundle {
 	return SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture:       SourceCapture{Harness: Harness{Name: harness}, AdapterName: harness, AdapterVersion: adapterVersion, SourceFormat: harness + "-jsonl", FilterVersion: FilterVersion, CapturedAt: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)},
 		NativeRecords: records,
 	}

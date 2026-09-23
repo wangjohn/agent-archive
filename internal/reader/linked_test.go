@@ -25,7 +25,7 @@ func TestLinkedSessionsResolveWithoutDownloadingOrPinningSources(t *testing.T) {
 	child.SessionID = "child"
 	child.ParentSessionID = parent.SessionID
 	child.LinkedSessions = nil
-	child.SourceBundle.Key = "sessions/codex/child/source." + strings.Repeat("a", 64) + ".json.gz"
+	child.SourceBundle.Key = "sessions/codex/child/source." + strings.Repeat("a", 64) + ".jsonl.gz"
 	child.SourceBundle.SHA256 = strings.Repeat("a", 64)
 	key, _ := archive.MetadataObjectKey("codex", "child")
 	save := func() {

@@ -2,7 +2,6 @@ package collector
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -71,13 +70,8 @@ func fetchBundle(t *testing.T, store storage.ObjectStore, metadata archive.Metad
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader, err := gzip.NewReader(bytes.NewReader(data))
+	bundle, err := archive.ReadSourceBundle(bytes.NewReader(data), archive.DecodeOptions{})
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	var bundle archive.SourceBundle
-	if err := json.NewDecoder(reader).Decode(&bundle); err != nil {
 		t.Fatal(err)
 	}
 	return bundle
@@ -1198,9 +1192,9 @@ func TestRecordSupersededMovesRepeatedKeyToEnd(t *testing.T) {
 		key string
 		at  time.Time
 	}{
-		{"sessions/codex/s1/source.a.json.gz", t0},
-		{"sessions/codex/s1/source.b.json.gz", t0.Add(time.Hour)},
-		{"sessions/codex/s1/source.a.json.gz", t0.Add(2 * time.Hour)},
+		{"sessions/codex/s1/source.a.jsonl.gz", t0},
+		{"sessions/codex/s1/source.b.jsonl.gz", t0.Add(time.Hour)},
+		{"sessions/codex/s1/source.a.jsonl.gz", t0.Add(2 * time.Hour)},
 	} {
 		if err := local.RecordSuperseded("s1", step.key, step.at); err != nil {
 			t.Fatal(err)
@@ -1210,7 +1204,7 @@ func TestRecordSupersededMovesRepeatedKeyToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ledger) != 2 || ledger[0].Key != "sessions/codex/s1/source.b.json.gz" || ledger[1].Key != "sessions/codex/s1/source.a.json.gz" {
+	if len(ledger) != 2 || ledger[0].Key != "sessions/codex/s1/source.b.jsonl.gz" || ledger[1].Key != "sessions/codex/s1/source.a.jsonl.gz" {
 		t.Fatalf("re-superseded key must move to the end of the ledger: %#v", ledger)
 	}
 	if !ledger[1].SupersededAt.Equal(t0.Add(2 * time.Hour)) {

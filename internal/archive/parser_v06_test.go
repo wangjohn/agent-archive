@@ -30,7 +30,7 @@ func parsedFixture(t *testing.T, harness, name string) (NormalizedView, Metadata
 	if err != nil {
 		t.Fatal(err)
 	}
-	reference := SourceReference{Key: "sessions/" + adapter.Name() + "/archive-123/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 1}
+	reference := SourceReference{Key: "sessions/" + adapter.Name() + "/archive-123/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 1}
 	metadata, err := BuildMetadata(bundle, "machine", reg.SessionStartedAt, captured, reference, ParserInfo{})
 	if err != nil {
 		t.Fatal(err)
@@ -195,14 +195,14 @@ func TestParserV06DerivesCursorTurnsAndOutcome(t *testing.T) {
 func TestParserV06NativeTurnEndDoesNotOverrideHookEvidence(t *testing.T) {
 	now := time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture:       SourceCapture{Harness: Harness{Name: "cursor"}, AdapterName: "cursor", AdapterVersion: adapterVersion, SourceFormat: "cursor-jsonl", FilterVersion: FilterVersion, CapturedAt: now},
 		NativeRecords: []map[string]any{{"role": "user", "message": map[string]any{"content": "hello"}}, {"type": "turn_ended", "status": "completed"}},
 		SupplementalEvidence: []SupplementalEvidence{
 			{Kind: EvidenceKindLifecycleHook, ObservedAt: now, Provenance: "hook:cursor:interrupt", Payload: map[string]any{"event_name": "Interrupt"}},
 		},
 	}
-	reference := SourceReference{Key: "sessions/cursor/a/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64)}
+	reference := SourceReference{Key: "sessions/cursor/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}
 	metadata, err := BuildMetadata(bundle, "machine", now, now, reference, ParserInfo{})
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ func TestParserV06LinksUnidentifiedToolResultsByPosition(t *testing.T) {
 func TestParserV06DoesNotMislinkAnUnknownCallID(t *testing.T) {
 	now := time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: adapterVersion, SourceFormat: "claude-jsonl", FilterVersion: FilterVersion, CapturedAt: now},
 		NativeRecords: []map[string]any{
 			{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "toolu_1", "name": "Read"}}}},
@@ -269,7 +269,7 @@ func TestParserV06DoesNotMislinkAnUnknownCallID(t *testing.T) {
 func TestParserV06RegeneratesFilterTwoBundles(t *testing.T) {
 	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "0.2.0", SourceFormat: "claude-jsonl", FilterVersion: "2", CapturedAt: now},
 		NativeRecords: []map[string]any{
 			{"type": "user", "uuid": "u1", "message": map[string]any{"role": "user", "content": "please check it"}},
@@ -280,7 +280,7 @@ func TestParserV06RegeneratesFilterTwoBundles(t *testing.T) {
 			{"type": "user", "uuid": "u2", "message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result"}}}},
 		},
 	}
-	reference := SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64)}
+	reference := SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}
 	metadata, err := BuildMetadata(bundle, "machine", now, now, reference, ParserInfo{})
 	if err != nil {
 		t.Fatalf("a filter 2 bundle no longer parses: %v", err)
@@ -311,7 +311,7 @@ func TestParserV06RegeneratesFilterTwoBundles(t *testing.T) {
 // parser is not a second chance for content the filter must have removed.
 func TestParserV06StillRejectsHiddenRoles(t *testing.T) {
 	bundle := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture:       SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", AdapterVersion: adapterVersion, SourceFormat: "codex-jsonl", FilterVersion: FilterVersion, CapturedAt: time.Now()},
 		NativeRecords: []map[string]any{{"role": "system", "content": "must not be normalized"}},
 	}
@@ -384,7 +384,7 @@ func TestParserV06IgnoresCodexInjectedOnlyPrompts(t *testing.T) {
 func TestParserV06TextBundlesLeaveCountsUnknown(t *testing.T) {
 	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: adapterVersion, SourceFormat: "claude-jsonl", FilterVersion: FilterVersion, CapturedAt: now},
 		NativeRecords: []map[string]any{
 			{"type": "user", "message": map[string]any{"role": "user", "content": "please check it"}},
@@ -392,7 +392,7 @@ func TestParserV06TextBundlesLeaveCountsUnknown(t *testing.T) {
 		},
 		NativeText: []TextTranscript{{Format: "text", Content: "an unparsed line"}},
 	}
-	reference := SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64)}
+	reference := SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}
 	metadata, err := BuildMetadata(bundle, "machine", now, now, reference, ParserInfo{})
 	if err != nil {
 		t.Fatal(err)

@@ -6,12 +6,10 @@ package reader
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -384,8 +382,10 @@ func matches(m archive.Metadata, f Filter) bool {
 	return true
 }
 
-// LoadSource verifies the compressed SHA-256 before bounded decompression and
-// validates that source identity matches the selected metadata pointer.
+// LoadSource verifies the compressed SHA-256 before bounded, streaming
+// decompression and validates that source identity matches the selected
+// metadata pointer. A schema-1 bundle (a single JSON document) is refused with
+// an error naming its schema version.
 func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata, limits Limits) (archive.SourceBundle, error) {
 	if err := metadata.ValidateSourceReference(); err != nil {
 		return archive.SourceBundle{}, err
@@ -406,20 +406,11 @@ func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive
 	if !storage.VerifySHA256(data, metadata.SourceBundle.SHA256) {
 		return archive.SourceBundle{}, errors.New("source checksum mismatch")
 	}
-	gz, err := gzip.NewReader(bytes.NewReader(data))
+	// The verified compressed bytes are decoded as a stream, one JSONL line at
+	// a time: the decompressed document is never held whole, only the
+	// assembled records the caller asked for.
+	bundle, err := archive.ReadSourceBundle(bytes.NewReader(data), archive.DecodeOptions{MaxUncompressedBytes: int64(limits.uncompressed())})
 	if err != nil {
-		return archive.SourceBundle{}, fmt.Errorf("open source gzip: %w", err)
-	}
-	defer gz.Close()
-	plain, err := io.ReadAll(io.LimitReader(gz, int64(limits.uncompressed()+1)))
-	if err != nil {
-		return archive.SourceBundle{}, err
-	}
-	if len(plain) > limits.uncompressed() {
-		return archive.SourceBundle{}, errors.New("source exceeds uncompressed read limit")
-	}
-	var bundle archive.SourceBundle
-	if err := json.Unmarshal(plain, &bundle); err != nil {
 		return archive.SourceBundle{}, fmt.Errorf("decode source: %w", err)
 	}
 	if bundle.SchemaVersion != archive.SourceSchemaVersion || bundle.ArchiveSessionID != metadata.SessionID || bundle.NativeSessionID != metadata.NativeSessionID || bundle.ProjectID != metadata.ProjectID || bundle.ParentSessionID != metadata.ParentSessionID || bundle.Capture.Harness != metadata.Harness || !bundle.Capture.CapturedAt.Equal(metadata.CapturedAt) || bundle.Capture.FilterVersion != metadata.FilterVersion {

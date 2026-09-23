@@ -113,7 +113,7 @@ func putSession(t *testing.T, store storage.ObjectStore, harness, id string, cap
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourceKey := "sessions/" + harness + "/" + id + "/source." + fakeSourceSHA + ".json.gz"
+	sourceKey := "sessions/" + harness + "/" + id + "/source." + fakeSourceSHA + ".jsonl.gz"
 	metadata := archive.Metadata{
 		SchemaVersion: archive.MetadataSchemaVersion, SessionID: id, NativeSessionID: "native-" + id,
 		MachineID: "machine", ProjectID: "project", Harness: archive.Harness{Name: harness}, CapturedAt: captured,
@@ -447,7 +447,7 @@ func TestMetadataCacheIsPrivateMetadataOnlyAndDisposable(t *testing.T) {
 	}
 
 	// put refuses anything but a metadata sidecar key.
-	cache.put("sessions/codex/s1/source."+fakeSourceSHA+".json.gz", "etag", []byte(`{"not":"metadata"}`))
+	cache.put("sessions/codex/s1/source."+fakeSourceSHA+".jsonl.gz", "etag", []byte(`{"not":"metadata"}`))
 	if after := cacheFiles(t, home); len(after) != len(files) {
 		t.Fatalf("a non-metadata object was cached: %q", after)
 	}
@@ -480,7 +480,7 @@ func TestMetadataCacheRefusesBytesThatDoNotMatchTheListedETag(t *testing.T) {
 	rewritten, _ := json.Marshal(archive.Metadata{
 		SchemaVersion: archive.MetadataSchemaVersion, SessionID: "s1", NativeSessionID: "native-s1",
 		MachineID: "machine", ProjectID: "project", Harness: archive.Harness{Name: "codex"}, CapturedAt: baseTime.Add(9 * time.Hour),
-		SourceBundle: archive.SourceReference{Key: "sessions/codex/s1/source." + fakeSourceSHA + ".json.gz", SHA256: fakeSourceSHA, CompressedBytes: 1},
+		SourceBundle: archive.SourceReference{Key: "sessions/codex/s1/source." + fakeSourceSHA + ".jsonl.gz", SHA256: fakeSourceSHA, CompressedBytes: 1},
 	})
 	store.swapGet[key] = rewritten
 	options := ListOptions{Cache: cache}

@@ -259,7 +259,7 @@ func TestPreviousDestinationSessionIsPrunedLocallyWithoutTouchingTheBucket(t *te
 		t.Fatal(err)
 	}
 	collect(t, local, previous, t0)
-	if err := local.RecordSuperseded("old", "sessions/codex/old/source.stale.json.gz", t0); err != nil {
+	if err := local.RecordSuperseded("old", "sessions/codex/old/source.stale.jsonl.gz", t0); err != nil {
 		t.Fatal(err)
 	}
 

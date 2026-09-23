@@ -54,7 +54,7 @@ func TestParserV07CountsStreamedResponsesOnce(t *testing.T) {
 func TestParserV07AssistantRecordsWithoutIDsCountIndividually(t *testing.T) {
 	now := time.Date(2026, 9, 22, 15, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: adapterVersion, SourceFormat: "claude-jsonl", FilterVersion: FilterVersion, CapturedAt: now},
 		NativeRecords: []map[string]any{
 			{"type": "user", "message": map[string]any{"role": "user", "content": "go"}},
@@ -62,7 +62,7 @@ func TestParserV07AssistantRecordsWithoutIDsCountIndividually(t *testing.T) {
 			{"type": "assistant", "message": map[string]any{"role": "assistant", "content": "two"}},
 		},
 	}
-	metadata, err := BuildMetadata(bundle, "m", now, now, SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
+	metadata, err := BuildMetadata(bundle, "m", now, now, SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestParserV07SlashCommandResolution(t *testing.T) {
 	meta := user("expanded")
 	meta["isMeta"] = true
 	bundle := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: adapterVersion, SourceFormat: "claude-jsonl", FilterVersion: FilterVersion, CapturedAt: now},
 		NativeRecords: []map[string]any{
 			user("<command-name>/clear</command-name>"), // 0: followed by a prompt
@@ -194,9 +194,9 @@ func harnessSession(withMetaFlags bool) []map[string]any {
 // session captured under filter 4 must then give the same counts.
 func TestParserV07RegeneratesFilterThreeBundlesNoWorse(t *testing.T) {
 	now := time.Date(2026, 9, 22, 18, 0, 0, 0, time.UTC)
-	reference := SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".json.gz", SHA256: strings.Repeat("a", 64)}
+	reference := SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}
 	filterThree := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture:       SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "0.3.0", SourceFormat: "claude-jsonl", FilterVersion: "3", CapturedAt: now},
 		NativeRecords: harnessSession(false),
 	}
@@ -287,7 +287,7 @@ func TestParserV07HarnessTagsAreRecognizedByPrefixOnly(t *testing.T) {
 		return map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}}
 	}
 	bundle := SourceBundle{
-		SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: adapterVersion, SourceFormat: "claude-jsonl", FilterVersion: FilterVersion, CapturedAt: now},
 		NativeRecords: []map[string]any{
 			user("  \n<bash-input>ls</bash-input>"),
@@ -336,7 +336,7 @@ func TestParserV07FixturesScanDeterministically(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			reference := SourceReference{Key: "sessions/" + harness + "/a/source." + compressed.SHA256 + ".json.gz", SHA256: compressed.SHA256}
+			reference := SourceReference{Key: "sessions/" + harness + "/a/source." + compressed.SHA256 + ".jsonl.gz", SHA256: compressed.SHA256}
 			metadata, err := BuildMetadata(bundle, "m", now, now, reference, ParserInfo{})
 			if err != nil {
 				t.Fatal(err)
