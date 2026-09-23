@@ -1462,3 +1462,67 @@ is refused by name; the uncompressed limit still applies). Existing tests use
 `docs/agent-run-archive-spec.md`, `docs/agent-archive-privacy.md`, and
 `docs/install.md` describe the new file and format.
 
+
+## PR D3 — Cursor plain-text transcript limits
+
+Filter 7, adapter 0.7.0 (parser unchanged at 0.9.0).
+
+Older Cursor versions give the hook a plain-text transcript, which the
+collector filters through `CursorAdapter.FilterText` when JSONL filtering
+finds no recognized records. It had two defects.
+
+**Whole transcript truncated to 64 KB.** `FilterText` joined every retained
+line and sanitized the result as one string, so the 64 KB per-string cap cut
+any text transcript over 64 KB to its first 64 KB; only a `content_truncated`
+gap recorded it. The collector's rewrite guard compares text by prefix, so
+new activity past 64 KB was invisible: both versions truncated to the same
+bytes, and an appended section was never published. Each visible role section
+(a `user:`, `assistant:`, or `tool:` line with its continuation lines) is now
+sanitized on its own:
+- redaction, instruction stripping, and the 64 KB cap apply per message, as
+  they do to JSONL records;
+- sections are joined again in their original order, each line as it was, so
+  the handoff (`textSectionPrefixes`) and the rewrite guard read the text
+  back unchanged;
+- hidden sections stay omitted;
+- each gap is recorded once (filter 6 added one `hidden_instruction_omitted`
+  per hidden section).
+
+**Separate 2 MB cap.** `FilterText` refused any text transcript over 2 MB
+with a `FilterError`, reported on every pass. It is now bounded by
+`archive.MaxRecordBytes`, and over it fails with `ErrRecordTooLarge`. The
+collector's text fallback checks the file against its own `recordLimit` and
+maps that error. Both become the existing `record_size_limit` gap: recorded
+once, the last published snapshot kept, cleared when the file changes, with
+`status` showing it and `sync` exiting 0. With the defaults the transcript
+size check sees such a file first and records `transcript_too_large`.
+
+**Versions.** Filtered text output changes, so `FilterVersion` goes from 6 to
+7 and `adapterVersion` from 0.6.0 to 0.7.0. JSONL output is byte-identical:
+D1's golden hashes still match every fixture.
+
+**Rewrite guard.** `nativeEvidenceExtends` still compares text by prefix.
+- A section appended to a transcript over 64 KB extends the published text
+  and publishes.
+- A truncated file is still a `transcript_rewritten` gap.
+- A still-growing last section keeps its sanitized prefix. When it passes
+  64 KB it stays truncated at the same 64 KB, and later sections follow it.
+
+Tests:
+- `internal/archive/text_limits_test.go`:
+  - a 5 MB transcript is retained in full with per-section redaction;
+  - one section over 64 KB is truncated with a `content_truncated` gap while
+    the others are intact and in order;
+  - exact line structure, with hidden sections omitted and one gap;
+  - the record limit, lowered in the test;
+  - a handoff over a 200-exchange text transcript reaches its last exchange
+    and "left off" point.
+- `internal/collector/text_limits_test.go`:
+  - an oversize text transcript blocks once, writes nothing on the next pass,
+    and clears on change;
+  - an appended section publishes, and truncation is a rewrite.
+
+  Both collector tests fail against `main`: the first because the oversize
+  transcript published, the second because the appended section was never
+  published.
+- The existing Cursor text and handoff golden tests pass unchanged.

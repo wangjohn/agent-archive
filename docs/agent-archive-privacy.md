@@ -7,6 +7,31 @@ native record, then text transcripts and supplemental evidence (source schema
 2). The line format changes how retained evidence is packaged, not what is
 retained: every line holds only what the source filter below kept.
 
+## Source filter version 7
+
+Filter 7 changes only how a Cursor plain-text transcript is filtered; JSONL
+output is byte-identical to filter 6. Older Cursor versions give the hook a
+plain-text transcript made of role sections: a `user:`, `assistant:`, or
+`tool:` line and the continuation lines under it.
+
+- **Sanitized per section.** Each visible section is sanitized on its own, so
+  injected-instruction stripping, credential redaction, and the 64 KB string
+  cap apply per message, as they do to a JSONL record. Filter 6 sanitized the
+  whole transcript as one string, so any transcript over 64 KB was cut to its
+  first 64 KB. A section over 64 KB is now truncated alone, with a
+  `content_truncated` gap, and every other section is kept.
+- **Structure kept.** Sections stay in their original order, each line as it
+  was, so the retained text is read back by the same role prefixes. Hidden
+  sections (`system:`, `developer:`, `thinking:`, `analysis:`) and their
+  continuation lines are still omitted.
+- **Gaps recorded once.** Each gap is recorded once per transcript. Filter 6
+  added a `hidden_instruction_omitted` gap for every hidden section.
+- **Size.** The transcript is bounded by the record size limit (64 MiB, the
+  collector's transcript cap) instead of 2 MB. Over the limit it is a
+  `record_size_limit` capture gap rather than a refusal on every pass.
+
+Every filter-6 rule below still applies.
+
 ## Source filter version 6
 
 Filter 6 is filter 5 plus two narrow retentions and one more injected block.
