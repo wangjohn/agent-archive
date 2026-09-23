@@ -688,22 +688,7 @@ func (s *LocalStore) LoadPublished(archiveSessionID string) (bundle archive.Sour
 	if readErr != nil {
 		return archive.SourceBundle{}, time.Time{}, "", false, fmt.Errorf("read published state %q: %w", archiveSessionID, readErr)
 	}
-	return currentSourceSchema(state.Bundle), state.PublishedAt, state.Status, true, nil
-}
-
-// currentSourceSchema treats a bundle cached before source schema 2 as a
-// schema-2 bundle. The in-memory bundle's shape did not change between the
-// two; only its uploaded encoding did (one JSON document became JSONL). So a
-// cached schema-1 bundle compares, re-derives metadata, and re-encodes exactly
-// as the current schema, instead of failing validation on every pass after an
-// upgrade. The object it was originally published as keeps its schema-1 key;
-// it is not rebuilt or read again, and whole-session expiry, which deletes
-// everything under the session's prefix, removes it.
-func currentSourceSchema(bundle archive.SourceBundle) archive.SourceBundle {
-	if bundle.SchemaVersion == 1 {
-		bundle.SchemaVersion = archive.SourceSchemaVersion
-	}
-	return bundle
+	return state.Bundle, state.PublishedAt, state.Status, true, nil
 }
 
 // LoadLastPublished returns the most recent bundle actually made discoverable
@@ -718,7 +703,7 @@ func (s *LocalStore) LoadLastPublished(archiveSessionID string) (bundle archive.
 		return archive.SourceBundle{}, time.Time{}, false, fmt.Errorf("read published state %q: %w", archiveSessionID, readErr)
 	}
 	bundle, publishedAt, found = state.resolveLastPublished()
-	return currentSourceSchema(bundle), publishedAt, found, nil
+	return bundle, publishedAt, found, nil
 }
 
 // PendingPublication is one fully rendered publication transaction. Source
@@ -761,9 +746,6 @@ func (s *LocalStore) LoadPending(id string) (PendingPublication, bool, error) {
 	if err != nil {
 		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, err)
 	}
-	// SourceBytes and SourceKey stay exactly as persisted: a publication
-	// rendered before an upgrade is retried byte for byte.
-	pending.Bundle = currentSourceSchema(pending.Bundle)
 	return pending, true, nil
 }
 

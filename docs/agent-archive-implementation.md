@@ -1406,14 +1406,16 @@ collide with the line's.
   them into the compressor. Output is deterministic and repeated builds are
   byte-identical, including re-encoding a decoded bundle.
 - `archive.DecodeSource(r, DecodeOptions, fn)` streams through a gzip reader
-  one line at a time with a per-line cap of 64 MiB plus 1 MiB and an optional
-  total cap. The 64 MiB is a local constant, `sourceRecordBytes`, until PR
-  D1's `archive.MaxRecordBytes` merges and replaces it. The header must be
-  first and appear once, kinds must be in order, counts must match, and every
-  line must end with a newline. A schema-1 document (with or without a
-  trailing newline), a truncated stream, an over-long line, or a count
-  mismatch each fail with a named error. `archive.ReadSourceBundle` assembles
-  a `SourceBundle` on top of it.
+  one line at a time with a per-line cap of `MaxSourceLineBytes`
+  (`archive.MaxRecordBytes` from PR D1, 64 MiB, plus 1 MiB of envelope) and
+  an optional total cap. The cap is inclusive on both sides: the encoder
+  writes a line of exactly that size and the decoder reads it. The header
+  must be first and appear once, kinds must be in order, counts must match,
+  every line must be a JSON object, and every line must end with a newline.
+  A schema-1 document (with or without a trailing newline), a truncated
+  stream, trailing bytes after the gzip stream, a non-object line, an
+  over-long line, or a count mismatch each fail with a named error.
+  `archive.ReadSourceBundle` assembles a `SourceBundle` on top of it.
 - `reader.LoadSource` verifies size and hash exactly as before, then decodes
   through `ReadSourceBundle`; the uncompressed read limit still applies.
   `show --normalized`, `handoff` (archived sessions, via `RefreshAndLoad`),
@@ -1423,15 +1425,14 @@ collide with the line's.
 - `SourceObjectKey` ends in `.jsonl.gz`. The collector's publication and
   superseded-key reconstruction, and retention, derive keys from it and need
   no other change.
-- Upgrade: the collector's local published cache and pending publications
-  hold the in-memory bundle, whose shape did not change. A bundle cached by a
-  schema-1 build is read as schema 2, so change detection, metadata, and
-  re-encoding keep working; without that, `publishPending` would fail
-  rebuilding the previous key on every pass after an upgrade. Such a session
-  keeps pointing at its schema-1 object, which the new reader refuses, until
-  its transcript changes and it republishes; the old object is then orphaned
-  (its superseded key is recomputed in the new format) and removed by
-  whole-session expiry, which deletes everything under the session prefix.
+- No upgrade path. The collector's local published cache and pending
+  publications carry the bundle's `schema_version`; a cache written by a
+  schema-1 build fails validation and is not silently reinterpreted. Review
+  removed a shim that re-labelled cached schema-1 bundles as schema 2: it
+  would have retried a pending schema-1 publication byte for byte (writing a
+  `.json.gz` object) and reconstructed superseded keys in the new suffix for
+  sessions whose stored object had the old one. This is a pre-launch format
+  switch; the one test install is reset instead.
 
 Memory, measured by `TestDecodeSourceStreamsWithBoundedMemory`: a synthetic
 bundle of 12,000 records, 37.1 MB uncompressed and 0.3 MB compressed,
@@ -1445,14 +1446,16 @@ Tests: `internal/archive/source_jsonl_test.go` (round trip of every fixture,
 including the handoff transcripts and a Cursor text bundle; byte-identical
 rebuilds; line layout; header not first, second header, fewer or more lines
 than counted, kinds out of order, unknown kind, invalid JSON, truncated
-gzip, missing final newline, not gzip, empty stream, over-long line, schema
-1 with and without a trailing newline, schema 3, and the total cap; callback
-errors stop the decode; bounded memory),
+gzip, missing final newline, not gzip, empty stream, trailing bytes after
+the gzip stream, non-object and blank lines, over-long line, schema 1 with
+and without a trailing newline, schema 3, and the total cap, including when
+it is hit mid-line; a line of exactly the cap decodes and one byte more does
+not; callback errors stop the decode; bounded memory; the normalized view of
+every fixture and the handoff golden document for each harness are identical
+whether the bundle came from memory or through the decoder) and
 `internal/reader/source_schema_test.go` (a schema-1 object with a valid hash
-is refused by name; the uncompressed limit still applies), and
-`internal/collector/source_schema_test.go` (a schema-1 cached bundle does not
-wedge publication, and the next change publishes a `.jsonl.gz` source).
-Existing tests use `SourceSchemaVersion` and `.jsonl.gz` keys.
+is refused by name; the uncompressed limit still applies). Existing tests use
+`SourceSchemaVersion` and `.jsonl.gz` keys.
 
 `schemas/source-bundle.schema.json` now describes one line (`oneOf` on
 `kind`) and states the ordering rules in its description.
