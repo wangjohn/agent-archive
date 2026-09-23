@@ -1353,3 +1353,38 @@ Tests:
   - the limiter passes content through unchanged across read sizes.
 - `internal/cli/record_limit_gap_test.go`: `status` shows the gap and no
   error.
+
+Review (Fable 5.1), all checks reproduced on the branch, no code change
+needed:
+- The golden hashes were regenerated independently from a clean copy of
+  `main`'s filter (`git archive origin/main`) with the same test and
+  fixture set: all 21 match, none is an error entry. No version constant
+  moved.
+- The memory measurement reproduced: 120 MiB peak heap above baseline and
+  160 MiB allocated for the 32 MiB record. Only one pass runs at a time
+  (`local.Lock` is a `flock` on `collector.lock`; a contended `sync` reports
+  busy), and `collector.Run` walks the registrations sequentially, so the
+  ceiling is per machine, not per session.
+- `filterTranscript` is the only transcript reader. The handoff code merged
+  in #12 stats the file for its mtime and reads the published bundle, so no
+  second path keeps the old 2 MB record cap. The remaining 2 MB constant,
+  `maxText` in `CursorAdapter.FilterText`, bounds a hook-provided Cursor
+  text transcript, not a JSONL record, and is unchanged.
+- `ErrRecordTooLarge` is a `FilterError`, so its `Error()` string carries
+  the "unsafe source format" prefix, but the collector maps it (and the
+  limiter's and the boundary scan's own errors) to the gap before anything
+  reaches `status` or `sync`; the prefix is never shown for it.
+- That the gap cannot trigger with the defaults is accepted: the transcript
+  limit equals the record limit, so a transcript the collector accepts
+  cannot hold a longer record, and a longer transcript is already the
+  `transcript_too_large` gap. The code path stays for a raised
+  `Options.MaxTranscriptBytes`.
+- Added tests: CRLF endings (a complete final record written up to its
+  carriage return is taken whole, as before), a file shorter than one chunk
+  with a partial final record, a file of only one incomplete line, a
+  trailing record of exactly the limit and one byte over, and
+  `TestCompleteJSONLBoundaryMatchesTheFixedTailRead`, which compares the
+  chunked scan with the old fixed-tail function (kept verbatim in the test)
+  on 400 random transcript tails; they agree on every input the old read
+  covered, and with a lowered limit they agree whenever the bytes after the
+  last newline fit, otherwise the scan reports `errRecordTooLarge`.

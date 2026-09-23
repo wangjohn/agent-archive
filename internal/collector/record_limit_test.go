@@ -139,7 +139,18 @@ func TestCompleteJSONLBoundaryScansBackwardInChunks(t *testing.T) {
 		{"last newline several chunks back", record(10) + "\n" + partial(5*boundaryChunk+17), 1 << 20,
 			func(c string) int64 { return int64(strings.LastIndexByte(c, '\n') + 1) }, nil},
 		{"no newline at all", record(10), 1 << 20, func(c string) int64 { return int64(len(c)) }, nil},
+		{"only one incomplete line, shorter than a chunk", partial(10), 1 << 20, func(c string) int64 { return int64(len(c)) }, nil},
+		{"partial final record, file shorter than a chunk", record(10) + "\n" + partial(10), 1 << 20,
+			func(c string) int64 { return int64(strings.LastIndexByte(c, '\n') + 1) }, nil},
+		{"CRLF, ends with a newline", record(10) + "\r\n" + record(10) + "\r\n", 1 << 20, func(c string) int64 { return int64(len(c)) }, nil},
+		{"CRLF, partial final record longer than a chunk", record(10) + "\r\n" + partial(3*boundaryChunk), 1 << 20,
+			func(c string) int64 { return int64(strings.LastIndexByte(c, '\n') + 1) }, nil},
+		{"CRLF, final record written up to its carriage return", record(10) + "\r\n" + record(10) + "\r", 1 << 20,
+			func(c string) int64 { return int64(len(c)) }, nil},
+		{"trailing record of exactly the limit", record(10) + "\n" + strings.Repeat("y", 200<<10), 200 << 10,
+			func(c string) int64 { return int64(strings.LastIndexByte(c, '\n') + 1) }, nil},
 		{"trailing record over the limit", record(10) + "\n" + partial(300<<10), 200 << 10, nil, errRecordTooLarge},
+		{"trailing record one byte over the limit", record(10) + "\n" + strings.Repeat("y", 200<<10+1), 200 << 10, nil, errRecordTooLarge},
 		{"single record over the limit", partial(300 << 10), 200 << 10, nil, errRecordTooLarge},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
