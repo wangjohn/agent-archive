@@ -1267,3 +1267,89 @@ with it. The one weaker answer came from a Cursor handoff, where no tool
 results are recorded; both receivers asked to check the file on disk first,
 as the preamble instructs.
 
+
+## PR D1 — Record size limit
+
+**Observed.** The largest local Claude Code transcript (10.4 MB) was refused
+whole. Three of its records are 1.8, 2.0, and 2.3 MB, almost all of it in
+`toolUseResult`, which the filter drops (about 40 KB each after filtering).
+`filterJSONL`'s scanner stopped at 2 MB per record, so the session failed as
+an unsafe source format on every collector pass.
+
+**Limit.** `archive.MaxRecordBytes` is 64 MiB, the scanner's maximum record.
+The collector's `DefaultMaxTranscriptBytes` is defined from it, so the two
+cannot drift: any record inside an accepted transcript can be read. The
+buffer holds a record plus its newline, so a record of exactly the limit is
+read. The initial buffer is capped at the limit too, because
+`bufio.Scanner` honours the larger of its maximum and the initial buffer's
+capacity; the lowered test limit exposed this. A longer record fails with
+`archive.ErrRecordTooLarge`.
+
+**Boundary.** `completeJSONLBoundary` read a fixed 2 MB tail on every pass.
+- When the transcript ends in a newline, the ordinary case, it now reads one
+  byte.
+- Otherwise it scans backward in 64 KiB chunks for the last newline, never
+  further than the record limit.
+- Its rules are otherwise unchanged:
+  - trailing bytes that are valid JSON are a complete final record;
+  - anything else is still being written, and the boundary is the newline;
+  - a file with no newline is taken whole.
+
+**Oversize record.** One record over the limit is a capture gap, not a
+per-pass failure. The collector checks line lengths itself as the filter
+reads, using `recordLimitReader`: one byte scan, no allocation. It maps that
+check, the boundary check, or `ErrRecordTooLarge` to
+`BlockedReasonRecordTooLarge` (gap `record_size_limit`). As with an oversize
+transcript, the gap is recorded once, the last published snapshot is kept,
+and the block clears when the transcript changes. `status` explains it, and
+`sync` exits 0.
+
+With the defaults this cannot trigger. Record and transcript limits are
+equal, so a transcript containing such a record is already refused whole as
+`transcript_too_large`. It applies when `Options.MaxTranscriptBytes` is
+raised above the record limit; tests lower the collector's unexported
+`recordLimit` to reach it.
+
+**Memory ceiling.** Reading one record holds it in the scanner's buffer and
+again as the decoded JSON value: the bulk of a dropped field is still
+decoded into a Go string before the filter discards it.
+`TestLargeRecordMemoryCeiling` measures a synthetic 32 MiB record whose bulk
+is `toolUseResult`:
+- peak heap in use is about 128 MiB above baseline (sampled every
+  millisecond; 120–128 MiB over repeated runs);
+- 160 MiB is allocated in total;
+- 358 bytes are retained.
+
+A one-off run at 63 MiB, just under the limit, peaked at about 175 MiB and
+allocated 191 MiB. That is less than linear, because the scanner buffer is
+capped at the limit instead of doubling past it. So the ceiling for one
+record at the limit is roughly 3× its size.
+
+`filterJSONL`'s blank-line check now uses `bytes.TrimSpace(line)` instead of
+`strings.TrimSpace(string(line))`: the same test without copying the record,
+which saved 32 MiB of the 32 MiB case. Skipping the decode of dropped keys
+would need a streaming decoder that keeps the output byte-identical; it was
+not cheap, and it is not done.
+
+**No version bump.** `internal/archive/testdata/filter-golden.json` pins the
+SHA-256 of every fixture's complete `FilteredTranscript`. The golden file was
+generated from `main`'s filter and committed before the change, and every
+hash is unchanged after it. `FilterVersion`, `adapterVersion`, and
+`DefaultParserVersion` are untouched.
+
+Tests:
+- `internal/archive/record_limit_test.go`:
+  - a 5 MB `toolUseResult` record filters and keeps only allowed fields;
+  - at a lowered limit, a record of exactly the limit is read (with or
+    without its newline) and one over it fails with `ErrRecordTooLarge`;
+  - the memory measurement.
+- `internal/collector/record_limit_test.go`:
+  - the 5 MB record publishes without the field;
+  - an oversize record, mid-file or trailing, blocks once, writes nothing on
+    the next pass, and clears when the file changes;
+  - boundary detection across chunk boundaries (a partial or complete final
+    record longer than a chunk, a newline several chunks back, no newline,
+    over the limit), with the normal case reading one byte;
+  - the limiter passes content through unchanged across read sizes.
+- `internal/cli/record_limit_gap_test.go`: `status` shows the gap and no
+  error.
