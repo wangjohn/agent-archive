@@ -22,8 +22,11 @@ const (
 	// compact_boundary system record (type, subtype, ids, timestamp only) and
 	// the isCompactSummary and isVisibleInTranscriptOnly flags, as booleans.
 	// Filter 6 retains Claude Code's origin (as {kind}) and promptSource.
-	// See docs/agent-archive-privacy.md.
-	FilterVersion = "6"
+	// Filter 7 sanitizes a Cursor text transcript per role section, so the
+	// 64 KB cap applies per message instead of truncating the whole
+	// transcript, and bounds it by MaxRecordBytes instead of 2 MB. JSONL
+	// output is unchanged. See docs/agent-archive-privacy.md.
+	FilterVersion = "7"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
