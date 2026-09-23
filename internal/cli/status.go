@@ -182,8 +182,11 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 // is the one reason that can end on its own, so it does not borrow the
 // permanent wording the other reasons need.
 func blockedReasonDetail(reason collector.BlockedReason) string {
-	if reason == collector.BlockedReasonTranscriptMissing {
+	switch reason {
+	case collector.BlockedReasonTranscriptMissing:
 		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
+	case collector.BlockedReasonRecordTooLarge:
+		return fmt.Sprintf("One record in the transcript is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
 }

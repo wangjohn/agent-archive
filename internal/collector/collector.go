@@ -51,7 +51,13 @@ type Options struct {
 
 // DefaultMaxTranscriptBytes is the transcript size ceiling when
 // Options.MaxTranscriptBytes is zero.
-const DefaultMaxTranscriptBytes int64 = 64 * 1024 * 1024
+// It is defined from archive.MaxRecordBytes so the two cannot drift: any
+// record inside a transcript the collector accepts can be read.
+const DefaultMaxTranscriptBytes int64 = archive.MaxRecordBytes
+
+// recordLimit is the largest single transcript record the collector reads,
+// archive.MaxRecordBytes; a variable only so a test can lower it.
+var recordLimit int64 = archive.MaxRecordBytes
 
 func (o Options) maxTranscriptBytes() int64 {
 	if o.MaxTranscriptBytes > 0 {
@@ -332,6 +338,11 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 			// The file will not shrink by retrying: record the gap once and
 			// keep the last published snapshot instead of failing every pass.
 			return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonTranscriptTooLarge, nil)
+		}
+		if errors.Is(err, errRecordTooLarge) {
+			// Likewise one record too long to read: a gap recorded once, the
+			// last published snapshot kept, cleared when the file changes.
+			return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonRecordTooLarge, nil)
 		}
 		if errors.Is(err, os.ErrNotExist) {
 			// The application deleted its own transcript. Retention keeps
@@ -676,6 +687,12 @@ func publishPending(ctx context.Context, local *LocalStore, store storage.Object
 // an error wrapping errTranscriptTooLarge.
 var errTranscriptTooLarge = errors.New("transcript exceeds collection limit")
 
+// errRecordTooLarge means one record of the transcript is longer than
+// recordLimit. With the defaults it cannot occur, since a transcript over the
+// same limit is refused whole first; it can when Options.MaxTranscriptBytes
+// is raised above archive.MaxRecordBytes.
+var errRecordTooLarge = errors.New("transcript record exceeds the record size limit")
+
 // transcriptFileInfo is the identity of the exact file bytes one scan read:
 // its size and its modification time at nanosecond resolution. Second
 // resolution would not be enough, because an application can rewrite a
@@ -710,13 +727,20 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	if boundary < 0 {
 		return archive.FilteredTranscript{}, stat, errors.New("transcript has invalid size")
 	}
-	jsonBoundary, err := completeJSONLBoundary(file, boundary)
+	jsonBoundary, err := completeJSONLBoundary(file, boundary, recordLimit)
+	if errors.Is(err, errRecordTooLarge) {
+		return archive.FilteredTranscript{}, stat, err
+	}
 	if err != nil {
 		return archive.FilteredTranscript{}, stat, fmt.Errorf("find complete transcript boundary: %w", err)
 	}
-	filtered, err := adapter.FilterJSONL(io.NewSectionReader(file, 0, jsonBoundary))
+	limited := &recordLimitReader{r: io.NewSectionReader(file, 0, jsonBoundary), limit: recordLimit}
+	filtered, err := adapter.FilterJSONL(limited)
 	if err == nil {
 		return filtered, stat, nil
+	}
+	if limited.exceeded || errors.Is(err, archive.ErrRecordTooLarge) {
+		return archive.FilteredTranscript{}, stat, errRecordTooLarge
 	}
 	cursorAdapter, ok := adapter.(archive.CursorAdapter)
 	if !ok || !errors.Is(err, archive.ErrUnsafeSourceFormat) {
@@ -726,26 +750,98 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	return filtered, stat, err
 }
 
-// completeJSONLBoundary ignores a final record while the harness is still
-// writing it. The file size was fixed by the caller before this check, and the
-// two-megabyte tail bound matches the adapter's maximum record size.
-func completeJSONLBoundary(file *os.File, boundary int64) (int64, error) {
-	if boundary == 0 {
+// boundaryChunk is how much of the transcript completeJSONLBoundary reads at a
+// time while it looks backward for the last newline.
+const boundaryChunk = 64 * 1024
+
+// completeJSONLBoundary returns the offset just past the transcript's last
+// complete record, so a final record the harness is still writing is ignored.
+// size was fixed by the caller before this check.
+//
+// A transcript that ends in a newline, the ordinary case, costs a one-byte
+// read. Otherwise it scans backward from the end in boundaryChunk pieces for
+// the last newline, never further back than limit+1 bytes: a trailing record
+// that long cannot be read, and errRecordTooLarge says so. The trailing bytes
+// after that newline are a complete record when they are valid JSON (a final
+// record written without its newline); otherwise they are still being written
+// and the boundary is the newline. A transcript with no newline at all is
+// taken whole, as before.
+func completeJSONLBoundary(file io.ReaderAt, size, limit int64) (int64, error) {
+	if size <= 0 {
 		return 0, nil
 	}
-	const maxRecordBytes int64 = 2 * 1024 * 1024
-	start := boundary - min(boundary, maxRecordBytes+1)
-	tail := make([]byte, boundary-start)
-	if _, err := file.ReadAt(tail, start); err != nil && !errors.Is(err, io.EOF) {
+	var last [1]byte
+	if _, err := file.ReadAt(last[:], size-1); err != nil && !errors.Is(err, io.EOF) {
 		return 0, err
 	}
-	if tail[len(tail)-1] == '\n' || json.Valid(bytes.TrimSpace(tail[bytes.LastIndexByte(tail, '\n')+1:])) {
-		return boundary, nil
+	if last[0] == '\n' {
+		return size, nil
 	}
-	if lastNewline := bytes.LastIndexByte(tail, '\n'); lastNewline >= 0 {
-		return start + int64(lastNewline) + 1, nil
+	// The earliest offset a newline may have for the record after it to fit.
+	floor := max(0, size-limit-1)
+	newline := int64(-1)
+	chunk := make([]byte, boundaryChunk)
+	for end := size; end > floor && newline < 0; {
+		start := max(floor, end-boundaryChunk)
+		buf := chunk[:end-start]
+		if _, err := file.ReadAt(buf, start); err != nil && !errors.Is(err, io.EOF) {
+			return 0, err
+		}
+		if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
+			newline = start + int64(i)
+		}
+		end = start
 	}
-	return boundary, nil
+	if newline < 0 {
+		if size > limit {
+			return 0, errRecordTooLarge
+		}
+		return size, nil
+	}
+	trailing := make([]byte, size-newline-1)
+	if _, err := file.ReadAt(trailing, newline+1); err != nil && !errors.Is(err, io.EOF) {
+		return 0, err
+	}
+	if json.Valid(bytes.TrimSpace(trailing)) {
+		return size, nil
+	}
+	return newline + 1, nil
+}
+
+// recordLimitReader passes a transcript through unchanged while checking that
+// no line is longer than limit. The collector sets the limit, not the adapter,
+// so the policy (block the session with a capture gap) stays with the
+// collector; exceeded tells the caller that a failed filter was this. It adds
+// one byte scan over data the filter reads anyway, and no allocation.
+type recordLimitReader struct {
+	r        io.Reader
+	limit    int64
+	line     int64
+	exceeded bool
+}
+
+func (l *recordLimitReader) Read(p []byte) (int, error) {
+	if l.exceeded {
+		return 0, errRecordTooLarge
+	}
+	n, err := l.r.Read(p)
+	for data := p[:n]; len(data) > 0; {
+		i := bytes.IndexByte(data, '\n')
+		if i < 0 {
+			l.line += int64(len(data))
+			break
+		}
+		if l.line+int64(i) > l.limit {
+			l.exceeded = true
+			return 0, errRecordTooLarge
+		}
+		l.line, data = 0, data[i+1:]
+	}
+	if l.line > l.limit {
+		l.exceeded = true
+		return 0, errRecordTooLarge
+	}
+	return n, err
 }
 
 // bundleEvidenceEqual reports whether two source bundles carry the same
