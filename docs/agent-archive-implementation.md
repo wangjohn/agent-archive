@@ -1267,3 +1267,73 @@ with it. The one weaker answer came from a Cursor handoff, where no tool
 results are recorded; both receivers asked to check the file on disk first,
 as the preamble instructs.
 
+## PR D2 — JSONL source bundles
+
+`SourceSchemaVersion` is `2`. Filter, adapter, and parser versions are
+unchanged. Pre-launch format change, so there is no reader for the old one.
+
+A source bundle is now `sessions/<harness>/<id>/source.<sha256>.jsonl.gz`,
+gzip of newline-delimited JSON with a `kind` on every line: one `header`
+(envelope and the count of each following kind), then `native_record` lines
+in source order, then `native_text`, then `supplemental_evidence`. Evidence
+is nested under `evidence` rather than flattened as the spec sketched,
+because evidence has its own `kind` field (`skill_inventory`, ...) that would
+collide with the line's.
+
+- `archive.EncodeSource` writes the lines; `BuildCompressedSource` streams
+  them into the compressor. Output is deterministic and repeated builds are
+  byte-identical, including re-encoding a decoded bundle.
+- `archive.DecodeSource(r, DecodeOptions, fn)` streams through a gzip reader
+  one line at a time with a per-line cap of 64 MiB plus 1 MiB and an optional
+  total cap. The 64 MiB is a local constant, `sourceRecordBytes`, until PR
+  D1's `archive.MaxRecordBytes` merges and replaces it. The header must be
+  first and appear once, kinds must be in order, counts must match, and every
+  line must end with a newline. A schema-1 document (with or without a
+  trailing newline), a truncated stream, an over-long line, or a count
+  mismatch each fail with a named error. `archive.ReadSourceBundle` assembles
+  a `SourceBundle` on top of it.
+- `reader.LoadSource` verifies size and hash exactly as before, then decodes
+  through `ReadSourceBundle`; the uncompressed read limit still applies.
+  `show --normalized`, `handoff` (archived sessions, via `RefreshAndLoad`),
+  and read-back verification all use it. `handoff`'s local path builds its
+  bundle in memory with `NewSourceBundle` and never encodes or decodes one,
+  so it needed no change; its golden files are unchanged.
+- `SourceObjectKey` ends in `.jsonl.gz`. The collector's publication and
+  superseded-key reconstruction, and retention, derive keys from it and need
+  no other change.
+- Upgrade: the collector's local published cache and pending publications
+  hold the in-memory bundle, whose shape did not change. A bundle cached by a
+  schema-1 build is read as schema 2, so change detection, metadata, and
+  re-encoding keep working; without that, `publishPending` would fail
+  rebuilding the previous key on every pass after an upgrade. Such a session
+  keeps pointing at its schema-1 object, which the new reader refuses, until
+  its transcript changes and it republishes; the old object is then orphaned
+  (its superseded key is recomputed in the new format) and removed by
+  whole-session expiry, which deletes everything under the session prefix.
+
+Memory, measured by `TestDecodeSourceStreamsWithBoundedMemory`: a synthetic
+bundle of 12,000 records, 37.1 MB uncompressed and 0.3 MB compressed,
+decoded with peak heap growth of about 3.1 MB (8.5% of the uncompressed
+size). The test fails if growth exceeds a quarter of the uncompressed size.
+`ReadSourceBundle` still assembles every record, so callers that need the
+whole bundle (the normalized view, handoff) remain proportional to it; the
+decompressed document itself is no longer held.
+
+Tests: `internal/archive/source_jsonl_test.go` (round trip of every fixture,
+including the handoff transcripts and a Cursor text bundle; byte-identical
+rebuilds; line layout; header not first, second header, fewer or more lines
+than counted, kinds out of order, unknown kind, invalid JSON, truncated
+gzip, missing final newline, not gzip, empty stream, over-long line, schema
+1 with and without a trailing newline, schema 3, and the total cap; callback
+errors stop the decode; bounded memory),
+`internal/reader/source_schema_test.go` (a schema-1 object with a valid hash
+is refused by name; the uncompressed limit still applies), and
+`internal/collector/source_schema_test.go` (a schema-1 cached bundle does not
+wedge publication, and the next change publishes a `.jsonl.gz` source).
+Existing tests use `SourceSchemaVersion` and `.jsonl.gz` keys.
+
+`schemas/source-bundle.schema.json` now describes one line (`oneOf` on
+`kind`) and states the ordering rules in its description.
+`docs/agent-run-archive-spec.md`, `docs/agent-archive-privacy.md`, and
+`docs/install.md` describe the new file and format.
+

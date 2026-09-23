@@ -1,5 +1,12 @@
 # Privacy
 
+What leaves this machine for a session is its metadata sidecar and its
+filtered source bundle, `sessions/<harness>/<id>/source.<sha256>.jsonl.gz`:
+gzip of newline-delimited JSON with a header line, one line per retained
+native record, then text transcripts and supplemental evidence (source schema
+2). The line format changes how retained evidence is packaged, not what is
+retained: every line holds only what the source filter below kept.
+
 ## Source filter version 6
 
 Filter 6 is filter 5 plus two narrow retentions and one more injected block.

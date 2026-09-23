@@ -224,7 +224,14 @@ bundle or its hash.
 `show` prints conversation content only when asked: `--normalized`
 downloads the session's source bundle, verifies its checksum and identity
 against the metadata, and prints the normalized view (turns, tool calls,
-and hook-reported final messages) after the sidecar. If the same session
+and hook-reported final messages) after the sidecar. A source bundle is
+stored as `sessions/<harness>/<id>/source.<sha256>.jsonl.gz`, gzip of
+newline-delimited JSON (source schema 2), and is read one line at a time. A
+bundle written by a pre-release build as a single JSON document
+(`source.<sha256>.json.gz`, schema 1) is not read: `show --normalized`, and
+`handoff` when it reads the session from the archive rather than from this
+Mac's transcript, report "unsupported source schema version 1" for it until
+the session's transcript changes and the collector publishes it again. If the same session
 ID was somehow published under more than one harness, pass `--harness` to
 pick one. Both commands print `Not set up.` and exit 0 before setup has run,
 the same as `status`.

@@ -1,15 +1,70 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/wangjohn/agent-archive/schemas/source-bundle.schema.json",
-  "title": "Agent Archive filtered source bundle",
+  "title": "Agent Archive filtered source bundle line (schema 2)",
+  "description": "A source bundle is stored as source.<sha256>.jsonl.gz: gzip of newline-delimited JSON, where <sha256> is the SHA-256 of the exact compressed bytes. This schema describes one line; every line is exactly one object and ends with a newline. Ordering rules, which a line-level schema cannot express: the first line is the only 'header' line; then every 'native_record' line, in native source order; then every 'native_text' line; then every 'supplemental_evidence' line. The header's counts equal the number of lines of each kind that follow it. A line may be at most 64 MiB plus 1 MiB of envelope. Serialization is deterministic (fixed field order, sorted object keys, fixed gzip header), so identical evidence yields identical bytes. Schema 1, a single JSON document stored as source.<sha256>.json.gz, is not read.",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["schema_version", "archive_session_id", "native_session_id", "project_id", "capture", "native_records"],
-  "properties": {
-    "schema_version": {"const": 1},
-    "archive_session_id": {"type": "string", "minLength": 1},
-    "native_session_id": {"type": "string", "minLength": 1},
-    "project_id": {"type": "string", "minLength": 1},
+  "required": ["kind"],
+  "oneOf": [
+    {"$ref": "#/$defs/header_line"},
+    {"$ref": "#/$defs/native_record_line"},
+    {"$ref": "#/$defs/native_text_line"},
+    {"$ref": "#/$defs/supplemental_evidence_line"}
+  ],
+  "$defs": {
+    "header_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "schema_version", "archive_session_id", "native_session_id", "project_id", "capture", "counts"],
+      "properties": {
+        "kind": {"const": "header"},
+        "schema_version": {"const": 2},
+        "archive_session_id": {"type": "string", "minLength": 1},
+        "native_session_id": {"type": "string", "minLength": 1},
+        "project_id": {"type": "string", "minLength": 1},
+        "capture": {"$ref": "#/$defs/capture"},
+        "parent_session_id": {"type": "string", "minLength": 1},
+        "linked_sessions": {"type": "array", "items": {"$ref": "#/$defs/linked_session"}},
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["native_records", "native_text", "supplemental_evidence"],
+          "properties": {
+            "native_records": {"type": "integer", "minimum": 0},
+            "native_text": {"type": "integer", "minimum": 0},
+            "supplemental_evidence": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    "native_record_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "record"],
+      "properties": {
+        "kind": {"const": "native_record"},
+        "record": {"type": "object", "minProperties": 1, "description": "One filtered native record, keeping the harness's own field names and structure."}
+      }
+    },
+    "native_text_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "format", "content"],
+      "properties": {
+        "kind": {"const": "native_text"},
+        "format": {"type": "string"},
+        "content": {"type": "string"}
+      }
+    },
+    "supplemental_evidence_line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "evidence"],
+      "properties": {
+        "kind": {"const": "supplemental_evidence"},
+        "evidence": {"$ref": "#/$defs/supplemental", "description": "Nested because evidence has its own 'kind' (skill_inventory, final_response, ...)."}
+      }
+    },
     "capture": {
       "type": "object",
       "additionalProperties": false,
@@ -25,13 +80,6 @@
         "gaps": {"type": "array", "items": {"$ref": "#/$defs/gap"}}
       }
     },
-    "native_records": {"type": "array", "items": {"type": "object"}},
-    "native_text": {"type": "array", "items": {"type":"object", "additionalProperties":false, "required":["format","content"], "properties":{"format":{"type":"string"},"content":{"type":"string"}}}},
-    "supplemental_evidence": {"type": "array", "items": {"$ref": "#/$defs/supplemental"}},
-    "parent_session_id": {"type": "string", "minLength": 1},
-    "linked_sessions": {"type": "array", "items": {"$ref": "#/$defs/linked_session"}}
-  },
-  "$defs": {
     "harness": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string"}, "version": {"type": "string"}, "mode": {"type": "string"}}},
     "boundary": {"type": "object", "additionalProperties": false, "required": ["retained_records", "retained_bytes"], "properties": {"retained_records": {"type": "integer", "minimum": 0}, "retained_bytes": {"type": "integer", "minimum": 0}}},
     "gap": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}, "record": {"type": "integer", "minimum": 1}, "detail": {"type": "string", "description": "Archive-authored description of the omission. Never a transcript value. From filter version 3 the single unknown_field_omitted gap carries the distinct omitted key names, sorted and capped, as 'omitted keys: a, b, c'."}}},
