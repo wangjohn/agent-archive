@@ -80,7 +80,14 @@ func TestFilterV9RedactsCredentialAssignments(t *testing.T) {
 		{"glued after two markers", "api_key=[REDACTED][REDACTED]realsecret", "api_key=[REDACTED]"},
 		{"glued bracket group", "password=[REDACTED][a,b]realsecret", "password=[REDACTED]"},
 		{"quoted value cut off after a backslash", `PASSWD=="0\`, `PASSWD=="[REDACTED]`},
-		{"quoted value after equals with a glued tail", `.PWD=='0'0`, `.PWD=='[REDACTED]'0`},
+		// Filter 10: what a shell glues onto a quoted value is part of it.
+		{"quoted value after equals with a glued tail", `.PWD=='0'0`, `.PWD=='[REDACTED]'`},
+		{"text glued after a closing quote", `PASSWORD="abc"realsecret`, `PASSWORD="[REDACTED]"`},
+		{"quoted segments glued together", `export TOKEN='abc'"def"ghi && make`, `export TOKEN='[REDACTED]' && make`},
+		{"glued tail stops at shell punctuation", `API_KEY="abc"secret|tee log`, `API_KEY="[REDACTED]"|tee log`},
+		{"closing brace is not glued", `{"password":"abc"}`, `{"password":"[REDACTED]"}`},
+		{"closing bracket is not glued", `["TOKEN='abc'x"]`, `["TOKEN='[REDACTED]'"]`},
+		{"flag value with a glued tail", `mysql --password 'abc'def -u root`, `mysql --password '[REDACTED]' -u root`},
 		// A single bracketed token is a value.
 		{"bracketed value", "password=[hunter2]", "password=[REDACTED]"},
 		{"braced value", "token={abc123def}", "token=[REDACTED]"},

@@ -1,38 +1,92 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/wangjohn/agent-archive/schemas/source-bundle.schema.json",
+  "$id": "https://raw.githubusercontent.com/wangjohn/agent-archive/main/schemas/source-bundle.schema.json",
   "title": "Agent Archive filtered source bundle line (schema 2)",
   "description": "A source bundle is stored as source.<sha256>.jsonl.gz: gzip of newline-delimited JSON, where <sha256> is the SHA-256 of the exact compressed bytes. This schema describes one line; every line is exactly one object and ends with a newline. Ordering rules, which a line-level schema cannot express: the first line is the only 'header' line; then every 'native_record' line, in native source order; then every 'native_text' line; then every 'supplemental_evidence' line. The header's counts equal the number of lines of each kind that follow it. A line may be at most 64 MiB plus 1 MiB of envelope. Serialization is deterministic (fixed field order, sorted object keys, fixed gzip header), so identical evidence yields identical bytes. Schema 1, a single JSON document stored as source.<sha256>.json.gz, is not read.",
   "type": "object",
-  "required": ["kind"],
+  "required": [
+    "kind"
+  ],
   "oneOf": [
-    {"$ref": "#/$defs/header_line"},
-    {"$ref": "#/$defs/native_record_line"},
-    {"$ref": "#/$defs/native_text_line"},
-    {"$ref": "#/$defs/supplemental_evidence_line"}
+    {
+      "$ref": "#/$defs/header_line"
+    },
+    {
+      "$ref": "#/$defs/native_record_line"
+    },
+    {
+      "$ref": "#/$defs/native_text_line"
+    },
+    {
+      "$ref": "#/$defs/supplemental_evidence_line"
+    }
   ],
   "$defs": {
     "header_line": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "schema_version", "archive_session_id", "native_session_id", "project_id", "capture", "counts"],
+      "required": [
+        "kind",
+        "schema_version",
+        "archive_session_id",
+        "native_session_id",
+        "project_id",
+        "capture",
+        "counts"
+      ],
       "properties": {
-        "kind": {"const": "header"},
-        "schema_version": {"const": 2},
-        "archive_session_id": {"type": "string", "minLength": 1},
-        "native_session_id": {"type": "string", "minLength": 1},
-        "project_id": {"type": "string", "minLength": 1},
-        "capture": {"$ref": "#/$defs/capture"},
-        "parent_session_id": {"type": "string", "minLength": 1},
-        "linked_sessions": {"type": "array", "items": {"$ref": "#/$defs/linked_session"}},
+        "kind": {
+          "const": "header"
+        },
+        "schema_version": {
+          "const": 2
+        },
+        "archive_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "native_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capture": {
+          "$ref": "#/$defs/capture"
+        },
+        "parent_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "linked_sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/linked_session"
+          }
+        },
         "counts": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["native_records", "native_text", "supplemental_evidence"],
+          "required": [
+            "native_records",
+            "native_text",
+            "supplemental_evidence"
+          ],
           "properties": {
-            "native_records": {"type": "integer", "minimum": 0},
-            "native_text": {"type": "integer", "minimum": 0},
-            "supplemental_evidence": {"type": "integer", "minimum": 0}
+            "native_records": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "native_text": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "supplemental_evidence": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         }
       }
@@ -40,50 +94,249 @@
     "native_record_line": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "record"],
+      "required": [
+        "kind",
+        "record"
+      ],
       "properties": {
-        "kind": {"const": "native_record"},
-        "record": {"type": "object", "minProperties": 1, "description": "One filtered native record, keeping the harness's own field names and structure."}
+        "kind": {
+          "const": "native_record"
+        },
+        "record": {
+          "type": "object",
+          "minProperties": 1,
+          "description": "One filtered native record, keeping the harness's own field names and structure."
+        }
       }
     },
     "native_text_line": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "format", "content"],
+      "required": [
+        "kind",
+        "format",
+        "content"
+      ],
       "properties": {
-        "kind": {"const": "native_text"},
-        "format": {"type": "string"},
-        "content": {"type": "string"}
+        "kind": {
+          "const": "native_text"
+        },
+        "format": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
       }
     },
     "supplemental_evidence_line": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "evidence"],
+      "required": [
+        "kind",
+        "evidence"
+      ],
       "properties": {
-        "kind": {"const": "supplemental_evidence"},
-        "evidence": {"$ref": "#/$defs/supplemental", "description": "Nested because evidence has its own 'kind' (skill_inventory, final_response, ...)."}
+        "kind": {
+          "const": "supplemental_evidence"
+        },
+        "evidence": {
+          "$ref": "#/$defs/supplemental",
+          "description": "Nested because evidence has its own 'kind' (skill_inventory, final_response, ...)."
+        }
       }
     },
     "capture": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["harness", "adapter_name", "adapter_version", "source_format", "boundary", "filter_version", "captured_at"],
+      "required": [
+        "harness",
+        "adapter_name",
+        "adapter_version",
+        "source_format",
+        "boundary",
+        "filter_version",
+        "captured_at"
+      ],
       "properties": {
-        "harness": {"$ref": "#/$defs/harness"},
-        "adapter_name": {"type": "string"},
-        "adapter_version": {"type": "string"},
-        "source_format": {"type": "string"},
-        "boundary": {"$ref": "#/$defs/boundary"},
-        "filter_version": {"type": "string"},
-        "captured_at": {"type": "string", "format": "date-time"},
-        "gaps": {"type": "array", "items": {"$ref": "#/$defs/gap"}}
+        "harness": {
+          "$ref": "#/$defs/harness"
+        },
+        "adapter_name": {
+          "type": "string"
+        },
+        "adapter_version": {
+          "type": "string"
+        },
+        "source_format": {
+          "type": "string"
+        },
+        "boundary": {
+          "$ref": "#/$defs/boundary"
+        },
+        "filter_version": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gap"
+          }
+        }
       }
     },
-    "harness": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string"}, "version": {"type": "string"}, "mode": {"type": "string"}}},
-    "boundary": {"type": "object", "additionalProperties": false, "required": ["retained_records", "retained_bytes"], "properties": {"retained_records": {"type": "integer", "minimum": 0}, "retained_bytes": {"type": "integer", "minimum": 0}}},
-    "gap": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {"code": {"type": "string"}, "record": {"type": "integer", "minimum": 1}, "detail": {"type": "string", "description": "Archive-authored description of the omission. Never a transcript value. From filter version 3 the single unknown_field_omitted gap carries the distinct omitted key names, sorted and capped, as 'omitted keys: a, b, c'."}}},
-    "supplemental": {"type": "object", "additionalProperties": false, "required": ["kind", "observed_at", "provenance", "payload"], "properties": {"kind": {"type": "string"}, "observed_at": {"type": "string", "format": "date-time"}, "provenance": {"type": "string"}, "payload": {"type": "object"}}},
-    "linked_session": {"type": "object", "additionalProperties": false, "required": ["session_id", "relationship", "status", "observed_at"], "properties": {"session_id": {"type": "string", "minLength": 1}, "relationship": {"const": "subagent"}, "status": {"enum": ["pending", "published", "unavailable"]}, "observed_at": {"type": "string", "format": "date-time"}}}
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        }
+      }
+    },
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retained_records",
+        "retained_bytes"
+      ],
+      "properties": {
+        "retained_records": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retained_bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "gap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/gap_code"
+        },
+        "record": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "detail": {
+          "type": "string",
+          "description": "Archive-authored description of the omission. Never a transcript value. From filter version 3 the single unknown_field_omitted gap carries the distinct omitted key names, sorted and capped, as 'omitted keys: a, b, c'."
+        }
+      }
+    },
+    "supplemental": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "observed_at",
+        "provenance",
+        "payload"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "provenance": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    "linked_session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_id",
+        "relationship",
+        "status",
+        "observed_at"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relationship": {
+          "const": "subagent"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "published",
+            "unavailable"
+          ]
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "gap_code": {
+      "description": "An archive-authored reason. The enum lists every code this version writes (internal/archive CaptureGapCodes; docs/agent-archive-privacy.md says what each means). A reader must accept any other lowercase code, which an older or newer writer may use.",
+      "anyOf": [
+        {
+          "enum": [
+            "binary_content_omitted",
+            "content_truncated",
+            "cursor_blob_content_unavailable",
+            "cursor_bubble_id_mismatch",
+            "cursor_bubble_missing",
+            "cursor_chat_rewritten",
+            "cursor_context_omitted",
+            "cursor_incomplete_tail_omitted",
+            "cursor_inline_conversation_omitted",
+            "cursor_message_type_unknown",
+            "cursor_tool_argument_omitted",
+            "hidden_instruction_omitted",
+            "hidden_or_unknown_nested_content_omitted",
+            "imported_without_hook_evidence",
+            "incomplete_or_invalid_record",
+            "record_without_allowed_fields_omitted",
+            "sensitive_content_redacted",
+            "sensitive_or_hidden_field_omitted",
+            "subagent_final_not_reconciled",
+            "subagent_identity_unavailable",
+            "supplemental_evidence_omitted",
+            "text_structure_partial",
+            "unknown_field_omitted",
+            "unknown_record_type",
+            "unsupported_value_omitted"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      ]
+    }
   }
 }

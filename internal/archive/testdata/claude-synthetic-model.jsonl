@@ -1,0 +1,4 @@
+{"type":"user","timestamp":"2026-09-24T10:00:00Z","uuid":"u1","message":{"role":"user","content":"summarize the change"}}
+{"type":"assistant","timestamp":"2026-09-24T10:00:05Z","uuid":"a1","message":{"id":"msg_1","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"It renames the flag."}],"usage":{"input_tokens":120,"output_tokens":30}}}
+{"type":"user","timestamp":"2026-09-24T10:01:00Z","uuid":"u2","message":{"role":"user","content":"and the tests?"}}
+{"type":"assistant","timestamp":"2026-09-24T10:01:01Z","uuid":"a2","message":{"id":"msg_2","role":"assistant","model":"<synthetic>","content":[{"type":"text","text":"No response requested."}],"usage":{"input_tokens":7,"output_tokens":7}}}
