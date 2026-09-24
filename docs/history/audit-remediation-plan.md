@@ -1,5 +1,7 @@
 # Agent Archive audit remediation plan
 
+> **Historical.** This is a working record kept for context; it is not maintained and parts of it are superseded. For current behavior see the [documentation index](../README.md).
+
 Prepared: 2026-09-21. Status: all eight implementation PRs open; combined automated verification passed. Live acceptance and explicit capability blockers remain. See [the acceptance record](remediation-acceptance.md) for PRs, evidence, and explicit external blockers.
 
 ## Scope and baseline

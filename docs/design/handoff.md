@@ -2,8 +2,9 @@
 
 Status: implemented (PRs H1–H3). Written 2026-09-22 from a probe of real
 Claude Code, Codex, and Cursor transcripts run through filter 3 / parser
-0.6.0. Depends on PR C1 (`fix/prompt-accuracy`, parser 0.7 / filter 4) being
-merged first; see [Sequencing](#sequencing).
+0.6.0; the versions named below are those of the time (see
+[versions](../reference/versions.md) for today's). How to use it:
+[handoff guide](../guides/handoff.md).
 
 ## Problem
 
@@ -79,7 +80,7 @@ Exit codes follow `show`: 0 success, 1 runtime failure, 2 usage error. When
 setup has never run, the command prints the shared `notSetUpMessage` to
 stderr and exits 1, except with `--file`, which needs no setup.
 
-Documented recipes (help text and `docs/getting-started/install.md`):
+Documented recipes (help text and `docs/guides/handoff.md`):
 
 ```sh
 # Continue in Claude Code what you started in Codex, same repo
@@ -435,7 +436,7 @@ adapter 0.6.0 / parser 0.9.0 (C4 took filter 5 / parser 0.8.0 first).
 | `internal/cli/uninstall.go` | add `handoffs` to `localStateEntries` so `--delete-local-data` removes it |
 | `internal/cli/cli.go` | `case "handoff"` dispatch |
 | `internal/cli/help.go` | `handoff` help entry and command-guide line |
-| `docs/getting-started/install.md`, `README.md` | command list and recipes |
+| `docs/guides/handoff.md`, `README.md` | command list and recipes |
 | `docs/reference/capture-capabilities.md` | per-harness handoff fidelity (Cursor: no tool results) |
 
 ## Tests

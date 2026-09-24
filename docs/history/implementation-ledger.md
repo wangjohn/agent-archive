@@ -1,5 +1,7 @@
 # Agent Archive implementation and verification ledger
 
+> **Historical.** This is a working record kept for context; it is not maintained and parts of it are superseded. For current behavior see the [documentation index](../README.md).
+
 ## Current remediation status
 
 See [the eight-PR acceptance record](remediation-acceptance.md)
@@ -1708,3 +1710,17 @@ real `HOME` and a sandboxed archive home reported the database checked with
 has a transcript file), and `ls -laT` of Cursor's `globalStorage` was
 identical before and after. The closed-Cursor path is covered by tests, not by
 a live run.
+
+## Backfill phase 2 and the review fixes (pointer)
+
+This ledger stops at backfill follow-up B. Later work is recorded in its pull
+requests rather than here:
+
+- Phase 2, Cursor database chats: #28 (destination IDs on registrations,
+  B1b), #29 (the `cursor-composer` adapter, filter 8 / adapter 0.8.0), #30
+  (the read-only Cursor database source), #31 (importing database-only chats).
+- The September 2026 staff review's fixes: #35 (privacy filter 9), #36
+  (collector durability), #37 (hook configuration safety), #38 (lint and
+  supply chain), #39 (CLI help consistency), #42 (backfill undo safety), and
+  the PRs after them. The [changelog](../../CHANGELOG.md) summarizes their
+  user-visible effects.

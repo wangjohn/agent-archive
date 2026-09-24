@@ -1,10 +1,10 @@
 # Private agent-run archive: product and engineering specification
 
-Status: proposed plan for review. This document describes the target design, not the current implementation.
+Status: design reference. This specification was written before the implementation, which now covers most of it; where they differ, the code and the [reference documentation](../README.md) describe current behavior. Remaining gaps are tracked in the [capture capabilities](../reference/capture-capabilities.md) record.
 
 ## Product purpose
 
-Collect private evidence of how coding agents perform, with and without skills, across Codex, Claude Code, and Cursor. Make it possible to compare skill versions, models, and harnesses without slowing down normal work or storing private history in this public repository.
+Collect private evidence of how coding agents perform, with and without skills, across Codex, Claude Code, and Cursor. Make it possible to compare skill versions, models, and harnesses without slowing down normal work or putting private history anywhere public.
 
 The archive answers questions such as:
 
@@ -434,7 +434,7 @@ Acceptance criteria:
 
 ## Existing implementation and migration
 
-The repository currently contains a Codex-only prototype using per-tool hooks, agent-reported skill markers, a local SQLite store, and per-run compressed bundles. That is not this target design.
+Before this design, a Codex-only prototype (in the agent-skills repository this CLI came from) used per-tool hooks, agent-reported skill markers, a local SQLite store, and per-run compressed bundles. That is not this design; setup retires it as described below.
 
 Migration must remove only the prototype's owned hooks, preserve unrelated hooks, retain existing private records, and replace the upload job deliberately. Existing records should retain their original schema and coverage labels; do not silently reinterpret them as complete session snapshots. No rollout or credential configuration is performed by committing this plan.
 

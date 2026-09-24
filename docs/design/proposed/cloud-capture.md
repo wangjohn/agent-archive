@@ -1,5 +1,7 @@
 # Cloud session capture: engineering specification
 
+> **Proposed.** Not implemented or scheduled. See the [documentation index](../../README.md) for what exists today.
+
 Status: proposed plan for review; not scheduled for implementation. Prepared 2026-09-24. This document describes a target design, not the current implementation. Claude Code on the web facts marked *verified* come from live probes on 2026-09-23 and 2026-09-24; everything else about vendor products comes from vendor documentation read on 2026-09-23 and is marked *documented* or *unknown*.
 
 ## Purpose

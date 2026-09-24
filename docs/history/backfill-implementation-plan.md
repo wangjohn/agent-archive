@@ -1,6 +1,8 @@
 # `agent-archive backfill` — implementation plan
 
-Status: in progress. This plan turns the [backfill spec](../design/backfill.md)
+> **Historical.** This is a working record kept for context; it is not maintained and parts of it are superseded. For current behavior see the [documentation index](../README.md).
+
+Status: complete (#17–#23, #28–#31). This plan turns the [backfill spec](../design/backfill.md)
 into work packages that separate agents can build and review. The spec is the
 source of truth for behaviour; this plan fixes ownership, contracts between
 packages, order, and the bar for "done". Where they disagree, the spec wins and
