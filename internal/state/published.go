@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -239,12 +240,22 @@ func (s *Store) publishedPath(archiveSessionID string) string {
 	return filepath.Join(s.home, "published", archiveSessionID+".json")
 }
 
+// publishedStateLoads counts LoadPublishedState calls; see PublishedStateLoads.
+var publishedStateLoads atomic.Int64
+
+// PublishedStateLoads reports how many times this process has read a
+// session's published state (LoadPublishedState, and every Store method
+// built on it). The file holds whole source bundles, so a collector scan
+// reads it once per session; tests use this count to keep it that way.
+func PublishedStateLoads() int64 { return publishedStateLoads.Load() }
+
 // LoadPublishedState reads a session's published state. A session with none
 // yet yields an empty one (Found reports false) that saves create.
 func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) {
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
+	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: archiveSessionID}
 	err := local.Read(s.publishedPath(archiveSessionID), &p.state)
 	switch {
