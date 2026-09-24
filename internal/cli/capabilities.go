@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -123,14 +125,108 @@ func captureCapabilityProfile(name string) captureCapabilities {
 
 func discoverApplications(userHome string) map[string]applicationDiscovery {
 	return map[string]applicationDiscovery{
-		"codex": discoverCommandVersion("codex", [][]string{
-			{"/Applications/Codex.app/Contents/Resources/codex", "--version"},
-			{filepath.Join(userHome, "Applications/Codex.app/Contents/Resources/codex"), "--version"},
-			{"codex", "--version"},
-		}),
-		"claude": discoverCommandVersion("claude", [][]string{{"claude", "--version"}}),
+		"codex":  discoverCommandVersion("codex", codexVersionCandidates(userHome)),
+		"claude": discoverCommandVersion("claude", claudeVersionCandidates(userHome)),
 		"cursor": discoverCursorVersion(userHome),
 	}
+}
+
+// codexVersionCandidates lists where a Codex CLI may be, standalone installs
+// first. The ChatGPT desktop app bundles its own copy, which may be the only
+// one on a machine that never installed the CLI.
+func codexVersionCandidates(userHome string) [][]string {
+	var candidates [][]string
+	for _, path := range []string{
+		"/Applications/Codex.app/Contents/Resources/codex",
+		filepath.Join(userHome, "Applications/Codex.app/Contents/Resources/codex"),
+		"codex",
+		"/Applications/ChatGPT.app/Contents/Resources/codex",
+		filepath.Join(userHome, "Applications/ChatGPT.app/Contents/Resources/codex"),
+	} {
+		candidates = append(candidates, []string{path, "--version"})
+	}
+	return candidates
+}
+
+// claudeVersionCandidates lists where a Claude Code CLI may be: PATH, the
+// native and legacy local install locations (setup may run with a minimal
+// PATH), then the copies the Claude desktop app keeps, newest first.
+//
+// A bundled copy is only a fallback: the version recorded from it may belong
+// to an older bundle (when the newest one does not answer) or differ from a
+// CLI installed off PATH that the hooks actually run. That affects only
+// whether status labels the installed version verified or unverified. The
+// same holds for the Codex copy inside ChatGPT.app.
+func claudeVersionCandidates(userHome string) [][]string {
+	paths := []string{
+		"claude",
+		filepath.Join(userHome, ".local/bin/claude"),
+		filepath.Join(userHome, ".claude/local/claude"),
+	}
+	paths = append(paths, claudeDesktopBundledCLIs(userHome)...)
+	candidates := make([][]string, len(paths))
+	for i, path := range paths {
+		candidates[i] = []string{path, "--version"}
+	}
+	return candidates
+}
+
+// versionDirPattern matches a directory named exactly for a version, such as
+// "2.1.280"; unlike versionPattern it does not find one inside other text,
+// so "backup-2.1.300" is not a version directory.
+var versionDirPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.-]+)?$`)
+
+// claudeDesktopBundledCLIs returns the Claude Code executables the Claude
+// desktop app keeps under one directory per version, newest version first.
+// Versions compare numerically, so 2.1.100 sorts above 2.1.99.
+func claudeDesktopBundledCLIs(userHome string) []string {
+	root := filepath.Join(userHome, "Library/Application Support/Claude/claude-code")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var versions []string
+	for _, entry := range entries {
+		if entry.IsDir() && versionDirPattern.MatchString(entry.Name()) {
+			versions = append(versions, entry.Name())
+		}
+	}
+	sort.SliceStable(versions, func(i, j int) bool { return compareDottedVersions(versions[i], versions[j]) > 0 })
+	paths := make([]string, len(versions))
+	for i, version := range versions {
+		paths[i] = filepath.Join(root, version, "claude.app/Contents/MacOS/claude")
+	}
+	return paths
+}
+
+// compareDottedVersions orders two versions by their numeric components,
+// returning -1, 0, or 1. A missing component counts as zero, and any
+// pre-release or build suffix is ignored.
+func compareDottedVersions(a, b string) int {
+	parts := func(value string) []string {
+		value = normalizedVersion(value)
+		if i := strings.IndexAny(value, "-+"); i >= 0 {
+			value = value[:i]
+		}
+		return strings.Split(value, ".")
+	}
+	left, right := parts(a), parts(b)
+	for i := 0; i < len(left) || i < len(right); i++ {
+		var l, r int
+		if i < len(left) {
+			l, _ = strconv.Atoi(left[i])
+		}
+		if i < len(right) {
+			r, _ = strconv.Atoi(right[i])
+		}
+		if l != r {
+			if l < r {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }
 
 // discoverCommandVersion tries each candidate in order. A candidate that is
