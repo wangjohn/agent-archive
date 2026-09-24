@@ -3,7 +3,9 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -183,6 +185,35 @@ func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
 	return data, nil
 }
 
+// Stat describes an object with a HEAD request in checksum mode. Put stores
+// every object with a SHA-256 checksum, and S3 reports it back as base64;
+// a store that keeps none (or a multipart upload's composite checksum,
+// "<digest>-<parts>") yields an empty SHA256, so callers read the object
+// instead.
+func (s *S3Store) Stat(ctx context.Context, relative string) (ObjectInfo, error) {
+	key, err := s.key(relative)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	output, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled})
+	if err != nil {
+		if isNotFound(err) {
+			return ObjectInfo{}, ErrNotFound
+		}
+		return ObjectInfo{}, err
+	}
+	var info ObjectInfo
+	if output.ContentLength != nil {
+		info.Size = *output.ContentLength
+	}
+	if output.ChecksumSHA256 != nil && output.ChecksumType != types.ChecksumTypeComposite {
+		if digest, err := base64.StdEncoding.DecodeString(*output.ChecksumSHA256); err == nil && len(digest) == sha256.Size {
+			info.SHA256 = hex.EncodeToString(digest)
+		}
+	}
+	return info, nil
+}
+
 func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, error) {
 	prefix, err := s.keyForList(relativePrefix)
 	if err != nil {
@@ -276,7 +307,10 @@ func sha256Bytes(data []byte) [32]byte {
 	return sha256Sum(data)
 }
 
-var _ ObjectStore = (*S3Store)(nil)
+var (
+	_ ObjectStore   = (*S3Store)(nil)
+	_ ObjectStatter = (*S3Store)(nil)
+)
 
 // NewConfiguredStore resolves the selected profile or Keychain reference and
 // builds the common S3 client used for both providers. It is deliberately

@@ -81,7 +81,27 @@ func readOrQuarantine[T any](s *LocalStore, path, lockName string) (value T, fou
 	if renameErr := os.Rename(path, aside); renameErr != nil {
 		return value, false, fmt.Errorf("%w (and it could not be moved aside: %v)", err, renameErr)
 	}
+	pruneQuarantine(path)
 	return value, false, fmt.Errorf("%w: %s did not decode (%v) and is now %s", ErrQuarantined, rel, err, filepath.Join(filepath.Dir(rel), filepath.Base(aside)))
+}
+
+// quarantineKeep is how many quarantined copies of one file are kept. A file
+// a hook keeps rewriting and something keeps corrupting would otherwise pile
+// up a copy per pass.
+const quarantineKeep = 3
+
+// pruneQuarantine removes all but the newest quarantineKeep quarantined
+// copies of path. Their names sort by the time they were moved aside. Best
+// effort: a copy left behind is only clutter.
+func pruneQuarantine(path string) {
+	copies, err := filepath.Glob(path + ".*" + quarantineSuffix)
+	if err != nil || len(copies) <= quarantineKeep {
+		return
+	}
+	sort.Strings(copies)
+	for _, old := range copies[:len(copies)-quarantineKeep] {
+		_ = os.Remove(old)
+	}
 }
 
 func readJSON[T any](path string) (T, bool, error) {

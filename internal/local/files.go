@@ -213,19 +213,57 @@ var ErrBusy = errors.New("another collector or setup is running")
 
 func Lock(home string) (func(), error) { return NamedLock(home, "collector.lock") }
 
+// NamedLock takes an exclusive, non-blocking flock on home/name, creating the
+// file if needed, and returns the function that releases it; ErrBusy means
+// another holder has it.
+//
+// A lock file may be unlinked while it is held (ForgetSession removes a
+// session's lock files). Someone who opened the file before the unlink would
+// then lock the orphaned inode while a newcomer locks a fresh file at the
+// same path, and both would believe they hold the lock. So once the flock is
+// taken, the path must still name the very file that was locked; if it does
+// not, the lock is dropped and taken again on whatever the path names now.
 func NamedLock(home, name string) (func(), error) {
-	f, e := os.OpenFile(filepath.Join(home, name), os.O_CREATE|os.O_RDWR, 0600)
-	if e != nil {
-		return nil, e
+	path := filepath.Join(home, name)
+	for {
+		f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+		if e != nil {
+			return nil, e
+		}
+		release, current, e := lockOpened(path, f)
+		if e != nil || current {
+			return release, e
+		}
+		// Unlinked (or replaced) between the open and the lock: try again.
 	}
+}
+
+// lockOpened flocks f, which was opened at path, and reports whether path
+// still names f's file once the lock is held. When it does not, or on error,
+// f is unlocked and closed; otherwise release does both.
+func lockOpened(path string, f *os.File) (release func(), current bool, e error) {
 	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
 		f.Close()
 		if errors.Is(e, syscall.EWOULDBLOCK) || errors.Is(e, syscall.EAGAIN) {
-			return nil, ErrBusy
+			return nil, false, ErrBusy
 		}
-		return nil, e
+		return nil, false, e
 	}
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+	release = func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }
+	locked, e := f.Stat()
+	if e != nil {
+		release()
+		return nil, false, e
+	}
+	named, e := os.Stat(path)
+	if e == nil && os.SameFile(locked, named) {
+		return release, true, nil
+	}
+	release()
+	if e != nil && !errors.Is(e, os.ErrNotExist) {
+		return nil, false, e
+	}
+	return nil, false, nil
 }
 
 // NamedLockWait tolerates short contention while preserving the hook deadline.

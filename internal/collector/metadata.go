@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -84,19 +89,33 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	if known && prior.SourceBundle != uploaded {
 		return outcomeSkipped, false, nil
 	}
-	// A metadata-only publication points at the source already uploaded.
-	// When this build reproduces that source's exact bytes from the retained
-	// bundle, it carries them, so the source is re-uploaded if it has gone
-	// missing. After a source schema bump it cannot reproduce them, and after
-	// a compressor change it may not; then it carries only the recorded
-	// reference, and the source is checked in storage against it instead.
+	// A refresh this parser already found impossible for this publication is
+	// not attempted again: each attempt costs a full decode and recompression
+	// of the retained bundle, and possibly a download. A new publication
+	// clears the record.
+	if skipped, found, err := store.loadRefreshSkip(reg.ArchiveSessionID); err != nil {
+		return outcomeSkipped, false, err
+	} else if found && skipped.ParserVersion == opts.parserVersion() && skipped.SourceKey == prior.SourceBundle.Key {
+		return outcomeSkipped, false, nil
+	}
+	// The source the refreshed metadata points at:
+	//   - This build reproduces the uploaded source's exact bytes: they are
+	//     carried, so the source is re-uploaded if it has gone missing.
+	//   - It builds the retained bundle, but to other bytes (a compressor
+	//     change): those bytes are published as a new source, which supersedes
+	//     the old one. The remote is repaired whatever state the old object is
+	//     in, and from then on the recorded source is one this build reproduces.
+	//   - It cannot build the bundle at all (a source schema bump): only the
+	//     recorded reference is carried, and the source is checked in storage
+	//     against it (see publishPending).
 	var source struct {
-		key, sha string
-		bytes    []byte
+		ref   archive.SourceReference
+		bytes []byte
 	}
 	if compressed, err := archive.BuildCompressedSource(bundle); err == nil {
-		if key, err := archive.SourceObjectKey(bundle, compressed.SHA256); err == nil && prior.SourceBundle == (archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}) {
-			source.key, source.sha, source.bytes = key, compressed.SHA256, compressed.Bytes
+		if key, err := archive.SourceObjectKey(bundle, compressed.SHA256); err == nil {
+			source.ref = archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+			source.bytes = compressed.Bytes
 		}
 	}
 	if source.bytes == nil {
@@ -105,7 +124,7 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 			// against. The next content change publishes current metadata.
 			return outcomeSkipped, false, nil
 		}
-		source.key, source.sha = uploaded.Key, uploaded.SHA256
+		source.ref = uploaded
 	}
 	// Cache before any early return below, so a legacy publication is
 	// migrated exactly once rather than re-read on every scan.
@@ -123,15 +142,16 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 		// wasted work that also starts the upload interval early.
 		return outcomeSkipped, false, nil
 	}
-	next, buildErr := archive.BuildMetadata(bundle, opts.MachineID, reg.SessionStartedAt, now, prior.SourceBundle, archive.ParserInfo{Version: opts.parserVersion()})
+	next, buildErr := archive.BuildMetadata(bundle, opts.MachineID, reg.SessionStartedAt, now, source.ref, archive.ParserInfo{Version: opts.parserVersion()})
 	next.ApplyRegistrationProvenance(reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		// This build cannot derive metadata from the retained bundle at all
-		// (one cached under an older source schema, say). Like every other
-		// reason regeneration cannot proceed, that is a skip, not a failure
-		// of the session on every pass.
-		return outcomeSkipped, false, nil
+		// (one cached under an older source schema, say). That is not a
+		// failure of the session, but it is recorded, so it is not retried
+		// on every pass and status can count it.
+		return outcomeSkipped, false, store.saveRefreshSkip(reg.ArchiveSessionID, refreshSkip{ParserVersion: opts.parserVersion(), SourceKey: prior.SourceBundle.Key, Reason: refreshSkipUnderivable})
 	}
+	// Unchanged metadata over the same source needs no publication.
 	comparison := next
 	comparison.MetadataDerivedAt = prior.MetadataDerivedAt
 	oldBytes, err := json.Marshal(prior)
@@ -149,7 +169,7 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	pending := PendingPublication{MetadataOnly: true, Bundle: bundle, SourceKey: source.key, MetadataKey: key, SourceSHA256: source.sha, SourceBytes: source.bytes, SourceSize: prior.SourceBundle.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: now}
+	pending := PendingPublication{MetadataOnly: true, Bundle: bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: now}
 	if err := store.SavePending(reg.ArchiveSessionID, pending); err != nil {
 		return outcomeSkipped, false, err
 	}
@@ -200,6 +220,83 @@ func liveTranscriptChanged(ctx context.Context, store *LocalStore, reg archive.S
 		guard = lastPublished
 	}
 	return nativeEvidenceExtends(guard, candidate)
+}
+
+// refreshSkip records that the current parser cannot refresh a session's
+// last publication's metadata, so regenerateMetadata stops retrying it. It
+// names no content: only the parser version, the published source's object
+// key, and why.
+type refreshSkip struct {
+	ParserVersion string            `json:"parser_version"`
+	SourceKey     string            `json:"source_key"`
+	Reason        refreshSkipReason `json:"reason"`
+}
+
+type refreshSkipReason string
+
+const (
+	// refreshSkipUnderivable: this build cannot derive metadata from the
+	// retained bundle at all.
+	refreshSkipUnderivable refreshSkipReason = "metadata_underivable"
+	// refreshSkipSourceUnavailable: the recorded source is missing from
+	// storage, or differs from its record, and this build cannot rebuild it.
+	refreshSkipSourceUnavailable refreshSkipReason = "source_unavailable"
+)
+
+const refreshSkipDir = "refresh-skips"
+
+func (s *LocalStore) refreshSkipPath(id string) string {
+	return filepath.Join(s.home, refreshSkipDir, id+".json")
+}
+
+func (s *LocalStore) saveRefreshSkip(id string, skip refreshSkip) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	return local.Write(s.refreshSkipPath(id), skip)
+}
+
+// loadRefreshSkip returns a session's refresh-skip record. One that cannot
+// be read is treated as absent: the refresh is then simply tried again.
+func (s *LocalStore) loadRefreshSkip(id string) (refreshSkip, bool, error) {
+	if !safeFileComponent(id) {
+		return refreshSkip{}, false, errors.New("archive session ID is not a safe file name component")
+	}
+	var skip refreshSkip
+	if err := local.Read(s.refreshSkipPath(id), &skip); err != nil {
+		return refreshSkip{}, false, nil
+	}
+	return skip, true, nil
+}
+
+// removeRefreshSkip drops a session's record once a publication makes it
+// stale.
+func (s *LocalStore) removeRefreshSkip(id string) error {
+	err := os.Remove(s.refreshSkipPath(id))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove refresh-skip record %q: %w", id, err)
+	}
+	return nil
+}
+
+// countRefreshSkips counts the sessions whose metadata parserVersion cannot
+// refresh (see Status.UnrefreshableSummaries).
+func (s *LocalStore) countRefreshSkips(parserVersion string) int {
+	entries, err := os.ReadDir(filepath.Join(s.home, refreshSkipDir))
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		var skip refreshSkip
+		if local.Read(filepath.Join(s.home, refreshSkipDir, entry.Name()), &skip) == nil && skip.ParserVersion == parserVersion {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *LocalStore) cacheMetadata(id string, metadata []byte) error {

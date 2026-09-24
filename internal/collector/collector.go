@@ -318,7 +318,10 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 	if err != nil && !isUndecodable(err) {
 		return result, err
 	}
-	status := Status{LastScanAt: now.UTC(), PendingCount: pending, LastPublishedAt: previousStatus.LastPublishedAt, QuarantinedFiles: local.quarantinedFiles()}
+	status := Status{
+		LastScanAt: now.UTC(), PendingCount: pending, LastPublishedAt: previousStatus.LastPublishedAt,
+		QuarantinedFiles: local.quarantinedFiles(), UnrefreshableSummaries: local.countRefreshSkips(opts.parserVersion()),
+	}
 	if len(result.Published) > 0 {
 		status.LastPublishedAt = now.UTC()
 	}
@@ -865,14 +868,23 @@ func publishPending(ctx context.Context, local *LocalStore, store storage.Object
 		return outcomeSkipped, fmt.Errorf("mark pending publication attempted: %w", err)
 	}
 	if pending.carriesNoSource() {
-		err := storage.PutMetadataForSource(ctx, store, pending.SourceKey, pending.SourceSHA256, pending.MetadataKey, pending.MetadataBytes, opts.Retry)
+		err := storage.PutMetadataForSource(ctx, store, pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, opts.Retry)
 		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch) {
 			// The recorded source is not in storage as recorded, and without
 			// its bytes this publication can never succeed. Dropping it
 			// keeps it from holding back normal capture; the metadata still
-			// points at whatever it pointed at before.
+			// points at whatever it pointed at before. If this build can
+			// build the bundle after all, the next refresh publishes it as a
+			// new source; if not, the refresh is recorded as impossible so it
+			// is not retried (with a download) on every pass.
 			if removeErr := local.RemovePending(id); removeErr != nil {
 				err = errors.Join(err, removeErr)
+			}
+			if _, buildErr := archive.BuildCompressedSource(pending.Bundle); buildErr != nil {
+				skip := refreshSkip{ParserVersion: opts.parserVersion(), SourceKey: pending.SourceKey, Reason: refreshSkipSourceUnavailable}
+				if skipErr := local.saveRefreshSkip(id, skip); skipErr != nil {
+					err = errors.Join(err, skipErr)
+				}
 			}
 		}
 		if err != nil {
@@ -903,6 +915,11 @@ func publishPending(ctx context.Context, local *LocalStore, store storage.Object
 	}
 	if err := saveErr; err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
+	}
+	// Whatever kept this session's metadata from being refreshed described
+	// the publication just replaced.
+	if err := local.removeRefreshSkip(id); err != nil {
+		return outcomeSkipped, err
 	}
 	if pending.RequestToken != "" {
 		if _, err := local.CompleteRequest(id, pending.RequestToken); err != nil {

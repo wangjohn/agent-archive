@@ -46,6 +46,34 @@ func TestRemoveStaleTempsRemovesOnlyOldTemporaries(t *testing.T) {
 	}
 }
 
+// A lock file unlinked between another process's open and its flock must not
+// give that process a lock on the orphaned file while a newcomer locks the
+// file now at the path: both would hold "the" lock.
+func TestNamedLockRejectsAFileUnlinkedBeforeItWasLocked(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "x.lock")
+	stale, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if release, current, err := lockOpened(path, stale); err != nil || current || release != nil {
+		t.Fatalf("locked an unlinked file: current=%v err=%v", current, err)
+	}
+	// NamedLock itself ends up holding the file the path names now, so a
+	// second caller is excluded.
+	unlock, err := NamedLock(home, "x.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	if _, err := NamedLock(home, "x.lock"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second lock: %v, want ErrBusy", err)
+	}
+}
+
 func TestTrimLogKeepsRecentLinesInPlace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "collector-error.log")
 	var log bytes.Buffer

@@ -182,6 +182,14 @@ func storageFailureState(err error) string {
 // cannot be read is left out and returned as an error once every other
 // session has been handled.
 func verifyPublications(home string, cfg config.Config, env Env, store *collector.LocalStore, remote storage.ObjectStore) (verificationSummary, error) {
+	return verifyPublicationsWithin(context.Background(), home, cfg, env, store, remote)
+}
+
+// verifyPublicationsWithin is verifyPublications within ctx: a collector
+// pass passes its own deadline, so read-back gets what is left of the pass's
+// budget rather than time of its own on top. Read-backs ctx leaves no time
+// for are deferred to the next pass, like those over the per-pass cap.
+func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Config, env Env, store *collector.LocalStore, remote storage.ObjectStore) (verificationSummary, error) {
 	var summary verificationSummary
 	regs, _, err := store.ScanRegistrations()
 	if err != nil {
@@ -245,8 +253,12 @@ func verifyPublications(home string, cfg config.Config, env Env, store *collecto
 		due = due[:maxVerificationsPerPass]
 	}
 	for _, c := range due {
+		if ctx.Err() != nil {
+			summary.Deferred++
+			continue
+		}
 		summary.Attempted++
-		sha, err := verifyPublication(cfg, store, remote, c.reg, c.bundle)
+		sha, err := verifyPublication(ctx, cfg, store, remote, c.reg, c.bundle)
 		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1}
 		switch {
 		case err == nil:
@@ -271,7 +283,8 @@ func verifyPublications(home string, cfg config.Config, env Env, store *collecto
 	return summary, errors.Join(localErrs...)
 }
 
-// verificationTimeout bounds one session's read-back: a metadata read and a
+// verificationTimeout bounds one session's read-back (within the caller's own
+// deadline): a metadata read and a
 // source download of at most the reader's compressed limit. A variable only
 // so a test can shorten it.
 var verificationTimeout = 5 * time.Minute
@@ -284,7 +297,7 @@ var verificationTimeout = 5 * time.Minute
 // (collector.LocalStore.LoadLastPublishedSource). Only state from a version
 // that recorded none falls back to rebuilding the digest from the cached
 // bundle, which a later source schema or compressor can no longer reproduce.
-func verifyPublication(cfg config.Config, store *collector.LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, bundle archive.SourceBundle) (string, error) {
+func verifyPublication(ctx context.Context, cfg config.Config, store *collector.LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, bundle archive.SourceBundle) (string, error) {
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
 		return "", err
@@ -300,7 +313,7 @@ func verifyPublication(cfg config.Config, store *collector.LocalStore, remote st
 		}
 		expected.SHA256 = rebuilt.SHA256
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), verificationTimeout)
+	ctx, cancel := context.WithTimeout(ctx, verificationTimeout)
 	defer cancel()
 	metadata, err := reader.ReadMetadata(ctx, remote, key)
 	if err != nil {

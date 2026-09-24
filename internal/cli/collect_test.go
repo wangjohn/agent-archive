@@ -188,3 +188,72 @@ func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
 		t.Fatalf("summary = %#v %v", summary, err)
 	}
 }
+
+// A read-back verification that fails (here: one session's published state
+// cannot be read) is reported, but only after the retention sweep has run:
+// another, expired session is still cleaned up in the same pass.
+func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads unreadable files")
+	}
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	home, env, _ := collectFixture(t, now)
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.RetentionDays = 3
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runOnePass(env, false); err != nil {
+		t.Fatal(err)
+	}
+	expired := theRegistration(t, home).ArchiveSessionID
+
+	// A second session, published two days later, so it is not yet expired
+	// when the first one is.
+	later := now.Add(48 * time.Hour)
+	dir := t.TempDir()
+	cfg, _, _ = config.Load(home)
+	cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{ProjectID: archive.ProjectID(dir), Root: dir, Included: true, ActivatedAt: now})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-2", "cwd": dir, "transcript_path": writeCodexTranscript(t, dir)}
+	if err := handleHookEvent(home, "codex", payload, later); err != nil {
+		t.Fatal(err)
+	}
+	env.Now = func() time.Time { return later }
+	if _, err := runOnePass(env, false); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	if err != nil || len(regs) != 2 {
+		t.Fatalf("registrations = %v %v", regs, err)
+	}
+	unreadable := regs[0].ArchiveSessionID
+	if unreadable == expired {
+		unreadable = regs[1].ArchiveSessionID
+	}
+	// Force a fresh read-back of that session, which cannot read its state.
+	if err := os.Remove(verificationPath(home, unreadable)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(home, "published", unreadable+".json"), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	env.Now = func() time.Time { return now.Add(96 * time.Hour) }
+	_, err = runOnePass(env, false)
+	if err == nil || !strings.Contains(err.Error(), "read-back verification") {
+		t.Fatalf("pass error = %v, want the verification failure", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, "registrations", expired+".json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("the retention sweep did not run: expired session still registered (%v)", statErr)
+	}
+	status, statusErr := collector.OpenLocalStoreReadOnly(home).LoadStatus()
+	if statusErr != nil || !strings.Contains(status.LastError, "read-back verification") {
+		t.Fatalf("status = %#v %v", status, statusErr)
+	}
+}

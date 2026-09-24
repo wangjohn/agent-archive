@@ -205,7 +205,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	// A read-back verification failure is reported, but only once the
 	// retention sweep below has run: it is no reason to skip cleanup.
 	var verifyErr error
-	if _, err := verifyPublications(home, cfg, env, localStore, objectStore); err != nil {
+	if _, err := verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore); err != nil {
 		verifyErr = fmt.Errorf("read-back verification: %w", err)
 	}
 	if health := passStorageHealth(result); health != "not_checked" {
@@ -256,7 +256,9 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		SessionMaxAge: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
 	})
 	if sweepErr != nil {
-		return result, errors.Join(verifyErr, fmt.Errorf("collection succeeded but retention cleanup failed: %w", sweepErr))
+		passErr := errors.Join(verifyErr, fmt.Errorf("collection succeeded but retention cleanup failed: %w", sweepErr))
+		recordPreflightError(localStore, passErr)
+		return result, passErr
 	}
 	if len(sweepResult.Errors) > 0 {
 		recordRetentionErrors(localStore, &result, sweepResult)

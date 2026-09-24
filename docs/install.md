@@ -230,6 +230,17 @@ secret input fails rather than falling back to visible keystrokes.
   `feedback` skip them, and the retention sweep no longer deletes their
   remote objects. Their earlier publications stay in the bucket until removed
   by hand.
+- This version records each publication's uploaded source (key, SHA-256 and
+  size) in its local state, and can queue a metadata-only publication that
+  carries only that reference instead of the source bytes (when a parser
+  upgrade meets a retained bundle it cannot rebuild). **Before downgrading**,
+  run `agent-archive sync` until `status` shows nothing pending: an earlier
+  version cannot publish such a queued file (under
+  `~/.local/share/agent-archive/pending/`, with `"metadata_only": true` and
+  no `source_bytes`) and would report it as failing on every pass. If you
+  have already downgraded, deleting those files is safe; the metadata is
+  refreshed on the session's next change. The recorded references are
+  ignored by earlier versions.
 
 ## Inspecting what was archived
 

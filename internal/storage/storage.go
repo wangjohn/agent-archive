@@ -203,7 +203,11 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 // source is read back and checked against sourceSHA256 first, so metadata
 // never points at a missing or different object: a missing source is
 // ErrNotFound and a different one ErrChecksumMismatch, and neither publishes.
-func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256, metadataKey string, metadata []byte, retry RetryPolicy) error {
+//
+// A store that can describe an object (ObjectStatter) and reports its SHA-256
+// is checked that way, without a download; otherwise the source is read back.
+// sourceSize, when positive, must match too.
+func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256 string, sourceSize int, metadataKey string, metadata []byte, retry RetryPolicy) error {
 	if sourceKey == "" || metadataKey == "" || sourceSHA256 == "" {
 		return errors.New("source key, source checksum, and metadata key are required")
 	}
@@ -211,13 +215,53 @@ func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sou
 		return errors.New("source and metadata keys must differ")
 	}
 	if err := retry.run(ctx, func() error {
-		_, err := ReadAndVerify(ctx, store, sourceKey, sourceSHA256)
-		return err
+		return verifyStoredObject(ctx, store, sourceKey, sourceSHA256, sourceSize)
 	}); err != nil {
 		return fmt.Errorf("verify source %q: %w", sourceKey, err)
 	}
 	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
 		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)
+	}
+	return nil
+}
+
+// ObjectInfo describes a stored object without its content.
+type ObjectInfo struct {
+	Size int64
+	// SHA256 is the object's whole-content SHA-256 in lower-case hex as the
+	// store records it, or "" when it records none for this object (one
+	// uploaded without a checksum, or a multipart upload's composite one).
+	SHA256 string
+}
+
+// ObjectStatter is implemented by stores that can describe an object without
+// downloading it. Stat returns ErrNotFound for a missing object.
+type ObjectStatter interface {
+	Stat(ctx context.Context, key string) (ObjectInfo, error)
+}
+
+// verifyStoredObject checks that key holds an object with the given SHA-256
+// hex digest (and size, when positive): through Stat when the store reports
+// a digest, otherwise by reading the object back.
+func verifyStoredObject(ctx context.Context, store ObjectStore, key, sha256Hex string, size int) error {
+	if statter, ok := store.(ObjectStatter); ok {
+		info, err := statter.Stat(ctx, key)
+		if err != nil {
+			return err
+		}
+		if info.SHA256 != "" {
+			if !strings.EqualFold(info.SHA256, strings.TrimSpace(sha256Hex)) || (size > 0 && info.Size != int64(size)) {
+				return fmt.Errorf("%w for %q", ErrChecksumMismatch, key)
+			}
+			return nil
+		}
+	}
+	data, err := ReadAndVerify(ctx, store, key, sha256Hex)
+	if err != nil {
+		return err
+	}
+	if size > 0 && len(data) != size {
+		return fmt.Errorf("%w for %q", ErrChecksumMismatch, key)
 	}
 	return nil
 }

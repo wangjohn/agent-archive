@@ -903,6 +903,12 @@ type Status struct {
 	// ErrQuarantined). They stay listed until someone inspects and deletes
 	// them.
 	QuarantinedFiles []string `json:"quarantined_files,omitempty"`
+	// UnrefreshableSummaries counts the sessions whose published metadata
+	// the current parser cannot refresh: the retained bundle cannot be
+	// read by this build, or its recorded source is gone from storage and
+	// cannot be rebuilt. Their metadata stays as published until the
+	// session changes. It names no session and no content.
+	UnrefreshableSummaries int `json:"unrefreshable_summaries,omitempty"`
 }
 
 func (s *LocalStore) statusPath() string { return filepath.Join(s.home, "status.json") }
