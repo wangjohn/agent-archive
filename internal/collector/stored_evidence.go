@@ -16,11 +16,15 @@ type evidenceOnly struct {
 	Bundle struct {
 		SupplementalEvidence []archive.SupplementalEvidence `json:"supplemental_evidence"`
 	} `json:"bundle"`
+	// DeferredHookEvidence is the published state's hook evidence held by a
+	// recoverable block (see publishedState); the pending file has none.
+	DeferredHookEvidence []archive.SupplementalEvidence `json:"deferred_hook_evidence"`
 }
 
 // StoredEvidence returns the supplemental evidence of a session's pending
 // publication and of its published state (the bundle LoadPending and
-// LoadPublished return), pending first, without decoding either bundle's
+// LoadPublished return, and hook evidence a recoverable block deferred),
+// pending first, without decoding either bundle's
 // records or the pending publication's source bytes. A session with neither
 // returns nothing. It is read-only.
 func (s *LocalStore) StoredEvidence(archiveSessionID string) ([]archive.SupplementalEvidence, error) {
@@ -41,6 +45,7 @@ func (s *LocalStore) StoredEvidence(archiveSessionID string) ([]archive.Suppleme
 			return nil, fmt.Errorf("read %s %q: %w", file.what, archiveSessionID, err)
 		}
 		out = append(out, state.Bundle.SupplementalEvidence...)
+		out = append(out, state.DeferredHookEvidence...)
 	}
 	return out, nil
 }

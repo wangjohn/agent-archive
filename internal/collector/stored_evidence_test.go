@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // StoredEvidence returns the evidence of both the pending publication and
@@ -33,6 +34,13 @@ func TestStoredEvidenceReadsPendingAndPublished(t *testing.T) {
 	got, err := store.StoredEvidence("s1")
 	if err != nil || len(got) != 2 || got[0].Provenance != "hook:pending" || got[1].Provenance != "hook:published" {
 		t.Fatalf("%+v %v", got, err)
+	}
+	// Hook evidence a recoverable block deferred counts too.
+	if err := local.Write(store.publishedPath("s2"), map[string]any{"status": "blocked", "deferred_hook_evidence": evidence("hook:deferred")}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.StoredEvidence("s2"); err != nil || len(got) != 1 || got[0].Provenance != "hook:deferred" {
+		t.Fatalf("deferred: %+v %v", got, err)
 	}
 	if _, err := store.StoredEvidence("../escape"); err == nil {
 		t.Fatal("unsafe ID accepted")

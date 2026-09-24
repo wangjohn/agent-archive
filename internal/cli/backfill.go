@@ -193,6 +193,13 @@ func interruptibleContext(env Env) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	signals, stopSignals := env.interrupts()
 	stopSignals = releaseOnce(stopSignals)
+	// A Ctrl-C already waiting cancels before planning starts.
+	select {
+	case <-signals:
+		stopSignals()
+		cancel()
+	default:
+	}
 	done, exited := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(exited)

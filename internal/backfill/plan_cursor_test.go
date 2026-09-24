@@ -37,6 +37,30 @@ func TestCursorDatabaseChatFormatErrorIsThatChats(t *testing.T) {
 	}
 }
 
+// A chat whose composerId or workspace ID is not a string is that chat's
+// unsafe_format, reported and not read, rather than imported under the key's
+// ID or without its workspace.
+func TestCursorDatabaseMalformedIDFieldsAreThatChatsUnsafeFormat(t *testing.T) {
+	tr := newTree(t)
+	site := tr.repo("home/site")
+	uri := map[string]any{"uri": "file://" + site}
+	writeCursorDB(t, CursorStateDatabase(tr.home), true, mergeRows(
+		chatRows("good", map[string]any{"workspaceIdentifier": uri}, "a", "b"),
+		map[string]any{"composerData:badid": composerJSON("badid", 1, map[string]any{"composerId": 5, "workspaceIdentifier": uri})},
+		map[string]any{"composerData:badws": composerJSON("badws", 1, map[string]any{"workspaceIdentifier": map[string]any{"uri": "file://" + site, "id": []any{1}}})},
+	))
+	env := tr.env()
+	env.CursorDatabase = CursorDatabaseReader(tr.home)
+	p := plan(t, env, states{}, config.Config{}, Filters{})
+	got := map[string]SkipReason{}
+	for _, c := range databaseCandidates(p) {
+		got[c.NativeSessionID] = c.Skip
+	}
+	if !p.CursorDatabaseChecked || !reflect.DeepEqual(got, map[string]SkipReason{"good": "", "badid": SkipUnsafeFormat, "badws": SkipUnsafeFormat}) {
+		t.Fatalf("checked %v (%q), outcomes %v", p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, got)
+	}
+}
+
 // A failure of the database itself while a chat is read (Cursor held a lock
 // past the timeout) leaves the whole database unchecked, with that reason.
 func TestCursorDatabaseReadFailureUnchecksTheDatabase(t *testing.T) {

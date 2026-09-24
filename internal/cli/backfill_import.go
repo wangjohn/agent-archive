@@ -274,8 +274,11 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
 	batch, err = backfill.OpenBatch(home, collector.OpenLocalStoreReadOnly(home), plan.BatchFilters(), cfg.DestinationID(), now)
-	if err != nil {
+	if errors.Is(err, backfill.ErrUnreadableImport) {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed. Repair the unreadable file in %s, then run backfill again. Moving it out of the folder also lets backfill run, but its sessions stay archived and backfill undo can no longer remove them", err, filepath.Join(home, "imports"))
+	}
+	if err != nil {
+		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
 	projects, apps := backfill.ApplyToConfig(&cfg, plan, admittedAt)
 	if plan.RetentionDays > 0 {

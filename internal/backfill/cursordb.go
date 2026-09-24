@@ -36,6 +36,10 @@ type CursorDatabaseChat struct {
 	// WorkspaceID is workspaceIdentifier.id, the workspaceStorage folder of
 	// the chat's workspace, "" when absent.
 	WorkspaceID string
+	// Malformed is set when composerId or workspaceIdentifier.id is present
+	// but not a string. The chat is not read and counts as unsafe_format,
+	// rather than being imported under an ID or workspace it does not have.
+	Malformed bool
 }
 
 // CursorUncheckedReason says why Cursor's database was not checked.
@@ -237,8 +241,9 @@ type composer struct {
 // not a shape this release knows. Only the fields that decide the count are
 // strict: isDraft and the message lists, and _v must be a positive integer.
 // A _v newer than maxComposerVersion is still read, and marked newer, when
-// those fields decode. The rest are read leniently and ignored when they are
-// some other shape.
+// those fields decode. A composerId or workspaceIdentifier.id of another
+// shape marks the chat Malformed (that chat's unsafe_format). The rest are
+// read leniently and ignored when they are some other shape.
 func decodeComposerData(key string, value []byte) (composer, bool) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(value, &fields); err != nil || fields == nil {
@@ -284,7 +289,9 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 	}
 
 	if raw, ok := present("composerId"); ok {
-		_ = json.Unmarshal(raw, &c.chat.ID) // another shape leaves the ID from the key
+		if json.Unmarshal(raw, &c.chat.ID) != nil {
+			c.chat.Malformed = true
+		}
 	}
 	c.chat.KeyID = strings.TrimPrefix(key, "composerData:")
 	if c.chat.ID == "" {
@@ -316,7 +323,9 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		if json.Unmarshal(raw, &ws) == nil {
 			c.chat.Folder = composerWorkspaceFolder(ws["uri"])
 			if rawID, ok := ws["id"]; ok {
-				_ = json.Unmarshal(rawID, &c.chat.WorkspaceID) // read leniently, as documented above
+				if json.Unmarshal(rawID, &c.chat.WorkspaceID) != nil {
+					c.chat.Malformed = true
+				}
 			}
 		}
 	}
@@ -463,7 +472,10 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 			w.state = reason
 		}
 		w.filtered = dated && !inRange(chat.CreatedAt, since, until)
-		if w.state == "" && !w.filtered && !w.t.identityMismatch {
+		// A chat whose ID or workspace field is of another shape is that
+		// chat's unsafe_format, reported, not read.
+		w.unsafe = chat.Malformed
+		if w.state == "" && !w.filtered && !w.t.identityMismatch && !w.unsafe {
 			toRead = append(toRead, w)
 		}
 	}

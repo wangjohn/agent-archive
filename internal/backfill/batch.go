@@ -189,6 +189,10 @@ func SaveBatch(home string, b Batch) error {
 	return nil
 }
 
+// ErrUnreadableImport wraps OpenBatch's error when an import's batch file
+// can't be read, as opposed to the local store's registrations.
+var ErrUnreadableImport = errors.New("an import file can't be read")
+
 // OpenBatch returns the batch a confirmed run records into: the latest one,
 // if it was interrupted, not undone, and ran with the same filters and
 // destination, or a new one named for now's local date. An interrupted
@@ -204,7 +208,7 @@ func SaveBatch(home string, b Batch) error {
 func OpenBatch(home string, store *collector.LocalStore, filters BatchFilters, destinationID string, now time.Time) (Batch, error) {
 	batches, err := LoadBatches(home)
 	if err != nil {
-		return Batch{}, err
+		return Batch{}, fmt.Errorf("%w: %w", ErrUnreadableImport, err)
 	}
 	if n := len(batches); n > 0 {
 		last := batches[n-1]
@@ -214,7 +218,7 @@ func OpenBatch(home string, store *collector.LocalStore, filters BatchFilters, d
 	}
 	regs, err := store.LoadRegistrations()
 	if err != nil {
-		return Batch{}, err
+		return Batch{}, fmt.Errorf("read registrations: %w", err)
 	}
 	used := make([]string, 0, len(batches)+len(regs))
 	for _, b := range batches {
