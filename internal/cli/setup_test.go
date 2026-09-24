@@ -37,6 +37,7 @@ func (f *fakeKeychain) Save(_ context.Context, reference string, value credentia
 	f.items[reference] = value
 	return nil
 }
+
 func (f *fakeKeychain) Load(_ context.Context, reference string) (credentials.R2Credentials, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -46,6 +47,7 @@ func (f *fakeKeychain) Load(_ context.Context, reference string) (credentials.R2
 	}
 	return v, nil
 }
+
 func (f *fakeKeychain) Delete(_ context.Context, reference string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -86,6 +88,7 @@ func setupTestEnv(t *testing.T, home, userHome string, keychain *fakeKeychain, n
 	return env
 }
 
+//lint:ignore unparam tests in other files pass the region explicitly so each setup transcript reads in full
 func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, project string) string {
 	yn := func(b bool) string {
 		if b {
@@ -95,9 +98,11 @@ func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, pr
 	}
 	return strings.Join([]string{yn(codex), yn(claude), yn(cursor), project, "", "s3", bucket, profile, region, "y"}, "\n") + "\n"
 }
+
 func r2SetupInput(project, secret string) string {
 	return strings.Join([]string{"y", "n", "n", project, "", "r2", "test-bucket", "0123456789abcdef0123456789abcdef", "ACCESS", secret, "y"}, "\n") + "\n"
 }
+
 func setupRun(t *testing.T, env Env, input string, want int) string {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -107,6 +112,7 @@ func setupRun(t *testing.T, env Env, input string, want int) string {
 	}
 	return out.String() + errOut.String()
 }
+
 func TestSetupFirstTimeProviders(t *testing.T) {
 	for _, provider := range []string{"s3", "r2"} {
 		t.Run(provider, func(t *testing.T) {
@@ -129,7 +135,7 @@ func TestSetupFirstTimeProviders(t *testing.T) {
 			if cfg.MachineID == "" || !cfg.Archive.Projects[0].ActivatedAt.Equal(now) {
 				t.Fatal("missing activation or identity")
 			}
-			if _, err := os.Stat(filepath.Join(userHome, ".codex/hooks.json")); err != nil {
+			if _, err := os.Stat(filepath.Join(userHome, ".codex", "hooks.json")); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(filepath.Join(home, "setup-draft.json")); !os.IsNotExist(err) {
@@ -143,6 +149,7 @@ func TestSetupFirstTimeProviders(t *testing.T) {
 		})
 	}
 }
+
 func TestSetupCancelAndResumeDraft(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
@@ -151,7 +158,7 @@ func TestSetupCancelAndResumeDraft(t *testing.T) {
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("cancel activated config")
 	}
-	if _, err := os.Stat(filepath.Join(userHome, ".codex/hooks.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(userHome, ".codex", "hooks.json")); !os.IsNotExist(err) {
 		t.Fatal("cancel installed hooks")
 	}
 	setupRun(t, env, "continue\ny\n", 0)
@@ -159,6 +166,7 @@ func TestSetupCancelAndResumeDraft(t *testing.T) {
 		t.Fatal("resume did not install")
 	}
 }
+
 func TestSetupTruncatedInputDoesNotEnable(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
@@ -168,6 +176,7 @@ func TestSetupTruncatedInputDoesNotEnable(t *testing.T) {
 		t.Fatal("EOF enabled capture")
 	}
 }
+
 func TestSetupStorageFailureKeepsDraftAndOldSecret(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
@@ -195,29 +204,33 @@ func TestSetupStorageFailureKeepsDraftAndOldSecret(t *testing.T) {
 		t.Fatal("active config changed")
 	}
 }
+
 func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 	old, _, _ := config.Load(home)
 	old.Paused = true
-	config.Save(home, old)
+	if err := config.Save(home, old); err != nil {
+		t.Fatal(err)
+	}
 	env.Now = func() time.Time { return time.Now().Add(time.Hour) }
 	setupRun(t, env, "capture\ny\ny\nn\nn\ny\n\ny\n", 0)
 	next, _, _ := config.Load(home)
 	if !next.Paused || next.MachineID != old.MachineID || !next.Archive.Projects[0].ActivatedAt.Equal(old.Archive.Projects[0].ActivatedAt) {
 		t.Fatal("reconfigure reset stable state")
 	}
-	b, _ := os.ReadFile(filepath.Join(userHome, ".claude/settings.json"))
+	b, _ := os.ReadFile(filepath.Join(userHome, ".claude", "settings.json"))
 	if strings.Contains(string(b), hooks.Owner) {
 		t.Fatal("deselected app hooks remain")
 	}
 }
+
 func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
-	paths := []string{filepath.Join(home, "config.json"), filepath.Join(userHome, ".codex/hooks.json"), filepath.Join(userHome, "Library/LaunchAgents", hooks.LaunchLabel+".plist")}
+	paths := []string{filepath.Join(home, "config.json"), filepath.Join(userHome, ".codex", "hooks.json"), filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")}
 	before := map[string]string{}
 	for _, p := range paths {
 		b, _ := os.ReadFile(p)
@@ -246,14 +259,19 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 		t.Fatal("successful rollback left journal")
 	}
 }
+
 func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	home := t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	path := filepath.Join(home, "config.json")
 	c := hooks.Change{Path: path, Before: []byte("before"), After: []byte("after"), Existed: true, Mode: 0600}
 	journal := setupJournal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
-	local.Write(journalPath(home), journal)
-	os.WriteFile(path, []byte("user edit"), 0600)
+	if err := local.Write(journalPath(home), journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("user edit"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := recoverSetup(home, env); err == nil {
 		t.Fatal("must refuse concurrent edit")
 	}
@@ -261,7 +279,9 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	if string(b) != "user edit" {
 		t.Fatal("overwrote user edit")
 	}
-	os.WriteFile(path, []byte("after"), 0600)
+	if err := os.WriteFile(path, []byte("after"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := recoverSetup(home, env); err != nil {
 		t.Fatal(err)
 	}
@@ -270,6 +290,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 		t.Fatal("did not restore")
 	}
 }
+
 func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
@@ -298,6 +319,7 @@ func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T)
 		t.Fatal("old sessions followed destination switch")
 	}
 }
+
 func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("maybe\ny\n0\n-1\n30\n"), &out)

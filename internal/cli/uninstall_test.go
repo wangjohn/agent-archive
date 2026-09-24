@@ -41,7 +41,7 @@ func TestUninstallKeepsLocalDataByDefault(t *testing.T) {
 	if !found || cfg.Archive.Enabled {
 		t.Fatal("must retain disabled config")
 	}
-	if _, err := os.Stat(filepath.Join(userHome, "Library/LaunchAgents", hooks.LaunchLabel+".plist")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")); !os.IsNotExist(err) {
 		t.Fatal("plist remains")
 	}
 	for _, rel := range []string{".codex/hooks.json", ".claude/settings.json"} {
@@ -139,7 +139,9 @@ func TestUninstallDeletesStoredR2CredentialsOnly(t *testing.T) {
 	keychain := newFakeKeychain()
 	// A credential under some other reference stands in for anything else
 	// stored under our Keychain service; uninstall must leave it alone.
-	keychain.Save(context.Background(), "r2-other-bucket", credentials.R2Credentials{AccessKeyID: "OTHER", SecretAccessKey: "othersecret"})
+	if err := keychain.Save(context.Background(), "r2-other-bucket", credentials.R2Credentials{AccessKeyID: "OTHER", SecretAccessKey: "othersecret"}); err != nil {
+		t.Fatal(err)
+	}
 	r2Input := r2SetupInput(t.TempDir(), "supersecret")
 	home, _, env := installedFixture(t, keychain, r2Input)
 	cfg, _, _ := config.Load(home)

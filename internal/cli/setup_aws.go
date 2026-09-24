@@ -12,11 +12,15 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // AWSProfile contains only the information needed to offer a profile in setup.
 // Discovery never retrieves credentials, runs credential_process, or logs in.
-type AWSProfile struct{ Name, Region string }
+type AWSProfile struct {
+	Name   string
+	Region string
+}
 
 func (e Env) awsProfiles() ([]AWSProfile, error) {
 	if e.AWSProfiles != nil {
@@ -64,7 +68,7 @@ func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {
 			}
 		}
 		scanErr := scanner.Err()
-		f.Close()
+		_ = f.Close()
 		if scanErr != nil {
 			return nil, fmt.Errorf("cannot read AWS profile settings")
 		}
@@ -88,7 +92,7 @@ func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {
 func promptAWSProfile(p *prompter, cfg *credentials.Config, env Env) error {
 	profiles, err := env.awsProfiles()
 	if err != nil {
-		fmt.Fprintln(p.out, "Could not read AWS profiles automatically. Enter an existing profile name below.")
+		terminal.Println(p.out, "Could not read AWS profiles automatically. Enter an existing profile name below.")
 	}
 	names := make([]string, 0, len(profiles))
 	for _, profile := range profiles {
@@ -127,17 +131,17 @@ func promptAWSProfile(p *prompter, cfg *credentials.Config, env Env) error {
 		cfg.Region, err = p.required("Bucket region (for example us-east-1)", "")
 		return err
 	}
-	fmt.Fprintf(p.out, "Using region %s. You can change it at the final review.\n", cfg.Region)
+	terminal.Printf(p.out, "Using region %s. You can change it at the final review.\n", cfg.Region)
 	return nil
 }
 
 // pickAWSProfile lists the discovered profiles by number. A profile that
 // discovery missed can still be typed by name.
 func pickAWSProfile(p *prompter, names []string, def string) (string, error) {
-	fmt.Fprintln(p.out, "Which AWS profile has access to the bucket?")
+	terminal.Println(p.out, "Which AWS profile has access to the bucket?")
 	defNum := def
 	for i, name := range names {
-		fmt.Fprintf(p.out, "  %d) %s\n", i+1, name)
+		terminal.Printf(p.out, "  %d) %s\n", i+1, name)
 		if name == def {
 			defNum = strconv.Itoa(i + 1)
 		}
@@ -154,6 +158,6 @@ func pickAWSProfile(p *prompter, names []string, def string) (string, error) {
 		if answer != "" {
 			return answer, nil
 		}
-		fmt.Fprintln(p.out, "This value is required.")
+		terminal.Println(p.out, "This value is required.")
 	}
 }

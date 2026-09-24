@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,7 +35,7 @@ func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
 	var args []string
 	for {
 		token, err := decoder.Token()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -44,6 +45,7 @@ func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
 		if !ok {
 			continue
 		}
+		//lint:ignore LV1001 XML element names from a launchd plist, an external format
 		switch start.Name.Local {
 		case "key":
 			if err := decoder.DecodeElement(&key, &start); err != nil {
@@ -88,7 +90,7 @@ func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
 	if state == "unknown" {
 		return nil, fmt.Errorf("cannot determine legacy upload job state; restore launchctl access and retry")
 	}
-	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: state == "loaded" || state == "running"}, nil
+	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)}, nil
 }
 
 func retireLegacyJob(job *legacyJob, env Env) error {
@@ -129,7 +131,7 @@ func restoreLegacyJob(job *legacyJob, env Env) error {
 		if state == "unknown" {
 			return fmt.Errorf("legacy job state is unknown; retry recovery when launchctl is available")
 		}
-		if state != "loaded" && state != "running" {
+		if !launchJobActive(state) {
 			return env.loadLaunchAgent(job.Change.Path)
 		}
 	}

@@ -129,7 +129,7 @@ func TestFreshStartDuringExpiryRegistersUnderAFreshID(t *testing.T) {
 // the session, no registration is ever left unreachable from its index.
 func TestConcurrentStartAndForgetKeepTheIndexConsistent(t *testing.T) {
 	const rounds = 30
-	for round := 0; round < rounds; round++ {
+	for round := range rounds {
 		home, project := t.TempDir(), t.TempDir()
 		setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 		at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)

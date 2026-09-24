@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -119,7 +118,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	collect()
 	cm = read(child)
 	if cm.Counts.Messages == nil || *cm.Counts.Messages != 2 {
-		t.Fatal(fmt.Sprintf("resumed child messages: %+v", cm.Counts))
+		t.Fatalf("resumed child messages: %+v", cm.Counts)
 	}
 	updated, _, _ := local.LoadRegistration(child.ArchiveSessionID)
 	if !updated.SessionStartedAt.Equal(child.SessionStartedAt) {

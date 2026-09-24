@@ -52,16 +52,19 @@ func TestStatusReportsAMovedOrDeletedBinaryAsBroken(t *testing.T) {
 		problem string
 	}{
 		{"deleted", func(t *testing.T, path string) {
+			t.Helper()
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
 		}, "missing"},
 		{"moved", func(t *testing.T, path string) {
+			t.Helper()
 			if err := os.Rename(path, path+"-moved"); err != nil {
 				t.Fatal(err)
 			}
 		}, "missing"},
 		{"not executable", func(t *testing.T, path string) {
+			t.Helper()
 			if err := os.Chmod(path, 0o644); err != nil {
 				t.Fatal(err)
 			}

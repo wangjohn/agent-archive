@@ -28,8 +28,8 @@ func TestStatusRequiresEveryApplicationProjectPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := storage.NewMemoryStore()
-	publishPairSession(t, home, store, remote, cfg, now, "codex-a", "codex", projectA, true)
-	publishPairSession(t, home, store, remote, cfg, now, "codex-b", "codex", projectB, false)
+	publishPairSession(t, home, store, remote, cfg, now, "codex-a", projectA, true)
+	publishPairSession(t, home, store, remote, cfg, now, "codex-b", projectB, false)
 
 	env := pairStatusEnv(t, home, userHome, now, "codex", "claude")
 	view, err := readStatus(env)
@@ -57,7 +57,7 @@ func TestPairVerificationSurvivesUnrelatedChangesButNotReactivationOrDestination
 	}
 	store, _ := collector.NewLocalStore(home)
 	remote := storage.NewMemoryStore()
-	publishPairSession(t, home, store, remote, cfg, now, "codex-a", "codex", projectA, true)
+	publishPairSession(t, home, store, remote, cfg, now, "codex-a", projectA, true)
 	env := pairStatusEnv(t, home, userHome, now, "codex")
 
 	cfg.Archive.Projects = cfg.Archive.Projects[:1]
@@ -135,7 +135,7 @@ func TestStatusCountsLegacySessionsWithoutConfiguredProjects(t *testing.T) {
 	}
 	store, _ := collector.NewLocalStore(home)
 	remote := storage.NewMemoryStore()
-	publishPairSession(t, home, store, remote, cfg, now, "codex-legacy", "codex", project, false)
+	publishPairSession(t, home, store, remote, cfg, now, "codex-legacy", project, false)
 	env := pairStatusEnv(t, home, userHome, now, "codex")
 	view, err := readStatus(env)
 	if err != nil {
@@ -169,7 +169,7 @@ func TestStatusIgnoresDuplicateProjectRoots(t *testing.T) {
 	}
 	store, _ := collector.NewLocalStore(home)
 	remote := storage.NewMemoryStore()
-	publishPairSession(t, home, store, remote, cfg, now, "codex-a", "codex", project, true)
+	publishPairSession(t, home, store, remote, cfg, now, "codex-a", project, true)
 	view, err := readStatus(pairStatusEnv(t, home, userHome, now, "codex"))
 	if err != nil {
 		t.Fatal(err)
@@ -189,8 +189,8 @@ func TestStatusTextDoesNotCallPartialReadBackVerified(t *testing.T) {
 	}
 	store, _ := collector.NewLocalStore(home)
 	remote := storage.NewMemoryStore()
-	publishPairSession(t, home, store, remote, cfg, now, "codex-a", "codex", projectA, true)
-	publishPairSession(t, home, store, remote, cfg, now, "codex-b", "codex", projectB, false)
+	publishPairSession(t, home, store, remote, cfg, now, "codex-a", projectA, true)
+	publishPairSession(t, home, store, remote, cfg, now, "codex-b", projectB, false)
 	env := pairStatusEnv(t, home, userHome, now, "codex")
 	var out strings.Builder
 	if code := runStatusCommand(nil, &out, &out, env); code != 0 {
@@ -216,13 +216,15 @@ func pairTestConfig(now time.Time, apps []string, roots ...string) config.Config
 	return config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: apps, Archive: archive.Config{Enabled: true, Projects: projects}}
 }
 
-func publishPairSession(t *testing.T, home string, store *collector.LocalStore, remote *storage.MemoryStore, cfg config.Config, now time.Time, id, harness, project string, verify bool) {
+// publishPairSession registers and publishes a Codex session, verifying it
+// when verify is set.
+func publishPairSession(t *testing.T, home string, store *collector.LocalStore, remote *storage.MemoryStore, cfg config.Config, now time.Time, id, project string, verify bool) {
 	t.Helper()
 	path := filepath.Join(project, id+".jsonl")
 	if err := os.WriteFile(path, []byte(`{"type":"turn_context","model":"synthetic","cli_version":"1.2.3"}`+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	reg := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "native-" + id, ProjectID: archive.ProjectID(project), ProjectRoot: project, Harness: archive.Harness{Name: harness, Version: "1.2.3"}, TranscriptPath: path, SessionStartedAt: now, RegisteredAt: now}
+	reg := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "native-" + id, ProjectID: archive.ProjectID(project), ProjectRoot: project, Harness: archive.Harness{Name: "codex", Version: "1.2.3"}, TranscriptPath: path, SessionStartedAt: now, RegisteredAt: now}
 	if err := store.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}

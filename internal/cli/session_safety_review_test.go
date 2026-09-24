@@ -31,6 +31,7 @@ func TestCursorVersionDoesNotProveSessionStart(t *testing.T) {
 		t.Fatalf("diagnostics %+v", ds)
 	}
 }
+
 func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
 	home := t.TempDir()
 	at := time.Now().UTC()
@@ -56,6 +57,7 @@ func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
 		t.Fatalf("registration %+v", regs)
 	}
 }
+
 func TestExcludedProjectLeavesNoDiagnostic(t *testing.T) {
 	home := t.TempDir()
 	at := time.Now().UTC()
