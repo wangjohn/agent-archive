@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -61,35 +60,40 @@ func printReviewPrivacy(p *prompter, cfg config.Config) {
 	printBucketPrivacy(p.out, currentBucketPrivacy(cfg, p.clock()))
 }
 
-func reviewAction(p *prompter, label string) (string, error) {
-	for {
-		answer, err := p.line(label + " [Y/n/edit] ")
-		if err != nil {
-			return "", err
-		}
-		switch strings.ToLower(answer) {
-		case "", "y", "yes":
-			return "start", nil
-		case "n", "no":
-			return "cancel", nil
-		case "edit", "e":
-			return "edit", nil
-		default:
-			fmt.Fprintln(p.out, "Enter y to continue, n to cancel, or edit to change something.")
-		}
+// reviewAction asks the final confirmation, returning start, edit, or cancel.
+// y, n, and e still work for scripted input.
+func reviewAction(p *prompter, reconfiguring bool) (string, error) {
+	label, yes := "Start archiving?", "Yes, start archiving"
+	if reconfiguring {
+		label, yes = "Save these changes?", "Yes, save"
 	}
+	choice, err := p.menu("\n"+label, "yes",
+		option{"yes", yes},
+		option{"edit", "Edit a setting"},
+		option{"no", "Cancel (your setup draft is kept)"})
+	switch choice {
+	case "yes":
+		return "start", err
+	case "no":
+		return "cancel", err
+	}
+	return choice, err
 }
 
 func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
-	fmt.Fprintln(p.out, "\nWhat would you like to change?")
-	fmt.Fprintln(p.out, "  apps       Which apps to include\n  projects   Which projects to include\n  sessions   All sessions or only sessions using skills\n  retention  How long sessions are kept\n  storage    Bucket or credentials\n  prefix     Folder inside the bucket")
-	choices := []string{"apps", "projects", "sessions", "retention", "storage", "prefix", "back"}
-	if draft.Config.Storage.Provider == credentials.ProviderS3 {
-		fmt.Fprintln(p.out, "  region     AWS bucket region")
-		choices = append(choices, "region")
+	choices := []option{
+		{"apps", "Apps to include"},
+		{"projects", "Projects to include"},
+		{"sessions", "All sessions or only sessions using skills"},
+		{"retention", "How long sessions are kept"},
+		{"storage", "Bucket or credentials"},
+		{"prefix", "Folder inside the bucket"},
 	}
-	fmt.Fprintln(p.out, "  back       Return to review")
-	choice, err := promptChoice(p, "Change", "back", choices...)
+	if draft.Config.Storage.Provider == credentials.ProviderS3 {
+		choices = append(choices, option{"region", "AWS bucket region"})
+	}
+	choices = append(choices, option{"back", "Nothing, go back to the review"})
+	choice, err := p.menu("\nWhat would you like to change?", "back", choices...)
 	if err != nil {
 		return err
 	}
