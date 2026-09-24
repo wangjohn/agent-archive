@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -863,6 +864,16 @@ type scanSignature struct {
 	// SourceFormat is the format the scan actually produced, which decides
 	// whether a stat is trustworthy evidence at all (see unchangedSinceLastScan).
 	SourceFormat string `json:"source_format,omitempty"`
+	// SourceKind is the registration's source. A Cursor database chat is
+	// identified by its cursorstore.Signature instead of a file stat.
+	SourceKind          archive.SourceKind `json:"source_kind,omitempty"`
+	CursorLastUpdatedAt int64              `json:"cursor_last_updated_at,omitempty"`
+	CursorHeaderCount   int                `json:"cursor_header_count,omitempty"`
+	CursorLastBubbleID  string             `json:"cursor_last_bubble_id,omitempty"`
+}
+
+func (s scanSignature) cursorSignature() cursorstore.Signature {
+	return cursorstore.Signature{LastUpdatedAt: s.CursorLastUpdatedAt, HeaderCount: s.CursorHeaderCount, LastBubbleID: s.CursorLastBubbleID}
 }
 
 func (s *LocalStore) scanSignaturePath(id string) string {

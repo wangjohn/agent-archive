@@ -291,7 +291,8 @@ func cursorTranscriptPath(payload map[string]any, conversationID string) string 
 // is reported as collector.ErrSessionNotRegistered, which handleHookEvent
 // treats as the quiet outcome of the race.
 func adoptCursorTranscriptPath(store *collector.LocalStore, reg *archive.SessionRegistration, harness string, payload map[string]any) error {
-	if canonicalHarness(harness) != "cursor" || reg.TranscriptPath != "" {
+	// A chat read from Cursor's database never switches to a file.
+	if canonicalHarness(harness) != "cursor" || reg.TranscriptPath != "" || !reg.ReadsTranscriptFile() {
 		return nil
 	}
 	path := cursorTranscriptPath(payload, reg.NativeSessionID)
@@ -299,7 +300,7 @@ func adoptCursorTranscriptPath(store *collector.LocalStore, reg *archive.Session
 		return nil
 	}
 	found, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
-		if current.TranscriptPath == "" {
+		if current.TranscriptPath == "" && current.ReadsTranscriptFile() {
 			current.TranscriptPath = path
 		}
 		*reg = *current
@@ -361,8 +362,9 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
 				return errSessionIdentityConflict
 			}
-			// A Cursor path, once set, is never replaced by a different one.
-			if transcriptPath != "" && (!isCursor || existing.TranscriptPath == "") {
+			// A Cursor path, once set, is never replaced by a different one,
+			// and a session read from Cursor's database never takes one.
+			if transcriptPath != "" && existing.ReadsTranscriptFile() && (!isCursor || existing.TranscriptPath == "") {
 				existing.TranscriptPath = transcriptPath
 			}
 			existing.RegisteredAt = now

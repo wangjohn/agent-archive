@@ -55,6 +55,9 @@ type Options struct {
 	// the pass ends early. The session in flight always finishes, and the
 	// rest keep their pending work for the next pass.
 	Stop func() bool
+	// CursorDatabase is Cursor's state.vscdb, which cursor-sqlite sessions
+	// are read from. Empty means the one under the user's home directory.
+	CursorDatabase string
 }
 
 // Progress reports one session a pass has processed.
@@ -288,8 +291,15 @@ const cursorTextSourceFormat = "cursor-text"
 // Cursor text transcript — which has no per-record timestamps and is compared
 // by prefix, making a silent in-place edit hardest to detect downstream — is
 // never skipped on a stat alone.
+//
+// A Cursor database chat is identified by its cursorstore.Signature instead
+// of a stat (see sourceReader).
 func unchangedSinceLastScan(local *LocalStore, reg archive.SessionRegistration, opts Options) (bool, error) {
-	if reg.TranscriptPath == "" || reg.ParentSessionID != "" {
+	if reg.ParentSessionID != "" {
+		return false, nil
+	}
+	reader, ok := newSourceReader(local, reg, opts)
+	if !ok {
 		return false, nil
 	}
 	signature, found, err := local.loadScanSignature(reg.ArchiveSessionID)
@@ -306,11 +316,8 @@ func unchangedSinceLastScan(local *LocalStore, reg archive.SessionRegistration, 
 	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapter.Version() {
 		return false, nil
 	}
-	info, err := os.Stat(reg.TranscriptPath)
-	if err != nil || !info.Mode().IsRegular() {
-		return false, nil
-	}
-	if statTranscript(info) != (transcriptFileInfo{Size: signature.TranscriptSize, Mtime: signature.TranscriptMtime}) {
+	state, ok := reader.Signature(context.Background())
+	if !ok || !state.matches(signature) {
 		return false, nil
 	}
 	if scanPending, err := local.ScanPending(reg.ArchiveSessionID); err != nil || scanPending {
@@ -326,11 +333,13 @@ func unchangedSinceLastScan(local *LocalStore, reg archive.SessionRegistration, 
 // recordScanSignature marks a session settled at the transcript bytes this
 // scan consumed, so the next pass can skip it. It is written only at an exit
 // that owes no further work.
-func recordScanSignature(local *LocalStore, reg archive.SessionRegistration, stat transcriptFileInfo, bundle archive.SourceBundle, opts Options) error {
+func recordScanSignature(local *LocalStore, reg archive.SessionRegistration, state sourceState, bundle archive.SourceBundle, opts Options) error {
 	return local.saveScanSignature(reg.ArchiveSessionID, scanSignature{
-		TranscriptSize: stat.Size, TranscriptMtime: stat.Mtime,
+		TranscriptSize: state.file.Size, TranscriptMtime: state.file.Mtime,
 		ParserVersion: opts.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
 		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
+		SourceKind: state.kind, CursorLastUpdatedAt: state.cursor.LastUpdatedAt,
+		CursorHeaderCount: state.cursor.HeaderCount, CursorLastBubbleID: state.cursor.LastBubbleID,
 	})
 }
 
@@ -368,7 +377,8 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		}
 	}
 
-	if reg.TranscriptPath == "" {
+	reader, ok := newSourceReader(local, reg, opts)
+	if !ok {
 		// Not an error: a Cursor desktop chat is registered at its first
 		// prompt, before Cursor names its transcript, and a later hook fills
 		// the path in. Until then there is nothing to read. The session is
@@ -381,7 +391,7 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	filtered, transcriptStat, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
+	filtered, transcriptStat, err := reader.Filter(ctx, adapter, opts.maxTranscriptBytes())
 	if err != nil {
 		if errors.Is(err, errTranscriptTooLarge) {
 			// The file will not shrink by retrying: record the gap once and
@@ -405,7 +415,7 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		// remains untouched and readable.
 		return outcomeSkipped, fmt.Errorf("filter transcript: %w", err)
 	}
-	if transcriptStat.Size == 0 {
+	if transcriptStat.empty() {
 		// The application has created the file but written no record yet:
 		// the fresh-start proof accepts exactly this state, so it is the
 		// same waiting as having no path at all, one step later. Nothing has

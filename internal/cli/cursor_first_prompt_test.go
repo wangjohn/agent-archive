@@ -443,3 +443,41 @@ func onlyCursorRegistrationList(t *testing.T, home string) ([]archive.SessionReg
 	}
 	return store.LoadRegistrations()
 }
+
+// A chat read from Cursor's database never adopts a transcript path a hook
+// reports, at a prompt, a response, a stop, or a continuation: switching
+// sources would change its format mid-session.
+func TestCursorDatabaseSessionNeverAdoptsTranscriptPath(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+	conversation := "5f3c2a10-0000-4000-8000-00000000db01"
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RegisterNewSession(conversation, func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{
+			ArchiveSessionID: id, NativeSessionID: conversation,
+			ProjectID: archive.ProjectID(project), ProjectRoot: project,
+			Harness: archive.Harness{Name: "cursor"}, SessionStartedAt: at, RegisteredAt: at, AdmittedAt: at,
+			Origin: archive.SessionOriginImport, SourceKind: archive.SourceKindCursorSQLite, SourceKey: conversation,
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	transcript := cursorTranscriptLocation(t, conversation)
+	for i, event := range []string{"beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionStart"} {
+		when := at.Add(time.Duration(i+1) * time.Minute)
+		if err := handleHookEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, transcript), when); err != nil {
+			t.Fatalf("%s: %v", event, err)
+		}
+		reg := onlyCursorRegistration(t, home)
+		if reg.TranscriptPath != "" || reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != conversation {
+			t.Fatalf("%s changed the source: %#v", event, reg)
+		}
+		if event == "sessionStart" && !reg.RegisteredAt.Equal(when) {
+			t.Fatalf("the continuation did not run: %#v", reg)
+		}
+	}
+}
