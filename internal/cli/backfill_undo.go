@@ -8,10 +8,12 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -67,9 +69,6 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if refusal := undoRefusal(home, cfg); refusal != "" {
 		return fail("%s", refusal)
 	}
-	if !*yes && !env.isTerminal(stdin) {
-		return fail("confirming an undo needs a terminal. Nothing was changed. Run again with --yes to undo without asking.")
-	}
 	userHome, err := env.userHomeDir()
 	if err != nil {
 		return fail("resolve user home: %v", err)
@@ -93,13 +92,37 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if err != nil {
 		return fail("%v", err)
 	}
+	// Nothing to do needs no confirmation, so these come before the
+	// terminal requirement.
 	if plan.Empty() {
-		scope := ""
 		if *project != "" {
-			scope = " in that project"
+			fmt.Fprintf(stdout, "No sessions from %s are left in import %s. Nothing was changed.\n", plan.ProjectDisplay(), batch.ID)
+		} else {
+			fmt.Fprintf(stdout, "Import %s has nothing left to undo. Nothing was changed.\n", batch.ID)
 		}
-		fmt.Fprintf(stdout, "Import %s has nothing left to undo%s. Nothing was changed.\n", batch.ID, scope)
 		return 0
+	}
+	if !*yes && !env.isTerminal(stdin) {
+		return fail("confirming an undo needs a terminal. Nothing was changed. Run again with --yes to undo without asking.")
+	}
+	// The bucket must work before anything is confirmed, as for an import.
+	// The check writes one test object and deletes it again.
+	var bucket storage.ObjectStore
+	if plan.Counts().Deleted > 0 {
+		fmt.Fprint(stdout, "Checking storage… ")
+		if bucket, err = env.openStore(cfg); err == nil {
+			err = storage.VerifyAccess(context.Background(), bucket)
+		}
+		if err != nil {
+			fmt.Fprintln(stdout, "failed.")
+			fmt.Fprintf(stderr, "agent-archive: backfill undo: storage check failed: %v\n", err)
+			if action := credentials.RecoveryAction(err); action != "" {
+				fmt.Fprintln(stderr, "agent-archive: backfill undo: "+action)
+			}
+			return fail("nothing was changed.")
+		}
+		fmt.Fprintln(stdout, "ready.")
+		fmt.Fprintln(stdout)
 	}
 	backfill.RenderUndo(stdout, plan)
 	fmt.Fprintln(stdout)
@@ -145,28 +168,29 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return fail("%v", err)
 	}
 
-	var bucket storage.ObjectStore
-	if plan.Counts().Deleted > 0 {
-		if bucket, err = env.openStore(cfg); err != nil {
-			return fail("open storage: %v. Nothing was changed.", err)
-		}
+	if plan.Counts().Deleted > 0 && bucket == nil {
+		// The recheck found a bucket delete the confirmed plan did not
+		// have; Grew refuses that, so this is only a guard.
+		return fail("the import changed while this was open; run undo again to review it. Nothing was changed.")
 	}
 	store, err := collector.NewLocalStore(home)
 	if err != nil {
 		return fail("open local store: %v", err)
 	}
 	now := env.now().UTC()
-	// The configuration goes first: once the projects are excluded, nothing
-	// of theirs is published again, even if undo is interrupted before it
-	// has removed every session. A rerun finishes the sessions.
-	excluded, err := commitUndo(home, plan, fingerprint)
+	// The batch is marked undone and the configuration changed before any
+	// session is removed: once the projects are excluded, nothing of theirs
+	// is published again, even if undo is interrupted, and an import undone
+	// in part is never continued. A rerun finishes the sessions.
+	excluded, err := commitUndo(home, batch, plan, fingerprint, now)
 	if err != nil {
 		return fail("%v", err)
 	}
-	batch.ProjectsExcluded = append(batch.ProjectsExcluded, excluded...)
-	batch.UndoneAt = &now
-	if err := backfill.SaveBatch(home, *batch); err != nil {
-		return fail("%v", err)
+	if len(excluded) > 0 {
+		batch.ProjectsExcluded = append(batch.ProjectsExcluded, excluded...)
+		if err := backfill.SaveBatch(home, *batch); err != nil {
+			return fail("%v. The configuration was already changed: %s excluded. Run undo again to remove the sessions.", err, countNoun(len(excluded), "project"))
+		}
 	}
 	result := plan.Remove(context.Background(), store, bucket, now)
 	return reportUndo(stdout, stderr, *batch, plan, excluded, result)
@@ -206,11 +230,20 @@ func selectUndoBatch(home, id string) (*backfill.Batch, error) {
 	return nil, fmt.Errorf("there is no import %q. Run agent-archive backfill history to see import IDs", id)
 }
 
-// commitUndo writes the configuration change under hooks.lock, after
-// checking that the configuration is still the one the plan was made from.
-func commitUndo(home string, plan backfill.UndoPlan, fingerprint string) ([]string, error) {
+// commitUndo marks the batch undone and then writes the configuration
+// change, under hooks.lock, after checking that the configuration is still
+// the one the plan was made from. It returns the IDs of the projects it
+// excluded; the caller records them in the batch.
+func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fingerprint string, now time.Time) ([]string, error) {
+	markUndone := func() error {
+		batch.UndoneAt = &now
+		if err := backfill.SaveBatch(home, *batch); err != nil {
+			return fmt.Errorf("%w. Nothing was changed", err)
+		}
+		return nil
+	}
 	if len(plan.ExcludeProjects) == 0 && len(plan.RemoveApps) == 0 {
-		return nil, nil
+		return nil, markUndone()
 	}
 	releaseHooks, err := local.NamedLockWait(home, "hooks.lock", backfillHooksWait)
 	if err != nil {
@@ -227,9 +260,12 @@ func commitUndo(home string, plan backfill.UndoPlan, fingerprint string) ([]stri
 	if configFingerprint(cfg) != fingerprint {
 		return nil, errors.New("the configuration changed while this was open; run undo again. Nothing was changed")
 	}
+	if err := markUndone(); err != nil {
+		return nil, err
+	}
 	excluded := plan.ApplyToConfig(&cfg)
 	if err := config.Save(home, cfg); err != nil {
-		return nil, fmt.Errorf("save config: %w. Nothing was changed", err)
+		return nil, fmt.Errorf("save config: %w. The import is marked undone but nothing was removed; run undo again", err)
 	}
 	return excluded, nil
 }

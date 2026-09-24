@@ -33,6 +33,10 @@ type UndoPlan struct {
 	// RemoveApps are apps the import added to ImportedHarnesses that no
 	// imported session left after the undo needs.
 	RemoveApps []string
+	// HookCapturedStopping counts the hook-captured sessions in
+	// ExcludeProjects. Excluding the projects stops them uploading; they are
+	// not deleted.
+	HookCapturedStopping int
 
 	view Plan
 }
@@ -44,8 +48,8 @@ type UndoSession struct {
 	// bucket configured now. Otherwise they are in a destination this machine
 	// no longer uses, and the session is only forgotten locally.
 	InCurrentDestination bool
-	// Resumed is set when a hook fired for the session after the import, so
-	// the archive holds content newer than the import.
+	// Resumed is set when the app ran the session again after the import
+	// (see resumedSinceImport), so it has content newer than the import.
 	Resumed bool
 }
 
@@ -93,16 +97,17 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 		if reg.ImportBatch != b.ID {
 			continue
 		}
-		// A subagent goes with its parent. One whose parent is already gone
-		// (an earlier undo removed the parent but failed on it) is selected
-		// by its own project.
+		// A subagent goes with its parent. One whose parent is no longer
+		// registered (an earlier undo removed the parent but failed on the
+		// subagent) is selected by its own project, which it shares with the
+		// parent.
 		if reg.ParentSessionID != "" && !selected[reg.ParentSessionID] && !inProject(reg.ProjectRoot) {
 			continue
 		}
 		if reg.ParentSessionID == "" && !selected[reg.ArchiveSessionID] {
 			continue
 		}
-		resumed, err := resumedSinceImport(store, reg, requested[reg.ArchiveSessionID])
+		resumed, err := resumedSinceImport(env, store, reg, requested[reg.ArchiveSessionID])
 		if err != nil {
 			return UndoPlan{}, err
 		}
@@ -115,9 +120,17 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 	}
 	p.Sessions = append(children, parents...)
 
+	excludedRoots := map[string]bool{}
 	for _, project := range cfg.Archive.Projects {
 		if project.Included && slices.Contains(b.ProjectsAdded, project.ProjectID) && !slices.Contains(b.ProjectsExcluded, project.ProjectID) && inProject(project.Root) {
 			p.ExcludeProjects = append(p.ExcludeProjects, project)
+			excludedRoots[project.Root] = true
+		}
+	}
+	// Excluding a project also stops its hook-captured sessions uploading.
+	for _, reg := range regs {
+		if !reg.Imported() && reg.ParentSessionID == "" && excludedRoots[reg.ProjectRoot] {
+			p.HookCapturedStopping++
 		}
 	}
 
@@ -141,12 +154,28 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 	return p, nil
 }
 
-// resumedSinceImport reports whether a hook fired for an imported session
-// after the import. Backfill records no hook evidence (its subagent links are
-// archive-generated, provenance hook:subagent-link), so any other hook
-// evidence, whether waiting in a request, built into a pending publication,
-// or already published, came from the app running the session again.
-func resumedSinceImport(store *collector.LocalStore, reg archive.SessionRegistration, req collector.Request) (bool, error) {
+// resumedSinceImport reports whether the app ran an imported session again
+// after the import. Two signals, either of which is enough:
+//
+//   - The transcript was written after the import: its modification time is
+//     later than AdmittedAt. Discovery read every transcript before the
+//     import was stamped, and nothing in the archive writes to one, so only
+//     the app did. This covers apps without hooks, hooks whose payload left
+//     no evidence, and content not yet uploaded.
+//   - Hook evidence other than subagent links, waiting in a request, built
+//     into a pending publication, or already published. Backfill records
+//     none (its links are archive-generated, provenance hook:subagent-link),
+//     so any came from a hook. This covers a resume whose transcript moved.
+//
+// The superseded-source ledger is not a signal: a parent is republished
+// when its subagents publish (a link-only change), and a parser upgrade
+// republishes everything, neither of which is a resume.
+func resumedSinceImport(env Environment, store *collector.LocalStore, reg archive.SessionRegistration, req collector.Request) (bool, error) {
+	if reg.TranscriptPath != "" && !reg.AdmittedAt.IsZero() {
+		if info, err := env.stat(reg.TranscriptPath); err == nil && info.ModTime().After(reg.AdmittedAt) {
+			return true, nil
+		}
+	}
 	if hasHookEvidence(req.HookEvidence) {
 		return true, nil
 	}
@@ -177,37 +206,51 @@ func (p UndoPlan) Empty() bool {
 
 // UndoCounts summarises an undo's sessions. Sessions and Subagents count
 // every one removed; Resumed counts the sessions (not subagents) resumed
-// since the import; Deleted and Forgotten split them by whether the bucket is
-// called.
+// since the import; Deleted and Forgotten split them all by whether the
+// bucket is called, and DeletedSessions and ForgottenSessions split the
+// sessions alone.
 type UndoCounts struct {
-	Sessions, Subagents, Resumed int
-	Deleted, Forgotten           int
+	Sessions, Subagents, Resumed       int
+	Deleted, Forgotten                 int
+	DeletedSessions, ForgottenSessions int
 }
 
 func (p UndoPlan) Counts() UndoCounts {
 	var c UndoCounts
 	for _, s := range p.Sessions {
-		if s.Registration.ParentSessionID != "" {
-			c.Subagents++
-		} else {
+		parent := s.Registration.ParentSessionID == ""
+		if parent {
 			c.Sessions++
 			if s.Resumed {
 				c.Resumed++
 			}
+		} else {
+			c.Subagents++
 		}
 		if s.InCurrentDestination {
 			c.Deleted++
+			if parent {
+				c.DeletedSessions++
+			}
 		} else {
 			c.Forgotten++
+			if parent {
+				c.ForgottenSessions++
+			}
 		}
 	}
 	return c
 }
 
+// ProjectDisplay is the --project directory as the plan shows it, with ~.
+func (p UndoPlan) ProjectDisplay() string { return p.view.display(p.Project) }
+
 // Grew reports whether p would remove anything confirmed did not show: a
-// session, a project, or an app. Undo checks this after confirming, under
-// the locks, and asks for a new run rather than removing more than was
-// confirmed.
+// session, a bucket delete for a session shown as only forgotten, a project,
+// or an app. Undo checks this after confirming, under the locks, and asks
+// for a new run rather than removing more than was confirmed. A session
+// resumed meanwhile does not count: the person already confirmed deleting
+// it, and one in active use would otherwise abort every run.
 func (p UndoPlan) Grew(confirmed UndoPlan) bool {
 	sessions := map[string]UndoSession{}
 	for _, s := range confirmed.Sessions {
@@ -215,7 +258,7 @@ func (p UndoPlan) Grew(confirmed UndoPlan) bool {
 	}
 	for _, s := range p.Sessions {
 		before, ok := sessions[s.Registration.ArchiveSessionID]
-		if !ok || s.InCurrentDestination && !before.InCurrentDestination || s.Resumed && !before.Resumed {
+		if !ok || s.InCurrentDestination && !before.InCurrentDestination {
 			return true
 		}
 	}
@@ -333,6 +376,16 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 		for _, root := range roots {
 			fmt.Fprintf(w, "      %s\n", root)
 		}
+		if h := p.HookCapturedStopping; h > 0 {
+			where, verb, what := "these projects", "stop", "they are"
+			if n == 1 {
+				where = "this project"
+			}
+			if h == 1 {
+				verb, what = "stops", "it is"
+			}
+			fmt.Fprintf(w, "    %s in %s %s uploading; %s not deleted.\n", count(h, "hook-captured session"), where, verb, what)
+		}
 	}
 	if len(p.RemoveApps) > 0 {
 		names := make([]string, 0, len(p.RemoveApps))
@@ -357,14 +410,19 @@ func UndoQuestion(p UndoPlan) string {
 	if c.Sessions+c.Subagents == 0 {
 		return fmt.Sprintf("Exclude %s?", count(len(p.ExcludeProjects), "project"))
 	}
-	n := count(c.Sessions, "session")
+	// Sessions are named when there are any; otherwise only subagents are
+	// left.
+	deleted, forgotten := count(c.DeletedSessions, "session"), count(c.ForgottenSessions, "session")
 	if c.Sessions == 0 {
-		n = count(c.Subagents, "subagent transcript")
+		deleted, forgotten = count(c.Deleted, "subagent transcript"), count(c.Forgotten, "subagent transcript")
 	}
-	if c.Deleted == 0 {
-		return fmt.Sprintf("Forget %s? This cannot be undone.", n)
+	switch {
+	case c.Deleted == 0:
+		return fmt.Sprintf("Forget %s? This cannot be undone.", forgotten)
+	case c.Forgotten == 0:
+		return fmt.Sprintf("Delete %s from the archive? This cannot be undone.", deleted)
 	}
-	return fmt.Sprintf("Delete %s from the archive? This cannot be undone.", n)
+	return fmt.Sprintf("Delete %s from the archive and forget %s from a previous destination? This cannot be undone.", deleted, forgotten)
 }
 
 func undoNoun(sessions, subagents int) string {

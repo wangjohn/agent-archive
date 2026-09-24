@@ -166,6 +166,16 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return errors.New("a collector pass is still running; run backfill again")
 	}
 	defer releaseCollector()
+	// Read the batch again under the locks: an undo or another run may have
+	// changed it since it was checked.
+	if batches, err = backfill.LoadBatches(home); err != nil || len(batches) == 0 {
+		return err
+	}
+	latest := batches[len(batches)-1]
+	if latest.ID != last.ID || !latest.Continues(plan.BatchFilters(), backfill.DestinationID(cfg.Storage)) {
+		return nil
+	}
+	last = latest
 	if err := completeBatch(env, home, collector.OpenLocalStoreReadOnly(home), &last); err != nil {
 		return err
 	}
