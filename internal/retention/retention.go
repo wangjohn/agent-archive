@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -101,18 +102,29 @@ func Sweep(ctx context.Context, local *collector.LocalStore, store storage.Objec
 	now := opts.now()
 	result := Result{Errors: map[string]error{}}
 
-	registrations, err := local.LoadRegistrations()
+	// An unreadable registration or request fails only its own session, as
+	// in collector.Run.
+	registrations, registrationIssues, err := local.ScanRegistrations()
 	if err != nil {
-		return Result{}, fmt.Errorf("load registrations: %w", err)
+		return Result{}, err
 	}
+	maps.Copy(result.Errors, registrationIssues)
 	// One directory read for the whole sweep, rather than one per session.
-	requests, err := local.LoadRequests()
+	requests, requestIssues, err := local.ScanRequests()
 	if err != nil {
-		return Result{}, fmt.Errorf("load requests: %w", err)
+		return Result{}, err
 	}
 	requested := make(map[string]bool, len(requests))
 	for _, req := range requests {
 		requested[req.ArchiveSessionID] = true
+	}
+	for id, issue := range requestIssues {
+		result.Errors[id] = issue
+		// A request that could not be read may still hold evidence, so it
+		// defers expiry like any other; a quarantined one no longer exists.
+		if !errors.Is(issue, collector.ErrQuarantined) {
+			requested[id] = true
+		}
 	}
 	for _, reg := range registrations {
 		if err := sweepSession(ctx, local, store, reg, opts, now, requested, &result); err != nil {

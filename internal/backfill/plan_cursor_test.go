@@ -37,6 +37,30 @@ func TestCursorDatabaseChatFormatErrorIsThatChats(t *testing.T) {
 	}
 }
 
+// A chat whose composerId or workspace ID is not a string is that chat's
+// unsafe_format, reported and not read, rather than imported under the key's
+// ID or without its workspace.
+func TestCursorDatabaseMalformedIDFieldsAreThatChatsUnsafeFormat(t *testing.T) {
+	tr := newTree(t)
+	site := tr.repo("home/site")
+	uri := map[string]any{"uri": "file://" + site}
+	writeCursorDB(t, CursorStateDatabase(tr.home), true, mergeRows(
+		chatRows("good", map[string]any{"workspaceIdentifier": uri}, "a", "b"),
+		map[string]any{"composerData:badid": composerJSON("badid", 1, map[string]any{"composerId": 5, "workspaceIdentifier": uri})},
+		map[string]any{"composerData:badws": composerJSON("badws", 1, map[string]any{"workspaceIdentifier": map[string]any{"uri": "file://" + site, "id": []any{1}}})},
+	))
+	env := tr.env()
+	env.CursorDatabase = CursorDatabaseReader(tr.home)
+	p := plan(t, env, states{}, config.Config{}, Filters{})
+	got := map[string]SkipReason{}
+	for _, c := range databaseCandidates(p) {
+		got[c.NativeSessionID] = c.Skip
+	}
+	if !p.CursorDatabaseChecked || !reflect.DeepEqual(got, map[string]SkipReason{"good": "", "badid": SkipUnsafeFormat, "badws": SkipUnsafeFormat}) {
+		t.Fatalf("checked %v (%q), outcomes %v", p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, got)
+	}
+}
+
 // A failure of the database itself while a chat is read (Cursor held a lock
 // past the timeout) leaves the whole database unchecked, with that reason.
 func TestCursorDatabaseReadFailureUnchecksTheDatabase(t *testing.T) {
@@ -78,6 +102,36 @@ func TestCursorDatabaseDuplicatePrefersTheMatchingKey(t *testing.T) {
 		if got := databaseOutcomes(p); !reflect.DeepEqual(got, map[SkipReason]int{"": 1, SkipDuplicateSession: 1}) {
 			t.Fatalf("keys %s then %s: %v", order[0].KeyID, order[1].KeyID, got)
 		}
+	}
+}
+
+// Ctrl-C while the plan reads chats cancels its context: planning stops with
+// the cancellation, and the plan's copy of the database is still removed.
+func TestCursorDatabaseSnapshotClosedWhenPlanningIsCancelled(t *testing.T) {
+	tr := newTree(t)
+	site := tr.repo("home/site")
+	at := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	chats := []CursorDatabaseChat{{ID: "a", Folder: site, CreatedAt: at}, {ID: "b", Folder: site, CreatedAt: at}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	closed := false
+	env := tr.env()
+	env.CursorDatabase = func(ctx context.Context) (CursorDatabaseResult, error) {
+		res, _ := fakeCursorDatabase(chats, map[string]cursorstore.Composer{"a": syntheticChat("a", nil, "x"), "b": syntheticChat("b", nil, "y")}, nil, nil)(ctx)
+		read := res.ReadChat
+		res.ReadChat = func(ctx context.Context, id string) (cursorstore.Composer, error) {
+			cancel() // Ctrl-C arrives mid-read.
+			if err := ctx.Err(); err != nil {
+				return cursorstore.Composer{}, err
+			}
+			return read(ctx, id)
+		}
+		res.Close = func() error { closed = true; return nil }
+		return res, nil
+	}
+	_, err := BuildPlan(ctx, env, states{}, config.Config{}, Filters{})
+	if !errors.Is(err, context.Canceled) || !closed {
+		t.Fatalf("err %v, snapshot closed %v", err, closed)
 	}
 }
 

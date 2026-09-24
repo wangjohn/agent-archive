@@ -190,7 +190,7 @@ func ReadSignature(ctx context.Context, dbPath, composerID string) (Signature, e
 		if err != nil {
 			return err
 		}
-		defer func() { _ = tx.Rollback() }()
+		defer func() { _ = tx.Rollback() }() // a read-only transaction; nothing to undo
 		value, err := composerRow(ctx, tx, composerID)
 		if err != nil {
 			return err

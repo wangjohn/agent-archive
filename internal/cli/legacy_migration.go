@@ -90,6 +90,9 @@ func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
 	if state == "unknown" {
 		return nil, fmt.Errorf("cannot determine legacy upload job state; restore launchctl access and retry")
 	}
+	if state == jobAnotherInstallation {
+		return nil, fmt.Errorf("launchd's legacy upload job was loaded from a plist other than %s; preserve it and resolve it before setup", path)
+	}
 	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)}, nil
 }
 
@@ -112,28 +115,53 @@ func retireLegacyJob(job *legacyJob, env Env) error {
 	return os.Remove(job.Change.Path)
 }
 
-func restoreLegacyJob(job *legacyJob, env Env) error {
+// restoreLegacyJob puts back a job setup retired: the legacy upload job, or
+// the collector an earlier release installed under the default label. name
+// says which in errors, and home is the data directory whose interrupted
+// setup is being recovered.
+func restoreLegacyJob(home string, job *legacyJob, name string, env Env) error {
+	if job == nil {
+		return nil
+	}
+	if err := checkLegacyJob(home, job, name); err != nil {
+		return err
+	}
+	if _, err := os.Stat(job.Change.Path); os.IsNotExist(err) {
+		if err := hooks.Apply([]hooks.Change{{Path: job.Change.Path, After: job.Change.Before, Mode: job.Change.Mode}}); err != nil {
+			return err
+		}
+	}
+	if job.WasLoaded {
+		state := env.jobState(job.Change.Path)
+		//lint:ignore LV1001 Env.JobState (cli.go) reports launchd states as plain strings, and tests stub it with string-returning funcs
+		switch state {
+		case "unknown":
+			return &recoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to launchctl and rerun setup", name)}
+		case jobAnotherInstallation:
+			return &recoveryBlockedError{home: home, cause: fmt.Sprintf("launchd runs the %s's label from another plist now, so it cannot be restarted from %s", name, job.Change.Path)}
+		case "loaded", "running":
+		default:
+			return env.loadLaunchAgent(job.Change.Path)
+		}
+	}
+	return nil
+}
+
+// checkLegacyJob confirms restoreLegacyJob can put job back: its plist is
+// either gone (setup removed it) or exactly as setup found it.
+func checkLegacyJob(home string, job *legacyJob, name string) error {
 	if job == nil {
 		return nil
 	}
 	current, err := os.ReadFile(job.Change.Path)
 	if os.IsNotExist(err) {
-		if err := hooks.Apply([]hooks.Change{{Path: job.Change.Path, After: job.Change.Before, Mode: job.Change.Mode}}); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	} else if !bytes.Equal(current, job.Change.Before) {
-		return fmt.Errorf("legacy upload job changed outside setup; preserve it and resolve recovery")
+		return nil
 	}
-	if job.WasLoaded {
-		state := env.jobState(job.Change.Path)
-		if state == "unknown" {
-			return fmt.Errorf("legacy job state is unknown; retry recovery when launchctl is available")
-		}
-		if !launchJobActive(state) {
-			return env.loadLaunchAgent(job.Change.Path)
-		}
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(current, job.Change.Before) {
+		return &recoveryBlockedError{home: home, cause: fmt.Sprintf("the %s's plist %s changed outside setup, and recovery never overwrites your edits", name, job.Change.Path)}
 	}
 	return nil
 }

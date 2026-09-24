@@ -23,6 +23,17 @@ import (
 
 var ErrRefreshRequired = errors.New("source changed or was deleted; refresh metadata and retry")
 
+// ErrInvalidMetadata means a metadata sidecar was read but does not decode
+// or validate: it is damaged, or a newer version of agent-archive wrote it.
+var ErrInvalidMetadata = errors.New("invalid metadata")
+
+// SkippedSidecar is a listed sidecar a listing left out because it is
+// invalid (Err wraps ErrInvalidMetadata).
+type SkippedSidecar struct {
+	Key string
+	Err error
+}
+
 // SkillUsage narrows a Filter's Skill/SkillSHA256 match to a specific
 // relationship between a session and the named skill. The zero value means
 // "the skill was used".
@@ -96,6 +107,10 @@ type ListOptions struct {
 	// local disk instead of downloading it, and forgets sidecars which are
 	// no longer listed. It holds metadata only.
 	Cache *MetadataCache
+	// Skipped, when set, is called once for each invalid sidecar the listing
+	// left out, in key order, after every sidecar has been read, so a caller
+	// can warn about it. The listing itself still succeeds.
+	Skipped func(SkippedSidecar)
 }
 
 // ListMetadata reads only metadata sidecars and applies filters without
@@ -107,9 +122,15 @@ func ListMetadata(ctx context.Context, store storage.ObjectStore, prefix string,
 // ListMetadataWithOptions is ListMetadata with an optional local cache. A
 // harness filter narrows the listing to that harness's own prefix, keys which
 // are not sidecars are skipped before any download, and sidecars are read with
-// bounded concurrency. Results are ordered newest capture first, and the first
-// sidecar in key order which cannot be read or validated fails the listing, as
-// a sequential read would.
+// bounded concurrency. Results are ordered newest capture first.
+//
+// Another Mac's retention or undo can delete a session at any time, so a
+// sidecar that is listed and then not found is left out: it no longer
+// exists. One that does not decode or validate (damaged, or written by a
+// newer version) is left out and reported through options.Skipped, so one
+// bad sidecar does not hide the rest of the archive. Any other read error
+// (network, credentials) fails the listing: the first in key order, as a
+// sequential read would.
 func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter, options ListOptions) ([]archive.Metadata, error) {
 	listPrefix := listPrefixFor(prefix, filter.Harness)
 	objects, err := store.List(ctx, listPrefix)
@@ -122,12 +143,17 @@ func ListMetadataWithOptions(ctx context.Context, store storage.ObjectStore, pre
 			sidecars = append(sidecars, object)
 		}
 	}
-	loaded, err := readSidecars(ctx, store, sidecars, options.Cache)
+	loaded, skipped, err := readSidecars(ctx, store, sidecars, options.Cache)
 	if err != nil {
 		return nil, err
 	}
 	if options.Cache != nil {
 		options.Cache.evictUnlisted(listPrefix, sidecars)
+	}
+	if options.Skipped != nil {
+		for _, s := range skipped {
+			options.Skipped(s)
+		}
 	}
 	var results []archive.Metadata
 	for _, metadata := range loaded {
@@ -162,9 +188,12 @@ func listPrefixFor(prefix, harness string) string {
 // the first failing one has been read and the lowest-index error is the one a
 // sequential read would have returned. It returns only after every read it
 // started has finished, so no goroutine outlives the call, and a cancelled
-// ctx is reported even when the store itself ignores it.
-func readSidecars(ctx context.Context, store storage.ObjectStore, objects []storage.Object, cache *MetadataCache) ([]archive.Metadata, error) {
+// ctx is reported even when the store itself ignores it. A sidecar deleted
+// since the listing is left out, and one that is invalid is left out and
+// returned in skipped, in key order; neither stops the others.
+func readSidecars(ctx context.Context, store storage.ObjectStore, objects []storage.Object, cache *MetadataCache) (loaded []archive.Metadata, skipped []SkippedSidecar, err error) {
 	out := make([]archive.Metadata, len(objects))
+	present := make([]bool, len(objects))
 	errs := make([]error, len(objects))
 	var failed atomic.Bool
 	slots := make(chan struct{}, listConcurrency)
@@ -186,25 +215,38 @@ func readSidecars(ctx context.Context, store storage.ObjectStore, objects []stor
 			defer wg.Done()
 			defer func() { <-slots }()
 			metadata, err := readListedSidecar(ctx, store, object, cache)
-			if err != nil {
+			switch {
+			case errors.Is(err, storage.ErrNotFound):
+				// Deleted since the listing.
+			case errors.Is(err, ErrInvalidMetadata):
+				errs[index] = err
+			case err != nil:
 				errs[index] = err
 				failed.Store(true)
-				return
+			default:
+				out[index], present[index] = metadata, true
 			}
-			out[index] = metadata
 		}(index, object)
 	}
 	wg.Wait()
-	for _, err := range errs {
-		if err != nil {
-			return nil, err
+	for index, err := range errs {
+		switch {
+		case errors.Is(err, ErrInvalidMetadata):
+			skipped = append(skipped, SkippedSidecar{Key: objects[index].Key, Err: err})
+		case err != nil:
+			return nil, nil, err
 		}
 	}
 	if dispatched < len(objects) {
 		// Dispatch stopped early without a read failing: ctx is done.
-		return nil, fmt.Errorf("read metadata: %w", ctx.Err())
+		return nil, nil, fmt.Errorf("read metadata: %w", ctx.Err())
 	}
-	return out, nil
+	for index := range out {
+		if present[index] {
+			loaded = append(loaded, out[index])
+		}
+	}
+	return loaded, skipped, nil
 }
 
 // readListedSidecar serves an unchanged sidecar from the cache and otherwise
@@ -241,10 +283,10 @@ func ReadMetadata(ctx context.Context, store storage.ObjectStore, key string) (a
 func decodeMetadata(key string, data []byte) (archive.Metadata, error) {
 	var metadata archive.Metadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return archive.Metadata{}, fmt.Errorf("decode metadata %q: %w", key, err)
+		return archive.Metadata{}, fmt.Errorf("%w %q: decode: %w", ErrInvalidMetadata, key, err)
 	}
 	if err := metadata.ValidateSourceReference(); err != nil {
-		return archive.Metadata{}, fmt.Errorf("invalid metadata %q: %w", key, err)
+		return archive.Metadata{}, fmt.Errorf("%w %q: %w", ErrInvalidMetadata, key, err)
 	}
 	return metadata, nil
 }

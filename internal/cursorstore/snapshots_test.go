@@ -45,7 +45,7 @@ func TestSweepSkipsASnapshotInUse(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(unlocked, snapshotLockName), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{unlocked, legacy} {
+	for _, d := range []string{unlocked, legacy, filepath.Join(unlocked, snapshotLockName)} {
 		if err := os.Chtimes(d, old, old); err != nil {
 			t.Fatal(err)
 		}
@@ -67,6 +67,39 @@ func TestSweepSkipsASnapshotInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertEmpty(t, root)
+}
+
+// TestSweepRemovesAnAbandonedSnapshotPromptly: a process killed mid-read
+// (Ctrl-C during a backfill plan) leaves a directory whose lock nobody
+// holds. It is removed as soon as its lock file is a minute old, not after
+// the hour a directory without a lock file waits; one whose lock file was
+// just created may be a read starting, and is kept.
+func TestSweepRemovesAnAbandonedSnapshotPromptly(t *testing.T) {
+	root := useTempSnapshots(t)
+	abandoned := filepath.Join(root, snapshotPrefix+"abandoned")
+	starting := filepath.Join(root, snapshotPrefix+"starting")
+	for _, d := range []string{abandoned, starting} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, snapshotLockName), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "state.vscdb"), []byte("copy"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	twoMinutes := time.Now().Add(-2 * abandonedSnapshotAge)
+	if err := os.Chtimes(filepath.Join(abandoned, snapshotLockName), twoMinutes, twoMinutes); err != nil {
+		t.Fatal(err)
+	}
+	RemoveStaleSnapshots()
+	if _, err := os.Stat(abandoned); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("abandoned snapshot kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(starting, "state.vscdb")); err != nil {
+		t.Fatalf("a snapshot just starting was swept: %v", err)
+	}
 }
 
 // TestUserTempDir: macOS uses the per-user temporary directory the system

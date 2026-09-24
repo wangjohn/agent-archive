@@ -26,8 +26,10 @@ import (
 // archive.SourceObjectKey, which both produce "sessions/<harness>/<id>/...".
 const archiveSessionsPrefix = "sessions"
 
-// notSetUpMessage is what every read-only command prints, with exit 0,
-// when setup has never run. It is deliberately the same line `status`
+// notSetUpMessage is what every read-only command prints, to stderr with
+// exit 1 like sync and pause, when setup has never run: its output is often
+// captured (claude "$(agent-archive handoff --latest)"), and must not pass
+// the message off as a result. It is deliberately the same line `status`
 // prints, so a first-time user gets one consistent answer.
 const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
 
@@ -138,10 +140,10 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	if !found {
-		terminal.Println(stdout, notSetUpMessage)
-		return 0
+		terminal.Println(stderr, notSetUpMessage)
+		return 1
 	}
-	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, filter, reader.ListOptions{Cache: listCache(env, *noCache)})
+	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, filter, reader.ListOptions{Cache: listCache(env, *noCache), Skipped: warnSkippedSidecar(stderr, "list")})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
@@ -170,6 +172,18 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	terminal.Printf(stdout, "%d session(s).\n", len(sessions))
 	return 0
+}
+
+// warnSkippedSidecar reports, on stderr, a metadata sidecar a listing left
+// out because it does not validate (damaged, or written by a newer version
+// of agent-archive), so stdout keeps its format while the gap is visible.
+func warnSkippedSidecar(stderr io.Writer, command string) func(reader.SkippedSidecar) {
+	if stderr == nil {
+		return nil
+	}
+	return func(s reader.SkippedSidecar) {
+		terminal.Printf(stderr, "agent-archive: %s: warning: skipped a session whose metadata could not be read: %v\n", command, s.Err)
+	}
 }
 
 // listCache opens the disposable metadata cache `list` uses to skip
@@ -242,8 +256,8 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	if !found {
-		terminal.Println(stdout, notSetUpMessage)
-		return 0
+		terminal.Println(stderr, notSetUpMessage)
+		return 1
 	}
 	ctx := context.Background()
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)

@@ -133,14 +133,25 @@ func snapshotInUse(dir string) bool {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return true
 	}
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) // closing f releases it anyway
 	return false
 }
 
+// abandonedSnapshotAge is how old the lock file of an unlocked snapshot
+// directory must be before the directory is removed. A Reader takes the lock
+// right after creating the file, and the lock is released only by Close,
+// which removes the directory, or by the process dying; so an unlocked lock
+// file older than this was left by a process that died (Ctrl-C, a crash).
+// The grace only covers the instant between creating the file and locking
+// it.
+const abandonedSnapshotAge = time.Minute
+
 // RemoveStaleSnapshots removes snapshot directories a killed process left
-// behind, so a copy of Cursor's chats does not outlive its read. Recent ones
-// may belong to a read that is just starting, and locked ones to a read in
-// progress; both are left alone.
+// behind, so a copy of Cursor's chats does not outlive its read. A locked
+// one belongs to a read in progress and is left alone. An unlocked one whose
+// lock file is over abandonedSnapshotAge old was abandoned and is removed; one
+// without a lock file may belong to a read that is just starting, so it is
+// removed only once it is over staleSnapshotAge old.
 func RemoveStaleSnapshots() {
 	root := snapshotRootPath()
 	info, err := os.Lstat(root)
@@ -156,7 +167,15 @@ func RemoveStaleSnapshots() {
 			continue
 		}
 		dir := filepath.Join(root, e.Name())
-		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > staleSnapshotAge && !snapshotInUse(dir) {
+		if snapshotInUse(dir) {
+			continue
+		}
+		age := staleSnapshotAge
+		info, err := e.Info()
+		if lock, lockErr := os.Lstat(filepath.Join(dir, snapshotLockName)); lockErr == nil {
+			age, info, err = abandonedSnapshotAge, lock, nil
+		}
+		if err == nil && time.Since(info.ModTime()) > age {
 			_ = os.RemoveAll(dir)
 		}
 	}

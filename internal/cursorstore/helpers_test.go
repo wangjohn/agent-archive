@@ -232,9 +232,7 @@ func startWriter(tb testing.TB, path string) *writer {
 		if err := stdin.Close(); err != nil {
 			tb.Error(err)
 		}
-		if err := cmd.Wait(); err != nil {
-			tb.Error(err)
-		}
+		_ = cmd.Wait() // the writer exits once stdin closes; its status is not under test
 	})
 	return w
 }
@@ -316,5 +314,13 @@ func TestWriterProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		fmt.Println("ok")
+	}
+}
+
+// mustWrite writes a test file, reporting a failure to the test.
+func mustWrite(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Error(err)
 	}
 }

@@ -224,9 +224,9 @@ func RenderText(w io.Writer, p Plan) {
 			last = s.LastStart
 		}
 	}
-	total := "Total: " + count(sessions, "session")
+	total := "Total: " + CountNoun(sessions, "session")
 	if subagents > 0 {
-		total += fmt.Sprintf(" (plus %s)", count(subagents, "subagent transcript"))
+		total += fmt.Sprintf(" (plus %s)", CountNoun(subagents, "subagent transcript"))
 	}
 	terminal.Printf(w, "%s, %s,\n", total, FormatSize(bytes))
 	loc := p.GeneratedAt.Location()
@@ -547,7 +547,9 @@ func (p Plan) filterFlags() string {
 	return strings.Join(flags, " ")
 }
 
-func count(n int, noun string) string {
+// CountNoun is n and noun, pluralized with "s" unless n is 1: "1 session",
+// "3 projects". The CLI uses it too, so every message counts alike.
+func CountNoun(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
 	}
@@ -570,7 +572,7 @@ func joinAnd(items []string) string {
 func FormatSize(n int64) string {
 	switch {
 	case n < 1000:
-		return count(int(n), "byte")
+		return CountNoun(int(n), "byte")
 	case n < 1000*1000:
 		return fmt.Sprintf("%d KB", (n+500)/1000)
 	case n < 1000*1000*1000:

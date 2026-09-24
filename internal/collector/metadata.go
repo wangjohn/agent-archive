@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -31,7 +36,7 @@ func (s *LocalStore) loadPublishedMetadata(id string) ([]byte, error) {
 // retainedMetadata decodes the metadata last published for a session, from
 // its cached encoding or, when nothing is cached, from the remote copy at key.
 // It returns usable=false, not an error, when there is nothing to refresh
-// from: see regenerateMetadata.
+// from: see loadLastPublication.
 func retainedMetadata(ctx context.Context, remote storage.ObjectStore, key string, cached []byte) (archive.Metadata, []byte, bool) {
 	encoded := cached
 	if len(encoded) == 0 {
@@ -64,39 +69,42 @@ func retainedMetadata(ctx context.Context, remote storage.ObjectStore, key strin
 // the session, because the next content change publishes current-parser
 // metadata anyway. Only the publish attempt itself reports errors.
 func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, now time.Time, opts Options) (sessionOutcome, bool, error) {
-	// Only the real last publication is a valid source: a blocked, declined,
-	// or rate-limited candidate cached alongside it was never made
-	// discoverable, so a blocked session without one has nothing to refresh.
-	bundle, _, found, err := store.LoadLastPublished(reg.ArchiveSessionID)
-	if err != nil || !found {
-		return outcomeSkipped, false, err
-	}
-	encoded, err := store.loadPublishedMetadata(reg.ArchiveSessionID)
-	if err != nil {
-		return outcomeSkipped, false, err
-	}
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	legacy := len(encoded) == 0
-	prior, encoded, usable := retainedMetadata(ctx, remote, key, encoded)
-	if !usable || prior.SessionID != reg.ArchiveSessionID || prior.MachineID != opts.MachineID {
-		return outcomeSkipped, false, nil
+	last, ok, err := loadLastPublication(ctx, store, remote, reg, key, opts)
+	if err != nil || !ok {
+		return outcomeSkipped, false, err
 	}
+	bundle, prior, encoded, legacy := last.bundle, last.metadata, last.encoded, last.legacy
 	sameParser := prior.Parser.Version == opts.parserVersion()
 	if sameParser && !legacy {
 		return outcomeSkipped, false, nil
 	}
-	compressed, err := archive.BuildCompressedSource(bundle)
+	// The metadata must describe the source actually uploaded last, as
+	// recorded at upload. (For state older than that record, lastPublishedSource
+	// reads it from the cached metadata itself, so this holds trivially.)
+	uploaded, known, err := store.LoadLastPublishedSource(reg.ArchiveSessionID)
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	sourceKey, err := archive.SourceObjectKey(bundle, compressed.SHA256)
-	if err != nil {
-		return outcomeSkipped, false, err
+	if known && prior.SourceBundle != uploaded {
+		return outcomeSkipped, false, nil
 	}
-	if prior.SourceBundle.Key != sourceKey || prior.SourceBundle.SHA256 != compressed.SHA256 || prior.SourceBundle.CompressedBytes != len(compressed.Bytes) {
+	// A refresh this parser already found impossible for this publication is
+	// not attempted again: each attempt costs a full decode and recompression
+	// of the retained bundle, and possibly a download. A new publication
+	// clears the record.
+	if skipped, found, err := store.loadRefreshSkip(reg.ArchiveSessionID); err != nil {
+		return outcomeSkipped, false, err
+	} else if found && skipped.ParserVersion == opts.parserVersion() && skipped.SourceKey == prior.SourceBundle.Key {
+		return outcomeSkipped, false, nil
+	}
+	source, ok := chooseRefreshSource(bundle, uploaded, known)
+	if !ok {
+		// Neither the bytes nor a recorded reference: nothing to publish
+		// against. The next content change publishes current metadata.
 		return outcomeSkipped, false, nil
 	}
 	// Cache before any early return below, so a legacy publication is
@@ -115,11 +123,16 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 		// wasted work that also starts the upload interval early.
 		return outcomeSkipped, false, nil
 	}
-	next, buildErr := archive.BuildMetadata(bundle, opts.MachineID, reg.SessionStartedAt, now, prior.SourceBundle, archive.ParserInfo{Version: opts.parserVersion()})
+	next, buildErr := archive.BuildMetadata(bundle, opts.MachineID, reg.SessionStartedAt, now, source.ref, archive.ParserInfo{Version: opts.parserVersion()})
 	next.ApplyRegistrationProvenance(reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
-		return outcomeSkipped, false, buildErr
+		// This build cannot derive metadata from the retained bundle at all
+		// (one cached under an older source schema, say). That is not a
+		// failure of the session, but it is recorded, so it is not retried
+		// on every pass and status can count it.
+		return outcomeSkipped, false, store.saveRefreshSkip(reg.ArchiveSessionID, refreshSkip{ParserVersion: opts.parserVersion(), SourceKey: prior.SourceBundle.Key, Reason: refreshSkipUnderivable})
 	}
+	// Unchanged metadata over the same source needs no publication.
 	comparison := next
 	comparison.MetadataDerivedAt = prior.MetadataDerivedAt
 	oldBytes, err := json.Marshal(prior)
@@ -137,12 +150,79 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	pending := PendingPublication{MetadataOnly: true, Bundle: bundle, SourceKey: sourceKey, MetadataKey: key, SourceSHA256: compressed.SHA256, SourceBytes: compressed.Bytes, MetadataBytes: metadataBytes, ReadyAt: now}
+	pending := PendingPublication{MetadataOnly: true, Bundle: bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: now}
 	if err := store.SavePending(reg.ArchiveSessionID, pending); err != nil {
 		return outcomeSkipped, false, err
 	}
 	outcome, err := publishPending(ctx, store, remote, reg.ArchiveSessionID, pending, now, opts)
 	return outcome, true, err
+}
+
+// lastPublication is what regenerateMetadata refreshes: the last published
+// bundle and the metadata document published with it.
+type lastPublication struct {
+	bundle   archive.SourceBundle
+	metadata archive.Metadata
+	encoded  []byte
+	// legacy means no metadata was cached locally and encoded is the copy
+	// read from storage (publications made before metadata was cached).
+	legacy bool
+}
+
+// loadLastPublication loads a session's last publication for a refresh. ok
+// is false when there is nothing usable to refresh: nothing was ever
+// published (a blocked, declined, or rate-limited candidate cached alongside
+// it was never made discoverable), or the metadata is unreadable, missing
+// from storage, or describes another session, machine, or source.
+func loadLastPublication(ctx context.Context, store *LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, metadataKey string, opts Options) (lastPublication, bool, error) {
+	bundle, _, found, err := store.LoadLastPublished(reg.ArchiveSessionID)
+	if err != nil || !found {
+		return lastPublication{}, false, err
+	}
+	encoded, err := store.loadPublishedMetadata(reg.ArchiveSessionID)
+	if err != nil {
+		return lastPublication{}, false, err
+	}
+	legacy := len(encoded) == 0
+	metadata, encoded, usable := retainedMetadata(ctx, remote, metadataKey, encoded)
+	if !usable || metadata.SessionID != reg.ArchiveSessionID || metadata.MachineID != opts.MachineID {
+		return lastPublication{}, false, nil
+	}
+	return lastPublication{
+		bundle:   bundle,
+		metadata: metadata,
+		encoded:  encoded,
+		legacy:   legacy,
+	}, true, nil
+}
+
+// refreshSource is the source a refreshed metadata document points at, and
+// the bytes to publish it with, if this build has them.
+type refreshSource struct {
+	ref   archive.SourceReference
+	bytes []byte
+}
+
+// chooseRefreshSource picks the source a metadata refresh points at:
+//   - This build reproduces the uploaded source's exact bytes: they are
+//     carried, so the source is re-uploaded if it has gone missing.
+//   - It builds the retained bundle, but to other bytes (a compressor
+//     change): those bytes are published as a new source, which supersedes
+//     the old one. The remote is repaired whatever state the old object is
+//     in, and from then on the recorded source is one this build reproduces.
+//   - It cannot build the bundle at all (a source schema bump): only the
+//     recorded reference (uploaded, when known) is carried, and the source is
+//     checked in storage against it (see publishPending).
+//
+// ok is false when it has neither bytes nor a recorded reference.
+func chooseRefreshSource(bundle archive.SourceBundle, uploaded archive.SourceReference, known bool) (refreshSource, bool) {
+	if compressed, err := archive.BuildCompressedSource(bundle); err == nil {
+		if key, err := archive.SourceObjectKey(bundle, compressed.SHA256); err == nil {
+			ref := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+			return refreshSource{ref: ref, bytes: compressed.Bytes}, true
+		}
+	}
+	return refreshSource{ref: uploaded}, known
 }
 
 // liveTranscriptChanged reports whether normal capture will publish this
@@ -190,6 +270,89 @@ func liveTranscriptChanged(ctx context.Context, store *LocalStore, reg archive.S
 	return nativeEvidenceExtends(guard, candidate)
 }
 
+// refreshSkip records that the current parser cannot refresh a session's
+// last publication's metadata, so regenerateMetadata stops retrying it. It
+// names no content: only the parser version, the published source's object
+// key, and why.
+type refreshSkip struct {
+	ParserVersion string            `json:"parser_version"`
+	SourceKey     string            `json:"source_key"`
+	Reason        refreshSkipReason `json:"reason"`
+}
+
+type refreshSkipReason string
+
+const (
+	// refreshSkipUnderivable: this build cannot derive metadata from the
+	// retained bundle at all.
+	refreshSkipUnderivable refreshSkipReason = "metadata_underivable"
+	// refreshSkipSourceUnavailable: the recorded source is missing from
+	// storage, or differs from its record, and this build cannot rebuild it.
+	refreshSkipSourceUnavailable refreshSkipReason = "source_unavailable"
+)
+
+const refreshSkipDir = "refresh-skips"
+
+func (s *LocalStore) refreshSkipPath(id string) string {
+	return filepath.Join(s.home, refreshSkipDir, id+".json")
+}
+
+func (s *LocalStore) saveRefreshSkip(id string, skip refreshSkip) error {
+	if !safeFileComponent(id) {
+		return errors.New("archive session ID is not a safe file name component")
+	}
+	return local.Write(s.refreshSkipPath(id), skip)
+}
+
+// loadRefreshSkip returns a session's refresh-skip record. One that cannot
+// be read is treated as absent: the refresh is then simply tried again.
+func (s *LocalStore) loadRefreshSkip(id string) (refreshSkip, bool, error) {
+	if !safeFileComponent(id) {
+		return refreshSkip{}, false, errors.New("archive session ID is not a safe file name component")
+	}
+	skip, found := readRefreshSkip(s.refreshSkipPath(id))
+	return skip, found, nil
+}
+
+// readRefreshSkip decodes the refresh-skip record at path; found is false
+// when it cannot be read (see loadRefreshSkip).
+func readRefreshSkip(path string) (skip refreshSkip, found bool) {
+	if err := local.Read(path, &skip); err != nil {
+		return refreshSkip{}, false
+	}
+	return skip, true
+}
+
+// removeRefreshSkip drops a session's record once a publication makes it
+// stale.
+func (s *LocalStore) removeRefreshSkip(id string) error {
+	err := os.Remove(s.refreshSkipPath(id))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove refresh-skip record %q: %w", id, err)
+	}
+	return nil
+}
+
+// countRefreshSkips counts the sessions whose metadata parserVersion cannot
+// refresh (see Status.UnrefreshableSummaries).
+func (s *LocalStore) countRefreshSkips(parserVersion string) int {
+	entries, err := os.ReadDir(filepath.Join(s.home, refreshSkipDir))
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		var skip refreshSkip
+		if local.Read(filepath.Join(s.home, refreshSkipDir, entry.Name()), &skip) == nil && skip.ParserVersion == parserVersion {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *LocalStore) cacheMetadata(id string, metadata []byte) error {
 	var state publishedState
 	if err := local.Read(s.publishedPath(id), &state); err != nil {
@@ -210,12 +373,13 @@ func (s *LocalStore) saveRepublishedMetadata(id string, pending PendingPublicati
 	}
 	state.MetadataBytes = pending.MetadataBytes
 	state.PublishedAt = at
+	source := pending.sourceReference()
 	if state.Status == CacheStatusPublished {
 		// The current bundle is the republished one, so the snapshot shares it.
 		state.Bundle = pending.Bundle
-		state.LastPublished = &publishedSnapshot{PublishedAt: at, SameAsBundle: true}
+		state.LastPublished = &publishedSnapshot{PublishedAt: at, SameAsBundle: true, Source: &source}
 	} else {
-		state.LastPublished = &publishedSnapshot{Bundle: pending.Bundle, PublishedAt: at}
+		state.LastPublished = &publishedSnapshot{Bundle: pending.Bundle, PublishedAt: at, Source: &source}
 	}
 	return local.Write(s.publishedPath(id), state)
 }

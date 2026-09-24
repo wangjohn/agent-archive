@@ -22,6 +22,9 @@ const (
 	// diagnosticSetupInProgress records a start that arrived while setup's own
 	// transaction was open. Hooks do not register anything in that window.
 	diagnosticSetupInProgress captureDiagnosticCode = "setup_in_progress"
+	// diagnosticHookFailed records a hook that stopped on an internal error
+	// (a recovered panic), so the event it carried was not recorded.
+	diagnosticHookFailed captureDiagnosticCode = "hook_failed"
 )
 
 // captureDiagnostic is deliberately content-free. It records only the
@@ -155,6 +158,8 @@ func captureDiagnosticMessage(code captureDiagnosticCode) string {
 		return "the session start does not meet the project activation boundary"
 	case diagnosticSetupInProgress:
 		return "setup was still in progress, so the session was not registered; start a new session"
+	case diagnosticHookFailed:
+		return "a hook stopped on an internal error, so its event was not recorded; please report it"
 	default:
 		return "capture evidence was not accepted"
 	}

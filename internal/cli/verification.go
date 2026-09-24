@@ -191,9 +191,23 @@ func storageFailureState(err error) string {
 // pass error: the publication itself succeeded, so `sync` still exits 0 and
 // Status.LastError stays free for genuine collection failures. Status reports
 // the pending or failed verification from the record instead.
+//
+// Local state that cannot be read fails only its own session's read-back:
+// an unreadable registration is skipped (the collector pass has already
+// reported it), and a session whose published state or verification record
+// cannot be read is left out and returned as an error once every other
+// session has been handled.
 func verifyPublications(home string, cfg config.Config, env Env, store *collector.LocalStore, remote storage.ObjectStore) (verificationSummary, error) {
+	return verifyPublicationsWithin(context.Background(), home, cfg, env, store, remote)
+}
+
+// verifyPublicationsWithin is verifyPublications within ctx: a collector
+// pass passes its own deadline, so read-back gets what is left of the pass's
+// budget rather than time of its own on top. Read-backs ctx leaves no time
+// for are deferred to the next pass, like those over the per-pass cap.
+func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Config, env Env, store *collector.LocalStore, remote storage.ObjectStore) (verificationSummary, error) {
 	var summary verificationSummary
-	regs, err := store.LoadRegistrations()
+	regs, _, err := store.ScanRegistrations()
 	if err != nil {
 		return summary, err
 	}
@@ -208,20 +222,23 @@ func verifyPublications(home string, cfg config.Config, env Env, store *collecto
 		cfgID string
 	}
 	var due []candidate
+	var localErrs []error
 	for _, reg := range regs {
 		if !cfg.AcceptSession(reg) {
 			continue
 		}
 		bundle, at, _, err := store.LoadLastPublished(reg.ArchiveSessionID)
 		if err != nil {
-			return summary, err
+			localErrs = append(localErrs, err)
+			continue
 		}
 		if at.IsZero() {
 			continue
 		}
 		prior, err := readVerification(home, reg.ArchiveSessionID)
 		if err != nil {
-			return summary, err
+			localErrs = append(localErrs, err)
+			continue
 		}
 		verificationConfigurationID := sessionVerificationConfigurationID(cfg, reg)
 		if prior.ConfigurationID == verificationConfigurationID && prior.PublishedAt.Equal(at) {
@@ -252,8 +269,12 @@ func verifyPublications(home string, cfg config.Config, env Env, store *collecto
 		due = due[:maxVerificationsPerPass]
 	}
 	for _, c := range due {
+		if ctx.Err() != nil {
+			summary.Deferred++
+			continue
+		}
 		summary.Attempted++
-		sha, err := verifyPublication(cfg, remote, c.reg, c.bundle)
+		sha, err := verifyPublication(ctx, cfg, store, remote, c.reg, c.bundle)
 		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1}
 		switch {
 		case err == nil:
@@ -272,35 +293,55 @@ func verifyPublications(home string, cfg config.Config, env Env, store *collecto
 			record.NextRetryAt = now.Add(verificationRetryDelay(record.Attempts))
 		}
 		if err := local.Write(verificationPath(home, c.reg.ArchiveSessionID), record); err != nil {
-			return summary, err
+			localErrs = append(localErrs, err)
 		}
 	}
-	return summary, nil
+	return summary, errors.Join(localErrs...)
 }
+
+// verificationTimeout bounds one session's read-back (within the caller's own
+// deadline): a metadata read and a
+// source download of at most the reader's compressed limit. A variable only
+// so a test can shorten it.
+var verificationTimeout = 5 * time.Minute
 
 // verifyPublication reads one session's remote metadata and source back and
 // returns the verified source SHA-256. A mismatch wraps errVerificationMismatch;
 // any other error is treated as transient.
-func verifyPublication(cfg config.Config, remote storage.ObjectStore, reg archive.SessionRegistration, bundle archive.SourceBundle) (string, error) {
+//
+// The source the metadata must name is the one recorded when it was uploaded
+// (collector.LocalStore.LoadLastPublishedSource). Only state from a version
+// that recorded none falls back to rebuilding the digest from the cached
+// bundle, which a later source schema or compressor can no longer reproduce.
+func verifyPublication(ctx context.Context, cfg config.Config, store *collector.LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, bundle archive.SourceBundle) (string, error) {
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
 		return "", err
 	}
-	expected, err := archive.BuildCompressedSource(bundle)
+	expected, recorded, err := store.LoadLastPublishedSource(reg.ArchiveSessionID)
 	if err != nil {
 		return "", err
 	}
-	metadata, err := reader.ReadMetadata(context.Background(), remote, key)
+	if !recorded {
+		rebuilt, err := archive.BuildCompressedSource(bundle)
+		if err != nil {
+			return "", err
+		}
+		expected.SHA256 = rebuilt.SHA256
+	}
+	ctx, cancel := context.WithTimeout(ctx, verificationTimeout)
+	defer cancel()
+	metadata, err := reader.ReadMetadata(ctx, remote, key)
 	if err != nil {
 		return "", err
 	}
-	if metadata.SourceBundle.SHA256 != expected.SHA256 {
+	if metadata.SourceBundle.SHA256 != expected.SHA256 || (recorded && metadata.SourceBundle.Key != expected.Key) {
 		return "", fmt.Errorf("%w: remote metadata does not identify the last local publication", errVerificationMismatch)
 	}
 	if metadata.MachineID != cfg.MachineID {
 		return "", fmt.Errorf("%w: metadata ownership does not match this machine", errVerificationMismatch)
 	}
-	if _, err := reader.LoadSource(context.Background(), remote, metadata, reader.Limits{}); err != nil {
+	if _, err := reader.LoadSource(ctx, remote, metadata, reader.Limits{}); err != nil {
 		return "", err
 	}
 	return metadata.SourceBundle.SHA256, nil

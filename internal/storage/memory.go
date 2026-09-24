@@ -53,6 +53,20 @@ func (s *MemoryStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return append([]byte(nil), obj.data...), nil
 }
 
+// Stat describes an object, with the SHA-256 of its bytes.
+func (s *MemoryStore) Stat(ctx context.Context, key string) (ObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return ObjectInfo{}, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	obj, ok := s.objects[key]
+	if !ok {
+		return ObjectInfo{}, ErrNotFound
+	}
+	return ObjectInfo{Size: int64(len(obj.data)), SHA256: sha256Hex(obj.data)}, nil
+}
+
 func (s *MemoryStore) List(ctx context.Context, prefix string) ([]Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -91,4 +105,7 @@ func hasPrefixKey(key, prefix string) bool {
 	return len(key) == len(prefix) || prefix[len(prefix)-1] == '/' || key[len(prefix)] == '/'
 }
 
-var _ ObjectStore = (*MemoryStore)(nil)
+var (
+	_ ObjectStore   = (*MemoryStore)(nil)
+	_ ObjectStatter = (*MemoryStore)(nil)
+)

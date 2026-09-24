@@ -47,15 +47,17 @@ func publishedFixture(t *testing.T) (Env, *storage.MemoryStore, string) {
 	return env, mem, regs[0].ArchiveSessionID
 }
 
+// Like sync and pause, read-only commands report a missing setup on stderr
+// with exit 1, so a script never takes the message for a result.
 func TestListAndShowReportNotSetUp(t *testing.T) {
 	env := testEnv(t, t.TempDir(), time.Now())
-	for _, args := range [][]string{{"list"}, {"show", "session-1"}} {
+	for _, args := range [][]string{{"list"}, {"show", "session-1"}, {"backfill", "history"}} {
 		var out, errOut bytes.Buffer
-		if code := Run(args, nil, &out, &errOut, env); code != 0 {
+		if code := Run(args, nil, &out, &errOut, env); code != 1 {
 			t.Fatalf("%v: code=%d stderr=%s", args, code, errOut.String())
 		}
-		if !strings.Contains(out.String(), "Not set up") {
-			t.Fatalf("%v: out=%s", args, out.String())
+		if out.Len() != 0 || !strings.Contains(errOut.String(), "Not set up") {
+			t.Fatalf("%v: out=%q stderr=%q", args, out.String(), errOut.String())
 		}
 	}
 }

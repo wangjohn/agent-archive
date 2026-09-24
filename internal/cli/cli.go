@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"os/user"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,6 +54,11 @@ type Env struct {
 	// agent-archive's own (possibly redirected) private data directory.
 	// Defaults to os.UserHomeDir.
 	UserHomeDir func() (string, error)
+	// AccountHome is the account's home directory from the user database,
+	// which overriding $HOME does not change. Only the data directory under
+	// it is the default installation, with the default launchd label.
+	// Defaults to os/user.Current's HomeDir.
+	AccountHome func() (string, error)
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of
@@ -152,6 +159,26 @@ func (e Env) executable() (string, error) {
 	return os.Executable()
 }
 
+// accountHome is Env.AccountHome, or "" when it cannot be read, in which
+// case no installation counts as the default one.
+func (e Env) accountHome() string {
+	lookup := e.AccountHome
+	if lookup == nil {
+		lookup = func() (string, error) {
+			u, err := user.Current()
+			if err != nil {
+				return "", err
+			}
+			return u.HomeDir, nil
+		}
+	}
+	home, err := lookup()
+	if err != nil || !filepath.IsAbs(home) {
+		return ""
+	}
+	return home
+}
+
 func (e Env) userHomeDir() (string, error) {
 	if e.UserHomeDir != nil {
 		return e.UserHomeDir()
@@ -174,7 +201,7 @@ func (e Env) detectHarnesses(userHome string) []string {
 	if e.DetectHarnesses != nil {
 		return e.DetectHarnesses(userHome)
 	}
-	return detectHarnesses(userHome)
+	return detectHarnesses(e.hookFiles(userHome))
 }
 
 func (e Env) discoverApplications(userHome string) map[string]applicationDiscovery {
@@ -271,10 +298,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runStatusCommand(args[1:], stdout, stderr, env)
 	case "sync":
 		return runSyncCommand(args[1:], stdout, stderr, env)
-	case "pause":
-		return runPauseCommand(stdout, stderr, env, true)
-	case "resume":
-		return runPauseCommand(stdout, stderr, env, false)
+	case "pause", "resume":
+		if !parseCommandFlags(newCommandFlags(args[0]), args[1:], stderr) {
+			return 2
+		}
+		return runPauseCommand(stdout, stderr, env, args[0] == "pause")
 	case "setup":
 		return runSetupCommand(args[1:], stdin, stdout, stderr, env)
 	case "uninstall":

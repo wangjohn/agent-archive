@@ -10,8 +10,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
 )
 
 var (
@@ -146,7 +150,7 @@ func setupKeyLabel(store ObjectStore, key string) string {
 
 func withCleanupError(primary error, cleanup func() error, label string) error {
 	if cleanupErr := cleanup(); cleanupErr != nil {
-		return fmt.Errorf("%w; setup test cleanup %s also failed: %v", primary, label, cleanupErr)
+		return fmt.Errorf("%w; setup test cleanup %s also failed: %w", primary, label, cleanupErr)
 	}
 	return primary
 }
@@ -195,12 +199,109 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 	return nil
 }
 
+// PutMetadataForSource publishes metadata that points at a source object
+// already in storage, for a caller that no longer has the source's bytes. The
+// source is read back and checked against sourceSHA256 first, so metadata
+// never points at a missing or different object: a missing source is
+// ErrNotFound and a different one ErrChecksumMismatch, and neither publishes.
+//
+// A store that can describe an object (ObjectStatter) and reports its SHA-256
+// is checked that way, without a download; otherwise the source is read back.
+// sourceSize, when positive, must match too.
+func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256 string, sourceSize int, metadataKey string, metadata []byte, retry RetryPolicy) error {
+	if sourceKey == "" || metadataKey == "" || sourceSHA256 == "" {
+		return errors.New("source key, source checksum, and metadata key are required")
+	}
+	if sourceKey == metadataKey {
+		return errors.New("source and metadata keys must differ")
+	}
+	if err := retry.run(ctx, func() error {
+		return verifyStoredObject(ctx, store, sourceKey, sourceSHA256, sourceSize)
+	}); err != nil {
+		return fmt.Errorf("verify source %q: %w", sourceKey, err)
+	}
+	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
+		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)
+	}
+	return nil
+}
+
+// ObjectInfo describes a stored object without its content.
+type ObjectInfo struct {
+	Size int64
+	// SHA256 is the object's whole-content SHA-256 in lower-case hex as the
+	// store records it, or "" when it records none for this object (one
+	// uploaded without a checksum, or a multipart upload's composite one).
+	SHA256 string
+}
+
+// ObjectStatter is implemented by stores that can describe an object without
+// downloading it. Stat returns ErrNotFound for a missing object.
+type ObjectStatter interface {
+	Stat(ctx context.Context, key string) (ObjectInfo, error)
+}
+
+// verifyStoredObject checks that key holds an object with the given SHA-256
+// hex digest (and size, when positive): through Stat when the store reports
+// a digest, otherwise by reading the object back.
+func verifyStoredObject(ctx context.Context, store ObjectStore, key, sha256Hex string, size int) error {
+	if statter, ok := store.(ObjectStatter); ok {
+		info, err := statter.Stat(ctx, key)
+		if err != nil {
+			return err
+		}
+		if info.SHA256 != "" {
+			if !strings.EqualFold(info.SHA256, strings.TrimSpace(sha256Hex)) || (size > 0 && info.Size != int64(size)) {
+				return fmt.Errorf("%w for %q", ErrChecksumMismatch, key)
+			}
+			return nil
+		}
+	}
+	data, err := ReadAndVerify(ctx, store, key, sha256Hex)
+	if err != nil {
+		return err
+	}
+	if size > 0 && len(data) != size {
+		return fmt.Errorf("%w for %q", ErrChecksumMismatch, key)
+	}
+	return nil
+}
+
 // RetryPolicy controls bounded retries for transient storage operations.
 // MaxAttempts includes the first attempt. Zero uses the default of three.
+// Only an error isTransient accepts is retried: a denied request, a missing
+// bucket, or a checksum mismatch fails the same way every time.
 type RetryPolicy struct {
 	MaxAttempts int
 	InitialWait time.Duration
 	MaxWait     time.Duration
+}
+
+// sdkRetryables is the AWS SDK's own classification of retryable errors:
+// connection failures, throttling, and 5xx responses.
+var sdkRetryables = awsretry.IsErrorRetryables(awsretry.DefaultRetryables)
+
+// isTransient reports whether a storage error may succeed if the operation is
+// simply tried again. It follows the AWS SDK's classification, with three
+// refinements: an error that already exhausted the SDK's own retries is not
+// retried again on top of them; a cancelled or expired context never is; and
+// a response body cut short (io.ErrUnexpectedEOF), which the SDK does not see
+// because the body is read after it returns, is.
+func isTransient(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrChecksumMismatch) || errors.Is(err, ErrObjectTooLarge) {
+		return false
+	}
+	var exhausted *awsretry.MaxAttemptsError
+	if errors.As(err, &exhausted) {
+		return false
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	return sdkRetryables.IsErrorRetryable(err) == aws.TrueTernary
 }
 
 func (p RetryPolicy) run(ctx context.Context, operation func() error) error {
@@ -221,7 +322,7 @@ func (p RetryPolicy) run(ctx context.Context, operation func() error) error {
 		if err = operation(); err == nil {
 			return nil
 		}
-		if attempt+1 == attempts {
+		if attempt+1 == attempts || !isTransient(err) || ctx.Err() != nil {
 			break
 		}
 		timer := time.NewTimer(wait)

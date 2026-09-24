@@ -919,8 +919,9 @@ func TestCursorDatabaseSkippedWhenTranscriptsUnreadable(t *testing.T) {
 // the plan is made, and nothing next to the database changes.
 func TestCursorDatabasePlanLive(t *testing.T) {
 	temp := t.TempDir()
+	previous := cursorstore.SnapshotTempDirForTesting
 	cursorstore.SnapshotTempDirForTesting = temp
-	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = "" })
+	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
 	tr := newTree(t)
 	path := CursorStateDatabase(tr.home)
 	w := startCursorWriter(t, path, true)

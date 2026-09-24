@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,9 +38,33 @@ type setupDraft struct {
 	StopImported []string `json:"stop_imported,omitempty"`
 }
 
-func runSetupCommand(_ []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	fs := newCommandFlags("setup")
+	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
+	if !parseCommandFlags(fs, args, stderr) {
+		return 2
+	}
+	if *abandon {
+		if err := abandonRecovery(stdout, env); err != nil {
+			terminal.Printf(stderr, "agent-archive: setup: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	// Every step asks something, so without a terminal setup would stop at
+	// its first question with nothing but an end-of-input error.
+	if !env.isTerminal(stdin) {
+		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal.")
+		return 1
+	}
 	if err := setup(stdin, stdout, stderr, env); err != nil {
-		terminal.Printf(stderr, "Setup incomplete: %v\nRun agent-archive setup to continue.\n", err)
+		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
+		var blocked *recoveryBlockedError
+		if errors.As(err, &blocked) {
+			terminal.Println(stderr, blocked.guidance())
+			return 1
+		}
+		terminal.Println(stderr, "Run agent-archive setup to continue.")
 		return 1
 	}
 	return 0
@@ -281,6 +306,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if existing.Paused {
 			p.note("Capture stays paused until you run agent-archive resume.")
 		}
+		reviewHookFiles(p, draft.Config.Harnesses, env.hookFiles(userHome), env.installedHookFiles(userHome, existing), existing.Harnesses, len(existing.HookFiles) > 0)
 		printReviewNotes(p, draft.Config, reviewed)
 		action, e := reviewAction(p, found)
 		if e != nil {

@@ -30,7 +30,7 @@ func runPauseCommand(stdout, stderr io.Writer, env Env, paused bool) int {
 	}
 	defer releaseHooks()
 	if transactionPending(home) {
-		terminal.Println(stderr, "Setup needs recovery. Run agent-archive setup first.")
+		terminal.Printf(stderr, "No settings changed: %s.\n", recoveryPending(home))
 		return 1
 	}
 	cfg, found, err := config.Load(home)

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"flag"
 	"io"
 	"strings"
 
@@ -8,11 +9,15 @@ import (
 )
 
 var commandHelp = map[string]string{
-	"setup": `Usage: agent-archive setup
+	"setup": `Usage: agent-archive setup [--abandon-recovery]
 
 Choose apps and projects, connect storage, then review and enable capture.
 Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
+Setup asks questions, so it needs a terminal.
+An interrupted setup is recovered on the next run. If recovery stops because
+a file it changed was edited since, --abandon-recovery keeps every file as it
+is now and discards the interrupted setup; then run setup again.
 Example: agent-archive setup
 `,
 	"status": `Usage: agent-archive status [--json]
@@ -43,12 +48,13 @@ can catch up, including activity written during the pause. For an immediate
 pass, run agent-archive sync.
 Example: agent-archive resume
 `,
-	"uninstall": `Usage: agent-archive uninstall [--delete-local-data]
+	"uninstall": `Usage: agent-archive uninstall [--delete-local-data] [--yes]
 
 Remove hooks and the background collector. Keep local evidence, settings,
 and credentials by default, so setup can restore the installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
+--yes skips the confirmations; it is required without a terminal.
 Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
 `,
@@ -179,20 +185,26 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 			return true, 0
 		}
 	}
-	//lint:ignore LV1001 cmd is raw argv; this picks the commands whose own parsers validate arguments
-	if cmd == "list" || cmd == "show" || cmd == "feedback" || cmd == "handoff" || cmd == "backfill" {
-		return false, 0
-	} // Their parsers validate before I/O.
-	allowed := ""
-	if cmd == "status" {
-		allowed = "--json"
-	}
-	if cmd == "uninstall" {
-		allowed = "--delete-local-data"
-	}
-	if len(args) > 1 && (len(args) != 2 || allowed == "" || args[1] != allowed) {
-		terminal.Printf(errOut, "agent-archive %s: unexpected arguments %s\nRun agent-archive %s --help.\n", cmd, strings.Join(args[1:], " "), cmd)
-		return true, 2
-	}
+	// Each command's own flag set is the one source of truth for its
+	// arguments, and it validates them before any I/O.
 	return false, 0
+}
+
+// newCommandFlags is the flag set of a command whose arguments are all
+// flags; parseCommandFlags parses it.
+func newCommandFlags(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	return fs
+}
+
+// parseCommandFlags parses args into fs. It reports anything else, from an
+// unknown flag to a stray argument, as a usage error before the command
+// touches anything, and returns false; the command then exits 2.
+func parseCommandFlags(fs *flag.FlagSet, args []string, errOut io.Writer) bool {
+	if err := fs.Parse(args); err == nil && fs.NArg() == 0 {
+		return true
+	}
+	terminal.Printf(errOut, "agent-archive %s: unexpected arguments %s\nRun agent-archive %s --help.\n", fs.Name(), strings.Join(args, " "), fs.Name())
+	return false
 }

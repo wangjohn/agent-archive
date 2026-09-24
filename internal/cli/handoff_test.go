@@ -105,10 +105,12 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 	}
 }
 
+// claude "$(agent-archive handoff --latest)" must not start a session whose
+// prompt is the not-set-up message: it goes to stderr, with exit 1.
 func TestHandoffReportsNotSetUp(t *testing.T) {
-	out, _, code := runHandoff(t, testEnv(t, t.TempDir(), time.Now()), "--latest")
-	if code != 0 || !strings.Contains(out, "Not set up") {
-		t.Fatalf("code=%d out=%q", code, out)
+	out, errOut, code := runHandoff(t, testEnv(t, t.TempDir(), time.Now()), "--latest")
+	if code != 1 || out != "" || !strings.Contains(errOut, "Not set up") {
+		t.Fatalf("code=%d out=%q stderr=%q", code, out, errOut)
 	}
 }
 

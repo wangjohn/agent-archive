@@ -10,12 +10,14 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
+// materializeSubagentCandidates registers each candidate a hook left, or
+// rejects it, and returns the per-candidate failures keyed by the
+// candidate's archive session ID. One unreadable candidate fails only
+// itself.
 func materializeSubagentCandidates(local *LocalStore, opts Options) map[string]error {
-	issues := map[string]error{}
-	candidates, err := local.LoadSubagentCandidates()
+	candidates, issues, err := local.scanSubagentCandidates()
 	if err != nil {
-		issues["subagent-candidates"] = err
-		return issues
+		return map[string]error{"subagent-candidates": err}
 	}
 	for _, candidate := range candidates {
 		if err := materializeSubagentCandidate(local, candidate, opts); err != nil {
