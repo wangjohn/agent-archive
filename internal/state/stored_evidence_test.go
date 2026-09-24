@@ -24,7 +24,11 @@ func TestStoredEvidenceReadsPendingAndPublished(t *testing.T) {
 		t.Fatalf("nothing stored: %v %v", got, err)
 	}
 	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: "s1", NativeRecords: []map[string]any{{"type": "user"}}, SupplementalEvidence: evidence("hook:published")}
-	if err := store.SavePublished("s1", bundle, at, CacheStatus("published")); err != nil {
+	p, err := store.LoadPublishedState("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Save(bundle, at, CacheStatus("published")); err != nil {
 		t.Fatal(err)
 	}
 	bundle.SupplementalEvidence = evidence("hook:pending")

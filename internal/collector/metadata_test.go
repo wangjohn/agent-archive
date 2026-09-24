@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -136,7 +137,7 @@ func TestMetadataUpgradePreservesNewerDeclinedCandidate(t *testing.T) {
 	richer := bundle
 	richer.NativeRecords = append(richer.NativeRecords, map[string]any{"type": "event_msg", "message": "retained candidate"})
 	richer.Capture.CapturedAt = now.Add(time.Minute)
-	if err := local.SavePublished(reg.ArchiveSessionID, richer, at, state.CacheStatusDeclined); err != nil {
+	if err := statetest.SavePublished(local, reg.ArchiveSessionID, richer, at, state.CacheStatusDeclined); err != nil {
 		t.Fatal(err)
 	}
 	opts.ParserVersion = "two"
@@ -225,7 +226,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 			opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 			before := publishOnce(t, local, remote, reg, &opts)
 			// State written before metadata was cached locally.
-			if err := local.CacheMetadata(reg.ArchiveSessionID, nil); err != nil {
+			if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
 				t.Fatal(err)
 			}
 			corrupt(t, remote, reg, before)
@@ -256,7 +257,7 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	published := publishOnce(t, local, remote, reg, &opts)
-	if err := local.CacheMetadata(reg.ArchiveSessionID, nil); err != nil {
+	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
 		t.Fatal(err)
 	}
 	// State written before metadata was cached also predates scan signatures;

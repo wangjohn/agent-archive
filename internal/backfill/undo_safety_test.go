@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 )
 
 // undoFixture is a local store and configuration with imported sessions.
@@ -221,7 +222,7 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 	}
 	evidence := []archive.SupplementalEvidence{{Kind: archive.EvidenceKindFinalResponse, ObservedAt: fixedNow.UTC(), Provenance: "hook:claude-stop", Payload: map[string]any{"text": "done"}}}
 	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeRecords: records, SupplementalEvidence: evidence}
-	if err := f.store.SavePublished(reg.ArchiveSessionID, bundle, fixedNow, state.CacheStatus("published")); err != nil {
+	if err := statetest.SavePublished(f.store, reg.ArchiveSessionID, bundle, fixedNow, state.CacheStatus("published")); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(f.home, "published", reg.ArchiveSessionID+".json"))

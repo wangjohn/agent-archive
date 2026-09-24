@@ -17,8 +17,12 @@ import (
 type RemovalReason string
 
 const (
+	// RemovalReasonRetention means the retention sweep removed the session once
+	// it passed the retention period.
 	RemovalReasonRetention RemovalReason = "retention"
-	RemovalReasonUndo      RemovalReason = "undo"
+	// RemovalReasonUndo means `agent-archive backfill undo` removed an imported
+	// session.
+	RemovalReasonUndo RemovalReason = "undo"
 )
 
 // RemovalRecord outlives a forgotten session. ForgetSession removes the

@@ -246,7 +246,8 @@ var publishedStateLoads atomic.Int64
 // PublishedStateLoads reports how many times this process has read a
 // session's published state (LoadPublishedState, and every Store method
 // built on it). The file holds whole source bundles, so a collector scan
-// reads it once per session; tests use this count to keep it that way.
+// reads it once per session. It exists for tests, which use the count to
+// keep it that way; production code has no use for it.
 func PublishedStateLoads() int64 { return publishedStateLoads.Load() }
 
 // LoadPublishedState reads a session's published state. A session with none
@@ -424,48 +425,10 @@ func (p *Published) SaveRepublishedMetadata(pending PendingPublication, at time.
 	return p.write(next)
 }
 
-// The Store methods below read the published state, act on it, and (for the
-// saves) write it back: one decode per call. Callers outside a collector
-// scan use them; a scan uses one Published for the whole session instead.
-
-// SavePublished is Published.Save for one session.
-func (s *Store) SavePublished(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, metadata ...[]byte) error {
-	p, err := s.LoadPublishedState(archiveSessionID)
-	if err != nil {
-		return err
-	}
-	return p.Save(bundle, publishedAt, status, metadata...)
-}
-
-// SavePublication is Published.SavePublication for one session.
-func (s *Store) SavePublication(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, source archive.SourceReference, metadata []byte) error {
-	p, err := s.LoadPublishedState(archiveSessionID)
-	if err != nil {
-		return err
-	}
-	return p.SavePublication(bundle, publishedAt, source, metadata)
-}
-
-// SaveBlocked is Published.SaveBlocked for one session.
-func (s *Store) SaveBlocked(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, reason BlockedReason, deferred ...archive.SupplementalEvidence) error {
-	if reason == "" {
-		return errors.New("blocked reason is required")
-	}
-	p, err := s.LoadPublishedState(archiveSessionID)
-	if err != nil {
-		return err
-	}
-	return p.SaveBlocked(bundle, publishedAt, reason, deferred...)
-}
-
-// ClearRecoverableBlock is Published.ClearRecoverableBlock for one session.
-func (s *Store) ClearRecoverableBlock(archiveSessionID string, now time.Time) (restored CacheStatus, replayed, cleared bool, err error) {
-	p, err := s.LoadPublishedState(archiveSessionID)
-	if err != nil {
-		return "", false, false, err
-	}
-	return p.ClearRecoverableBlock(now)
-}
+// The Store methods below read the published state and report on it: one
+// decode per call, for callers outside a collector scan. A scan uses one
+// Published for the whole session instead. Whole-file saves that bypass a
+// scan's Published live in package statetest, for tests only.
 
 // LoadBlocked reports whether a session is in CacheStatusBlocked and why.
 func (s *Store) LoadBlocked(archiveSessionID string) (BlockedReason, bool, error) {
@@ -506,15 +469,6 @@ func (s *Store) LoadLastPublishedSource(archiveSessionID string) (archive.Source
 	}
 	source, found := p.LastPublishedSource()
 	return source, found, nil
-}
-
-// CacheMetadata is Published.CacheMetadata for one session.
-func (s *Store) CacheMetadata(archiveSessionID string, metadata []byte) error {
-	p, err := s.LoadPublishedState(archiveSessionID)
-	if err != nil {
-		return err
-	}
-	return p.CacheMetadata(metadata)
 }
 
 // PublishedMetadata is Published.Metadata for one session. It reports

@@ -33,10 +33,11 @@ type SubagentCandidate struct {
 }
 
 var (
-	// ErrSubagentCandidateIncomplete: a candidate is missing a required field.
+	// ErrSubagentCandidateIncomplete reports a candidate missing a required
+	// field.
 	ErrSubagentCandidateIncomplete = errors.New("subagent candidate is incomplete")
-	// ErrSubagentCandidateConflict: an earlier candidate for the same
-	// archive ID has a different path or owner, which a later one never
+	// ErrSubagentCandidateConflict reports that an earlier candidate for the
+	// same archive ID has a different path or owner, which a later one never
 	// replaces.
 	ErrSubagentCandidateConflict = errors.New("subagent candidate ownership changed")
 )
@@ -125,8 +126,10 @@ func (s *Store) RemoveSubagentCandidate(id string) error {
 	return s.removeSubagentCandidate(id)
 }
 
-// A later stop may arrive while background transcript validation is running.
-// Acknowledge only the exact observed generation, under the writer's short lock.
+// AcknowledgeSubagentCandidate marks a candidate handled. A later stop may
+// arrive while background transcript validation is running, so it
+// acknowledges only the exact observed generation, under the writer's short
+// lock.
 func (s *Store) AcknowledgeSubagentCandidate(expected SubagentCandidate) error {
 	unlock, err := s.lockSubagentCandidate(expected.ArchiveSessionID)
 	if err != nil {

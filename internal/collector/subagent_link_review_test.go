@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -56,7 +57,7 @@ func TestRepeatedParentLinkNotificationDoesNotGrowTheRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := local.SavePublished("child", bundle, at, state.CacheStatusPublished); err != nil {
+	if err := statetest.SavePublished(local, "child", bundle, at, state.CacheStatusPublished); err != nil {
 		t.Fatal(err)
 	}
 
@@ -175,7 +176,7 @@ func TestBlockedParentIsNotRenotifiedUntilItRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := local.SavePublished("child", bundle, at, state.CacheStatusPublished); err != nil {
+	if err := statetest.SavePublished(local, "child", bundle, at, state.CacheStatusPublished); err != nil {
 		t.Fatal(err)
 	}
 

@@ -245,7 +245,7 @@ type Request struct {
 	Deferred bool `json:"deferred,omitempty"`
 }
 
-// urgent reports whether the request asks the collector to flush the upload
+// Urgent reports whether the request asks the collector to flush the upload
 // debounce now rather than wait for the next scheduled publication.
 func (r Request) Urgent() bool {
 	return r.Token != "" && !r.Deferred
@@ -496,7 +496,7 @@ type PendingPublication struct {
 	Attempted     bool      `json:"attempted,omitempty"`
 }
 
-// sourceReference is the reference the publication's metadata carries for
+// SourceReference is the reference the publication's metadata carries for
 // its source object.
 func (p PendingPublication) SourceReference() archive.SourceReference {
 	size := len(p.SourceBytes)

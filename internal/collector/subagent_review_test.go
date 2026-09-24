@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -79,7 +80,7 @@ func TestCollectorRepairsParentLinkAfterNotificationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := local.SavePublished("child", bundle, at, state.CacheStatusPublished); err != nil {
+	if err := statetest.SavePublished(local, "child", bundle, at, state.CacheStatusPublished); err != nil {
 		t.Fatal(err)
 	}
 	blocked := requestPath(local, "parent")
