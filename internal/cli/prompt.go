@@ -97,18 +97,6 @@ func (p *prompter) line(label string) (string, error) {
 	return strings.TrimSpace(text), nil
 }
 
-// help prints guidance for the prompt that follows: the question flush with
-// the prompts, then any continuation lines (a note, or a menu of choices)
-// indented beneath it.
-func (p *prompter) help(question string, continuation ...string) {
-	if question != "" {
-		fmt.Fprintln(p.out, question)
-	}
-	for _, l := range continuation {
-		fmt.Fprintln(p.out, "  "+l)
-	}
-}
-
 // withDefault prompts once, returning def when the answer is blank. A blank
 // default shows no bracketed value rather than a confusing "[]".
 func (p *prompter) withDefault(label, def string) (string, error) {
@@ -266,21 +254,5 @@ func (p *prompter) required(label, def string) (string, error) {
 			return value, nil
 		}
 		fmt.Fprintln(p.out, "This value is required.")
-	}
-}
-
-// lines reads one answer per call until a blank line ends the list.
-func (p *prompter) lines(label string) ([]string, error) {
-	fmt.Fprintln(p.out, label)
-	var out []string
-	for {
-		answer, err := p.line("> ")
-		if err != nil {
-			return nil, err
-		}
-		if answer == "" {
-			return out, nil
-		}
-		out = append(out, answer)
 	}
 }

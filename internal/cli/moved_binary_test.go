@@ -159,11 +159,11 @@ func TestUninstalledArchiveDoesNotReportTheDeletedBinary(t *testing.T) {
 func TestBackgroundAloneBrokenWhenTheLaunchAgentRunsAMissingFile(t *testing.T) {
 	home, userHome, env, _ := installedWithBinary(t)
 	stale := filepath.Join(t.TempDir(), "old", "agent-archive")
-	plist, err := hooks.LaunchAgent(stale, home)
+	plist, err := hooks.LaunchAgent(stale, home, launchLabel(env.installation(home, userHome).collectorPlist()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist"), plist, 0o644); err != nil {
+	if err := os.WriteFile(env.installation(home, userHome).collectorPlist(), plist, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	view, err := readStatus(env)

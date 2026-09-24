@@ -154,8 +154,8 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			return 1
 		}
 		if !found {
-			fmt.Fprintln(stdout, notSetUpMessage)
-			return 0
+			fmt.Fprintln(stderr, notSetUpMessage)
+			return 1
 		}
 		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source, skip: currentSessions(env)}
 		if *latest {
@@ -359,7 +359,7 @@ func (r handoffResolver) byID(id string) (handoffTarget, error) {
 	}
 	target, err := r.archiveByID(id)
 	if err != nil && localErr != nil && !errors.Is(localErr, errNotRegisteredHere) {
-		return handoffTarget{}, fmt.Errorf("local transcript: %v; archive: %w", localErr, err)
+		return handoffTarget{}, fmt.Errorf("local transcript: %w; archive: %w", localErr, err)
 	}
 	return target, err
 }
