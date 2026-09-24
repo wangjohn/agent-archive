@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // Undo reads a Cursor database chat's lastUpdatedAt to tell whether it was
@@ -16,7 +16,7 @@ import (
 // not check rather than silently counting the chat as not resumed.
 func TestUndoResumedCursorDatabaseChat(t *testing.T) {
 	home := t.TempDir()
-	store, err := collector.NewLocalStore(t.TempDir())
+	store, err := state.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestUndoResumedCursorDatabaseChat(t *testing.T) {
 	))
 	env := Environment{Home: home}
 	for id, want := range map[string][2]bool{"old": {false, false}, "new": {true, false}, "gone": {false, false}} {
-		resumed, unknown, err := resumedSinceImport(env, store, reg(id), collector.Request{})
+		resumed, unknown, err := resumedSinceImport(env, store, reg(id), state.Request{})
 		if err != nil || resumed != want[0] || unknown != want[1] {
 			t.Errorf("%s: resumed %v, unknown %v, err %v", id, resumed, unknown, err)
 		}
@@ -41,7 +41,7 @@ func TestUndoResumedCursorDatabaseChat(t *testing.T) {
 	if err := os.WriteFile(db+"-journal", []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	resumed, unknown, err := resumedSinceImport(env, store, reg("new"), collector.Request{})
+	resumed, unknown, err := resumedSinceImport(env, store, reg("new"), state.Request{})
 	if err != nil || resumed || !unknown {
 		t.Fatalf("locked: resumed %v, unknown %v, err %v", resumed, unknown, err)
 	}

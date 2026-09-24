@@ -1,4 +1,4 @@
-package collector
+package state
 
 import (
 	"errors"
@@ -19,7 +19,7 @@ type SupersededSource struct {
 	SupersededAt time.Time `json:"superseded_at"`
 }
 
-func (s *LocalStore) supersededPath(archiveSessionID string) string {
+func (s *Store) supersededPath(archiveSessionID string) string {
 	return filepath.Join(s.home, "superseded", archiveSessionID+".json")
 }
 
@@ -33,7 +33,7 @@ func (s *LocalStore) supersededPath(archiveSessionID string) string {
 // SupersededAt: append order is the supersession order retention relies
 // on to identify the immediate predecessor of the current snapshot, so
 // the most recently superseded key must always be last.
-func (s *LocalStore) RecordSuperseded(archiveSessionID, key string, at time.Time) error {
+func (s *Store) RecordSuperseded(archiveSessionID, key string, at time.Time) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -52,7 +52,7 @@ func (s *LocalStore) RecordSuperseded(archiveSessionID, key string, at time.Time
 }
 
 // LoadSuperseded returns a session's superseded-source ledger.
-func (s *LocalStore) LoadSuperseded(archiveSessionID string) ([]SupersededSource, error) {
+func (s *Store) LoadSuperseded(archiveSessionID string) ([]SupersededSource, error) {
 	var out []SupersededSource
 	err := local.Read(s.supersededPath(archiveSessionID), &out)
 	if errors.Is(err, os.ErrNotExist) {
@@ -66,7 +66,7 @@ func (s *LocalStore) LoadSuperseded(archiveSessionID string) ([]SupersededSource
 
 // RemoveSuperseded drops one entry from a session's ledger, after its
 // object has actually been deleted from storage.
-func (s *LocalStore) RemoveSuperseded(archiveSessionID, key string) error {
+func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
 	existing, err := s.LoadSuperseded(archiveSessionID)
 	if err != nil {
 		return err
@@ -100,7 +100,7 @@ func (s *LocalStore) RemoveSuperseded(archiveSessionID, key string) error {
 // after that recheck and before anything is forgotten: a session kept alive
 // gets no record, and a record that cannot be written leaves the session
 // registered, so the caller's next attempt retries both.
-func (s *LocalStore) ForgetIdleSession(archiveSessionID, nativeSessionID string, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
+func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -110,7 +110,7 @@ func (s *LocalStore) ForgetIdleSession(archiveSessionID, nativeSessionID string,
 	}
 	defer unlock()
 	if deferForWork {
-		_, requested, err := s.loadRequest(archiveSessionID)
+		_, requested, err := s.LoadRequest(archiveSessionID)
 		if err != nil {
 			return false, err
 		}
@@ -136,7 +136,7 @@ func (s *LocalStore) ForgetIdleSession(archiveSessionID, nativeSessionID string,
 // SessionDir is the per-session directory under the collector-owned
 // sessions/ tree where other packages keep session-scoped evidence (the CLI's
 // read-back verification record, for one). ForgetSession clears it.
-func (s *LocalStore) SessionDir(archiveSessionID string) string {
+func (s *Store) SessionDir(archiveSessionID string) string {
 	return filepath.Join(s.home, "sessions", archiveSessionID)
 }
 
@@ -154,7 +154,7 @@ func (s *LocalStore) SessionDir(archiveSessionID string) string {
 // registration and the index entry are already gone, so saveRequest refuses
 // to write for the session, UpdateRegistration reports it forgotten, and
 // RegisterNewSession assigns a fresh archive ID instead of reusing this one.
-func (s *LocalStore) ForgetSession(archiveSessionID, nativeSessionID string) error {
+func (s *Store) ForgetSession(archiveSessionID, nativeSessionID string) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}

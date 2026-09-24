@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // Batch is one confirmed import, kept as imports/<id>.json under the archive
@@ -93,7 +93,7 @@ func (p Plan) BatchFilters() BatchFilters {
 // source of truth: every registration carrying the batch's ID, and every
 // imported subagent candidate of those sessions. A crash inside a
 // registration hold registers sessions the batch file never heard of.
-func (b *Batch) Reconcile(store *collector.LocalStore) error {
+func (b *Batch) Reconcile(store *state.Store) error {
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		return err
@@ -205,7 +205,7 @@ var ErrUnreadableImport = errors.New("an import file can't be read")
 // it would make undoing the new import remove the earlier one too. That
 // happens once a batch file is gone (moved aside, deleted) while its
 // sessions are still registered.
-func OpenBatch(home string, store *collector.LocalStore, filters BatchFilters, destinationID string, now time.Time) (Batch, error) {
+func OpenBatch(home string, store *state.Store, filters BatchFilters, destinationID string, now time.Time) (Batch, error) {
 	batches, err := LoadBatches(home)
 	if err != nil {
 		return Batch{}, fmt.Errorf("%w: %w", ErrUnreadableImport, err)

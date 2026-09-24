@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // Every help names its own command on its Usage line, uses SESSION_ID (and
@@ -115,7 +115,7 @@ func TestFeedbackWhilePausedSaysWhen(t *testing.T) {
 	if err := handleHookEvent(home, "claude", start, env.now()); err != nil {
 		t.Fatal(err)
 	}
-	regs, _ := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	regs, _ := state.OpenReadOnly(home).LoadRegistrations()
 	if len(regs) != 1 {
 		t.Fatalf("registrations %d", len(regs))
 	}
@@ -149,8 +149,8 @@ func TestStatusReportsAStuckCollectorLock(t *testing.T) {
 	now := time.Now()
 	env := pairStatusEnv(t, home, userHome, now)
 	setUpTestConfig(t, home, t.TempDir(), now.Add(-48*time.Hour))
-	store, _ := collector.NewLocalStore(home)
-	must(t, store.SaveStatus(collector.Status{LastScanAt: now.Add(-3 * time.Hour)}))
+	store, _ := state.Open(home)
+	must(t, store.SaveStatus(state.Status{LastScanAt: now.Add(-3 * time.Hour)}))
 	stuck := func() (statusView, bool) {
 		t.Helper()
 		view, err := readStatus(env)
@@ -205,8 +205,8 @@ func TestStatusShowsQuarantinedFilesAndUnrefreshableSummaries(t *testing.T) {
 	now := time.Now()
 	env := pairStatusEnv(t, home, userHome, now)
 	setUpTestConfig(t, home, t.TempDir(), now.Add(-48*time.Hour))
-	store, _ := collector.NewLocalStore(home)
-	must(t, store.SaveStatus(collector.Status{LastScanAt: now, QuarantinedFiles: []string{"registrations/x.json.corrupt"}, UnrefreshableSummaries: 2}))
+	store, _ := state.Open(home)
+	must(t, store.SaveStatus(state.Status{LastScanAt: now, QuarantinedFiles: []string{"registrations/x.json.corrupt"}, UnrefreshableSummaries: 2}))
 	var out bytes.Buffer
 	if code := Run([]string{"status"}, nil, &out, nil, env); code != 0 {
 		t.Fatal(code)

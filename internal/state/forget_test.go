@@ -1,4 +1,4 @@
-package collector
+package state
 
 import (
 	"errors"
@@ -31,7 +31,7 @@ func TestForgetIdleSessionKeepsASessionThatGainedWork(t *testing.T) {
 				t.Fatalf("forgotten=%t err=%v, want %t", forgotten, err, tc.forgotten)
 			}
 			_, registered, _ := local.LoadRegistration(reg.ArchiveSessionID)
-			_, requested, _ := local.loadRequest(reg.ArchiveSessionID)
+			_, requested, _ := local.LoadRequest(reg.ArchiveSessionID)
 			if registered == tc.forgotten || requested == tc.forgotten {
 				t.Fatalf("registered=%t requested=%t after forgotten=%t", registered, requested, tc.forgotten)
 			}

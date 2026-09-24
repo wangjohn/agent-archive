@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -110,7 +111,7 @@ func countSnapshots(t *testing.T) *[]int {
 
 // run is one pass that must not fail as a whole; it returns the pass's
 // result and how many copies of the database it took.
-func run(t *testing.T, local *LocalStore, remote storage.ObjectStore, opts Options, passes *[]int) (Result, int) {
+func run(t *testing.T, local *state.Store, remote storage.ObjectStore, opts Options, passes *[]int) (Result, int) {
 	t.Helper()
 	before := len(*passes)
 	result, err := Run(context.Background(), local, remote, opts)
@@ -126,7 +127,7 @@ func run(t *testing.T, local *LocalStore, remote storage.ObjectStore, opts Optio
 // settleCursorSession records the scan signature a completed scan of the
 // chat as it is now would leave, without a pass, for a state no pass could
 // capture (a composerData value the filter refuses).
-func settleCursorSession(t *testing.T, local *LocalStore, reg archive.SessionRegistration, opts Options) {
+func settleCursorSession(t *testing.T, local *state.Store, reg archive.SessionRegistration, opts Options) {
 	t.Helper()
 	sig, err := cursorstore.ReadSignature(context.Background(), opts.CursorDatabase, reg.SourceKey)
 	if err != nil {
@@ -156,7 +157,7 @@ func advancingClock() func() time.Time {
 	}
 }
 
-func unchanged(t *testing.T, local *LocalStore, reg archive.SessionRegistration, opts Options) bool {
+func unchanged(t *testing.T, local *state.Store, reg archive.SessionRegistration, opts Options) bool {
 	t.Helper()
 	u, err := unchangedSinceLastScan(context.Background(), local, reg, opts)
 	if err != nil {
@@ -306,21 +307,21 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 		setup     func(db *cursorDB)
 		maxBytes  int64
 		firstCopy int
-		check     func(t *testing.T, local *LocalStore, id string, err error)
+		check     func(t *testing.T, local *state.Store, id string, err error)
 	}{
-		"missing chat": {func(db *cursorDB) { db.chat("other", 1, "x") }, 0, 0, func(t *testing.T, local *LocalStore, id string, err error) {
-			if reason, found, _ := local.LoadBlocked(id); err != nil || !found || reason != BlockedReasonTranscriptMissing {
+		"missing chat": {func(db *cursorDB) { db.chat("other", 1, "x") }, 0, 0, func(t *testing.T, local *state.Store, id string, err error) {
+			if reason, found, _ := local.LoadBlocked(id); err != nil || !found || reason != state.BlockedReasonTranscriptMissing {
 				t.Fatalf("err %v, blocked %q", err, reason)
 			}
 		}},
-		"unsafe format": {func(db *cursorDB) { db.put("composerData:chat", "not json") }, 0, 0, func(t *testing.T, local *LocalStore, id string, err error) {
+		"unsafe format": {func(db *cursorDB) { db.put("composerData:chat", "not json") }, 0, 0, func(t *testing.T, local *state.Store, id string, err error) {
 			var nc *cursorstore.NotCheckedError
 			if !errors.As(err, &nc) || nc.Reason != cursorstore.UnknownFormat {
 				t.Fatalf("err %v", err)
 			}
 		}},
-		"too large": {func(db *cursorDB) { db.chat("chat", 1, "a", "b") }, 10, 1, func(t *testing.T, local *LocalStore, id string, err error) {
-			if reason, found, _ := local.LoadBlocked(id); err != nil || !found || reason != BlockedReasonTranscriptTooLarge {
+		"too large": {func(db *cursorDB) { db.chat("chat", 1, "a", "b") }, 10, 1, func(t *testing.T, local *state.Store, id string, err error) {
+			if reason, found, _ := local.LoadBlocked(id); err != nil || !found || reason != state.BlockedReasonTranscriptTooLarge {
 				t.Fatalf("err %v, blocked %q", err, reason)
 			}
 		}},
@@ -385,14 +386,14 @@ func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 
 func TestFileSourceStateMatchesOnlyFileSignatures(t *testing.T) {
 	file := sourceState{file: transcriptFileInfo{Size: 3, Mtime: 4}}
-	if !file.matches(scanSignature{TranscriptSize: 3, TranscriptMtime: 4}) {
+	if !file.matches(state.ScanSignature{TranscriptSize: 3, TranscriptMtime: 4}) {
 		t.Fatal("a file signature did not match its own state")
 	}
-	if file.matches(scanSignature{TranscriptSize: 3, TranscriptMtime: 4, SourceKind: archive.SourceKindCursorSQLite}) {
+	if file.matches(state.ScanSignature{TranscriptSize: 3, TranscriptMtime: 4, SourceKind: archive.SourceKindCursorSQLite}) {
 		t.Fatal("a cursor signature matched a file")
 	}
 	chat := sourceState{kind: archive.SourceKindCursorSQLite}
-	if chat.matches(scanSignature{}) {
+	if chat.matches(state.ScanSignature{}) {
 		t.Fatal("a file signature matched a chat")
 	}
 }

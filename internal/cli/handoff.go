@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -326,7 +327,7 @@ func (r handoffResolver) byID(id string) (handoffTarget, error) {
 	// reported if it fails too.
 	var localErr error
 	if r.source != "archive" {
-		reg, found, err := collector.OpenLocalStoreReadOnly(r.home).LoadRegistration(id)
+		reg, found, err := state.OpenReadOnly(r.home).LoadRegistration(id)
 		switch {
 		case err != nil:
 			localErr = err
@@ -380,7 +381,7 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	dir = filepath.Clean(dir)
 	now := r.env.now()
 	if r.source != "archive" {
-		regs, err := collector.OpenLocalStoreReadOnly(r.home).LoadRegistrations()
+		regs, err := state.OpenReadOnly(r.home).LoadRegistrations()
 		if err != nil {
 			return handoffTarget{}, err
 		}

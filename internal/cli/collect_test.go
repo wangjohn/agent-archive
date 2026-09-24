@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -44,7 +44,7 @@ func TestCollectPassReportsQuarantinedStateAndTrimsErrorLog(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q", code, errOut.String())
 	}
 
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func collectFixture(t *testing.T, now time.Time) (home string, env Env, remote *
 
 func theRegistration(t *testing.T, home string) archive.SessionRegistration {
 	t.Helper()
-	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil || len(regs) != 1 {
 		t.Fatalf("registrations = %#v %v", regs, err)
 	}
@@ -144,7 +144,7 @@ func TestCollectPassSoftDeadlineStartsNoNewSession(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 || result.Scanned != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
-	status, err := collector.OpenLocalStoreReadOnly(home).LoadStatus()
+	status, err := state.OpenReadOnly(home).LoadStatus()
 	if err != nil || status.LastError != "" {
 		t.Fatalf("status = %#v %v", status, err)
 	}
@@ -166,12 +166,12 @@ func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
 	}
 	id := theRegistration(t, home).ArchiveSessionID
 	publishedPath := filepath.Join(home, "published", id+".json")
-	var state map[string]any
-	if err := local.Read(publishedPath, &state); err != nil {
+	var raw map[string]any
+	if err := local.Read(publishedPath, &raw); err != nil {
 		t.Fatal(err)
 	}
-	state["bundle"].(map[string]any)["schema_version"] = 1
-	if err := local.Write(publishedPath, state); err != nil {
+	raw["bundle"].(map[string]any)["schema_version"] = 1
+	if err := local.Write(publishedPath, raw); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(verificationPath(home, id)); err != nil {
@@ -181,7 +181,7 @@ func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 	if _, err := runOnePass(env, false); err != nil {
 		t.Fatal(err)
 	}
-	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil || len(regs) != 2 {
 		t.Fatalf("registrations = %v %v", regs, err)
 	}
@@ -253,7 +253,7 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 	if _, statErr := os.Stat(filepath.Join(home, "registrations", expired+".json")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("the retention sweep did not run: expired session still registered (%v)", statErr)
 	}
-	status, statusErr := collector.OpenLocalStoreReadOnly(home).LoadStatus()
+	status, statusErr := state.OpenReadOnly(home).LoadStatus()
 	if statusErr != nil || !strings.Contains(status.LastError, "read-back verification") {
 		t.Fatalf("status = %#v %v", status, statusErr)
 	}
@@ -274,7 +274,7 @@ func TestReadBackDefersOnceThePassDeadlineHasPassed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

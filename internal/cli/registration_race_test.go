@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // assertIndexConsistent checks the invariant the races below could break:
@@ -16,7 +16,7 @@ import (
 // the session's next start finds it instead of minting a second archive ID.
 func assertIndexConsistent(t *testing.T, home string) {
 	t.Helper()
-	store := collector.OpenLocalStoreReadOnly(home)
+	store := state.OpenReadOnly(home)
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestResumeDuringExpiryIsTreatedAsNeverSeen(t *testing.T) {
 	if err := handleHookEvent(home, "claude", claudeStart(project, "native-1", "startup", transcript), at); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestFreshStartDuringExpiryRegistersUnderAFreshID(t *testing.T) {
 	if err := handleHookEvent(home, "claude", claudeStart(project, "native-1", "startup", writeTestTranscript(t, "t.jsonl", "")), at); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	oldID, _, _ := store.ArchiveSessionID("native-1")
 	release, err := local.NamedLock(home, filepath.Join("request-locks", oldID+".lock"))
 	if err != nil {
@@ -137,7 +137,7 @@ func TestConcurrentStartAndForgetKeepTheIndexConsistent(t *testing.T) {
 		if err := handleHookEvent(home, "claude", claudeStart(project, native, "startup", writeTestTranscript(t, "t.jsonl", "")), at); err != nil {
 			t.Fatal(err)
 		}
-		store, _ := collector.NewLocalStore(home)
+		store, _ := state.Open(home)
 		archiveID, _, _ := store.ArchiveSessionID(native)
 		source := "resume"
 		if round%2 == 1 {

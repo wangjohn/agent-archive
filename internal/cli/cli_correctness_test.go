@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -44,12 +44,12 @@ func TestUninstallPurgeLeavesNoFilesOrDirectory(t *testing.T) {
 
 // The purge must know every entry the running system creates, not only the
 // ones setup does: the collector's directories (created by every
-// collector.NewLocalStore), the lineage ledger and reader cache (created on
+// state.Open), the lineage ledger and reader cache (created on
 // first use), and the diagnostics lock (created by the first diagnostic a
 // hook records).
 func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
 	if _, err := reader.OpenMetadataCache(home); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordRemoval("codex", "native", collector.RemovalReasonRetention, time.Now()); err != nil {
+	if err := store.RecordRemoval("codex", "native", state.RemovalReasonRetention, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _, _ := config.Load(home)
