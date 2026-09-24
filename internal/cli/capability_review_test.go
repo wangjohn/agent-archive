@@ -172,3 +172,35 @@ func TestStatusSurvivesCorruptApplicationVersions(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
 }
+
+func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
+	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+	env.DiscoverApplications = func(string) map[string]applicationDiscovery {
+		return map[string]applicationDiscovery{"codex": {VersionState: "absent"}}
+	}
+	input := strings.Join([]string{"y", project, "", "s3", "test", "profile", "us-east-1", "y"}, "\n") + "\n"
+	output := setupRun(t, env, input, 0)
+	if !strings.Contains(output, "Codex (version unknown)") || strings.Contains(output, "not found") {
+		t.Fatalf("detected app shown as not found:\n%s", output)
+	}
+	// Only the display changes; the recorded discovery keeps what was seen.
+	observations, err := readApplicationDiscoveries(home)
+	if err != nil || observations["codex"].Installed || observations["codex"].VersionState != "absent" {
+		t.Fatalf("recorded discovery changed: %+v %v", observations, err)
+	}
+}
+
+func TestReviewDiscoveriesKeepsUndetectedAbsentApps(t *testing.T) {
+	got := reviewDiscoveries(map[string]applicationDiscovery{
+		"codex":  {VersionState: "absent"},
+		"claude": {VersionState: "absent"},
+		"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"},
+	}, []string{"claude", "cursor"})
+	for app, want := range map[string]string{"codex": "Codex (not found)", "claude": "Claude Code (version unknown)", "cursor": "Cursor 3.21.13"} {
+		if line := appWithVersion(app, got[app]); line != want {
+			t.Fatalf("%s: got %q want %q", app, line, want)
+		}
+	}
+}

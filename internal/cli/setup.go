@@ -74,6 +74,8 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	fmt.Fprintln(out, "Checking installed applications...")
 	discoveries := env.discoverApplications(userHome)
 	discoveredAt := env.now()
+	// The review shows these; discoveries themselves are recorded unchanged.
+	reviewed := reviewDiscoveries(discoveries, env.detectHarnesses(userHome))
 	p := newPrompter(stdin, out)
 	p.now = env.now
 	if !found {
@@ -267,7 +269,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		// Review what will be committed, not what a draft may have saved.
 		draft.Config.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
-		showSetupReview(p, draft.Config, existing, found, discoveries)
+		showSetupReview(p, draft.Config, existing, found, reviewed)
 		fmt.Fprintln(out, "\n"+p.style.bold("Before you confirm"))
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
 			return err
@@ -275,7 +277,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if existing.Paused {
 			p.note("Capture stays paused until you run agent-archive resume.")
 		}
-		printReviewNotes(p, draft.Config, discoveries)
+		printReviewNotes(p, draft.Config, reviewed)
 		action, e := reviewAction(p, found)
 		if e != nil {
 			return e
@@ -454,22 +456,46 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 
 func promptHarnesses(p *prompter, detected, existing []string) ([]string, error) {
 	// Preserve an existing selection on reconfiguration. Detection supplies
-	// defaults only for first-time setup; it never proves capture is working.
+	// defaults for first-time setup and, on reconfiguration, offers apps the
+	// selection leaves out; it never proves capture is working.
 	defaults := detected
 	if len(existing) > 0 {
 		defaults = existing
 	}
-	var suggested, others []string
+	var suggested, others, found []string
 	for _, app := range allHarnesses {
-		if containsString(defaults, app) {
+		switch {
+		case containsString(defaults, app):
 			suggested = append(suggested, app)
-		} else {
+		case containsString(detected, app):
+			// Only reachable on reconfiguration: detected but not included.
+			found = append(found, app)
+			others = append(others, app)
+		default:
 			others = append(others, app)
 		}
 	}
 	switch {
 	case len(suggested) == 0:
 		fmt.Fprintln(p.out, "No apps found automatically.")
+	case len(found) > 0:
+		// Detected apps the saved selection leaves out are offered on their
+		// own, defaulting to yes; declining keeps the saved selection as is.
+		fmt.Fprintf(p.out, "Included: %s.\nAlso found on this computer: %s.\n", appList(suggested), appList(found))
+		add, err := p.yesNo(addPrompt(found), true)
+		if err != nil {
+			return nil, err
+		}
+		if !add {
+			return suggested, nil
+		}
+		var result []string
+		for _, app := range allHarnesses {
+			if containsString(suggested, app) || containsString(found, app) {
+				result = append(result, app)
+			}
+		}
+		return result, nil
 	case len(existing) > 0 && len(others) > 0:
 		// Name the apps left out so it is clear how to add them; "Keep X?"
 		// reads as if declining would remove X.
@@ -511,6 +537,14 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 		}
 		fmt.Fprintln(p.out, "Choose at least one app to continue.")
 	}
+}
+
+// addPrompt asks to add newly found apps: "Add it?" or "Add them?".
+func addPrompt(apps []string) string {
+	if len(apps) == 1 {
+		return "Add it?"
+	}
+	return "Add them?"
 }
 
 // appList names apps in prose: "Codex", "Codex and Cursor", or

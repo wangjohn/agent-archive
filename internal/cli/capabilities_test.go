@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -122,5 +123,76 @@ func TestDiscoverCommandVersionTriesEveryPresentCandidate(t *testing.T) {
 	got = discoverCommandVersion("tool", [][]string{{missing, "--version"}, {dir, "--version"}})
 	if got.Installed || got.VersionState != "absent" {
 		t.Fatalf("absent candidates: %+v", got)
+	}
+}
+
+func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
+	userHome := t.TempDir()
+	root := filepath.Join(userHome, "Library/Application Support/Claude/claude-code")
+	for _, dir := range []string{"2.1.99", "2.1.275", "2.1.280", "2.1.100", "not-a-version"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "3.0.0"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := claudeDesktopBundledCLIs(userHome)
+	var want []string
+	for _, version := range []string{"2.1.280", "2.1.275", "2.1.100", "2.1.99"} {
+		want = append(want, filepath.Join(root, version, "claude.app/Contents/MacOS/claude"))
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+	if got := claudeDesktopBundledCLIs(t.TempDir()); len(got) != 0 {
+		t.Fatalf("no desktop app: %v", got)
+	}
+}
+
+func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
+	userHome := t.TempDir()
+	bundled := filepath.Join(userHome, "Library/Application Support/Claude/claude-code/2.1.280")
+	if err := os.MkdirAll(bundled, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var claude []string
+	for _, candidate := range claudeVersionCandidates(userHome) {
+		claude = append(claude, candidate[0])
+	}
+	want := []string{"claude", filepath.Join(userHome, ".local/bin/claude"), filepath.Join(userHome, ".claude/local/claude"), filepath.Join(bundled, "claude.app/Contents/MacOS/claude")}
+	if !reflect.DeepEqual(claude, want) {
+		t.Fatalf("claude candidates %v", claude)
+	}
+	var codex []string
+	for _, candidate := range codexVersionCandidates(userHome) {
+		codex = append(codex, candidate[0])
+	}
+	want = []string{
+		"/Applications/Codex.app/Contents/Resources/codex",
+		filepath.Join(userHome, "Applications/Codex.app/Contents/Resources/codex"),
+		"codex",
+		"/Applications/ChatGPT.app/Contents/Resources/codex",
+		filepath.Join(userHome, "Applications/ChatGPT.app/Contents/Resources/codex"),
+	}
+	if !reflect.DeepEqual(codex, want) {
+		t.Fatalf("codex candidates %v", codex)
+	}
+}
+
+func TestCompareDottedVersions(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want int
+	}{
+		{"2.1.280", "2.1.275", 1},
+		{"2.1.99", "2.1.100", -1},
+		{"1.2", "1.2.0", 0},
+		{"1.2.3-alpha", "1.2.3", 0},
+		{"codex-cli 0.155.0-alpha.9.2", "0.154.9", 1},
+	} {
+		if got := compareDottedVersions(tt.a, tt.b); got != tt.want {
+			t.Fatalf("compare(%q, %q) = %d want %d", tt.a, tt.b, got, tt.want)
+		}
 	}
 }

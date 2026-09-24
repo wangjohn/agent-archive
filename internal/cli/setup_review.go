@@ -71,6 +71,22 @@ func appWithVersion(app string, discovery applicationDiscovery) string {
 	return appName(app) + " (version unknown)"
 }
 
+// reviewDiscoveries returns discoveries as the review shows them. An app
+// discovery could not find but whose config directory detection saw is
+// reported as installed with an unknown version rather than "not found":
+// its CLI may live somewhere discovery does not look. Recorded discoveries
+// keep the absent state, which version support relies on.
+func reviewDiscoveries(discoveries map[string]applicationDiscovery, detected []string) map[string]applicationDiscovery {
+	result := make(map[string]applicationDiscovery, len(discoveries))
+	for app, discovery := range discoveries {
+		if discovery.VersionState == "absent" && containsString(detected, app) {
+			discovery = applicationDiscovery{Installed: true, VersionState: "unknown"}
+		}
+		result[app] = discovery
+	}
+	return result
+}
+
 // showSetupReview prints the summary of what will be saved. When
 // reconfiguring, a value that differs from the active configuration is
 // marked, with the old value beneath it, so only those lines need checking.

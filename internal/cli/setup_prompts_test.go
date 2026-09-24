@@ -25,7 +25,10 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 		{"single app", []string{"cursor"}, nil, "y\n", []string{"cursor"}, "Include Cursor? [Y/n]", false},
 		{"choose another app", []string{"codex", "claude"}, nil, "n\nn\nn\ny\n", []string{"cursor"}, "Include Codex and Claude Code?", true},
 		{"nothing detected", nil, nil, "n\ny\nn\n", []string{"claude"}, "No apps found automatically.", true},
-		{"keep prior selection", []string{"codex", "cursor"}, []string{"claude"}, "\n", []string{"claude"}, "Included: Claude Code. Not included: Codex and Cursor.\nChange which apps are included? [y/N]", false},
+		{"keep prior selection", []string{"claude"}, []string{"claude"}, "\n", []string{"claude"}, "Included: Claude Code. Not included: Codex and Cursor.\nChange which apps are included? [y/N]", false},
+		{"add newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "\n", []string{"codex", "claude", "cursor"}, "Included: Cursor.\nAlso found on this computer: Codex and Claude Code.\nAdd them? [Y/n]", false},
+		{"decline newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\n", []string{"cursor"}, "Also found on this computer: Codex and Claude Code.", false},
+		{"add one newly found app", []string{"claude"}, []string{"cursor"}, "y\n", []string{"claude", "cursor"}, "Included: Cursor.\nAlso found on this computer: Claude Code.\nAdd it? [Y/n]", false},
 		{"add to prior selection", nil, []string{"cursor"}, "y\ny\ny\n\n", []string{"codex", "claude", "cursor"}, "Change which apps are included?", true},
 		{"keep full prior selection", nil, []string{"cursor", "claude", "codex"}, "\n", []string{"codex", "claude", "cursor"}, "Keep Codex, Claude Code, and Cursor? [Y/n]", false},
 		{"trim full prior selection", nil, []string{"cursor", "claude", "codex"}, "n\nn\n\n\n", []string{"claude", "cursor"}, "Choose which apps to include:", true},
@@ -151,5 +154,16 @@ func TestPickAWSProfileByNumberOrName(t *testing.T) {
 		if !strings.Contains(out.String(), "  2) work\n") || !strings.Contains(out.String(), "Enter 1-2, or another profile name [1]: ") {
 			t.Fatalf("unexpected output: %s", &out)
 		}
+	}
+}
+
+func TestNewlyFoundAppsOmitAppsNotDetected(t *testing.T) {
+	var out bytes.Buffer
+	got, err := promptHarnesses(newPrompter(strings.NewReader("\n"), &out), []string{"claude", "cursor"}, []string{"cursor"})
+	if err != nil || !reflect.DeepEqual(got, []string{"claude", "cursor"}) {
+		t.Fatalf("got %v, %v", got, err)
+	}
+	if strings.Contains(out.String(), "Codex") || strings.Contains(out.String(), "Not included") {
+		t.Fatalf("an app neither included nor detected was advertised:\n%s", &out)
 	}
 }
