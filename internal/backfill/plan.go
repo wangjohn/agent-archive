@@ -32,8 +32,11 @@ type Plan struct {
 	Candidates []Candidate
 	// CursorDatabaseOnly counts Cursor chats found only in Cursor's database,
 	// when CursorDatabaseChecked says the count was available.
-	CursorDatabaseOnly    int
-	CursorDatabaseChecked bool
+	// CursorDatabaseFiltered counts those --since, --until, or --project
+	// leave out.
+	CursorDatabaseOnly     int
+	CursorDatabaseFiltered int
+	CursorDatabaseChecked  bool
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string
@@ -329,18 +332,8 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 	}
 
-	if env.CursorDatabaseOnly != nil {
-		chats := map[string]bool{}
-		for _, c := range plan.Candidates {
-			if c.Harness == "cursor" {
-				chats[c.NativeSessionID] = true
-			}
-		}
-		count, checked, err := env.CursorDatabaseOnly(ctx, chats)
-		if err != nil {
-			return Plan{}, fmt.Errorf("count Cursor database chats: %w", err)
-		}
-		plan.CursorDatabaseOnly, plan.CursorDatabaseChecked = count, checked
+	if err := countCursorDatabase(ctx, env, r, projectFilter, since, until, &plan); err != nil {
+		return Plan{}, err
 	}
 	sort.SliceStable(plan.Candidates, func(i, j int) bool {
 		a, b := plan.Candidates[i], plan.Candidates[j]

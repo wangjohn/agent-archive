@@ -52,7 +52,7 @@ func (p Plan) Imported() []Candidate {
 
 // Found is how many sessions discovery found, imported or not.
 func (p Plan) Found() int {
-	return len(p.Candidates) + p.CursorDatabaseOnly
+	return len(p.Candidates) + p.CursorDatabaseOnly + p.CursorDatabaseFiltered
 }
 
 // Projects groups the imported sessions by project, sorted by total and then
@@ -110,6 +110,9 @@ func (p Plan) Skipped() map[SkipReason]int {
 		} else {
 			counts[SkipFilteredOut] += p.CursorDatabaseOnly
 		}
+	}
+	if p.CursorDatabaseFiltered > 0 {
+		counts[SkipFilteredOut] += p.CursorDatabaseFiltered
 	}
 	return counts
 }
@@ -598,8 +601,8 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 		AppsWithoutHooks: p.AppsWithoutHooks(),
 		RetentionDays:    p.RetentionDays,
 		StorageChecked:   storageChecked,
-		// Phase 1 cannot read Cursor's database yet; see
-		// Environment.CursorDatabaseOnly.
+		// False when Cursor's database could not be read; see
+		// CursorDatabaseReader.
 		CursorDatabaseChecked: p.CursorDatabaseChecked,
 		SubagentsSkipped:      p.SubagentsSkipped(),
 	}

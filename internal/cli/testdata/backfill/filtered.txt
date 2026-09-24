@@ -1,4 +1,4 @@
-Looking for Claude Code sessions on this Mac… 17 found.
+Looking for Claude Code sessions on this Mac… 18 found.
 
 Backfill imports sessions matching --harness claude --since 2026-09-19
 into s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
@@ -19,7 +19,7 @@ Total: 6 sessions (plus 2 subagent transcripts), 5 KB,
 
 Not imported:
    1  already in the archive
-   7  not matching the filters
+   8  not matching the filters
    2  run from temporary directories            add --include-temp
    1  with no conversation
 

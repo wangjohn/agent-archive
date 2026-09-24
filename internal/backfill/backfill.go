@@ -205,12 +205,11 @@ type Environment struct {
 	// default reads it from the file system where it is recorded (macOS);
 	// where it is not, or it fails, the modification time is used.
 	FileCreated func(string) (time.Time, error)
-	// CursorDatabaseOnly counts Cursor chats that exist only in Cursor's
+	// CursorDatabaseOnly reads the Cursor chats that exist only in Cursor's
 	// database: composerData entries with headers, not drafts, and none of
-	// the given chat IDs. checked is false when the count is unavailable.
-	// Nil means unavailable; reading state.vscdb needs a SQLite driver the
-	// module does not carry yet.
-	CursorDatabaseOnly func(ctx context.Context, fileChats map[string]bool) (count int, checked bool, err error)
+	// the given chat IDs. checked is false when they could not be read. Nil
+	// means not checked; the CLI uses CursorDatabaseReader.
+	CursorDatabaseOnly func(ctx context.Context, fileChats map[string]bool) (chats []CursorDatabaseChat, checked bool, err error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int
 }

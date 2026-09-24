@@ -446,9 +446,9 @@ func TestCursorDatabaseCount(t *testing.T) {
 	tr.write(filepath.Join("home", ".cursor", "projects", cursorSlug(repo), "agent-transcripts", "k1", "k1.jsonl"), cursorTranscript)
 	env := tr.env()
 	var got map[string]bool
-	env.CursorDatabaseOnly = func(_ context.Context, chats map[string]bool) (int, bool, error) {
+	env.CursorDatabaseOnly = func(_ context.Context, chats map[string]bool) ([]CursorDatabaseChat, bool, error) {
 		got = chats
-		return 2, true, nil
+		return make([]CursorDatabaseChat, 2), true, nil
 	}
 	p := plan(t, env, nil, config.Config{}, Filters{})
 	if !got["k1"] || p.Skipped()[SkipCursorDatabaseOnly] != 2 || p.Found() != 3 {
