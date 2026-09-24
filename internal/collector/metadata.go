@@ -102,6 +102,7 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 		return outcomeSkipped, false, nil
 	}
 	next, buildErr := archive.BuildMetadata(bundle, opts.MachineID, reg.SessionStartedAt, now, prior.SourceBundle, archive.ParserInfo{Version: opts.parserVersion()})
+	next.ApplyRegistrationProvenance(reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		return outcomeSkipped, false, buildErr
 	}

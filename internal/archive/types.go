@@ -201,9 +201,33 @@ type Harness struct {
 	Mode    string `json:"mode,omitempty"`
 }
 
+// SessionOrigin is how a session entered the archive. The empty value means
+// SessionOriginHook, so registrations written before the field decode as hook
+// registrations.
+type SessionOrigin string
+
+const (
+	SessionOriginHook   SessionOrigin = "hook"
+	SessionOriginImport SessionOrigin = "import"
+)
+
+// StartedAtSource says where a registration's SessionStartedAt came from. The
+// empty value means StartedAtSourceHook.
+type StartedAtSource string
+
+const (
+	StartedAtSourceHook           StartedAtSource = "hook"            // when the hook fired
+	StartedAtSourceTranscript     StartedAtSource = "transcript"      // earliest native record
+	StartedAtSourceFileCreated    StartedAtSource = "file_created"    // file birth time; format has no timestamps
+	StartedAtSourceCursorComposer StartedAtSource = "cursor_composer" // phase 2: composerData.createdAt
+)
+
 // SessionRegistration is the small hook-produced observation a later collector
 // needs. TranscriptPath is local operational data and is never placed in a
 // SourceBundle or Metadata document.
+//
+// SessionStartedAt is when the conversation began. It is not the capture
+// boundary: project activation and the storage destination compare Admitted().
 type SessionRegistration struct {
 	ArchiveSessionID      string    `json:"archive_session_id"`
 	NativeSessionID       string    `json:"native_session_id"`
@@ -217,6 +241,31 @@ type SessionRegistration struct {
 	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
 	SubagentID            string    `json:"subagent_id,omitempty"`
 	SubagentObservedAt    time.Time `json:"subagent_observed_at,omitempty"`
+	// AdmittedAt is when this machine took ownership of the session: the
+	// boundary for project activation and storage destination. Hooks set it at
+	// registration and backfill sets it to the import time. Empty on older
+	// registrations.
+	AdmittedAt time.Time `json:"admitted_at,omitempty"`
+	// Origin is how the session entered the archive. Set once.
+	Origin SessionOrigin `json:"origin,omitempty"`
+	// StartedAtSource says where SessionStartedAt came from.
+	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
+	// ImportBatch is the backfill run that registered the session.
+	ImportBatch string `json:"import_batch,omitempty"`
+}
+
+// Admitted is the boundary time. Registrations older than AdmittedAt were
+// all hook-registered, so their start is their admission.
+func (r SessionRegistration) Admitted() time.Time {
+	if !r.AdmittedAt.IsZero() {
+		return r.AdmittedAt
+	}
+	return r.SessionStartedAt
+}
+
+// Imported reports whether backfill, not a hook, registered the session.
+func (r SessionRegistration) Imported() bool {
+	return r.Origin == SessionOriginImport
 }
 
 func (r SessionRegistration) Validate() error {
@@ -421,4 +470,40 @@ type Metadata struct {
 	SourceBundle        SourceReference          `json:"source_bundle"`
 	ParentSessionID     string                   `json:"parent_session_id,omitempty"`
 	LinkedSessions      []LinkedSessionReference `json:"linked_sessions,omitempty"`
+	// Origin, ImportedAt, and StartedAtSource describe a session backfill
+	// imported. All three are omitted for hook-captured sessions, so their
+	// metadata is unchanged. See ApplyRegistrationProvenance.
+	Origin          SessionOrigin   `json:"origin,omitempty"`
+	ImportedAt      *time.Time      `json:"imported_at,omitempty"`
+	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
 }
+
+// CaptureGapImportedWithoutHookEvidence marks an imported session: no hook
+// ran while it happened, so it has no lifecycle events, final-response text,
+// or skill inventory.
+const CaptureGapImportedWithoutHookEvidence = "imported_without_hook_evidence"
+
+// ApplyRegistrationProvenance records how the session entered the archive.
+// It changes nothing for a hook registration. Callers apply it to every
+// metadata document BuildMetadata returns, including a failed parse's.
+func (m *Metadata) ApplyRegistrationProvenance(r SessionRegistration) {
+	if !r.Imported() {
+		return
+	}
+	m.Origin = r.Origin
+	if !r.AdmittedAt.IsZero() {
+		importedAt := r.AdmittedAt.UTC()
+		m.ImportedAt = &importedAt
+	}
+	m.StartedAtSource = r.StartedAtSource
+	for _, gap := range m.CaptureGaps {
+		if gap.Code == CaptureGapImportedWithoutHookEvidence {
+			return
+		}
+	}
+	m.CaptureGaps = append(m.CaptureGaps, CaptureGap{Code: CaptureGapImportedWithoutHookEvidence, Detail: importedGapDetail})
+}
+
+// importedGapDetail is about the time before the import only: a hook that
+// resumes an imported session records its lifecycle from then on.
+const importedGapDetail = "No hook observed this session before it was imported (imported_at): activity before then has no hook lifecycle events, final-response text, or skill inventory."

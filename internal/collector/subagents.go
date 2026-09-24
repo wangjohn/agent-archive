@@ -26,6 +26,10 @@ type SubagentCandidate struct {
 	AgentID                string          `json:"agent_id"`
 	TranscriptPath         string          `json:"transcript_path"`
 	ObservedAt             time.Time       `json:"observed_at"`
+	// Origin is who found the subagent: a SubagentStop hook (empty or
+	// SessionOriginHook) or backfill (SessionOriginImport). Only a hook
+	// candidate carries a SubagentStop lifecycle event.
+	Origin archive.SessionOrigin `json:"origin,omitempty"`
 }
 
 func (s *LocalStore) subagentCandidatePath(id string) string {

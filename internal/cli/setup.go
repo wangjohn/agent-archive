@@ -27,6 +27,10 @@ type setupDraft struct {
 	Config        config.Config `json:"config"`
 	Step          int           `json:"step"`
 	CredentialRef string        `json:"staged_credential_ref,omitempty"`
+	// StopImported lists imported-only apps whose imports the person chose to
+	// stop publishing. Config.ImportedHarnesses itself always comes from the
+	// committed configuration (see carriedImportedHarnesses).
+	StopImported []string `json:"stop_imported,omitempty"`
 }
 
 func runSetupCommand(_ []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
@@ -103,6 +107,9 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 				if e = chooseCapture(p, &draft.Config, userHome, env); e != nil {
 					return e
 				}
+				if e = offerStopImported(p, &draft, existing); e != nil {
+					return e
+				}
 				draft.Step = 2
 				if draft.Config.Storage.Provider == "" {
 					draft.Step = 1
@@ -144,6 +151,9 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		if choice == "capture" { // Storage is still verified, but its prompts are skipped.
 			if err = chooseCapture(p, &draft.Config, userHome, env); err != nil {
+				return err
+			}
+			if err = offerStopImported(p, &draft, existing); err != nil {
 				return err
 			}
 			draft.Step = 2
@@ -251,6 +261,8 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if draft.Config.RetentionDays <= 0 {
 			draft.Config.RetentionDays = defaultRetentionDays
 		}
+		// Review what will be committed, not what a draft may have saved.
+		draft.Config.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
 		showSetupReview(p, draft.Config, existing, found, discoveries)
 		fmt.Fprintln(out, "\n"+p.style.bold("Before you confirm"))
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
@@ -284,7 +296,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			}
 		}
 		// Re-read under the machine lock in applySetup; it rejects concurrent config changes.
-		if err = applySetup(home, userHome, exe, existing, &draft.Config, env); err != nil {
+		if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
 			return err
 		}
 		if err = recordApplicationDiscoveries(home, discoveries, discoveredAt); err != nil {

@@ -35,10 +35,15 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery) 
 	}
 	rows := []reviewRow{
 		{"Apps", []string{strings.Join(apps, ", ")}},
+	}
+	if len(cfg.ImportedHarnesses) > 0 {
+		rows = append(rows, reviewRow{"Imported", []string{friendlyApps(cfg.ImportedHarnesses) + " (sessions imported by backfill stay published; new sessions are not captured)"}})
+	}
+	rows = append(rows, []reviewRow{
 		{"Projects", projects},
 		{"Sessions", []string{sessions}},
 		{"Keep for", []string{fmt.Sprintf("%d days, then deleted automatically", cfg.RetentionDays)}},
-	}
+	}...)
 	s := cfg.Storage
 	if s.Provider == credentials.ProviderS3 {
 		rows = append(rows, reviewRow{"Storage", []string{"Amazon S3"}}, reviewRow{"Bucket", []string{s.Bucket}}, reviewRow{"AWS", []string{"profile " + s.AWSProfile + " · " + s.Region}})
@@ -188,6 +193,35 @@ func reviewAction(p *prompter, reconfiguring bool) (string, error) {
 	return choice, err
 }
 
+// promptStopImported offers to stop publishing each app that has only
+// imported sessions: one backfill imported without its hooks installed, and
+// which setup is not installing hooks for now. Stopping removes it from
+// ImportedHarnesses when setup commits, so its imports are no longer
+// published; sessions already in the bucket stay until retention removes
+// them.
+func promptStopImported(p *prompter, draft *setupDraft) error {
+	for _, app := range draft.Config.ImportedHarnesses {
+		if containsString(draft.Config.Harnesses, app) || containsString(draft.StopImported, app) {
+			continue
+		}
+		keep, err := p.yesNo(fmt.Sprintf("Keep publishing %s sessions imported by backfill?", appName(app)), true)
+		if err != nil {
+			return err
+		}
+		if !keep {
+			draft.StopImported = append(draft.StopImported, app)
+		}
+	}
+	return nil
+}
+
+// offerStopImported refreshes the draft's list from the committed
+// configuration, which is where backfill writes it, then prompts.
+func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) error {
+	draft.Config.ImportedHarnesses = carriedImportedHarnesses(committed.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
+	return promptStopImported(p, draft)
+}
+
 func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
 	choices := []option{
 		{"apps", "Apps to include"},
@@ -208,6 +242,10 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
 	switch choice {
 	case "apps":
 		draft.Config.Harnesses, err = promptHarnesses(p, nil, draft.Config.Harnesses)
+		if err != nil {
+			return err
+		}
+		err = promptStopImported(p, draft)
 	case "projects":
 		projects, e := promptProjects(p, draft.Config.Archive.Projects, time.Time{}, userHome)
 		if e != nil {

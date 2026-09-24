@@ -150,7 +150,7 @@ func TestConcurrentStartAndForgetKeepTheIndexConsistent(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_, forgetErr = store.ForgetIdleSession(archiveID, native, false)
+			_, forgetErr = store.ForgetIdleSession(archiveID, native, false, nil)
 		}()
 		go func() {
 			defer wg.Done()
