@@ -57,6 +57,7 @@
       }
     },
     {
+      "completed_at_ms": 1790000004500,
       "id": "b4",
       "message": {
         "content": [
@@ -90,8 +91,32 @@
       "message": {
         "content": [
           {
-            "text": "The test passes now.",
+            "text": "The test run failed; see the error.",
             "type": "text"
+          },
+          {
+            "id": "call-2",
+            "input": {
+              "command": "go test ./internal/widget/",
+              "commandDescription": "Run the widget tests",
+              "cwd": "",
+              "parsingResult": {
+                "executableCommands": [
+                  {
+                    "name": "go"
+                  }
+                ]
+              }
+            },
+            "name": "run_terminal_command_v2",
+            "type": "tool_use"
+          },
+          {
+            "content": "exit status 1: [REDACTED]",
+            "is_error": true,
+            "status": "error",
+            "tool_use_id": "call-2",
+            "type": "tool_result"
           }
         ]
       },
@@ -122,6 +147,10 @@
       "detail": "1 of 7 messages have an unknown or inconsistent type"
     },
     {
+      "code": "cursor_tool_argument_omitted",
+      "detail": "omitted tool arguments: requestedSandboxPolicy"
+    },
+    {
       "code": "hidden_instruction_omitted",
       "detail": "reasoning omitted"
     },
@@ -135,12 +164,12 @@
     },
     {
       "code": "unknown_field_omitted",
-      "detail": "omitted keys: additionalData, cacheTokens, extra, isAgentic, isDraft, lastUpdatedAt, modelCallId, modelConfig, name, provider, subagentComposerIds, tool, toolIndex, unifiedMode, usageData, workspaceIdentifier"
+      "detail": "omitted keys: chat.isDraft, chat.lastUpdatedAt, chat.modelConfig, chat.name, chat.subagentComposerIds, chat.unifiedMode, chat.usageData, chat.workspaceIdentifier, message.isAgentic, model.provider, tokens.cacheTokens, tool.additionalData, tool.extra, tool.modelCallId, tool.result, tool.tool, tool.toolCallBinary, tool.toolIndex, tool.userDecision"
     }
   ],
   "boundary": {
     "retained_records": 6,
-    "retained_bytes": 1407
+    "retained_bytes": 1795
   },
   "session_ids": [
     "c0ffee00-0000-4000-8000-000000000001"

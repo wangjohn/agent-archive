@@ -28,13 +28,15 @@ type CursorBubble struct {
 // database, distinct from the hook-provided cursor-jsonl and cursor-text.
 const cursorComposerFormat = "cursor-composer"
 
-// maxCursorComposerVersion and maxCursorBubbleVersion are the newest _v this
-// filter knows on a composerData value and on a message. A newer or missing
-// _v is refused rather than guessed at (spec phase 2, decision 6).
-// maxCursorComposerVersion matches the backfill count's newest known version.
+// cursorComposerVersion and cursorBubbleVersion are the only _v values this
+// filter accepts on a composerData value and on a message: the versions the
+// probe of a real database found on every chat and every message. Any other
+// value, older or newer, or none, is refused rather than guessed at (spec
+// phase 2, decision 6). Chats older than composer version 18 kept their
+// messages inline in "conversation"; that shape is not read.
 const (
-	maxCursorComposerVersion = 18
-	maxCursorBubbleVersion   = 3
+	cursorComposerVersion = 18
+	cursorBubbleVersion   = 3
 )
 
 // Cursor's message types: 1 is the person, 2 is the assistant. Any other type
@@ -50,19 +52,28 @@ var errCursorFormatUnknown = fmt.Errorf("cursor composer format version is not k
 
 // cursorComposerConsumed are the composerData keys the filter reads for
 // structure and identity. They are not retained as fields, but nothing they
-// hold is lost either, so they are not reported as omitted.
+// hold is lost either, so they are not reported as omitted. conversation is
+// reported by its own gap when it holds anything.
 var cursorComposerConsumed = map[string]bool{
 	"_v": true, "composerId": true, "createdAt": true,
 	"fullConversationHeadersOnly": true, "conversation": true,
 }
 
 // cursorBubbleConsumed are the message keys the filter maps onto a record
-// (see cursorBubbleRecord). richText is the editor's structured copy of text
-// and is consumed only when text is present.
+// (see bubbleRecord). richText is the editor's structured copy of text and is
+// consumed only when text is present.
 var cursorBubbleConsumed = map[string]bool{
 	"_v": true, "bubbleId": true, "type": true, "text": true,
 	"toolFormerData": true, "toolResults": true, "tokenCount": true, "modelInfo": true,
 	"createdAt": true, "startedAtMs": true, "completedAtMs": true, "requestId": true,
+}
+
+// cursorToolConsumed are the toolFormerData keys mapped onto tool_use and
+// tool_result blocks. Everything else in it (toolCallBinary, userDecision,
+// additionalData, the tool's numeric ID) is reported as omitted.
+var cursorToolConsumed = map[string]bool{
+	"toolCallId": true, "name": true, "rawArgs": true, "params": true,
+	"result": true, "error": true, "status": true,
 }
 
 // cursorContextKeys are the context payloads Cursor attaches to a message:
@@ -82,15 +93,19 @@ var cursorContextKeys = map[string]bool{
 // cursorHiddenKeys carry the model's reasoning, which no adapter retains.
 var cursorHiddenKeys = map[string]bool{"thinking": true, "allThinkingBlocks": true}
 
+// cursorPendingToolStatuses are the toolFormerData statuses of a tool call
+// that has not finished; its message is not complete yet.
+var cursorPendingToolStatuses = map[string]bool{"loading": true, "pending": true}
+
 // cursorComposerFilter accumulates one FilterComposer call.
 type cursorComposerFilter struct {
-	result                          FilteredTranscript
-	gapSet                          map[string]bool
-	omitted, denied, context        keyNameSet
-	missing, blobMessages           int
-	unknownType, unsupportedEntries int
-	messages                        int
-	composerBlob                    bool
+	result                         FilteredTranscript
+	gapSet                         map[string]bool
+	omitted, denied, context, args keyNameSet
+	messages, missing, idMismatch  int
+	blobMessages, unknownType      int
+	incompleteTail                 int
+	composerBlob                   bool
 }
 
 func (f *cursorComposerFilter) addGap(code string, _ int, detail string) {
@@ -101,10 +116,15 @@ func (f *cursorComposerFilter) addGap(code string, _ int, detail string) {
 	}
 }
 
+// omit records an omitted key name under its level (chat, message, tool,
+// model, tokens, record) so a reader can tell where it was.
+func (f *cursorComposerFilter) omit(level, key string) { f.omitted.add(level + "." + key) }
+
 // FilterComposer filters one chat from Cursor's database into native records,
 // format "cursor-composer", through an allowlist (spec phase 2, decisions 5
-// and 6). It writes one session record carrying the chat's ID and creation
-// time, then one record per message in header order:
+// and 6). When the chat has at least one retained message it writes one
+// session record carrying the chat's ID and creation time, then one record
+// per message in header order:
 //
 //	{"type":"session","session_id":…,"timestamp":…}
 //	{"role":"user"|"assistant","id":…,"timestamp":…,"model":…,"requestId":…,
@@ -118,13 +138,17 @@ func (f *cursorComposerFilter) addGap(code string, _ int, detail string) {
 // cap apply exactly as they do to other adapters. Context payloads, reasoning,
 // and every field not mapped above are dropped and reported by key name.
 //
-// It refuses (ErrUnsafeSourceFormat) a chat or message whose _v is missing or
-// newer than this filter knows. A message with no row, one whose content
-// lives in blobs this filter does not read, one of an unknown type, and an
-// inline conversation entry of another shape are each omitted and counted in
-// a gap. Records are stable once a message is complete: nothing that changes
-// as the chat is used later (lastUpdatedAt, the chat's current model) is
-// written into them.
+// It refuses (ErrUnsafeSourceFormat) a chat or message whose _v is not the
+// one version this filter knows. A message with no row (or a row for another
+// message), one whose content lives in blobs this filter does not read, and
+// one of an unknown type are each omitted and counted in a gap.
+//
+// Records are append-only across snapshots of a chat that is still in use:
+// messages are emitted only up to the last complete one, so a reply still
+// streaming, or a tool call still running, is left for a later pass (and
+// counted in cursor_incomplete_tail_omitted), and nothing that changes as the
+// chat is merely used (lastUpdatedAt, the chat's current model) is written
+// into a record.
 func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error) {
 	if len(c.Composer) > maxRecordBytes {
 		return FilteredTranscript{}, ErrRecordTooLarge
@@ -133,7 +157,7 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 	if err := json.Unmarshal(c.Composer, &composer); err != nil || composer == nil {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor composer is not valid JSON"}
 	}
-	if !knownCursorVersion(composer["_v"], maxCursorComposerVersion) {
+	if v, ok := cursorInt(composer["_v"]); !ok || v != cursorComposerVersion {
 		return FilteredTranscript{}, errCursorFormatUnknown
 	}
 	composerID, _ := composer["composerId"].(string)
@@ -156,26 +180,28 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 				f.composerBlob = true
 			}
 		default:
-			f.omitted.add(key)
+			f.omit("chat", key)
 		}
 	}
-	session := map[string]any{"type": "session", "session_id": composerID}
-	if hasCreatedAt {
-		session["timestamp"] = createdAt.Format(time.RFC3339Nano)
-	}
-	if err := f.retain(session); err != nil {
-		return FilteredTranscript{}, err
+	if conversation, present := composer["conversation"]; present && nonEmptyValue(conversation) {
+		f.addGap("cursor_inline_conversation_omitted", 0, "inline conversation entries are not read")
 	}
 
 	headers, _ := composer["fullConversationHeadersOnly"].([]any)
-	var err error
-	if len(headers) > 0 || len(c.Bubbles) > 0 {
-		err = f.filterHeaderMessages(headers, c.Bubbles)
-	} else if conversation, _ := composer["conversation"].([]any); len(conversation) > 0 {
-		err = f.filterInlineConversation(conversation)
-	}
+	messages, err := f.filterHeaderMessages(headers, c.Bubbles)
 	if err != nil {
 		return FilteredTranscript{}, err
+	}
+	if len(messages) > 0 {
+		session := map[string]any{"type": "session", "session_id": composerID}
+		if hasCreatedAt {
+			session["timestamp"] = createdAt.Format(time.RFC3339Nano)
+		}
+		for _, record := range append([]map[string]any{session}, messages...) {
+			if err := f.retain(record); err != nil {
+				return FilteredTranscript{}, err
+			}
+		}
 	}
 	if !f.result.NativeStartComplete && !f.result.NativeStartAt.IsZero() {
 		f.result.FirstEventAt = f.result.NativeStartAt
@@ -184,20 +210,22 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 	return f.result, nil
 }
 
-// filterHeaderMessages filters the messages listed in
+// filterHeaderMessages builds the records for the messages listed in
 // fullConversationHeadersOnly, which the reader supplies as bubbles in the
-// same order. A list that does not match the headers is refused: the reader
-// and the chat disagree about what the conversation is.
-func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []CursorBubble) error {
+// same order, stopping at the first message that is not complete. A list
+// that does not match the headers is refused: the reader and the chat
+// disagree about what the conversation is.
+func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []CursorBubble) ([]map[string]any, error) {
 	if len(headers) != len(bubbles) {
-		return &FilterError{Reason: "cursor composer messages do not match its headers"}
+		return nil, &FilterError{Reason: "cursor composer messages do not match its headers"}
 	}
+	var records []map[string]any
 	var lastAt time.Time
 	for i, rawHeader := range headers {
 		header, _ := rawHeader.(map[string]any)
 		headerID, _ := header["bubbleId"].(string)
 		if header == nil || headerID == "" || headerID != bubbles[i].ID {
-			return &FilterError{Reason: "cursor composer messages do not match its headers"}
+			return nil, &FilterError{Reason: "cursor composer messages do not match its headers"}
 		}
 		f.messages++
 		headerType, hasHeaderType := cursorInt(header["type"])
@@ -210,24 +238,50 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 			continue
 		}
 		if len(value) > maxRecordBytes {
-			return ErrRecordTooLarge
+			return nil, ErrRecordTooLarge
 		}
 		var bubble map[string]any
 		if err := json.Unmarshal(value, &bubble); err != nil || bubble == nil {
-			return &FilterError{Reason: "cursor message is not valid JSON"}
+			return nil, &FilterError{Reason: "cursor message is not valid JSON"}
 		}
-		if !knownCursorVersion(bubble["_v"], maxCursorBubbleVersion) {
-			return errCursorFormatUnknown
+		if v, ok := cursorInt(bubble["_v"]); !ok || v != cursorBubbleVersion {
+			return nil, errCursorFormatUnknown
 		}
-		if bubbleType, ok := cursorInt(bubble["type"]); ok && hasHeaderType && bubbleType != headerType {
+		if rowID, _ := bubble["bubbleId"].(string); rowID != headerID {
+			// The row is some other message's: as good as missing.
+			f.missing++
+			f.idMismatch++
+			continue
+		}
+		bubbleType, _ := cursorInt(bubble["type"])
+		if hasHeaderType && bubbleType != headerType {
 			// The header and the row disagree about who wrote the message.
 			f.unknownType++
 			continue
 		}
-		at, err := f.filterBubble(bubble)
-		if err != nil {
-			return err
+		var role string
+		switch bubbleType {
+		case cursorBubbleUser:
+			role = "user"
+		case cursorBubbleAssistant:
+			role = "assistant"
+		default:
+			f.unknownType++
+			continue
 		}
+		if !cursorMessageComplete(bubble, header, bubbleType) {
+			f.incompleteTail = len(headers) - i
+			break
+		}
+		record, blob := f.bubbleRecord(bubble, role)
+		if blob {
+			f.blobMessages++
+		}
+		if created, ok := cursorTime(bubble["createdAt"]); ok && !f.result.NativeStartComplete && (f.result.NativeStartAt.IsZero() || created.Before(f.result.NativeStartAt)) {
+			f.result.NativeStartAt = created
+		}
+		records = append(records, record)
+		at := cursorMessageTime(bubble)
 		if at.IsZero() {
 			at = cursorMessageTime(header)
 		}
@@ -236,66 +290,25 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 		}
 	}
 	f.result.NativeEndAt = lastAt
-	return nil
+	return records, nil
 }
 
-// filterInlineConversation filters an older chat that keeps its messages
-// inline in "conversation" rather than in message rows. An entry in the
-// message shape is filtered like a row; any other entry is counted.
-func (f *cursorComposerFilter) filterInlineConversation(conversation []any) error {
-	var lastAt time.Time
-	for _, raw := range conversation {
-		f.messages++
-		bubble, _ := raw.(map[string]any)
-		if id, _ := bubble["bubbleId"].(string); bubble == nil || id == "" {
-			f.unsupportedEntries++
-			continue
-		}
-		if _, ok := cursorInt(bubble["type"]); !ok {
-			f.unsupportedEntries++
-			continue
-		}
-		at, err := f.filterBubble(bubble)
-		if err != nil {
-			return err
-		}
-		if !at.IsZero() {
-			lastAt = at
+// cursorMessageComplete reports whether a message will not change any more:
+// an assistant message has completedAtMs (on its row or its header), and no
+// tool call in it is still loading or pending. A person's message is complete
+// once it exists.
+func cursorMessageComplete(bubble, header map[string]any, bubbleType int) bool {
+	if tool, ok := bubble["toolFormerData"].(map[string]any); ok {
+		if status, _ := tool["status"].(string); cursorPendingToolStatuses[strings.ToLower(strings.TrimSpace(status))] {
+			return false
 		}
 	}
-	f.result.NativeEndAt = lastAt
-	return nil
-}
-
-// filterBubble retains one message and returns its time: completedAtMs, else
-// createdAt, else zero.
-func (f *cursorComposerFilter) filterBubble(bubble map[string]any) (time.Time, error) {
-	if !knownCursorVersion(bubble["_v"], maxCursorBubbleVersion) {
-		return time.Time{}, errCursorFormatUnknown
+	if bubbleType != cursorBubbleAssistant {
+		return true
 	}
-	bubbleType, _ := cursorInt(bubble["type"])
-	var role string
-	switch bubbleType {
-	case cursorBubbleUser:
-		role = "user"
-	case cursorBubbleAssistant:
-		role = "assistant"
-	default:
-		f.unknownType++
-		return time.Time{}, nil
-	}
-	record, blob := f.bubbleRecord(bubble, role)
-	if blob {
-		f.blobMessages++
-	}
-	created, _ := cursorTime(bubble["createdAt"])
-	if !f.result.NativeStartComplete && !created.IsZero() && (f.result.NativeStartAt.IsZero() || created.Before(f.result.NativeStartAt)) {
-		f.result.NativeStartAt = created
-	}
-	if err := f.retain(record); err != nil {
-		return time.Time{}, err
-	}
-	return cursorMessageTime(bubble), nil
+	_, onRow := cursorTime(bubble["completedAtMs"])
+	_, onHeader := cursorTime(header["completedAtMs"])
+	return onRow || onHeader
 }
 
 // bubbleRecord maps one message onto the record shape FilterComposer
@@ -322,7 +335,7 @@ func (f *cursorComposerFilter) bubbleRecord(bubble map[string]any, role string) 
 			if name, isString := info[key].(string); key == "modelName" && isString && name != "" {
 				record["model"] = name
 			} else if key != "modelName" {
-				f.omitted.add(key)
+				f.omit("model", key)
 			}
 		}
 	}
@@ -359,7 +372,7 @@ func (f *cursorComposerFilter) bubbleRecord(bubble map[string]any, role string) 
 				blob = true
 			}
 		default:
-			f.omitted.add(key)
+			f.omit("message", key)
 		}
 	}
 	return record, blob
@@ -382,7 +395,7 @@ func (f *cursorComposerFilter) cursorUsage(raw any) map[string]any {
 		case key == "outputTokens" && isNumber:
 			usage["output_tokens"] = value
 		default:
-			f.omitted.add(key)
+			f.omit("tokens", key)
 		}
 	}
 	if in, out := usage["input_tokens"], usage["output_tokens"]; (in == nil || in == 0.0) && (out == nil || out == 0.0) {
@@ -392,9 +405,10 @@ func (f *cursorComposerFilter) cursorUsage(raw any) map[string]any {
 }
 
 // toolFormerBlocks maps a message's toolFormerData (the tool call the
-// assistant made and, once it ran, its result) onto a tool_use block and a
-// tool_result block. Arguments come from rawArgs, a JSON string, or params;
-// arguments that do not decode to an object are kept as one string.
+// assistant made and, once it ran, its result or error) onto a tool_use block
+// and a tool_result block. A tool that failed reports its error, not its
+// result, as the tool_result's content, with is_error set; a result recorded
+// beside an error is reported as omitted.
 func (f *cursorComposerFilter) toolFormerBlocks(raw any) []any {
 	tool, ok := raw.(map[string]any)
 	if !ok {
@@ -409,9 +423,7 @@ func (f *cursorComposerFilter) toolFormerBlocks(raw any) []any {
 	if name != "" {
 		call["name"] = name
 	}
-	if input, ok := cursorToolArguments(tool["rawArgs"]); ok {
-		call["input"] = input
-	} else if input, ok := cursorToolArguments(tool["params"]); ok {
+	if input := f.toolInput(tool); input != nil {
 		call["input"] = input
 	}
 	var blocks []any
@@ -419,7 +431,16 @@ func (f *cursorComposerFilter) toolFormerBlocks(raw any) []any {
 		blocks = append(blocks, call)
 	}
 	status, _ := tool["status"].(string)
-	if output, ok := cursorToolOutput(tool["result"]); ok {
+	errorText, _ := tool["error"].(string)
+	output, hasOutput := cursorToolOutput(tool["result"])
+	isError := strings.EqualFold(status, "error")
+	if errorText != "" {
+		if hasOutput {
+			f.omit("tool", "result")
+		}
+		output, hasOutput, isError = errorText, true, true
+	}
+	if hasOutput {
 		result := map[string]any{"type": "tool_result", "content": output}
 		if callID != "" {
 			result["tool_use_id"] = callID
@@ -427,24 +448,109 @@ func (f *cursorComposerFilter) toolFormerBlocks(raw any) []any {
 		if status != "" {
 			result["status"] = status
 		}
-		if strings.EqualFold(status, "error") {
+		if isError {
 			result["is_error"] = true
 		}
 		blocks = append(blocks, result)
 	}
 	for _, key := range sortedKeys(tool) {
-		switch key {
-		case "toolCallId", "name", "rawArgs", "params", "result", "status":
-		default:
-			f.omitted.add(key)
+		if !cursorToolConsumed[key] {
+			f.omit("tool", key)
 		}
 	}
 	return blocks
 }
 
+// toolInput returns a tool call's arguments as an object: rawArgs when it
+// decodes to one, else params. When neither does, the arguments are dropped
+// and named. An empty object is no arguments, not an omission. A string
+// argument that is itself JSON (an object or array) is dropped and named
+// rather than retained as opaque text the argument rules never saw.
+func (f *cursorComposerFilter) toolInput(tool map[string]any) map[string]any {
+	var input map[string]any
+	for _, key := range []string{"rawArgs", "params"} {
+		if decoded, ok := cursorArgumentObject(tool[key]); ok {
+			input = decoded
+			break
+		}
+	}
+	if input == nil {
+		for _, key := range []string{"rawArgs", "params"} {
+			if nonEmptyValue(tool[key]) {
+				f.args.add(key)
+			}
+		}
+		return nil
+	}
+	input = f.dropNestedJSON(input).(map[string]any)
+	if len(input) == 0 {
+		return nil
+	}
+	return input
+}
+
+// dropNestedJSON removes, at every depth, each string that decodes as a JSON
+// object or array, naming the argument that held it. It also removes empty
+// objects, which carry nothing and which the sanitizer would otherwise report
+// as a record without allowed fields.
+func (f *cursorComposerFilter) dropNestedJSON(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for _, key := range sortedKeys(v) {
+			if s, ok := v[key].(string); ok && isNestedJSON(s) {
+				f.args.add(key)
+				continue
+			}
+			if list, ok := v[key].([]any); ok && containsNestedJSON(list) {
+				f.args.add(key)
+			}
+			child := f.dropNestedJSON(v[key])
+			if object, ok := child.(map[string]any); ok && len(object) == 0 {
+				continue
+			}
+			out[key] = child
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && isNestedJSON(s) {
+				continue
+			}
+			child := f.dropNestedJSON(item)
+			if object, ok := child.(map[string]any); ok && len(object) == 0 {
+				continue
+			}
+			out = append(out, child)
+		}
+		return out
+	}
+	return value
+}
+
+func containsNestedJSON(list []any) bool {
+	for _, item := range list {
+		if s, ok := item.(string); ok && isNestedJSON(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// isNestedJSON reports whether a string is a JSON object or array.
+func isNestedJSON(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return false
+	}
+	return json.Valid([]byte(trimmed))
+}
+
 // toolResultBlocks maps the entries of a message's toolResults onto
 // tool_result blocks. An entry keeps its call ID, tool name, and result; any
-// other member is reported by name.
+// other member is reported by name. (The probed database never had an entry;
+// the shape is conservative.)
 func (f *cursorComposerFilter) toolResultBlocks(raw any) []any {
 	entries, _ := raw.([]any)
 	var blocks []any
@@ -470,7 +576,7 @@ func (f *cursorComposerFilter) toolResultBlocks(raw any) []any {
 					block["content"] = output
 				}
 			default:
-				f.omitted.add(key)
+				f.omit("tool", key)
 			}
 		}
 		if len(block) > 1 {
@@ -483,7 +589,7 @@ func (f *cursorComposerFilter) toolResultBlocks(raw any) []any {
 // retain sanitizes one built record exactly as filterJSONL sanitizes a native
 // one and appends it.
 func (f *cursorComposerFilter) retain(record map[string]any) error {
-	state := sanitizeState{addGap: f.addGap, omittedKey: f.omitted.add, deniedKey: f.denied.add}
+	state := sanitizeState{addGap: f.addGap, omittedKey: func(key string) { f.omit("record", key) }, deniedKey: f.denied.add}
 	safe, keep := sanitizeObject(record, &state)
 	if !keep {
 		return nil
@@ -504,6 +610,9 @@ func (f *cursorComposerFilter) finishGaps() {
 	if f.missing > 0 {
 		f.addGap("cursor_bubble_missing", 0, fmt.Sprintf("%d of %d messages have no message row", f.missing, f.messages))
 	}
+	if f.idMismatch > 0 {
+		f.addGap("cursor_bubble_id_mismatch", 0, fmt.Sprintf("%d of %d message rows belong to another message", f.idMismatch, f.messages))
+	}
 	if f.blobMessages > 0 {
 		f.addGap("cursor_blob_content_unavailable", 0, fmt.Sprintf("%d of %d messages reference content blobs, which are not read", f.blobMessages, f.messages))
 	}
@@ -513,11 +622,14 @@ func (f *cursorComposerFilter) finishGaps() {
 	if f.unknownType > 0 {
 		f.addGap("cursor_message_type_unknown", 0, fmt.Sprintf("%d of %d messages have an unknown or inconsistent type", f.unknownType, f.messages))
 	}
-	if f.unsupportedEntries > 0 {
-		f.addGap("cursor_conversation_entry_unsupported", 0, fmt.Sprintf("%d of %d inline conversation entries are not in the message shape", f.unsupportedEntries, f.messages))
+	if f.incompleteTail > 0 {
+		f.addGap("cursor_incomplete_tail_omitted", 0, fmt.Sprintf("%d messages from the first incomplete one on are left for a later pass", f.incompleteTail))
 	}
 	if detail := f.context.detail("omitted context fields: "); detail != "" {
 		f.addGap("cursor_context_omitted", 0, detail)
+	}
+	if detail := f.args.detail("omitted tool arguments: "); detail != "" {
+		f.addGap("cursor_tool_argument_omitted", 0, detail)
 	}
 	if detail := f.omitted.detail("omitted keys: "); detail != "" {
 		f.addGap("unknown_field_omitted", 0, detail)
@@ -526,13 +638,6 @@ func (f *cursorComposerFilter) finishGaps() {
 		f.addGap("sensitive_or_hidden_field_omitted", 0, detail)
 	}
 	sort.SliceStable(f.result.Gaps, func(i, j int) bool { return f.result.Gaps[i].Code < f.result.Gaps[j].Code })
-}
-
-// knownCursorVersion reports whether a _v value is a positive integer no newer
-// than newest. A missing _v is not known.
-func knownCursorVersion(raw any, newest int) bool {
-	v, ok := cursorInt(raw)
-	return ok && v >= 1 && v <= newest
 }
 
 // cursorInt reads a JSON number that is a whole number.
@@ -571,22 +676,17 @@ func cursorMessageTime(message map[string]any) time.Time {
 	return at
 }
 
-// cursorToolArguments decodes a tool call's arguments: an object as is, or a
-// JSON string that decodes to one. Any other non-empty string is kept whole,
-// as Codex arguments are.
-func cursorToolArguments(raw any) (any, bool) {
+// cursorArgumentObject decodes a tool call's arguments when they are an
+// object, or a JSON string holding one.
+func cursorArgumentObject(raw any) (map[string]any, bool) {
 	switch value := raw.(type) {
 	case map[string]any:
-		return value, len(value) > 0
+		return value, true
 	case string:
-		if value == "" {
-			return nil, false
-		}
 		var decoded map[string]any
 		if json.Unmarshal([]byte(value), &decoded) == nil && decoded != nil {
 			return decoded, true
 		}
-		return value, true
 	}
 	return nil, false
 }

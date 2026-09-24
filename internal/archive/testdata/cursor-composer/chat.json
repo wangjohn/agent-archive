@@ -54,7 +54,9 @@
         "rawArgs": "{\"target_file\":\"internal/widget/widget_test.go\",\"offset\":1,\"limit\":80}",
         "params": "{\"relativeWorkspacePath\":\"internal/widget/widget_test.go\"}",
         "result": "{\"contents\":\"package widget\\n// token = SYNTHETIC-TOKEN-VALUE\"}",
-        "additionalData": {"sentinel": "TOOL-ADDITIONAL-SENTINEL"}
+        "additionalData": {"sentinel": "TOOL-ADDITIONAL-SENTINEL"},
+        "toolCallBinary": "TOOLBINARY-SENTINEL",
+        "userDecision": "USERDECISION-SENTINEL"
       },
       "toolResults": [],
       "codebaseContextChunks": []
@@ -64,11 +66,12 @@
       "_v": 3, "bubbleId": "b4", "type": 2,
       "text": "",
       "createdAt": "2026-09-21T14:13:24Z",
+      "completedAtMs": 1790000004500,
       "contentBlobIds": ["agentKv:blob:SYNTHETIC-HASH"],
       "toolResults": [{"toolCallId": "call-0", "toolName": "run_terminal_cmd", "result": {"output": "ok", "exitCode": 0}, "extra": "TOOLRESULT-EXTRA-SENTINEL"}]
     }},
     {"id": "b5", "value": {
-      "_v": 2, "bubbleId": "b5", "type": 1,
+      "_v": 3, "bubbleId": "b5", "type": 1,
       "text": "<system-reminder>INJECTED-SENTINEL</system-reminder>Thanks, now run it.",
       "createdAt": 1790000005000
     }},
@@ -78,9 +81,19 @@
     }},
     {"id": "b7", "value": {
       "_v": 3, "bubbleId": "b7", "type": 2,
-      "text": "The test passes now.",
+      "text": "The test run failed; see the error.",
       "createdAt": "2026-09-21T14:13:27Z",
       "completedAtMs": 1790000009000,
+      "toolFormerData": {
+        "tool": 15, "toolIndex": 0, "modelCallId": "mc-2",
+        "toolCallId": "call-2", "name": "run_terminal_command_v2", "status": "error",
+        "rawArgs": "{\"command\":\"go test ./internal/wid",
+        "params": "{\"command\":\"go test ./internal/widget/\",\"commandDescription\":\"Run the widget tests\",\"cwd\":\"\",\"options\":{},\"parsingResult\":{\"executableCommands\":[{\"name\":\"go\"}]},\"requestedSandboxPolicy\":\"{\\\"mode\\\":\\\"NESTED-SENTINEL\\\"}\"}",
+        "result": "RESULT-BESIDE-ERROR-SENTINEL",
+        "error": "exit status 1: password=ERROR-SECRET-SENTINEL",
+        "toolCallBinary": "TOOLBINARY-SENTINEL",
+        "userDecision": "USERDECISION-SENTINEL"
+      },
       "modelInfo": {"modelName": "synthetic-model-a", "provider": "PROVIDER-SENTINEL"},
       "tokenCount": {"inputTokens": 1400, "outputTokens": 20, "cacheTokens": 3}
     }}

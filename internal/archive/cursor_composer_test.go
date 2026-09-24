@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -109,7 +110,7 @@ func TestCursorComposerGolden(t *testing.T) {
 		}
 	}
 	sort.Strings(inputs)
-	if len(inputs) < 4 {
+	if len(inputs) < 3 {
 		t.Fatalf("fixtures = %v", inputs)
 	}
 	for _, name := range inputs {
@@ -159,6 +160,7 @@ func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
 		"INJECTED-SENTINEL", "system-reminder", "UNKNOWN-TYPE-SENTINEL", "SYNTHETIC-HASH",
 		"SYNTHETIC-ENCRYPTION-KEY", "SYNTHETIC-CHAT-TITLE", "/Users/synthetic", "synthetic-model-current",
 		"TOOL-ADDITIONAL-SENTINEL", "TOOLRESULT-EXTRA-SENTINEL", "PROVIDER-SENTINEL", "costInCents", "richText",
+		"TOOLBINARY-SENTINEL", "USERDECISION-SENTINEL", "NESTED-SENTINEL", "ERROR-SECRET-SENTINEL", "RESULT-BESIDE-ERROR-SENTINEL",
 	} {
 		if strings.Contains(encoded, leaked) {
 			t.Errorf("retained %q", leaked)
@@ -229,6 +231,29 @@ func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
 	if text := contentText(records[4]["message"].(map[string]any)["content"]); text != "Thanks, now run it." || records[4]["timestamp"] != "2026-09-21T14:13:25Z" {
 		t.Errorf("second prompt = %#v", records[4])
 	}
+	// A failed tool: rawArgs is cut off, so the arguments come from params,
+	// without the argument that was itself JSON and without the empty options
+	// object; the error, not the result, is the tool_result.
+	failed := records[5]["message"].(map[string]any)["content"].([]any)
+	if len(failed) != 3 {
+		t.Fatalf("failed tool content = %#v", failed)
+	}
+	failedCall, failedResult := failed[1].(map[string]any), failed[2].(map[string]any)
+	input, _ := failedCall["input"].(map[string]any)
+	if failedCall["name"] != "run_terminal_command_v2" || input["command"] != "go test ./internal/widget/" || input["commandDescription"] != "Run the widget tests" {
+		t.Fatalf("failed call = %#v", failedCall)
+	}
+	for _, dropped := range []string{"requestedSandboxPolicy", "options"} {
+		if _, kept := input[dropped]; kept {
+			t.Errorf("argument %s retained: %#v", dropped, input)
+		}
+	}
+	if _, kept := input["parsingResult"].(map[string]any); !kept {
+		t.Errorf("a plain object argument was dropped: %#v", input)
+	}
+	if failedResult["tool_use_id"] != "call-2" || failedResult["is_error"] != true || failedResult["content"] != "exit status 1: [REDACTED]" {
+		t.Fatalf("failed result = %#v", failedResult)
+	}
 }
 
 func TestCursorComposerReportsWhatItCouldNotKeep(t *testing.T) {
@@ -258,18 +283,30 @@ func TestCursorComposerReportsWhatItCouldNotKeep(t *testing.T) {
 	if strings.Contains(context, "lints") {
 		t.Errorf("an empty context field was reported: %q", context)
 	}
+	// Omitted key names say which level they were at.
 	omitted := gapDetail(filtered.Gaps, "unknown_field_omitted")
-	for _, name := range []string{"lastUpdatedAt", "modelConfig", "usageData", "workspaceIdentifier", "isAgentic", "additionalData", "modelCallId", "extra", "provider", "cacheTokens"} {
+	for _, name := range []string{
+		"chat.lastUpdatedAt", "chat.modelConfig", "chat.usageData", "chat.workspaceIdentifier",
+		"message.isAgentic", "tool.additionalData", "tool.modelCallId", "tool.extra", "tool.toolCallBinary",
+		"tool.userDecision", "tool.result", "model.provider", "tokens.cacheTokens",
+	} {
 		if !strings.Contains(omitted, name) {
 			t.Errorf("omitted key %s not reported: %q", name, omitted)
 		}
 	}
 	// Consumed keys lose nothing and are not reported, and blobEncryptionKey
 	// is not content.
-	for _, name := range []string{"composerId", "fullConversationHeadersOnly", "bubbleId", "richText", "toolFormerData", "blobEncryptionKey"} {
-		if strings.Contains(omitted, name+",") || strings.HasSuffix(omitted, name) {
+	for _, name := range []string{"composerId", "fullConversationHeadersOnly", "bubbleId", "richText", "toolFormerData", "blobEncryptionKey", "rawArgs", "params", "error"} {
+		if strings.Contains(omitted, "."+name) {
 			t.Errorf("consumed key %s reported as omitted: %q", name, omitted)
 		}
+	}
+	if got := gapDetail(filtered.Gaps, "cursor_tool_argument_omitted"); got != "omitted tool arguments: requestedSandboxPolicy" {
+		t.Errorf("tool argument gap = %q", got)
+	}
+	// An empty argument object is dropped without a gap.
+	if hasGap(filtered.Gaps, "record_without_allowed_fields_omitted") || hasGap(filtered.Gaps, "cursor_incomplete_tail_omitted") {
+		t.Errorf("gaps = %#v", filtered.Gaps)
 	}
 	for i := 1; i < len(filtered.Gaps); i++ {
 		if filtered.Gaps[i-1].Code > filtered.Gaps[i].Code {
@@ -297,28 +334,16 @@ func TestCursorComposerTimestampsAndIdentity(t *testing.T) {
 	}
 }
 
-// An older chat with its messages inline is filtered like rows, without a
-// createdAt its start comes from its messages and is not complete, and an
-// entry in another shape is counted rather than guessed at.
-func TestCursorComposerInlineConversation(t *testing.T) {
-	filtered, records := filterComposerFixture(t, "inline-conversation.json")
-	if len(records) != 3 || records[1]["id"] != "i1" || records[2]["id"] != "i2" || records[2]["role"] != "assistant" {
-		t.Fatalf("records = %#v", records)
-	}
-	if filtered.NativeStartComplete || !filtered.NativeStartAt.IsZero() {
-		t.Fatalf("start = %v complete = %v", filtered.NativeStartAt, filtered.NativeStartComplete)
-	}
-	if got := gapDetail(filtered.Gaps, "cursor_conversation_entry_unsupported"); got != "2 of 4 inline conversation entries are not in the message shape" {
-		t.Fatalf("gap = %q (%#v)", got, filtered.Gaps)
-	}
-	encoded := string(bytes.Join(filtered.Records, []byte("\n")))
-	if strings.Contains(encoded, "SENTINEL") {
-		t.Fatalf("retained a sentinel: %s", encoded)
-	}
+// oneMessageChat is a chat whose single header is b1 of the given type, with
+// row as its message.
+func oneMessageChat(headerType int, row string) CursorComposer {
+	composer := fmt.Sprintf(`{"_v":18,"composerId":"c","createdAt":1790000000000,"fullConversationHeadersOnly":[{"bubbleId":"b1","type":%d}]}`, headerType)
+	return CursorComposer{Composer: json.RawMessage(composer), Bubbles: []CursorBubble{{ID: "b1", Value: json.RawMessage(row)}}}
 }
 
-// Fail closed: a format version this filter does not know, on the chat or on
-// any message, refuses the whole chat as an unsafe format.
+// Fail closed: only the probed versions (chat 18, message 3) are read. Any
+// other _v on the chat or on any message, older or newer, refuses the whole
+// chat as an unsafe format.
 func TestCursorComposerRefusesUnknownVersions(t *testing.T) {
 	for _, name := range []string{"unknown-composer-version.json", "unknown-bubble-version.json"} {
 		_, err := (CursorAdapter{}).FilterComposer(loadComposerFixture(t, name))
@@ -330,17 +355,181 @@ func TestCursorComposerRefusesUnknownVersions(t *testing.T) {
 		`{"composerId":"c","createdAt":1}`, // no _v
 		`{"_v":"18","composerId":"c"}`,     // not a number
 		`{"_v":18.5,"composerId":"c"}`,     // not an integer
-		`{"_v":0,"composerId":"c"}`,        // not positive
+		`{"_v":17,"composerId":"c"}`,       // older
+		`{"_v":2,"composerId":"c","conversation":[{"_v":1,"bubbleId":"i1","type":1,"text":"x"}]}`, // an inline-conversation chat
 	} {
 		_, err := (CursorAdapter{}).FilterComposer(CursorComposer{Composer: json.RawMessage(composer)})
 		if !errors.Is(err, ErrUnsafeSourceFormat) {
 			t.Errorf("%s: err = %v", composer, err)
 		}
 	}
-	// A message without _v, even in an inline conversation.
-	inline := `{"_v":2,"composerId":"c","conversation":[{"bubbleId":"i1","type":1,"text":"x"}]}`
-	if _, err := (CursorAdapter{}).FilterComposer(CursorComposer{Composer: json.RawMessage(inline)}); !errors.Is(err, ErrUnsafeSourceFormat) {
-		t.Errorf("inline message without _v: err = %v", err)
+	for _, row := range []string{
+		`{"bubbleId":"b1","type":1,"text":"x"}`,        // no _v
+		`{"_v":2,"bubbleId":"b1","type":1,"text":"x"}`, // older
+		`{"_v":4,"bubbleId":"b1","type":1,"text":"x"}`, // newer
+	} {
+		if _, err := (CursorAdapter{}).FilterComposer(oneMessageChat(1, row)); !errors.Is(err, ErrUnsafeSourceFormat) {
+			t.Errorf("%s: err = %v", row, err)
+		}
+	}
+}
+
+// A chat with headers and an inline conversation too has the conversation
+// reported rather than silently dropped.
+func TestCursorComposerReportsAnInlineConversationBesideHeaders(t *testing.T) {
+	c := oneMessageChat(1, `{"_v":3,"bubbleId":"b1","type":1,"text":"hello"}`)
+	c.Composer = json.RawMessage(`{"_v":18,"composerId":"c","fullConversationHeadersOnly":[{"bubbleId":"b1","type":1}],"conversation":[{"bubbleId":"old","type":1,"text":"INLINE-SENTINEL"}]}`)
+	filtered, err := (CursorAdapter{}).FilterComposer(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Records) != 2 || bytes.Contains(bytes.Join(filtered.Records, nil), []byte("SENTINEL")) {
+		t.Fatalf("records = %s", bytes.Join(filtered.Records, []byte("\n")))
+	}
+	if !hasGap(filtered.Gaps, "cursor_inline_conversation_omitted") {
+		t.Fatalf("gaps = %#v", filtered.Gaps)
+	}
+	// An empty conversation array, as current chats carry, is not a gap.
+	c.Composer = json.RawMessage(`{"_v":18,"composerId":"c","fullConversationHeadersOnly":[{"bubbleId":"b1","type":1}],"conversation":[]}`)
+	if filtered, _ = (CursorAdapter{}).FilterComposer(c); hasGap(filtered.Gaps, "cursor_inline_conversation_omitted") {
+		t.Fatalf("gaps = %#v", filtered.Gaps)
+	}
+}
+
+// A chat without messages yields no records at all, not a lone session
+// record, so the import plan classifies it as empty.
+func TestCursorComposerEmptyChatHasNoRecords(t *testing.T) {
+	for _, composer := range []string{
+		`{"_v":18,"composerId":"c","createdAt":1790000000000}`,
+		`{"_v":18,"composerId":"c","createdAt":1790000000000,"fullConversationHeadersOnly":[]}`,
+	} {
+		filtered, err := (CursorAdapter{}).FilterComposer(CursorComposer{Composer: json.RawMessage(composer)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(filtered.Records) != 0 || filtered.Boundary.RetainedRecords != 0 {
+			t.Fatalf("%s: records = %s", composer, bytes.Join(filtered.Records, []byte("\n")))
+		}
+	}
+}
+
+// Successive snapshots of a chat in use (a prompt, a reply streaming, a tool
+// call running, the reply done, the next prompt) filter to record sequences
+// each of which is a prefix of the next, so the collector's append-only check
+// holds. The unfinished tail is counted.
+func TestCursorComposerSnapshotsAreAppendOnly(t *testing.T) {
+	user1 := `{"_v":3,"bubbleId":"u1","type":1,"text":"Run the tests.","createdAt":1790000001000}`
+	user2 := `{"_v":3,"bubbleId":"u2","type":1,"text":"Thanks.","createdAt":1790000009000}`
+	assistant := func(text, status string, completed bool) string {
+		row := map[string]any{"_v": 3, "bubbleId": "a1", "type": 2, "text": text, "createdAt": 1790000002000, "startedAtMs": 1790000002000,
+			"toolFormerData": map[string]any{"toolCallId": "t1", "name": "run_terminal_command_v2", "status": status, "params": `{"command":"go test ./..."}`}}
+		if status == "completed" {
+			row["toolFormerData"].(map[string]any)["result"] = "ok"
+		}
+		if completed {
+			row["completedAtMs"] = 1790000008000
+		}
+		encoded, _ := json.Marshal(row)
+		return string(encoded)
+	}
+	chat := func(rows ...string) CursorComposer {
+		ids, types := []string{"u1", "a1", "u2"}, []int{1, 2, 1}
+		var headers []string
+		c := CursorComposer{}
+		for i, row := range rows {
+			headers = append(headers, fmt.Sprintf(`{"bubbleId":%q,"type":%d}`, ids[i], types[i]))
+			c.Bubbles = append(c.Bubbles, CursorBubble{ID: ids[i], Value: json.RawMessage(row)})
+		}
+		c.Composer = json.RawMessage(`{"_v":18,"composerId":"c","createdAt":1790000000000,"fullConversationHeadersOnly":[` + strings.Join(headers, ",") + `]}`)
+		return c
+	}
+	snapshots := []struct {
+		chat       CursorComposer
+		records    int
+		incomplete bool
+	}{
+		{chat(user1), 2, false},
+		{chat(user1, assistant("Running", "loading", false)), 2, true},
+		{chat(user1, assistant("Running the tests", "completed", false)), 2, true},
+		{chat(user1, assistant("Running the tests now.", "loading", true)), 2, true},
+		{chat(user1, assistant("Running the tests now.", "completed", true)), 3, false},
+		{chat(user1, assistant("Running the tests now.", "completed", true), user2), 4, false},
+	}
+	var previous [][]byte
+	for i, snapshot := range snapshots {
+		filtered, err := (CursorAdapter{}).FilterComposer(snapshot.chat)
+		if err != nil {
+			t.Fatalf("snapshot %d: %v", i, err)
+		}
+		if len(filtered.Records) != snapshot.records || hasGap(filtered.Gaps, "cursor_incomplete_tail_omitted") != snapshot.incomplete {
+			t.Fatalf("snapshot %d: %d records, gaps %#v", i, len(filtered.Records), filtered.Gaps)
+		}
+		if len(filtered.Records) < len(previous) {
+			t.Fatalf("snapshot %d lost records", i)
+		}
+		for j := range previous {
+			if !bytes.Equal(previous[j], filtered.Records[j]) {
+				t.Fatalf("snapshot %d rewrote record %d:\n%s\n%s", i, j, previous[j], filtered.Records[j])
+			}
+		}
+		previous = filtered.Records
+	}
+	filtered, _ := (CursorAdapter{}).FilterComposer(snapshots[1].chat)
+	if got := gapDetail(filtered.Gaps, "cursor_incomplete_tail_omitted"); got != "1 messages from the first incomplete one on are left for a later pass" {
+		t.Fatalf("gap = %q", got)
+	}
+}
+
+// A row whose bubbleId is some other message's is treated as missing.
+func TestCursorComposerRowForAnotherMessageIsMissing(t *testing.T) {
+	filtered, err := (CursorAdapter{}).FilterComposer(oneMessageChat(1, `{"_v":3,"bubbleId":"other","type":1,"text":"MISMATCH-SENTINEL"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Records) != 0 || gapDetail(filtered.Gaps, "cursor_bubble_missing") != "1 of 1 messages have no message row" || !hasGap(filtered.Gaps, "cursor_bubble_id_mismatch") {
+		t.Fatalf("records = %s gaps = %#v", bytes.Join(filtered.Records, nil), filtered.Gaps)
+	}
+}
+
+// Arguments come from rawArgs when it is an object, else params; when neither
+// is, they are dropped and named. A string argument that is itself JSON, at
+// any depth, is dropped and named; an empty argument object is dropped
+// silently.
+func TestCursorComposerToolArguments(t *testing.T) {
+	input := func(t *testing.T, tool string) (map[string]any, FilteredTranscript) {
+		t.Helper()
+		filtered, err := (CursorAdapter{}).FilterComposer(oneMessageChat(2, `{"_v":3,"bubbleId":"b1","type":2,"completedAtMs":1790000001000,"toolFormerData":`+tool+`}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var record map[string]any
+		if err := json.Unmarshal(filtered.Records[1], &record); err != nil {
+			t.Fatal(err)
+		}
+		call := record["message"].(map[string]any)["content"].([]any)[0].(map[string]any)
+		args, _ := call["input"].(map[string]any)
+		return args, filtered
+	}
+
+	args, filtered := input(t, `{"toolCallId":"t1","name":"run_terminal_command_v2","rawArgs":"{\"command\":\"go te","params":"{\"command\":\"go te"}`)
+	if args != nil || gapDetail(filtered.Gaps, "cursor_tool_argument_omitted") != "omitted tool arguments: params, rawArgs" {
+		t.Fatalf("undecodable arguments: input = %#v gaps = %#v", args, filtered.Gaps)
+	}
+
+	args, filtered = input(t, `{"toolCallId":"t1","name":"run_terminal_command_v2","rawArgs":"{\"command\":\"ls\",\"env\":[\"A=1\",\"[\\\"NESTED-SENTINEL\\\"]\"],\"options\":{\"deep\":{\"blob\":\"{\\\"x\\\":\\\"NESTED-SENTINEL\\\"}\"}}}"}`)
+	if args["command"] != "ls" || len(args["env"].([]any)) != 1 || bytes.Contains(bytes.Join(filtered.Records, nil), []byte("SENTINEL")) {
+		t.Fatalf("nested JSON: input = %#v", args)
+	}
+	if _, kept := args["options"]; kept {
+		t.Fatalf("an object emptied by the nested-JSON rule was kept: %#v", args)
+	}
+	if got := gapDetail(filtered.Gaps, "cursor_tool_argument_omitted"); got != "omitted tool arguments: blob, env" {
+		t.Fatalf("nested JSON gap = %q", got)
+	}
+
+	args, filtered = input(t, `{"toolCallId":"t1","name":"glob_file_search","rawArgs":"{}"}`)
+	if args != nil || hasGap(filtered.Gaps, "record_without_allowed_fields_omitted") || hasGap(filtered.Gaps, "cursor_tool_argument_omitted") {
+		t.Fatalf("empty arguments: input = %#v gaps = %#v", args, filtered.Gaps)
 	}
 }
 
@@ -382,7 +571,7 @@ func TestCursorComposerNullRowAndTypeMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(filtered.Records) != 1 || bytes.Contains(bytes.Join(filtered.Records, nil), []byte("SENTINEL")) {
+	if len(filtered.Records) != 0 {
 		t.Fatalf("records = %s", bytes.Join(filtered.Records, []byte("\n")))
 	}
 	if gapDetail(filtered.Gaps, "cursor_bubble_missing") != "1 of 2 messages have no message row" || !hasGap(filtered.Gaps, "cursor_message_type_unknown") {
@@ -399,7 +588,7 @@ func TestCursorComposerNullRowAndTypeMismatch(t *testing.T) {
 func TestCursorComposerToolArgumentsUseTheSharedDenyList(t *testing.T) {
 	c := CursorComposer{
 		Composer: json.RawMessage(`{"_v":18,"composerId":"c","fullConversationHeadersOnly":[{"bubbleId":"b1","type":2}]}`),
-		Bubbles:  []CursorBubble{{ID: "b1", Value: json.RawMessage(`{"_v":3,"bubbleId":"b1","type":2,"toolFormerData":{"toolCallId":"t1","name":"mcp__browser__type","status":"error","params":{"selector":"#login","text":"TYPED-SENTINEL","apiToken":"ARG-SENTINEL"},"result":"failed"}}`)}},
+		Bubbles:  []CursorBubble{{ID: "b1", Value: json.RawMessage(`{"_v":3,"bubbleId":"b1","type":2,"completedAtMs":1790000001000,"toolFormerData":{"toolCallId":"t1","name":"mcp__browser__type","status":"error","params":{"selector":"#login","text":"TYPED-SENTINEL","apiToken":"ARG-SENTINEL"},"result":"failed"}}`)}},
 	}
 	filtered, err := (CursorAdapter{}).FilterComposer(c)
 	if err != nil {
@@ -447,10 +636,10 @@ func TestCursorComposerRecordsParse(t *testing.T) {
 	if prompts != 2 || replies != 3 {
 		t.Fatalf("prompts = %d replies = %d: %#v", prompts, replies, view.Turns)
 	}
-	if len(view.ToolCalls) != 1 || view.ToolCalls[0].Name != "read_file" || view.ToolCalls[0].CallID != "call-1" {
+	if len(view.ToolCalls) != 2 || view.ToolCalls[0].Name != "read_file" || view.ToolCalls[0].CallID != "call-1" || view.ToolCalls[1].CallID != "call-2" {
 		t.Fatalf("tool calls = %#v", view.ToolCalls)
 	}
-	if len(view.ToolResults) != 2 {
+	if len(view.ToolResults) != 3 || !view.ToolResults[2].IsError {
 		t.Fatalf("tool results = %#v", view.ToolResults)
 	}
 	if view.Tokens.Input == nil || *view.Tokens.Input != 2600 || view.Tokens.Output == nil || *view.Tokens.Output != 65 {
