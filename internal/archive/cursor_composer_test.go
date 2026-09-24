@@ -287,7 +287,7 @@ func TestCursorComposerReportsWhatItCouldNotKeep(t *testing.T) {
 	omitted := gapDetail(filtered.Gaps, "unknown_field_omitted")
 	for _, name := range []string{
 		"chat.lastUpdatedAt", "chat.modelConfig", "chat.usageData", "chat.workspaceIdentifier",
-		"message.isAgentic", "tool.additionalData", "tool.modelCallId", "tool.extra", "tool.toolCallBinary",
+		"message.isAgentic", "tool.additionalData", "tool.modelCallId", "toolResult.extra", "tool.toolCallBinary",
 		"tool.userDecision", "tool.result", "model.provider", "tokens.cacheTokens",
 	} {
 		if !strings.Contains(omitted, name) {
@@ -305,7 +305,7 @@ func TestCursorComposerReportsWhatItCouldNotKeep(t *testing.T) {
 		t.Errorf("tool argument gap = %q", got)
 	}
 	// An empty argument object is dropped without a gap.
-	if hasGap(filtered.Gaps, "record_without_allowed_fields_omitted") || hasGap(filtered.Gaps, "cursor_incomplete_tail_omitted") {
+	if hasGap(filtered.Gaps, "record_without_allowed_fields_omitted") || gapDetail(filtered.Gaps, "cursor_incomplete_tail_omitted") != "1 of 7 messages, from the first one without a usable row on, are left for a later pass" {
 		t.Errorf("gaps = %#v", filtered.Gaps)
 	}
 	for i := 1; i < len(filtered.Gaps); i++ {
@@ -507,7 +507,7 @@ func TestCursorComposerInFlightMessages(t *testing.T) {
 		}
 	}
 	filtered, _ := (CursorAdapter{}).FilterComposer(cases[0].chat)
-	if got := gapDetail(filtered.Gaps, "cursor_incomplete_tail_omitted"); got != "2 messages from the first one still in flight on are left for a later pass" {
+	if got := gapDetail(filtered.Gaps, "cursor_incomplete_tail_omitted"); got != "2 of 3 messages, from the first one still in flight on, are left for a later pass" {
 		t.Fatalf("gap = %q", got)
 	}
 }
@@ -600,7 +600,7 @@ func TestCursorComposerToolArguments(t *testing.T) {
 	}
 
 	args, filtered := input(t, `{"toolCallId":"t1","status":"completed","name":"run_terminal_command_v2","rawArgs":"{\"command\":\"go te","params":"{\"command\":\"go te"}`)
-	if args != nil || gapDetail(filtered.Gaps, "cursor_tool_argument_omitted") != "omitted tool arguments: params, rawArgs" {
+	if args != nil || gapDetail(filtered.Gaps, "cursor_tool_argument_omitted") != "tool arguments that do not decode to an object, from Cursor's: params, rawArgs" {
 		t.Fatalf("undecodable arguments: input = %#v gaps = %#v", args, filtered.Gaps)
 	}
 
@@ -645,29 +645,135 @@ func TestCursorComposerRefusesMalformedInput(t *testing.T) {
 	}
 }
 
-// A row that is JSON null is as missing as no row at all, and a header whose
-// type disagrees with its row is counted, not attributed to either role.
-func TestCursorComposerNullRowAndTypeMismatch(t *testing.T) {
-	c := CursorComposer{
-		Composer: json.RawMessage(`{"_v":18,"composerId":"c","createdAt":1790000000000,"fullConversationHeadersOnly":[{"bubbleId":"b1","type":1},{"bubbleId":"b2","type":1,"createdAt":1790000002000}]}`),
-		Bubbles: []CursorBubble{
-			{ID: "b1", Value: json.RawMessage(`{"_v":3,"bubbleId":"b1","type":2,"text":"MISMATCH-SENTINEL"}`)},
-			{ID: "b2", Value: json.RawMessage(`null`)},
-		},
+// A missing row (nil or JSON null), a row for another message, and a row
+// whose type disagrees with its header each stop output at that message, with
+// the specific gap and the held-back tail counted; nothing after it is
+// emitted, and the chat ends at the last message that was.
+func TestCursorComposerUnusableRowStopsOutput(t *testing.T) {
+	user := liveMessage{"u1", 1, "Run the tests.", ""}
+	cases := map[string]struct {
+		row  json.RawMessage
+		code string
+	}{
+		"nil row":       {nil, "cursor_bubble_missing"},
+		"null row":      {json.RawMessage(`null`), "cursor_bubble_missing"},
+		"another's row": {json.RawMessage(`{"_v":3,"bubbleId":"other","type":2,"text":"MISMATCH-SENTINEL"}`), "cursor_bubble_id_mismatch"},
+		"type mismatch": {json.RawMessage(`{"_v":3,"bubbleId":"a1","type":1,"text":"MISMATCH-SENTINEL"}`), "cursor_message_type_unknown"},
 	}
-	filtered, err := (CursorAdapter{}).FilterComposer(c)
+	for name, tc := range cases {
+		c := liveChat("completed", nil, user, liveMessage{"a1", 2, "", ""}, liveMessage{"u2", 1, "LATER-SENTINEL", ""})
+		c.Bubbles[1].Value = tc.row
+		filtered, err := (CursorAdapter{}).FilterComposer(c)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(filtered.Records) != 2 || bytes.Contains(bytes.Join(filtered.Records, nil), []byte("SENTINEL")) {
+			t.Fatalf("%s: records = %s", name, bytes.Join(filtered.Records, []byte("\n")))
+		}
+		if !hasGap(filtered.Gaps, tc.code) || gapDetail(filtered.Gaps, "cursor_incomplete_tail_omitted") != "2 of 3 messages, from the first one without a usable row on, are left for a later pass" {
+			t.Fatalf("%s: gaps = %#v", name, filtered.Gaps)
+		}
+		if end := time.UnixMilli(1790000001000).UTC(); !filtered.NativeEndAt.Equal(end) {
+			t.Fatalf("%s: end = %v", name, filtered.NativeEndAt)
+		}
+	}
+}
+
+// A row that is missing mid-chat and appears later leaves the output
+// append-only: u1, (a1 missing), u2 and then u1, a1, u2.
+func TestCursorComposerMissingRowThenPresentIsAppendOnly(t *testing.T) {
+	messages := []liveMessage{{"u1", 1, "Run the tests.", ""}, {"a1", 2, "Done.", ""}, {"u2", 1, "Thanks.", ""}}
+	before := liveChat("completed", nil, messages...)
+	before.Bubbles[1].Value = nil
+	after := liveChat("completed", nil, messages...)
+	first, err := (CursorAdapter{}).FilterComposer(before)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(filtered.Records) != 0 {
+	second, err := (CursorAdapter{}).FilterComposer(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Records) != 2 || len(second.Records) != 4 {
+		t.Fatalf("records: %d then %d", len(first.Records), len(second.Records))
+	}
+	for i := range first.Records {
+		if !bytes.Equal(first.Records[i], second.Records[i]) {
+			t.Fatalf("record %d rewritten:\n%s\n%s", i, first.Records[i], second.Records[i])
+		}
+	}
+}
+
+// toolMessage filters a chat whose one assistant message carries tool and
+// returns that message's content blocks.
+func toolMessage(t *testing.T, tool string) ([]any, FilteredTranscript) {
+	t.Helper()
+	filtered, err := (CursorAdapter{}).FilterComposer(oneMessageChat(2, `{"_v":3,"bubbleId":"b1","type":2,"toolFormerData":`+tool+`}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Records) != 2 {
 		t.Fatalf("records = %s", bytes.Join(filtered.Records, []byte("\n")))
 	}
-	if gapDetail(filtered.Gaps, "cursor_bubble_missing") != "1 of 2 messages have no message row" || !hasGap(filtered.Gaps, "cursor_message_type_unknown") {
-		t.Fatalf("gaps = %#v", filtered.Gaps)
+	var record map[string]any
+	if err := json.Unmarshal(filtered.Records[1], &record); err != nil {
+		t.Fatal(err)
 	}
-	// The missing message's header still dates the end of the chat.
-	if end := time.UnixMilli(1790000002000).UTC(); !filtered.NativeEndAt.Equal(end) {
-		t.Fatalf("end = %v", filtered.NativeEndAt)
+	return record["message"].(map[string]any)["content"].([]any), filtered
+}
+
+// An empty rawArgs object does not hide params (S1), and nothing is lost
+// when both are empty.
+func TestCursorComposerEmptyRawArgsFallsBackToParams(t *testing.T) {
+	content, filtered := toolMessage(t, `{"toolCallId":"t1","status":"completed","name":"web_search","rawArgs":"{}","params":"{\"searchTerm\":\"widget parser\"}","result":"ok"}`)
+	input, _ := content[0].(map[string]any)["input"].(map[string]any)
+	if input["searchTerm"] != "widget parser" || hasGap(filtered.Gaps, "cursor_tool_argument_omitted") {
+		t.Fatalf("input = %#v gaps = %#v", input, filtered.Gaps)
+	}
+	// rawArgs whose only argument was nested JSON also falls back.
+	content, filtered = toolMessage(t, `{"toolCallId":"t1","status":"completed","name":"web_fetch","rawArgs":"{\"policy\":\"{\\\"a\\\":1}\"}","params":"{\"url\":\"https://example.com\"}","result":"ok"}`)
+	if input, _ = content[0].(map[string]any)["input"].(map[string]any); input["url"] != "https://example.com" {
+		t.Fatalf("input = %#v", input)
+	}
+	if got := gapDetail(filtered.Gaps, "cursor_tool_argument_omitted"); got != "omitted tool arguments: policy" {
+		t.Fatalf("gap = %q", got)
+	}
+}
+
+// An error that is not a string (S2) is kept as text like a string one: the
+// error is the content, is_error is set, and the result beside it is named.
+func TestCursorComposerStructuredToolError(t *testing.T) {
+	content, filtered := toolMessage(t, `{"toolCallId":"t1","status":"error","name":"read_file_v2","params":"{\"path\":\"a.go\"}","result":"RESULT-BESIDE-ERROR-SENTINEL","error":{"message":"file not found","code":2}}`)
+	result := content[1].(map[string]any)
+	if result["content"] != `{"code":2,"message":"file not found"}` || result["is_error"] != true || result["tool_use_id"] != "t1" {
+		t.Fatalf("result = %#v", result)
+	}
+	if bytes.Contains(bytes.Join(filtered.Records, nil), []byte("SENTINEL")) || !strings.Contains(gapDetail(filtered.Gaps, "unknown_field_omitted"), "tool.result") {
+		t.Fatalf("records = %s gaps = %#v", bytes.Join(filtered.Records, nil), filtered.Gaps)
+	}
+	// An empty error is no error.
+	content, _ = toolMessage(t, `{"toolCallId":"t1","status":"completed","name":"read_file_v2","result":"ok","error":""}`)
+	if result := content[len(content)-1].(map[string]any); result["content"] != "ok" || result["is_error"] != nil {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+// Nested JSON deep inside arrays is named by the nearest argument key, and
+// the arrays it leaves empty are removed rather than kept as [[]].
+func TestCursorComposerNestedJSONInArrays(t *testing.T) {
+	content, filtered := toolMessage(t, `{"toolCallId":"t1","status":"completed","name":"x","params":{"keep":"yes","matrix":[["{\"a\":\"NESTED-SENTINEL\"}"]],"rows":[["ok","[1,2]"]],"empty":[]}}`)
+	input := content[0].(map[string]any)["input"].(map[string]any)
+	if _, kept := input["matrix"]; kept {
+		t.Fatalf("an emptied array was kept: %#v", input)
+	}
+	if rows, _ := json.Marshal(input["rows"]); string(rows) != `[["ok"]]` {
+		t.Fatalf("rows = %s", rows)
+	}
+	if empty, ok := input["empty"].([]any); !ok || len(empty) != 0 {
+		t.Fatalf("an originally empty array was not kept: %#v", input)
+	}
+	if got := gapDetail(filtered.Gaps, "cursor_tool_argument_omitted"); got != "omitted tool arguments: matrix, rows" || bytes.Contains(bytes.Join(filtered.Records, nil), []byte("SENTINEL")) {
+		t.Fatalf("gap = %q", got)
 	}
 }
 

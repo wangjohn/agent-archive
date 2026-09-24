@@ -114,10 +114,11 @@ var cursorSettledComposerStatuses = map[string]bool{
 type cursorComposerFilter struct {
 	result                         FilteredTranscript
 	gapSet                         map[string]bool
-	omitted, denied, context, args keyNameSet
+	omitted, denied, context       keyNameSet
+	args, argSources               keyNameSet
 	messages, missing, idMismatch  int
 	blobMessages, unknownType      int
-	incompleteTail                 int
+	incompleteTail, unreadableTail int
 	composerBlob                   bool
 }
 
@@ -129,8 +130,9 @@ func (f *cursorComposerFilter) addGap(code string, _ int, detail string) {
 	}
 }
 
-// omit records an omitted key name under its level (chat, message, tool,
-// model, tokens, record) so a reader can tell where it was.
+// omit records an omitted key name under its level (chat, message, tool for
+// toolFormerData, toolResult for toolResults entries, model, tokens, or record
+// for a key the sanitizer omitted) so a reader can tell where it was.
 func (f *cursorComposerFilter) omit(level, key string) { f.omitted.add(level + "." + key) }
 
 // FilterComposer filters one chat from Cursor's database into native records,
@@ -152,16 +154,20 @@ func (f *cursorComposerFilter) omit(level, key string) { f.omitted.add(level + "
 // and every field not mapped above are dropped and reported by key name.
 //
 // It refuses (ErrUnsafeSourceFormat) a chat or message whose _v is not the
-// one version this filter knows. A message with no row (or a row for another
-// message), one whose content lives in blobs this filter does not read, and
-// one of an unknown type are each omitted and counted in a gap.
+// one version this filter knows. A message whose content lives in blobs this
+// filter does not read, and one of an unknown type, are omitted and counted
+// in a gap.
 //
-// Records are append-only across snapshots of a chat that is still in use:
-// output stops at the first message in flight (see cursorGenerating), so a
-// reply still streaming, or a tool call still running, is left for a later
-// pass (and counted in cursor_incomplete_tail_omitted), and nothing that
+// Records are append-only across snapshots of a chat that is still in use, as
+// far as the filter can make them: output stops at the first message in
+// flight (see cursorGenerating), such as a reply still streaming or a tool
+// call still running, and at the first message whose row is missing, belongs
+// to another message, or disagrees with its header about its type. That
+// message and everything after it are left for a later pass (and counted in
+// cursor_incomplete_tail_omitted, besides the specific gap). Nothing that
 // changes as the chat is merely used (lastUpdatedAt, the chat's current
-// model) is written into a record.
+// model) is written into a record. If Cursor rewrites a finished message the
+// output changes; the collector, not the filter, handles that.
 func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error) {
 	if len(c.Composer) > maxRecordBytes {
 		return FilteredTranscript{}, ErrRecordTooLarge
@@ -225,14 +231,18 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 
 // filterHeaderMessages builds the records for the messages listed in
 // fullConversationHeadersOnly, which the reader supplies as bubbles in the
-// same order, stopping at the first message in flight. generating reports
-// whether a header's message is one the chat is still generating. A list
-// that does not match the headers is refused: the reader and the chat
-// disagree about what the conversation is.
+// same order. Output stops at the first message in flight, and at the first
+// message whose row is missing, belongs to another message, or disagrees with
+// its header about who wrote it: skipping such a message and emitting later
+// ones would make the output stop being a prefix of the next pass's once the
+// row appears or is fixed. generating reports whether a header's message is
+// one the chat is still generating. A list that does not match the headers is
+// refused: the reader and the chat disagree about what the conversation is.
 func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []CursorBubble, generating func(index, count int, id string) bool) ([]map[string]any, error) {
 	if len(headers) != len(bubbles) {
 		return nil, &FilterError{Reason: "cursor composer messages do not match its headers"}
 	}
+	f.messages = len(headers)
 	var records []map[string]any
 	var lastAt time.Time
 	for i, rawHeader := range headers {
@@ -241,7 +251,6 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 		if header == nil || headerID == "" || headerID != bubbles[i].ID {
 			return nil, &FilterError{Reason: "cursor composer messages do not match its headers"}
 		}
-		f.messages++
 		if generating(i, len(headers), headerID) {
 			f.incompleteTail = len(headers) - i
 			break
@@ -250,10 +259,8 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 		value := bytes.TrimSpace(bubbles[i].Value)
 		if len(value) == 0 || string(value) == "null" {
 			f.missing++
-			if at := cursorMessageTime(header); !at.IsZero() {
-				lastAt = at
-			}
-			continue
+			f.unreadableTail = len(headers) - i
+			break
 		}
 		if len(value) > maxRecordBytes {
 			return nil, ErrRecordTooLarge
@@ -269,7 +276,8 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 			// The row is some other message's: as good as missing.
 			f.missing++
 			f.idMismatch++
-			continue
+			f.unreadableTail = len(headers) - i
+			break
 		}
 		if cursorToolRunning(bubble) {
 			f.incompleteTail = len(headers) - i
@@ -279,7 +287,8 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 		if hasHeaderType && bubbleType != headerType {
 			// The header and the row disagree about who wrote the message.
 			f.unknownType++
-			continue
+			f.unreadableTail = len(headers) - i
+			break
 		}
 		var role string
 		switch bubbleType {
@@ -466,10 +475,10 @@ func (f *cursorComposerFilter) toolFormerBlocks(raw any) []any {
 		blocks = append(blocks, call)
 	}
 	status, _ := tool["status"].(string)
-	errorText, _ := tool["error"].(string)
 	output, hasOutput := cursorToolOutput(tool["result"])
 	isError := strings.EqualFold(status, "error")
-	if errorText != "" {
+	// An error of any shape (Cursor writes a string) is kept as text.
+	if errorText, hasError := cursorToolOutput(tool["error"]); hasError && nonEmptyValue(tool["error"]) {
 		if hasOutput {
 			f.omit("tool", "result")
 		}
@@ -497,38 +506,48 @@ func (f *cursorComposerFilter) toolFormerBlocks(raw any) []any {
 }
 
 // toolInput returns a tool call's arguments as an object: rawArgs when it
-// decodes to one, else params. When neither does, the arguments are dropped
-// and named. An empty object is no arguments, not an omission. A string
-// argument that is itself JSON (an object or array) is dropped and named
-// rather than retained as opaque text the argument rules never saw.
+// decodes to a non-empty one (after dropNestedJSON), else params. When
+// neither yields arguments, a source that did not decode is named in its own
+// gap detail, apart from the tool's argument names; a source that decoded to
+// an empty object is no arguments, not an omission. A string argument that is
+// itself JSON (an object or array) is dropped and named rather than retained
+// as opaque text the argument rules never saw.
 func (f *cursorComposerFilter) toolInput(tool map[string]any) map[string]any {
-	var input map[string]any
+	var undecodable []string
 	for _, key := range []string{"rawArgs", "params"} {
-		if decoded, ok := cursorArgumentObject(tool[key]); ok {
-			input = decoded
-			break
-		}
-	}
-	if input == nil {
-		for _, key := range []string{"rawArgs", "params"} {
+		decoded, ok := cursorArgumentObject(tool[key])
+		if !ok {
 			if nonEmptyValue(tool[key]) {
-				f.args.add(key)
+				undecodable = append(undecodable, key)
 			}
+			continue
 		}
-		return nil
+		if input, _ := f.dropNestedJSON(decoded, "").(map[string]any); len(input) > 0 {
+			return input
+		}
 	}
-	input = f.dropNestedJSON(input).(map[string]any)
-	if len(input) == 0 {
-		return nil
+	for _, key := range undecodable {
+		f.argSources.add(key)
 	}
-	return input
+	return nil
 }
 
 // dropNestedJSON removes, at every depth, each string that decodes as a JSON
-// object or array, naming the argument that held it. It also removes empty
-// objects, which carry nothing and which the sanitizer would otherwise report
-// as a record without allowed fields.
-func (f *cursorComposerFilter) dropNestedJSON(value any) any {
+// object or array, naming the nearest argument key that held it (parent). It
+// also removes objects left empty, which carry nothing and which the
+// sanitizer would otherwise report as a record without allowed fields, and
+// arrays emptied by the removal, so no [[]] is left behind.
+func (f *cursorComposerFilter) dropNestedJSON(value any, parent string) any {
+	emptied := func(before, after any) bool {
+		switch a := after.(type) {
+		case map[string]any:
+			return len(a) == 0
+		case []any:
+			b, _ := before.([]any)
+			return len(a) == 0 && len(b) > 0
+		}
+		return false
+	}
 	switch v := value.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(v))
@@ -537,40 +556,25 @@ func (f *cursorComposerFilter) dropNestedJSON(value any) any {
 				f.args.add(key)
 				continue
 			}
-			if list, ok := v[key].([]any); ok && containsNestedJSON(list) {
-				f.args.add(key)
+			if child := f.dropNestedJSON(v[key], key); !emptied(v[key], child) {
+				out[key] = child
 			}
-			child := f.dropNestedJSON(v[key])
-			if object, ok := child.(map[string]any); ok && len(object) == 0 {
-				continue
-			}
-			out[key] = child
 		}
 		return out
 	case []any:
 		out := make([]any, 0, len(v))
 		for _, item := range v {
 			if s, ok := item.(string); ok && isNestedJSON(s) {
+				f.args.add(parent)
 				continue
 			}
-			child := f.dropNestedJSON(item)
-			if object, ok := child.(map[string]any); ok && len(object) == 0 {
-				continue
+			if child := f.dropNestedJSON(item, parent); !emptied(item, child) {
+				out = append(out, child)
 			}
-			out = append(out, child)
 		}
 		return out
 	}
 	return value
-}
-
-func containsNestedJSON(list []any) bool {
-	for _, item := range list {
-		if s, ok := item.(string); ok && isNestedJSON(s) {
-			return true
-		}
-	}
-	return false
 }
 
 // isNestedJSON reports whether a string is a JSON object or array.
@@ -611,7 +615,7 @@ func (f *cursorComposerFilter) toolResultBlocks(raw any) []any {
 					block["content"] = output
 				}
 			default:
-				f.omit("tool", key)
+				f.omit("toolResult", key)
 			}
 		}
 		if len(block) > 1 {
@@ -658,7 +662,13 @@ func (f *cursorComposerFilter) finishGaps() {
 		f.addGap("cursor_message_type_unknown", 0, fmt.Sprintf("%d of %d messages have an unknown or inconsistent type", f.unknownType, f.messages))
 	}
 	if f.incompleteTail > 0 {
-		f.addGap("cursor_incomplete_tail_omitted", 0, fmt.Sprintf("%d messages from the first one still in flight on are left for a later pass", f.incompleteTail))
+		f.addGap("cursor_incomplete_tail_omitted", 0, fmt.Sprintf("%d of %d messages, from the first one still in flight on, are left for a later pass", f.incompleteTail, f.messages))
+	}
+	if f.unreadableTail > 0 {
+		f.addGap("cursor_incomplete_tail_omitted", 0, fmt.Sprintf("%d of %d messages, from the first one without a usable row on, are left for a later pass", f.unreadableTail, f.messages))
+	}
+	if detail := f.argSources.detail("tool arguments that do not decode to an object, from Cursor's: "); detail != "" {
+		f.addGap("cursor_tool_argument_omitted", 0, detail)
 	}
 	if detail := f.context.detail("omitted context fields: "); detail != "" {
 		f.addGap("cursor_context_omitted", 0, detail)

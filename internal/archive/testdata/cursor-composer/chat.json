@@ -15,11 +15,11 @@
     "fullConversationHeadersOnly": [
       {"bubbleId": "b1", "type": 1, "createdAt": 1790000001000},
       {"bubbleId": "b2", "type": 2, "createdAt": 1790000002000},
-      {"bubbleId": "b3", "type": 2, "createdAt": 1790000003000},
       {"bubbleId": "b4", "type": 2, "createdAt": 1790000004000},
       {"bubbleId": "b5", "type": 1, "createdAt": 1790000005000},
       {"bubbleId": "b6", "type": 30, "createdAt": 1790000006000},
-      {"bubbleId": "b7", "type": 2, "createdAt": 1790000007000, "completedAtMs": 1790000009000}
+      {"bubbleId": "b7", "type": 2, "createdAt": 1790000007000, "completedAtMs": 1790000009000},
+      {"bubbleId": "b3", "type": 2, "createdAt": 1790000010000}
     ]
   },
   "bubbles": [
@@ -61,7 +61,6 @@
       "toolResults": [],
       "codebaseContextChunks": []
     }},
-    {"id": "b3"},
     {"id": "b4", "value": {
       "_v": 3, "bubbleId": "b4", "type": 2,
       "text": "",
@@ -95,6 +94,7 @@
       },
       "modelInfo": {"modelName": "synthetic-model-a", "provider": "PROVIDER-SENTINEL"},
       "tokenCount": {"inputTokens": 1400, "outputTokens": 20, "cacheTokens": 3}
-    }}
+    }},
+    {"id": "b3"}
   ]
 }
