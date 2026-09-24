@@ -650,7 +650,7 @@ func readStatus(env Env) (view statusView, err error) {
 	// sync cannot help while another process holds the collector lock. The
 	// holder records when it took the lock, so a pass that started a moment
 	// ago is never mistaken for a hung one.
-	if record, ok := readCollectorLockRecord(home); ok && env.now().Sub(record.Since) > collectLockStuckAfter && collectorLockHeld(home) {
+	if record, ok := readCollectorLockRecord(home); ok && env.now().Sub(record.Since) > collectLockStuckAfter && processAlive(record.PID) && collectorLockHeld(home) {
 		view.State = "Needs attention"
 		view.Next = fmt.Sprintf("Collection is stuck: %s (process %d) has held the collector lock since %s, %s, well past a pass's time limit. If that command is no longer doing anything, quit process %d (in Activity Monitor or with kill %d); the next pass then resumes.", record.Holder, record.PID, record.Since.UTC().Format("2006-01-02 15:04 UTC"), durationAgo(env.now().Sub(record.Since)), record.PID, record.PID)
 	}

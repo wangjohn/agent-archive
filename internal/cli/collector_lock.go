@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -51,6 +53,10 @@ func recordCollectorLock(home, holder string, now time.Time, lock func() (func()
 		return nil, err
 	}
 	path := filepath.Join(home, collectorLockRecordName)
+	// A record a dead holder left behind names a process that no longer
+	// holds the lock (its PID may even be reused), so it goes first: if the
+	// write below fails, no record is better than a wrong one.
+	_ = os.Remove(path)
 	// Best effort: without the record status cannot call a hold stuck, which
 	// is the safe direction to fail in.
 	_ = local.Write(path, collectorLockRecord{Holder: holder, PID: os.Getpid(), Since: now.UTC()})
@@ -77,4 +83,14 @@ func readCollectorLockRecord(home string) (collectorLockRecord, bool) {
 		return collectorLockRecord{}, false
 	}
 	return record, true
+}
+
+// processAlive reports whether pid names a running process. EPERM means it
+// exists but belongs to someone else, which still counts as alive.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
