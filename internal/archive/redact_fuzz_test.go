@@ -55,6 +55,11 @@ var credentialTemplates = []string{
 	"password=[%s]",
 	"token={%s}",
 	"password=[REDACTED]%s",
+	// Filter 10: text glued after a closing quote is part of the value.
+	`PASSWORD="abc"%s`,
+	"export TOKEN='abc'%s && make",
+	`API_KEY='x'"y"%s`,
+	"mysql --password 'x'%s -u root",
 }
 
 // plainSecret is the shape of a secret the templates are fuzzed with: long

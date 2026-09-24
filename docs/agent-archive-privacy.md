@@ -7,6 +7,30 @@ native record, then text transcripts and supplemental evidence (source schema
 2). The line format changes how retained evidence is packaged, not what is
 retained: every line holds only what the source filter below kept.
 
+## Source filter version 10
+
+Filter 10 fixes two things. Adapter version 0.10.0 goes with it.
+
+- **Role headers only at column 0.** Filter 9 treated any line whose trimmed
+  text began with `user:`, `system:`, or another role name as a role header.
+  An indented YAML key in tool output (`    user: …` in a docker-compose
+  file) therefore started a new section, and `  system: linux` hid
+  everything after it as if it were a system prompt. A header is now only a
+  role name and a colon at the start of the line (in any case), followed by
+  a space or the end of the line. An indented role word is content: it is
+  retained, sanitized like the rest of its section, and never hides or
+  reveals anything. Only Cursor plain-text transcripts change.
+- **Text glued after a closing quote.** Filter 9 ended a quoted credential
+  value at its closing quote, so `PASSWORD="abc"realsecret`, which a shell
+  reads as the value `abcrealsecret`, became `PASSWORD="[REDACTED]"realsecret`,
+  and `.PWD=='0'0` kept its trailing `0`. Whatever a shell would read as the
+  same word after the closing quote (more text, or more closed quoted
+  segments: `TOKEN='a'"b"c`) is now part of the value and is redacted with
+  it: `PASSWORD="[REDACTED]"`. It stops at whitespace, `,`, `;`, a closing
+  `]`, `}`, or `)` (so `{"password":"abc"}` keeps its brace), and shell
+  punctuation (`&`, `|`, `<`, `>`). Redacting twice still changes nothing.
+  Every format with text changes.
+
 ## Source filter version 9
 
 Filter 9 closes four ways content left the machine that the filter was meant
@@ -346,8 +370,9 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   `PGPASSWORD`, `spring.datasource.password`, and `x-api-key` all match. The
   name may be quoted (`"…"`, `'…'`, or escaped inside a string, `\"…\"`);
   the separator is `=`, `:`, `:=`, or `=>`; a `--name value` command-line
-  flag counts too. The value, quoted up to its closing quote or unquoted up
-  to whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
+  flag counts too. The value, quoted up to its closing quote (plus anything
+  glued on after it, as a shell reads it; filter 10) or unquoted up to
+  whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
   `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`. An HTTP scheme
   before the value stays: `Authorization: Bearer [REDACTED]`. A single token
   in brackets or braces is a value too (`password=[hunter2]`,
@@ -387,6 +412,17 @@ Known misses.
 
 - An unquoted value stops at a quote, so a quote inside an unquoted
   password leaves the rest of the password.
+- Text glued after a closing quote is taken with the value (filter 10) only
+  up to a closing `]`, `}`, or `)`, which usually closes the structure
+  around the value (`{"password":"abc"}`, `f(PASSWORD="abc")`) and must stay.
+  So in the rare `PASSWORD="abc")realsecret`, `realsecret` is kept.
+- A Cursor plain-text transcript has no structure beyond its role headers,
+  so a line in tool output that itself starts at column 0 with `user:`,
+  `assistant:`, `tool:`, or a hidden role (`system:`, `thinking:`, …) reads
+  as a header, exactly as Cursor's own format would: it starts a section
+  (a Person turn in the handoff) or hides what follows. Filter 10 stopped
+  treating indented role words this way; a column-0 one cannot be told
+  apart. Cursor's JSONL transcripts and database chats are not affected.
 - In JSON escaped more than once inside a string (`\\\"password\\\":…`),
   the value ends at the first escaped quote of any depth, so the tail of a
   value after an escaped quote inside it (`\\\"ab\\\\\\\"cd\\\"`: `cd`) is
