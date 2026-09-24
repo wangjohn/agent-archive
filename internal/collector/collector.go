@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -55,6 +56,12 @@ type Options struct {
 	// the pass ends early. The session in flight always finishes, and the
 	// rest keep their pending work for the next pass.
 	Stop func() bool
+	// CursorDatabase is Cursor's state.vscdb, which cursor-sqlite sessions
+	// are read from. Empty means the one under the user's home directory.
+	CursorDatabase string
+
+	// cursorPass is the pass's Reader of Cursor's database, set by Run.
+	cursorPass *cursorstore.Reader
 }
 
 // Progress reports one session a pass has processed.
@@ -145,6 +152,8 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 	}
 
 	orderOldestRequestsFirst(registrations, requestsByID)
+	closeCursorPass := openCursorPass(registrations, &opts)
+	defer closeCursorPass()
 
 	result := Result{Errors: materializationIssues}
 	pending := 0
@@ -165,11 +174,21 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		req := requestsByID[reg.ArchiveSessionID]
 
 		if req.Token == "" {
-			unchanged, err := unchangedSinceLastScan(local, reg, opts)
+			unchanged, err := unchangedSinceLastScan(ctx, local, reg, opts)
 			if err != nil {
 				return result, fmt.Errorf("check transcript for changes: %w", err)
 			}
 			if unchanged {
+				if failure, err := rememberedFailure(local, reg); err != nil {
+					return result, fmt.Errorf("check transcript for changes: %w", err)
+				} else if failure != "" {
+					// Not read again, but still a failure: reported as one on
+					// every pass, as if the read had been repeated.
+					result.Errors[reg.ArchiveSessionID] = errUnchangedSinceFailure{message: failure}
+					pending++
+					opts.progress(reg.ArchiveSessionID, false)
+					continue
+				}
 				// Nothing to read, nothing to compare, nothing to journal.
 				result.Skipped = append(result.Skipped, reg.ArchiveSessionID)
 				opts.progress(reg.ArchiveSessionID, false)
@@ -288,8 +307,20 @@ const cursorTextSourceFormat = "cursor-text"
 // Cursor text transcript — which has no per-record timestamps and is compared
 // by prefix, making a silent in-place edit hardest to detect downstream — is
 // never skipped on a stat alone.
-func unchangedSinceLastScan(local *LocalStore, reg archive.SessionRegistration, opts Options) (bool, error) {
-	if reg.TranscriptPath == "" || reg.ParentSessionID != "" {
+//
+// A Cursor database chat is identified by its cursorstore.Signature instead
+// of a stat (see sourceReader).
+//
+// A Cursor chat whose last read failed in a way reading it again can't fix
+// (see rememberFailedRead) is also "unchanged" while its signature and the
+// versions match, although that failed scan is still journaled; Run reports
+// its failure again without reading it.
+func unchangedSinceLastScan(ctx context.Context, local *LocalStore, reg archive.SessionRegistration, opts Options) (bool, error) {
+	if reg.ParentSessionID != "" {
+		return false, nil
+	}
+	reader, ok := newSourceReader(reg, opts)
+	if !ok {
 		return false, nil
 	}
 	signature, found, err := local.loadScanSignature(reg.ArchiveSessionID)
@@ -306,15 +337,14 @@ func unchangedSinceLastScan(local *LocalStore, reg archive.SessionRegistration, 
 	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapter.Version() {
 		return false, nil
 	}
-	info, err := os.Stat(reg.TranscriptPath)
-	if err != nil || !info.Mode().IsRegular() {
+	state, ok := reader.Signature(ctx)
+	if !ok || !state.matches(signature) {
 		return false, nil
 	}
-	if statTranscript(info) != (transcriptFileInfo{Size: signature.TranscriptSize, Mtime: signature.TranscriptMtime}) {
-		return false, nil
-	}
-	if scanPending, err := local.ScanPending(reg.ArchiveSessionID); err != nil || scanPending {
-		return false, err
+	if !signature.Failed {
+		if scanPending, err := local.ScanPending(reg.ArchiveSessionID); err != nil || scanPending {
+			return false, err
+		}
 	}
 	pending, err := local.HasPending(reg.ArchiveSessionID)
 	if err != nil || pending {
@@ -323,14 +353,30 @@ func unchangedSinceLastScan(local *LocalStore, reg archive.SessionRegistration, 
 	return true, nil
 }
 
+// rememberedFailure is the text of the failure unchangedSinceLastScan
+// skipped a session on, "" when it skipped a settled one or a recorded gap.
+func rememberedFailure(local *LocalStore, reg archive.SessionRegistration) (string, error) {
+	if reg.SourceKind != archive.SourceKindCursorSQLite {
+		return "", nil
+	}
+	signature, found, err := local.loadScanSignature(reg.ArchiveSessionID)
+	if err != nil || !found || !signature.Failed {
+		return "", err
+	}
+	return signature.FailedError, nil
+}
+
 // recordScanSignature marks a session settled at the transcript bytes this
 // scan consumed, so the next pass can skip it. It is written only at an exit
 // that owes no further work.
-func recordScanSignature(local *LocalStore, reg archive.SessionRegistration, stat transcriptFileInfo, bundle archive.SourceBundle, opts Options) error {
+func recordScanSignature(local *LocalStore, reg archive.SessionRegistration, state sourceState, bundle archive.SourceBundle, opts Options) error {
 	return local.saveScanSignature(reg.ArchiveSessionID, scanSignature{
-		TranscriptSize: stat.Size, TranscriptMtime: stat.Mtime,
+		TranscriptSize: state.file.Size, TranscriptMtime: state.file.Mtime,
 		ParserVersion: opts.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
 		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
+		SourceKind: state.kind, CursorLastUpdatedAt: state.cursor.LastUpdatedAt,
+		CursorHeaderCount: state.cursor.HeaderCount, CursorLastBubbleID: state.cursor.LastBubbleID,
+		CursorMessageRows: state.cursor.MessageRows, CursorLastMessageHash: state.cursor.LastMessageHash,
 	})
 }
 
@@ -368,7 +414,8 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		}
 	}
 
-	if reg.TranscriptPath == "" {
+	reader, ok := newSourceReader(reg, opts)
+	if !ok {
 		// Not an error: a Cursor desktop chat is registered at its first
 		// prompt, before Cursor names its transcript, and a later hook fills
 		// the path in. Until then there is nothing to read. The session is
@@ -381,17 +428,17 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	filtered, transcriptStat, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
+	filtered, transcriptStat, err := reader.Filter(ctx, adapter, opts.maxTranscriptBytes())
 	if err != nil {
 		if errors.Is(err, errTranscriptTooLarge) {
 			// The file will not shrink by retrying: record the gap once and
 			// keep the last published snapshot instead of failing every pass.
-			return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonTranscriptTooLarge, nil)
+			return blockThenRemember(local, reg, req, BlockedReasonTranscriptTooLarge, adapter, transcriptStat, opts)
 		}
 		if errors.Is(err, errRecordTooLarge) {
 			// Likewise one record too long to read: a gap recorded once, the
 			// last published snapshot kept, cleared when the file changes.
-			return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonRecordTooLarge, nil)
+			return blockThenRemember(local, reg, req, BlockedReasonRecordTooLarge, adapter, transcriptStat, opts)
 		}
 		if errors.Is(err, os.ErrNotExist) {
 			// The application deleted its own transcript. Retention keeps
@@ -403,9 +450,13 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		}
 		// Unsafe format: never upload; the last published snapshot, if any,
 		// remains untouched and readable.
-		return outcomeSkipped, fmt.Errorf("filter transcript: %w", err)
+		err = fmt.Errorf("filter transcript: %w", err)
+		if rememberErr := rememberFailedRead(local, reg, adapter, transcriptStat, opts, err); rememberErr != nil {
+			return outcomeSkipped, errors.Join(err, rememberErr)
+		}
+		return outcomeSkipped, err
 	}
-	if transcriptStat.Size == 0 {
+	if transcriptStat.empty() {
 		// The application has created the file but written no record yet:
 		// the fresh-start proof accepts exactly this state, so it is the
 		// same waiting as having no path at all, one step later. Nothing has
@@ -618,6 +669,16 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		return outcome, err
 	}
 	return outcome, recordScanSignature(local, reg, transcriptStat, candidate, opts)
+}
+
+// blockThenRemember is blockSession for a size limit, which for a Cursor
+// chat also remembers the state it was reached at (see rememberFailedRead).
+func blockThenRemember(local *LocalStore, reg archive.SessionRegistration, req Request, reason BlockedReason, adapter archive.Adapter, state sourceState, opts Options) (sessionOutcome, error) {
+	outcome, err := blockSession(local, reg.ArchiveSessionID, req, reason, nil)
+	if err != nil {
+		return outcome, err
+	}
+	return outcome, rememberFailedRead(local, reg, adapter, state, opts, nil)
 }
 
 // blockSession records a terminal capture gap for one session and completes

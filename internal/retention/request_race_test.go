@@ -203,3 +203,28 @@ func TestQueuedRequestDoesNotKeepATranscriptlessSessionPastRetention(t *testing.
 		t.Fatalf("requests=%#v err=%v; the forgotten session's request must go with it", requests, err)
 	}
 }
+
+// A session read from Cursor's database has no transcript path by design,
+// but the collector still captures it: its queued request keeps deferring
+// expiry past the retention window, as a file session's does.
+func TestQueuedRequestKeepsACursorDatabaseSessionPastRetention(t *testing.T) {
+	local := newTestStore(t)
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reg := registration("cursor-db", "")
+	reg.Harness.Name = "cursor"
+	reg.SourceKind, reg.SourceKey = archive.SourceKindCursorSQLite, reg.NativeSessionID
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", t0.Add(time.Minute), finalResponse(t, t0.Add(time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	result := sweep(t, local, store, t0.Add(retentionWindow+time.Hour), Options{})
+	if len(result.Errors) != 0 || len(result.PrunedSessions) != 0 || len(result.DeletedSessions) != 0 {
+		t.Fatalf("result=%#v, want nothing expired", result)
+	}
+	if _, found, _ := local.LoadRegistration(reg.ArchiveSessionID); !found {
+		t.Fatal("unpublished work on a Cursor database session was deleted")
+	}
+}

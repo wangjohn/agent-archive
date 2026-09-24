@@ -260,6 +260,12 @@ type SessionRegistration struct {
 	// registrations, which fall back to comparing Admitted() with the
 	// destination's start.
 	DestinationID string `json:"destination_id,omitempty"`
+	// SourceKind is where the collector reads the session from, fixed at
+	// registration: a transcript file ("") or a Cursor database chat.
+	SourceKind SourceKind `json:"source_kind,omitempty"`
+	// SourceKey names the session within its source: for
+	// SourceKindCursorSQLite, the chat's composer ID.
+	SourceKey string `json:"source_key,omitempty"`
 }
 
 // Admitted is the boundary time. Registrations older than AdmittedAt were
@@ -289,7 +295,7 @@ func (r SessionRegistration) Validate() error {
 	if r.SessionStartedAt.IsZero() {
 		return errors.New("session start time is required; older sessions cannot be inferred safely")
 	}
-	return nil
+	return r.validateSource()
 }
 
 // CaptureGap tells readers why source coverage is incomplete without including

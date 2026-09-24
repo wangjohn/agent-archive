@@ -1,23 +1,17 @@
 package backfill
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	// modernc.org/sqlite is a pure-Go SQLite, so builds and tests need no
-	// cgo (spec, "Phase 2: Cursor database chats", decision 4).
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
 // CursorDatabaseChat is what the plan needs from one Cursor chat in Cursor's
@@ -35,23 +29,23 @@ type CursorDatabaseChat struct {
 }
 
 // CursorUncheckedReason says why Cursor's database was not checked.
-type CursorUncheckedReason string
+type CursorUncheckedReason = cursorstore.Reason
 
 const (
 	// CursorUncheckedLocked: a rollback journal shows an unfinished write
 	// (which may be a hot journal only Cursor can roll back), or Cursor held
 	// a lock past the busy timeout.
-	CursorUncheckedLocked CursorUncheckedReason = "locked"
+	CursorUncheckedLocked = cursorstore.Locked
 	// CursorUncheckedUnreadable: the file is not a database SQLite can open,
 	// or its side files are in a state that can't be read without changing
 	// them.
-	CursorUncheckedUnreadable CursorUncheckedReason = "unreadable"
+	CursorUncheckedUnreadable = cursorstore.Unreadable
 	// CursorUncheckedUnknownFormat: the table, a composerData value, or its
 	// _v is not a shape this release knows.
-	CursorUncheckedUnknownFormat CursorUncheckedReason = "unknown_format"
+	CursorUncheckedUnknownFormat = cursorstore.UnknownFormat
 	// CursorUncheckedChangedDuringRead: Cursor wrote the file while it was
 	// read in place with Cursor closed.
-	CursorUncheckedChangedDuringRead CursorUncheckedReason = "changed_during_read"
+	CursorUncheckedChangedDuringRead = cursorstore.ChangedDuringRead
 	// CursorUncheckedTranscriptsUnreadable: part of Cursor's transcript store
 	// could not be listed, so a chat with a transcript can't be told apart
 	// from one stored only in the database. The database is not opened.
@@ -72,14 +66,8 @@ type CursorDatabaseResult struct {
 
 // CursorStateDatabase is where Cursor keeps its chats under home.
 func CursorStateDatabase(home string) string {
-	return filepath.Join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb")
+	return cursorstore.StateDatabase(home)
 }
-
-// cursorBusyTimeout is how long a read waits for Cursor's own lock.
-const cursorBusyTimeout = 500 * time.Millisecond
-
-// cursorReadTimeout bounds the whole database read.
-const cursorReadTimeout = 30 * time.Second
 
 // maxComposerVersion is the newest composerData _v this release knows. Newer
 // rows are still counted when the fields the count needs decode, and the plan
@@ -90,9 +78,6 @@ const maxComposerVersion = 18
 // LIKE, uses the key's unique index, so the read touches only those rows and
 // not every message row, and holds its lock only briefly.
 const cursorComposerQuery = `SELECT key, value FROM cursorDiskKV WHERE key >= 'composerData:' AND key < 'composerData;'`
-
-// cursorSideFiles are the files SQLite keeps beside a database.
-var cursorSideFiles = []string{"-wal", "-shm", "-journal"}
 
 // cursorAfterRead, when set by a test, runs after an immutable read and
 // before its check that the file did not change.
@@ -117,101 +102,29 @@ func unchecked(reason CursorUncheckedReason) CursorDatabaseResult {
 	return CursorDatabaseResult{Reason: reason}
 }
 
-// readCursorDatabase reads path without writing it or creating anything
-// beside it. SQLite creates a WAL database's -wal and -shm files when they
-// are missing, even for a read-only connection, so there are two ways in:
-//
-//   - Cursor running: the -wal and -shm files exist. The database is opened
-//     in place read-only, with the shared-memory index opened read-only too
-//     (readonly_shm), so Cursor's live writes are seen and nothing is
-//     created.
-//   - Cursor closed: no side file exists, so the database is complete in the
-//     one file. It is opened with immutable=1, which opens no side file and
-//     takes no lock, and afterwards the file must have the same size,
-//     modification time, inode, and 100-byte header (which holds SQLite's
-//     change counter), with still no side file; otherwise Cursor started and
-//     wrote during the read, which immutable=1 could have read torn, and the
-//     result is changed_during_read.
-//
-// A symlinked database is followed first: SQLite keeps the side files beside
-// the file the link points to, so they are looked for there.
-//
-// Anything else (a rollback journal, or one WAL side file without the other)
-// is not checked. If Cursor quits between the side-file check and the open,
-// SQLite may create a 0-byte -wal beside the database; that race is accepted.
-// A 0-byte -wal is harmless to Cursor, and nothing next to the real database
-// is ever deleted.
-func readCursorDatabase(ctx context.Context, link string) CursorDatabaseResult {
-	path, err := filepath.EvalSymlinks(link)
-	if errors.Is(err, os.ErrNotExist) {
-		return CursorDatabaseResult{Checked: true}
-	}
-	if err != nil {
-		return unchecked(CursorUncheckedUnreadable)
-	}
-	before, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return CursorDatabaseResult{Checked: true}
-	}
-	if err != nil || !before.Mode().IsRegular() {
-		return unchecked(CursorUncheckedUnreadable)
-	}
-	header, ok := sqliteHeader(path)
-	if !ok {
-		return unchecked(CursorUncheckedUnreadable)
-	}
-	// File format read or write version 2 is WAL mode.
-	wal := header[18] == 2 || header[19] == 2
-	sides := existingSideFiles(path)
-	var immutable bool
+// readCursorDatabase reads path through cursorstore.Read, which neither
+// writes it nor creates anything beside it (see cursorstore's resolve for
+// how it opens a database with Cursor running and closed).
+func readCursorDatabase(ctx context.Context, path string) CursorDatabaseResult {
+	var res CursorDatabaseResult
+	err := cursorstore.Read(ctx, path, cursorstore.Options{AfterImmutableRead: cursorAfterRead}, func(ctx context.Context, db *sql.DB) error {
+		var err error
+		res, err = queryCursorDatabase(ctx, db)
+		return err
+	})
 	switch {
-	case len(sides) == 0:
-		immutable = true
-	case sides["-journal"]:
-		return unchecked(CursorUncheckedLocked)
-	case wal && sides["-wal"] && sides["-shm"]:
-	default:
-		return unchecked(CursorUncheckedUnreadable)
-	}
-
-	query := url.Values{}
-	query.Set("mode", "ro")
-	if immutable {
-		query.Set("immutable", "1")
-	} else {
-		query.Set("readonly_shm", "1")
-	}
-	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", cursorBusyTimeout.Milliseconds()))
-	query.Add("_pragma", "query_only(1)")
-	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}).String()
-
-	ctx, cancel := context.WithTimeout(ctx, cursorReadTimeout)
-	defer cancel()
-	res := queryCursorDatabase(ctx, dsn)
-	if immutable {
-		if cursorAfterRead != nil {
-			cursorAfterRead(path)
-		}
-		after, err := os.Stat(path)
-		headerAfter, ok := sqliteHeader(path)
-		if err != nil || !ok || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) ||
-			!os.SameFile(before, after) || !bytes.Equal(header, headerAfter) || len(existingSideFiles(path)) != 0 {
-			return unchecked(CursorUncheckedChangedDuringRead)
-		}
+	case errors.Is(err, cursorstore.ErrNoDatabase):
+		return CursorDatabaseResult{Checked: true}
+	case err != nil:
+		return unchecked(cursorstore.ReasonOf(err))
 	}
 	return res
 }
 
-func queryCursorDatabase(ctx context.Context, dsn string) CursorDatabaseResult {
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return unchecked(uncheckedReason(err))
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
+func queryCursorDatabase(ctx context.Context, db *sql.DB) (CursorDatabaseResult, error) {
 	rows, err := db.QueryContext(ctx, cursorComposerQuery)
 	if err != nil {
-		return unchecked(uncheckedReason(err))
+		return CursorDatabaseResult{}, err
 	}
 	defer rows.Close()
 
@@ -222,14 +135,14 @@ func queryCursorDatabase(ctx context.Context, dsn string) CursorDatabaseResult {
 		var key string
 		var value []byte
 		if err := rows.Scan(&key, &value); err != nil {
-			return unchecked(uncheckedReason(err))
+			return CursorDatabaseResult{}, err
 		}
 		if value == nil {
 			continue
 		}
 		d, ok := decodeComposerData(key, value)
 		if !ok {
-			return unchecked(CursorUncheckedUnknownFormat)
+			return CursorDatabaseResult{}, cursorstore.NotChecked(cursorstore.UnknownFormat)
 		}
 		if d.newer {
 			newer++
@@ -242,7 +155,7 @@ func queryCursorDatabase(ctx context.Context, dsn string) CursorDatabaseResult {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return unchecked(uncheckedReason(err))
+		return CursorDatabaseResult{}, err
 	}
 	// A subagent's composer is part of its parent chat, not a chat of its
 	// own.
@@ -252,51 +165,7 @@ func queryCursorDatabase(ctx context.Context, dsn string) CursorDatabaseResult {
 			kept = append(kept, c)
 		}
 	}
-	return CursorDatabaseResult{Chats: kept, Checked: true, NewerFormat: newer}
-}
-
-// uncheckedReason classifies a SQLite error.
-func uncheckedReason(err error) CursorUncheckedReason {
-	var serr *sqlite.Error
-	if errors.As(err, &serr) {
-		switch serr.Code() & 0xff {
-		case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
-			return CursorUncheckedLocked
-		}
-	}
-	if msg := err.Error(); strings.Contains(msg, "no such table") || strings.Contains(msg, "no such column") {
-		return CursorUncheckedUnknownFormat
-	}
-	return CursorUncheckedUnreadable
-}
-
-// sqliteHeader reads the 100-byte database header; ok is false for a file
-// that is not a SQLite database.
-func sqliteHeader(path string) (header []byte, ok bool) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, false
-	}
-	defer f.Close()
-	header = make([]byte, 100)
-	if _, err := io.ReadFull(f, header); err != nil {
-		return nil, false
-	}
-	if !bytes.Equal(header[:16], []byte("SQLite format 3\x00")) {
-		return nil, false
-	}
-	return header, true
-}
-
-// existingSideFiles reports which of path's side files exist.
-func existingSideFiles(path string) map[string]bool {
-	out := map[string]bool{}
-	for _, suffix := range cursorSideFiles {
-		if _, err := os.Lstat(path + suffix); !errors.Is(err, os.ErrNotExist) {
-			out[suffix] = true
-		}
-	}
-	return out
+	return CursorDatabaseResult{Chats: kept, Checked: true, NewerFormat: newer}, nil
 }
 
 // composer is what one composerData value contributes.

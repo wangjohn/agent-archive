@@ -148,9 +148,11 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 	// captured for it. Once such a session is itself older than the retention
 	// window, its request (which can carry hook text) stops deferring expiry;
 	// otherwise the registration and that text would stay on this machine
-	// forever. It never published, so forgetting it needs no bucket call.
+	// forever. It never published, so forgetting it needs no bucket call. A
+	// session read from Cursor's database has no path by design and is
+	// captured all the same, so its work still defers expiry.
 	deferForWork := opts.Publishable == nil || opts.Publishable(reg)
-	if admitted := reg.Admitted(); reg.TranscriptPath == "" && opts.SessionMaxAge > 0 && !admitted.IsZero() && now.Sub(admitted) >= opts.SessionMaxAge {
+	if admitted := reg.Admitted(); reg.ReadsTranscriptFile() && reg.TranscriptPath == "" && opts.SessionMaxAge > 0 && !admitted.IsZero() && now.Sub(admitted) >= opts.SessionMaxAge {
 		deferForWork = false
 	}
 	if locallyExpired && deferForWork {
