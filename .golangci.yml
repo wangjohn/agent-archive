@@ -168,26 +168,3 @@ linters:
         linters: [errcheck]
       - path: internal/reader/reader_test\.go
         linters: [errorlint]
-      #
-      # TODO(W1-C, fix/hook-config-safety): hooks and cli.
-      - path: internal/hooks/install\.go
-        text: xml.EscapeText
-        linters: [errcheck]
-      - path: internal/(hooks/hooks|hooks/install|cli/experience|cli/setup|cli/uninstall)_test\.go
-        linters: [errcheck]
-      - path: internal/cli/(handoff|legacy_migration)\.go
-        linters: [errorlint]
-      - path: internal/cli/privacy_test\.go
-        linters: [errorlint]
-      - path: internal/cli/uninstall\.go
-        text: found
-        linters: [ineffassign]
-      - path: internal/cli/(status|uninstall)\.go
-        text: SA4006
-        linters: [staticcheck]
-      - path: internal/cli/(destination_waiting|subagent_review)_test\.go
-        text: ST1008|S1038
-        linters: [staticcheck]
-      - path: internal/cli/prompt\.go
-        text: (help|lines) is unused
-        linters: [unused]
