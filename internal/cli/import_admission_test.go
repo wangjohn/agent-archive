@@ -131,7 +131,7 @@ func TestSetupCarriesImportedHarnessesFromCommittedState(t *testing.T) {
 		old, _, _ := config.Load(home)
 		next := old
 		next.ImportedHarnesses = draftList
-		if err := applySetup(home, userHome, exe, old, &next, env); err != nil {
+		if err := applySetup(home, userHome, exe, old, &next, nil, env); err != nil {
 			t.Fatal(err)
 		}
 		saved, _, _ := config.Load(home)
@@ -144,7 +144,7 @@ func TestSetupCarriesImportedHarnessesFromCommittedState(t *testing.T) {
 	old, _, _ := config.Load(home)
 	next := old
 	next.Harnesses = []string{"codex", "claude"}
-	if err := applySetup(home, userHome, exe, old, &next, env); err != nil {
+	if err := applySetup(home, userHome, exe, old, &next, nil, env); err != nil {
 		t.Fatal(err)
 	}
 	saved, _, _ := config.Load(home)
@@ -160,7 +160,57 @@ func TestSetupCarriesImportedHarnessesFromCommittedState(t *testing.T) {
 		t.Fatal(err)
 	}
 	next = old
-	if err := applySetup(home, userHome, exe, old, &next, env); err == nil || !strings.Contains(err.Error(), "settings changed while setup was open") {
+	if err := applySetup(home, userHome, exe, old, &next, nil, env); err == nil || !strings.Contains(err.Error(), "settings changed while setup was open") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// Setup's review lists the apps that have only imported sessions, and its
+// app edit step offers to stop publishing each one's imports.
+func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
+	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
+	committed, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed.ImportedHarnesses = []string{"claude", "cursor"}
+	if err := config.Save(home, committed); err != nil {
+		t.Fatal(err)
+	}
+
+	// Keep the retention, then edit apps: keep Codex, stop publishing the
+	// Claude Code imports, keep the Cursor ones, and save.
+	out := setupRun(t, env, "retention\n\nedit\napps\ny\nn\ny\ny\n", 0)
+	first := strings.Index(out, "Imported only: Claude Code, Cursor")
+	stop := strings.Index(out, "Keep publishing Claude Code sessions imported by backfill?")
+	after := strings.LastIndex(out, "Imported only: Cursor (")
+	if first < 0 || stop < first || after < stop {
+		t.Fatalf("review and prompts out of order:\n%s", out)
+	}
+	saved, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(saved.ImportedHarnesses, []string{"cursor"}) || !reflect.DeepEqual(saved.Harnesses, []string{"codex"}) {
+		t.Fatalf("harnesses=%v imported=%v", saved.Harnesses, saved.ImportedHarnesses)
+	}
+	claudeImport := archive.SessionRegistration{Harness: archive.Harness{Name: "claude"}, Origin: archive.SessionOriginImport, ProjectRoot: saved.Archive.Projects[0].Root, AdmittedAt: time.Now().UTC()}
+	if saved.AcceptSession(claudeImport) {
+		t.Fatal("Claude Code imports are still published")
+	}
+	claudeImport.Harness.Name = "cursor"
+	if !saved.AcceptSession(claudeImport) {
+		t.Fatal("Cursor imports stopped publishing")
+	}
+
+	// Without imported-only apps the review has no such line.
+	saved.ImportedHarnesses = nil
+	if err := config.Save(home, saved); err != nil {
+		t.Fatal(err)
+	}
+	if out := setupRun(t, env, "retention\n\ny\n", 0); strings.Contains(out, "Imported only") {
+		t.Fatalf("empty imported list shown:\n%s", out)
 	}
 }

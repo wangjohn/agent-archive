@@ -255,7 +255,7 @@ func TestResumeDraftLeftAfterDestinationCommitPreservesOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := applySetup(home, userHome, exe, old, &next, env); err != nil {
+	if err := applySetup(home, userHome, exe, old, &next, nil, env); err != nil {
 		t.Fatal(err)
 	}
 	committed, _, _ := config.Load(home)
