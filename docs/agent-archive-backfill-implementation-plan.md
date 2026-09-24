@@ -236,6 +236,114 @@ line, and the implementation ledger. Run the end-to-end check from the spec's
 Tests section with the local MinIO recipe and copies of real transcripts in a
 sandboxed `HOME`.
 
+## Phase 2 and B1b
+
+Phase 1 (B1–B4 and follow-ups A and B, PRs #17–#23) is merged. The same
+roles and review rules apply. This part covers
+[B1b](agent-archive-backfill-spec.md#destination-id-b1b) and
+[phase 2](agent-archive-backfill-spec.md#phase-2-cursor-database-chats):
+importing Cursor chats that exist only in `state.vscdb`.
+
+### Waves
+
+| Wave | Packages | Parallel because |
+|---|---|---|
+| 1 | B1b destination ID; P1 composer adapter; P2 source readers | Disjoint files except one line each in `SessionRegistration`, which merges trivially. P2 leaves the cursor reader's filter call to P3. |
+| 2 | P3 import integration | Needs P1 and P2. |
+| 3 | Live acceptance (orchestrator) | Needs P3. |
+
+### Contracts
+
+**P1 provides (package `archive`, new file `cursor_composer.go`):**
+
+```go
+// CursorComposer is one Cursor chat as read from state.vscdb: its
+// composerData value and its messages in header order. A message whose row
+// is missing has a nil Value.
+type CursorComposer struct {
+	Composer json.RawMessage
+	Bubbles  []CursorBubble
+}
+
+type CursorBubble struct {
+	ID    string
+	Value json.RawMessage
+}
+
+// FilterComposer filters one chat into native records, format
+// "cursor-composer", through an allowlist; see the spec's phase 2 decision 5.
+func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error)
+```
+
+**P2 provides:**
+
+- `archive.SourceKind` (`SourceKindFile` = "" meaning file, and
+  `SourceKindCursorSQLite` = "cursor-sqlite") and `SessionRegistration`
+  fields `SourceKind` (json `source_kind`) and `SourceKey` (json
+  `source_key`, the composer ID), both omitempty.
+- New package `internal/cursorstore`: the safe database access now in
+  `internal/backfill/cursordb.go` moves here, and backfill's count uses it.
+  It adds `ReadComposer(ctx, dbPath, composerID) (archive.CursorComposer,
+  Signature, error)`, which reads one chat consistently: with Cursor running
+  through the online backup API into a `0600` temporary file under the
+  archive home (deleted afterwards), and with Cursor closed through the
+  checked immutable read. `Signature` is `(lastUpdatedAt, header count, last
+  bubble ID)`.
+- In the collector, a small `sourceReader` interface (`Signature`, `Filter`),
+  with today's file code as the file implementation and a cursor-sqlite
+  implementation that calls `cursorstore.ReadComposer`. Until P3 lands, the
+  cursor-sqlite `Filter` returns a clearly named "not wired" error.
+- A cursor-sqlite registration never adopts a hook's `transcript_path`.
+
+**B1b provides:** `archive.DestinationID(credentials.Config) string` (moved
+from `internal/backfill`), a `SessionRegistration.DestinationID` field (json
+`destination_id`, omitempty) set by hooks and backfill at registration, and
+`AcceptSession` and `InCurrentDestination` comparing it when set, falling back
+to the time rule when empty.
+
+### B1b — Destination ID
+
+Owns `internal/config`, `internal/cli/hook.go`, the retention closure in
+`internal/cli/collect.go`, the registration builder in `internal/backfill`,
+and the move of `DestinationID`. Done when: a legacy registration behaves as
+before; a registration admitted into bucket A is not accepted while the
+destination is B and is accepted again after switching back to A (its objects
+are in A); retention treats it the same way; tests cover each.
+
+### P1 — Composer adapter
+
+Owns `internal/archive/cursor_composer.go` and its tests and goldens. Per the
+spec's decisions 5 and 6: an allowlist keeps role, text, tool calls and
+results (through the existing tool filter), model, token counts, and
+timestamps, and drops context payloads. An unknown `_v` on the chat or a
+message is `ErrUnsafeSourceFormat`. A missing message row adds a
+`cursor_bubble_missing` gap with a count, and blob content adds
+`cursor_blob_content_unavailable`. `NativeStartAt` comes from `createdAt`,
+and `NativeEndAt` from the last message. Bump `FilterVersion` to 8 and the
+adapter version. Golden tests use synthetic chats only.
+
+### P2 — Source readers
+
+Owns `internal/cursorstore` (new), `internal/collector` source reading, the
+new registration fields, the hook adoption guard, and moving
+`internal/backfill/cursordb.go` onto `cursorstore` without changing its
+behaviour (its tests must still pass). Done when: the file reader passes
+every existing collector test unchanged; `ReadComposer` has tests for Cursor
+running (live writer process) and closed, with the database folder
+byte-for-byte unchanged in both; the backup copy is deleted on every path;
+and the signature changes exactly when a chat changes.
+
+### P3 — Import integration
+
+Wires the cursor-sqlite reader to `FilterComposer`. In backfill, database-only
+chats become importable candidates: project from `workspaceIdentifier`, then
+`workspace.json`, then message `workspaceUris`; start from `createdAt`
+(`started_at_source: cursor_composer`); the plan runs the adapter to classify
+them like file sessions; registration sets `SourceKind` and `SourceKey`.
+`cursor_database_only` stops being a skip reason for chats that can be
+imported. `subagentComposerIds` become linked sessions if time allows,
+otherwise they are left for later and the plan says so.
+
 ## Review checklist
 
 Reviewers check each package against these, in addition to the spec:
