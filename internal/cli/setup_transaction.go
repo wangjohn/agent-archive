@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -57,15 +56,12 @@ func discardDraft(home string, draft setupDraft, active config.Config, env Env) 
 	}
 	return err
 }
+
+// destinationEqual reports whether two storage configurations are the same
+// destination. It compares destination IDs, so a destination change is
+// exactly a change of the ID registrations record.
 func destinationEqual(a, b credentials.Config) bool {
-	endpoint := func(c credentials.Config) string {
-		if c.Provider == credentials.ProviderR2 {
-			e, _ := credentials.R2Endpoint(c.R2Endpoint, c.R2AccountID)
-			return e
-		}
-		return ""
-	}
-	return a.Provider == b.Provider && a.Bucket == b.Bucket && strings.Trim(a.Prefix, "/") == strings.Trim(b.Prefix, "/") && endpoint(a) == endpoint(b)
+	return config.DestinationID(a) == config.DestinationID(b)
 }
 
 // pendingSessions counts every accepted session with work outstanding, a

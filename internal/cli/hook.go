@@ -424,6 +424,9 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 			AdmittedAt:      now,
 			Origin:          archive.SessionOriginHook,
 			StartedAtSource: archive.StartedAtSourceHook,
+			// Likewise the destination it was admitted into: a continuation
+			// keeps it, and an older registration without one keeps none.
+			DestinationID: cfg.DestinationID(),
 		}
 	})
 	if err != nil {

@@ -57,30 +57,6 @@ func TestOpenBatch(t *testing.T) {
 	}
 }
 
-// The destination ID covers where sessions go, never credentials.
-func TestDestinationID(t *testing.T) {
-	s3 := credentials.Config{Provider: "s3", Bucket: "b", Prefix: "agent-archive/", Region: "us-east-1", AWSProfile: "p"}
-	other := s3
-	other.AWSProfile, other.Region, other.Prefix = "q", "eu-west-1", "/agent-archive"
-	if DestinationID(s3) != DestinationID(other) {
-		t.Fatal("credentials or prefix spelling changed the destination")
-	}
-	other.Bucket = "c"
-	if DestinationID(s3) == DestinationID(other) {
-		t.Fatal("bucket not covered")
-	}
-	r2 := credentials.Config{Provider: "r2", Bucket: "b", R2AccountID: "acct", R2CredentialRef: "setup-1"}
-	r2b := r2
-	r2b.R2CredentialRef = "setup-2"
-	if DestinationID(r2) != DestinationID(r2b) {
-		t.Fatal("a credential reference changed the destination")
-	}
-	r2b.R2AccountID = "other"
-	if DestinationID(r2) == DestinationID(r2b) {
-		t.Fatal("endpoint not covered")
-	}
-}
-
 // New projects are added included, activated at the import, in the plan's
 // spelling; apps without hooks are added to ImportedHarnesses.
 func TestApplyToConfigAndClock(t *testing.T) {
@@ -124,6 +100,45 @@ func TestApplyToConfigAndClock(t *testing.T) {
 	}
 	if again, apps := ApplyToConfig(&cfg, p, admitted); len(again) != 0 || len(apps) != 0 || len(cfg.Archive.Projects) != 2 {
 		t.Fatalf("applied twice: %v %v %+v", again, apps, cfg.Archive.Projects)
+	}
+}
+
+// Each imported registration records the destination the import was
+// confirmed for. If the configured destination is a different one by the
+// time a session is registered, the session is not admitted.
+func TestRegistrationRecordsTheConfirmedDestination(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	admitted := fixedNow.UTC()
+	bucketA := credentials.Config{Provider: "s3", Bucket: "a"}
+	cfg := config.Config{Storage: bucketA, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{
+		{ProjectID: archive.ProjectID(project), Root: project, Included: true, ActivatedAt: admitted},
+	}}}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := func(id string) Candidate {
+		path := filepath.Join(project, id+".jsonl")
+		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return Candidate{Harness: "claude", NativeSessionID: id, TranscriptPath: path, ProjectRoot: project, StartedAt: admitted.Add(-time.Hour), StartedAtSource: archive.StartedAtSourceTranscript}
+	}
+	r := Registration{Home: home, Store: store, Batch: "2026-09-23-1", AdmittedAt: admitted, DestinationID: config.DestinationID(bucketA)}
+	result, err := r.Run([]Candidate{candidate("a")})
+	if err != nil || len(result.Sessions) != 1 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	if reg, _, _ := store.LoadRegistration(result.Sessions[0]); reg.DestinationID != config.DestinationID(bucketA) {
+		t.Fatalf("destination ID %q, want bucket A's", reg.DestinationID)
+	}
+	r.DestinationID = config.DestinationID(credentials.Config{Provider: "s3", Bucket: "b"})
+	result, err = r.Run([]Candidate{candidate("b")})
+	if err != nil || len(result.Sessions) != 0 || result.NotAdmitted != 1 {
+		t.Fatalf("an import confirmed for bucket B was registered while the destination is A: %+v %v", result, err)
 	}
 }
 

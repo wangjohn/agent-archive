@@ -197,10 +197,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		// Retention sweeps every session this machine registered, including
 		// ones cfg.AcceptSession no longer admits for publication: an excluded
 		// project's already-published sessions still own objects in this
-		// bucket and must age out of it. Only a session that predates the
-		// current destination published somewhere else, and for those the
-		// sweep prunes local state without touching this bucket. The boundary
-		// is the session's admission, not its start.
+		// bucket and must age out of it. Only a session admitted into another
+		// destination published somewhere else, and for those the sweep
+		// prunes local state without touching this bucket. That is decided by
+		// the registration's destination ID, or for an older registration
+		// without one by its admission (not its start) against
+		// DestinationSince.
 		CurrentDestination: cfg.InCurrentDestination,
 		// Outstanding work defers expiry only when the collector will do it.
 		Publishable:   cfg.AcceptSession,

@@ -591,24 +591,29 @@ func TestBackfillUndoHoldsCollectorLock(t *testing.T) {
 // Sessions whose objects are in a destination this machine no longer uses
 // are only forgotten locally: the current bucket is not called for them.
 // Either guard alone decides it: a different destination, even with no
-// DestinationSince recorded, or the same destination switched back to after
-// the import, which DestinationSince records.
+// DestinationSince recorded, or, for registrations written before they
+// recorded a destination ID, the same destination switched back to after the
+// import, which DestinationSince records.
 func TestBackfillUndoPreviousDestination(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		legacy bool
 		change func(cfg *config.Config)
 	}{
-		{"different destination", func(cfg *config.Config) {
+		{"different destination", false, func(cfg *config.Config) {
 			cfg.PreviousDestinations = append(cfg.PreviousDestinations, cfg.Storage)
 			cfg.Storage = credentials.Config{Provider: credentials.ProviderS3, Bucket: "new-bucket", Region: "us-east-1", AWSProfile: "test"}
 			cfg.DestinationSince = time.Time{}
 		}},
-		{"same destination switched back to", func(cfg *config.Config) {
+		{"legacy registrations, same destination switched back to", true, func(cfg *config.Config) {
 			cfg.DestinationSince = backfillNow.Add(time.Hour).UTC()
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, bucket := newUndoFixture(t)
+			if tc.legacy {
+				stripDestinationIDs(t, f.data)
+			}
 			cfg, _, _ := config.Load(f.data)
 			tc.change(&cfg)
 			if err := config.Save(f.data, cfg); err != nil {
@@ -643,6 +648,56 @@ func TestBackfillUndoPreviousDestination(t *testing.T) {
 				t.Fatalf("%d still registered", len(p)+len(c))
 			}
 		})
+	}
+}
+
+// Imported registrations record the destination they were admitted into.
+// After switching away and back, their objects are in the current bucket
+// again, so undo deletes them there even though DestinationSince moved past
+// the import.
+func TestBackfillUndoSwitchedBackDeletesFromTheBucket(t *testing.T) {
+	f, bucket := newUndoFixture(t)
+	parents, children := importRegistrations(t, f.data, firstImport)
+	cfg, _, _ := config.Load(f.data)
+	for _, reg := range append(parents, children...) {
+		if reg.DestinationID != cfg.DestinationID() {
+			t.Fatalf("%s: destination ID %q, want the import's %q", reg.ArchiveSessionID, reg.DestinationID, cfg.DestinationID())
+		}
+	}
+	cfg.PreviousDestinations = append(cfg.PreviousDestinations, cfg.Storage)
+	cfg.DestinationSince = backfillNow.Add(time.Hour).UTC()
+	if err := config.Save(f.data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := f.undoRun(t, strings.NewReader("y\n"), true)
+	if code != 0 || !strings.Contains(out, "11 sessions and 2 subagent transcripts are deleted from") || strings.Contains(out, "previous storage destination") {
+		t.Fatalf("code %d, %s\n%s", code, errOut, out)
+	}
+	if len(bucket.deletes) == 0 {
+		t.Fatal("undo left the sessions in the bucket they were imported into")
+	}
+	if p, c := importRegistrations(t, f.data, firstImport); len(p)+len(c) != 0 {
+		t.Fatalf("%d still registered", len(p)+len(c))
+	}
+}
+
+// stripDestinationIDs rewrites every registration as one written before
+// registrations recorded their destination.
+func stripDestinationIDs(t *testing.T, home string) {
+	t.Helper()
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	regs, err := store.LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reg := range regs {
+		reg.DestinationID = ""
+		if err := store.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

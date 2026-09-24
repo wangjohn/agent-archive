@@ -92,7 +92,8 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	candidates := plan.Imported()
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 	registration := backfill.Registration{
-		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, MaxHoldSteps: backfillHoldSteps,
+		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
+		MaxHoldSteps: backfillHoldSteps,
 		AfterHold: func(sessions, subagents []string) error {
 			batch.AddSessions(sessions, subagents)
 			if err := backfill.SaveBatch(home, batch); err != nil {
@@ -153,7 +154,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return err
 	}
 	last := batches[len(batches)-1]
-	if !last.Continues(plan.BatchFilters(), backfill.DestinationID(cfg.Storage)) {
+	if !last.Continues(plan.BatchFilters(), cfg.DestinationID()) {
 		return nil
 	}
 	release, err := local.NamedLock(home, "setup.lock")
@@ -173,7 +174,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return err
 	}
 	latest := batches[len(batches)-1]
-	if latest.ID != last.ID || !latest.Continues(plan.BatchFilters(), backfill.DestinationID(cfg.Storage)) {
+	if latest.ID != last.ID || !latest.Continues(plan.BatchFilters(), cfg.DestinationID()) {
 		return nil
 	}
 	last = latest
@@ -272,7 +273,7 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err := backfill.CheckClock(cfg, plan, admittedAt); err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
-	batch, err = backfill.OpenBatch(home, plan.BatchFilters(), backfill.DestinationID(cfg.Storage), now)
+	batch, err = backfill.OpenBatch(home, plan.BatchFilters(), cfg.DestinationID(), now)
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed. Repair or move the unreadable file out of %s, then run backfill again", err, filepath.Join(home, "imports"))
 	}

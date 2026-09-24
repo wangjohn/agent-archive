@@ -84,7 +84,9 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 	}
 	// The bucket the import went to is the current one only if the
 	// destination has not changed since, by its ID and by its time boundary.
-	sameDestination := b.DestinationID == DestinationID(cfg.Storage)
+	// A registration that records its own destination ID is judged by that
+	// alone (see inCurrentDestination).
+	sameDestination := b.DestinationID == cfg.DestinationID()
 	selected := map[string]bool{}
 	var parents, children []UndoSession
 	for _, reg := range regs {
@@ -111,7 +113,7 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 		if err != nil {
 			return UndoPlan{}, err
 		}
-		s := UndoSession{Registration: reg, InCurrentDestination: sameDestination && cfg.InCurrentDestination(reg), Resumed: resumed}
+		s := UndoSession{Registration: reg, InCurrentDestination: inCurrentDestination(cfg, reg, sameDestination), Resumed: resumed}
 		if reg.ParentSessionID != "" {
 			children = append(children, s)
 		} else {
@@ -152,6 +154,18 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 		}
 	}
 	return p, nil
+}
+
+// inCurrentDestination reports whether an imported session's objects are in
+// the bucket configured now. A registration with a destination ID answers by
+// that ID, which stays right after a switch away and back, when the time
+// boundary has moved past the import. One without falls back to the batch's
+// destination ID and the time boundary.
+func inCurrentDestination(cfg config.Config, reg archive.SessionRegistration, sameBatchDestination bool) bool {
+	if reg.DestinationID != "" {
+		return cfg.InCurrentDestination(reg)
+	}
+	return sameBatchDestination && cfg.InCurrentDestination(reg)
 }
 
 // resumedSinceImport reports whether the app ran an imported session again

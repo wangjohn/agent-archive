@@ -17,6 +17,13 @@ import (
 // variable first; review has to catch those.
 func boundaryComparisons(t *testing.T, fset *token.FileSet, file *ast.File) []token.Position {
 	t.Helper()
+	return comparisons(fset, file, []string{"SessionStartedAt"}, []string{"ActivatedAt", "DestinationSince"})
+}
+
+// comparisons returns the position of every comparison in file whose
+// operands mention a name from left and a name from right, as
+// boundaryComparisons describes.
+func comparisons(fset *token.FileSet, file *ast.File, left, right []string) []token.Position {
 	mentions := func(node ast.Node, names ...string) bool {
 		found := false
 		ast.Inspect(node, func(n ast.Node) bool {
@@ -60,8 +67,8 @@ func boundaryComparisons(t *testing.T, fset *token.FileSet, file *ast.File) []to
 		}
 		start, boundary := false, false
 		for _, side := range sides {
-			start = start || mentions(side, "SessionStartedAt")
-			boundary = boundary || mentions(side, "ActivatedAt", "DestinationSince")
+			start = start || mentions(side, left...)
+			boundary = boundary || mentions(side, right...)
 		}
 		if start && boundary {
 			out = append(out, fset.Position(n.Pos()))
@@ -76,6 +83,33 @@ func boundaryComparisons(t *testing.T, fset *token.FileSet, file *ast.File) []to
 // silently for imports, whose start is long before both: the collector skips
 // the session, or retention leaves its objects behind. Compare Admitted().
 func TestNoBoundaryComparesSessionStartedAtOutsideAdmitted(t *testing.T) {
+	walkSources(t, func(path string, fset *token.FileSet, file *ast.File) {
+		for _, position := range boundaryComparisons(t, fset, file) {
+			t.Errorf("%s: compares SessionStartedAt with an admission boundary; use SessionRegistration.Admitted()", position)
+		}
+	})
+}
+
+// A registration's destination is decided by config.InCurrentDestination,
+// which compares its DestinationID and falls back to Admitted() against
+// DestinationSince only when the ID is empty. Comparing Admitted() with
+// DestinationSince anywhere else skips the ID: a session admitted into a
+// bucket the configuration switched away from and back to would look foreign.
+func TestNoDestinationTimeComparisonOutsideInCurrentDestination(t *testing.T) {
+	allowed := filepath.Join("internal", "config", "config.go")
+	walkSources(t, func(path string, fset *token.FileSet, file *ast.File) {
+		if strings.HasSuffix(path, allowed) {
+			return
+		}
+		for _, position := range comparisons(fset, file, []string{"Admitted", "AdmittedAt"}, []string{"DestinationSince"}) {
+			t.Errorf("%s: compares an admission with DestinationSince; use config.InCurrentDestination", position)
+		}
+	})
+}
+
+// walkSources parses every non-test Go file in the module and calls fn.
+func walkSources(t *testing.T, fn func(path string, fset *token.FileSet, file *ast.File)) {
+	t.Helper()
 	root := filepath.Join("..", "..")
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -95,9 +129,7 @@ func TestNoBoundaryComparesSessionStartedAtOutsideAdmitted(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, position := range boundaryComparisons(t, fset, file) {
-			t.Errorf("%s: compares SessionStartedAt with an admission boundary; use SessionRegistration.Admitted()", position)
-		}
+		fn(path, fset, file)
 		return nil
 	})
 	if err != nil {
@@ -126,5 +158,29 @@ func a() {
 	}
 	if len(lines) != 3 || lines[0] != 3 || lines[1] != 4 || lines[2] != 5 {
 		t.Fatalf("flagged lines %v, want [3 4 5]", lines)
+	}
+}
+
+// The destination guard must recognise an admission compared with
+// DestinationSince, and leave other comparisons alone.
+func TestDestinationGuardDetectsAdmissionComparisons(t *testing.T) {
+	src := `package p
+func a() {
+	_ = r.Admitted().Before(c.DestinationSince)
+	_ = !reg.AdmittedAt.IsZero() && reg.AdmittedAt.After(cfg.DestinationSince)
+	_ = admittedAt.Before(cfg.DestinationSince)
+	_ = r.Admitted().Before(p.ActivatedAt)
+}`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "guard.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []int
+	for _, position := range comparisons(fset, file, []string{"Admitted", "AdmittedAt"}, []string{"DestinationSince"}) {
+		lines = append(lines, position.Line)
+	}
+	if len(lines) != 2 || lines[0] != 3 || lines[1] != 4 {
+		t.Fatalf("flagged lines %v, want [3 4]", lines)
 	}
 }
