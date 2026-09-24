@@ -59,6 +59,8 @@ func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReade
 	switch reg.SourceKind {
 	case archive.SourceKindCursorSQLite:
 		return cursorSQLiteReader{reg: reg, dbPath: opts.cursorDatabase(), pass: opts.cursorPass}, true
+	case archive.SourceKindFile:
+		fallthrough
 	default:
 		if reg.TranscriptPath == "" {
 			return nil, false
@@ -179,7 +181,7 @@ func (r cursorSQLiteReader) Filter(ctx context.Context, adapter archive.Adapter,
 	reader := r.pass
 	if reader == nil {
 		reader = cursorstore.NewReader(r.dbPath)
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 	}
 	c, sig, err := reader.ReadComposer(ctx, r.reg.SourceKey)
 	if errors.Is(err, cursorstore.ErrComposerNotFound) {
@@ -305,10 +307,10 @@ func withCursorRewriteGap(evidence []archive.SupplementalEvidence, at time.Time)
 	})
 }
 
-// errUnchangedSinceFailure reports a remembered failure again on a pass that
+// unchangedSinceFailureError reports a remembered failure again on a pass that
 // skipped the chat because it has not changed since.
-type errUnchangedSinceFailure struct{ message string }
+type unchangedSinceFailureError struct{ message string }
 
-func (e errUnchangedSinceFailure) Error() string {
+func (e unchangedSinceFailureError) Error() string {
 	return e.message + " (the Cursor chat has not changed since)"
 }

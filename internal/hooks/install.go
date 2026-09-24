@@ -110,12 +110,12 @@ func PlanRemoval(home string, harnesses []string) ([]Change, error) {
 // hookFile is the per-harness hook configuration file, relative to the
 // user's home directory.
 func hookFile(harness string) (string, error) {
-	switch harness {
-	case "codex":
+	switch harnessName(harness) {
+	case harnessCodex:
 		return ".codex/hooks.json", nil
-	case "claude":
+	case harnessClaude:
 		return ".claude/settings.json", nil
-	case "cursor":
+	case harnessCursor:
 		return ".cursor/hooks.json", nil
 	default:
 		return "", errors.New("unsupported harness")
@@ -123,6 +123,7 @@ func hookFile(harness string) (string, error) {
 }
 
 func Rollback(changes []Change) error { return rollback(changes) }
+
 func rollback(changes []Change) error {
 	var failures []error
 	for i := len(changes) - 1; i >= 0; i-- {
@@ -143,6 +144,7 @@ func rollback(changes []Change) error {
 	}
 	return errors.Join(failures...)
 }
+
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
@@ -152,7 +154,8 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	// After a successful rename there is nothing left at name to remove.
+	defer func() { _ = os.Remove(name) }()
 	if err = f.Chmod(mode); err == nil {
 		_, err = f.Write(data)
 	}
@@ -175,7 +178,12 @@ func LaunchAgent(executable, dataHome string) ([]byte, error) {
 	if !filepath.IsAbs(executable) || !filepath.IsAbs(dataHome) {
 		return nil, errors.New("LaunchAgent paths must be absolute")
 	}
-	escape := func(s string) string { var b strings.Builder; xml.EscapeText(&b, []byte(s)); return b.String() }
+	escape := func(s string) string {
+		var b strings.Builder
+		// A strings.Builder never fails a write.
+		_ = xml.EscapeText(&b, []byte(s))
+		return b.String()
+	}
 	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -213,6 +221,7 @@ func LaunchAgentProgram(plist []byte) (string, error) {
 		}
 		switch t := token.(type) {
 		case xml.StartElement:
+			//lint:ignore LV1001 plist element names come from an external XML format; any other element is skipped
 			switch t.Name.Local {
 			case "key":
 				readingKey = true
@@ -228,6 +237,7 @@ func LaunchAgentProgram(plist []byte) (string, error) {
 				text.Write(t)
 			}
 		case xml.EndElement:
+			//lint:ignore LV1001 plist element names come from an external XML format; any other element is skipped
 			switch t.Name.Local {
 			case "key":
 				readingKey = false

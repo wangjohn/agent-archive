@@ -18,12 +18,12 @@ func TestRunOrderProgressAndStop(t *testing.T) {
 	local := newTestStore(t)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// IDs sort a..e; starts run the other way for the requested ones.
-	starts := map[string]time.Duration{"a": 3, "b": 1, "c": 2, "d": 0, "e": 5}
+	starts := map[string]int{"a": 3, "b": 1, "c": 2, "d": 0, "e": 5}
 	requested := map[string]bool{"a": true, "b": true, "c": true}
 	for _, id := range []string{"a", "b", "c", "d", "e"} {
 		reg := registration(t, writeTranscript(t, dir, id+".jsonl", codexTranscript))
 		reg.ArchiveSessionID, reg.NativeSessionID = id, "native-"+id
-		reg.SessionStartedAt = base.Add(-starts[id] * 24 * time.Hour)
+		reg.SessionStartedAt = base.Add(-time.Duration(starts[id]) * 24 * time.Hour)
 		if err := local.SaveRegistration(reg); err != nil {
 			t.Fatal(err)
 		}

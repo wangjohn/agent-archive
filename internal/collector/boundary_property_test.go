@@ -80,7 +80,7 @@ func TestCompleteJSONLBoundaryMatchesTheFixedTailRead(t *testing.T) {
 	var (
 		agreed, tooLarge, multiChunk int
 	)
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		content := randomTranscriptTail(rng)
 		size := int64(len(content))
 		if size > 2<<20 {

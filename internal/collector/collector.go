@@ -200,7 +200,7 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 				// request stays queued, as it does for a transcript file
 				// the filter refuses: its evidence is the only copy, and
 				// the chat's next change reads the chat again with it.
-				result.Errors[reg.ArchiveSessionID] = errUnchangedSinceFailure{message: failure}
+				result.Errors[reg.ArchiveSessionID] = unchangedSinceFailureError{message: failure}
 				pending++
 				opts.progress(reg.ArchiveSessionID, false)
 				continue
@@ -269,12 +269,19 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 	if err != nil {
 		return result, err
 	}
-	status := Status{LastScanAt: now.UTC(), PendingCount: pending, LastPublishedAt: previousStatus.LastPublishedAt}
+	lastPublishedAt := previousStatus.LastPublishedAt
 	if len(result.Published) > 0 {
-		status.LastPublishedAt = now.UTC()
+		lastPublishedAt = now.UTC()
 	}
+	var lastError string
 	if len(result.Errors) > 0 {
-		status.LastError = fmt.Sprintf("%d session(s) failed to scan or publish", len(result.Errors))
+		lastError = fmt.Sprintf("%d session(s) failed to scan or publish", len(result.Errors))
+	}
+	status := Status{
+		LastScanAt:      now.UTC(),
+		PendingCount:    pending,
+		LastPublishedAt: lastPublishedAt,
+		LastError:       lastError,
 	}
 	if err := local.SaveStatus(status); err != nil {
 		return result, fmt.Errorf("save status: %w", err)
@@ -305,6 +312,16 @@ func orderOldestRequestsFirst(registrations []archive.SessionRegistration, reque
 
 // cursorTextSourceFormat labels a Cursor transcript captured as plain text.
 const cursorTextSourceFormat = "cursor-text"
+
+// harnessAdapterVersion returns the version of the adapter that reads
+// harness, or known=false when no adapter does.
+func harnessAdapterVersion(harness string) (string, bool) {
+	adapter, err := archive.NewAdapter(harness)
+	if err != nil {
+		return "", false
+	}
+	return adapter.Version(), true
+}
 
 // unchangedSinceLastScan answers the spec's "transcript changed?" question
 // without opening, reading, parsing, or journaling anything: one stat of the
@@ -355,11 +372,11 @@ func unchangedSinceLastScan(ctx context.Context, local *LocalStore, reg archive.
 	if signature.SourceFormat == cursorTextSourceFormat {
 		return false, nil
 	}
-	adapter, err := archive.NewAdapter(reg.Harness.Name)
-	if err != nil {
+	adapterVersion, known := harnessAdapterVersion(reg.Harness.Name)
+	if !known {
 		return false, nil
 	}
-	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapter.Version() {
+	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion {
 		return false, nil
 	}
 	if signature.Failed && (signature.FailedMaxBytes != opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
@@ -865,7 +882,7 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("stat transcript: %w", err)

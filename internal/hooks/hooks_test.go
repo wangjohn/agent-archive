@@ -23,7 +23,9 @@ func TestMergePreservesAndIsIdempotent(t *testing.T) {
 				t.Fatal("duplicate hooks on setup rerun")
 			}
 			var value map[string]any
-			json.Unmarshal(first, &value)
+			if err := json.Unmarshal(first, &value); err != nil {
+				t.Fatal(err)
+			}
 			if value["unrelated"] != true {
 				t.Fatal("lost setting")
 			}
@@ -33,6 +35,7 @@ func TestMergePreservesAndIsIdempotent(t *testing.T) {
 		})
 	}
 }
+
 func TestPreserveUnrelatedHandler(t *testing.T) {
 	data, e := Merge([]byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"other"}]}]}}`), "codex", "/bin/agent-archive")
 	if e != nil {
@@ -42,6 +45,7 @@ func TestPreserveUnrelatedHandler(t *testing.T) {
 		t.Fatal("removed unrelated handler")
 	}
 }
+
 func TestInvalidConfigIsNotOverwritten(t *testing.T) {
 	for _, s := range []string{`null`, `[]`, `{"hooks":42}`, `{"hooks":{"Stop":[{}]}}`} {
 		if _, e := Merge([]byte(s), "codex", "/bin/archive"); e == nil {

@@ -28,6 +28,31 @@ func (s *LocalStore) loadPublishedMetadata(id string) ([]byte, error) {
 	return state.MetadataBytes, nil
 }
 
+// retainedMetadata decodes the metadata last published for a session, from
+// its cached encoding or, when nothing is cached, from the remote copy at key.
+// It returns usable=false, not an error, when there is nothing to refresh
+// from: see regenerateMetadata.
+func retainedMetadata(ctx context.Context, remote storage.ObjectStore, key string, cached []byte) (archive.Metadata, []byte, bool) {
+	encoded := cached
+	if len(encoded) == 0 {
+		// One-time migration for publications made before metadata was cached.
+		// A missing or unreachable copy is not fatal: nothing can be refreshed
+		// from it, and normal capture keeps working without it.
+		var err error
+		if encoded, err = remote.Get(ctx, key); err != nil {
+			return archive.Metadata{}, nil, false
+		}
+	}
+	var prior archive.Metadata
+	if err := json.Unmarshal(encoded, &prior); err != nil {
+		return archive.Metadata{}, nil, false
+	}
+	if prior.ValidateSourceReference() != nil {
+		return archive.Metadata{}, nil, false
+	}
+	return prior, encoded, true
+}
+
 // Refresh from durable filtered evidence before opening the live transcript.
 // A parser upgrade still works after the application rotates its local log.
 //
@@ -54,20 +79,8 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 		return outcomeSkipped, false, err
 	}
 	legacy := len(encoded) == 0
-	if legacy {
-		// One-time migration for publications made before metadata was cached.
-		// A missing or unreachable copy is not fatal: nothing can be refreshed
-		// from it, and normal capture keeps working without it.
-		encoded, err = remote.Get(ctx, key)
-		if err != nil {
-			return outcomeSkipped, false, nil
-		}
-	}
-	var prior archive.Metadata
-	if err := json.Unmarshal(encoded, &prior); err != nil {
-		return outcomeSkipped, false, nil
-	}
-	if prior.SessionID != reg.ArchiveSessionID || prior.MachineID != opts.MachineID || prior.ValidateSourceReference() != nil {
+	prior, encoded, usable := retainedMetadata(ctx, remote, key, encoded)
+	if !usable || prior.SessionID != reg.ArchiveSessionID || prior.MachineID != opts.MachineID {
 		return outcomeSkipped, false, nil
 	}
 	sameParser := prior.Parser.Version == opts.parserVersion()

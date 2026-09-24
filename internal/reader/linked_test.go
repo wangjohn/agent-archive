@@ -13,14 +13,14 @@ func TestLinkedSessionsResolveWithoutDownloadingOrPinningSources(t *testing.T) {
 	parent, _, store := fixture(t)
 	parent.LinkedSessions = []archive.LinkedSessionReference{{SessionID: "child", Relationship: "subagent", Status: archive.LinkedSessionPending}}
 	ctx := context.Background()
-	check := func(want string) {
+	check := func(want LinkedState) {
 		t.Helper()
 		got := ResolveLinkedSessions(ctx, store, parent)
 		if len(got) != 1 || got[0].State != want {
 			t.Fatalf("want %s got %+v", want, got)
 		}
 	}
-	check("pending")
+	check(LinkedStatePending)
 	child := parent
 	child.SessionID = "child"
 	child.ParentSessionID = parent.SessionID
@@ -40,25 +40,25 @@ func TestLinkedSessionsResolveWithoutDownloadingOrPinningSources(t *testing.T) {
 	}
 	save()
 	// No child source was uploaded: resolution must be metadata-only.
-	check("metadata_available")
+	check(LinkedStateMetadataAvailable)
 	parent.LinkedSessions[0].Status = archive.LinkedSessionPublished
 	child.ParentSessionID = "other-parent"
 	save()
-	check("identity_mismatch")
+	check(LinkedStateIdentityMismatch)
 	child.ParentSessionID = parent.SessionID
 	child.MachineID = "other-machine"
 	save()
-	check("identity_mismatch")
+	check(LinkedStateIdentityMismatch)
 	if err := store.Put(ctx, key, []byte("invalid-json")); err != nil {
 		t.Fatal(err)
 	}
-	check("lookup_failed")
+	check(LinkedStateLookupFailed)
 	if err := store.Delete(ctx, key); err != nil {
 		t.Fatal(err)
 	}
-	check("unavailable_or_expired")
+	check(LinkedStateUnavailableOrExpired)
 	parent.LinkedSessions[0].Status = archive.LinkedSessionUnavailable
-	check("unavailable")
+	check(LinkedStateUnavailable)
 }
 
 func TestSourceReadRejectsMismatchedParent(t *testing.T) {

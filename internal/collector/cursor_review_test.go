@@ -33,12 +33,12 @@ func TestCursorSQLiteRememberedFailureWithRequest(t *testing.T) {
 	if result, copies := run(t, local, remote, opts, passes); !errors.Is(result.Errors[bad.ArchiveSessionID], archive.ErrUnsafeSourceFormat) || copies != 1 {
 		t.Fatalf("%v, %d copies", result.Errors, copies)
 	}
-	for pass := 0; pass < 3; pass++ {
+	for pass := range 3 {
 		if err := local.SaveRequest(bad.ArchiveSessionID, "stop", at.Add(time.Duration(pass)*time.Minute)); err != nil {
 			t.Fatal(err)
 		}
 		result, copies := run(t, local, remote, opts, passes)
-		var again errUnchangedSinceFailure
+		var again unchangedSinceFailureError
 		if !errors.As(result.Errors[bad.ArchiveSessionID], &again) || copies != 0 {
 			t.Fatalf("pass %d: %v, %d copies", pass, result.Errors, copies)
 		}
@@ -97,7 +97,7 @@ func TestCursorSQLiteChatNewerThanTheSnapshot(t *testing.T) {
 	db := newCursorDB(t, true)
 	db.chat("old", 1, "m")
 	pass := cursorstore.NewReader(db.path)
-	defer pass.Close()
+	defer func() { _ = pass.Close() }()
 	if _, _, err := pass.ReadComposer(context.Background(), "old"); err != nil || pass.Snapshots() != 1 {
 		t.Fatalf("%v, %d snapshots", err, pass.Snapshots())
 	}

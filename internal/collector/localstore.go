@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +52,7 @@ func NewLocalStore(home string) (*LocalStore, error) {
 }
 
 func safeFileComponent(value string) bool {
+	//lint:ignore LV1001 value is an arbitrary file name component; these are the reserved names it must not be
 	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/\\") {
 		return false
 	}
@@ -108,7 +110,7 @@ func (s *LocalStore) UpdateRegistration(archiveSessionID string, update func(*ar
 // registration with no index entry. If the entry changed or disappeared, a
 // fresh ID is assigned and the check repeats.
 func (s *LocalStore) RegisterNewSession(nativeSessionID string, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
-	for attempt := 0; attempt < 3; attempt++ {
+	for range 3 {
 		id, _, err := s.EnsureArchiveSessionID(nativeSessionID)
 		if err != nil {
 			return archive.SessionRegistration{}, err
@@ -300,18 +302,9 @@ func (s *LocalStore) saveRequest(archiveSessionID, reason string, requestedAt ti
 		return fmt.Errorf("generate request token: %w", err)
 	}
 	reasonAlready := true
-	if reason != "" {
-		have := false
-		for _, r := range merged.Reasons {
-			if r == reason {
-				have = true
-				break
-			}
-		}
-		if !have {
-			reasonAlready = false
-			merged.Reasons = append(merged.Reasons, reason)
-		}
+	if reason != "" && !slices.Contains(merged.Reasons, reason) {
+		reasonAlready = false
+		merged.Reasons = append(merged.Reasons, reason)
 	}
 	added := 0
 	for _, item := range evidence {
@@ -591,8 +584,8 @@ func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.
 	if err := local.Read(s.publishedPath(archiveSessionID), &existing); err == nil {
 		last = existing.detachedLastPublished()
 		if last == nil && existing.Status == CacheStatusPublished {
-			copy := publishedSnapshot{Bundle: existing.Bundle, PublishedAt: existing.PublishedAt}
-			last = &copy
+			snapshot := publishedSnapshot{Bundle: existing.Bundle, PublishedAt: existing.PublishedAt}
+			last = &snapshot
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read published state %q: %w", archiveSessionID, err)
@@ -912,17 +905,20 @@ func (s *LocalStore) loadScanSignature(id string) (scanSignature, bool, error) {
 	if !safeFileComponent(id) {
 		return scanSignature{}, false, errors.New("archive session ID is not a safe file name component")
 	}
+	signature, found := readScanSignature(s.scanSignaturePath(id))
+	return signature, found, nil
+}
+
+// readScanSignature reads the token at path, or returns found=false when
+// there is none to trust: a missing token, or a corrupt one. A corrupt token
+// is not a failure: it only means this session cannot be skipped, which is
+// the safe answer.
+func readScanSignature(path string) (scanSignature, bool) {
 	var signature scanSignature
-	err := local.Read(s.scanSignaturePath(id), &signature)
-	if errors.Is(err, os.ErrNotExist) {
-		return scanSignature{}, false, nil
+	if err := local.Read(path, &signature); err != nil {
+		return scanSignature{}, false
 	}
-	if err != nil {
-		// A corrupt token is not a failure: it only means this session cannot
-		// be skipped, which is the safe answer.
-		return scanSignature{}, false, nil
-	}
-	return signature, true, nil
+	return signature, true
 }
 
 func (s *LocalStore) removeScanSignature(id string) error {

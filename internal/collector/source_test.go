@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,10 +36,14 @@ func newCursorDB(t *testing.T, running bool) *cursorDB {
 	d := &cursorDB{t: t, path: filepath.Join(t.TempDir(), "state.vscdb")}
 	if running {
 		d.held = d.open()
-		if _, err := d.held.Exec(`PRAGMA wal_autocheckpoint=0`); err != nil {
+		if _, err := d.held.ExecContext(context.Background(), `PRAGMA wal_autocheckpoint=0`); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { d.held.Close() })
+		t.Cleanup(func() {
+			if err := d.held.Close(); err != nil {
+				t.Error(err)
+			}
+		})
 	}
 	return d
 }
@@ -51,7 +56,7 @@ func (d *cursorDB) open() *sql.DB {
 	}
 	db.SetMaxOpenConns(1)
 	for _, stmt := range []string{`PRAGMA journal_mode=WAL`, `CREATE TABLE IF NOT EXISTS cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)`} {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(context.Background(), stmt); err != nil {
 			d.t.Fatal(err)
 		}
 	}
@@ -63,9 +68,13 @@ func (d *cursorDB) put(key, value string) {
 	db := d.held
 	if db == nil {
 		db = d.open()
-		defer db.Close()
+		defer func() {
+			if err := db.Close(); err != nil {
+				d.t.Fatal(err)
+			}
+		}()
 	}
-	if _, err := db.Exec(`INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, key, value); err != nil {
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, key, value); err != nil {
 		d.t.Fatal(err)
 	}
 }
@@ -198,7 +207,7 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 	}
 
 	// Unchanged: skipped without a read.
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		result, copies = run(t, local, remote, opts, passes)
 		if len(result.Errors) != 0 || !contains(result.Skipped, reg.ArchiveSessionID) || copies != 0 {
 			t.Fatalf("pass %d: %+v, %d copies", i, result, copies)
@@ -219,9 +228,9 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 	if !errors.Is(result.Errors[reg.ArchiveSessionID], archive.ErrUnsafeSourceFormat) || copies != 1 {
 		t.Fatalf("errors %v, %d copies", result.Errors, copies)
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		result, copies = run(t, local, remote, opts, passes)
-		var again errUnchangedSinceFailure
+		var again unchangedSinceFailureError
 		if !errors.As(result.Errors[reg.ArchiveSessionID], &again) || !strings.Contains(again.Error(), "unsafe") || copies != 0 {
 			t.Fatalf("pass %d: errors %v, %d copies", i, result.Errors, copies)
 		}
@@ -262,7 +271,9 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 
 	// A chat that can't be read is never unchanged.
 	settleCursorSession(t, local, reg, opts)
-	db.held.Close()
+	if err := db.held.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(db.path); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +289,7 @@ func TestCursorSQLiteOneSnapshotPerPass(t *testing.T) {
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
 	opts := Options{MachineID: "m", CursorDatabase: db.path}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		id := fmt.Sprintf("chat-%d", i)
 		db.chat(id, 1, "m")
 		if err := local.SaveRegistration(cursorRegistration("session-"+id, id)); err != nil {
@@ -309,17 +320,20 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 		check     func(t *testing.T, local *LocalStore, id string, err error)
 	}{
 		"missing chat": {func(db *cursorDB) { db.chat("other", 1, "x") }, 0, 0, func(t *testing.T, local *LocalStore, id string, err error) {
+			t.Helper()
 			if reason, found, _ := local.LoadBlocked(id); err != nil || !found || reason != BlockedReasonTranscriptMissing {
 				t.Fatalf("err %v, blocked %q", err, reason)
 			}
 		}},
 		"unsafe format": {func(db *cursorDB) { db.put("composerData:chat", "not json") }, 0, 0, func(t *testing.T, local *LocalStore, id string, err error) {
+			t.Helper()
 			var nc *cursorstore.NotCheckedError
 			if !errors.As(err, &nc) || nc.Reason != cursorstore.UnknownFormat {
 				t.Fatalf("err %v", err)
 			}
 		}},
 		"too large": {func(db *cursorDB) { db.chat("chat", 1, "a", "b") }, 10, 1, func(t *testing.T, local *LocalStore, id string, err error) {
+			t.Helper()
 			if reason, found, _ := local.LoadBlocked(id); err != nil || !found || reason != BlockedReasonTranscriptTooLarge {
 				t.Fatalf("err %v, blocked %q", err, reason)
 			}
@@ -335,7 +349,7 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 				t.Fatal(err)
 			}
 			opts := Options{MachineID: "m", CursorDatabase: db.path, MaxTranscriptBytes: tc.maxBytes}
-			for pass := 0; pass < 3; pass++ {
+			for pass := range 3 {
 				result, copies := run(t, local, storage.NewMemoryStore(), opts, passes)
 				want := 0
 				if pass == 0 {
@@ -398,10 +412,5 @@ func TestFileSourceStateMatchesOnlyFileSignatures(t *testing.T) {
 }
 
 func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, s)
 }
