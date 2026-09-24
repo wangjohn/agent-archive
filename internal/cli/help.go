@@ -81,11 +81,13 @@ Find sessions using metadata; does not download conversation content.
                                  reusing unchanged ones from the local
                                  metadata cache (metadata only; never
                                  conversation content)
+  --json                         Print the matching sessions' metadata as a
+                                 versioned JSON document
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
-	"show": `Usage: agent-archive show SESSION_ID [--harness NAME] [--normalized]
+	"show": `Usage: agent-archive show SESSION_ID [--harness NAME] [--normalized] [--json]
 
-Print session metadata as JSON. An imported session also shows origin,
+Print session metadata as JSON (--json is accepted, as for list and status). An imported session also shows origin,
 imported_at, and started_at_source. --normalized explicitly downloads and
 verifies its source bundle and prints conversation content as well.
 Example: agent-archive show SESSION_ID --normalized
