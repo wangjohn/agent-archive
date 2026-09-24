@@ -56,10 +56,11 @@ type NotCheckedError struct {
 	Err error
 }
 
+// Error names only the reason. The underlying error, reachable through
+// Unwrap, can name the database's path (a path error from resolving it, or
+// SQLite's own message), which never goes into a message that may be
+// printed or recorded.
 func (e *NotCheckedError) Error() string {
-	if e.Err != nil {
-		return fmt.Sprintf("Cursor database not checked (%s): %v", e.Reason, e.Err)
-	}
 	return fmt.Sprintf("Cursor database not checked (%s)", e.Reason)
 }
 
@@ -106,7 +107,10 @@ var ErrNoDatabase = fmt.Errorf("no Cursor database: %w", fs.ErrNotExist)
 // BusyTimeout is how long a read waits for Cursor's own lock.
 const BusyTimeout = 500 * time.Millisecond
 
-// ReadTimeout bounds one whole database read.
+// ReadTimeout bounds one whole database read, as far as it can be
+// interrupted: a query is cancelled at its deadline, but the online backup's
+// single Step(-1) copies the whole database in one uninterruptible call,
+// and the deadline is only checked between busy retries around it.
 const ReadTimeout = 30 * time.Second
 
 // sideFiles are the files SQLite keeps beside a database.
@@ -125,9 +129,13 @@ type source struct {
 	path string
 	// live is set when Cursor has the database open (or left its WAL side
 	// files behind): -wal and -shm both exist.
-	live   bool
-	before os.FileInfo
-	header []byte
+	live bool
+	// strayWAL is set when the only side file is an empty -wal, which SQLite
+	// can leave when Cursor quits just as a reader opens the database. An
+	// empty -wal holds no frames to replay, so the file is read as closed.
+	strayWAL bool
+	before   os.FileInfo
+	header   []byte
 }
 
 // resolve follows link to the real database and decides how it may be read.
@@ -153,7 +161,11 @@ type source struct {
 // is not checked. If Cursor quits between the side-file check and the open,
 // SQLite may create a 0-byte -wal beside the database; that race is accepted.
 // A 0-byte -wal is harmless to Cursor, and nothing next to the real database
-// is ever deleted.
+// is ever deleted. A WAL database whose only side file is such an empty -wal
+// is read as closed (it has nothing to replay), and the check afterwards
+// requires the -wal to be still empty and still the only side file.
+//
+// No error names the path: a path error is kept only for Unwrap.
 func resolve(link string) (source, error) {
 	path, err := filepath.EvalSymlinks(link)
 	if errors.Is(err, os.ErrNotExist) {
@@ -186,6 +198,8 @@ func resolve(link string) (source, error) {
 		return source{}, NotChecked(Locked)
 	case wal && sides["-wal"] && sides["-shm"]:
 		src.live = true
+	case wal && len(sides) == 1 && emptyFile(path+"-wal"):
+		src.strayWAL = true
 	default:
 		return source{}, NotChecked(Unreadable)
 	}
@@ -208,12 +222,26 @@ func dsn(path string, live bool) string {
 }
 
 // unchanged is the check after an immutable read: the file is the same one,
-// with the same size, modification time, and header, and still no side file.
+// with the same size, modification time, and header, and still no side file
+// (or, for a stray -wal, still only that -wal, still empty).
 func (s source) unchanged() bool {
 	after, err := os.Stat(s.path)
 	headerAfter, ok := sqliteHeader(s.path)
-	return err == nil && ok && after.Size() == s.before.Size() && after.ModTime().Equal(s.before.ModTime()) &&
-		os.SameFile(s.before, after) && bytes.Equal(s.header, headerAfter) && len(existingSideFiles(s.path)) == 0
+	if err != nil || !ok || after.Size() != s.before.Size() || !after.ModTime().Equal(s.before.ModTime()) ||
+		!os.SameFile(s.before, after) || !bytes.Equal(s.header, headerAfter) {
+		return false
+	}
+	sides := existingSideFiles(s.path)
+	if s.strayWAL {
+		return len(sides) == 1 && emptyFile(s.path+"-wal")
+	}
+	return len(sides) == 0
+}
+
+// emptyFile reports whether path is a regular file of zero bytes.
+func emptyFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular() && info.Size() == 0
 }
 
 // Read opens the database at path in place, as resolve describes, without

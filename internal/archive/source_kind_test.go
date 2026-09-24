@@ -22,18 +22,19 @@ func TestSessionRegistrationSourceKind(t *testing.T) {
 	}
 
 	chat := base
-	chat.SourceKind, chat.SourceKey = SourceKindCursorSQLite, "composer-1"
+	chat.SourceKind, chat.SourceKey = SourceKindCursorSQLite, "n"
 	if err := chat.Validate(); err != nil || chat.ReadsTranscriptFile() {
 		t.Fatalf("a Cursor database session: %v", err)
 	}
 	data, _ = json.Marshal(chat)
-	if !strings.Contains(string(data), `"source_kind":"cursor-sqlite","source_key":"composer-1"`) {
+	if !strings.Contains(string(data), `"source_kind":"cursor-sqlite","source_key":"n"`) {
 		t.Fatalf("%s", data)
 	}
 
 	for name, mutate := range map[string]func(*SessionRegistration){
 		"no source key":   func(r *SessionRegistration) { r.SourceKey = " " },
-		"a path":          func(r *SessionRegistration) { r.TranscriptPath = "/t/composer-1.jsonl" },
+		"a path":          func(r *SessionRegistration) { r.TranscriptPath = "/t/n.jsonl" },
+		"another key":     func(r *SessionRegistration) { r.SourceKey = "other" },
 		"not cursor":      func(r *SessionRegistration) { r.Harness.Name = "codex" },
 		"an unknown kind": func(r *SessionRegistration) { r.SourceKind = "cursor-leveldb" },
 	} {

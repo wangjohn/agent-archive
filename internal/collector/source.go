@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
@@ -55,10 +54,10 @@ type sourceReader interface {
 
 // newSourceReader returns reg's reader, or ok=false when there is nothing to
 // read yet: a file session whose transcript path a hook has not reported.
-func newSourceReader(local *LocalStore, reg archive.SessionRegistration, opts Options) (sourceReader, bool) {
+func newSourceReader(reg archive.SessionRegistration, opts Options) (sourceReader, bool) {
 	switch reg.SourceKind {
 	case archive.SourceKindCursorSQLite:
-		return cursorSQLiteReader{reg: reg, dbPath: opts.cursorDatabase(), scratchDir: local.cursorSnapshotDir()}, true
+		return cursorSQLiteReader{reg: reg, dbPath: opts.cursorDatabase(), pass: opts.cursorPass}, true
 	default:
 		if reg.TranscriptPath == "" {
 			return nil, false
@@ -87,12 +86,14 @@ func (r fileReader) Filter(_ context.Context, adapter archive.Adapter, maxBytes 
 
 // cursorSQLiteReader reads one chat, reg.SourceKey, from Cursor's database.
 type cursorSQLiteReader struct {
-	reg        archive.SessionRegistration
-	dbPath     string
-	scratchDir string
+	reg    archive.SessionRegistration
+	dbPath string
+	// pass is the collector pass's Reader, which takes at most one snapshot
+	// of the database for all the chats the pass reads. Nil outside a pass.
+	pass *cursorstore.Reader
 }
 
-// Signature reads only the chat's composerData row: the database file
+// Signature reads only the chat's own rows, in place: the database file
 // changes constantly, so its stat says nothing about one chat (spec, phase 2
 // decision 7), and a snapshot of the whole database would cost every pass a
 // copy of it.
@@ -106,8 +107,7 @@ func (r cursorSQLiteReader) Signature(ctx context.Context) (sourceState, bool) {
 
 // errCursorSourceNotWired is what the cursor-sqlite reader's Filter returns
 // until the composer adapter (archive.CursorAdapter.FilterComposer) is wired
-// into filterCursorComposer. The session is left retryable, as any failed
-// filter is.
+// into filterCursorComposer.
 var errCursorSourceNotWired = errors.New("reading Cursor database chats is not wired to the composer adapter yet")
 
 // filterCursorComposer filters one chat read from Cursor's database.
@@ -119,16 +119,27 @@ func filterCursorComposer(_ archive.Adapter, _ cursorstore.Composer) (archive.Fi
 	return archive.FilteredTranscript{}, errCursorSourceNotWired
 }
 
+// Filter first reads the chat's signature in place, so a chat Cursor deleted
+// (or a composerData value that doesn't decode) costs no copy of the
+// database, then reads the chat through the pass's Reader.
 func (r cursorSQLiteReader) Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (archive.FilteredTranscript, sourceState, error) {
-	c, sig, err := cursorstore.ReadComposer(ctx, r.dbPath, r.reg.SourceKey, r.scratchDir)
-	if err != nil {
+	if _, err := cursorstore.ReadSignature(ctx, r.dbPath, r.reg.SourceKey); err != nil {
 		// A missing database or chat wraps os.ErrNotExist, so the session
 		// records a missing-source gap, as a deleted transcript does.
 		return archive.FilteredTranscript{}, sourceState{}, fmt.Errorf("read Cursor chat: %w", err)
 	}
+	reader := r.pass
+	if reader == nil {
+		reader = cursorstore.NewReader(r.dbPath)
+		defer reader.Close()
+	}
+	c, sig, err := reader.ReadComposer(ctx, r.reg.SourceKey)
+	if err != nil {
+		return archive.FilteredTranscript{}, sourceState{}, fmt.Errorf("read Cursor chat: %w", err)
+	}
 	state := sourceState{kind: archive.SourceKindCursorSQLite, cursor: sig}
 	size := int64(len(c.Composer))
-	if int64(len(c.Composer)) > recordLimit {
+	if size > recordLimit {
 		return archive.FilteredTranscript{}, state, errRecordTooLarge
 	}
 	for _, b := range c.Bubbles {
@@ -156,8 +167,59 @@ func (o Options) cursorDatabase() string {
 	return cursorstore.StateDatabase(home)
 }
 
-// cursorSnapshotDir is where Cursor database snapshots are taken, inside
-// the private archive home.
-func (s *LocalStore) cursorSnapshotDir() string {
-	return filepath.Join(s.home, "cursor-snapshots")
+// afterCursorPass, when set by a test, runs as a pass ends with how many
+// snapshots of Cursor's database the pass took.
+var afterCursorPass func(snapshots int)
+
+// openCursorPass gives the pass one Reader for Cursor's database when any
+// session is read from it, and sweeps snapshots a killed pass left behind.
+// The returned function removes the pass's snapshot.
+func openCursorPass(registrations []archive.SessionRegistration, opts *Options) func() {
+	for _, reg := range registrations {
+		if reg.SourceKind == archive.SourceKindCursorSQLite {
+			cursorstore.RemoveStaleSnapshots()
+			reader := cursorstore.NewReader(opts.cursorDatabase())
+			opts.cursorPass = reader
+			return func() {
+				reader.Close()
+				if afterCursorPass != nil {
+					afterCursorPass(reader.Snapshots())
+				}
+			}
+		}
+	}
+	return func() {}
+}
+
+// rememberFailedRead records, for a cursor-sqlite session whose chat was
+// read but could not be captured for a reason that reading it again cannot
+// change (a filter error, or a size limit), the state it failed at, with
+// the error's text ("" for a recorded gap). unchangedSinceLastScan then
+// skips the chat until its signature, or a derivation version, changes, so
+// the failure costs one in-place signature read per pass rather than a copy
+// of the database. A failure to read at all (a lock, a changed file) is
+// left to be retried.
+func rememberFailedRead(local *LocalStore, reg archive.SessionRegistration, adapter archive.Adapter, state sourceState, opts Options, failure error) error {
+	if state.kind != archive.SourceKindCursorSQLite {
+		return nil
+	}
+	message := ""
+	if failure != nil {
+		message = failure.Error()
+	}
+	return local.saveScanSignature(reg.ArchiveSessionID, scanSignature{
+		ParserVersion: opts.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(),
+		SourceKind: state.kind, CursorLastUpdatedAt: state.cursor.LastUpdatedAt,
+		CursorHeaderCount: state.cursor.HeaderCount, CursorLastBubbleID: state.cursor.LastBubbleID,
+		CursorMessageRows: state.cursor.MessageRows, CursorLastMessageHash: state.cursor.LastMessageHash,
+		Failed: true, FailedError: message,
+	})
+}
+
+// errUnchangedSinceFailure reports a remembered failure again on a pass that
+// skipped the chat because it has not changed since.
+type errUnchangedSinceFailure struct{ message string }
+
+func (e errUnchangedSinceFailure) Error() string {
+	return e.message + " (the Cursor chat has not changed since)"
 }

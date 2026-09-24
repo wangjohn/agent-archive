@@ -35,6 +35,11 @@ func (r SessionRegistration) validateSource() error {
 		if strings.TrimSpace(r.SourceKey) == "" {
 			return errors.New("a Cursor database session requires its composer ID as the source key")
 		}
+		// The composer ID is the chat's native session ID, which is what
+		// hooks and backfill deduplicate on.
+		if r.SourceKey != r.NativeSessionID {
+			return errors.New("a Cursor database session's source key must be its native session ID")
+		}
 		if !strings.EqualFold(strings.TrimSpace(r.Harness.Name), "cursor") {
 			return errors.New("a Cursor database session must be a Cursor session")
 		}

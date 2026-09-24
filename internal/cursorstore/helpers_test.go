@@ -139,6 +139,20 @@ func assertUnchanged(t testing.TB, dir string, before map[string]fileState) {
 	}
 }
 
+// useTempSnapshots points the system temporary directory, and so
+// SnapshotRoot, at a directory of the test's own, and returns the snapshot
+// root there.
+func useTempSnapshots(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+	root := snapshotRootPath()
+	if filepath.Dir(root) != filepath.Clean(dir) {
+		t.Fatalf("snapshot root %s is not under %s", root, dir)
+	}
+	return root
+}
+
 // assertEmpty fails unless dir holds nothing: no snapshot was left behind.
 func assertEmpty(t testing.TB, dir string) {
 	t.Helper()
@@ -255,6 +269,18 @@ func TestWriterProcess(t *testing.T) {
 			_, err = conn.ExecContext(ctx, `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, c.Key, c.Value)
 		case "delete":
 			_, err = conn.ExecContext(ctx, `DELETE FROM cursorDiskKV WHERE key = ?`, c.Key)
+		case "exclusive":
+			// Holds the database's exclusive lock from the next write on,
+			// so every reader in another process is busy.
+			if _, err = conn.ExecContext(ctx, `PRAGMA locking_mode=EXCLUSIVE`); err == nil {
+				_, err = conn.ExecContext(ctx, `INSERT INTO ItemTable (key, value) VALUES ('lock', 'held')`)
+			}
+		case "normal":
+			// Releases the exclusive lock at the next access.
+			if _, err = conn.ExecContext(ctx, `PRAGMA locking_mode=NORMAL`); err == nil {
+				var n int
+				err = conn.QueryRowContext(ctx, `SELECT count(*) FROM ItemTable`).Scan(&n)
+			}
 		default:
 			err = fmt.Errorf("unknown op %q", c.Op)
 		}
