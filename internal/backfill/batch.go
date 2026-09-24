@@ -1,0 +1,191 @@
+package backfill
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/local"
+)
+
+// Batch is one confirmed import, kept as imports/<id>.json under the archive
+// home. It is local bookkeeping and is never uploaded. It holds no native ID
+// and no path: projects are named by project ID and sessions by archive
+// session ID. Registrations point back to it through ImportBatch.
+type Batch struct {
+	// ID is <local date>-<n>, n counting that day's imports from 1.
+	ID        string    `json:"id"`
+	StartedAt time.Time `json:"started_at"`
+	// CompletedAt is set once every session of the confirmed plan has been
+	// registered or skipped. An import without it was interrupted; the next
+	// run with the same filters continues it.
+	CompletedAt *time.Time   `json:"completed_at,omitempty"`
+	Filters     BatchFilters `json:"filters"`
+	// DestinationID names the bucket the import was confirmed for.
+	DestinationID string `json:"destination_id"`
+	// ProjectsAdded are the project IDs the import added to the
+	// configuration; projects that were already included are not listed.
+	ProjectsAdded []string `json:"projects_added"`
+	// AppsAdded are the apps the import added to ImportedHarnesses.
+	AppsAdded []string `json:"apps_added"`
+	// Sessions are the archive session IDs the import registered.
+	Sessions []string `json:"sessions"`
+	// Subagents are the archive session IDs given to the imported sessions'
+	// subagent transcripts. Each registers when the collector validates it.
+	Subagents []string `json:"subagents"`
+}
+
+// BatchFilters are the filters and --include-* flags a batch was run with.
+// A --project directory is recorded by its project ID.
+type BatchFilters struct {
+	Harnesses      []string `json:"harnesses"`
+	ProjectIDs     []string `json:"project_ids"`
+	Since          string   `json:"since,omitempty"`
+	Until          string   `json:"until,omitempty"`
+	IncludeHome    bool     `json:"include_home"`
+	IncludeTemp    bool     `json:"include_temp"`
+	IncludeRemoved bool     `json:"include_removed"`
+}
+
+// NewBatchFilters records f without paths.
+func NewBatchFilters(f Filters) BatchFilters {
+	out := BatchFilters{
+		Harnesses: []string{}, ProjectIDs: []string{},
+		Since: f.Since, Until: f.Until,
+		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
+	}
+	for _, h := range f.Harnesses {
+		out.Harnesses = append(out.Harnesses, canonicalHarness(h))
+	}
+	for _, dir := range f.Projects {
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		out.ProjectIDs = append(out.ProjectIDs, archive.ProjectID(dir))
+	}
+	return out
+}
+
+func (f BatchFilters) equal(o BatchFilters) bool {
+	return slices.Equal(f.Harnesses, o.Harnesses) && slices.Equal(f.ProjectIDs, o.ProjectIDs) &&
+		f.Since == o.Since && f.Until == o.Until &&
+		f.IncludeHome == o.IncludeHome && f.IncludeTemp == o.IncludeTemp && f.IncludeRemoved == o.IncludeRemoved
+}
+
+// DestinationID identifies a storage destination by its provider, endpoint,
+// bucket, and prefix. It never covers credentials or their references.
+func DestinationID(c credentials.Config) string {
+	endpoint := ""
+	if c.Provider == credentials.ProviderR2 {
+		endpoint, _ = credentials.R2Endpoint(c.R2Endpoint, c.R2AccountID)
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{c.Provider, endpoint, c.Bucket, strings.Trim(c.Prefix, "/")}, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+func batchDir(home string) string { return filepath.Join(home, "imports") }
+
+func batchPath(home, id string) string { return filepath.Join(batchDir(home), id+".json") }
+
+// LoadBatches returns every import batch, oldest first.
+func LoadBatches(home string) ([]Batch, error) {
+	entries, err := os.ReadDir(batchDir(home))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list imports: %w", err)
+	}
+	var out []Batch
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		var b Batch
+		if err := local.Read(filepath.Join(batchDir(home), e.Name()), &b); err != nil {
+			return nil, fmt.Errorf("read import %q: %w", strings.TrimSuffix(e.Name(), ".json"), err)
+		}
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].StartedAt.Equal(out[j].StartedAt) {
+			return out[i].StartedAt.Before(out[j].StartedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out, nil
+}
+
+// SaveBatch durably writes b, replacing any earlier version.
+func SaveBatch(home string, b Batch) error {
+	if b.ID == "" || strings.ContainsAny(b.ID, `/\`) {
+		return errors.New("import ID is required")
+	}
+	if err := local.Write(batchPath(home, b.ID), b); err != nil {
+		return fmt.Errorf("save import %s: %w", b.ID, err)
+	}
+	return nil
+}
+
+// OpenBatch returns the batch a confirmed run records into: the latest one,
+// if it was interrupted and ran with the same filters and destination, or a
+// new one named for now's local date. An interrupted import is continued so
+// that its sessions and the projects it added stay one import, which undo
+// can reverse as a whole.
+func OpenBatch(home string, filters BatchFilters, destinationID string, now time.Time) (Batch, error) {
+	batches, err := LoadBatches(home)
+	if err != nil {
+		return Batch{}, err
+	}
+	if n := len(batches); n > 0 {
+		last := batches[n-1]
+		if last.CompletedAt == nil && last.Filters.equal(filters) && last.DestinationID == destinationID {
+			return last, nil
+		}
+	}
+	day := now.Format(dateLayout)
+	next := 1
+	for _, b := range batches {
+		if rest, ok := strings.CutPrefix(b.ID, day+"-"); ok {
+			if n, err := strconv.Atoi(rest); err == nil && n >= next {
+				next = n + 1
+			}
+		}
+	}
+	return Batch{
+		ID: fmt.Sprintf("%s-%d", day, next), StartedAt: now.UTC(), Filters: filters, DestinationID: destinationID,
+		ProjectsAdded: []string{}, AppsAdded: []string{}, Sessions: []string{}, Subagents: []string{},
+	}, nil
+}
+
+// AddChanges records the projects and apps a run added to the configuration.
+func (b *Batch) AddChanges(projectIDs, apps []string) {
+	b.ProjectsAdded = addUnique(b.ProjectsAdded, projectIDs...)
+	b.AppsAdded = addUnique(b.AppsAdded, apps...)
+}
+
+// AddSessions records sessions and subagents a run registered.
+func (b *Batch) AddSessions(sessions, subagents []string) {
+	b.Sessions = addUnique(b.Sessions, sessions...)
+	b.Subagents = addUnique(b.Subagents, subagents...)
+}
+
+// addUnique appends the values not already in list.
+func addUnique(list []string, values ...string) []string {
+	for _, v := range values {
+		if !slices.Contains(list, v) {
+			list = append(list, v)
+		}
+	}
+	return list
+}

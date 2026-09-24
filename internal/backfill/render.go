@@ -228,7 +228,7 @@ func RenderText(w io.Writer, p Plan) {
 	if subagents > 0 {
 		total += fmt.Sprintf(" (plus %s)", count(subagents, "subagent transcript"))
 	}
-	fmt.Fprintf(w, "%s, %s,\n", total, formatSize(bytes))
+	fmt.Fprintf(w, "%s, %s,\n", total, FormatSize(bytes))
 	loc := p.GeneratedAt.Location()
 	firstDay, lastDay := first.In(loc).Format(dateLayout), last.In(loc).Format(dateLayout)
 	if firstDay == lastDay {
@@ -533,8 +533,8 @@ func joinAnd(items []string) string {
 	return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
 }
 
-// formatSize shows a byte count in decimal units, as Finder does.
-func formatSize(n int64) string {
+// FormatSize shows a byte count in decimal units, as Finder does.
+func FormatSize(n int64) string {
 	switch {
 	case n < 1000:
 		return count(int(n), "byte")
