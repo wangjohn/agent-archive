@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func interruptedSetupWithExternalEdit(t *testing.T) (home, userHome, settings st
 	if err != nil {
 		t.Fatal(err)
 	}
-	journal := setupJournal{Changes: []hooks.Change{{Path: settings, Before: []byte("{}\n"), After: installed, Existed: true, Mode: 0600}}, Plist: collectorPlist(home, userHome)}
+	journal := setupJournal{Changes: []hooks.Change{{Path: settings, Before: []byte("{}\n"), After: installed, Existed: true, Mode: 0600}}, Plist: env.installation(home, userHome).collectorPlist()}
 	if err := local.Write(journalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestUninstallSkipsAnUnparsableFileOfAnUnselectedApp(t *testing.T) {
 	if b, _ := os.ReadFile(cursor); !bytes.Equal(b, broken) {
 		t.Fatal("the unparsable file was changed")
 	}
-	if _, err := os.Stat(collectorPlist(home, userHome)); !os.IsNotExist(err) {
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !os.IsNotExist(err) {
 		t.Fatal("the collector was not removed")
 	}
 	// The same file blocks uninstall once setup did install Cursor hooks.
@@ -145,7 +146,7 @@ func TestSetupAndUninstallNeedATerminal(t *testing.T) {
 	if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("uninstall --yes: exit %d\n%s", code, &errOut)
 	}
-	if _, err := os.Stat(collectorPlist(home, userHome)); !os.IsNotExist(err) {
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !os.IsNotExist(err) {
 		t.Fatal("uninstall --yes left the collector")
 	}
 }
@@ -223,7 +224,7 @@ func TestSetupMovesARelocatedCollectorOffTheDefaultLabel(t *testing.T) {
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			dataHome := home
 			if owner == "another" {
-				dataHome = defaultDataHome(userHome)
+				dataHome = env.installation(home, userHome).defaultDataHome()
 			}
 			old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
 			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel)
@@ -243,7 +244,7 @@ func TestSetupMovesARelocatedCollectorOffTheDefaultLabel(t *testing.T) {
 			if owner == "another" && (err != nil || len(unloaded) != 0) {
 				t.Fatalf("another directory's job was touched: unloaded %v, stat %v", unloaded, err)
 			}
-			if states[collectorPlist(home, userHome)] != "loaded" {
+			if states[env.installation(home, userHome).collectorPlist()] != "loaded" {
 				t.Fatal("the collector was not loaded under its own label")
 			}
 		})
@@ -260,14 +261,14 @@ func TestUninstallTouchesOnlyThisDirectorysCollector(t *testing.T) {
 			home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 			dataHome := home
 			if owner == "another" {
-				dataHome = defaultDataHome(userHome)
+				dataHome = env.installation(home, userHome).defaultDataHome()
 			}
 			old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
 			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel)
 			if err := local.WriteBytes(old, plist); err != nil {
 				t.Fatal(err)
 			}
-			current := collectorPlist(home, userHome)
+			current := env.installation(home, userHome).collectorPlist()
 			states := map[string]string{old: "running", current: "loaded"}
 			var unloaded []string
 			env.JobState = func(p string) string { return states[p] }
@@ -293,16 +294,116 @@ func TestUninstallTouchesOnlyThisDirectorysCollector(t *testing.T) {
 	}
 }
 
-// launchctl is asked about, and told to stop, the job by its service target,
-// which works whether or not the plist is still on disk.
-func TestLaunchdServiceTargetUsesTheLabel(t *testing.T) {
+// The default label belongs to the account's own default installation
+// only. A sandbox that overrides $HOME (and so moves the data directory with
+// it) gets a label of its own, as does AGENT_ARCHIVE_HOME set elsewhere.
+func TestOnlyTheAccountsDefaultInstallationGetsTheDefaultLabel(t *testing.T) {
+	account, sandbox := t.TempDir(), t.TempDir()
+	env := Env{AccountHome: func() (string, error) { return account, nil }}
+	accountDefault := filepath.Join(account, ".local", "share", "agent-archive")
+	sandboxDefault := filepath.Join(sandbox, ".local", "share", "agent-archive")
+	for _, tc := range []struct {
+		name, home, userHome string
+		isDefault            bool
+	}{
+		{"the account's own install", accountDefault, account, true},
+		{"HOME-only sandbox", sandboxDefault, sandbox, false},
+		{"AGENT_ARCHIVE_HOME elsewhere", filepath.Join(account, "other"), account, false},
+		{"sandbox HOME pointed at the real data directory", accountDefault, sandbox, true},
+	} {
+		in := env.installation(tc.home, tc.userHome)
+		label := launchLabel(in.collectorPlist())
+		if in.isDefault() != tc.isDefault || (label == hooks.LaunchLabel) != tc.isDefault {
+			t.Errorf("%s: default=%v label=%s", tc.name, in.isDefault(), label)
+		}
+		if got := serviceTarget(in.collectorPlist()); got != fmt.Sprintf("gui/%d/%s", os.Getuid(), label) {
+			t.Errorf("%s: service target %s", tc.name, got)
+		}
+	}
+	unknown := Env{AccountHome: func() (string, error) { return "", fmt.Errorf("no user database") }}
+	if unknown.installation(accountDefault, account).isDefault() {
+		t.Error("an unreadable account home made an installation the default one")
+	}
+}
+
+// A label is not proof of ownership: launchd reports the plist it loaded a
+// job from, and a job loaded from any other file is another installation's.
+func TestParseJobStateComparesTheLoadedPlist(t *testing.T) {
+	ours := filepath.Join(t.TempDir(), "com.agent-archive.collector.plist")
+	for _, tc := range []struct {
+		output string
+		err    error
+		want   string
+	}{
+		{"gui/501/com.agent-archive.collector = {\n\tpath = " + ours + "\n\tstate = running\n}", nil, "running"},
+		{"\tstate = waiting\n\tpath = " + ours + "\n", nil, "loaded"},
+		{"\tpath = /Users/someone/Library/LaunchAgents/com.agent-archive.collector.plist\n\tstate = running\n", nil, jobAnotherInstallation},
+		{"\tstate = running\n", nil, "unknown"},
+		{"Could not find service \"x\" in domain for user gui: 501", fmt.Errorf("exit status 113"), "missing"},
+		{"boom", fmt.Errorf("exit status 1"), "unknown"},
+	} {
+		if got := parseJobState(tc.output, tc.err, ours); got != tc.want {
+			t.Errorf("%q: %s, want %s", tc.output, got, tc.want)
+		}
+	}
+}
+
+// With the real launchctl path (nothing injected but launchctl itself), a
+// sandboxed install whose label launchd has loaded from another plist, the
+// user's real collector, neither stops nor replaces it: uninstall leaves it
+// running and setup refuses before touching anything.
+func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
-	plist := collectorPlist(home, userHome)
-	want := fmt.Sprintf("gui/%d/%s", os.Getuid(), hooks.CollectorLabel(canonicalPath(home), defaultDataHome(userHome)))
-	if got := serviceTarget(plist); got != want || strings.Contains(got, ".plist") {
-		t.Fatalf("service target %q, want %q", got, want)
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	env.JobState, env.LoadLaunchAgent, env.UnloadLaunchAgent = nil, nil, nil
+	var calls []string
+	stubLaunchctl(t, func(args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if args[0] == "print" {
+			return []byte("\tpath = /Users/real/Library/LaunchAgents/x.plist\n\tstate = running\n"), nil
+		}
+		return nil, nil
+	})
+	var out, errOut bytes.Buffer
+	code := Run([]string{"setup"}, strings.NewReader(s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir())), &out, &errOut, env)
+	if code != 1 || !strings.Contains(errOut.String(), "another installation") {
+		t.Fatalf("setup: exit %d\n%s", code, &errOut)
 	}
-	if got := collectorPlist(defaultDataHome(userHome), userHome); filepath.Base(got) != hooks.LaunchLabel+".plist" {
-		t.Fatalf("the default data directory's collector moved to %s", got)
+	for _, call := range calls {
+		if !strings.HasPrefix(call, "print ") {
+			t.Fatalf("setup ran launchctl %s", call)
+		}
 	}
+	if err := unloadLaunchAgent(env.installation(home, userHome).collectorPlist()); err == nil || !strings.Contains(err.Error(), "another installation") {
+		t.Fatalf("unload: %v", err)
+	}
+	for _, call := range calls {
+		if strings.HasPrefix(call, "bootout") || strings.HasPrefix(call, "bootstrap") {
+			t.Fatalf("launchctl %s", call)
+		}
+	}
+}
+
+// Uninstall leaves another installation's job running and says so.
+func TestUninstallLeavesAnotherInstallationsJob(t *testing.T) {
+	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
+	env.JobState = func(string) string { return jobAnotherInstallation }
+	env.UnloadLaunchAgent = func(p string) error { t.Fatalf("unloaded %s", p); return nil }
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("exit %d\n%s", code, &errOut)
+	}
+	if !strings.Contains(out.String(), "another installation") {
+		t.Fatalf("not reported:\n%s", &out)
+	}
+	_ = home
+	_ = userHome
+}
+
+// stubLaunchctl replaces launchctl for one test.
+func stubLaunchctl(t *testing.T, run func(args ...string) ([]byte, error)) {
+	t.Helper()
+	previous := runLaunchctl
+	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) { return run(args...) }
+	t.Cleanup(func() { runLaunchctl = previous })
 }

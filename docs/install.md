@@ -106,21 +106,30 @@ Macs are supported.
    when those variables are set in the shell you run setup from, otherwise
    `~/.claude/settings.json` and `~/.codex/hooks.json`; Cursor's is always
    `~/.cursor/hooks.json`. The paths are recorded, so `status` and `uninstall`
-   find them from any shell. Only the `hooks` entry of each file is rewritten
+   find them from any shell. The review lists each hook file, and warns when
+   rerunning setup from a shell with a different `CLAUDE_CONFIG_DIR` or
+   `CODEX_HOME` would move the hooks. Only the `hooks` entry of each file is rewritten
    (and Cursor's `version`, when missing): every other setting keeps its
    exact text, key order, and numbers, and uninstall restores a file setup
    only added hooks to byte for byte. A file that is a symlink, as dotfile
    managers such as stow or chezmoi create, is updated at its target and the
    link is kept.
 
-   With `AGENT_ARCHIVE_HOME` set to a directory other than the default
-   `~/.local/share/agent-archive`, the hooks carry it in their command, since
-   apps run hooks without your shell's environment, and the background
-   collector gets a launchd label of its own
-   (`com.agent-archive.collector.<hash>`). A second or test installation
-   therefore never loads, stops, or removes the default one. Rerunning setup
-   moves a collector an earlier release installed for such a directory under
-   the default label to its own label.
+   Only the account's own default installation, in
+   `~/.local/share/agent-archive` under the home directory macOS records for
+   your account, uses the launchd label `com.agent-archive.collector`. Any
+   other data directory, whether set with `AGENT_ARCHIVE_HOME` or moved by a
+   sandbox that overrides `HOME`, gets a label of its own
+   (`com.agent-archive.collector.<hash>`), and its hooks carry the directory
+   in their command, since apps run hooks without your shell's environment.
+   Before stopping a job, setup and uninstall also check that launchd loaded
+   it from this installation's own plist; a job loaded from any other plist
+   is left running and reported. Together these keep a second or test
+   installation from stopping or replacing the default one. They do not stop
+   it from loading its own job into your real launchd: run tests with
+   launchctl stubbed out. Rerunning setup moves a collector an earlier
+   release installed for a non-default directory under the default label to
+   its own label.
 
    After installation, approve the hooks in each selected app (Codex CLI:
    `/hooks`), then start a harmless new session in an included project.
@@ -468,8 +477,10 @@ Confirming needs a terminal; `--yes` skips the confirmations and is required
 without one.
 
 Only the collector of the current data directory (see `AGENT_ARCHIVE_HOME`
-above) is stopped. The hook files of the apps setup installed must be
-readable; another app's file is only checked for leftover handlers, so one
+above) is stopped, and only when launchd loaded it from this installation's
+own plist. The hook files, including any an earlier release left at
+`~/.claude/settings.json` or `~/.codex/hooks.json`, of the apps setup installed must be
+readable; any other file is only checked for leftover handlers, so one
 that is not valid JSON is reported and left as it is rather than blocking
 uninstall.
 

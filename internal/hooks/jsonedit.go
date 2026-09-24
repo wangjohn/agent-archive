@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -178,6 +179,7 @@ type document struct {
 	open    int          // offset of the root '{'
 	close   int          // offset of the root '}'
 	indent  string       // whitespace before each top-level key; "" when compact
+	newline string       // the file's line ending, "\r\n" or "\n"
 	created bool         // the file was empty, so the whole document is new
 	edits   []edit
 }
@@ -196,7 +198,10 @@ var errInvalidConfiguration = errors.New("invalid existing hook configuration")
 
 // parseDocument reads src, which must be empty or a single JSON object.
 func parseDocument(src []byte) (*document, error) {
-	d := &document{src: src}
+	d := &document{src: src, newline: "\n"}
+	if bytes.Contains(src, []byte("\r\n")) {
+		d.newline = "\r\n"
+	}
 	if len(bytes.TrimSpace(src)) == 0 {
 		d.src, d.created, d.indent = []byte("{}"), true, "  "
 	}
@@ -217,6 +222,12 @@ func parseDocument(src []byte) (*document, error) {
 		key, ok := keyToken.(string)
 		if !ok {
 			return nil, errInvalidConfiguration
+		}
+		// Setup would edit one of two members that tools resolve
+		// differently (the last wins in Go and JavaScript, not everywhere),
+		// so a duplicate of a member it owns is refused.
+		if _, dup := d.span(key); dup && (key == "hooks" || key == "version") {
+			return nil, fmt.Errorf("%w: more than one top-level %q key; remove the duplicate", errInvalidConfiguration, key)
 		}
 		keyStart := skipUntil(d.src, before, '"')
 		valStart := skipSpace(d.src, skipSpace(d.src, int(dec.InputOffset()))+1)
@@ -275,7 +286,8 @@ func (d *document) render(value any) (string, error) {
 	if err := json.Indent(&out, compact.Bytes(), d.indent, d.indent); err != nil {
 		return "", err
 	}
-	return out.String(), nil
+	// JSON strings cannot hold a raw newline, so every one here is layout.
+	return strings.ReplaceAll(out.String(), "\n", d.newline), nil
 }
 
 func (d *document) span(key string) (int, bool) {
@@ -312,7 +324,7 @@ func (d *document) set(key string, value any) error {
 		}
 		return nil
 	}
-	entry := "\n" + d.indent + name.String() + ": " + text
+	entry := d.newline + d.indent + name.String() + ": " + text
 	if len(d.spans) > 0 {
 		end := d.spans[len(d.spans)-1].valEnd
 		d.edits = append(d.edits, edit{end, end, "," + entry})
@@ -321,10 +333,34 @@ func (d *document) set(key string, value any) error {
 	// An empty root object: lay it out afresh, keeping any members added
 	// before this one in the same edit.
 	if n := len(d.edits); n > 0 && d.edits[n-1].start == d.open+1 && d.edits[n-1].end == d.close {
-		d.edits[n-1].text = strings.TrimSuffix(d.edits[n-1].text, "\n") + "," + entry + "\n"
+		d.edits[n-1].text = strings.TrimSuffix(d.edits[n-1].text, d.newline) + "," + entry + d.newline
 		return nil
 	}
-	d.edits = append(d.edits, edit{d.open + 1, d.close, entry + "\n"})
+	d.edits = append(d.edits, edit{d.open + 1, d.close, entry + d.newline})
+	return nil
+}
+
+// setBefore adds the member key just before the existing member before, or
+// like set when there is no such member. key must not exist yet.
+func (d *document) setBefore(before, key string, value any) error {
+	i, ok := d.span(before)
+	if !ok {
+		return d.set(key, value)
+	}
+	text, err := d.render(value)
+	if err != nil {
+		return err
+	}
+	var name bytes.Buffer
+	if err := encodeString(&name, key); err != nil {
+		return err
+	}
+	d.root.members = append([]member{{key, value}}, d.root.members...)
+	entry := name.String() + ":" + text + ","
+	if d.indent != "" {
+		entry = name.String() + ": " + text + "," + d.newline + d.indent
+	}
+	d.edits = append(d.edits, edit{d.spans[i].keyStart, d.spans[i].keyStart, entry})
 	return nil
 }
 
@@ -349,8 +385,13 @@ func (d *document) remove(key string) {
 }
 
 // bytes applies the edits. Edits never overlap: each touches one member.
+// Two insertions at one offset keep the order they were made in: the later
+// is applied first, so it ends up after the earlier.
 func (d *document) bytes() []byte {
-	edits := append([]edit(nil), d.edits...)
+	edits := make([]edit, 0, len(d.edits))
+	for i := len(d.edits) - 1; i >= 0; i-- {
+		edits = append(edits, d.edits[i])
+	}
 	sort.SliceStable(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
 	out := append([]byte(nil), d.src...)
 	for _, e := range edits {

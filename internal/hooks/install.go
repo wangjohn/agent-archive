@@ -107,6 +107,12 @@ func Apply(changes []Change) error {
 		if err = atomicWrite(c.Path, c.After, c.Mode); err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
+		// What the application will read is the file through c.Path, links
+		// and all; a write that landed anywhere else is not a success.
+		if written, err := os.ReadFile(c.Path); err != nil || string(written) != string(c.After) {
+			target, _ := resolveTarget(c.Path)
+			return errors.Join(fmt.Errorf("cannot update %s: the file written (%s) does not read back through it", c.Path, target), rollback(applied))
+		}
 		applied = append(applied, c)
 	}
 	return nil
@@ -207,7 +213,14 @@ func resolveTarget(path string) (string, error) {
 			return "", err
 		}
 		if !filepath.IsAbs(link) {
-			link = filepath.Join(filepath.Dir(path), link)
+			// Relative to the directory the link really sits in, which is
+			// not filepath.Dir(path) when that directory is itself a link
+			// (~/.claude -> dotfiles/claude).
+			dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+			if err != nil {
+				return "", err
+			}
+			link = filepath.Join(dir, link)
 		}
 		path = link
 	}
@@ -253,14 +266,14 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 // data directory.
 const LaunchLabel = "com.agent-archive.collector"
 
-// CollectorLabel is the launchd label of the collector for dataHome. The
-// default data directory keeps LaunchLabel, so existing installations keep
-// their job. Any other directory (AGENT_ARCHIVE_HOME) gets a label of its
-// own, derived from the directory: launchd labels are global to the login
-// session, unlike HOME, so without this a test or secondary installation
-// would load, inspect, and unload the default one.
+// CollectorLabel is the launchd label of the collector for dataHome when it
+// is not the account's default installation, which keeps LaunchLabel so an
+// existing installation keeps its job. The label is derived from the
+// directory: launchd labels are global to the login session, unlike HOME,
+// so a test or secondary installation needs one of its own. defaultDataHome
+// may be "" when the caller has already decided dataHome is not the default.
 func CollectorLabel(dataHome, defaultDataHome string) string {
-	if filepath.Clean(dataHome) == filepath.Clean(defaultDataHome) {
+	if defaultDataHome != "" && filepath.Clean(dataHome) == filepath.Clean(defaultDataHome) {
 		return LaunchLabel
 	}
 	sum := sha256.Sum256([]byte(filepath.Clean(dataHome)))

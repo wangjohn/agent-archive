@@ -16,9 +16,11 @@ func noEnv(string) (string, bool) { return "", false }
 
 func testEnv(t *testing.T, home string, now time.Time) Env {
 	t.Helper()
-	userHome := t.TempDir()
+	userHome, accountHome := t.TempDir(), t.TempDir()
 	return Env{
 		UserHomeDir: func() (string, error) { return userHome, nil },
+		// Tests never run as the account's default installation.
+		AccountHome: func() (string, error) { return accountHome, nil },
 		Home:        func() (string, error) { return home, nil },
 		Now:         func() time.Time { return now },
 		// Tests must not see the real environment: run inside an agent,

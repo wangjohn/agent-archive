@@ -7,6 +7,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -127,6 +128,22 @@ func showSetupReview(p *prompter, cfg, existing config.Config, reconfiguring boo
 
 // printReviewNotes prints the caveats that always apply, after any
 // change-specific warnings.
+// reviewHookFiles names the file each selected app's hooks go into, and
+// warns when that is not where setup installed them last time: this shell's
+// CLAUDE_CONFIG_DIR or CODEX_HOME differs from the one setup saw then, and
+// confirming moves the hooks.
+func reviewHookFiles(p *prompter, apps []string, next, previous hooks.Files, installed []string) {
+	variable := map[string]string{"claude": "CLAUDE_CONFIG_DIR", "codex": "CODEX_HOME"}
+	for _, app := range apps {
+		p.note(fmt.Sprintf("%s hooks: %s", appName(app), next[app]))
+		if containsString(installed, app) && previous[app] != next[app] {
+			p.warn(fmt.Sprintf("%s hooks move here from %s.", appName(app), previous[app]),
+				fmt.Sprintf("%s in this shell differs from when setup last ran. To keep them where they are,", variable[app]),
+				"cancel and run agent-archive setup from a shell with the same setting.")
+		}
+	}
+}
+
 func printReviewNotes(p *prompter, cfg config.Config, discoveries map[string]applicationDiscovery) {
 	printReviewPrivacy(p, cfg)
 	p.note("Filtering is best effort; sensitive text may remain in archived sessions.")

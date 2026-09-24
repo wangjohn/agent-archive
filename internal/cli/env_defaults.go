@@ -27,14 +27,25 @@ func detectHarnesses(files hooks.Files) []string {
 	return found
 }
 
+// runLaunchctl runs launchctl with args. Tests replace it; nothing else
+// shells out to launchctl.
+var runLaunchctl = func(ctx context.Context, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, "launchctl", args...).CombinedOutput()
+}
+
+// jobAnotherInstallation is the job state of a label launchd has loaded
+// from a plist other than the one asked about: the job belongs to another
+// installation (the user's real one, seen from a sandboxed HOME, say), and
+// nothing here may stop or replace it.
+const jobAnotherInstallation = "another_installation"
+
 // loadLaunchAgent loads a just-installed LaunchAgent so scheduled
 // collection starts immediately rather than waiting for the next login.
 // This shells out to launchctl and has not been verified against a real
 // launchd (see docs/agent-archive-implementation.md); a failure here is
 // reported as an incomplete setup, with rollback and a retry path.
 func loadLaunchAgent(plistPath string) error {
-	cmd := exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
-	output, err := cmd.CombinedOutput()
+	output, err := runLaunchctl(context.Background(), "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
 	if err != nil {
 		return fmt.Errorf("launchctl bootstrap: %w: %s", err, output)
 	}
@@ -45,10 +56,19 @@ func loadLaunchAgent(plistPath string) error {
 // service target (gui/UID/label), as jobState checks it, rather than by the
 // plist: bootout by path needs the file, and fails with a misleading
 // "Input/output error" when the plist was deleted while the job stayed
-// loaded. Every plist this tool loads is named after its label.
+// loaded. A label alone does not prove ownership, so it first confirms
+// launchd loaded the job from plistPath itself, and refuses otherwise.
 func unloadLaunchAgent(plistPath string) error {
-	cmd := exec.Command("launchctl", "bootout", serviceTarget(plistPath))
-	output, err := cmd.CombinedOutput()
+	switch state := launchdJobState(plistPath); state {
+	case "loaded", "running":
+	case "missing":
+		return nil
+	case jobAnotherInstallation:
+		return fmt.Errorf("launchd's %s job was not loaded from %s; it belongs to another installation and was left running", launchLabel(plistPath), plistPath)
+	default:
+		return fmt.Errorf("cannot confirm which plist launchd's %s job was loaded from; it was left as it is", launchLabel(plistPath))
+	}
+	output, err := runLaunchctl(context.Background(), "bootout", serviceTarget(plistPath))
 	if err != nil {
 		return fmt.Errorf("launchctl bootout: %w: %s", err, output)
 	}
@@ -69,16 +89,41 @@ func (e Env) jobState(plist string) string {
 	if e.LoadLaunchAgent != nil {
 		return "missing"
 	}
+	return launchdJobState(plist)
+}
+
+// launchdJobState asks launchd about the job plist defines, by its label.
+func launchdJobState(plist string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, "launchctl", "print", serviceTarget(plist)).CombinedOutput()
+	output, err := runLaunchctl(ctx, "print", serviceTarget(plist))
+	return parseJobState(string(output), err, plist)
+}
+
+// parseJobState reads `launchctl print` output for the job plist defines:
+// missing, loaded, or running when launchd loaded the label from plist
+// itself; jobAnotherInstallation when it loaded it from another file; and
+// unknown when launchctl fails or names no file to compare.
+func parseJobState(output string, err error, plist string) string {
 	if err != nil {
-		if strings.Contains(string(output), "Could not find service") {
+		if strings.Contains(output, "Could not find service") {
 			return "missing"
 		}
 		return "unknown"
 	}
-	if strings.Contains(string(output), "state = running") {
+	loadedFrom := ""
+	for _, line := range strings.Split(output, "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "path = "); ok {
+			loadedFrom = strings.TrimSpace(value)
+			break
+		}
+	}
+	switch {
+	case loadedFrom == "":
+		return "unknown"
+	case canonicalPath(loadedFrom) != canonicalPath(plist):
+		return jobAnotherInstallation
+	case strings.Contains(output, "state = running"):
 		return "running"
 	}
 	return "loaded"

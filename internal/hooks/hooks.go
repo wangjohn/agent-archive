@@ -81,7 +81,8 @@ func Merge(existing []byte, harness string, hook Hook) ([]byte, error) {
 			return nil, errors.New("unsupported Cursor hook configuration version")
 		}
 		if !ok {
-			if err = doc.set("version", json.Number("1")); err != nil {
+			// Where Cursor's own files have it: before "hooks".
+			if err = doc.setBefore("hooks", "version", json.Number("1")); err != nil {
 				return nil, err
 			}
 		}

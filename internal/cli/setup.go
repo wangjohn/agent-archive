@@ -300,6 +300,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if existing.Paused {
 			p.note("Capture stays paused until you run agent-archive resume.")
 		}
+		reviewHookFiles(p, draft.Config.Harnesses, env.hookFiles(userHome), env.installedHookFiles(userHome, existing), existing.Harnesses)
 		printReviewNotes(p, draft.Config, discoveries)
 		action, e := reviewAction(p, found)
 		if e != nil {

@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"os/user"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -52,6 +54,11 @@ type Env struct {
 	// agent-archive's own (possibly redirected) private data directory.
 	// Defaults to os.UserHomeDir.
 	UserHomeDir func() (string, error)
+	// AccountHome is the account's home directory from the user database,
+	// which overriding $HOME does not change. Only the data directory under
+	// it is the default installation, with the default launchd label.
+	// Defaults to os/user.Current's HomeDir.
+	AccountHome func() (string, error)
 	// DetectHarnesses best-effort detects which applications appear
 	// installed under a user home directory, to pre-select setup's
 	// application prompts; the user can still include or exclude any of
@@ -150,6 +157,26 @@ func (e Env) executable() (string, error) {
 		return e.Executable()
 	}
 	return os.Executable()
+}
+
+// accountHome is Env.AccountHome, or "" when it cannot be read, in which
+// case no installation counts as the default one.
+func (e Env) accountHome() string {
+	lookup := e.AccountHome
+	if lookup == nil {
+		lookup = func() (string, error) {
+			u, err := user.Current()
+			if err != nil {
+				return "", err
+			}
+			return u.HomeDir, nil
+		}
+	}
+	home, err := lookup()
+	if err != nil || !filepath.IsAbs(home) {
+		return ""
+	}
+	return home
 }
 
 func (e Env) userHomeDir() (string, error) {

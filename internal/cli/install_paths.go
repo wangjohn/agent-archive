@@ -10,10 +10,25 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// defaultDataHome is the data directory used when AGENT_ARCHIVE_HOME is
-// unset (see local.Home), with its symlinks resolved the same way.
-func defaultDataHome(userHome string) string {
-	return canonicalPath(filepath.Join(userHome, ".local", "share", "agent-archive"))
+// installation locates one data directory's integrations: the hook command
+// its hooks run and its background collector's LaunchAgent.
+type installation struct {
+	home     string // the data directory
+	userHome string // $HOME, where LaunchAgents and app configs live
+	// accountHome is the account's own home directory from the user
+	// database, which a sandbox that only overrides $HOME does not change.
+	accountHome string
+}
+
+func (e Env) installation(home, userHome string) installation {
+	return installation{home: home, userHome: userHome, accountHome: e.accountHome()}
+}
+
+// defaultDataHome is the data directory of the account's own default
+// installation: ~/.local/share/agent-archive under the account's real home,
+// with its symlinks resolved as local.Home resolves them.
+func (in installation) defaultDataHome() string {
+	return canonicalPath(filepath.Join(in.accountHome, ".local", "share", "agent-archive"))
 }
 
 // canonicalPath is path with its existing symlinks resolved, as local.Home
@@ -26,26 +41,38 @@ func canonicalPath(path string) string {
 	return filepath.Clean(path)
 }
 
-// isDefaultDataHome reports whether home is the data directory a process
-// finds without AGENT_ARCHIVE_HOME.
-func isDefaultDataHome(home, userHome string) bool {
-	return canonicalPath(home) == defaultDataHome(userHome)
+// isDefault reports whether this is the account's default installation.
+// Anything else (AGENT_ARCHIVE_HOME set elsewhere, or a sandbox that
+// overrides $HOME and so moves the data directory with it) is not, and gets
+// labels and hook commands of its own.
+func (in installation) isDefault() bool {
+	return in.accountHome != "" && canonicalPath(in.home) == in.defaultDataHome()
 }
 
-// installedHook is what setup installs into the apps' hook files for the
-// data directory home: a non-default directory travels in the command.
-func installedHook(home, userHome, executable string) hooks.Hook {
+// hook is what setup installs into the apps' hook files: a non-default data
+// directory travels in the command.
+func (in installation) hook(executable string) hooks.Hook {
 	hook := hooks.Hook{Executable: executable}
-	if !isDefaultDataHome(home, userHome) {
-		hook.DataHome = home
+	if !in.isDefault() {
+		hook.DataHome = in.home
 	}
 	return hook
 }
 
-// collectorPlist is the LaunchAgent path of home's background collector;
-// its file name is its label (see hooks.CollectorLabel).
-func collectorPlist(home, userHome string) string {
-	return filepath.Join(userHome, "Library", "LaunchAgents", hooks.CollectorLabel(canonicalPath(home), defaultDataHome(userHome))+".plist")
+// label is the background collector's launchd label (see
+// hooks.CollectorLabel): the default label only for the default
+// installation.
+func (in installation) label() string {
+	if in.isDefault() {
+		return hooks.LaunchLabel
+	}
+	return hooks.CollectorLabel(canonicalPath(in.home), "")
+}
+
+// collectorPlist is the LaunchAgent path of the background collector; its
+// file name is its label.
+func (in installation) collectorPlist() string {
+	return filepath.Join(in.userHome, "Library", "LaunchAgents", in.label()+".plist")
 }
 
 // launchLabel is the launchd label of the job a plist defines. Every job
@@ -57,13 +84,13 @@ func launchLabel(plist string) string {
 // previousCollectorPlist is the LaunchAgent an earlier release installed
 // under the default label for a non-default data directory, before labels
 // were derived from the directory: "" unless that plist exists and runs the
-// collector for home. A plist for any other directory is never returned, so
-// the default installation is never touched from a secondary one.
-func previousCollectorPlist(home, userHome string) string {
-	if isDefaultDataHome(home, userHome) {
+// collector for this data directory. A plist for any other directory is
+// never returned, so another installation's is never touched.
+func (in installation) previousCollectorPlist() string {
+	if in.isDefault() {
 		return ""
 	}
-	path := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
+	path := filepath.Join(in.userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
@@ -72,19 +99,19 @@ func previousCollectorPlist(home, userHome string) string {
 	if err != nil || dataHome == "" {
 		return ""
 	}
-	if canonicalPath(dataHome) != canonicalPath(home) {
+	if canonicalPath(dataHome) != canonicalPath(in.home) {
 		return ""
 	}
 	return path
 }
 
 // installedCollectorPlist is the LaunchAgent status reports on: the one for
-// home's own label, or else one an earlier release installed for home under
-// the default label.
-func installedCollectorPlist(home, userHome string) string {
-	current := collectorPlist(home, userHome)
+// this installation's own label, or else one an earlier release installed
+// for it under the default label.
+func (in installation) installedCollectorPlist() string {
+	current := in.collectorPlist()
 	if _, err := os.Stat(current); err != nil {
-		if previous := previousCollectorPlist(home, userHome); previous != "" {
+		if previous := in.previousCollectorPlist(); previous != "" {
 			return previous
 		}
 	}
@@ -97,12 +124,19 @@ func (e Env) hookFiles(userHome string) hooks.Files {
 	return hooks.ResolveFiles(userHome, e.lookupEnv)
 }
 
+// legacyHookFiles are the fixed paths every release before hook_files
+// installed into, whatever CLAUDE_CONFIG_DIR or CODEX_HOME said.
+func legacyHookFiles(userHome string) hooks.Files {
+	return hooks.ResolveFiles(userHome, func(string) (string, bool) { return "", false })
+}
+
 // installedHookFiles is where setup installed each app's hooks: the paths it
 // recorded, so status and uninstall find them from a shell without the
-// variables setup saw, and the current environment's paths for apps a
-// configuration from before the record has no entry for.
+// variables setup saw. An app a configuration from before the record has no
+// entry for was installed at its legacy path, never where the current
+// environment points.
 func (e Env) installedHookFiles(userHome string, cfg config.Config) hooks.Files {
-	files := e.hookFiles(userHome)
+	files := legacyHookFiles(userHome)
 	for app, path := range cfg.HookFiles {
 		if filepath.IsAbs(path) {
 			files[app] = path

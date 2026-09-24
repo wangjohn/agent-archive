@@ -126,20 +126,24 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 			return fmt.Errorf("new pending evidence appeared while confirming; rerun uninstall to review it")
 		}
 	}
-	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), installedApps(cfg, found))
+	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), legacyHookFiles(userHome), installedApps(cfg, found))
 	if err != nil {
 		return err
 	}
 	// The collector for this data directory, and one an earlier release
 	// installed for it under the default label. Never another directory's.
-	plists := []string{collectorPlist(home, userHome)}
-	if previous := previousCollectorPlist(home, userHome); previous != "" {
+	plists := []string{env.installation(home, userHome).collectorPlist()}
+	if previous := env.installation(home, userHome).previousCollectorPlist(); previous != "" {
 		plists = append(plists, previous)
 	}
 	for _, plist := range plists {
 		state := env.jobState(plist)
 		if state == "unknown" {
 			return fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
+		}
+		if state == jobAnotherInstallation {
+			fmt.Fprintf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation.\n", launchLabel(plist))
+			continue
 		}
 		if state == "running" || state == "loaded" {
 			if err = env.unloadLaunchAgent(plist); err != nil {
@@ -253,24 +257,30 @@ func installedApps(cfg config.Config, found bool) []string {
 	return cfg.Harnesses
 }
 
-// planUninstallHooks plans removing our handlers from every app's hook file.
-// An installed app's file must be readable, or its hooks would stay behind.
-// Any other app's file is only checked for leftovers from an earlier
-// installation, so one that cannot be parsed (the user's own, half-edited
+// planUninstallHooks plans removing our handlers from every app's hook file
+// (files), and from its legacy path too when that differs, where an earlier
+// release may have left them. An installed app's file must be readable, or
+// its hooks would stay behind. Any other file is only checked for
+// leftovers, so one that cannot be parsed (the user's own, half-edited
 // ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
 // than blocking the collector's removal.
-func planUninstallHooks(files hooks.Files, installed []string) (changes []hooks.Change, skipped []string, err error) {
+func planUninstallHooks(files, legacy hooks.Files, installed []string) (changes []hooks.Change, skipped []string, err error) {
 	for _, app := range allHarnesses {
-		change, found, err := hooks.PlanRemovalOf(files, app)
-		if err != nil {
-			if containsString(installed, app) {
-				return nil, nil, err
+		for i, set := range []hooks.Files{files, legacy} {
+			if i == 1 && legacy[app] == files[app] {
+				continue
 			}
-			skipped = append(skipped, fmt.Sprintf("Skipped %v. Setup did not install %s hooks, so the file was left as it is.", err, appName(app)))
-			continue
-		}
-		if found {
-			changes = append(changes, change)
+			change, found, err := hooks.PlanRemovalOf(set, app)
+			if err != nil {
+				if containsString(installed, app) && i == 0 {
+					return nil, nil, err
+				}
+				skipped = append(skipped, fmt.Sprintf("Skipped %v. Setup did not install %s hooks there, so the file was left as it is.", err, appName(app)))
+				continue
+			}
+			if found {
+				changes = append(changes, change)
+			}
 		}
 	}
 	return changes, skipped, nil

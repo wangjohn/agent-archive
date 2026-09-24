@@ -342,7 +342,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	for _, app := range next.Harnesses {
 		next.HookFiles[app] = files[app]
 	}
-	changes, err := hooks.Plan(files, installedHook(home, userHome, executable), next.Harnesses)
+	changes, err := hooks.Plan(files, env.installation(home, userHome).hook(executable), next.Harnesses)
 	if err != nil {
 		return err
 	}
@@ -360,7 +360,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 			changes = append(changes, removal)
 		}
 	}
-	plistPath := collectorPlist(home, userHome)
+	plistPath := env.installation(home, userHome).collectorPlist()
 	plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath))
 	if err != nil {
 		return err
@@ -382,6 +382,9 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	job := env.jobState(plistPath)
 	if job == "unknown" && old.MachineID != "" {
 		return fmt.Errorf("cannot determine previous background job state; restore access to launchctl and retry")
+	}
+	if job == jobAnotherInstallation {
+		return fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)
 	}
 	legacy, err := planLegacyMigration(userHome, env)
 	if err != nil {
@@ -440,6 +443,12 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 		}
 		changed = append(changed, c)
 	}
+	if err := checkLegacyJob(home, journal.Legacy, legacyJobName); err != nil {
+		return err
+	}
+	if err := checkLegacyJob(home, journal.Relabeled, relabeledJobName); err != nil {
+		return err
+	}
 	state := env.jobState(journal.Plist)
 	if state == "loaded" || state == "running" {
 		if err := env.unloadLaunchAgent(journal.Plist); err != nil {
@@ -456,14 +465,20 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 			return err
 		}
 	}
-	if err := restoreLegacyJob(journal.Legacy, env); err != nil {
+	if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, env); err != nil {
 		return err
 	}
-	if err := restoreLegacyJob(journal.Relabeled, env); err != nil {
+	if err := restoreLegacyJob(home, journal.Relabeled, relabeledJobName, env); err != nil {
 		return err
 	}
 	return os.Remove(journalPath(home))
 }
+
+// Names of the jobs a setup journal can retire, as recovery errors call them.
+const (
+	legacyJobName    = "legacy upload job"
+	relabeledJobName = "background collector installed under the default label"
+)
 
 // recoveryBlockedError is a recovery that cannot proceed without the user:
 // a file changed outside setup, or launchd cannot be asked. Rerunning setup
@@ -529,7 +544,8 @@ func abandonRecovery(out io.Writer, env Env) error {
 	for _, c := range journal.Changes {
 		fmt.Fprintf(out, "  %s\n", c.Path)
 	}
-	fmt.Fprintln(out, "Next: run agent-archive setup to review your settings and reinstall anything missing. agent-archive status shows what is installed.")
+	fmt.Fprintln(out, "The background collector may be stopped: the interrupted setup can have stopped it before it was interrupted, and nothing restarts it now.")
+	fmt.Fprintln(out, "Next: run agent-archive setup to review your settings; it reinstalls the hooks and starts the background collector again. agent-archive status shows what is running.")
 	return nil
 }
 
@@ -558,7 +574,7 @@ func recoverSetup(home string, env Env) error {
 // planRelabel prepares retiring the collector an earlier release installed
 // for home under the default label, or returns nil when there is none.
 func planRelabel(home, userHome string, env Env) (*legacyJob, error) {
-	path := previousCollectorPlist(home, userHome)
+	path := env.installation(home, userHome).previousCollectorPlist()
 	if path == "" {
 		return nil, nil
 	}
@@ -573,6 +589,10 @@ func planRelabel(home, userHome string, env Env) (*legacyJob, error) {
 	state := env.jobState(path)
 	if state == "unknown" {
 		return nil, fmt.Errorf("cannot determine the state of %s; restore access to launchctl and retry", path)
+	}
+	if state == jobAnotherInstallation {
+		// launchd runs that label from another plist: not this one's to retire.
+		return nil, nil
 	}
 	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: state == "loaded" || state == "running"}, nil
 }

@@ -220,7 +220,7 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
-	paths := []string{filepath.Join(home, "config.json"), filepath.Join(userHome, ".codex/hooks.json"), collectorPlist(home, userHome)}
+	paths := []string{filepath.Join(home, "config.json"), filepath.Join(userHome, ".codex/hooks.json"), env.installation(home, userHome).collectorPlist()}
 	before := map[string]string{}
 	for _, p := range paths {
 		b, _ := os.ReadFile(p)

@@ -546,7 +546,7 @@ func readStatus(env Env) (view statusView, err error) {
 		view.Apps[i].VersionState = appDiscovery.VersionState
 		view.Apps[i].Capabilities = captureCapabilityProfile(view.Apps[i].Name)
 		view.Apps[i].VersionSupport, view.Apps[i].VersionSupportReason = installedVersionSupportDetail(appDiscovery, view.Apps[i].verifiedHarnessVersions)
-		installed, e := hooks.Installed(hookFiles, installedHook(home, userHome, executable), view.Apps[i].Name)
+		installed, e := hooks.Installed(hookFiles, env.installation(home, userHome).hook(executable), view.Apps[i].Name)
 		switch {
 		case binaryProblem != "":
 			view.Apps[i].Hooks = hooksBroken
@@ -558,7 +558,7 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Apps[i].Hooks = "installed"
 		}
 	}
-	plist := installedCollectorPlist(home, userHome)
+	plist := env.installation(home, userHome).installedCollectorPlist()
 	view.Background = env.jobState(plist)
 	// launchd reports a job whose program is gone as loaded (it only fails
 	// when it fires), so read the program the LaunchAgent actually runs.
