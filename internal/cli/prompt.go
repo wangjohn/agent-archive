@@ -19,6 +19,51 @@ type prompter struct {
 	out    io.Writer
 	source io.Reader
 	now    func() time.Time
+	style  textStyle
+}
+
+// textStyle adds ANSI emphasis only when writing to a color terminal, so
+// redirected output and tests see plain text.
+type textStyle struct{ color bool }
+
+func styleFor(out io.Writer) textStyle {
+	file, ok := out.(*os.File)
+	if !ok || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return textStyle{}
+	}
+	return textStyle{color: term.IsTerminal(int(file.Fd()))}
+}
+
+func (s textStyle) wrap(code, text string) string {
+	if !s.color || text == "" {
+		return text
+	}
+	return "\x1b[" + code + "m" + text + "\x1b[0m"
+}
+func (s textStyle) bold(text string) string   { return s.wrap("1", text) }
+func (s textStyle) dim(text string) string    { return s.wrap("2", text) }
+func (s textStyle) green(text string) string  { return s.wrap("32", text) }
+func (s textStyle) yellow(text string) string { return s.wrap("33", text) }
+func (s textStyle) red(text string) string    { return s.wrap("31", text) }
+
+// step prints a wizard step heading, set apart from the prompts above it.
+func (p *prompter) step(n int, title string) {
+	fmt.Fprintf(p.out, "\n%s\n\n", p.style.bold(fmt.Sprintf("Step %d of 3 · %s", n, title)))
+}
+
+// warn and note print one review item. Continuation lines, such as a link,
+// are indented under the item's text.
+func (p *prompter) warn(text string, continuation ...string) {
+	p.item(p.style.yellow("!"), text, continuation)
+}
+func (p *prompter) note(text string, continuation ...string) {
+	p.item(p.style.dim("·"), text, continuation)
+}
+func (p *prompter) item(mark, text string, continuation []string) {
+	fmt.Fprintf(p.out, "  %s %s\n", mark, text)
+	for _, l := range continuation {
+		fmt.Fprintln(p.out, "    "+l)
+	}
 }
 
 // clock returns the prompter's injected clock, or the wall clock when none
@@ -31,7 +76,7 @@ func (p *prompter) clock() time.Time {
 }
 
 func newPrompter(in io.Reader, out io.Writer) *prompter {
-	return &prompter{in: bufio.NewReader(in), out: out, source: in}
+	return &prompter{in: bufio.NewReader(in), out: out, source: in, style: styleFor(out)}
 }
 
 func (p *prompter) line(label string) (string, error) {
@@ -102,6 +147,65 @@ func (p *prompter) yesNo(label string, def bool) (bool, error) {
 			fmt.Fprintln(p.out, "Please enter y or n.")
 		}
 	}
+}
+
+// option is one numbered entry in a menu. Key is what the caller receives;
+// Label is what the user reads.
+type option struct {
+	Key, Label string
+}
+
+// menu prints a question with numbered options and returns the chosen key.
+// The user answers with the option's number; a blank answer takes def. The
+// option's key, or an unambiguous prefix of it such as y for yes, is also
+// accepted, so scripted input keeps working.
+func (p *prompter) menu(question, def string, options ...option) (string, error) {
+	fmt.Fprintln(p.out, question)
+	defNum := ""
+	for i, o := range options {
+		fmt.Fprintf(p.out, "  %d) %s\n", i+1, o.Label)
+		if o.Key == def {
+			defNum = strconv.Itoa(i + 1)
+		}
+	}
+	label := fmt.Sprintf("Enter 1-%d", len(options))
+	for {
+		answer, err := p.withDefault(label, defNum)
+		if err != nil {
+			return "", err
+		}
+		if n, e := strconv.Atoi(answer); e == nil && n >= 1 && n <= len(options) {
+			return options[n-1].Key, nil
+		}
+		if key, ok := matchOption(answer, options); ok {
+			return key, nil
+		}
+		fmt.Fprintf(p.out, "Enter a number from 1 to %d.\n", len(options))
+	}
+}
+
+// matchOption finds the option whose key equals answer, or failing that the
+// only option whose key starts with it.
+func matchOption(answer string, options []option) (string, bool) {
+	answer = strings.ToLower(answer)
+	if answer == "" {
+		return "", false
+	}
+	for _, o := range options {
+		if answer == o.Key {
+			return o.Key, true
+		}
+	}
+	match := ""
+	for _, o := range options {
+		if strings.HasPrefix(o.Key, answer) {
+			if match != "" {
+				return "", false
+			}
+			match = o.Key
+		}
+	}
+	return match, match != ""
 }
 
 func (p *prompter) intWithDefault(label string, def int) (int, error) {

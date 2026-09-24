@@ -152,9 +152,12 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 		if pending > 0 {
 			return fmt.Errorf("%d session(s) still pending at the current destination; run agent-archive sync before changing storage", pending)
 		}
-		fmt.Fprintln(p.out, "Changing destination starts a new capture boundary. Existing sessions stay published at the previous destination, which this Mac will no longer collect into or clean up. Their local evidence is kept until it ages past the retention period, then removed from this Mac only.")
+		p.warn("Storage is changing. Sessions already archived stay at the old destination,",
+			"and this Mac stops adding to or cleaning up there. Nothing is deleted from either bucket;",
+			"this Mac's local copies are removed once they pass the retention period.")
 		if waiting > 0 {
-			fmt.Fprintf(p.out, "%d session(s) never received a transcript (for example a Cursor chat with transcripts turned off) and published nothing. They stay behind this boundary and will not be captured at the new destination either.\n", waiting)
+			p.warn(fmt.Sprintf("%d session(s) never received a transcript (for example a Cursor chat with transcripts turned off).", waiting),
+				"They published nothing and will not be captured at the new destination either.")
 		}
 	}
 	if next.RetentionDays < old.RetentionDays {
@@ -177,7 +180,8 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 				count++
 			}
 		}
-		fmt.Fprintf(p.out, "Shorter retention: %d currently captured session(s) on this Mac are eligible for deletion at cutoff %s. Future cleanup also applies this policy.\n", count, cutoff.UTC().Format(time.RFC3339))
+		p.warn(fmt.Sprintf("Shorter retention: %d session(s) captured before %s become eligible for deletion.", count, cutoff.UTC().Format("2006-01-02 15:04 UTC")),
+			"Future cleanup also applies this policy.")
 	}
 	return nil
 }
