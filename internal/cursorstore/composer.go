@@ -67,7 +67,8 @@ type Reader struct {
 	dbPath string
 	// snapDir is the private directory holding the copy, "" until one is
 	// taken; copyPath is the copy, "" until it is complete.
-	snapDir, copyPath string
+	snapDir  string
+	copyPath string
 	// lock holds the snapshot directory's lock while the copy is in use,
 	// so no sweep removes it (see snapshotLockName).
 	lock *os.File
@@ -97,7 +98,7 @@ func (r *Reader) Close() error {
 	err := os.RemoveAll(dir)
 	if lock != nil {
 		// Released only after the copy is gone.
-		lock.Close()
+		_ = lock.Close()
 	}
 	if err != nil {
 		return errors.New("remove the Cursor database snapshot")
@@ -110,7 +111,7 @@ func (r *Reader) Close() error {
 func ReadComposer(ctx context.Context, dbPath, composerID string) (Composer, Signature, error) {
 	r := NewReader(dbPath)
 	c, sig, err := func() (Composer, Signature, error) {
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 		return r.ReadComposer(ctx, composerID)
 	}()
 	return c, sig, err
@@ -189,7 +190,7 @@ func ReadSignature(ctx context.Context, dbPath, composerID string) (Signature, e
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		value, err := composerRow(ctx, tx, composerID)
 		if err != nil {
 			return err
@@ -203,7 +204,7 @@ func ReadSignature(ctx context.Context, dbPath, composerID string) (Signature, e
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		present := map[string]bool{}
 		for rows.Next() {
 			var key string
@@ -281,7 +282,7 @@ func (r *Reader) snapshot(ctx context.Context, src source) error {
 	defer cancel()
 	r.snapshots++
 	if err := backup(ctx, dsn(src.path, true), copyPath); err != nil {
-		r.Close()
+		_ = r.Close()
 		return notChecked(err)
 	}
 	r.copyPath = copyPath
@@ -315,13 +316,13 @@ func backup(ctx context.Context, srcDSN, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	// Opened read-write: the copy's own rollback journal, if SQLite makes
 	// one, lands in the private directory beside it.
 	dstURI := (&url.URL{Scheme: "file", Path: dst}).String()
@@ -429,7 +430,7 @@ func queryComposer(ctx context.Context, db *sql.DB, composerID string) (Composer
 	if err != nil {
 		return Composer{}, Signature{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	found := map[string]json.RawMessage{}
 	keys := map[string]bool{}
 	for rows.Next() {
@@ -472,13 +473,13 @@ func decodeHeaders(value []byte) (Signature, []string, error) {
 		raw, ok := fields[name]
 		return raw, ok && string(raw) != "null"
 	}
-	var sig Signature
+	var lastUpdatedAt int64
 	if raw, ok := present("lastUpdatedAt"); ok {
 		var ms float64
 		if json.Unmarshal(raw, &ms) != nil {
 			return Signature{}, nil, NotChecked(UnknownFormat)
 		}
-		sig.LastUpdatedAt = int64(ms)
+		lastUpdatedAt = int64(ms)
 	}
 	type header struct {
 		BubbleID *string `json:"bubbleId"`
@@ -495,21 +496,22 @@ func decodeHeaders(value []byte) (Signature, []string, error) {
 			}
 			ids = append(ids, *h.BubbleID)
 		}
-		sig.HeaderCount = len(ids)
+		var lastBubbleID string
 		if len(ids) > 0 {
-			sig.LastBubbleID = ids[len(ids)-1]
+			lastBubbleID = ids[len(ids)-1]
 		}
-		return sig, ids, nil
+		return Signature{LastUpdatedAt: lastUpdatedAt, HeaderCount: len(ids), LastBubbleID: lastBubbleID}, ids, nil
 	}
 	if raw, ok := present("conversation"); ok {
 		var inline []header
 		if json.Unmarshal(raw, &inline) != nil {
 			return Signature{}, nil, NotChecked(UnknownFormat)
 		}
-		sig.HeaderCount = len(inline)
+		var lastBubbleID string
 		if n := len(inline); n > 0 && inline[n-1].BubbleID != nil {
-			sig.LastBubbleID = *inline[n-1].BubbleID
+			lastBubbleID = *inline[n-1].BubbleID
 		}
+		return Signature{LastUpdatedAt: lastUpdatedAt, HeaderCount: len(inline), LastBubbleID: lastBubbleID}, nil, nil
 	}
-	return sig, nil, nil
+	return Signature{LastUpdatedAt: lastUpdatedAt}, nil, nil
 }

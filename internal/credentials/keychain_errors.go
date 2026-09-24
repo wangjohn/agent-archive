@@ -17,27 +17,28 @@ const (
 	osStatusAuthFailed            = -25293 // errSecAuthFailed
 )
 
-// keychainSentinel is a Keychain failure that is also an instance of a
+// keychainSentinelError is a Keychain failure that is also an instance of a
 // broader, older error, so callers that only know the broader one keep
 // working: a missing item is still ErrMissingCredential, and a locked
 // Keychain is still ErrUnavailable.
-type keychainSentinel struct {
+type keychainSentinelError struct {
 	message string
 	parent  error
 }
 
-func (e *keychainSentinel) Error() string { return e.message }
-func (e *keychainSentinel) Unwrap() error { return e.parent }
+func (e *keychainSentinelError) Error() string { return e.message }
+
+func (e *keychainSentinelError) Unwrap() error { return e.parent }
 
 var (
 	// ErrKeychainItemNotFound means the Keychain holds no item for the
 	// reference (errSecItemNotFound). Re-running setup stores it again.
-	ErrKeychainItemNotFound error = &keychainSentinel{message: "storage credential not found in the Keychain", parent: ErrMissingCredential}
+	ErrKeychainItemNotFound error = &keychainSentinelError{message: "storage credential not found in the Keychain", parent: ErrMissingCredential}
 	// ErrKeychainLocked means the Keychain is locked, or refused this
 	// executable access without asking (errSecInteractionNotAllowed,
 	// errSecAuthFailed). A background process never prompts, so it cannot
 	// resolve this itself.
-	ErrKeychainLocked error = &keychainSentinel{message: "the Keychain is locked or denied this program access", parent: ErrUnavailable}
+	ErrKeychainLocked error = &keychainSentinelError{message: "the Keychain is locked or denied this program access", parent: ErrUnavailable}
 )
 
 // KeychainStatusError is any other Keychain failure. It carries the
@@ -48,6 +49,7 @@ type KeychainStatusError struct{ Status int }
 func (e *KeychainStatusError) Error() string {
 	return fmt.Sprintf("Keychain error (OSStatus %d)", e.Status)
 }
+
 func (e *KeychainStatusError) Unwrap() error { return ErrUnavailable }
 
 // errorForOSStatus maps a Security.framework result code to this package's

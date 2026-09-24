@@ -18,14 +18,14 @@ import (
 )
 
 // openWriter opens path as Cursor does, with Cursor's tables.
-func openWriter(t testing.TB, path string, wal bool) *sql.DB {
-	t.Helper()
+func openWriter(tb testing.TB, path string, wal bool) *sql.DB {
+	tb.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	db.SetMaxOpenConns(1)
 	stmts := []string{`CREATE TABLE IF NOT EXISTS ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)`,
@@ -34,8 +34,8 @@ func openWriter(t testing.TB, path string, wal bool) *sql.DB {
 		stmts = append([]string{`PRAGMA journal_mode=WAL`}, stmts...)
 	}
 	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatal(err)
+		if _, err := db.ExecContext(context.Background(), s); err != nil {
+			tb.Fatal(err)
 		}
 	}
 	return db
@@ -43,16 +43,24 @@ func openWriter(t testing.TB, path string, wal bool) *sql.DB {
 
 // writeDB creates or updates a database at path and closes it, so SQLite
 // checkpoints and removes its side files: Cursor closed.
-func writeDB(t testing.TB, path string, wal bool, rows map[string]any) {
-	t.Helper()
-	db := openWriter(t, path, wal)
+func writeDB(tb testing.TB, path string, wal bool, rows map[string]any) {
+	tb.Helper()
+	db := openWriter(tb, path, wal)
 	for k, v := range rows {
-		if _, err := db.Exec(`INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, v); err != nil {
-			t.Fatal(err)
+		if _, err := db.ExecContext(context.Background(), `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, v); err != nil {
+			tb.Fatal(err)
 		}
 	}
 	if err := db.Close(); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
+	}
+}
+
+// closeOrFail closes c, failing the test if that fails. It suits a defer.
+func closeOrFail(tb testing.TB, c io.Closer) {
+	tb.Helper()
+	if err := c.Close(); err != nil {
+		tb.Error(err)
 	}
 }
 
@@ -86,56 +94,56 @@ type fileState struct {
 }
 
 // snapshotDir records every file in dir, and dir itself, byte for byte.
-func snapshotDir(t testing.TB, dir string) map[string]fileState {
-	t.Helper()
+func snapshotDir(tb testing.TB, dir string) map[string]fileState {
+	tb.Helper()
 	out := map[string]fileState{}
 	info, err := os.Stat(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return out
 	}
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	out["."] = fileState{mode: info.Mode(), modTime: info.ModTime()}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	for _, e := range entries {
 		info, err := e.Info()
 		if err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
-		st := fileState{size: info.Size(), mode: info.Mode(), modTime: info.ModTime()}
+		var sum [32]byte
 		if info.Mode().IsRegular() {
 			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 			if err != nil {
-				t.Fatal(err)
+				tb.Fatal(err)
 			}
-			st.sum = sha256.Sum256(data)
+			sum = sha256.Sum256(data)
 		}
-		out[e.Name()] = st
+		out[e.Name()] = fileState{size: info.Size(), mode: info.Mode(), modTime: info.ModTime(), sum: sum}
 	}
 	return out
 }
 
-func assertUnchanged(t testing.TB, dir string, before map[string]fileState) {
-	t.Helper()
-	after := snapshotDir(t, dir)
+func assertUnchanged(tb testing.TB, dir string, before map[string]fileState) {
+	tb.Helper()
+	after := snapshotDir(tb, dir)
 	for name, a := range after {
 		if b, ok := before[name]; !ok {
-			t.Errorf("%s was created", name)
+			tb.Errorf("%s was created", name)
 		} else if !reflect.DeepEqual(a, b) {
-			t.Errorf("%s changed: %+v -> %+v", name, b, a)
+			tb.Errorf("%s changed: %+v -> %+v", name, b, a)
 		}
 	}
 	for name := range before {
 		if _, ok := after[name]; !ok {
-			t.Errorf("%s was removed", name)
+			tb.Errorf("%s was removed", name)
 		}
 	}
-	if t.Failed() {
-		t.FailNow()
+	if tb.Failed() {
+		tb.FailNow()
 	}
 }
 
@@ -155,17 +163,17 @@ func useTempSnapshots(t *testing.T) string {
 }
 
 // assertEmpty fails unless dir holds nothing: no snapshot was left behind.
-func assertEmpty(t testing.TB, dir string) {
-	t.Helper()
+func assertEmpty(tb testing.TB, dir string) {
+	tb.Helper()
 	entries, err := os.ReadDir(dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	for _, e := range entries {
-		t.Errorf("left behind in the scratch directory: %s", e.Name())
+		tb.Errorf("left behind in the scratch directory: %s", e.Name())
 	}
-	if t.Failed() {
-		t.FailNow()
+	if tb.Failed() {
+		tb.FailNow()
 	}
 }
 
@@ -180,36 +188,53 @@ type writer struct {
 	replies *bufio.Scanner
 }
 
+// writerOp is what a writerCommand asks the writer process to do.
+type writerOp string
+
+const (
+	writerPut        writerOp = "put"
+	writerDelete     writerOp = "delete"
+	writerBegin      writerOp = "begin"
+	writerCommit     writerOp = "commit"
+	writerCheckpoint writerOp = "checkpoint"
+	writerExclusive  writerOp = "exclusive"
+	writerNormal     writerOp = "normal"
+)
+
 // writerCommand is one line the writer process runs.
 type writerCommand struct {
-	Op    string `json:"op"` // put, delete, begin, commit, checkpoint
-	Key   string `json:"key,omitempty"`
-	Value string `json:"value,omitempty"`
+	Op    writerOp `json:"op"`
+	Key   string   `json:"key,omitempty"`
+	Value string   `json:"value,omitempty"`
 }
 
-func startWriter(t testing.TB, path string) *writer {
-	t.Helper()
+func startWriter(tb testing.TB, path string) *writer {
+	tb.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestWriterProcess$")
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestWriterProcess$")
 	cmd.Env = append(os.Environ(), "CURSORSTORE_WRITER_DB="+path)
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
-	w := &writer{t: t, cmd: cmd, stdin: stdin, replies: bufio.NewScanner(stdout)}
-	t.Cleanup(func() {
-		stdin.Close()
-		cmd.Wait()
+	w := &writer{t: tb, cmd: cmd, stdin: stdin, replies: bufio.NewScanner(stdout)}
+	tb.Cleanup(func() {
+		if err := stdin.Close(); err != nil {
+			tb.Error(err)
+		}
+		if err := cmd.Wait(); err != nil {
+			tb.Error(err)
+		}
 	})
 	return w
 }
@@ -218,7 +243,9 @@ func (w *writer) do(commands ...writerCommand) {
 	w.t.Helper()
 	for _, c := range commands {
 		line, _ := json.Marshal(c)
-		fmt.Fprintln(w.stdin, string(line))
+		if _, err := fmt.Fprintln(w.stdin, string(line)); err != nil {
+			w.t.Fatal(err)
+		}
 		if !w.replies.Scan() || w.replies.Text() != "ok" {
 			w.t.Fatalf("the writer did not do %+v: %q", c, w.replies.Text())
 		}
@@ -228,7 +255,7 @@ func (w *writer) do(commands ...writerCommand) {
 func (w *writer) put(rows map[string]string) {
 	w.t.Helper()
 	for k, v := range rows {
-		w.do(writerCommand{Op: "put", Key: k, Value: v})
+		w.do(writerCommand{Op: writerPut, Key: k, Value: v})
 	}
 }
 
@@ -241,13 +268,13 @@ func TestWriterProcess(t *testing.T) {
 		t.Skip("run by startWriter")
 	}
 	db := openWriter(t, path, true)
-	defer db.Close()
+	defer closeOrFail(t, db)
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer closeOrFail(t, conn)
 	if _, err := conn.ExecContext(ctx, `PRAGMA wal_autocheckpoint=0`); err != nil {
 		t.Fatal(err)
 	}
@@ -260,23 +287,23 @@ func TestWriterProcess(t *testing.T) {
 		}
 		var err error
 		switch c.Op {
-		case "begin":
+		case writerBegin:
 			_, err = conn.ExecContext(ctx, `BEGIN IMMEDIATE`)
-		case "commit":
+		case writerCommit:
 			_, err = conn.ExecContext(ctx, `COMMIT`)
-		case "checkpoint":
+		case writerCheckpoint:
 			_, err = conn.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
-		case "put":
+		case writerPut:
 			_, err = conn.ExecContext(ctx, `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, c.Key, c.Value)
-		case "delete":
+		case writerDelete:
 			_, err = conn.ExecContext(ctx, `DELETE FROM cursorDiskKV WHERE key = ?`, c.Key)
-		case "exclusive":
+		case writerExclusive:
 			// Holds the database's exclusive lock from the next write on,
 			// so every reader in another process is busy.
 			if _, err = conn.ExecContext(ctx, `PRAGMA locking_mode=EXCLUSIVE`); err == nil {
 				_, err = conn.ExecContext(ctx, `INSERT INTO ItemTable (key, value) VALUES ('lock', 'held')`)
 			}
-		case "normal":
+		case writerNormal:
 			// Releases the exclusive lock at the next access.
 			if _, err = conn.ExecContext(ctx, `PRAGMA locking_mode=NORMAL`); err == nil {
 				var n int

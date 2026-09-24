@@ -84,9 +84,11 @@ func TestUserTempDir(t *testing.T) {
 	}
 	perUser := func() string { return "/var/folders/xy/abc/T" }
 	for _, tc := range []struct {
-		name, tmpdir, goos string
-		darwin             func() string
-		want               string
+		name   string
+		tmpdir string
+		goos   string
+		darwin func() string
+		want   string
 	}{
 		{"custom TMPDIR", "/private/tmp/mine", "darwin", perUser, "/var/folders/xy/abc/T"},
 		{"launchd without TMPDIR", "", "darwin", perUser, "/var/folders/xy/abc/T"},

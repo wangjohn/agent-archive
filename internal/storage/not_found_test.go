@@ -33,7 +33,7 @@ func TestIsNotFoundTrustsOnlyTypedEvidence(t *testing.T) {
 		{"wrapped NoSuchKey", fmt.Errorf("operation GetObject: %w", &types.NoSuchKey{}), true},
 		{"NotFound", &types.NotFound{}, true},
 		{"HTTP 404", responseError(http.StatusNotFound, errors.New("api error")), true},
-		{"bare smithy 404", &smithyhttp.ResponseError{Response: &smithyhttp.Response{Response: &http.Response{StatusCode: 404}}}, true},
+		{"bare smithy 404", &smithyhttp.ResponseError{Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusNotFound}}}, true},
 		{"403 whose text says not found", responseError(http.StatusForbidden, errors.New("access denied: key not found in policy")), false},
 		{"plain text not found", errors.New("dial tcp: lookup bucket.example: no such host (not found)"), false},
 		{"plain text 404", errors.New("https response error StatusCode: 404, NoSuchKey"), false},
@@ -56,7 +56,9 @@ func TestS3GetReportsOnlyAMissingObjectAsNotFound(t *testing.T) {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(status)
-			fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>%s</Code><Message>%s</Message></Error>`, code, message)
+			if _, err := fmt.Fprintf(w, `<?xml version="1.0" encoding="UTF-8"?><Error><Code>%s</Code><Message>%s</Message></Error>`, code, message); err != nil {
+				t.Error(err)
+			}
 		}
 	}
 	cases := []struct {

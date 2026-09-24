@@ -14,6 +14,7 @@ import (
 // CheckedAt is nil until an inspection has run, so never-inspected evidence
 // omits the field instead of serializing the zero time.
 type PrivacyReport struct {
+	//lint:ignore LV1001 callers in internal/cli copy State into plain string fields and compare it to literals; a defined type would break them
 	State           string     `json:"state"`
 	Reason          string     `json:"reason"`
 	Scope           string     `json:"scope"`
@@ -24,13 +25,23 @@ type PrivacyReport struct {
 }
 
 func UnknownPrivacy(provider string) PrivacyReport {
-	report := PrivacyReport{State: "not_verified", Reason: "inspection_unavailable", Scope: "native_bucket_public_access", GuidanceURL: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html"}
+	reason := "inspection_unavailable"
+	guidanceURL := "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html"
 	if provider == "r2" {
-		report.Reason = "r2_management_credentials_not_configured"
-		report.GuidanceURL = "https://developers.cloudflare.com/r2/buckets/public-buckets/"
+		reason = "r2_management_credentials_not_configured"
+		guidanceURL = "https://developers.cloudflare.com/r2/buckets/public-buckets/"
 	}
-	return report
+	return PrivacyReport{State: "not_verified", Reason: reason, Scope: "native_bucket_public_access", GuidanceURL: guidanceURL}
 }
+
+// granteeGroupURI identifies an S3 predefined grantee group in a bucket ACL.
+type granteeGroupURI string
+
+// The predefined groups whose grants make a bucket public.
+const (
+	allUsersGroupURI           granteeGroupURI = "http://acs.amazonaws.com/groups/global/AllUsers"
+	authenticatedUsersGroupURI granteeGroupURI = "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"
+)
 
 // InspectPrivacy makes at most three read-only API calls with the caller's
 // credentials. R2's S3 object credentials cannot inspect Cloudflare-managed
@@ -66,8 +77,8 @@ func (s *S3Store) InspectPrivacy(ctx context.Context) PrivacyReport {
 			if grant.Grantee == nil {
 				continue
 			}
-			uri := aws.ToString(grant.Grantee.URI)
-			if uri == "http://acs.amazonaws.com/groups/global/AllUsers" || uri == "http://acs.amazonaws.com/groups/global/AuthenticatedUsers" {
+			uri := granteeGroupURI(aws.ToString(grant.Grantee.URI))
+			if uri == allUsersGroupURI || uri == authenticatedUsersGroupURI {
 				report.State = "public_or_risky"
 				report.Reason = "public_bucket_acl"
 				return report

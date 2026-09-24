@@ -38,9 +38,9 @@ const KeychainService = "agent-archive"
 // reference in production setup. They are value types so callers can inject a
 // test credential provider without any shell or command-line transport.
 type R2Credentials struct {
-	AccessKeyID     string
-	SecretAccessKey string
-	SessionToken    string
+	AccessKeyID     string `json:"AccessKeyID"`
+	SecretAccessKey string `json:"SecretAccessKey"`
+	SessionToken    string `json:"SessionToken"`
 }
 
 func (c R2Credentials) validate() error {

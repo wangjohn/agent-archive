@@ -131,7 +131,7 @@ func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
 		}
 		return nil, err
 	}
-	defer output.Body.Close()
+	defer func() { _ = output.Body.Close() }()
 	limited := io.LimitReader(output.Body, s.maxGetBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
@@ -159,17 +159,12 @@ func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, er
 			if item.Key == nil {
 				continue
 			}
-			obj := Object{Key: trimStorePrefix(*item.Key, s.prefix)}
-			if item.Size != nil {
-				obj.Size = *item.Size
-			}
-			if item.ETag != nil {
-				obj.ETag = strings.Trim(*item.ETag, "\"")
-			}
-			if item.LastModified != nil {
-				obj.LastModified = *item.LastModified
-			}
-			objects = append(objects, obj)
+			objects = append(objects, Object{
+				Key:          trimStorePrefix(*item.Key, s.prefix),
+				Size:         aws.ToInt64(item.Size),
+				ETag:         strings.Trim(aws.ToString(item.ETag), "\""),
+				LastModified: aws.ToTime(item.LastModified),
+			})
 		}
 	}
 	return objects, nil
