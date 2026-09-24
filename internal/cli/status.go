@@ -7,15 +7,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -41,14 +42,17 @@ type appStatus struct {
 	// scan issues, and gaps recorded inside captured bundles. A blocked
 	// session's last published snapshot, if any, stays retained. These are
 	// recorded gaps, not errors.
-	CaptureGaps       []archive.CaptureGap `json:"capture_gaps,omitempty"`
-	Installed         bool                 `json:"installed"`
-	InstalledVersion  string               `json:"installed_version,omitempty"`
-	VersionSource     string               `json:"installed_version_source,omitempty"`
-	VersionObservedAt time.Time            `json:"installed_version_observed_at,omitempty"`
-	VersionKind       string               `json:"installed_version_kind,omitempty"`
-	VersionState      string               `json:"installed_version_state"`
-	VersionSupport    string               `json:"installed_version_support"`
+	CaptureGaps []archive.CaptureGap `json:"capture_gaps,omitempty"`
+	// SessionsWithCaptureGaps counts the distinct sessions behind
+	// CaptureGaps: one session can record several gaps.
+	SessionsWithCaptureGaps int       `json:"sessions_with_capture_gaps,omitempty"`
+	Installed               bool      `json:"installed"`
+	InstalledVersion        string    `json:"installed_version,omitempty"`
+	VersionSource           string    `json:"installed_version_source,omitempty"`
+	VersionObservedAt       time.Time `json:"installed_version_observed_at,omitempty"`
+	VersionKind             string    `json:"installed_version_kind,omitempty"`
+	VersionState            string    `json:"installed_version_state"`
+	VersionSupport          string    `json:"installed_version_support"`
 	// VersionSupportReason is set when VersionSupport is unverified. Verified
 	// captures report the harness's own version (Codex cli_version, Claude
 	// Code record version, Cursor hook cursor_version) in HarnessVersions; the
@@ -85,18 +89,27 @@ type statusView struct {
 	ConfigurationID string                `json:"configuration_id,omitempty"`
 	Authentication  storageHealth         `json:"authentication"`
 
-	Code               string              `json:"code"`
-	Version            int                 `json:"schema_version"`
-	State              string              `json:"state"`
-	Storage            string              `json:"storage,omitempty"`
-	StorageVerifiedAt  time.Time           `json:"storage_verified_at,omitempty"`
-	Privacy            string              `json:"privacy"`
-	Background         string              `json:"background"`
-	Paused             bool                `json:"paused"`
-	Projects           []string            `json:"projects"`
-	Apps               []appStatus         `json:"applications"`
-	Collector          collector.Status    `json:"collector"`
-	CaptureDiagnostics []captureDiagnostic `json:"capture_diagnostics,omitempty"`
+	Code    string `json:"code"`
+	Version int    `json:"schema_version"`
+	State   string `json:"state"`
+	Storage string `json:"storage,omitempty"`
+	// StorageVerifiedAt is when setup's storage check (write, read, list,
+	// and delete of a probe object) last passed for this configuration.
+	StorageVerifiedAt time.Time `json:"storage_verified_at,omitempty"`
+	// StorageAccessConfirmedAt is the latest confirmation that this
+	// destination is reachable with the configured credentials: setup's
+	// check, or the collector's last verified storage health for the same
+	// configuration (its access probe or a pass that uploaded).
+	// StorageAccessConfirmedBy names which: "setup" or "collector".
+	StorageAccessConfirmedAt time.Time           `json:"storage_access_confirmed_at,omitempty"`
+	StorageAccessConfirmedBy string              `json:"storage_access_confirmed_by,omitempty"`
+	Privacy                  string              `json:"privacy"`
+	Background               string              `json:"background"`
+	Paused                   bool                `json:"paused"`
+	Projects                 []string            `json:"projects"`
+	Apps                     []appStatus         `json:"applications"`
+	Collector                state.Status        `json:"collector"`
+	CaptureDiagnostics       []captureDiagnostic `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
 	// has to upload, and ImportedWithIssues those with a capture gap or a
@@ -141,7 +154,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 0
 	}
 	if view.Storage != "" {
-		fmt.Fprintf(stdout, "Storage:       %s\nAccess checked: %s\n", view.Storage, formatTimeOrNever(view.StorageVerifiedAt))
+		fmt.Fprintf(stdout, "Storage:       %s\nAccess:        %s\n", view.Storage, storageAccessLine(view))
 		printBucketPrivacy(stdout, view.PrivacyEvidence)
 	}
 	checked := "not checked yet"
@@ -170,7 +183,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	for _, app := range view.Apps {
 		gaps := ""
 		if len(app.CaptureGaps) > 0 {
-			gaps = fmt.Sprintf("; %d with a capture gap", len(app.CaptureGaps))
+			gaps = fmt.Sprintf("; %d with a capture gap", app.SessionsWithCaptureGaps)
 		}
 		fmt.Fprintf(stdout, "%s: %s (%d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Sessions, gaps, app.Hooks)
 		if app.Trust == "unknown" {
@@ -196,7 +209,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			fmt.Fprintf(stdout, "  Read-back: %s\n", app.VerificationDetail)
 		}
 		if len(app.CaptureGaps) > 0 {
-			fmt.Fprintf(stdout, "  Capture gaps: %d; see status --json for details.\n", len(app.CaptureGaps))
+			fmt.Fprintf(stdout, "  Capture gaps: %d recorded across %d session(s); see status --json for details.\n", len(app.CaptureGaps), app.SessionsWithCaptureGaps)
 		}
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
@@ -218,15 +231,37 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	return 0
 }
 
+// storageAccessLine is the text status's Access line: when access to the
+// destination was last confirmed, and by what.
+func storageAccessLine(view statusView) string {
+	switch view.StorageAccessConfirmedBy {
+	case "setup":
+		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by setup's storage check (write, read, list, delete)"
+	case "collector":
+		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by the collector's last successful storage access"
+	}
+	return "not confirmed yet"
+}
+
+// storageLabel names the destination as "provider / bucket / prefix",
+// leaving out an empty prefix rather than ending in a bare separator.
+func storageLabel(cfg credentials.Config) string {
+	parts := []string{cfg.Provider, cfg.Bucket}
+	if cfg.Prefix != "" {
+		parts = append(parts, cfg.Prefix)
+	}
+	return strings.Join(parts, " / ")
+}
+
 // blockedReasonDetail explains a recorded capture gap. A missing transcript is
 // the ordinary end of an archived session's local life, not a defect, and it
 // is the one reason that can end on its own, so it does not borrow the
 // permanent wording the other reasons need.
-func blockedReasonDetail(reason collector.BlockedReason) string {
+func blockedReasonDetail(reason state.BlockedReason) string {
 	switch reason {
-	case collector.BlockedReasonTranscriptMissing:
+	case state.BlockedReasonTranscriptMissing:
 		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
-	case collector.BlockedReasonRecordTooLarge:
+	case state.BlockedReasonRecordTooLarge:
 		return fmt.Sprintf("One record in the transcript (or a plain-text transcript as a whole) is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
@@ -303,7 +338,7 @@ func readStatus(env Env) (view statusView, err error) {
 	}
 	view.configured = true
 	view.Background = "unknown"
-	view.Storage = fmt.Sprintf("%s / %s / %s", cfg.Storage.Provider, cfg.Storage.Bucket, cfg.Storage.Prefix)
+	view.Storage = storageLabel(cfg.Storage)
 	view.StorageVerifiedAt = cfg.StorageVerifiedAt
 	view.PrivacyEvidence = currentBucketPrivacy(cfg, env.now())
 	view.Privacy = view.PrivacyEvidence.State
@@ -320,6 +355,17 @@ func readStatus(env Env) (view statusView, err error) {
 	if view.Authentication.ConfigurationID != "" && view.Authentication.ConfigurationID != view.ConfigurationID {
 		view.Authentication.State = "stale_configuration"
 	}
+	// Setup records when its storage check passed; afterwards the collector
+	// confirms the same destination again (its access probe, or a pass that
+	// uploaded). Report the latest, so the Access line never says "not
+	// confirmed" beside an Authentication line that says verified. Health
+	// without this configuration's ID is not evidence for it.
+	if !view.StorageVerifiedAt.IsZero() {
+		view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy = view.StorageVerifiedAt, "setup"
+	}
+	if view.Authentication.State == "verified" && view.Authentication.ConfigurationID == view.ConfigurationID && view.Authentication.CheckedAt.After(view.StorageAccessConfirmedAt) {
+		view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy = view.Authentication.CheckedAt, "collector"
+	}
 	// The background probe only runs while collection is active, so a paused
 	// install keeps its last known state (with its checked time) rather than
 	// being called stale for a check that was deliberately not repeated.
@@ -332,7 +378,7 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Projects = append(view.Projects, p.Root)
 		}
 	}
-	store := collector.OpenLocalStoreReadOnly(home)
+	store := state.OpenReadOnly(home)
 	view.Collector, err = store.LoadStatus()
 	if err != nil {
 		return view, err
@@ -397,6 +443,7 @@ func readStatus(env Env) (view statusView, err error) {
 			}
 			app.Sessions++
 			app.HookObserved = true
+			gapsBefore := len(app.CaptureGaps)
 			if pair != nil {
 				pair.HookObserved = true
 			}
@@ -409,11 +456,11 @@ func readStatus(env Env) (view statusView, err error) {
 			if app.State == "waiting for first session" {
 				app.State = "hook observed; waiting for capture"
 			}
-			bundle, _, state, found, err := store.LoadPublished(reg.ArchiveSessionID)
+			bundle, _, cacheStatus, found, err := store.LoadPublished(reg.ArchiveSessionID)
 			if err != nil {
 				return view, err
 			}
-			if state == collector.CacheStatusBlocked {
+			if cacheStatus == state.CacheStatusBlocked {
 				reason, _, e := store.LoadBlocked(reg.ArchiveSessionID)
 				if e != nil {
 					return view, e
@@ -421,7 +468,7 @@ func readStatus(env Env) (view statusView, err error) {
 				app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: blockedReasonDetail(reason)})
 			}
 			if found {
-				if state != collector.CacheStatusBlocked {
+				if cacheStatus != state.CacheStatusBlocked {
 					app.CapturedLocally = true
 					if pair != nil {
 						pair.CapturedLocally = true
@@ -434,8 +481,11 @@ func readStatus(env Env) (view statusView, err error) {
 			}
 			// A blocked session with no publication has captured nothing;
 			// one that was published earlier still counts as published below.
-			if found && state != collector.CacheStatusBlocked && app.LastPublishedAt.IsZero() {
+			if found && cacheStatus != state.CacheStatusBlocked && app.LastPublishedAt.IsZero() {
 				app.State = "captured locally"
+			}
+			if len(app.CaptureGaps) > gapsBefore {
+				app.SessionsWithCaptureGaps++
 			}
 			publishedBundle, actualAt, published, e := store.LoadLastPublished(reg.ArchiveSessionID)
 			if e != nil {
@@ -708,17 +758,17 @@ func collectorLockHeld(home string) bool {
 // declined capture aside) or have one in flight. withIssues counts those
 // with a recorded capture gap or a failed last scan: status leaves imports
 // out of each app's own gaps and issues, so they are reported here.
-func importedSessionCounts(store *collector.LocalStore, cfg config.Config, regs []archive.SessionRegistration, issues map[string]string) (imported, pending, withIssues int, err error) {
+func importedSessionCounts(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, issues map[string]string) (imported, pending, withIssues int, err error) {
 	for _, reg := range regs {
 		if !reg.Imported() || reg.ParentSessionID != "" {
 			continue
 		}
 		imported++
-		_, _, state, _, err := store.LoadPublished(reg.ArchiveSessionID)
+		_, _, cacheStatus, _, err := store.LoadPublished(reg.ArchiveSessionID)
 		if err != nil {
 			return 0, 0, 0, err
 		}
-		if state == collector.CacheStatusBlocked || issues[reg.ArchiveSessionID] != "" {
+		if cacheStatus == state.CacheStatusBlocked || issues[reg.ArchiveSessionID] != "" {
 			withIssues++
 		}
 		waiting, err := importPending(store, cfg, reg)
@@ -735,11 +785,11 @@ func importedSessionCounts(store *collector.LocalStore, cfg config.Config, regs 
 // importPending reports whether the collector still has to upload an
 // imported session: one it still publishes that has no publication yet (a
 // recorded gap or a declined capture aside), or has one in flight.
-func importPending(store *collector.LocalStore, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
+func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
 	if !cfg.AcceptSession(reg) {
 		return false, nil
 	}
-	_, _, state, _, err := store.LoadPublished(reg.ArchiveSessionID)
+	_, _, cacheStatus, _, err := store.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
 		return false, err
 	}
@@ -751,7 +801,7 @@ func importPending(store *collector.LocalStore, cfg config.Config, reg archive.S
 	if err != nil {
 		return false, err
 	}
-	return inFlight || (!published && state != collector.CacheStatusBlocked && state != collector.CacheStatusDeclined), nil
+	return inFlight || (!published && cacheStatus != state.CacheStatusBlocked && cacheStatus != state.CacheStatusDeclined), nil
 }
 
 const (

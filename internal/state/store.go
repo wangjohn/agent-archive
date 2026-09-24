@@ -1,17 +1,28 @@
-// Package collector runs the local scan/build/publish loop that turns a
-// hook-registered session into a published metadata sidecar and source
-// bundle. It owns publication cadence and change detection; it builds on
-// internal/local for the private home directory, atomic file I/O, and the
-// machine-level lock, and does not own transcript reading (archive
-// adapters), privacy filtering (archive adapters), or storage upload
-// mechanics (storage.PutSourceThenMetadata). A caller runs Run under
-// local.Lock(home) so only one collector process acts on a given home at a
-// time; Run itself does not take that lock.
-package collector
+// Package state is agent-archive's per-machine local state: the small files
+// under the private data directory (local.Home) that hooks, the collector,
+// retention, backfill, and the CLI share. It owns their layout, the
+// per-session locks that keep a hook and the collector from interleaving,
+// and every rule about what a file may hold:
+//
+//   - registrations/: one per session a hook (or backfill) admitted;
+//   - requests/: hook evidence waiting for the next collector pass;
+//   - published/: the last bundle built and the last one published, with
+//     the uploaded source reference and metadata (see Published);
+//   - pending/: a publication transaction frozen before its first upload;
+//   - scan-signatures/, pending-scans/: the collector's change detection;
+//   - superseded/: source objects retention may delete after a grace period;
+//   - sessions/ (the native-session index and per-session evidence),
+//     subagent-candidates/, forgotten/, refresh-skips/, and status.json.
+//
+// It never reads transcripts or talks to storage; the collector does both
+// and records the outcome here. It holds no credentials and no content
+// beyond what published bundles already carry. A Store is safe for the
+// processes that share a data directory as long as each follows the
+// documented locks; the collector lock (local.Lock) additionally makes the
+// collector the only writer of published/ and pending/ during a pass.
+package state
 
 import (
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -25,26 +36,26 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// LocalStore persists small operational files under a private home
+// Store persists small operational files under a private home
 // directory (see local.Home): registrations, upload requests, and a
 // per-session cache of the last published source bundle, used to detect
 // unchanged input without redownloading or reparsing published history. It
 // never stores credentials or a second copy of conversation content beyond
 // what the published source bundle itself already contains.
-type LocalStore struct {
+type Store struct {
 	home string
 }
 
-// OpenLocalStoreReadOnly returns a handle to an existing local store under
+// OpenReadOnly returns a handle to an existing local store under
 // home without creating any of its directories, for commands that only read
 // it (status, handoff, backfill planning). A missing directory reads as
 // nothing recorded.
-func OpenLocalStoreReadOnly(home string) *LocalStore { return &LocalStore{home: home} }
+func OpenReadOnly(home string) *Store { return &Store{home: home} }
 
-// NewLocalStore creates (if needed) the local store's directory layout under
+// Open creates (if needed) the local store's directory layout under
 // home — ordinarily the result of local.Home() — and returns a handle to it.
 // home is caller-owned; this package never deletes it.
-func NewLocalStore(home string) (*LocalStore, error) {
+func Open(home string) (*Store, error) {
 	if strings.TrimSpace(home) == "" {
 		return nil, errors.New("local store home is required")
 	}
@@ -53,17 +64,20 @@ func NewLocalStore(home string) (*LocalStore, error) {
 			return nil, fmt.Errorf("create local store directory %q: %w", dir, err)
 		}
 	}
-	return &LocalStore{home: home}, nil
+	return &Store{home: home}, nil
 }
 
-// storeDirs are the directories NewLocalStore creates under home.
+// Home returns the data directory the store keeps its files in.
+func (s *Store) Home() string { return s.home }
+
+// storeDirs are the directories Open creates under home.
 var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "scan-signatures", "subagent-candidates"}
 
 // lazyStoreDirs are the directories the store creates under home on first
 // use rather than up front.
 var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
 
-// OwnedEntries lists every top-level entry a LocalStore can create under its
+// OwnedEntries lists every top-level entry a Store can create under its
 // home: its directories and its status file. Uninstall deletes a data
 // directory entry by entry and must know all of them; a test there checks
 // its list against this one, so a new directory cannot be left behind.
@@ -81,7 +95,7 @@ func safeFileComponent(value string) bool {
 
 // SaveRegistration durably records a hook-observed session start. Re-saving
 // the same archive session ID overwrites its prior registration.
-func (s *LocalStore) SaveRegistration(reg archive.SessionRegistration) error {
+func (s *Store) SaveRegistration(reg archive.SessionRegistration) error {
 	if err := reg.Validate(); err != nil {
 		return err
 	}
@@ -102,7 +116,7 @@ func (s *LocalStore) SaveRegistration(reg archive.SessionRegistration) error {
 // A plain load then SaveRegistration from a hook could write the registration
 // back after retention forgot it, leaving it without its native-session index
 // entry, so the session's next start would be given a second archive ID.
-func (s *LocalStore) UpdateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error) (found bool, err error) {
+func (s *Store) UpdateRegistration(archiveSessionID string, update func(*archive.SessionRegistration) error) (found bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -129,7 +143,7 @@ func (s *LocalStore) UpdateRegistration(archiveSessionID string, update func(*ar
 // just before retention removed it. Reusing that ID would leave the new
 // registration with no index entry. If the entry changed or disappeared, a
 // fresh ID is assigned and the check repeats.
-func (s *LocalStore) RegisterNewSession(nativeSessionID string, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
+func (s *Store) RegisterNewSession(nativeSessionID string, build func(archiveSessionID string) archive.SessionRegistration) (archive.SessionRegistration, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		id, _, err := s.EnsureArchiveSessionID(nativeSessionID)
 		if err != nil {
@@ -143,7 +157,7 @@ func (s *LocalStore) RegisterNewSession(nativeSessionID string, build func(archi
 	return archive.SessionRegistration{}, errors.New("session index kept changing while registering; this start was not recorded")
 }
 
-func (s *LocalStore) registerUnderLock(nativeSessionID, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
+func (s *Store) registerUnderLock(nativeSessionID, id string, build func(string) archive.SessionRegistration) (archive.SessionRegistration, bool, error) {
 	unlock, err := s.lockRequest(id)
 	if err != nil {
 		return archive.SessionRegistration{}, false, err
@@ -163,13 +177,13 @@ func (s *LocalStore) registerUnderLock(nativeSessionID, id string, build func(st
 	return reg, true, nil
 }
 
-func (s *LocalStore) registrationPath(archiveSessionID string) string {
+func (s *Store) registrationPath(archiveSessionID string) string {
 	return filepath.Join(s.home, "registrations", archiveSessionID+".json")
 }
 
 // LoadRegistrations returns every registered session, sorted by archive
 // session ID for deterministic scan order.
-func (s *LocalStore) LoadRegistrations() ([]archive.SessionRegistration, error) {
+func (s *Store) LoadRegistrations() ([]archive.SessionRegistration, error) {
 	dir := filepath.Join(s.home, "registrations")
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -198,7 +212,7 @@ func (s *LocalStore) LoadRegistrations() ([]archive.SessionRegistration, error) 
 }
 
 // LoadRegistration returns one session's registration, if it has been saved.
-func (s *LocalStore) LoadRegistration(archiveSessionID string) (archive.SessionRegistration, bool, error) {
+func (s *Store) LoadRegistration(archiveSessionID string) (archive.SessionRegistration, bool, error) {
 	var reg archive.SessionRegistration
 	err := local.Read(s.registrationPath(archiveSessionID), &reg)
 	if errors.Is(err, os.ErrNotExist) {
@@ -231,9 +245,9 @@ type Request struct {
 	Deferred bool `json:"deferred,omitempty"`
 }
 
-// urgent reports whether the request asks the collector to flush the upload
+// Urgent reports whether the request asks the collector to flush the upload
 // debounce now rather than wait for the next scheduled publication.
-func (r Request) urgent() bool {
+func (r Request) Urgent() bool {
 	return r.Token != "" && !r.Deferred
 }
 
@@ -243,7 +257,7 @@ func (r Request) urgent() bool {
 // when a stop and a session-end hook both fire for the same session. The
 // resulting request is urgent: the collector publishes it as soon as it is
 // scanned, bypassing MinUploadInterval.
-func (s *LocalStore) SaveRequest(archiveSessionID, reason string, requestedAt time.Time, evidence ...archive.SupplementalEvidence) error {
+func (s *Store) SaveRequest(archiveSessionID, reason string, requestedAt time.Time, evidence ...archive.SupplementalEvidence) error {
 	return s.saveRequest(archiveSessionID, reason, requestedAt, false, evidence...)
 }
 
@@ -251,7 +265,7 @@ func (s *LocalStore) SaveRequest(archiveSessionID, reason string, requestedAt ti
 // asking for a flush. A request it creates is deferred; a request that is
 // already pending keeps its urgency and RequestedAt, so a stop that is
 // waiting to publish is neither delayed nor re-triggered by a later prompt.
-func (s *LocalStore) SaveEvidence(archiveSessionID, reason string, observedAt time.Time, evidence ...archive.SupplementalEvidence) error {
+func (s *Store) SaveEvidence(archiveSessionID, reason string, observedAt time.Time, evidence ...archive.SupplementalEvidence) error {
 	return s.saveRequest(archiveSessionID, reason, observedAt, true, evidence...)
 }
 
@@ -263,7 +277,7 @@ var ErrSessionNotRegistered = errors.New("session is no longer registered")
 // lockRequest takes the per-session request lock. Hooks writing a request,
 // the collector acknowledging one, and retention forgetting the session all
 // hold it, so none of them can interleave with another.
-func (s *LocalStore) lockRequest(archiveSessionID string) (func(), error) {
+func (s *Store) lockRequest(archiveSessionID string) (func(), error) {
 	unlock, err := local.NamedLockWait(s.home, requestLockName(archiveSessionID), time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("lock request %q: %w", archiveSessionID, err)
@@ -281,7 +295,7 @@ func requestLockName(archiveSessionID string) string {
 // pass instead of being acknowledged away with it. Evidence identical to an
 // item the pending request already carries is dropped, and a call that adds
 // nothing at all leaves the request untouched.
-func (s *LocalStore) saveRequest(archiveSessionID, reason string, requestedAt time.Time, deferred bool, evidence ...archive.SupplementalEvidence) error {
+func (s *Store) saveRequest(archiveSessionID, reason string, requestedAt time.Time, deferred bool, evidence ...archive.SupplementalEvidence) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -301,7 +315,7 @@ func (s *LocalStore) saveRequest(archiveSessionID, reason string, requestedAt ti
 	} else if err != nil {
 		return fmt.Errorf("check registration %q: %w", archiveSessionID, err)
 	}
-	existing, found, err := s.loadRequest(archiveSessionID)
+	existing, found, err := s.LoadRequest(archiveSessionID)
 	if err != nil {
 		return err
 	}
@@ -363,11 +377,13 @@ func requestHasEvidence(have []archive.SupplementalEvidence, candidate archive.S
 	return false
 }
 
-func (s *LocalStore) requestPath(archiveSessionID string) string {
+func (s *Store) requestPath(archiveSessionID string) string {
 	return filepath.Join(s.home, "requests", archiveSessionID+".json")
 }
 
-func (s *LocalStore) loadRequest(archiveSessionID string) (Request, bool, error) {
+// LoadRequest returns a session's pending request, if any. Unlike ScanRequests
+// it never moves a file aside, so hooks may call it.
+func (s *Store) LoadRequest(archiveSessionID string) (Request, bool, error) {
 	var req Request
 	err := local.Read(s.requestPath(archiveSessionID), &req)
 	if errors.Is(err, os.ErrNotExist) {
@@ -379,17 +395,17 @@ func (s *LocalStore) loadRequest(archiveSessionID string) (Request, bool, error)
 	return req, true, nil
 }
 
-// ensureRequestToken upgrades a request written by an older collector. The
+// EnsureRequestToken upgrades a request written by an older collector. The
 // token is assigned under the same lock used by hooks and acknowledgements so
 // migration cannot overwrite a concurrent hook update. found is false when
 // the request disappeared between listing and upgrade.
-func (s *LocalStore) ensureRequestToken(archiveSessionID string) (Request, bool, error) {
+func (s *Store) EnsureRequestToken(archiveSessionID string) (Request, bool, error) {
 	unlock, err := local.NamedLockWait(s.home, requestLockName(archiveSessionID), time.Second)
 	if err != nil {
 		return Request{}, false, fmt.Errorf("lock request %q: %w", archiveSessionID, err)
 	}
 	defer unlock()
-	request, found, err := s.loadRequest(archiveSessionID)
+	request, found, err := s.LoadRequest(archiveSessionID)
 	if err != nil || !found || request.Token != "" {
 		return request, found, err
 	}
@@ -404,7 +420,7 @@ func (s *LocalStore) ensureRequestToken(archiveSessionID string) (Request, bool,
 }
 
 // LoadRequests returns every pending request, sorted by archive session ID.
-func (s *LocalStore) LoadRequests() ([]Request, error) {
+func (s *Store) LoadRequests() ([]Request, error) {
 	dir := filepath.Join(s.home, "requests")
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -419,7 +435,7 @@ func (s *LocalStore) LoadRequests() ([]Request, error) {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".json")
-		req, found, err := s.loadRequest(id)
+		req, found, err := s.LoadRequest(id)
 		if err != nil {
 			return nil, err
 		}
@@ -436,7 +452,7 @@ func (s *LocalStore) LoadRequests() ([]Request, error) {
 // a scan is in progress assigns a new token under the same lock and therefore
 // remains pending for the next pass. Tokens do not repeat when a request file
 // was removed between events, unlike a per-file revision counter.
-func (s *LocalStore) CompleteRequest(archiveSessionID, coveredToken string) (bool, error) {
+func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -445,7 +461,7 @@ func (s *LocalStore) CompleteRequest(archiveSessionID, coveredToken string) (boo
 		return false, fmt.Errorf("lock request %q: %w", archiveSessionID, err)
 	}
 	defer unlock()
-	current, found, err := s.loadRequest(archiveSessionID)
+	current, found, err := s.LoadRequest(archiveSessionID)
 	if err != nil || !found {
 		return false, err
 	}
@@ -457,353 +473,6 @@ func (s *LocalStore) CompleteRequest(archiveSessionID, coveredToken string) (boo
 		return false, fmt.Errorf("remove request %q: %w", archiveSessionID, err)
 	}
 	return true, nil
-}
-
-// CacheStatus distinguishes why a bundle sits in the local published cache,
-// since only some of those reasons should be auto-retried once time passes.
-type CacheStatus string
-
-const (
-	// CacheStatusPublished means this exact bundle was actually published.
-	CacheStatusPublished CacheStatus = "published"
-	// CacheStatusRateLimited means this bundle was built and differs from
-	// what's published, but was withheld by the minimum upload interval; it
-	// is eligible to auto-publish once that interval elapses.
-	CacheStatusRateLimited CacheStatus = "rate_limited"
-	// CacheStatusDeclined means this bundle was deliberately not published
-	// by policy (see Options.RequireSkillUse), not by cadence. Unlike
-	// CacheStatusRateLimited, it must never auto-publish just because time
-	// passed — only a genuine further content change reconsiders it.
-	CacheStatusDeclined CacheStatus = "declined"
-	// CacheStatusBlocked means the session's current transcript can no longer
-	// be captured safely (see BlockedReason) and, unlike a transient failure,
-	// the condition cannot clear by retrying: it is a recorded capture gap,
-	// not an error. The last published snapshot stays retained and any
-	// outstanding request is acknowledged, so later passes are no-ops until
-	// the transcript changes again.
-	CacheStatusBlocked CacheStatus = "blocked"
-)
-
-// BlockedReason says why a session sits in CacheStatusBlocked.
-type BlockedReason string
-
-const (
-	// BlockedReasonTranscriptRewritten means the transcript was truncated,
-	// compacted, or rewritten so it no longer extends the retained evidence.
-	BlockedReasonTranscriptRewritten BlockedReason = "transcript_rewritten"
-	// BlockedReasonTranscriptTooLarge means the transcript exceeds the
-	// collection size limit (Options.MaxTranscriptBytes).
-	BlockedReasonTranscriptTooLarge BlockedReason = "transcript_too_large"
-	// BlockedReasonRecordTooLarge means one record of the transcript is longer
-	// than archive.MaxRecordBytes, so the transcript cannot be read whole.
-	BlockedReasonRecordTooLarge BlockedReason = "record_size_limit"
-	// BlockedReasonTranscriptMissing means the native transcript is no longer
-	// on disk. Every supported application deletes its own transcripts on its
-	// own schedule (Claude Code after cleanupPeriodDays, 30 by default) while
-	// this archive retains sessions for far longer, so a session outliving its
-	// transcript is the steady state, not a failure. Unlike the other reasons
-	// this one can end: if the file comes back, the next scan clears the block.
-	BlockedReasonTranscriptMissing BlockedReason = "transcript_missing"
-)
-
-// recoverable reports whether a block can end without the session changing:
-// only a missing file can reappear. A rewritten or oversize transcript stays
-// rewritten or oversize until its content changes, which clears the block
-// through the normal comparison instead.
-func (r BlockedReason) recoverable() bool { return r == BlockedReasonTranscriptMissing }
-
-// publishedState is the small local cache of what was last built for a
-// session: the exact source bundle (so a later scan can detect "no
-// meaningful change" without redownloading or reparsing published history),
-// when that happened, and why the bundle is in the state it's in.
-type publishedState struct {
-	MetadataBytes []byte               `json:"metadata_bytes,omitempty"`
-	Bundle        archive.SourceBundle `json:"bundle"`
-	PublishedAt   time.Time            `json:"published_at"`
-	Status        CacheStatus          `json:"status"`
-	// BlockedReason is set only while Status is CacheStatusBlocked.
-	BlockedReason BlockedReason `json:"blocked_reason,omitempty"`
-	// PreBlockStatus is the status a recoverable block replaced, so clearing
-	// that block restores what was true before it rather than guessing.
-	PreBlockStatus CacheStatus `json:"pre_block_status,omitempty"`
-	// DeferredHookEvidence is hook evidence (a final response, a link) whose
-	// request was acknowledged while a recoverable block was in force. The
-	// transcript could not be read, so nothing could be built to carry it;
-	// rather than drop it, the block holds it and hands it back as request
-	// evidence the moment the transcript is readable again, so it publishes
-	// with the recovery. Set only while Status is CacheStatusBlocked with a
-	// recoverable reason.
-	DeferredHookEvidence []archive.SupplementalEvidence `json:"deferred_hook_evidence,omitempty"`
-	// LastPublished survives a newer rate-limited or declined candidate so
-	// compaction checks and retention always have the actual remote baseline.
-	LastPublished *publishedSnapshot `json:"last_published,omitempty"`
-}
-
-type publishedSnapshot struct {
-	Bundle      archive.SourceBundle `json:"bundle"`
-	PublishedAt time.Time            `json:"published_at"`
-	// Source is the source object this publication's metadata points at:
-	// exactly the key, digest, and size that were uploaded. The next
-	// publication names the object it supersedes from it. Rebuilding that
-	// reference from Bundle is not reliable: a later build may serialize or
-	// compress an old bundle differently, or refuse it outright after a
-	// source schema bump. State written before this field existed is read
-	// through its cached metadata instead (see lastPublishedSource).
-	Source *archive.SourceReference `json:"source,omitempty"`
-	// SameAsBundle means the last published bundle is the one in Bundle, so
-	// this snapshot carries only its time. While a session sits in its normal
-	// published state the two are always identical, and a source bundle is by
-	// far the largest thing in this file: storing it once halves the file and
-	// the cost of every decode of it. Bundle is materialized here again the
-	// moment a different candidate (rate limited, declined, blocked) takes
-	// over publishedState.Bundle. State written before this field existed
-	// always carries its own copy, so it keeps working unchanged.
-	SameAsBundle bool `json:"same_as_bundle,omitempty"`
-}
-
-// resolveLastPublished returns the bundle actually made discoverable remotely,
-// expanding the shared-copy marker.
-func (p publishedState) resolveLastPublished() (archive.SourceBundle, time.Time, bool) {
-	if p.LastPublished == nil {
-		// Backward compatibility with state written before the separate ledger.
-		if p.Status == CacheStatusPublished {
-			return p.Bundle, p.PublishedAt, true
-		}
-		return archive.SourceBundle{}, time.Time{}, false
-	}
-	if p.LastPublished.SameAsBundle {
-		return p.Bundle, p.LastPublished.PublishedAt, true
-	}
-	return p.LastPublished.Bundle, p.LastPublished.PublishedAt, true
-}
-
-// detachedLastPublished gives the last published snapshot its own copy of the
-// bundle, for use when publishedState.Bundle is about to become a different
-// candidate. Called on every save that is not itself a publication.
-func (p publishedState) detachedLastPublished() *publishedSnapshot {
-	if p.LastPublished == nil || !p.LastPublished.SameAsBundle {
-		return p.LastPublished
-	}
-	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt, Source: p.LastPublished.Source}
-}
-
-// lastPublishedSource returns the source reference of the last publication,
-// as it was uploaded. found is false when nothing was published, or when
-// state written before publishedSnapshot.Source existed has no readable
-// cached metadata either: the reference is then unknown. It is never rebuilt.
-func (p publishedState) lastPublishedSource() (archive.SourceReference, bool) {
-	if _, _, published := p.resolveLastPublished(); !published {
-		return archive.SourceReference{}, false
-	}
-	if p.LastPublished != nil && p.LastPublished.Source != nil {
-		return *p.LastPublished.Source, true
-	}
-	// Older state: MetadataBytes is only ever replaced by a publication, so it
-	// is the metadata document that went out with the last published source.
-	if len(p.MetadataBytes) == 0 {
-		return archive.SourceReference{}, false
-	}
-	// Only the reference is read, so metadata written under an older (or
-	// newer) metadata schema still yields it.
-	var metadata struct {
-		SourceBundle archive.SourceReference `json:"source_bundle"`
-	}
-	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil || !validSourceReference(metadata.SourceBundle) {
-		return archive.SourceReference{}, false
-	}
-	return metadata.SourceBundle, true
-}
-
-// validSourceReference reports whether ref names an object and carries a
-// SHA-256 digest in hex.
-func validSourceReference(ref archive.SourceReference) bool {
-	if ref.Key == "" || len(ref.SHA256) != 64 {
-		return false
-	}
-	_, err := hex.DecodeString(ref.SHA256)
-	return err == nil
-}
-
-func (s *LocalStore) publishedPath(archiveSessionID string) string {
-	return filepath.Join(s.home, "published", archiveSessionID+".json")
-}
-
-// SavePublished records the outcome of a build/publish decision for a
-// session, so the next scan can compare against it instead of rebuilding
-// from scratch. See CacheStatus for what each status means for retry.
-func (s *LocalStore) SavePublished(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, metadata ...[]byte) error {
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, status, "", metadata, nil, nil)
-}
-
-// savePublication records a completed publication: bundle becomes both the
-// comparison baseline and the last published snapshot, source is the object
-// its metadata points at, and metadata is the document that was uploaded.
-func (s *LocalStore) savePublication(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, source archive.SourceReference, metadata []byte) error {
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusPublished, "", [][]byte{metadata}, nil, &source)
-}
-
-// LoadLastPublishedSource returns the source reference of a session's last
-// publication, exactly as uploaded: the object its live metadata points at.
-// found is false when nothing was published, or when state from an old
-// version records no reference (see publishedState.lastPublishedSource);
-// callers must then not assume one, least of all by rebuilding it.
-func (s *LocalStore) LoadLastPublishedSource(archiveSessionID string) (archive.SourceReference, bool, error) {
-	var state publishedState
-	err := local.Read(s.publishedPath(archiveSessionID), &state)
-	if errors.Is(err, os.ErrNotExist) {
-		return archive.SourceReference{}, false, nil
-	}
-	if err != nil {
-		return archive.SourceReference{}, false, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
-	}
-	source, found := state.lastPublishedSource()
-	return source, found, nil
-}
-
-// SaveBlocked records a terminal capture gap for a session (see
-// CacheStatusBlocked). bundle is what the next scan compares against and
-// publishedAt is the last actual publish time, if any; the last published
-// snapshot itself is preserved exactly as SavePublished preserves it. For a
-// recoverable reason, deferred is hook evidence the block acknowledged and
-// must hand back when it clears; it accumulates across saves of the same
-// block and is dropped, having been handed back, by any other status.
-func (s *LocalStore) SaveBlocked(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, reason BlockedReason, deferred ...archive.SupplementalEvidence) error {
-	if reason == "" {
-		return errors.New("blocked reason is required")
-	}
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusBlocked, reason, nil, deferred, nil)
-}
-
-// savePublishedState writes a session's published state. source, when
-// status is CacheStatusPublished, is the uploaded source reference if the
-// caller knows it (see savePublication); it is ignored for any other status.
-func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata [][]byte, deferred []archive.SupplementalEvidence, source *archive.SourceReference) error {
-	if !safeFileComponent(archiveSessionID) {
-		return errors.New("archive session ID is not a safe file name component")
-	}
-	var last *publishedSnapshot
-	var existing publishedState
-	if err := local.Read(s.publishedPath(archiveSessionID), &existing); err == nil {
-		last = existing.detachedLastPublished()
-		if last == nil && existing.Status == CacheStatusPublished {
-			copy := publishedSnapshot{Bundle: existing.Bundle, PublishedAt: existing.PublishedAt}
-			last = &copy
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read published state %q: %w", archiveSessionID, err)
-	}
-	if status == CacheStatusPublished {
-		// The candidate becoming the current bundle is exactly what was just
-		// published, so the snapshot records only when, not a second copy.
-		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true, Source: source}
-	}
-	preBlock := existing.PreBlockStatus
-	switch {
-	case status != CacheStatusBlocked:
-		preBlock = ""
-	case existing.Status != CacheStatusBlocked:
-		preBlock = existing.Status
-	}
-	var held []archive.SupplementalEvidence
-	if status == CacheStatusBlocked && reason.recoverable() {
-		// The same block continuing keeps what it already holds; a block
-		// that replaces a settled state starts with only what arrived now.
-		if existing.Status == CacheStatusBlocked && existing.BlockedReason == reason {
-			held = existing.DeferredHookEvidence
-		}
-		held = archive.MergeSupplementalEvidence(held, deferred)
-	}
-	return local.Write(s.publishedPath(archiveSessionID), publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: publicationMetadata(existing.MetadataBytes, metadata)})
-}
-
-// ClearRecoverableBlock ends a block whose condition has passed — today only a
-// transcript that came back — by restoring the status the block replaced. It
-// exists because a returning transcript whose content is byte-identical to the
-// cached bundle produces no change for the normal comparison to act on, so
-// without this the gap would be reported forever.
-//
-// Hook evidence the block held on to (see publishedState.DeferredHookEvidence)
-// is handed back first, as an urgent request for the session, before the
-// state is rewritten: the request is the durable carrier the collector
-// already retries, so a crash at any point leaves the evidence pending
-// rather than lost, and a replay adds nothing the request already holds.
-// replayed reports that such a request was written, so the caller must
-// reload the session's request rather than act on the one it loaded before.
-//
-// A block with no recorded previous status is not rewritten: there was no
-// cached evidence before it, so the first real candidate replaces the whole
-// state anyway, and anything it held is replayed (idempotently) until then.
-func (s *LocalStore) ClearRecoverableBlock(archiveSessionID string, now time.Time) (restored CacheStatus, replayed, cleared bool, err error) {
-	var state publishedState
-	err = local.Read(s.publishedPath(archiveSessionID), &state)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false, false, nil
-	}
-	if err != nil {
-		return "", false, false, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
-	}
-	if state.Status != CacheStatusBlocked || !state.BlockedReason.recoverable() {
-		return state.Status, false, false, nil
-	}
-	if len(state.DeferredHookEvidence) > 0 {
-		if err := s.SaveRequest(archiveSessionID, "transcript-returned", now, state.DeferredHookEvidence...); err != nil {
-			return "", false, false, fmt.Errorf("replay evidence held while blocked %q: %w", archiveSessionID, err)
-		}
-		replayed = true
-	}
-	if state.PreBlockStatus == "" || state.PreBlockStatus == CacheStatusBlocked {
-		return state.Status, replayed, false, nil
-	}
-	restored = state.PreBlockStatus
-	state.Status, state.BlockedReason, state.PreBlockStatus, state.DeferredHookEvidence = restored, "", "", nil
-	if err := local.Write(s.publishedPath(archiveSessionID), state); err != nil {
-		return "", replayed, false, fmt.Errorf("clear block %q: %w", archiveSessionID, err)
-	}
-	return restored, replayed, true, nil
-}
-
-// LoadBlocked reports whether a session is in CacheStatusBlocked and why.
-func (s *LocalStore) LoadBlocked(archiveSessionID string) (BlockedReason, bool, error) {
-	var state publishedState
-	readErr := local.Read(s.publishedPath(archiveSessionID), &state)
-	if errors.Is(readErr, os.ErrNotExist) {
-		return "", false, nil
-	}
-	if readErr != nil {
-		return "", false, fmt.Errorf("read published state %q: %w", archiveSessionID, readErr)
-	}
-	if state.Status != CacheStatusBlocked {
-		return "", false, nil
-	}
-	return state.BlockedReason, true, nil
-}
-
-// LoadPublished returns the last cached bundle for a session, if any.
-func (s *LocalStore) LoadPublished(archiveSessionID string) (bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, found bool, err error) {
-	var state publishedState
-	readErr := local.Read(s.publishedPath(archiveSessionID), &state)
-	if errors.Is(readErr, os.ErrNotExist) {
-		return archive.SourceBundle{}, time.Time{}, "", false, nil
-	}
-	if readErr != nil {
-		return archive.SourceBundle{}, time.Time{}, "", false, fmt.Errorf("read published state %q: %w", archiveSessionID, readErr)
-	}
-	return state.Bundle, state.PublishedAt, state.Status, true, nil
-}
-
-// LoadLastPublished returns the most recent bundle actually made discoverable
-// by remote metadata. It deliberately ignores a newer local-only candidate.
-func (s *LocalStore) LoadLastPublished(archiveSessionID string) (bundle archive.SourceBundle, publishedAt time.Time, found bool, err error) {
-	var state publishedState
-	readErr := local.Read(s.publishedPath(archiveSessionID), &state)
-	if errors.Is(readErr, os.ErrNotExist) {
-		return archive.SourceBundle{}, time.Time{}, false, nil
-	}
-	if readErr != nil {
-		return archive.SourceBundle{}, time.Time{}, false, fmt.Errorf("read published state %q: %w", archiveSessionID, readErr)
-	}
-	bundle, publishedAt, found = state.resolveLastPublished()
-	return bundle, publishedAt, found, nil
 }
 
 // PendingPublication is one fully rendered publication transaction. Source
@@ -827,30 +496,30 @@ type PendingPublication struct {
 	Attempted     bool      `json:"attempted,omitempty"`
 }
 
-// sourceReference is the reference the publication's metadata carries for
+// SourceReference is the reference the publication's metadata carries for
 // its source object.
-func (p PendingPublication) sourceReference() archive.SourceReference {
+func (p PendingPublication) SourceReference() archive.SourceReference {
 	size := len(p.SourceBytes)
-	if p.carriesNoSource() {
+	if p.CarriesNoSource() {
 		size = p.SourceSize
 	}
 	return archive.SourceReference{Key: p.SourceKey, SHA256: p.SourceSHA256, CompressedBytes: size}
 }
 
-// carriesNoSource reports a metadata-only publication that points at an
+// CarriesNoSource reports a metadata-only publication that points at an
 // existing source without carrying its bytes (see SourceSize).
-func (p PendingPublication) carriesNoSource() bool {
+func (p PendingPublication) CarriesNoSource() bool {
 	return p.MetadataOnly && len(p.SourceBytes) == 0
 }
 
-func (s *LocalStore) pendingPath(id string) string {
+func (s *Store) pendingPath(id string) string {
 	return filepath.Join(s.home, "pending", id+".json")
 }
 
 // SavePending durably records a session's publication transaction before its
 // first remote write. It refuses an incomplete one: every retry must upload
 // exactly the same bytes under exactly the same keys.
-func (s *LocalStore) SavePending(id string, pending PendingPublication) error {
+func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -863,7 +532,7 @@ func (s *LocalStore) SavePending(id string, pending PendingPublication) error {
 // LoadPending returns a session's outstanding publication transaction, if
 // any. Decoding it reads the whole compressed source; HasPending answers
 // whether one exists without that cost.
-func (s *LocalStore) LoadPending(id string) (PendingPublication, bool, error) {
+func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
 	var pending PendingPublication
 	err := local.Read(s.pendingPath(id), &pending)
 	if errors.Is(err, os.ErrNotExist) {
@@ -879,7 +548,7 @@ func (s *LocalStore) LoadPending(id string) (PendingPublication, bool, error) {
 // without decoding it. The pending file carries the compressed source bytes,
 // so a stat is the only way to ask this question cheaply enough to ask it for
 // every registered session on every pass.
-func (s *LocalStore) HasPending(id string) (bool, error) {
+func (s *Store) HasPending(id string) (bool, error) {
 	if !safeFileComponent(id) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -895,7 +564,7 @@ func (s *LocalStore) HasPending(id string) (bool, error) {
 
 // RemovePending discards a session's publication transaction once it has
 // been published and acknowledged locally. A missing one is not an error.
-func (s *LocalStore) RemovePending(id string) error {
+func (s *Store) RemovePending(id string) error {
 	err := os.Remove(s.pendingPath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove pending publication %q: %w", id, err)
@@ -924,16 +593,16 @@ type Status struct {
 	UnrefreshableSummaries int `json:"unrefreshable_summaries,omitempty"`
 }
 
-func (s *LocalStore) statusPath() string { return filepath.Join(s.home, "status.json") }
+func (s *Store) statusPath() string { return filepath.Join(s.home, "status.json") }
 
 // SaveStatus durably records the latest Status.
-func (s *LocalStore) SaveStatus(status Status) error {
+func (s *Store) SaveStatus(status Status) error {
 	return local.Write(s.statusPath(), status)
 }
 
 // LoadStatus returns the last saved Status, or the zero value if none exists
 // yet.
-func (s *LocalStore) LoadStatus() (Status, error) {
+func (s *Store) LoadStatus() (Status, error) {
 	var status Status
 	err := local.Read(s.statusPath(), &status)
 	if errors.Is(err, os.ErrNotExist) {
@@ -947,7 +616,7 @@ func (s *LocalStore) LoadStatus() (Status, error) {
 
 // SetScanPending journals work before scanning. A failed or interrupted update
 // remains pending even when the previous published cache is still valid.
-func (s *LocalStore) SetScanPending(id string, pending bool) error {
+func (s *Store) SetScanPending(id string, pending bool) error {
 	if !safeFileComponent(id) {
 		return errors.New("invalid session ID")
 	}
@@ -964,7 +633,7 @@ func (s *LocalStore) SetScanPending(id string, pending bool) error {
 
 // ScanPending reports whether a scan of the session was journaled by
 // SetScanPending and never completed, so its outcome is still owed.
-func (s *LocalStore) ScanPending(id string) (bool, error) {
+func (s *Store) ScanPending(id string) (bool, error) {
 	if !safeFileComponent(id) {
 		return false, errors.New("invalid session ID")
 	}
@@ -976,7 +645,7 @@ func (s *LocalStore) ScanPending(id string) (bool, error) {
 	return pending, err
 }
 
-// scanSignature is one session's "nothing to do" token: the exact size and
+// ScanSignature is one session's "nothing to do" token: the exact size and
 // nanosecond modification time of the transcript the last completed scan
 // consumed, plus the versions that scan ran under. Its presence asserts that
 // the scan ended settled — published, declined, or unchanged — and never
@@ -987,8 +656,8 @@ func (s *LocalStore) ScanPending(id string) (bool, error) {
 // source bundle (hundreds of kilobytes), and decoding one per registered
 // session per pass is precisely the cost this token exists to remove.
 // Anything that invalidates the assertion removes the token (see
-// removeScanSignature's callers).
-type scanSignature struct {
+// RemoveScanSignature's callers).
+type ScanSignature struct {
 	TranscriptSize  int64 `json:"transcript_size"`
 	TranscriptMtime int64 `json:"transcript_mtime_unix_nano"`
 	// The derivation versions are part of the signature: a parser, filter, or
@@ -1019,24 +688,25 @@ type scanSignature struct {
 	FailedRecordLimit int64 `json:"failed_record_limit,omitempty"`
 }
 
-func (s scanSignature) cursorSignature() cursorstore.Signature {
+// CursorSignature is the Cursor chat state the signature was recorded at.
+func (s ScanSignature) CursorSignature() cursorstore.Signature {
 	return cursorstore.Signature{
 		LastUpdatedAt: s.CursorLastUpdatedAt, HeaderCount: s.CursorHeaderCount, LastBubbleID: s.CursorLastBubbleID,
 		MessageRows: s.CursorMessageRows, LastMessageHash: s.CursorLastMessageHash,
 	}
 }
 
-func (s *LocalStore) scanSignaturePath(id string) string {
+func (s *Store) scanSignaturePath(id string) string {
 	return filepath.Join(s.home, "scan-signatures", id+".json")
 }
 
-// saveScanSignature records the token, skipping the write (and its two fsyncs)
+// SaveScanSignature records the token, skipping the write (and its two fsyncs)
 // when nothing about it changed.
-func (s *LocalStore) saveScanSignature(id string, signature scanSignature) error {
+func (s *Store) SaveScanSignature(id string, signature ScanSignature) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if existing, found, err := s.loadScanSignature(id); err != nil {
+	if existing, found, err := s.LoadScanSignature(id); err != nil {
 		return err
 	} else if found && existing == signature {
 		return nil
@@ -1044,24 +714,28 @@ func (s *LocalStore) saveScanSignature(id string, signature scanSignature) error
 	return local.Write(s.scanSignaturePath(id), signature)
 }
 
-func (s *LocalStore) loadScanSignature(id string) (scanSignature, bool, error) {
+// LoadScanSignature returns a session's scan signature. One that cannot be
+// read counts as absent: the session is then scanned, the safe answer.
+func (s *Store) LoadScanSignature(id string) (ScanSignature, bool, error) {
 	if !safeFileComponent(id) {
-		return scanSignature{}, false, errors.New("archive session ID is not a safe file name component")
+		return ScanSignature{}, false, errors.New("archive session ID is not a safe file name component")
 	}
-	var signature scanSignature
+	var signature ScanSignature
 	err := local.Read(s.scanSignaturePath(id), &signature)
 	if errors.Is(err, os.ErrNotExist) {
-		return scanSignature{}, false, nil
+		return ScanSignature{}, false, nil
 	}
 	if err != nil {
 		// A corrupt token is not a failure: it only means this session cannot
 		// be skipped, which is the safe answer.
-		return scanSignature{}, false, nil
+		return ScanSignature{}, false, nil
 	}
 	return signature, true, nil
 }
 
-func (s *LocalStore) removeScanSignature(id string) error {
+// RemoveScanSignature drops a session's scan signature, so the next pass
+// scans it rather than skipping it on a stat.
+func (s *Store) RemoveScanSignature(id string) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -1070,11 +744,4 @@ func (s *LocalStore) removeScanSignature(id string) error {
 		return fmt.Errorf("remove scan signature %q: %w", id, err)
 	}
 	return nil
-}
-
-func publicationMetadata(previous []byte, supplied [][]byte) []byte {
-	if len(supplied) > 0 {
-		return supplied[0]
-	}
-	return previous
 }

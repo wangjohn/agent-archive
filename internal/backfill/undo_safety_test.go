@@ -11,22 +11,23 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 )
 
 // undoFixture is a local store and configuration with imported sessions.
 type undoFixture struct {
 	t     *testing.T
 	home  string
-	store *collector.LocalStore
+	store *state.Store
 	cfg   config.Config
 }
 
 func newUndoFixture(t *testing.T) *undoFixture {
 	t.Helper()
 	home := t.TempDir()
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestUndoKeepsAProjectAnotherImportStillNeeds(t *testing.T) {
 	cfg := f.cfg
 	plan.ApplyToConfig(&cfg)
 	for _, s := range plan.Sessions {
-		if _, err := f.store.ForgetIdleSession(s.Registration.ArchiveSessionID, s.Registration.NativeSessionID, false, &collector.RemovalRecord{Harness: "claude", Reason: collector.RemovalReasonUndo, At: fixedNow}); err != nil {
+		if _, err := f.store.ForgetIdleSession(s.Registration.ArchiveSessionID, s.Registration.NativeSessionID, false, &state.RemovalRecord{Harness: "claude", Reason: state.RemovalReasonUndo, At: fixedNow}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -221,7 +222,7 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 	}
 	evidence := []archive.SupplementalEvidence{{Kind: archive.EvidenceKindFinalResponse, ObservedAt: fixedNow.UTC(), Provenance: "hook:claude-stop", Payload: map[string]any{"text": "done"}}}
 	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeRecords: records, SupplementalEvidence: evidence}
-	if err := f.store.SavePublished(reg.ArchiveSessionID, bundle, fixedNow, collector.CacheStatus("published")); err != nil {
+	if err := statetest.SavePublished(f.store, reg.ArchiveSessionID, bundle, fixedNow, state.CacheStatus("published")); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(f.home, "published", reg.ArchiveSessionID+".json"))
@@ -231,7 +232,7 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	resumed, err := resumedByEvidence(Environment{}, f.store, reg, collector.Request{})
+	resumed, err := resumedByEvidence(Environment{}, f.store, reg, state.Request{})
 	runtime.ReadMemStats(&after)
 	if err != nil || !resumed {
 		t.Fatalf("resumed %v, %v", resumed, err)

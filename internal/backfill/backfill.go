@@ -92,7 +92,7 @@ var skipOrder = []SkipReason{
 }
 
 // ArchiveState is what backfill needs to know about the local archive. The
-// CLI implements it over collector.LocalStore and config.Config.
+// CLI implements it over state.Store and config.Config.
 type ArchiveState interface {
 	// Classify returns "" when the native session is not in the archive, or
 	// one of the skip codes already_archived, registered_not_admitted,

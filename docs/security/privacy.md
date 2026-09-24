@@ -152,8 +152,9 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   `PGPASSWORD`, `spring.datasource.password`, and `x-api-key` all match. The
   name may be quoted (`"…"`, `'…'`, or escaped inside a string, `\"…\"`);
   the separator is `=`, `:`, `:=`, or `=>`; a `--name value` command-line
-  flag counts too. The value, quoted up to its closing quote or unquoted up
-  to whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
+  flag counts too. The value, quoted up to its closing quote (plus anything
+  glued on after it, as a shell reads it; filter 10) or unquoted up to
+  whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
   `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`. An HTTP scheme
   before the value stays: `Authorization: Bearer [REDACTED]`. A single token
   in brackets or braces is a value too (`password=[hunter2]`,
@@ -216,6 +217,17 @@ Known misses.
   (`AKIA…`/`ASIA…`, URL userinfo).
 - A credential in prose (`the password is hunter2`) or on the line after
   its YAML key is not recognized.
+- Text glued after a closing quote is taken with the value (filter 10) only
+  up to a closing `]`, `}`, or `)`, which usually closes the structure
+  around the value (`{"password":"abc"}`, `f(PASSWORD="abc")`) and must stay.
+  So in the rare `PASSWORD="abc")realsecret`, `realsecret` is kept.
+- A Cursor plain-text transcript has no structure beyond its role headers,
+  so a line in tool output that itself starts at column 0 with `user:`,
+  `assistant:`, `tool:`, or a hidden role (`system:`, `thinking:`, …) reads
+  as a header, exactly as Cursor's own format would: it starts a section
+  (a Person turn in the handoff) or hides what follows. Filter 10 stopped
+  treating indented role words this way; a column-0 one cannot be told
+  apart. Cursor's JSONL transcripts and database chats are not affected.
 
 Redaction is best effort in both directions: a legitimate value that looks like
 a credential is redacted, and a tool argument that happens to contain one of

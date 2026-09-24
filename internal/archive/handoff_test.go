@@ -226,7 +226,7 @@ func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
 	if strings.Join(kinds, ",") != strings.Join(want, ",") {
 		t.Fatalf("elision order = %v, want %v", kinds, want)
 	}
-	if steps := fit.Exchanges[0].Steps; len(steps) != 2 || steps[1].Kind != "collapsed" || steps[1].Text != "3 tool calls: Bash ×3" {
+	if steps := fit.Exchanges[0].Steps; len(steps) != 2 || steps[1].Kind != "collapsed" || steps[1].Text != "3 tool calls: `Bash` ×3" {
 		t.Fatalf("collapsed = %#v", steps)
 	}
 	for _, exchange := range fit.Exchanges {

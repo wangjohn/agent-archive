@@ -5,6 +5,30 @@ rules, as a whole, are in [privacy](privacy.md); version numbers and bump
 rules are in [versions](../reference/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 10
+
+Filter 10 fixes two things. Adapter version 0.10.0 goes with it.
+
+- **Role headers only at column 0.** Filter 9 treated any line whose trimmed
+  text began with `user:`, `system:`, or another role name as a role header.
+  An indented YAML key in tool output (`    user: …` in a docker-compose
+  file) therefore started a new section, and `  system: linux` hid
+  everything after it as if it were a system prompt. A header is now only a
+  role name and a colon at the start of the line (in any case), followed by
+  a space or the end of the line. An indented role word is content: it is
+  retained, sanitized like the rest of its section, and never hides or
+  reveals anything. Only Cursor plain-text transcripts change.
+- **Text glued after a closing quote.** Filter 9 ended a quoted credential
+  value at its closing quote, so `PASSWORD="abc"realsecret`, which a shell
+  reads as the value `abcrealsecret`, became `PASSWORD="[REDACTED]"realsecret`,
+  and `.PWD=='0'0` kept its trailing `0`. Whatever a shell would read as the
+  same word after the closing quote (more text, or more closed quoted
+  segments: `TOKEN='a'"b"c`) is now part of the value and is redacted with
+  it: `PASSWORD="[REDACTED]"`. It stops at whitespace, `,`, `;`, a closing
+  `]`, `}`, or `)` (so `{"password":"abc"}` keeps its brace), and shell
+  punctuation (`&`, `|`, `<`, `>`). Redacting twice still changes nothing.
+  Every format with text changes.
+
 ## Source filter version 9
 
 Filter 9 closes four ways content left the machine that the filter was meant

@@ -101,7 +101,7 @@ d0a8124edb786e5686a068deca82e04f  codex    2026-01-02T00:00:00Z  hook    partial
 - `status` shows storage, collector, hooks, and capture coverage.
 - `sync` runs one collection and upload pass now.
 - `pause` and `resume` suspend and restore scheduled work.
-- `list` and `show` inspect archived sessions from the bucket, metadata first.
+- `list` and `show` inspect archived sessions from the bucket, metadata first. `list --json`, `show`, and `status --json` print JSON for scripts ([JSON output](docs/reference/json-output.md)).
 - `handoff` prints a session as a prompt another coding agent can continue from, on this Mac or another.
 - `backfill` imports the sessions already on this Mac after showing a plan; `backfill history` and `backfill undo` review and remove imports.
 - `feedback` attaches your own assessment to a session.

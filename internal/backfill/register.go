@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // ErrStopped is returned when Stop asked registration to end early.
@@ -36,7 +36,7 @@ const (
 // while registration runs; each hold still rereads the configuration.
 type Registration struct {
 	Home       string
-	Store      *collector.LocalStore
+	Store      *state.Store
 	Batch      string
 	AdmittedAt time.Time
 	// DestinationID is the destination the import was confirmed for, the
@@ -207,7 +207,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 		sub := c.Subagents[w.next]
 		w.next++
 		err := r.subagent(w, sub)
-		if errors.Is(err, collector.ErrSubagentCandidateConflict) || errors.Is(err, collector.ErrSubagentCandidateIncomplete) {
+		if errors.Is(err, state.ErrSubagentCandidateConflict) || errors.Is(err, state.ErrSubagentCandidateIncomplete) {
 			result.SubagentsInvalid++
 			err = nil
 		}
@@ -292,7 +292,7 @@ func (r Registration) subagent(w *parentWork, sub Subagent) error {
 		// A hook registered this subagent already.
 		return err
 	}
-	if err := r.Store.SaveSubagentCandidate(collector.SubagentCandidate{
+	if err := r.Store.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: childID, NativeSessionID: childNativeID,
 		ParentArchiveSessionID: w.id, ParentNativeSessionID: c.NativeSessionID,
 		ProjectID: archive.ProjectID(c.ProjectRoot), ProjectRoot: c.ProjectRoot, Harness: archive.Harness{Name: c.Harness},

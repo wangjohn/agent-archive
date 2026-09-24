@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -38,9 +39,9 @@ func registration(t *testing.T, transcriptPath string) archive.SessionRegistrati
 	}
 }
 
-func newTestStore(t *testing.T) *LocalStore {
+func newTestStore(t *testing.T) *state.Store {
 	t.Helper()
-	store, err := NewLocalStore(t.TempDir())
+	store, err := state.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +305,7 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 	store := storage.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
-	local1, err := NewLocalStore(root)
+	local1, err := state.Open(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,9 +323,9 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 		t.Fatalf("expected rate-limited skip before restart: %#v", result)
 	}
 
-	// Simulate a process restart: a fresh LocalStore handle over the same
+	// Simulate a process restart: a fresh Store handle over the same
 	// root directory, as a newly started collector process would construct.
-	local2, err := NewLocalStore(root)
+	local2, err := state.Open(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +347,7 @@ func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T)
 	home := t.TempDir()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
-	local1, err := NewLocalStore(home)
+	local1, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +385,7 @@ func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T)
 		t.Fatal(err)
 	}
 	store.failMetadata = false
-	local2, err := NewLocalStore(home)
+	local2, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +585,7 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 		t.Fatalf("blocked session left scan pending: %v err=%v", scanPending, err)
 	}
 	reason, blocked, err := local.LoadBlocked("session-1")
-	if err != nil || !blocked || reason != BlockedReasonTranscriptRewritten {
+	if err != nil || !blocked || reason != state.BlockedReasonTranscriptRewritten {
 		t.Fatalf("blocked=%v reason=%q err=%v", blocked, reason, err)
 	}
 	if _, at, found, err := local.LoadLastPublished("session-1"); err != nil || !found || !at.Equal(t0) {
@@ -641,13 +642,13 @@ func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
 	before := fetchMetadata(t, cloud, "codex", "session-1")
 	// Simulate a cache written by an earlier release whose filter produced
 	// different records: the new release must republish, not block forever.
-	var state publishedState
-	if err := local.Read(store.publishedPath("session-1"), &state); err != nil {
+	var file publishedFile
+	if err := local.Read(publishedPath(store, "session-1"), &file); err != nil {
 		t.Fatal(err)
 	}
-	state.Bundle.Capture.FilterVersion = "0"
-	state.LastPublished.Bundle.Capture.FilterVersion = "0"
-	if err := local.Write(store.publishedPath("session-1"), state); err != nil {
+	file.Bundle.Capture.FilterVersion = "0"
+	file.LastPublished.Bundle.Capture.FilterVersion = "0"
+	if err := local.Write(publishedPath(store, "session-1"), file); err != nil {
 		t.Fatal(err)
 	}
 	writeTranscript(t, dir, "codex.jsonl", `{"type":"turn_context","model":"gpt-test"}`)
@@ -720,7 +721,7 @@ func TestRunUpgradesAndCompletesLegacyTokenlessRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if err := local.Write(store.requestPath("session-1"), Request{ArchiveSessionID: "session-1", Reasons: []string{"stop"}, RequestedAt: now}); err != nil {
+	if err := local.Write(requestPath(store, "session-1"), state.Request{ArchiveSessionID: "session-1", Reasons: []string{"stop"}, RequestedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Run(context.Background(), store, storage.NewMemoryStore(), Options{MachineID: "m", Now: func() time.Time { return now }})
@@ -758,7 +759,7 @@ func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
 	if len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("oversized transcript should be a recorded gap, not a failure: %#v", result)
 	}
-	if reason, blocked, err := local.LoadBlocked("session-1"); err != nil || !blocked || reason != BlockedReasonTranscriptTooLarge {
+	if reason, blocked, err := local.LoadBlocked("session-1"); err != nil || !blocked || reason != state.BlockedReasonTranscriptTooLarge {
 		t.Fatalf("blocked=%v reason=%q err=%v", blocked, reason, err)
 	}
 	objects, _ := store.List(context.Background(), "sessions")
@@ -802,7 +803,7 @@ func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("oversize should be a recorded gap: result=%#v err=%v", result, err)
 	}
-	if reason, blocked, err := local.LoadBlocked("session-1"); err != nil || !blocked || reason != BlockedReasonTranscriptTooLarge {
+	if reason, blocked, err := local.LoadBlocked("session-1"); err != nil || !blocked || reason != state.BlockedReasonTranscriptTooLarge {
 		t.Fatalf("blocked=%v reason=%q err=%v", blocked, reason, err)
 	}
 	if requests, err := local.LoadRequests(); err != nil || len(requests) != 0 {
@@ -819,7 +820,7 @@ func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
 	}
 
 	// Still oversize, nothing else changed: no work, no error, not pending.
-	stat, err := os.Stat(local.publishedPath("session-1"))
+	stat, err := os.Stat(publishedPath(local, "session-1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -829,7 +830,7 @@ func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("unchanged oversize session was reprocessed: result=%#v err=%v", result, err)
 	}
-	if again, err := os.Stat(local.publishedPath("session-1")); err != nil || !again.ModTime().Equal(stat.ModTime()) || again.Size() != stat.Size() {
+	if again, err := os.Stat(publishedPath(local, "session-1")); err != nil || !again.ModTime().Equal(stat.ModTime()) || again.Size() != stat.Size() {
 		t.Fatalf("published cache rewritten on a no-op pass: err=%v", err)
 	}
 	status, err := local.LoadStatus()
@@ -859,7 +860,7 @@ func TestForgetSessionRemovesRequestLock(t *testing.T) {
 	if err := store.SaveRequest("session-1", "stop", now); err != nil {
 		t.Fatal(err)
 	}
-	lock := filepath.Join(store.home, "request-locks", "session-1.lock")
+	lock := filepath.Join(store.Home(), "request-locks", "session-1.lock")
 	if _, err := os.Stat(lock); err != nil {
 		t.Fatalf("request lock was not created: %v", err)
 	}
@@ -984,7 +985,7 @@ func TestRunComposesWithLocalLock(t *testing.T) {
 		t.Fatalf("expected a second collector run to be excluded, got %v", err)
 	}
 
-	localStore, err := NewLocalStore(home)
+	localStore, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1020,7 +1021,7 @@ func TestEnsureArchiveSessionIDPersistsAndReuses(t *testing.T) {
 
 func TestArchiveSessionIDRejectsPathLikeInputSafely(t *testing.T) {
 	home := t.TempDir()
-	local, err := NewLocalStore(home)
+	local, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1098,7 +1099,7 @@ func TestRunDeclinedCandidateIsNotSpuriouslyRateLimitedOnLaterChange(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found || status != CacheStatusDeclined || !publishedAt.IsZero() {
+	if !found || status != state.CacheStatusDeclined || !publishedAt.IsZero() {
 		t.Fatalf("expected a zero-time declined cache entry: found=%v status=%v publishedAt=%v", found, status, publishedAt)
 	}
 
@@ -1111,7 +1112,7 @@ func TestRunDeclinedCandidateIsNotSpuriouslyRateLimitedOnLaterChange(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found2 || status2 != CacheStatusDeclined {
+	if !found2 || status2 != state.CacheStatusDeclined {
 		t.Fatalf("expected an immediate re-decline, not a spurious rate limit: found=%v status=%v", found2, status2)
 	}
 }

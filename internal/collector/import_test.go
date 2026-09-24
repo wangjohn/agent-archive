@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -132,7 +133,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			local, err := NewLocalStore(home)
+			local, err := state.Open(home)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -157,7 +158,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			if err := local.SaveRegistration(parent); err != nil {
 				t.Fatal(err)
 			}
-			if err := local.SaveSubagentCandidate(SubagentCandidate{
+			if err := local.SaveSubagentCandidate(state.SubagentCandidate{
 				ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native",
 				ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: childPath,
 				ObservedAt: tc.observedAt, Origin: tc.candidateOrigin,
@@ -223,7 +224,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 
 func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 	home := t.TempDir()
-	local, err := NewLocalStore(home)
+	local, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,11 +232,11 @@ func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 	if _, found, err := local.Removal("codex", "native-secret"); err != nil || found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
-	if err := local.RecordRemoval("codex", "native-secret", RemovalReasonRetention, at); err != nil {
+	if err := local.RecordRemoval("codex", "native-secret", state.RemovalReasonRetention, at); err != nil {
 		t.Fatal(err)
 	}
 	record, found, err := local.Removal("codex", "native-secret")
-	if err != nil || !found || record.Harness != "codex" || record.Reason != RemovalReasonRetention || !record.At.Equal(at) {
+	if err != nil || !found || record.Harness != "codex" || record.Reason != state.RemovalReasonRetention || !record.At.Equal(at) {
 		t.Fatalf("record=%#v found=%v err=%v", record, found, err)
 	}
 	// The app is part of the key: the same native ID from another app is a
@@ -243,10 +244,10 @@ func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 	if _, found, _ := local.Removal("claude", "native-secret"); found {
 		t.Fatal("removal record matched another app")
 	}
-	if err := local.RecordRemoval("codex", "native-secret", RemovalReasonUndo, at.Add(time.Hour)); err != nil {
+	if err := local.RecordRemoval("codex", "native-secret", state.RemovalReasonUndo, at.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if record, _, _ := local.Removal("codex", "native-secret"); record.Reason != RemovalReasonUndo {
+	if record, _, _ := local.Removal("codex", "native-secret"); record.Reason != state.RemovalReasonUndo {
 		t.Fatalf("later removal did not replace the record: %#v", record)
 	}
 	if err := local.RecordRemoval("codex", "native-secret", "expired", at); err == nil {
@@ -272,11 +273,11 @@ func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 // A registration written under the "claude-code" spelling (a hand-edited
 // hook) leaves a record backfill finds under "claude".
 func TestRemovalRecordCanonicalApp(t *testing.T) {
-	local, err := NewLocalStore(t.TempDir())
+	local, err := state.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := local.RecordRemoval("claude-code", "native-secret", RemovalReasonRetention, time.Now()); err != nil {
+	if err := local.RecordRemoval("claude-code", "native-secret", state.RemovalReasonRetention, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := local.Removal("claude", "native-secret"); err != nil || !found {
@@ -290,7 +291,7 @@ func TestRemovalRecordCanonicalApp(t *testing.T) {
 // registered, and a retry then records and forgets it.
 func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonUndo, At: at}
+	removal := &state.RemovalRecord{Harness: "codex", Reason: state.RemovalReasonUndo, At: at}
 
 	kept := newTestStore(t)
 	reg := registration(t, "/unused")
@@ -308,7 +309,7 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	}
 
 	home := t.TempDir()
-	failing, err := NewLocalStore(home)
+	failing, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +339,7 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || !forgotten {
 		t.Fatalf("retry: forgotten=%t err=%v", forgotten, err)
 	}
-	if record, found, err := failing.Removal("codex", reg.NativeSessionID); err != nil || !found || record.Reason != RemovalReasonUndo || !record.At.Equal(at) {
+	if record, found, err := failing.Removal("codex", reg.NativeSessionID); err != nil || !found || record.Reason != state.RemovalReasonUndo || !record.At.Equal(at) {
 		t.Fatalf("record=%#v found=%t err=%v", record, found, err)
 	}
 }
@@ -360,7 +361,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			local, err := NewLocalStore(home)
+			local, err := state.Open(home)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -383,7 +384,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 			if err := local.SaveRegistration(parent); err != nil {
 				t.Fatal(err)
 			}
-			if err := local.SaveSubagentCandidate(SubagentCandidate{
+			if err := local.SaveSubagentCandidate(state.SubagentCandidate{
 				ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native",
 				ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: childPath,
 				ObservedAt: importedAt, Origin: tc.origin,

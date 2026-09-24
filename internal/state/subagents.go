@@ -1,4 +1,4 @@
-package collector
+package state
 
 import (
 	"errors"
@@ -33,22 +33,22 @@ type SubagentCandidate struct {
 }
 
 var (
-	// ErrSubagentCandidateIncomplete means a candidate is missing a required
+	// ErrSubagentCandidateIncomplete reports a candidate missing a required
 	// field.
 	ErrSubagentCandidateIncomplete = errors.New("subagent candidate is incomplete")
-	// ErrSubagentCandidateConflict means an earlier candidate for the same
-	// archive ID has a different path or owner, which a later one never
+	// ErrSubagentCandidateConflict reports that an earlier candidate for the
+	// same archive ID has a different path or owner, which a later one never
 	// replaces.
 	ErrSubagentCandidateConflict = errors.New("subagent candidate ownership changed")
 )
 
-func (s *LocalStore) subagentCandidatePath(id string) string {
+func (s *Store) subagentCandidatePath(id string) string {
 	return filepath.Join(s.home, "subagent-candidates", id+".json")
 }
 
 // SaveSubagentCandidate coalesces duplicate stop deliveries without allowing
 // a later event to replace the path or ownership established by the first.
-func (s *LocalStore) SaveSubagentCandidate(candidate SubagentCandidate) error {
+func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || candidate.ParentArchiveSessionID == "" || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
 		return ErrSubagentCandidateIncomplete
 	}
@@ -72,10 +72,10 @@ func (s *LocalStore) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	return local.Write(path, candidate)
 }
 
-// LoadSubagentCandidates returns every saved subagent candidate, sorted by
-// archive session ID. A missing directory means none; a candidate removed
-// while the directory is listed is skipped.
-func (s *LocalStore) LoadSubagentCandidates() ([]SubagentCandidate, error) {
+// LoadSubagentCandidates returns every subagent candidate hooks and backfill
+// have left, sorted by archive session ID. Unlike ScanSubagentCandidates it
+// fails on the first one it cannot read, and never moves a file aside.
+func (s *Store) LoadSubagentCandidates() ([]SubagentCandidate, error) {
 	dir := filepath.Join(s.home, "subagent-candidates")
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -103,7 +103,7 @@ func (s *LocalStore) LoadSubagentCandidates() ([]SubagentCandidate, error) {
 	return out, nil
 }
 
-func (s *LocalStore) lockSubagentCandidate(id string) (func(), error) {
+func (s *Store) lockSubagentCandidate(id string) (func(), error) {
 	if !safeFileComponent(id) {
 		return nil, errors.New("invalid subagent candidate ID")
 	}
@@ -116,9 +116,8 @@ func subagentLockName(id string) string {
 	return filepath.Join("request-locks", "subagent-"+id+".lock")
 }
 
-// RemoveSubagentCandidate deletes the candidate for archive session id under
-// its lock. A candidate that is already gone is not an error.
-func (s *LocalStore) RemoveSubagentCandidate(id string) error {
+// RemoveSubagentCandidate removes one subagent candidate, under its lock.
+func (s *Store) RemoveSubagentCandidate(id string) error {
 	unlock, err := s.lockSubagentCandidate(id)
 	if err != nil {
 		return err
@@ -127,9 +126,11 @@ func (s *LocalStore) RemoveSubagentCandidate(id string) error {
 	return s.removeSubagentCandidate(id)
 }
 
-// A later stop may arrive while background transcript validation is running.
-// Acknowledge only the exact observed generation, under the writer's short lock.
-func (s *LocalStore) acknowledgeSubagentCandidate(expected SubagentCandidate) error {
+// AcknowledgeSubagentCandidate marks a candidate handled. A later stop may
+// arrive while background transcript validation is running, so it
+// acknowledges only the exact observed generation, under the writer's short
+// lock.
+func (s *Store) AcknowledgeSubagentCandidate(expected SubagentCandidate) error {
 	unlock, err := s.lockSubagentCandidate(expected.ArchiveSessionID)
 	if err != nil {
 		return err
@@ -148,7 +149,7 @@ func (s *LocalStore) acknowledgeSubagentCandidate(expected SubagentCandidate) er
 	return s.removeSubagentCandidate(expected.ArchiveSessionID)
 }
 
-func (s *LocalStore) removeSubagentCandidate(id string) error {
+func (s *Store) removeSubagentCandidate(id string) error {
 	err := os.Remove(s.subagentCandidatePath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove subagent candidate: %w", err)
@@ -159,8 +160,8 @@ func (s *LocalStore) removeSubagentCandidate(id string) error {
 // removeSubagentCandidatesForSession removes the candidates naming id as the
 // subagent or its parent. Another session's unreadable candidate does not
 // stand in the way (the scan quarantines one that does not decode).
-func (s *LocalStore) removeSubagentCandidatesForSession(id string) error {
-	candidates, issues, err := s.scanSubagentCandidates()
+func (s *Store) removeSubagentCandidatesForSession(id string) error {
+	candidates, issues, err := s.ScanSubagentCandidates()
 	if err != nil {
 		return err
 	}
