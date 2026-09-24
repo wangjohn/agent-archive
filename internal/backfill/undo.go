@@ -82,9 +82,11 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 	for _, req := range requests {
 		requested[req.ArchiveSessionID] = req
 	}
-	// The bucket the import went to is the current one only if the
-	// destination has not changed since, by its ID and by its time boundary.
-	sameDestination := b.DestinationID == DestinationID(cfg.Storage)
+	// Whether a session's objects are in the bucket configured now. A
+	// registration that records its destination ID (always the batch's) is
+	// judged by it alone, which stays right after a switch away and back.
+	// One without needs both the batch's ID and the time boundary to match.
+	sameDestination := b.DestinationID == cfg.DestinationID()
 	selected := map[string]bool{}
 	var parents, children []UndoSession
 	for _, reg := range regs {
@@ -111,7 +113,7 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 		if err != nil {
 			return UndoPlan{}, err
 		}
-		s := UndoSession{Registration: reg, InCurrentDestination: sameDestination && cfg.InCurrentDestination(reg), Resumed: resumed}
+		s := UndoSession{Registration: reg, InCurrentDestination: (reg.DestinationID != "" || sameDestination) && cfg.InCurrentDestination(reg), Resumed: resumed}
 		if reg.ParentSessionID != "" {
 			children = append(children, s)
 		} else {

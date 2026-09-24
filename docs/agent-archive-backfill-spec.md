@@ -277,7 +277,7 @@ behaviour is unchanged.
 | Site | After |
 |---|---|
 | `AcceptSession`, project activation | `Admitted()` |
-| `AcceptSession` destination check, and retention's `CurrentDestination` | `Admitted()`, or `DestinationID` once [B1b](#destination-id-b1b) lands |
+| `AcceptSession` destination check, and retention's `CurrentDestination` (both `InCurrentDestination`) | The registration's `DestinationID` ([B1b](#destination-id-b1b)); `Admitted()` when it has none |
 | `AcceptSession` app check | `Harnesses`, plus `ImportedHarnesses` for imports ([Apps without hooks](#apps-without-hooks)) |
 | Retention age before a first capture, and with no transcript path (`retention.go:133`, `:149`) | `Admitted()`. Without this, an import with a two-year-old start whose first upload fails is expired and pruned at once. |
 | `Eligible` (hook fresh start), `BuildMetadata`, Cursor text first event, subagent ordering, handoff | Unchanged. These want the true start. |
@@ -291,12 +291,22 @@ or retention leaves its objects behind.
 ### Destination ID (B1b)
 
 Deciding which bucket a session belongs to by comparing times is a guess, and a
-clock change can make it wrong. B1b records the bucket directly:
-`DestinationID` is a hash of provider, endpoint, bucket, and prefix, never of
-credentials. `AcceptSession` and `CurrentDestination` compare it when it is
-set, and fall back to comparing times when it is empty. No migration is
-needed. Project activation stays a time comparison, because it really is a
-question of time. B1b is optional, but re-admission requires it.
+clock change can make it wrong. B1b, now implemented, records the bucket
+directly: `config.DestinationID` is a hash of provider, endpoint, bucket, and
+prefix, never of credentials. (It lives in `config`, not `archive`, which
+imports no other internal package.) A test pins its value: changing the hash
+needs a migration of every stored ID. Hooks set the registration's
+`DestinationID` on a new session, backfill on an import, and a subagent copies
+its parent's; a continuation never changes it. `InCurrentDestination`, which
+`AcceptSession` and retention use, compares it when it is set, and falls back
+to comparing times when it is empty. No migration is needed. A session
+admitted into bucket A is not accepted while the destination is B. Switching
+back to A resumes A's sessions that are still registered: they publish and
+expire in A again, where their objects are. What happened while B was
+configured is not recovered: retention forgot A sessions that expired then
+without deleting their objects, A's pending subagent candidates were
+rejected, and hooks dropped A sessions' lifecycle evidence. Project
+activation stays a time comparison, because it really is a question of time.
 
 ### Alternatives considered
 
@@ -759,8 +769,8 @@ implementation.
 - **Retention.**
   - An import with an old start and a failed first upload is not expired
     early.
-  - After a bucket change, imports belong to the previous bucket, by time or
-    by `DestinationID` once B1b lands.
+  - After a bucket change, imports belong to the previous bucket, by
+    `DestinationID` (B1b), or by time for a registration without one.
   - Removal records are honored, and overridden by `--include-removed`.
 - **Hook resume of an import.** It is accepted, keeps `SessionStartedAt`,
   `AdmittedAt`, and `Origin`, and updates the path.

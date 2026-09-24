@@ -27,12 +27,17 @@ func cursorSetup(t *testing.T, now time.Time) (Env, string, string, string) {
 
 func changeBucket(t *testing.T, env Env, home, userHome string) (config.Config, error, string) {
 	t.Helper()
+	return changeBucketTo(t, env, home, userHome, "another-bucket")
+}
+
+func changeBucketTo(t *testing.T, env Env, home, userHome, bucket string) (config.Config, error, string) {
+	t.Helper()
 	old, _, err := config.Load(home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	next := old
-	next.Storage.Bucket = "another-bucket"
+	next.Storage.Bucket = bucket
 	var out strings.Builder
 	if err := reviewChanges(home, old, next, newPrompter(strings.NewReader(""), &out), env); err != nil {
 		return config.Config{}, err, out.String()
@@ -115,5 +120,48 @@ func TestCursorChatWithATranscriptStillBlocksADestinationChange(t *testing.T) {
 	}
 	if _, err, _ := changeBucket(t, env, home, userHome); err == nil || !strings.Contains(err.Error(), "still pending") {
 		t.Fatalf("pending work did not block the change: %v", err)
+	}
+}
+
+// A session admitted into bucket A records it. While the destination is B it
+// is not accepted and does not hold setup at B; switching back to A accepts
+// it again, pending work included, because its objects are in A.
+func TestSwitchingBackToADestinationAcceptsItsSessionsAgain(t *testing.T) {
+	now := time.Now().UTC()
+	env, home, userHome, project := cursorSetup(t, now)
+	conversation := "5f3c2a10-0000-4000-8000-00000000eeee"
+	for _, event := range []string{"beforeSubmitPrompt", "stop"} {
+		if err := handleHookEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, nil), now.Add(time.Minute)); err != nil {
+			t.Fatalf("%s: %v", event, err)
+		}
+	}
+	reg := onlyCursorRegistration(t, home)
+	env.Now = func() time.Time { return now.Add(time.Hour) }
+	atB, err, out := changeBucketTo(t, env, home, userHome, "bucket-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "resume uploading") {
+		t.Fatalf("a new destination was said to resume sessions: %s", out)
+	}
+	if atB.AcceptSession(reg) || atB.InCurrentDestination(reg) {
+		t.Fatal("a session admitted into A was accepted at B")
+	}
+	env.Now = func() time.Time { return now.Add(2 * time.Hour) }
+	backAtA, err, out := changeBucketTo(t, env, home, userHome, "test-bucket")
+	if err != nil {
+		t.Fatalf("a session of A blocked switching back to A: %v", err)
+	}
+	if !strings.Contains(out, "1 session(s) from when this destination was used before resume uploading there") {
+		t.Fatalf("setup did not say A's session resumes: %s", out)
+	}
+	if !backAtA.DestinationSince.After(reg.Admitted()) {
+		t.Fatalf("test precondition: the switch back moved DestinationSince past the admission: %v", backAtA.DestinationSince)
+	}
+	if !backAtA.AcceptSession(reg) || !backAtA.InCurrentDestination(reg) {
+		t.Fatal("a session admitted into A was not accepted after switching back to A")
+	}
+	if pending, err := pendingSessions(home, backAtA); err != nil || pending != 1 {
+		t.Fatalf("its outstanding work is not pending again at A: %d err=%v", pending, err)
 	}
 }

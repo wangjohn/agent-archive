@@ -252,6 +252,12 @@ type SessionRegistration struct {
 	StartedAtSource StartedAtSource `json:"started_at_source,omitempty"`
 	// ImportBatch is the backfill run that registered the session.
 	ImportBatch string `json:"import_batch,omitempty"`
+	// DestinationID is config.DestinationID of the storage destination the
+	// session was admitted into. Set once, at registration, by hooks and
+	// backfill; a subagent copies its parent's. Empty on older
+	// registrations, which fall back to comparing Admitted() with the
+	// destination's start.
+	DestinationID string `json:"destination_id,omitempty"`
 }
 
 // Admitted is the boundary time. Registrations older than AdmittedAt were

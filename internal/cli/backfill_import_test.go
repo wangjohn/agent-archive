@@ -207,7 +207,7 @@ func TestBackfillImportGolden(t *testing.T) {
 		}
 	}
 	if b.ID != firstImport || b.CompletedAt == nil || len(b.Sessions) != 11 || len(b.Subagents) != 2 || len(b.ProjectsAdded) != 4 ||
-		strings.Join(b.AppsAdded, ",") != "codex,cursor" || b.DestinationID != backfill.DestinationID(cfg.Storage) {
+		strings.Join(b.AppsAdded, ",") != "codex,cursor" || b.DestinationID != cfg.DestinationID() {
 		t.Fatalf("batch %+v", b)
 	}
 	registered := map[string]bool{}
@@ -618,7 +618,8 @@ func TestBackfillSubagentsInheritImport(t *testing.T) {
 		}
 	}
 	for _, child := range children {
-		if child.ParentSessionID != parentID || child.Origin != archive.SessionOriginImport || child.ImportBatch != firstImport || !child.AdmittedAt.Equal(parent.AdmittedAt) {
+		if child.ParentSessionID != parentID || child.Origin != archive.SessionOriginImport || child.ImportBatch != firstImport || !child.AdmittedAt.Equal(parent.AdmittedAt) ||
+			parent.DestinationID == "" || child.DestinationID != parent.DestinationID {
 			t.Errorf("child %+v", child)
 		}
 		key, _ := archive.MetadataObjectKey("claude", child.ArchiveSessionID)

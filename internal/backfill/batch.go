@@ -1,8 +1,6 @@
 package backfill
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -15,7 +13,6 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
-	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -136,17 +133,6 @@ func (f BatchFilters) equal(o BatchFilters) bool {
 	return slices.Equal(f.Harnesses, o.Harnesses) && slices.Equal(f.ProjectIDs, o.ProjectIDs) &&
 		f.Since == o.Since && f.Until == o.Until &&
 		f.IncludeHome == o.IncludeHome && f.IncludeTemp == o.IncludeTemp && f.IncludeRemoved == o.IncludeRemoved
-}
-
-// DestinationID identifies a storage destination by its provider, endpoint,
-// bucket, and prefix. It never covers credentials or their references.
-func DestinationID(c credentials.Config) string {
-	endpoint := ""
-	if c.Provider == credentials.ProviderR2 {
-		endpoint, _ = credentials.R2Endpoint(c.R2Endpoint, c.R2AccountID)
-	}
-	sum := sha256.Sum256([]byte(strings.Join([]string{c.Provider, endpoint, c.Bucket, strings.Trim(c.Prefix, "/")}, "\x00")))
-	return hex.EncodeToString(sum[:])
 }
 
 func batchDir(home string) string { return filepath.Join(home, "imports") }

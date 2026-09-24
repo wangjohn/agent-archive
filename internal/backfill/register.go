@@ -37,6 +37,10 @@ type Registration struct {
 	Store      *collector.LocalStore
 	Batch      string
 	AdmittedAt time.Time
+	// DestinationID is the destination the import was confirmed for, the
+	// batch's. Each registration records it, so a session is not admitted if
+	// the configured destination is somehow a different one by then.
+	DestinationID string
 	// MaxHoldSteps overrides maxHoldSteps; tests lower it to force several
 	// holds.
 	MaxHoldSteps int
@@ -284,6 +288,7 @@ func (r Registration) registration(c Candidate, archiveID string) archive.Sessio
 		AdmittedAt:       r.AdmittedAt,
 		Origin:           archive.SessionOriginImport,
 		ImportBatch:      r.Batch,
+		DestinationID:    r.DestinationID,
 	}
 }
 

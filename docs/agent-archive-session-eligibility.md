@@ -52,14 +52,16 @@ Every boundary check uses `Admitted()`, which is `admitted_at`, or
 
 | Check | Uses |
 |---|---|
-| Project activation and storage destination in `AcceptSession` | `Admitted()` |
-| Retention's current-bucket check, and retention age before a first capture | `Admitted()` |
+| Project activation in `AcceptSession` | `Admitted()` |
+| Storage destination in `AcceptSession`, and retention's current-bucket check (`InCurrentDestination`) | The registration's `destination_id`, set at registration by hooks and backfill; `Admitted()` against `DestinationSince` for a registration without one |
+| Retention age before a first capture | `Admitted()` |
 | App selection | `Harnesses`, plus `ImportedHarnesses` for imports |
 | Fresh-start eligibility for hooks, metadata `started_at`, subagent ordering, handoff | `session_started_at` |
 | App hook verification, `HookObserved`, skill inventory | hook-registered sessions only |
 
 A guard test fails if code compares `session_started_at` with `ActivatedAt`
-or `DestinationSince` outside `Admitted()`. A hook that later resumes an
-imported session continues it: the registration keeps its start, admission,
-and origin. Retention and undo leave a removal record when they forget a
+or `DestinationSince` outside `Admitted()`, and a second one if code compares
+an admission with `DestinationSince` outside `InCurrentDestination`. A hook
+that later resumes an imported session continues it: the registration keeps
+its start, admission, destination ID, and origin. Retention and undo leave a removal record when they forget a
 session, so backfill does not import it again.

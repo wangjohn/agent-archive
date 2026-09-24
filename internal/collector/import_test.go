@@ -111,7 +111,7 @@ func TestImportedSessionMetadataRecordsProvenanceAndGap(t *testing.T) {
 }
 
 // A subagent is admitted with its parent: it copies the parent's AdmittedAt,
-// Origin, and ImportBatch. Only a subagent a SubagentStop hook reported gets
+// Origin, ImportBatch, and DestinationID. Only a subagent a SubagentStop hook reported gets
 // that hook's lifecycle event; one backfill found gets none. A hook that
 // reports a subagent of a resumed import gives an import child the event.
 func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *testing.T) {
@@ -148,6 +148,8 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 				ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project",
 				Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: parentStart, RegisteredAt: tc.admittedAt,
 				AdmittedAt: tc.admittedAt, Origin: tc.origin, ImportBatch: tc.batch,
+				// The destination configured below: a zero storage.
+				DestinationID: config.Config{}.DestinationID(),
 			}
 			if tc.origin == archive.SessionOriginImport {
 				parent.StartedAtSource = archive.StartedAtSourceTranscript
@@ -178,7 +180,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			if err != nil || !found {
 				t.Fatalf("child not registered: found=%v err=%v", found, err)
 			}
-			if !child.AdmittedAt.Equal(parent.AdmittedAt) || child.Origin != parent.Origin || child.ImportBatch != parent.ImportBatch {
+			if !child.AdmittedAt.Equal(parent.AdmittedAt) || child.Origin != parent.Origin || child.ImportBatch != parent.ImportBatch || child.DestinationID != parent.DestinationID {
 				t.Fatalf("child did not inherit admission: %#v", child)
 			}
 			if !child.SessionStartedAt.Equal(parentStart.Add(2 * time.Minute)) {

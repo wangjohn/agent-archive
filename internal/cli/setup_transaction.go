@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -57,15 +56,12 @@ func discardDraft(home string, draft setupDraft, active config.Config, env Env) 
 	}
 	return err
 }
+
+// destinationEqual reports whether two storage configurations are the same
+// destination. It compares destination IDs, so a destination change is
+// exactly a change of the ID registrations record.
 func destinationEqual(a, b credentials.Config) bool {
-	endpoint := func(c credentials.Config) string {
-		if c.Provider == credentials.ProviderR2 {
-			e, _ := credentials.R2Endpoint(c.R2Endpoint, c.R2AccountID)
-			return e
-		}
-		return ""
-	}
-	return a.Provider == b.Provider && a.Bucket == b.Bucket && strings.Trim(a.Prefix, "/") == strings.Trim(b.Prefix, "/") && endpoint(a) == endpoint(b)
+	return config.DestinationID(a) == config.DestinationID(b)
 }
 
 // pendingSessions counts every accepted session with work outstanding, a
@@ -125,6 +121,25 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 	return blocking, waiting, nil
 }
 
+// sessionsAdmittedInto counts the registrations that record cfg's
+// destination and that cfg accepts: when setup switches back to a
+// destination used before, these resume there. Subagents go with their
+// parents and are not counted. A registration without a destination ID
+// stays behind.
+func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
+	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	if err != nil {
+		return 0, err
+	}
+	id, count := cfg.DestinationID(), 0
+	for _, r := range regs {
+		if r.ParentSessionID == "" && r.DestinationID == id && cfg.AcceptSession(r) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // waitingForTranscript reports whether a registration has no transcript path,
 // has never published, and has no publication in flight.
 func waitingForTranscript(store *collector.LocalStore, r archive.SessionRegistration) (bool, error) {
@@ -152,9 +167,17 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 		if pending > 0 {
 			return fmt.Errorf("%d session(s) still pending at the current destination; run agent-archive sync before changing storage", pending)
 		}
+		returning, err := sessionsAdmittedInto(home, next)
+		if err != nil {
+			return err
+		}
 		p.warn("Storage is changing. Sessions already archived stay at the old destination,",
 			"and this Mac stops adding to or cleaning up there. Nothing is deleted from either bucket;",
 			"this Mac's local copies are removed once they pass the retention period.")
+		if returning > 0 {
+			p.warn(fmt.Sprintf("%d session(s) from when this destination was used before resume uploading there,", returning),
+				"and are deleted from it once they pass the retention period.")
+		}
 		if waiting > 0 {
 			p.warn(fmt.Sprintf("%d session(s) never received a transcript (for example a Cursor chat with transcripts turned off).", waiting),
 				"They published nothing and will not be captured at the new destination either.")

@@ -5,10 +5,13 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -105,19 +108,45 @@ func SetPaused(home string, paused bool) (Config, error) {
 	return cfg, nil
 }
 
+// DestinationID identifies a storage destination by its provider, endpoint,
+// bucket, and prefix. It never covers credentials or their references. It
+// lives here rather than in package archive, which imports no other internal
+// package: taking a credentials.Config would pull the AWS SDK and cgo into
+// archive.
+//
+// Registrations and batch files store this value, and it decides which bucket
+// owns a session. It must never change, not the provider or endpoint
+// normalisation, the join, nor the prefix trimming, without a migration of
+// every stored ID: otherwise every registration silently belongs to no
+// destination. TestDestinationIDIsPinned holds it fixed.
+func DestinationID(c credentials.Config) string {
+	// The provider is compared as storage compares it, case- and
+	// space-insensitively; setup always writes it lowercase.
+	provider := strings.ToLower(strings.TrimSpace(c.Provider))
+	endpoint := ""
+	if provider == credentials.ProviderR2 {
+		endpoint, _ = credentials.R2Endpoint(c.R2Endpoint, c.R2AccountID)
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{provider, endpoint, c.Bucket, strings.Trim(c.Prefix, "/")}, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+// DestinationID is the ID of the storage destination configured now.
+func (c Config) DestinationID() string { return DestinationID(c.Storage) }
+
 // AcceptSession prevents excluded apps/projects and previous destinations from
-// continuing to publish or delete sessions after reconfiguration. Both time
-// boundaries compare the registration's admission, never its start: an
-// imported session began long before the project was activated, and is
-// admitted by the import itself.
+// continuing to publish or delete sessions after reconfiguration. The
+// destination check is InCurrentDestination. Project activation compares the
+// registration's admission, never its start: an imported session began long
+// before the project was activated, and is admitted by the import itself.
 func (c Config) AcceptSession(r archive.SessionRegistration) bool {
-	admitted := r.Admitted()
-	if !c.DestinationSince.IsZero() && admitted.Before(c.DestinationSince) {
+	if !c.InCurrentDestination(r) {
 		return false
 	}
 	if !c.acceptsHarness(r) {
 		return false
 	}
+	admitted := r.Admitted()
 	for _, p := range c.Archive.Projects {
 		if p.Included && p.Root == r.ProjectRoot {
 			return p.ActivatedAt.IsZero() || !admitted.Before(p.ActivatedAt)
@@ -127,10 +156,18 @@ func (c Config) AcceptSession(r archive.SessionRegistration) bool {
 }
 
 // InCurrentDestination reports whether a registration published to the
-// storage destination configured now, rather than to one it replaced. Like
-// AcceptSession it compares the admission: an import published here even
-// though it started before this destination was configured.
+// storage destination configured now, rather than to one it replaced. A
+// registration that records its destination's ID is compared by that ID, so
+// one admitted into a bucket belongs to it again if the configuration
+// switches back. A registration without one (written before the ID existed)
+// falls back to time: it belongs here if it was admitted at or after
+// DestinationSince. Like AcceptSession it compares the admission, not the
+// start: an import published here even though it started before this
+// destination was configured.
 func (c Config) InCurrentDestination(r archive.SessionRegistration) bool {
+	if r.DestinationID != "" {
+		return r.DestinationID == c.DestinationID()
+	}
 	return c.DestinationSince.IsZero() || !r.Admitted().Before(c.DestinationSince)
 }
 

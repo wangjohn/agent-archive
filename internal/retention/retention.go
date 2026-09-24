@@ -35,11 +35,13 @@ type Options struct {
 	// the collector's AcceptSession: that decides what may still be published,
 	// and a session this machine has stopped publishing (its project was
 	// excluded, its application deselected) still owns objects here that must
-	// age out. Only a session captured before the machine's current storage
-	// destination was configured has its objects somewhere else; its local
-	// state is still pruned when it expires, but no delete is ever issued
-	// against the current bucket on its behalf. Nil means every registration
-	// belongs to the current destination.
+	// age out. Only a session admitted into another storage destination (by
+	// its recorded destination ID, or for an older registration without one,
+	// admitted before the current destination was configured) has its
+	// objects somewhere else; its local state is still pruned when it
+	// expires, but no delete is ever issued against the current bucket on
+	// its behalf. Nil means every registration belongs to the current
+	// destination.
 	CurrentDestination func(archive.SessionRegistration) bool
 	// Publishable is the collector's AcceptSession: whether this session's
 	// outstanding work will ever be published. It never decides whether a
@@ -169,8 +171,8 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		locallyExpired = !unfinished
 	}
 
-	// A session captured before this machine's current destination was
-	// configured has no objects in this bucket. Its local state still ages
+	// A session admitted into another destination has no objects in this
+	// bucket. Its local state still ages
 	// out; nothing is deleted remotely, here or in the bucket it came from.
 	if opts.CurrentDestination != nil && !opts.CurrentDestination(reg) {
 		if !locallyExpired {
