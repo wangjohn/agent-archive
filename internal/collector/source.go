@@ -182,6 +182,12 @@ func (r cursorSQLiteReader) Filter(ctx context.Context, adapter archive.Adapter,
 		defer reader.Close()
 	}
 	c, sig, err := reader.ReadComposer(ctx, r.reg.SourceKey)
+	if errors.Is(err, cursorstore.ErrComposerNotFound) {
+		// The chat is in the database now but not in the pass's snapshot,
+		// taken earlier in the pass: Cursor wrote it since. That is not a
+		// deleted chat, so no missing-source gap; the next pass reads it.
+		return archive.FilteredTranscript{}, sourceState{}, fmt.Errorf("read Cursor chat: %w", cursorstore.NotChecked(cursorstore.ChangedDuringRead))
+	}
 	if err != nil {
 		return archive.FilteredTranscript{}, sourceState{}, fmt.Errorf("read Cursor chat: %w", err)
 	}
@@ -208,22 +214,25 @@ var afterCursorPass func(snapshots int)
 
 // openCursorPass gives the pass one Reader for Cursor's database when any
 // session is read from it, and sweeps snapshots a killed pass left behind.
-// The returned function removes the pass's snapshot.
-func openCursorPass(registrations []archive.SessionRegistration, opts *Options) func() {
+// The returned function removes the pass's snapshot, and says if it could
+// not: a copy of every Cursor chat left in the temporary directory is worth
+// a failed pass (the next sweep removes it once it is stale).
+func openCursorPass(registrations []archive.SessionRegistration, opts *Options) func() error {
 	for _, reg := range registrations {
 		if reg.SourceKind == archive.SourceKindCursorSQLite {
 			cursorstore.RemoveStaleSnapshots()
 			reader := cursorstore.NewReader(opts.cursorDatabase())
 			opts.cursorPass = reader
-			return func() {
-				reader.Close()
+			return func() error {
+				err := reader.Close()
 				if afterCursorPass != nil {
 					afterCursorPass(reader.Snapshots())
 				}
+				return err
 			}
 		}
 	}
-	return func() {}
+	return func() error { return nil }
 }
 
 // rememberFailedRead records, for a cursor-sqlite session whose chat was
@@ -233,7 +242,8 @@ func openCursorPass(registrations []archive.SessionRegistration, opts *Options) 
 // skips the chat until its signature, or a derivation version, changes, so
 // the failure costs one in-place signature read per pass rather than a copy
 // of the database. A failure to read at all (a lock, a changed file) is
-// left to be retried.
+// left to be retried. The size limits in force are recorded too, so raising
+// one reads the chat again.
 func rememberFailedRead(local *LocalStore, reg archive.SessionRegistration, adapter archive.Adapter, state sourceState, opts Options, failure error) error {
 	if state.kind != archive.SourceKindCursorSQLite {
 		return nil
@@ -247,7 +257,7 @@ func rememberFailedRead(local *LocalStore, reg archive.SessionRegistration, adap
 		SourceKind: state.kind, CursorLastUpdatedAt: state.cursor.LastUpdatedAt,
 		CursorHeaderCount: state.cursor.HeaderCount, CursorLastBubbleID: state.cursor.LastBubbleID,
 		CursorMessageRows: state.cursor.MessageRows, CursorLastMessageHash: state.cursor.LastMessageHash,
-		Failed: true, FailedError: message,
+		Failed: true, FailedError: message, FailedMaxBytes: opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
 	})
 }
 

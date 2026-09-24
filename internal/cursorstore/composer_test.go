@@ -645,8 +645,13 @@ func TestBubbleQueryUsesIndex(t *testing.T) {
 			plan = append(plan, detail)
 		}
 		rows.Close()
-		if got := strings.Join(plan, "; "); !strings.Contains(got, "USING INDEX") {
+		got := strings.Join(plan, "; ")
+		if !strings.Contains(got, "USING INDEX") && !strings.Contains(got, "USING COVERING INDEX") {
 			t.Fatalf("query plan %q does not search the key index", got)
+		}
+		if q == bubbleKeyQuery && !strings.Contains(got, "USING COVERING INDEX") {
+			// Keys alone come from the index, with no lookup of each row.
+			t.Fatalf("query plan %q reads the table for keys", got)
 		}
 	}
 }

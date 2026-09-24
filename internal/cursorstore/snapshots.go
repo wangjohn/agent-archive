@@ -5,27 +5,72 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
 // snapshotPrefix names the private directories that hold database copies.
 const snapshotPrefix = "cursor-snapshot-"
 
+// snapshotLockName is the file in each snapshot directory its Reader holds
+// an exclusive flock on while the copy is in use, so a sweep, in this
+// process or another, never removes a copy a pass is still reading however
+// long the pass lasts.
+const snapshotLockName = "in-use.lock"
+
 // staleSnapshotAge is how old a leftover snapshot directory must be before
-// it is removed. Only a killed process leaves one, and no read lasts this
-// long.
+// it is removed. Only a killed process leaves one, and a directory whose lock
+// is held is never removed whatever its age.
 const staleSnapshotAge = time.Hour
 
 // snapshotRootPath is where snapshots go: a directory of this user's own in
-// the system temporary directory. A copy holds every Cursor chat, including
-// those of projects that are not archived, so it stays out of the archive
-// home, which may be backed up or synced. On macOS os.TempDir is $TMPDIR, a
-// per-user directory under /var/folders that Time Machine excludes; the user
-// ID in the name keeps users apart where the temporary directory is shared.
+// the per-user temporary directory. A copy holds every Cursor chat,
+// including those of projects that are not archived, so it stays out of the
+// archive home, which may be backed up or synced. On macOS that directory
+// is under /var/folders, which Time Machine excludes; the user ID in the
+// name keeps users apart where the temporary directory is shared.
 func snapshotRootPath() string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("agent-archive-cursor-%d", os.Getuid()))
+	return filepath.Join(userTempDir(os.Getenv, runtime.GOOS, darwinUserTempDir), fmt.Sprintf("agent-archive-cursor-%d", os.Getuid()))
+}
+
+// userTempDir is $TMPDIR when it is set. Without it, on macOS it asks the
+// system for the per-user temporary directory rather than falling back to
+// the shared /tmp: the LaunchAgent that runs the collector sets only
+// AGENT_ARCHIVE_HOME, so launchd may leave TMPDIR unset while hook runs,
+// started from the apps, have it, and both must use one snapshot root for
+// the sweep of one to see the other's leftovers. Elsewhere, os.TempDir.
+func userTempDir(getenv func(string) string, goos string, darwinTemp func() string) string {
+	if dir := getenv("TMPDIR"); dir != "" {
+		return dir
+	}
+	if goos == "darwin" {
+		if dir := darwinTemp(); filepath.IsAbs(dir) {
+			return dir
+		}
+	}
+	return os.TempDir()
+}
+
+var (
+	darwinTempOnce sync.Once
+	darwinTempDir  string
+)
+
+// darwinUserTempDir is confstr(_CS_DARWIN_USER_TEMP_DIR), asked of getconf
+// once per process so builds need no cgo; "" when it can't be read.
+func darwinUserTempDir() string {
+	darwinTempOnce.Do(func() {
+		out, err := exec.Command("/usr/bin/getconf", "DARWIN_USER_TEMP_DIR").Output()
+		if err == nil && strings.TrimSpace(string(out)) != "" {
+			darwinTempDir = filepath.Clean(strings.TrimSpace(string(out)))
+		}
+	})
+	return darwinTempDir
 }
 
 // errSnapshotRootNotPrivate means the snapshot directory exists but is not a
@@ -34,7 +79,8 @@ var errSnapshotRootNotPrivate = errors.New("the Cursor snapshot directory is not
 
 // SnapshotRoot returns the directory snapshots are taken in, creating it
 // 0700 if needed. It must be a real directory (not a link), owned by this
-// user, with mode 0700; otherwise no snapshot is taken.
+// user, with mode 0700; otherwise no snapshot is taken, and the error says
+// which directory to remove.
 func SnapshotRoot() (string, error) {
 	root := snapshotRootPath()
 	if err := os.Mkdir(root, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
@@ -45,14 +91,44 @@ func SnapshotRoot() (string, error) {
 		return "", errors.New("inspect the Cursor snapshot directory")
 	}
 	if !info.IsDir() || info.Mode().Perm() != 0o700 || !ownedByCurrentUser(info) {
-		return "", errSnapshotRootNotPrivate
+		return "", fmt.Errorf("%w: %s must be a directory of yours with mode 0700, not a link; remove it so it is created again", errSnapshotRootNotPrivate, root)
 	}
 	return root, nil
 }
 
+// lockSnapshot creates dir's lock file and takes its exclusive lock, which
+// the returned file holds until it is closed.
+func lockSnapshot(dir string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(dir, snapshotLockName), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
+// snapshotInUse reports whether a Reader holds dir's lock. A directory
+// without a lock file was left by a process that died before taking it.
+func snapshotInUse(dir string) bool {
+	f, err := os.Open(filepath.Join(dir, snapshotLockName))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return true
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
+}
+
 // RemoveStaleSnapshots removes snapshot directories a killed process left
 // behind, so a copy of Cursor's chats does not outlive its read. Recent ones
-// may belong to a read in progress and are left alone.
+// may belong to a read that is just starting, and locked ones to a read in
+// progress; both are left alone.
 func RemoveStaleSnapshots() {
 	root := snapshotRootPath()
 	info, err := os.Lstat(root)
@@ -67,8 +143,9 @@ func RemoveStaleSnapshots() {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), snapshotPrefix) {
 			continue
 		}
-		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > staleSnapshotAge {
-			os.RemoveAll(filepath.Join(root, e.Name()))
+		dir := filepath.Join(root, e.Name())
+		if info, err := e.Info(); err == nil && time.Since(info.ModTime()) > staleSnapshotAge && !snapshotInUse(dir) {
+			os.RemoveAll(dir)
 		}
 	}
 }
