@@ -4,7 +4,31 @@
 runtime dependencies to install separately. Both Intel and Apple Silicon
 Macs are supported.
 
+## Install with the script
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
+```
+
+[`install.sh`](../install.sh) is short; read it first if you prefer. It
+downloads the release binary for your Mac's architecture, checks it against
+the release's `SHA256SUMS`, and installs it as `agent-archive`, without
+`sudo`. If `agent-archive` is already on your `PATH`, it replaces that copy,
+so the hooks and background collector keep pointing at it. Otherwise it
+uses `/usr/local/bin` when that is writable, and `~/.local/bin` if not,
+printing the line to add to your shell profile when the directory isn't on
+your `PATH`. It never runs setup; continue with step 5 below.
+
+Run the same command again to upgrade. To choose a release or a directory,
+set the variables on the `sh` side of the pipe:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | AGENT_ARCHIVE_VERSION=v0.1.0 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
+```
+
 ## Install a release build
+
+To install by hand instead:
 
 1. Download the binary for your Mac from the
    [latest release](https://github.com/wangjohn/agent-archive/releases/latest):
@@ -290,6 +314,17 @@ falling back to visible keystrokes.
   `feedback` skip them, and the retention sweep no longer deletes their
   remote objects. Their earlier publications stay in the bucket until removed
   by hand.
+- This version records each publication's uploaded source (key, SHA-256 and
+  size) in its local state, and can queue a metadata-only publication that
+  carries only that reference instead of the source bytes (when a parser
+  upgrade meets a retained bundle it cannot rebuild). **Before downgrading**,
+  run `agent-archive sync` until `status` shows nothing pending: an earlier
+  version cannot publish such a queued file (under
+  `~/.local/share/agent-archive/pending/`, with `"metadata_only": true` and
+  no `source_bytes`) and would report it as failing on every pass. If you
+  have already downgraded, deleting those files is safe; the metadata is
+  refreshed on the session's next change. The recorded references are
+  ignored by earlier versions.
 
 ## Inspecting what was archived
 

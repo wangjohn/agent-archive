@@ -1,0 +1,136 @@
+#!/bin/sh
+# Installs the latest agent-archive release for this Mac.
+#
+#   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
+#
+# Downloads the signed, notarized binary for this Mac's architecture from
+# GitHub Releases, verifies it against the release's SHA256SUMS, and installs
+# it as `agent-archive`. It never runs setup and never needs sudo.
+#
+# Environment:
+#   AGENT_ARCHIVE_VERSION      release tag to install, e.g. v0.1.0 (default: latest)
+#   AGENT_ARCHIVE_INSTALL_DIR  directory to install into (default: where
+#                              agent-archive already is, else /usr/local/bin
+#                              if writable, else ~/.local/bin)
+#   AGENT_ARCHIVE_DOWNLOAD_URL release download base, for testing only
+#
+# The whole script is one function called on the last line, so a download
+# cut off partway through runs nothing.
+set -eu
+
+main() {
+  repo_url="https://github.com/wangjohn/agent-archive"
+
+  if [ "$(uname -s)" != "Darwin" ]; then
+    fail "agent-archive supports macOS only (this system reports $(uname -s))."
+  fi
+
+  arch="$(detect_arch)"
+  asset="agent-archive-darwin-${arch}"
+
+  version="${AGENT_ARCHIVE_VERSION:-}"
+  if [ -n "$version" ]; then
+    case "$version" in v*) ;; *) version="v${version}" ;; esac
+    default_base="${repo_url}/releases/download/${version}"
+  else
+    default_base="${repo_url}/releases/latest/download"
+  fi
+  base="${AGENT_ARCHIVE_DOWNLOAD_URL:-$default_base}"
+
+  install_dir="$(choose_install_dir)"
+  target="${install_dir}/agent-archive"
+
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT INT TERM
+
+  say "Downloading ${asset} (${version:-latest})"
+  download "${base}/${asset}" "${tmp}/${asset}"
+  download "${base}/SHA256SUMS" "${tmp}/SHA256SUMS"
+
+  expected="$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' "${tmp}/SHA256SUMS")"
+  if [ -z "$expected" ]; then
+    fail "SHA256SUMS has no entry for ${asset}."
+  fi
+  actual="$(shasum -a 256 "${tmp}/${asset}" | awk '{ print $1 }')"
+  if [ "$expected" != "$actual" ]; then
+    fail "checksum mismatch for ${asset}: expected ${expected}, got ${actual}."
+  fi
+  say "Checksum verified"
+
+  mkdir -p "$install_dir"
+  # Stage beside the target, then rename over it: replacing the file (a new
+  # inode) rather than overwriting it in place keeps macOS from killing the
+  # upgraded binary at launch.
+  staged="${install_dir}/.agent-archive.install.$$"
+  cp "${tmp}/${asset}" "$staged"
+  chmod 755 "$staged"
+  mv -f "$staged" "$target"
+
+  installed_version="$("$target" --version 2>&1)" ||
+    fail "installed ${target}, but it failed to run: ${installed_version}"
+  say "Installed agent-archive ${installed_version} to ${target}"
+
+  case ":${PATH}:" in
+    *":${install_dir}:"*)
+      say ""
+      say "Next, run:  agent-archive setup"
+      ;;
+    *)
+      say ""
+      say "${install_dir} is not on your PATH. Add it with:"
+      say "  echo 'export PATH=\"${install_dir}:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
+      say "Then run:  agent-archive setup"
+      ;;
+  esac
+}
+
+detect_arch() {
+  case "$(uname -m)" in
+    arm64 | aarch64) echo arm64 ;;
+    x86_64)
+      # A shell running under Rosetta reports x86_64 on Apple Silicon; the
+      # native build is the right one there.
+      if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = "1" ]; then
+        echo arm64
+      else
+        echo amd64
+      fi
+      ;;
+    *) fail "unsupported architecture: $(uname -m)" ;;
+  esac
+}
+
+choose_install_dir() {
+  if [ -n "${AGENT_ARCHIVE_INSTALL_DIR:-}" ]; then
+    echo "$AGENT_ARCHIVE_INSTALL_DIR"
+    return
+  fi
+  # Upgrade in place, so the hooks and background collector setup recorded
+  # keep pointing at the new binary.
+  existing="$(command -v agent-archive 2>/dev/null || true)"
+  if [ -n "$existing" ] && [ -w "$(dirname "$existing")" ]; then
+    dirname "$existing"
+    return
+  fi
+  if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+    echo /usr/local/bin
+    return
+  fi
+  echo "${HOME}/.local/bin"
+}
+
+download() {
+  curl --fail --silent --show-error --location --proto '=https,file' --retry 3 \
+    --output "$2" "$1" || fail "download failed: $1"
+}
+
+say() {
+  printf '%s\n' "$1"
+}
+
+fail() {
+  printf 'agent-archive install: %s\n' "$1" >&2
+  exit 1
+}
+
+main "$@"

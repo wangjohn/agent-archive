@@ -2,12 +2,15 @@
 package local
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -97,7 +100,7 @@ func WriteBytes(path string, b []byte) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return e
 	}
-	f, e := os.CreateTemp(filepath.Dir(path), ".pending-")
+	f, e := os.CreateTemp(filepath.Dir(path), tempPrefix)
 	if e != nil {
 		return e
 	}
@@ -125,6 +128,80 @@ func WriteBytes(path string, b []byte) error {
 	defer d.Close()
 	return d.Sync()
 }
+
+// tempPrefix names WriteBytes' temporary files. A process that dies between
+// creating one and renaming it over its target leaves it behind.
+const tempPrefix = ".pending-"
+
+// RemoveStaleTemps removes the temporary files WriteBytes left in dir, not
+// in its subdirectories, whose modification time is more than olderThan ago.
+// A write in progress is younger than any sensible olderThan, so only a
+// temporary a crashed writer abandoned is removed. A missing dir is not an
+// error.
+func RemoveStaleTemps(dir string, olderThan time.Duration) error {
+	entries, e := os.ReadDir(dir)
+	if errors.Is(e, os.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	cutoff := time.Now().Add(-olderThan)
+	var errs []error
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), tempPrefix) {
+			continue
+		}
+		info, e := entry.Info()
+		if e != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if e := os.Remove(filepath.Join(dir, entry.Name())); e != nil && !errors.Is(e, os.ErrNotExist) {
+			errs = append(errs, e)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// TrimLog keeps an append-only log file from growing without bound: once it
+// is larger than maxBytes it is cut down, in place, to about its last keep
+// bytes, starting at a line boundary. The file is truncated rather than
+// replaced so a writer holding it open with O_APPEND (launchd's redirect of
+// the collector's stderr) keeps writing to the same file. It must not run
+// while another process writes the file. A missing file is not an error.
+func TrimLog(path string, maxBytes, keep int64) error {
+	f, e := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(e, os.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	defer f.Close()
+	info, e := f.Stat()
+	if e != nil {
+		return e
+	}
+	if !info.Mode().IsRegular() || info.Size() <= maxBytes {
+		return nil
+	}
+	keep = min(keep, info.Size())
+	tail := make([]byte, keep)
+	if _, e = f.ReadAt(tail, info.Size()-keep); e != nil {
+		return e
+	}
+	if i := bytes.IndexByte(tail, '\n'); i >= 0 {
+		tail = tail[i+1:]
+	}
+	if e = f.Truncate(0); e != nil {
+		return e
+	}
+	if _, e = f.WriteAt(tail, 0); e != nil {
+		return e
+	}
+	return f.Sync()
+}
+
 func Read(path string, value any) error {
 	b, e := os.ReadFile(path)
 	if e != nil {
@@ -137,19 +214,63 @@ var ErrBusy = errors.New("another collector or setup is running")
 
 func Lock(home string) (func(), error) { return NamedLock(home, "collector.lock") }
 
+// NamedLock takes an exclusive, non-blocking flock on home/name, creating the
+// file if needed, and returns the function that releases it; ErrBusy means
+// another holder has it.
+//
+// A lock file may be unlinked while it is held (ForgetSession removes a
+// session's lock files). Someone who opened the file before the unlink would
+// then lock the orphaned inode while a newcomer locks a fresh file at the
+// same path, and both would believe they hold the lock. So once the flock is
+// taken, the path must still name the very file that was locked; if it does
+// not, the lock is dropped and taken again on whatever the path names now.
 func NamedLock(home, name string) (func(), error) {
-	f, e := os.OpenFile(filepath.Join(home, name), os.O_CREATE|os.O_RDWR, 0600)
-	if e != nil {
-		return nil, e
+	path := filepath.Join(home, name)
+	for attempt := 0; attempt < lockAttempts; attempt++ {
+		f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+		if e != nil {
+			return nil, e
+		}
+		release, current, e := lockOpened(path, f)
+		if e != nil || current {
+			return release, e
+		}
+		// Unlinked (or replaced) between the open and the lock: try again.
 	}
+	return nil, fmt.Errorf("lock %s: the file kept being replaced while it was locked", path)
+}
+
+// lockAttempts bounds NamedLock's retries on a lock file that is unlinked or
+// replaced between its open and its lock. Each retry means another process
+// removed the file just then; far fewer than this happen in practice.
+const lockAttempts = 100
+
+// lockOpened flocks f, which was opened at path, and reports whether path
+// still names f's file once the lock is held. When it does not, or on error,
+// f is unlocked and closed; otherwise release does both.
+func lockOpened(path string, f *os.File) (release func(), current bool, e error) {
 	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
 		f.Close()
 		if errors.Is(e, syscall.EWOULDBLOCK) || errors.Is(e, syscall.EAGAIN) {
-			return nil, ErrBusy
+			return nil, false, ErrBusy
 		}
-		return nil, e
+		return nil, false, e
 	}
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+	release = func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }
+	locked, e := f.Stat()
+	if e != nil {
+		release()
+		return nil, false, e
+	}
+	named, e := os.Stat(path)
+	if e == nil && os.SameFile(locked, named) {
+		return release, true, nil
+	}
+	release()
+	if e != nil && !errors.Is(e, os.ErrNotExist) {
+		return nil, false, e
+	}
+	return nil, false, nil
 }
 
 // NamedLockWait tolerates short contention while preserving the hook deadline.

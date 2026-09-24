@@ -108,7 +108,10 @@ func Apply(changes []Change) error {
 		if err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
-		undo := snapshot(target)
+		undo, err := snapshot(target)
+		if err != nil {
+			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
+		}
 		if err = writeFile(target, c.After, c.Mode); err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), undo.restore(), rollback(applied))
 		}
@@ -260,13 +263,20 @@ type priorFile struct {
 	created []string // directories that did not exist, deepest first
 }
 
-func snapshot(path string) priorFile {
+func snapshot(path string) (priorFile, error) {
 	prior := priorFile{path: path}
-	if info, err := os.Stat(path); err == nil {
-		prior.mode = info.Mode().Perm()
-		if data, err := os.ReadFile(path); err == nil {
-			prior.data, prior.existed = data, true
+	info, err := os.Stat(path)
+	switch {
+	case err == nil:
+		// A file that is there but cannot be read could not be put back,
+		// so it is refused rather than overwritten.
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return priorFile{}, err
 		}
+		prior.mode, prior.data, prior.existed = info.Mode().Perm(), data, true
+	case !os.IsNotExist(err):
+		return priorFile{}, err
 	}
 	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
 		if _, err := os.Lstat(dir); err == nil || filepath.Dir(dir) == dir {
@@ -274,7 +284,7 @@ func snapshot(path string) priorFile {
 		}
 		prior.created = append(prior.created, dir)
 	}
-	return prior
+	return prior, nil
 }
 
 // restore puts the path back as snapshot found it. Directories it created

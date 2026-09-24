@@ -54,3 +54,27 @@ func TestApplyRestoresAFileAMisplacedWriteReplaced(t *testing.T) {
 		t.Fatalf("the replaced file holds %q", b)
 	}
 }
+
+func TestApplyRefusesToOverwriteATargetItCannotRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads files regardless of mode")
+	}
+	home := t.TempDir()
+	plan, err := Plan(testFiles(home), testHook("/usr/local/bin/agent-archive"), []string{"codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(home, "other.json")
+	must(t, os.WriteFile(other, []byte("mine"), 0200))
+	t.Cleanup(func() { _ = os.Chmod(other, 0600) })
+	previous := writeTarget
+	t.Cleanup(func() { writeTarget = previous })
+	writeTarget = func(string) (string, error) { return other, nil }
+	if err := Apply(plan); err == nil {
+		t.Fatal("a write over an unreadable file succeeded")
+	}
+	must(t, os.Chmod(other, 0600))
+	if b, _ := os.ReadFile(other); string(b) != "mine" {
+		t.Fatalf("the unreadable file now holds %q", b)
+	}
+}

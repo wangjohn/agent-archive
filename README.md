@@ -12,9 +12,15 @@ is involved.
 
 ## Install
 
-Download the binary for your Mac from the [latest release](https://github.com/wangjohn/agent-archive/releases/latest),
-verify its checksum, and run `agent-archive setup`. Full steps, including
-building from source and uninstalling, are in [docs/install.md](docs/install.md).
+```sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
+agent-archive setup
+```
+
+The script downloads the signed build for your Mac from the
+[latest release](https://github.com/wangjohn/agent-archive/releases/latest),
+verifies its checksum, and installs it without `sudo`. Manual download,
+building from source, and uninstalling are in [docs/install.md](docs/install.md).
 
 ## Commands
 
