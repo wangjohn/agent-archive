@@ -452,7 +452,11 @@ and no text). A Claude Code or Codex transcript with no record timestamp is
 back to the file's birth time. Only counts, times, and sizes are kept.
 Symlinked transcript files are skipped. A folder in an app's store that can't
 be listed is skipped and counted on one "Not imported" line
-(`unreadable_folders` in JSON), without printing its path. Header reads (a Claude `cwd`, a Codex `session_meta`) are
+(`unreadable_folders` in JSON), without printing its path. If an app's whole
+session folder can't be listed (`~/.claude/projects`, `~/.codex/sessions`,
+`~/.codex/archived_sessions`, or `~/.cursor/projects`), the plan names the app
+instead and says none of its sessions are included (`unreadable_stores` in
+JSON); the other apps still import. Header reads (a Claude `cwd`, a Codex `session_meta`) are
 capped at 1 MiB per line. The same session found more than once, for example a
 Claude file under two project folders, is imported once. The winner is, in
 order: a copy that would import over one that wouldn't, the best identity
@@ -576,7 +580,9 @@ only a few milliseconds at a time.
 4. **Commit the configuration.** Take `setup.lock` and hold it until exit.
    Reload the configuration. Abort if its fingerprint changed ("run backfill
    again"), if it is paused, or if a setup transaction is pending. Stamp
-   `AdmittedAt` and check the clock. `collector.lock` is taken before the
+   `AdmittedAt` and check the clock: admission must not be earlier than
+   `DestinationSince`, any target project's `ActivatedAt`, or the time the plan
+   was made. `collector.lock` is taken before the
    reload and held through registration (step 5), so no collector pass runs
    while candidates are half-written, and `pause`, which also takes it, waits
    until registration ends. Take `hooks.lock` briefly to write the batch file,
@@ -584,7 +590,7 @@ only a few milliseconds at a time.
 5. **Register** in batches of at most 50 sessions or 100 ms:
    - Take `hooks.lock` and reload the configuration. Skip anything no longer
      admitted. A session whose start is after `AdmittedAt` is skipped as
-     `start_in_future`.
+     `start_in_future`, a backstop for the clock check in step 4.
    - For each session, re-stat the transcript and skip it if it's gone. Call
      `RegisterNewSession`. If the native index already has the session, a
      hook or another run got there first, so count it `already_archived`.
