@@ -112,7 +112,7 @@ func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) 
 	return promptStopImported(p, draft)
 }
 
-func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
+func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool) error {
 	fmt.Fprintln(p.out, "\nWhat would you like to change?")
 	fmt.Fprintln(p.out, "  apps       Which apps to include\n  projects   Which projects to include\n  sessions   All sessions or only sessions using skills\n  retention  How long sessions are kept\n  storage    Bucket or credentials\n  prefix     Folder inside the bucket")
 	choices := []string{"apps", "projects", "sessions", "retention", "storage", "prefix", "back"}
@@ -133,7 +133,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
 		}
 		err = promptStopImported(p, draft)
 	case "projects":
-		projects, e := promptProjects(p, draft.Config.Archive.Projects, time.Time{}, userHome)
+		projects, e := promptProjects(p, draft.Config.Archive.Projects, backfilled, time.Time{}, userHome)
 		if e != nil {
 			return e
 		}
