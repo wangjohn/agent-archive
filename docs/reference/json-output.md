@@ -42,12 +42,13 @@ verified conversation as `turns`, `tool_calls`, `tool_results`, and
 
 ## `status --json`
 
-Top-level fields (versioned by `schema_version`, currently `1`):
+Top-level fields (versioned by `schema_version`, currently `3`):
 
 | Field | Meaning |
 | --- | --- |
 | `state`, `code`, `next_action` | Overall state as shown in the text output (`Ready`, `Needs attention`, …), a stable code for it (`ready`, `needs_attention`, `awaiting_capture`, `paused`, `not_configured`, `recovery_required`, …; codes never change with wording), and the suggested next step. |
 | `storage` | The destination, as `provider / bucket / prefix`. |
+| `configuration_id` | The identifier of the saved configuration this status describes; collector records made under another configuration are ignored. |
 | `storage_verified_at` | When **setup's** storage check (write, read, list, delete of a probe object) last passed for this configuration. Setup only. |
 | `storage_access_confirmed_at`, `storage_access_confirmed_by` | The latest confirmation that the destination is reachable with the configured credentials, and by whom: `setup`, or `collector` (its access probe, or a pass that uploaded). Use this to tell whether capture can still reach the bucket. |
 | `authentication` | The last storage health check: state (`verified`, `stale_configuration`, …), time, and whether it came from a manual `sync` or the background collector. |

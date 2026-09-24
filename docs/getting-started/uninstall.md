@@ -31,8 +31,8 @@ R2 credentials. It shows how many sessions are still waiting to upload and
 asks a second time (`--yes` answers both). Unpublished evidence is lost. Only
 files agent-archive creates are removed (see
 [local state](../reference/local-state.md)); anything else in the directory
-is kept and reported. Small lock files remain, to keep process coordination
-safe.
+is kept and reported. The lock files go last, while uninstall still holds
+them, so nothing can start work in a half-deleted directory.
 
 Neither mode reads or deletes anything in the bucket. To delete archived
 sessions, delete `sessions/` (under your prefix) in the bucket yourself, or

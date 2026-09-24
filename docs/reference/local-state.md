@@ -74,9 +74,10 @@ and left in place.
 
 ## What uninstall removes
 
-`agent-archive uninstall --delete-local-data` removes every entry above
-except the three lock files, which it keeps so processes that start while it
-runs still coordinate. It also removes leftover temporary files from
+`agent-archive uninstall --delete-local-data` removes every entry above,
+the three lock files last: it holds them while deleting everything else, so
+no process can start work in a half-deleted directory, then unlinks them
+before releasing them. It also removes leftover temporary files from
 interrupted writes. Anything else in the directory is kept and reported, and
 the directory itself stays if anything is left. A test keeps uninstall's
 list in step with `state.OwnedEntries()`.
