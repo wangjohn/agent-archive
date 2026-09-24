@@ -33,6 +33,7 @@ func TestEveryPublicHelpIsReadOnly(t *testing.T) {
 		}
 	}
 }
+
 func TestStatusJSONAndTextUseObservedEvidence(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
@@ -58,19 +59,26 @@ func TestStatusJSONAndTextUseObservedEvidence(t *testing.T) {
 	env.OpenStore = nil // status must not resolve storage at all.
 	cfg, _, _ := config.Load(home)
 	cfg.Paused = true
-	config.Save(home, cfg)
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
 	view, err = readStatus(env)
 	if err != nil || view.State != "Paused" {
 		t.Fatal(view, err)
 	}
 	cfg.Paused = false
-	config.Save(home, cfg)
-	local.Write(journalPath(home), setupJournal{})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.Write(journalPath(home), setupJournal{}); err != nil {
+		t.Fatal(err)
+	}
 	view, err = readStatus(env)
 	if err != nil || view.State != "Setup needs recovery" {
 		t.Fatal(view, err)
 	}
 }
+
 func TestPauseBusyMakesNoFalseClaimAndDoesNotLoseConfig(t *testing.T) {
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/project", time.Now())
@@ -96,6 +104,7 @@ func TestPauseBusyMakesNoFalseClaimAndDoesNotLoseConfig(t *testing.T) {
 		t.Fatal("pause not persisted")
 	}
 }
+
 func TestUninstallPurgeRequiresSecondConfirmation(t *testing.T) {
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()))
 	var out, errOut bytes.Buffer
@@ -107,6 +116,7 @@ func TestUninstallPurgeRequiresSecondConfirmation(t *testing.T) {
 		t.Fatal("declining purge altered installation")
 	}
 }
+
 func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
@@ -115,13 +125,14 @@ func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("failed fresh setup left active config")
 	}
-	if _, err := os.Stat(filepath.Join(userHome, ".codex/hooks.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(userHome, ".codex", "hooks.json")); !os.IsNotExist(err) {
 		t.Fatal("failed setup left hooks")
 	}
 	if transactionPending(home) {
 		t.Fatal("journal not cleaned after restoration")
 	}
 }
+
 func TestStatusReadDoesNotCreateCollectorLayout(t *testing.T) {
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/project", time.Now())
@@ -136,6 +147,7 @@ func TestStatusReadDoesNotCreateCollectorLayout(t *testing.T) {
 		}
 	}
 }
+
 func TestCollectorKeepsLastPublicationOnUnchangedPass(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now()
@@ -170,6 +182,7 @@ func TestSecretTerminalChild(t *testing.T) {
 		t.Fatal("hidden input failed")
 	}
 }
+
 func TestSecretInputDisablesTerminalEcho(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -245,6 +258,7 @@ func TestDraftStorageEditKeepsCaptureChoices(t *testing.T) {
 		t.Fatal("edit lost capture choices")
 	}
 }
+
 func TestRestartRemovesOnlyStagedCredentials(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
@@ -259,6 +273,7 @@ func TestRestartRemovesOnlyStagedCredentials(t *testing.T) {
 		t.Fatal("discarded draft leaked credential")
 	}
 }
+
 func TestRetentionReductionShowsImpactBeforeConfirmation(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now().UTC()

@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // runBackfillUndo implements `agent-archive backfill undo [ID] [--project
@@ -29,7 +30,7 @@ import (
 // undo stops if it grew. hooks.lock is held only to write the configuration.
 func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fail := func(format string, args ...any) int {
-		fmt.Fprintf(stderr, "agent-archive: backfill undo: "+format+"\n", args...)
+		terminal.Printf(stderr, "agent-archive: backfill undo: "+format+"\n", args...)
 		return 1
 	}
 	fs := flag.NewFlagSet("backfill undo", flag.ContinueOnError)
@@ -51,7 +52,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "agent-archive: backfill undo: unexpected argument %q\n", fs.Arg(0))
+		terminal.Printf(stderr, "agent-archive: backfill undo: unexpected argument %q\n", fs.Arg(0))
 		return 2
 	}
 
@@ -84,7 +85,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return fail("%v", err)
 	}
 	if batch == nil {
-		fmt.Fprintln(stdout, "No imports to undo.")
+		terminal.Println(stdout, "No imports to undo.")
 		return 0
 	}
 	bfEnv := env.backfillEnvironment(userHome)
@@ -96,9 +97,9 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// terminal requirement.
 	if plan.Empty() {
 		if *project != "" {
-			fmt.Fprintf(stdout, "No sessions from %s are left in import %s. Nothing was changed.\n", plan.ProjectDisplay(), batch.ID)
+			terminal.Printf(stdout, "No sessions from %s are left in import %s. Nothing was changed.\n", plan.ProjectDisplay(), batch.ID)
 		} else {
-			fmt.Fprintf(stdout, "Import %s has nothing left to undo. Nothing was changed.\n", batch.ID)
+			terminal.Printf(stdout, "Import %s has nothing left to undo. Nothing was changed.\n", batch.ID)
 		}
 		return 0
 	}
@@ -109,30 +110,30 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// The check writes one test object and deletes it again.
 	var bucket storage.ObjectStore
 	if plan.Counts().Deleted > 0 {
-		fmt.Fprint(stdout, "Checking storage… ")
+		terminal.Print(stdout, "Checking storage… ")
 		if bucket, err = env.openStore(cfg); err == nil {
 			err = storage.VerifyAccess(context.Background(), bucket)
 		}
 		if err != nil {
-			fmt.Fprintln(stdout, "failed.")
-			fmt.Fprintf(stderr, "agent-archive: backfill undo: storage check failed: %v\n", err)
+			terminal.Println(stdout, "failed.")
+			terminal.Printf(stderr, "agent-archive: backfill undo: storage check failed: %v\n", err)
 			if action := credentials.RecoveryAction(err); action != "" {
-				fmt.Fprintln(stderr, "agent-archive: backfill undo: "+action)
+				terminal.Println(stderr, "agent-archive: backfill undo: "+action)
 			}
 			return fail("nothing was changed.")
 		}
-		fmt.Fprintln(stdout, "ready.")
-		fmt.Fprintln(stdout)
+		terminal.Println(stdout, "ready.")
+		terminal.Println(stdout)
 	}
 	backfill.RenderUndo(stdout, plan)
-	fmt.Fprintln(stdout)
+	terminal.Println(stdout)
 	if !*yes {
 		confirmed, err := newPrompter(stdin, stdout).yesNo(backfill.UndoQuestion(plan), false)
 		if err != nil {
 			return fail("%v. Nothing was changed.", err)
 		}
 		if !confirmed {
-			fmt.Fprintln(stdout, "Cancelled. Nothing was changed.")
+			terminal.Println(stdout, "Cancelled. Nothing was changed.")
 			return 0
 		}
 	}
@@ -300,7 +301,7 @@ func reportUndo(stdout, stderr io.Writer, batch backfill.Batch, plan backfill.Un
 	}
 	if len(parts) > 0 {
 		line := strings.Join(parts, ", ")
-		fmt.Fprintf(stdout, "Import %s: %s.\n", batch.ID, strings.ToUpper(line[:1])+line[1:])
+		terminal.Printf(stdout, "Import %s: %s.\n", batch.ID, strings.ToUpper(line[:1])+line[1:])
 	}
 	if len(result.Failed) == 0 {
 		return 0
@@ -311,9 +312,9 @@ func reportUndo(stdout, stderr io.Writer, batch backfill.Batch, plan backfill.Un
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		fmt.Fprintf(stderr, "agent-archive: backfill undo: session %s: %v\n", id, result.Failed[id])
+		terminal.Printf(stderr, "agent-archive: backfill undo: session %s: %v\n", id, result.Failed[id])
 	}
-	fmt.Fprintf(stderr, "agent-archive: backfill undo: %s could not be removed and %s still registered; run agent-archive backfill undo %s again to finish.\n",
+	terminal.Printf(stderr, "agent-archive: backfill undo: %s could not be removed and %s still registered; run agent-archive backfill undo %s again to finish.\n",
 		countNoun(len(ids), "session"), isAre(len(ids)), batch.ID)
 	return 1
 }

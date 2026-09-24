@@ -144,7 +144,7 @@ func TestSetupPruneAndHookDiagnosticRaceNeverResurrects(t *testing.T) {
 	hookDiagnosticsWait = 10 * time.Second
 	t.Cleanup(func() { hookDiagnosticsWait = saved })
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	for round := 0; round < rounds; round++ {
+	for round := range rounds {
 		home := t.TempDir()
 		twoProjectConfig(t, home, "/work/kept", "/work/excluded")
 		if err := recordCaptureDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {

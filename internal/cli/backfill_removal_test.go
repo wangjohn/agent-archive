@@ -26,8 +26,9 @@ func TestBackfillArchiveStateReportsRemovalRecords(t *testing.T) {
 	}
 	state := newArchiveState(home, config.Config{})
 	for _, tc := range []struct {
-		harness, native string
-		want            backfill.SkipReason
+		harness string
+		native  string
+		want    backfill.SkipReason
 	}{
 		{"codex", "expired-session", backfill.SkipRemovedByRetention},
 		{"claude", "undone-session", backfill.SkipRemovedByUndo},

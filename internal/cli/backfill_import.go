@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // backfillCheckpoint, when set, is called inside the configuration commit
@@ -52,7 +53,7 @@ const (
 // background is set. setup.lock is held until it returns.
 func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, background bool) int {
 	fail := func(format string, args ...any) int {
-		fmt.Fprintf(stderr, "agent-archive: backfill: "+format+"\n", args...)
+		terminal.Printf(stderr, "agent-archive: backfill: "+format+"\n", args...)
 		return 1
 	}
 	releaseSetup, err := local.NamedLock(home, "setup.lock")
@@ -111,7 +112,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 			_ = backfill.SaveBatch(home, batch)
 		}
 		if errors.Is(err, backfill.ErrStopped) {
-			fmt.Fprintf(stdout, "Stopped. %s registered as import %s; run agent-archive backfill again with the same options to finish it.\n", countNoun(len(batch.Sessions), "session"), batch.ID)
+			terminal.Printf(stdout, "Stopped. %s registered as import %s; run agent-archive backfill again with the same options to finish it.\n", countNoun(len(batch.Sessions), "session"), batch.ID)
 			return 1
 		}
 		return fail("%v. %s registered before this; run agent-archive backfill again with the same options to finish.", err, countNoun(len(result.Sessions), "session"))
@@ -123,7 +124,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	printRegistered(stdout, batch.ID, added, result)
 
 	if background {
-		fmt.Fprintln(stdout, "The background collector uploads them. Run agent-archive status to follow it.")
+		terminal.Println(stdout, "The background collector uploads them. Run agent-archive status to follow it.")
 		printImportHints(stdout, batch.ID)
 		return 0
 	}
@@ -181,7 +182,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	if err := completeBatch(env, home, collector.OpenLocalStoreReadOnly(home), &last); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
+	terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
 	return nil
 }
 
@@ -189,9 +190,10 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 // watch at once, even in the middle of a long upload, so a second one ends
 // the process as usual.
 type interruption struct {
-	stop         func()
-	done, exited chan struct{}
-	seen         atomic.Bool
+	stop   func()
+	done   chan struct{}
+	exited chan struct{}
+	seen   atomic.Bool
 }
 
 func newInterruption(env Env, out io.Writer) *interruption {
@@ -203,7 +205,7 @@ func newInterruption(env Env, out io.Writer) *interruption {
 		case <-signals:
 			i.seen.Store(true)
 			i.stop()
-			fmt.Fprintln(out, "Stopping after the current session; press Ctrl-C again to quit.")
+			terminal.Println(out, "Stopping after the current session; press Ctrl-C again to quit.")
 		case <-i.done:
 		}
 	}()
@@ -303,7 +305,7 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 	if n := len(result.Subagents); n > 0 {
 		line += " and " + countNoun(n, "subagent transcript")
 	}
-	fmt.Fprintf(out, "%s as import %s.\n", line, batchID)
+	terminal.Printf(out, "%s as import %s.\n", line, batchID)
 	var skipped []string
 	if n := result.AlreadyArchived; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d already in the archive", n))
@@ -321,16 +323,16 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 		skipped = append(skipped, fmt.Sprintf("%d that could not be registered", n))
 	}
 	if n := result.SubagentsInvalid; n > 0 {
-		skipped = append(skipped, fmt.Sprintf("%s whose record conflicts with an earlier one or is incomplete", countNoun(n, "subagent transcript")))
+		skipped = append(skipped, countNoun(n, "subagent transcript")+" whose record conflicts with an earlier one or is incomplete")
 	}
 	if len(skipped) > 0 {
-		fmt.Fprintf(out, "Not registered: %s.\n", strings.Join(skipped, ", "))
+		terminal.Printf(out, "Not registered: %s.\n", strings.Join(skipped, ", "))
 	}
 }
 
 func printImportHints(out io.Writer, batchID string) {
-	fmt.Fprintln(out, "See them with `agent-archive list --imported`.")
-	fmt.Fprintf(out, "Undo with `agent-archive backfill undo %s`.\n", batchID)
+	terminal.Println(out, "See them with `agent-archive list --imported`.")
+	terminal.Printf(out, "Undo with `agent-archive backfill undo %s`.\n", batchID)
 }
 
 // uploadBusyGiveUp is how long upload waits on a collector pass that holds
@@ -352,7 +354,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	}
 	u := &upload{env: env, home: home, batch: batchID, sizes: sizes, terminal: env.isTerminal(underlyingWriter(stdout)), out: stdout}
 	if err := u.refresh(); err != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 		return 1
 	}
 	// Ctrl-C is looked for before each session and between passes, so the
@@ -391,25 +393,25 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		}
 	}
 	if u.terminal && u.drawn {
-		fmt.Fprintln(stdout)
+		terminal.Println(stdout)
 	}
 
 	switch {
 	case len(u.pending) == 0:
-		fmt.Fprintf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
+		terminal.Printf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
 	case interrupt.requested():
-		fmt.Fprintf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", countNoun(len(u.pending), "session"))
+		terminal.Printf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", countNoun(len(u.pending), "session"))
 	case errors.Is(passErr, errPaused):
-		fmt.Fprintf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", countNoun(len(u.pending), "session"))
+		terminal.Printf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", countNoun(len(u.pending), "session"))
 	default:
-		fmt.Fprintf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", countNoun(len(u.pending), "session"))
+		terminal.Printf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", countNoun(len(u.pending), "session"))
 	}
 	printImportHints(stdout, batchID)
 	if interrupt.requested() || errors.Is(passErr, errPaused) {
 		return 0
 	}
 	if passErr != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill: upload: %v\n", passErr)
+		terminal.Printf(stderr, "agent-archive: backfill: upload: %v\n", passErr)
 		return 1
 	}
 	if len(u.pending) > 0 {
@@ -509,10 +511,10 @@ func (u *upload) draw(newline bool) {
 	}
 	line := fmt.Sprintf("Uploading: %d of %s, %s of %s", u.total-len(u.pending), countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes-pendingBytes), backfill.FormatSize(u.totalBytes))
 	if newline {
-		fmt.Fprintln(u.out, line)
+		terminal.Println(u.out, line)
 		return
 	}
-	fmt.Fprintf(u.out, "\r%-72s", line)
+	terminal.Printf(u.out, "\r%-72s", line)
 	u.drawn = true
 }
 
@@ -521,55 +523,55 @@ func (u *upload) draw(newline bool) {
 // reads local state only.
 func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 	if len(args) != 0 {
-		fmt.Fprintf(stderr, "agent-archive: backfill history: unexpected argument %q\n", args[0])
+		terminal.Printf(stderr, "agent-archive: backfill history: unexpected argument %q\n", args[0])
 		return 2
 	}
 	home, err := env.readHome()
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill history: resolve home: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill history: resolve home: %v\n", err)
 		return 1
 	}
 	cfg, found, err := config.Load(home)
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill history: load config: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill history: load config: %v\n", err)
 		return 1
 	}
 	if !found {
-		fmt.Fprintln(stdout, notSetUpMessage)
+		terminal.Println(stdout, notSetUpMessage)
 		return 0
 	}
 	batches, err := backfill.LoadBatches(home)
 	if err != nil {
 		// An unreadable import file is named; the others are still listed.
-		fmt.Fprintf(stderr, "agent-archive: backfill history: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill history: %v\n", err)
 	}
 	if len(batches) == 0 && err != nil {
-		fmt.Fprintln(stdout, "No import could be read. Repair or move the files named above, then run agent-archive backfill history again.")
+		terminal.Println(stdout, "No import could be read. Repair or move the files named above, then run agent-archive backfill history again.")
 		return 1
 	}
 	if len(batches) == 0 {
-		fmt.Fprintln(stdout, "No imports yet. Run agent-archive backfill --dry-run to see what an import would do.")
+		terminal.Println(stdout, "No imports yet. Run agent-archive backfill --dry-run to see what an import would do.")
 		return 0
 	}
 	store := collector.OpenLocalStoreReadOnly(home)
 	regs, err := store.LoadRegistrations()
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill history: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill history: %v\n", err)
 		return 1
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "IMPORT\tSTARTED\tSESSIONS\tPROJECTS ADDED\tUPLOAD")
+	terminal.Println(tw, "IMPORT\tSTARTED\tSESSIONS\tPROJECTS ADDED\tUPLOAD")
 	loc := env.now().Location()
 	for i, b := range batches {
 		state, err := batchUploadState(store, cfg, regs, b, i == len(batches)-1)
 		if err != nil {
-			fmt.Fprintf(stderr, "agent-archive: backfill history: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: backfill history: %v\n", err)
 			return 1
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%s\n", b.ID, b.StartedAt.In(loc).Format("2006-01-02 15:04"), len(b.Sessions), len(b.ProjectsAdded), state)
+		terminal.Printf(tw, "%s\t%s\t%d\t%d\t%s\n", b.ID, b.StartedAt.In(loc).Format("2006-01-02 15:04"), len(b.Sessions), len(b.ProjectsAdded), state)
 	}
 	if err := tw.Flush(); err != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill history: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill history: %v\n", err)
 		return 1
 	}
 	return 0
