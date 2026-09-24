@@ -186,10 +186,9 @@ func runOnePass(env Env, quietOnBusy bool) (collector.Result, error) {
 		// project's already-published sessions still own objects in this
 		// bucket and must age out of it. Only a session that predates the
 		// current destination published somewhere else, and for those the
-		// sweep prunes local state without touching this bucket.
-		CurrentDestination: func(reg archive.SessionRegistration) bool {
-			return cfg.DestinationSince.IsZero() || !reg.SessionStartedAt.Before(cfg.DestinationSince)
-		},
+		// sweep prunes local state without touching this bucket. The boundary
+		// is the session's admission, not its start.
+		CurrentDestination: cfg.InCurrentDestination,
 		// Outstanding work defers expiry only when the collector will do it.
 		Publishable:   cfg.AcceptSession,
 		SessionMaxAge: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
@@ -279,10 +278,16 @@ func openConfiguredStore(cfg config.Config) (storage.ObjectStore, error) {
 // roots are read once per harness, project-scope roots once per
 // harness/project. Each read carries its own instruction-content cap, so a
 // pass reads at most that cap per harness plus that cap per project.
+//
+// An imported session gets no observation: today's skills attached to a
+// session that ran before them would be false evidence.
 func skillObserver(env Env) func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
 	userCache := map[string][]archive.SupplementalEvidence{}
 	projectCache := map[string][]archive.SupplementalEvidence{}
 	return func(reg archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
+		if reg.Imported() {
+			return nil, nil
+		}
 		userScope, ok := userCache[reg.Harness.Name]
 		if !ok {
 			userHome, err := env.userHomeDir()

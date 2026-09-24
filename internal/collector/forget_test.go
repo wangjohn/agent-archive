@@ -26,7 +26,7 @@ func TestForgetIdleSessionKeepsASessionThatGainedWork(t *testing.T) {
 			if err := local.SaveRequest(reg.ArchiveSessionID, "stop", at); err != nil {
 				t.Fatal(err)
 			}
-			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, tc.deferForWork)
+			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, tc.deferForWork, nil)
 			if err != nil || forgotten != tc.forgotten {
 				t.Fatalf("forgotten=%t err=%v, want %t", forgotten, err, tc.forgotten)
 			}
@@ -48,7 +48,7 @@ func TestForgetIdleSessionKeepsASessionWithAPendingPublication(t *testing.T) {
 	if err := local.SavePending(reg.ArchiveSessionID, PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}}); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true); err != nil || forgotten {
+	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, nil); err != nil || forgotten {
 		t.Fatalf("forgotten=%t err=%v", forgotten, err)
 	}
 }
@@ -62,7 +62,7 @@ func TestSaveRequestForAForgottenSessionLeavesNoOrphan(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true); err != nil || !forgotten {
+	if forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, nil); err != nil || !forgotten {
 		t.Fatalf("forgotten=%t err=%v", forgotten, err)
 	}
 	err := local.SaveRequest(reg.ArchiveSessionID, "stop", time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))

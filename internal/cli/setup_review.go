@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -28,6 +27,9 @@ func showSetupReview(p *prompter, cfg config.Config, reconfiguring bool, discove
 			version = "unknown"
 		}
 		fmt.Fprintf(p.out, "  %s: installed version %s (capture unverified); fresh-start evidence %s; transcript %s\n", appName(app), version, profile.FreshStart.State, profile.Transcript.State)
+	}
+	if len(cfg.ImportedHarnesses) > 0 {
+		fmt.Fprintf(p.out, "Imported only: %s (sessions imported by backfill are published; new sessions are not captured)\n", friendlyApps(cfg.ImportedHarnesses))
 	}
 	for _, project := range cfg.Archive.Projects {
 		if project.Included {
@@ -61,41 +63,79 @@ func printReviewPrivacy(p *prompter, cfg config.Config) {
 	printBucketPrivacy(p.out, currentBucketPrivacy(cfg, p.clock()))
 }
 
-func reviewAction(p *prompter, label string) (string, error) {
-	for {
-		answer, err := p.line(label + " [Y/n/edit] ")
-		if err != nil {
-			return "", err
+// reviewAction asks the final confirmation, returning start, edit, or cancel.
+// y, n, and e still work for scripted input.
+func reviewAction(p *prompter, reconfiguring bool) (string, error) {
+	label, yes := "Start archiving?", "Yes, start archiving"
+	if reconfiguring {
+		label, yes = "Save these changes?", "Yes, save"
+	}
+	choice, err := p.menu("\n"+label, "yes",
+		option{"yes", yes},
+		option{"edit", "Edit a setting"},
+		option{"no", "Cancel (your setup draft is kept)"})
+	switch choice {
+	case "yes":
+		return "start", err
+	case "no":
+		return "cancel", err
+	}
+	return choice, err
+}
+
+// promptStopImported offers to stop publishing each app that has only
+// imported sessions: one backfill imported without its hooks installed, and
+// which setup is not installing hooks for now. Stopping removes it from
+// ImportedHarnesses when setup commits, so its imports are no longer
+// published; sessions already in the bucket stay until retention removes
+// them.
+func promptStopImported(p *prompter, draft *setupDraft) error {
+	for _, app := range draft.Config.ImportedHarnesses {
+		if containsString(draft.Config.Harnesses, app) || containsString(draft.StopImported, app) {
+			continue
 		}
-		switch strings.ToLower(answer) {
-		case "", "y", "yes":
-			return "start", nil
-		case "n", "no":
-			return "cancel", nil
-		case "edit", "e":
-			return "edit", nil
-		default:
-			fmt.Fprintln(p.out, "Enter y to continue, n to cancel, or edit to change something.")
+		keep, err := p.yesNo(fmt.Sprintf("Keep publishing %s sessions imported by backfill?", appName(app)), true)
+		if err != nil {
+			return err
+		}
+		if !keep {
+			draft.StopImported = append(draft.StopImported, app)
 		}
 	}
+	return nil
+}
+
+// offerStopImported refreshes the draft's list from the committed
+// configuration, which is where backfill writes it, then prompts.
+func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) error {
+	draft.Config.ImportedHarnesses = carriedImportedHarnesses(committed.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
+	return promptStopImported(p, draft)
 }
 
 func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
-	fmt.Fprintln(p.out, "\nWhat would you like to change?")
-	fmt.Fprintln(p.out, "  apps       Which apps to include\n  projects   Which projects to include\n  sessions   All sessions or only sessions using skills\n  retention  How long sessions are kept\n  storage    Bucket or credentials\n  prefix     Folder inside the bucket")
-	choices := []string{"apps", "projects", "sessions", "retention", "storage", "prefix", "back"}
-	if draft.Config.Storage.Provider == credentials.ProviderS3 {
-		fmt.Fprintln(p.out, "  region     AWS bucket region")
-		choices = append(choices, "region")
+	choices := []option{
+		{"apps", "Apps to include"},
+		{"projects", "Projects to include"},
+		{"sessions", "All sessions or only sessions using skills"},
+		{"retention", "How long sessions are kept"},
+		{"storage", "Bucket or credentials"},
+		{"prefix", "Folder inside the bucket"},
 	}
-	fmt.Fprintln(p.out, "  back       Return to review")
-	choice, err := promptChoice(p, "Change", "back", choices...)
+	if draft.Config.Storage.Provider == credentials.ProviderS3 {
+		choices = append(choices, option{"region", "AWS bucket region"})
+	}
+	choices = append(choices, option{"back", "Nothing, go back to the review"})
+	choice, err := p.menu("\nWhat would you like to change?", "back", choices...)
 	if err != nil {
 		return err
 	}
 	switch choice {
 	case "apps":
 		draft.Config.Harnesses, err = promptHarnesses(p, nil, draft.Config.Harnesses)
+		if err != nil {
+			return err
+		}
+		err = promptStopImported(p, draft)
 	case "projects":
 		projects, e := promptProjects(p, draft.Config.Archive.Projects, time.Time{}, userHome)
 		if e != nil {

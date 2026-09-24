@@ -101,6 +101,24 @@ waiting for a sync; otherwise it is downloaded from the archive.
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 `,
+	"backfill": `Usage: agent-archive backfill --dry-run [options]
+
+Plan importing the Claude Code, Codex, and Cursor sessions already on this Mac
+that the archive has not captured. Shows each project with its session count
+per app, and why any session would not be imported. Prints project folders
+and counts only, never conversation content. Nothing is written or uploaded.
+  --harness NAME        Only claude, codex, or cursor (repeatable)
+  --project DIR         Only this project; it need not still exist (repeatable)
+  --since DATE          Sessions started on or after DATE (YYYY-MM-DD, local)
+  --until DATE          Sessions started on or before DATE
+  --include-home        Include sessions run from the home folder
+  --include-temp        Include sessions run from temporary directories
+  --include-removed     Include sessions retention or undo removed
+  --dry-run             Print the plan and exit
+  --json                With --dry-run, print the plan as JSON
+Importing is not available yet; this version prints the plan only.
+Example: agent-archive backfill --dry-run --since 2026-09-01
+`,
 	"feedback": `Usage: agent-archive feedback ID --file PATH
 
 Attach an explicit user assessment to a locally captured session. The file is
@@ -144,7 +162,7 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 			return true, 0
 		}
 	}
-	if cmd == "list" || cmd == "show" || cmd == "feedback" || cmd == "handoff" {
+	if cmd == "list" || cmd == "show" || cmd == "feedback" || cmd == "handoff" || cmd == "backfill" {
 		return false, 0
 	} // Their parsers validate before I/O.
 	allowed := ""

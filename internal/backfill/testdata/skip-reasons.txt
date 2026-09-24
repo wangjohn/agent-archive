@@ -1,0 +1,62 @@
+Backfill imports every session found on this Mac into
+s3 / bucket / agent-archive/. Nothing has been uploaded yet.
+
+PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL
+~/repo                                     1      –       –      1  will be added
+
+Not a repository:
+~                                          1      –       –      1  already included
+
+Total: 2 sessions (plus 1 subagent transcript), 4 KB,
+       started 2026-09-20.
+
+Not imported:
+   1  already in the archive
+   1  same session found more than once
+   1  registered earlier, not accepted by the current setup
+   1  removed earlier by undo                   add --include-removed
+   1  removed earlier by retention              add --include-removed
+   1  not matching the filters
+   1  in projects excluded in setup             change in setup
+   1  run from the home folder                  add --include-home
+   1  run from / or /Users, above the home folder
+   1  run from temporary directories            add --include-temp
+   1  Cursor chat whose project could not be determined
+   1  from worktrees that no longer exist
+   1  with IDs that do not match the file
+   1  with no conversation
+   1  in a format the archive cannot read safely
+   1  larger than 64 MiB
+   1  starting in the future (check the clock)
+   1  Cursor chat stored only in Cursor's database (a later release)
+   1  subagent transcript that can't be read
+
+If you continue:
+  • 1 project is added, and new Claude Code sessions in it are captured.
+  • Retention is 90 days, so these sessions are deleted on 2026-12-22.
+    Choose `edit` to keep them longer.
+  • Undo any time with `agent-archive backfill undo`.
+
+--- cursor database not checked, --include-home set ---
+Backfill imports every session found on this Mac into
+s3 / bucket / agent-archive/. Nothing has been uploaded yet.
+
+PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL
+~/repo                                     1      –       –      1  will be added
+
+Not a repository:
+~                                          1      –       –      1  already included
+
+Total: 2 sessions (plus 1 subagent transcript), 4 KB,
+       started 2026-09-20.
+
+Not imported:
+   1  subagent transcript that can't be read
+      Cursor chats stored only in Cursor's database were not checked
+      (a later release).
+
+If you continue:
+  • 1 project is added, and new Claude Code sessions in it are captured.
+  • Retention is 90 days, so these sessions are deleted on 2026-12-22.
+    Choose `edit` to keep them longer.
+  • Undo any time with `agent-archive backfill undo`.

@@ -76,6 +76,10 @@ type Env struct {
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
+	// BackfillTempDirs are the temporary directories backfill skips. Nil
+	// means the macOS defaults plus $TMPDIR; tests set it because their
+	// files live in one.
+	BackfillTempDirs []string
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {
@@ -241,6 +245,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":
 		return runHandoffCommand(args[1:], stdout, stderr, env)
+	case "backfill":
+		return runBackfillCommand(args[1:], stdout, stderr, env)
 	default:
 		fmt.Fprintf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2

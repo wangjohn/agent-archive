@@ -95,7 +95,12 @@ func (s *LocalStore) RemoveSuperseded(archiveSessionID, key string) error {
 // or a pending publication is kept (forgotten reports false) so the collector
 // publishes that evidence. A session the collector no longer publishes is
 // forgotten regardless: its work would never be done.
-func (s *LocalStore) ForgetIdleSession(archiveSessionID, nativeSessionID string, deferForWork bool) (forgotten bool, err error) {
+//
+// A non-nil removal is recorded (see RecordRemoval) under the same lock,
+// after that recheck and before anything is forgotten: a session kept alive
+// gets no record, and a record that cannot be written leaves the session
+// registered, so the caller's next attempt retries both.
+func (s *LocalStore) ForgetIdleSession(archiveSessionID, nativeSessionID string, deferForWork bool, removal *RemovalRecord) (forgotten bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
 	}
@@ -115,6 +120,11 @@ func (s *LocalStore) ForgetIdleSession(archiveSessionID, nativeSessionID string,
 		}
 		if requested || pending {
 			return false, nil
+		}
+	}
+	if removal != nil {
+		if err := s.RecordRemoval(removal.Harness, nativeSessionID, removal.Reason, removal.At); err != nil {
+			return false, err
 		}
 	}
 	if err := s.ForgetSession(archiveSessionID, nativeSessionID); err != nil {

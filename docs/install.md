@@ -78,13 +78,13 @@ Macs are supported.
    asks for a region only when one is missing.
 
    The final summary shows the apps, projects, destination, session scope,
-   and automatic deletion period. At “Start archiving? [Y/n/edit]”, choose
-   `edit` to adjust apps, projects, session scope, retention, storage, the
+   and automatic deletion period. At “Start archiving?”, enter the number
+   for “Edit a setting” to adjust apps, projects, session scope, retention, storage, the
    folder inside the bucket, or the AWS region. Ordinary setup has no
    advanced-settings questions. Storage changes are checked again before
    starting; editing other choices does not repeat the connection test.
-   If the connection test fails, choose `edit` to correct the region, bucket
-   folder, or other settings, or `retry` after restoring access.
+   If the connection test fails, choose “Edit settings” to correct the region,
+   bucket folder, or other settings, or “Retry” after restoring access.
 
    Review the exact project paths and retention period before enabling.
    The default is 90 days; older sessions are deleted automatically.
