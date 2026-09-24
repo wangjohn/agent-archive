@@ -7,6 +7,58 @@ native record, then text transcripts and supplemental evidence (source schema
 2). The line format changes how retained evidence is packaged, not what is
 retained: every line holds only what the source filter below kept.
 
+## Source filter version 8
+
+Filter 8 adds one source format, `cursor-composer`: a Cursor chat read from
+Cursor's own database (`state.vscdb`) rather than from a hook's transcript.
+JSONL and text output are byte-identical to filter 7. A chat is a
+`composerData` value and one row per message; the filter builds records from
+them through an allowlist and then passes every record through the same
+sanitizer as a JSONL record.
+
+- **Kept:** one session record (the chat's ID and creation time) and, per
+  message, its role (user or assistant), ID, creation time, request ID, start
+  and completion times, model name, input and output token counts (an
+  all-zero count is left out), text, and its tool call: the tool's name and
+  call ID, its arguments, and its result or, for a failed call, its error
+  with `is_error`. Tool arguments pass the same deny list and redaction as in
+  a JSONL transcript.
+- **Dropped by design:** every context payload Cursor attaches to a message
+  (`codebaseContextChunks`, `attachedCodeChunks`, `originalFileStates`,
+  `diffHistories`, `images`, `consoleLogs`, `recentlyViewedFiles`, and the
+  like), named in a `cursor_context_omitted` gap; the model's reasoning
+  (`thinking`), as `hidden_instruction_omitted`; and the chat's settings and
+  bookkeeping (`lastUpdatedAt`, `modelConfig`, `usageData`,
+  `workspaceIdentifier`, `blobEncryptionKey`, UI state). Every other key not
+  kept, including a tool call's `toolCallBinary`, `userDecision`, and
+  `additionalData`, is named in `unknown_field_omitted` with its level
+  (`chat.`, `message.`, `tool.`, `model.`, `tokens.`). Names only, never
+  values.
+- **Tool arguments.** Arguments come from `rawArgs` when it decodes to an
+  object, else from `params`; when neither does, they are dropped. A string
+  argument that is itself JSON (an object or array) is dropped rather than
+  kept as text the argument rules never saw. Both are named in
+  `cursor_tool_argument_omitted`. An empty argument object is dropped
+  silently.
+- **Fail closed.** Only the format versions seen in a real database are read:
+  chat `_v` 18 and message `_v` 3. Any other version, older or newer, refuses
+  the whole chat as an unsafe format. So do malformed JSON and a message list
+  that does not match the chat's headers. Older chats that keep their
+  messages inline (`conversation`) are not read; one that also has headers
+  gets a `cursor_inline_conversation_omitted` gap.
+- **Counted, not guessed.** A message with no row (or a row belonging to
+  another message) is `cursor_bubble_missing` (and
+  `cursor_bubble_id_mismatch`); content kept in blobs, which are never read,
+  is `cursor_blob_content_unavailable`; an unknown or inconsistent message
+  type is `cursor_message_type_unknown`. Each gives a count, never an ID.
+- **Complete messages only.** Messages are kept up to the last complete one:
+  a reply without a completion time, or with a tool call still loading, and
+  everything after it wait for a later pass
+  (`cursor_incomplete_tail_omitted`). Records therefore only ever grow, and
+  a chat with no kept message has no records at all.
+
+Every filter-7 rule below still applies.
+
 ## Source filter version 7
 
 Filter 7 changes only how a Cursor plain-text transcript is filtered; JSONL
