@@ -1,0 +1,11 @@
+{
+  "composer": {
+    "_v": 19,
+    "composerId": "c0ffee00-0000-4000-8000-000000000003",
+    "createdAt": 1790000000000,
+    "fullConversationHeadersOnly": [{"bubbleId": "b1", "type": 1}]
+  },
+  "bubbles": [
+    {"id": "b1", "value": {"_v": 3, "bubbleId": "b1", "type": 1, "text": "hello"}}
+  ]
+}

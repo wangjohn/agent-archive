@@ -16,7 +16,7 @@ import (
 
 // fixtureBundles builds a source bundle from every JSONL fixture, with
 // supplemental evidence and a linked session so every line kind appears, plus
-// one Cursor text bundle for native_text lines.
+// one Cursor text bundle for native_text lines and one Cursor database chat.
 func fixtureBundles(t *testing.T) map[string]SourceBundle {
 	t.Helper()
 	entries, err := os.ReadDir("testdata")
@@ -73,6 +73,15 @@ func fixtureBundles(t *testing.T) map[string]SourceBundle {
 		t.Fatal(err)
 	}
 	out["cursor-text"] = bundle
+	composer, err := (CursorAdapter{}).FilterComposer(loadComposerFixture(t, "chat.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err = NewSourceBundle(reg, CursorAdapter{}, composer, captured, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out["cursor-composer"] = bundle
 	if len(out) < 10 {
 		t.Fatalf("only %d fixture bundles were built", len(out))
 	}
@@ -423,7 +432,9 @@ func TestFixtureBundlesCoverEveryHarnessPrefix(t *testing.T) {
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			if entry.Name() != "handoff" {
+			// cursor-composer holds synthetic database chats; fixtureBundles
+			// round-trips chat.json from it.
+			if entry.Name() != "handoff" && entry.Name() != "cursor-composer" {
 				t.Errorf("fixture directory %s is not covered by the round-trip test", entry.Name())
 			}
 			continue

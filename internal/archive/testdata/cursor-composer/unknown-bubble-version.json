@@ -1,0 +1,12 @@
+{
+  "composer": {
+    "_v": 18,
+    "composerId": "c0ffee00-0000-4000-8000-000000000004",
+    "createdAt": 1790000000000,
+    "fullConversationHeadersOnly": [{"bubbleId": "b1", "type": 1}, {"bubbleId": "b2", "type": 2}]
+  },
+  "bubbles": [
+    {"id": "b1", "value": {"_v": 3, "bubbleId": "b1", "type": 1, "text": "hello"}},
+    {"id": "b2", "value": {"_v": 4, "bubbleId": "b2", "type": 2, "text": "a newer message shape"}}
+  ]
+}

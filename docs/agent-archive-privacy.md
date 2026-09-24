@@ -7,6 +7,76 @@ native record, then text transcripts and supplemental evidence (source schema
 2). The line format changes how retained evidence is packaged, not what is
 retained: every line holds only what the source filter below kept.
 
+## Source filter version 8
+
+Filter 8 adds one source format, `cursor-composer`: a Cursor chat read from
+Cursor's own database (`state.vscdb`) rather than from a hook's transcript.
+JSONL and text output are byte-identical to filter 7. A chat is a
+`composerData` value and one row per message; the filter builds records from
+them through an allowlist and then passes every record through the same
+sanitizer as a JSONL record.
+
+- **Kept:** one session record (the chat's ID and creation time) and, per
+  message, its role (user or assistant), ID, creation time, request ID, start
+  and completion times, model name, input and output token counts (an
+  all-zero count is left out), text, and its tool call: the tool's name and
+  call ID, its arguments, and its result or, for a failed call, its error
+  (as text, whatever its shape) with `is_error`. Tool arguments pass the same
+  deny list and redaction as in a JSONL transcript.
+- **Dropped by design:** every context payload Cursor attaches to a message
+  (`codebaseContextChunks`, `attachedCodeChunks`, `originalFileStates`,
+  `diffHistories`, `images`, `consoleLogs`, `recentlyViewedFiles`, and the
+  like), named in a `cursor_context_omitted` gap; the model's reasoning
+  (`thinking`), as `hidden_instruction_omitted`; and the chat's settings and
+  bookkeeping (`lastUpdatedAt`, `modelConfig`, `usageData`,
+  `workspaceIdentifier`, `blobEncryptionKey`, UI state). Every other key not
+  kept, including a tool call's `toolCallBinary`, `userDecision`, and
+  `additionalData`, and a result recorded beside an error, is named in
+  `unknown_field_omitted` with its level: `chat.`, `message.`, `tool.`
+  (`toolFormerData`), `toolResult.` (`toolResults` entries), `model.`,
+  `tokens.`, or `record.` (a key the shared sanitizer omitted from a record
+  this filter built). Names only, never values.
+- **Tool arguments.** Arguments come from `rawArgs` when it decodes to a
+  non-empty object, else from `params`. A string argument that is itself
+  JSON (an object or array), at any depth, is dropped rather than kept as
+  text the argument rules never saw, and the nearest argument name is given
+  in `cursor_tool_argument_omitted`; objects and arrays it leaves empty are
+  removed. When neither source yields arguments, a source that did not
+  decode is named in the same gap under a separate detail, so Cursor's own
+  `rawArgs` and `params` are never confused with a tool's argument names. An
+  empty argument object is dropped silently.
+- **Fail closed.** Only the format versions seen in a real database are read:
+  chat `_v` 18 and message `_v` 3. Any other version, older or newer, refuses
+  the whole chat as an unsafe format. So do malformed JSON and a message list
+  that does not match the chat's headers. Older chats kept their messages
+  inline in `conversation` and are refused by version; inline messages in a
+  chat that is read are not read either, and add a
+  `cursor_inline_conversation_omitted` gap.
+- **Counted, not guessed.** A message with no row, or a row belonging to
+  another message, adds `cursor_bubble_missing` (and, for the second,
+  `cursor_bubble_id_mismatch`); content kept in blobs, which are never read,
+  adds `cursor_blob_content_unavailable`; an unknown or inconsistent message
+  type adds `cursor_message_type_unknown`. Their details give counts out of
+  all the chat's messages, never an ID.
+- **Output stops early rather than skipping.** Output stops at the first
+  message whose row is missing, belongs to another message, or disagrees with
+  its header about its type, and at the first message still in flight: one
+  the chat lists in `generatingBubbleIds`; one whose tool call's status is
+  anything but `completed`, `error`, or `cancelled` (or `canceled`); or, as a
+  backstop, the chat's last message when the chat's `status` is anything but
+  `completed`, `none`, `aborted`, `cancelled` (or `canceled`), `error`, or
+  empty. That message and everything after it wait for a later pass, counted
+  in `cursor_incomplete_tail_omitted`. A completion time is not required:
+  most finished replies have none. A chat with no kept message has no
+  records at all.
+- **Rewrites.** Stopping early keeps a chat's records append-only while it
+  grows, but Cursor can still rewrite a message it has finished (late token
+  counts, an edited prompt, a checkpoint restore). The filter then produces
+  different records; the collector, not the filter, handles a rewritten
+  Cursor database chat.
+
+Every filter-7 rule below still applies.
+
 ## Source filter version 7
 
 Filter 7 changes only how a Cursor plain-text transcript is filtered; JSONL

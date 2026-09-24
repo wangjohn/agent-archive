@@ -3,7 +3,6 @@ package archive
 import (
 	"bytes"
 	"encoding/json"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -23,15 +22,6 @@ func filteredRecords(t *testing.T, adapter Adapter, jsonl string) (FilteredTrans
 		records = append(records, record)
 	}
 	return filtered, records
-}
-
-func sortedKeys(record map[string]any) []string {
-	keys := make([]string, 0, len(record))
-	for key := range record {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // Filter 5 keeps a compact_boundary system record's identity and nothing else

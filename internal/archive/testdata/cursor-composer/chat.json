@@ -1,0 +1,100 @@
+{
+  "composer": {
+    "_v": 18,
+    "composerId": "c0ffee00-0000-4000-8000-000000000001",
+    "createdAt": 1790000000000,
+    "lastUpdatedAt": 1790000600000,
+    "isDraft": false,
+    "name": "SYNTHETIC-CHAT-TITLE",
+    "blobEncryptionKey": "SYNTHETIC-ENCRYPTION-KEY",
+    "workspaceIdentifier": {"uri": "file:///Users/synthetic/private-project"},
+    "subagentComposerIds": ["c0ffee00-0000-4000-8000-0000000000aa"],
+    "modelConfig": {"modelName": "synthetic-model-current", "maxMode": false},
+    "usageData": {"synthetic-model": {"costInCents": 12, "amount": 3}},
+    "unifiedMode": "agent",
+    "fullConversationHeadersOnly": [
+      {"bubbleId": "b1", "type": 1, "createdAt": 1790000001000},
+      {"bubbleId": "b2", "type": 2, "createdAt": 1790000002000},
+      {"bubbleId": "b4", "type": 2, "createdAt": 1790000004000},
+      {"bubbleId": "b5", "type": 1, "createdAt": 1790000005000},
+      {"bubbleId": "b6", "type": 30, "createdAt": 1790000006000},
+      {"bubbleId": "b7", "type": 2, "createdAt": 1790000007000, "completedAtMs": 1790000009000},
+      {"bubbleId": "b3", "type": 2, "createdAt": 1790000010000}
+    ]
+  },
+  "bubbles": [
+    {"id": "b1", "value": {
+      "_v": 3, "bubbleId": "b1", "type": 1,
+      "text": "Fix the widget test. My key is sk-SYNTHETICabcdefghijklmnop and password=hunter2-synthetic",
+      "richText": "{\"root\":{\"children\":[{\"text\":\"Fix the widget test.\"}]}}",
+      "createdAt": "2026-09-21T14:13:21Z",
+      "requestId": "req-1",
+      "tokenCount": {"inputTokens": 0, "outputTokens": 0},
+      "codebaseContextChunks": [{"relativeWorkspacePath": "src/secret.go", "contents": "CONTEXT-SENTINEL-CHUNK"}],
+      "attachedCodeChunks": [{"contents": "CONTEXT-SENTINEL-ATTACHED"}],
+      "originalFileStates": {"src/widget.go": {"content": "CONTEXT-SENTINEL-FILESTATE"}},
+      "diffHistories": [{"diff": "CONTEXT-SENTINEL-DIFF"}],
+      "images": [{"data": "CONTEXT-SENTINEL-IMAGE"}],
+      "consoleLogs": ["CONTEXT-SENTINEL-CONSOLE"],
+      "recentlyViewedFiles": ["/Users/synthetic/CONTEXT-SENTINEL-RECENT.go"],
+      "lints": [],
+      "isAgentic": true
+    }},
+    {"id": "b2", "value": {
+      "_v": 3, "bubbleId": "b2", "type": 2,
+      "text": "Reading the test first.",
+      "createdAt": "2026-09-21T14:13:22Z",
+      "startedAtMs": 1790000002000, "completedAtMs": 1790000002500,
+      "modelInfo": {"modelName": "synthetic-model-a"},
+      "tokenCount": {"inputTokens": 1200, "outputTokens": 45},
+      "thinking": {"text": "THINKING-SENTINEL", "signature": "sig"},
+      "toolFormerData": {
+        "tool": 5, "toolIndex": 0, "modelCallId": "mc-1",
+        "toolCallId": "call-1", "name": "read_file", "status": "completed",
+        "rawArgs": "{\"target_file\":\"internal/widget/widget_test.go\",\"offset\":1,\"limit\":80}",
+        "params": "{\"relativeWorkspacePath\":\"internal/widget/widget_test.go\"}",
+        "result": "{\"contents\":\"package widget\\n// token = SYNTHETIC-TOKEN-VALUE\"}",
+        "additionalData": {"sentinel": "TOOL-ADDITIONAL-SENTINEL"},
+        "toolCallBinary": "TOOLBINARY-SENTINEL",
+        "userDecision": "USERDECISION-SENTINEL"
+      },
+      "toolResults": [],
+      "codebaseContextChunks": []
+    }},
+    {"id": "b4", "value": {
+      "_v": 3, "bubbleId": "b4", "type": 2,
+      "text": "",
+      "createdAt": "2026-09-21T14:13:24Z",
+      "contentBlobIds": ["agentKv:blob:SYNTHETIC-HASH"],
+      "toolResults": [{"toolCallId": "call-0", "toolName": "run_terminal_cmd", "result": {"output": "ok", "exitCode": 0}, "extra": "TOOLRESULT-EXTRA-SENTINEL"}]
+    }},
+    {"id": "b5", "value": {
+      "_v": 3, "bubbleId": "b5", "type": 1,
+      "text": "<system-reminder>INJECTED-SENTINEL</system-reminder>Thanks, now run it.",
+      "createdAt": 1790000005000
+    }},
+    {"id": "b6", "value": {
+      "_v": 3, "bubbleId": "b6", "type": 30,
+      "text": "UNKNOWN-TYPE-SENTINEL"
+    }},
+    {"id": "b7", "value": {
+      "_v": 3, "bubbleId": "b7", "type": 2,
+      "text": "The test run failed; see the error.",
+      "createdAt": "2026-09-21T14:13:27Z",
+      "completedAtMs": 1790000009000,
+      "toolFormerData": {
+        "tool": 15, "toolIndex": 0, "modelCallId": "mc-2",
+        "toolCallId": "call-2", "name": "run_terminal_command_v2", "status": "error",
+        "rawArgs": "{\"command\":\"go test ./internal/wid",
+        "params": "{\"command\":\"go test ./internal/widget/\",\"commandDescription\":\"Run the widget tests\",\"cwd\":\"\",\"options\":{},\"parsingResult\":{\"executableCommands\":[{\"name\":\"go\"}]},\"requestedSandboxPolicy\":\"{\\\"mode\\\":\\\"NESTED-SENTINEL\\\"}\"}",
+        "result": "RESULT-BESIDE-ERROR-SENTINEL",
+        "error": "exit status 1: password=ERROR-SECRET-SENTINEL",
+        "toolCallBinary": "TOOLBINARY-SENTINEL",
+        "userDecision": "USERDECISION-SENTINEL"
+      },
+      "modelInfo": {"modelName": "synthetic-model-a", "provider": "PROVIDER-SENTINEL"},
+      "tokenCount": {"inputTokens": 1400, "outputTokens": 20, "cacheTokens": 3}
+    }},
+    {"id": "b3"}
+  ]
+}
