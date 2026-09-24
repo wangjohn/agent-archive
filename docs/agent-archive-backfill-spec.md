@@ -545,9 +545,9 @@ being read at the same time, so a file that doesn't fit waits for room.
     file wins). Each goes through the archive-state check, so
     `already_archived` and `removed_*` win, and `--since` and `--until` use
     `createdAt` (a chat without it fails them). A second row for the same
-    chat is a `duplicate_session`, and a row whose `composerId` differs from
-    its key is `identity_mismatch`, since the collector reads a chat by its
-    ID. Rows with a newer `_v` than tested are still listed when the fields
+    chat is a `duplicate_session` (the row kept is one whose key is the
+    chat's ID), and a row whose `composerId` differs from its key is
+    `identity_mismatch`, since the collector reads a chat by its ID. Rows with a newer `_v` than tested are still listed when the fields
     that decide the listing decode; their number is reported in JSON
     (`cursor_database_newer_format`), and the filter then refuses them as
     `unsafe_format`.
@@ -564,8 +564,9 @@ being read at the same time, so a file that doesn't fit waits for room.
     goes through the [project rules](#project-resolution) like a working
     directory (so `--project` and the home, temporary, and excluded rules
     apply), and a chat with none is `project_unknown`. A chat Cursor
-    deleted between the listing and the read is not counted. If a read
-    can't be done safely (Cursor held a lock past the timeout, the copy
+    deleted between the listing and the read is not counted, and one whose
+    own values don't decode is `unsafe_format`. If a read fails because of
+    the database itself (Cursor held a lock past the timeout, the copy
     failed, the file changed), the database counts as not checked, with
     that reason, and none of its chats is included.
   - **Subagent chats** of the Cursor chats the plan imports are not imported
@@ -746,16 +747,20 @@ results the file lacks. Phase 2 still imports only chats that have no file:
    connection, in one uninterruptible step (a busy source is retried until
    the read's 30-second deadline, then the read fails rather than reading
    partially), into a `0600` file in a new `0700` directory under
-   `filepath.Join(os.TempDir(), "agent-archive-cursor-<uid>")`: `$TMPDIR`, or
-   on macOS without it the per-user `DARWIN_USER_TEMP_DIR` (the LaunchAgent
-   sets only `AGENT_ARCHIVE_HOME`), never the archive home, which may be
-   backed up or synced. That root must be a real directory of this user's
-   with mode `0700`, or no copy is made. A `cursorstore.Reader` takes at most
-   one snapshot however many chats it reads: a collector pass holds one
-   Reader, and so does a backfill plan, and each removes its copy when it
-   ends. Each snapshot directory holds an `flock` while its Reader uses it;
-   directories older than an hour whose lock is free (a killed process's)
-   are swept at the start of a pass and on a Reader's first read. With
+   `filepath.Join(<temp>, "agent-archive-cursor-<uid>")`, where `<temp>` is
+   on macOS the per-user `DARWIN_USER_TEMP_DIR` whatever `$TMPDIR` says (the
+   folder Time Machine excludes, and the one launchd's collector, which gets
+   only `AGENT_ARCHIVE_HOME`, and hook runs agree on), falling back to
+   `$TMPDIR` and then `os.TempDir()` only if it can't be read; never the
+   archive home, which may be backed up or synced. That root must be a real
+   directory of this user's with mode `0700`, or no copy is made. A
+   `cursorstore.Reader` takes at most one snapshot however many chats it
+   reads: a collector pass holds one Reader, and so does a backfill plan,
+   and each removes its copy when it ends; a copy that can't be removed
+   fails the pass or the plan. Each snapshot directory holds an `flock`
+   while its Reader uses it; directories older than an hour whose lock is
+   free (a killed process's) are swept at the start of a pass and on a
+   Reader's first read. With
    Cursor closed, the backup API would create `-wal` next to the source, so
    a chat is read in place as the listing is: `immutable=1`, then size,
    modification time, inode, header, and side files must be unchanged, and
@@ -817,9 +822,11 @@ results the file lacks. Phase 2 still imports only chats that have no file:
 token count filled in late, an edited prompt, a checkpoint restore), so a
 cursor-sqlite chat whose new records no longer extend what was published is
 not blocked as `transcript_rewritten`, as a transcript file is. The new
-snapshot is published as a replacement, and each replacement adds a
+snapshot is published as a replacement, and the chat carries one
 `cursor_chat_rewritten` capture gap (collector evidence, provenance
-`collector:cursor-rewrite`, no content) that stays with the chat.
+`collector:cursor-rewrite`, no content) whose detail counts the rewrites and
+whose observation time is the last one's, so a chat Cursor rewrites often
+(late token counts are routine) does not grow a gap per rewrite.
 
 **Everywhere else a transcript file was assumed.** The collector reads each
 registration through a small `sourceReader` interface (`Signature`,
@@ -828,7 +835,10 @@ cursor-sqlite reader as its second. Metadata regeneration's change check and
 `handoff --source local` (including its last-activity time, the chat's
 `lastUpdatedAt`) go through it. Registration checks in place that the chat
 still exists and counts it gone otherwise. Undo counts a database chat as
-resumed when its `lastUpdatedAt` is after `AdmittedAt`.
+resumed when its `lastUpdatedAt` is after `AdmittedAt`, and says how many
+chats it could not check when the database can't be read. A storage change
+counts an un-uploaded database chat as pending, not as waiting for a
+transcript.
 
 ## Code layout
 
