@@ -285,7 +285,11 @@ func LaunchAgent(executable, dataHome, label string) ([]byte, error) {
 	if !filepath.IsAbs(executable) || !filepath.IsAbs(dataHome) {
 		return nil, errors.New("LaunchAgent paths must be absolute")
 	}
-	escape := func(s string) string { var b strings.Builder; xml.EscapeText(&b, []byte(s)); return b.String() }
+	escape := func(s string) string {
+		var b strings.Builder
+		_ = xml.EscapeText(&b, []byte(s)) // a strings.Builder never fails to write
+		return b.String()
+	}
 	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>

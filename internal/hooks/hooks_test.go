@@ -29,7 +29,9 @@ func TestMergePreservesAndIsIdempotent(t *testing.T) {
 				t.Fatal("duplicate hooks on setup rerun")
 			}
 			var value map[string]any
-			json.Unmarshal(first, &value)
+			if err := json.Unmarshal(first, &value); err != nil {
+				t.Fatal(err)
+			}
 			if value["unrelated"] != true {
 				t.Fatal("lost setting")
 			}

@@ -204,7 +204,9 @@ func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *test
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 	old, _, _ := config.Load(home)
 	old.Paused = true
-	config.Save(home, old)
+	if err := config.Save(home, old); err != nil {
+		t.Fatal(err)
+	}
 	env.Now = func() time.Time { return time.Now().Add(time.Hour) }
 	setupRun(t, env, "capture\ny\ny\nn\nn\ny\n\ny\n", 0)
 	next, _, _ := config.Load(home)
@@ -255,8 +257,10 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	path := filepath.Join(home, "config.json")
 	c := hooks.Change{Path: path, Before: []byte("before"), After: []byte("after"), Existed: true, Mode: 0600}
 	journal := setupJournal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
-	local.Write(journalPath(home), journal)
-	os.WriteFile(path, []byte("user edit"), 0600)
+	if err := local.Write(journalPath(home), journal); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.WriteFile(path, []byte("user edit"), 0600))
 	if err := recoverSetup(home, env); err == nil {
 		t.Fatal("must refuse concurrent edit")
 	}
@@ -264,7 +268,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	if string(b) != "user edit" {
 		t.Fatal("overwrote user edit")
 	}
-	os.WriteFile(path, []byte("after"), 0600)
+	must(t, os.WriteFile(path, []byte("after"), 0600))
 	if err := recoverSetup(home, env); err != nil {
 		t.Fatal(err)
 	}

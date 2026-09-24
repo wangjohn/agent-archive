@@ -386,7 +386,7 @@ func readStatus(env Env) (view statusView, err error) {
 			if app.State == "waiting for first session" {
 				app.State = "hook observed; waiting for capture"
 			}
-			bundle, at, state, found, err := store.LoadPublished(reg.ArchiveSessionID)
+			bundle, _, state, found, err := store.LoadPublished(reg.ArchiveSessionID)
 			if err != nil {
 				return view, err
 			}
@@ -419,7 +419,7 @@ func readStatus(env Env) (view statusView, err error) {
 				return view, e
 			}
 			if published {
-				at = actualAt
+				at := actualAt
 
 				app.Published = true
 				app.PublishedSessions++

@@ -81,9 +81,9 @@ func TestInterruptedSetupHasAWayOut(t *testing.T) {
 func TestUninstallSkipsAnUnparsableFileOfAnUnselectedApp(t *testing.T) {
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	cursor := filepath.Join(userHome, ".cursor", "hooks.json")
-	os.MkdirAll(filepath.Dir(cursor), 0700)
+	must(t, os.MkdirAll(filepath.Dir(cursor), 0700))
 	broken := []byte("{\"version\":1,\"hooks\":{},}\n")
-	os.WriteFile(cursor, broken, 0600)
+	must(t, os.WriteFile(cursor, broken, 0600))
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env); code != 0 {
 		t.Fatalf("exit %d\n%s%s", code, &out, &errOut)
@@ -98,9 +98,9 @@ func TestUninstallSkipsAnUnparsableFileOfAnUnselectedApp(t *testing.T) {
 		t.Fatal("the collector was not removed")
 	}
 	// The same file blocks uninstall once setup did install Cursor hooks.
-	home, userHome, env = installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, false, true, t.TempDir()))
+	_, userHome, env = installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, false, true, t.TempDir()))
 	cursor = filepath.Join(userHome, ".cursor", "hooks.json")
-	os.WriteFile(cursor, broken, 0600)
+	must(t, os.WriteFile(cursor, broken, 0600))
 	out.Reset()
 	errOut.Reset()
 	if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), cursor) {
@@ -117,7 +117,7 @@ func TestUninstallConcurrentEditNamesUninstall(t *testing.T) {
 	env.JobState = func(p string) string {
 		// Runs after uninstall planned its changes: an editor saves the file.
 		b, _ := os.ReadFile(settings)
-		os.WriteFile(settings, append(b, ' '), 0600)
+		must(t, os.WriteFile(settings, append(b, ' '), 0600))
 		return jobState(p)
 	}
 	var out, errOut bytes.Buffer
@@ -169,8 +169,8 @@ func TestCommandsRejectUnknownArguments(t *testing.T) {
 func TestRelocatedInstallationStaysSelfContained(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
 	claudeDir, codexDir := filepath.Join(userHome, "cfg", "claude"), filepath.Join(userHome, "cfg", "codex")
-	os.MkdirAll(claudeDir, 0700)
-	os.MkdirAll(codexDir, 0700)
+	must(t, os.MkdirAll(claudeDir, 0700))
+	must(t, os.MkdirAll(codexDir, 0700))
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	vars := map[string]string{"CLAUDE_CONFIG_DIR": claudeDir, "CODEX_HOME": codexDir}
 	env.LookupEnv = func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
@@ -406,4 +406,12 @@ func stubLaunchctl(t *testing.T, run func(args ...string) ([]byte, error)) {
 	previous := runLaunchctl
 	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) { return run(args...) }
 	t.Cleanup(func() { runLaunchctl = previous })
+}
+
+// must fails the test on a fixture setup error.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
 }
