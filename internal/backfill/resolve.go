@@ -124,13 +124,13 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 		return resolution{skip: skip}
 	}
 	if found {
-		if r.homeOrAbove(repo) {
-			// A missing ~/.claude/worktrees/<name> maps to home by its path;
-			// home is never a repository project.
-			return r.homeRule(repo)
-		}
 		if res, ok := r.configured(repo); ok {
 			return res
+		}
+		if r.homeOrAbove(repo) {
+			// A missing ~/.claude/worktrees/<name> maps to home by its path;
+			// unless home is configured, it is never a repository project.
+			return r.homeRule(repo)
 		}
 		return resolution{root: repo, kind: ProjectKindRepository}
 	}
@@ -255,11 +255,12 @@ func (r *resolver) repository(dir string) (repo string, found bool, skip SkipRea
 			main, ok := r.worktreeMain(d, gitPath)
 			if !ok {
 				// The git directory the file names is gone: the worktree's
-				// repository was removed or moved.
-				if repo, found, skip := r.missingWorktree(d); found || skip != "" {
-					return repo, found, skip
+				// repository was removed or moved. Only a Claude Code
+				// worktree can still be mapped, by its path.
+				if repo, found, _ := r.missingWorktree(d); found {
+					return repo, true, ""
 				}
-				return d, true, ""
+				return "", false, SkipWorktreeUnresolved
 			}
 			return r.env.resolved(main), true, ""
 		}
