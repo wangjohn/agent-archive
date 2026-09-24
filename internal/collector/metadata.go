@@ -38,10 +38,11 @@ func retainedMetadata(ctx context.Context, remote storage.ObjectStore, key strin
 		// One-time migration for publications made before metadata was cached.
 		// A missing or unreachable copy is not fatal: nothing can be refreshed
 		// from it, and normal capture keeps working without it.
-		var err error
-		if encoded, err = remote.Get(ctx, key); err != nil {
+		fetched, err := remote.Get(ctx, key)
+		if err != nil {
 			return archive.Metadata{}, nil, false
 		}
+		encoded = fetched
 	}
 	var prior archive.Metadata
 	if err := json.Unmarshal(encoded, &prior); err != nil {
