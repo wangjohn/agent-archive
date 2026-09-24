@@ -1,5 +1,7 @@
 # Archive implementation gap plan
 
+> **Historical.** This is a working record kept for context; it is not maintained and parts of it are superseded. For current behavior see the [documentation index](../README.md).
+
 Baseline: main `62d4674`, audited September 21, 2026. Preserve local user edits; implement on isolated branches. This work closes the audit findings without changing the archive's source-first, single-owner design.
 
 | PR | Scope | Dependencies | Acceptance |

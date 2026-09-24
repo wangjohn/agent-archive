@@ -1,7 +1,10 @@
 # `agent-archive backfill` — engineering spec
 
-Status: proposed. Written 2026-09-23 against `main` at `50087bf` (filter 6,
-adapter 0.6.0, parser 0.9.0, source bundle schema 2). The native stores were
+Status: implemented. Phase 1 merged in #17–#23 and #28 (destination IDs), and phase 2
+(Cursor database chats) in #29–#31; Cursor subagent chats are not imported yet.
+Written 2026-09-23 against `main` at `50087bf` (filter 6, adapter 0.6.0,
+parser 0.9.0, source bundle schema 2). How to use it:
+[backfill guide](../guides/backfill.md). The native stores were
 probed on a working Mac for their layout and field names only, never their
 content. Phase 1 imports transcript files. Phase 2 adds Cursor chats that exist
 only in Cursor's SQLite database.
@@ -9,7 +12,7 @@ only in Cursor's SQLite database.
 ## Problem
 
 The archive captures only sessions that start after their project is activated
-([session eligibility](agent-archive-session-eligibility.md)). Earlier
+([session eligibility](../reference/session-eligibility.md)). Earlier
 sessions are invisible to `list`, `show`, `handoff`, and retros. So are
 sessions the hooks declined: resumed old conversations, projects that weren't
 included yet, and apps without hooks. That history is still on disk, for now.
@@ -210,10 +213,10 @@ asks `[y/N]`. On a yes:
    ordering, handoff times, and the Cursor text first event.
 2. It decides which boundary the session falls on. `Config.AcceptSession`
    rejects a session that starts before its project's `ActivatedAt` or before
-   `DestinationSince` ([config.go:103](../internal/config/config.go)).
+   `DestinationSince` ([config.go:103](../../internal/config/config.go)).
    Retention compares it with `DestinationSince` to decide whether the
    session's objects are in the current bucket
-   ([collect.go:190](../internal/cli/collect.go)).
+   ([collect.go:190](../../internal/cli/collect.go)).
 
 For a hook session the two times are equal. For an import they are months
 apart.
@@ -328,7 +331,7 @@ activation stays a time comparison, because it really is a question of time.
   so comparing before and after a skill was adopted could silently include
   imports. Metadata `origin` and `list --imported` let readers exclude them.
 - **Imports expire together.** Retention ages a session from its capture time
-  ([retention.go:134](../internal/retention/retention.go)). The plan shows the
+  ([retention.go:134](../../internal/retention/retention.go)). The plan shows the
   date and offers `edit`.
 - **Less exact start times.** An import's start is its earliest record, or
   for a Cursor file its birth time, which a copy or restore resets.
@@ -387,7 +390,7 @@ new one. `history`, `undo`, and `status` read these files, and
 ## Removal records
 
 Retention's `ForgetSession` deletes the session's entry in the native session
-index ([lineage.go:147](../internal/collector/lineage.go)). Without some other
+index ([internal/state/lineage.go](../../internal/state/lineage.go)). Without some other
 record, the next backfill would import the session again. Codex keeps its
 files forever, so the result would be a 90-day cycle of import and delete.
 
@@ -645,7 +648,7 @@ a hook or backfill registered it.
 
 The lock order stays `setup.lock` → `collector.lock` → `hooks.lock`. A hook
 waits at most one second for `hooks.lock`, then drops its event
-([hook.go:119](../internal/cli/hook.go)). So backfill holds `hooks.lock` for
+([hook.go:119](../../internal/cli/hook.go)). So backfill holds `hooks.lock` for
 only a few milliseconds at a time.
 
 1. **Plan.** No locks. Record a fingerprint of the configuration: a hash of

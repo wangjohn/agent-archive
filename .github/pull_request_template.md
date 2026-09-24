@@ -15,5 +15,5 @@ and a stubbed launchctl. -->
 - [ ] New or changed exported identifiers have doc comments.
 - [ ] **Privacy:** if this changes what the filter keeps, drops, or redacts (anything that changes uploaded bundle content), `FilterVersion` is bumped (and the adapter version if adapter output changed), the privacy doc's changelog is updated, and the golden files are regenerated.
 - [ ] If metadata derivation changed, `DefaultParserVersion` is bumped and the schemas under `schemas/` still match.
-- [ ] User-facing behavior, commands, or output changed: docs (README, `docs/install.md`, help text) are updated.
+- [ ] User-facing behavior, commands, or output changed: docs (README, the guides under `docs/`, help text, CHANGELOG.md) are updated.
 - [ ] No transcript content, credentials, or personal paths appear in tests, fixtures, logs, or this description.

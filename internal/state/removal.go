@@ -16,6 +16,9 @@ import (
 // RemovalReason says why this machine forgot a session it had archived.
 type RemovalReason string
 
+// Removal reasons. Backfill reports a session with a removal record as
+// removed_by_retention or removed_by_undo and skips it unless
+// --include-removed is set.
 const (
 	// RemovalReasonRetention means the retention sweep removed the session once
 	// it passed the retention period.

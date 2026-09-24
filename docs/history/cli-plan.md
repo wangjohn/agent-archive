@@ -1,5 +1,7 @@
 # Agent Archive setup and CLI improvement plan
 
+> **Historical.** This is a working record kept for context; it is not maintained and parts of it are superseded. For current behavior see the [documentation index](../README.md).
+
 Status: implemented; automated verification is recorded in the implementation ledger. Live app/cloud and signed-release verification remain pending. Prepared 2026-09-20 against the Go implementation integrated from `origin/main` at `bdcd7c3`, with the pre-existing local work preserved in `a44dbf4` and merge `94431f7`.
 
 ## Goal and scope

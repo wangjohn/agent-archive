@@ -353,6 +353,7 @@ type UndoCounts struct {
 	DeletedSessions, ForgottenSessions int
 }
 
+// Counts tallies the plan's sessions and subagents into UndoCounts.
 func (p UndoPlan) Counts() UndoCounts {
 	var c UndoCounts
 	for _, s := range p.Sessions {

@@ -1,5 +1,7 @@
 # Remediation acceptance record
 
+> **Historical.** This is a working record kept for context; it is not maintained and parts of it are superseded. For current behavior see the [documentation index](../README.md).
+
 Date: 2026-09-21. This record distinguishes implementation, automated tests, and live acceptance. It supersedes completion claims in older implementation notes; historical notes are not release approval.
 
 ## Pull requests

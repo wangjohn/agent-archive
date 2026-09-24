@@ -69,14 +69,12 @@ type Env struct {
 	DiscoverApplications func(userHome string) map[string]applicationDiscovery
 	// LoadLaunchAgent loads the just-written LaunchAgent plist so scheduled
 	// collection starts without a login/logout cycle. Defaults to shelling
-	// out to launchctl; unverified against a real launchd (see the
-	// implementation ledger).
+	// out to launchctl (runLaunchctl).
 	LoadLaunchAgent func(plistPath string) error
 	// UnloadLaunchAgent undoes a successful LoadLaunchAgent: it rolls setup
 	// back if a later step (config.Save) fails after the LaunchAgent was
 	// already loaded, and stops the collector during uninstall. Defaults to
-	// shelling out to launchctl; unverified against a real launchd, same as
-	// LoadLaunchAgent.
+	// shelling out to launchctl, like LoadLaunchAgent.
 	UnloadLaunchAgent func(plistPath string) error
 	// Keychain opens the credential store setup saves R2 secrets to and
 	// uninstall deletes them from.

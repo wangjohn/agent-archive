@@ -25,8 +25,11 @@ type Adapter interface {
 // safe and valuable to retain.
 type FilterError struct{ Reason string }
 
+// Error names the refusal's reason.
 func (e *FilterError) Error() string { return "unsafe source format: " + e.Reason }
 
+// ErrUnsafeSourceFormat means the input held no record of a type the adapter
+// recognizes, so nothing in it is known to be safe to retain.
 var ErrUnsafeSourceFormat = &FilterError{Reason: "no recognized safe records"}
 
 // ErrRecordTooLarge means one JSONL record is longer than MaxRecordBytes. It is
@@ -43,7 +46,7 @@ var ErrRecordTooLarge = &FilterError{Reason: "record exceeds the record size lim
 //
 // Reading one record costs memory in proportion to its size: the scanner's
 // buffer and the decoded JSON value both hold it, several times over at the
-// limit. See docs/agent-archive-implementation.md for the measured ceiling.
+// limit. See docs/history/implementation-ledger.md for the measured ceiling.
 const MaxRecordBytes = 64 * 1024 * 1024
 
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
@@ -78,8 +81,14 @@ func NewAdapter(name string) (Adapter, error) {
 // foundation. Unsupported Codex record types are gaps, never pass-through.
 type CodexAdapter struct{}
 
-func (CodexAdapter) Name() string    { return "codex" }
+// Name returns the canonical harness name, "codex".
+func (CodexAdapter) Name() string { return "codex" }
+
+// Version returns the adapter version shared by every adapter.
 func (CodexAdapter) Version() string { return adapterVersion }
+
+// FilterJSONL keeps only the Codex record types this adapter recognizes,
+// through the shared privacy filter, and labels the result codex-jsonl.
 func (CodexAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "codex-jsonl", map[string]bool{
 		"session_meta": true, "turn_context": true, "response_item": true,
@@ -91,8 +100,14 @@ func (CodexAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // types. It does not claim schema coverage for every installed version.
 type ClaudeAdapter struct{}
 
-func (ClaudeAdapter) Name() string    { return "claude" }
+// Name returns the canonical harness name, "claude".
+func (ClaudeAdapter) Name() string { return "claude" }
+
+// Version returns the adapter version shared by every adapter.
 func (ClaudeAdapter) Version() string { return adapterVersion }
+
+// FilterJSONL keeps only the Claude Code record types this adapter recognizes,
+// through the shared privacy filter, and labels the result claude-jsonl.
 func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "claude-jsonl", map[string]bool{
 		"user": true, "assistant": true, "tool_use": true, "tool_result": true,
@@ -106,8 +121,14 @@ func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // unsupported capture gaps upstream.
 type CursorAdapter struct{}
 
-func (CursorAdapter) Name() string    { return "cursor" }
+// Name returns the canonical harness name, "cursor".
+func (CursorAdapter) Name() string { return "cursor" }
+
+// Version returns the adapter version shared by every adapter.
 func (CursorAdapter) Version() string { return adapterVersion }
+
+// FilterJSONL keeps only the Cursor record types this adapter recognizes,
+// through the shared privacy filter, and labels the result cursor-jsonl.
 func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "cursor-jsonl", map[string]bool{
 		"session": true, "message": true, "tool_call": true, "tool_result": true,

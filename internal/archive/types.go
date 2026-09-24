@@ -13,7 +13,10 @@ import (
 const (
 	// SourceSchemaVersion 2 is the JSONL source bundle (source.<sha256>.jsonl.gz);
 	// see source_jsonl.go. Schema 1, a single JSON document, is not read.
-	SourceSchemaVersion   = 2
+	SourceSchemaVersion = 2
+	// MetadataSchemaVersion is the schema_version of every Metadata document
+	// (schemas/metadata.schema.json). Readers reject any other version; see
+	// Metadata.ValidateSourceReference.
 	MetadataSchemaVersion = 1
 	// FilterVersion 3 keeps tool arguments and tool-result linkage, reports the
 	// key names it could not keep, and strips injected instruction blocks from
@@ -49,19 +52,36 @@ const (
 // source. See schemas/metadata.schema.json for the authoritative enum.
 type ParserStatus string
 
+// Parser statuses. BuildMetadata reports partial unless its caller claims
+// otherwise, and failed when the filtered source could not be parsed.
 const (
-	ParserStatusPartial  ParserStatus = "partial"
-	ParserStatusFailed   ParserStatus = "failed"
+	// ParserStatusPartial means the metadata was derived, but the parser does
+	// not claim to understand every retained record. It is the default.
+	ParserStatusPartial ParserStatus = "partial"
+	// ParserStatusFailed means the filtered source could not be parsed, so
+	// the metadata holds only what needs no parsing (identity, source
+	// reference, hook-derived lifecycle); a later parser version may retry.
+	ParserStatusFailed ParserStatus = "failed"
+	// ParserStatusComplete means the adapter has demonstrated complete
+	// coverage of its source. A reader's complete-coverage filter requires it.
 	ParserStatusComplete ParserStatus = "complete"
 )
 
 // MetadataState is the session lifecycle state recorded on Metadata.
 type MetadataState string
 
+// Session lifecycle states, derived from the latest lifecycle hook evidence
+// (and, for Cursor, its native end-of-turn record).
 const (
-	MetadataStateActive  MetadataState = "active"
-	MetadataStateIdle    MetadataState = "idle"
-	MetadataStateClosed  MetadataState = "closed"
+	// MetadataStateActive means a session start or prompt was the latest
+	// lifecycle event observed: a turn may be in progress.
+	MetadataStateActive MetadataState = "active"
+	// MetadataStateIdle means the latest turn was observed to end (stop,
+	// interrupt, or failure) and the session was not seen to close.
+	MetadataStateIdle MetadataState = "idle"
+	// MetadataStateClosed means the session was observed to end.
+	MetadataStateClosed MetadataState = "closed"
+	// MetadataStateUnknown means no lifecycle evidence was observed.
 	MetadataStateUnknown MetadataState = "unknown"
 )
 
@@ -70,11 +90,19 @@ const (
 // is not a claim that the task succeeded.
 type TurnOutcome string
 
+// Turn outcomes.
 const (
-	TurnOutcomeCompleted   TurnOutcome = "completed"
+	// TurnOutcomeCompleted means the harness explicitly reported that the
+	// turn completed.
+	TurnOutcomeCompleted TurnOutcome = "completed"
+	// TurnOutcomeInterrupted means the turn was interrupted, aborted, or
+	// cancelled.
 	TurnOutcomeInterrupted TurnOutcome = "interrupted"
-	TurnOutcomeError       TurnOutcome = "error"
-	TurnOutcomeUnknown     TurnOutcome = "unknown"
+	// TurnOutcomeError means the harness reported that the turn failed.
+	TurnOutcomeError TurnOutcome = "error"
+	// TurnOutcomeUnknown means no supported event reported how the turn
+	// ended, including while a turn is still in progress.
+	TurnOutcomeUnknown TurnOutcome = "unknown"
 )
 
 // SkillDetection reports whether skill-usage evidence was observed for a
@@ -100,18 +128,31 @@ const (
 // do not.
 type SkillCoverage string
 
+// Skill coverage values.
 const (
-	SkillCoverageEligible      SkillCoverage = "eligible"
-	SkillCoverageDiscovered    SkillCoverage = "discovered"
+	// SkillCoverageEligible means the skill was reported as eligible for use
+	// in the session.
+	SkillCoverageEligible SkillCoverage = "eligible"
+	// SkillCoverageDiscovered means the harness was reported to have
+	// discovered the skill in the session.
+	SkillCoverageDiscovered SkillCoverage = "discovered"
+	// SkillCoverageInstalledOnly means the skill was only found installed on
+	// disk, which does not show the session could use it.
 	SkillCoverageInstalledOnly SkillCoverage = "installed_only"
 )
 
 // SkillUseEvidence names how a skill use was detected.
 type SkillUseEvidence string
 
+// Skill-use evidence values. A native invocation outranks a read inference
+// for the same skill.
 const (
+	// SkillUseEvidenceNativeInvocation means the agent invoked the skill
+	// through the harness's skill tool, or a hook reported an invocation.
 	SkillUseEvidenceNativeInvocation SkillUseEvidence = "native_invocation"
-	SkillUseEvidenceReadInference    SkillUseEvidence = "skill_read_inference"
+	// SkillUseEvidenceReadInference means the use is inferred from the agent
+	// reading a file inside the skill's directory; it is weaker evidence.
+	SkillUseEvidenceReadInference SkillUseEvidence = "skill_read_inference"
 )
 
 // SupplementalEvidenceKind names the recognized shapes of hook-only evidence.
@@ -119,6 +160,10 @@ const (
 // package does not recognize, and such evidence is still preserved as-is.
 type SupplementalEvidenceKind string
 
+// Recognized supplemental evidence kinds. Each names the shape of one hook
+// observation's payload: skill inventory, discovery, snapshot, invocation, and
+// read; a lifecycle event; a final response; explicit user feedback; a linked
+// child session; and a capture gap.
 const (
 	EvidenceKindSkillInventory   SupplementalEvidenceKind = "skill_inventory"
 	EvidenceKindSkillDiscovered  SupplementalEvidenceKind = "skill_discovered"
@@ -137,9 +182,17 @@ const (
 // pending from a published child whose metadata is now unavailable.
 type LinkedSessionStatus string
 
+// Linked session statuses.
 const (
-	LinkedSessionPending     LinkedSessionStatus = "pending"
-	LinkedSessionPublished   LinkedSessionStatus = "published"
+	// LinkedSessionPending means the child's transcript is known and its
+	// upload has not been published yet.
+	LinkedSessionPending LinkedSessionStatus = "pending"
+	// LinkedSessionPublished means the child's metadata was published; if a
+	// reader cannot find it now, it has been removed or expired.
+	LinkedSessionPublished LinkedSessionStatus = "published"
+	// LinkedSessionUnavailable means the child will not be archived, for
+	// example because the harness gave no transcript for it or the candidate
+	// was rejected.
 	LinkedSessionUnavailable LinkedSessionStatus = "unavailable"
 )
 
@@ -156,9 +209,13 @@ type LinkedSessionReference struct {
 // ModelSummarySource names where a ModelSummary's attribution came from.
 type ModelSummarySource string
 
+// Model summary sources.
 const (
+	// ModelSummarySourceNativeTranscript means the model was read from the
+	// retained transcript records.
 	ModelSummarySourceNativeTranscript ModelSummarySource = "native_transcript"
-	ModelSummarySourceHook             ModelSummarySource = "hook"
+	// ModelSummarySourceHook means a hook reported the model.
+	ModelSummarySourceHook ModelSummarySource = "hook"
 )
 
 // ResponseModelStatus reports whether a model attribution came from the
@@ -166,9 +223,14 @@ const (
 // response.
 type ResponseModelStatus string
 
+// Response model statuses.
 const (
+	// ResponseModelStatusNotExposed means only the requested model is known
+	// (gen_ai.request.model); the model that answered was not exposed.
 	ResponseModelStatusNotExposed ResponseModelStatus = "not_exposed"
-	ResponseModelStatusObserved   ResponseModelStatus = "observed"
+	// ResponseModelStatusObserved means the model was read from a response
+	// (gen_ai.response.model).
+	ResponseModelStatusObserved ResponseModelStatus = "observed"
 )
 
 // Config is the durable, non-secret configuration required to decide whether a
@@ -218,8 +280,13 @@ type Harness struct {
 // registrations.
 type SessionOrigin string
 
+// Session origins.
 const (
-	SessionOriginHook   SessionOrigin = "hook"
+	// SessionOriginHook means an application hook registered the session as
+	// it ran.
+	SessionOriginHook SessionOrigin = "hook"
+	// SessionOriginImport means `agent-archive backfill` imported the session
+	// after the fact, so it has no hook evidence.
 	SessionOriginImport SessionOrigin = "import"
 )
 
@@ -227,6 +294,7 @@ const (
 // empty value means StartedAtSourceHook.
 type StartedAtSource string
 
+// Sources of SessionStartedAt.
 const (
 	StartedAtSourceHook           StartedAtSource = "hook"            // when the hook fired
 	StartedAtSourceTranscript     StartedAtSource = "transcript"      // earliest native record
@@ -292,6 +360,9 @@ func (r SessionRegistration) Imported() bool {
 	return r.Origin == SessionOriginImport
 }
 
+// Validate reports the first problem that makes the registration unusable:
+// a missing session ID, project, harness name, or start time, or source
+// fields (SourceKind, SourceKey, TranscriptPath) that do not fit together.
 func (r SessionRegistration) Validate() error {
 	if strings.TrimSpace(r.ArchiveSessionID) == "" || strings.TrimSpace(r.NativeSessionID) == "" {
 		return errors.New("archive and native session IDs are required")
@@ -447,6 +518,10 @@ type Counts struct {
 	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
 }
 
+// ModelSummary is one model a session used, as OpenTelemetry GenAI attributes
+// (gen_ai.request.model or gen_ai.response.model, and gen_ai.provider.name and
+// agent_archive.request.reasoning_level when known). TurnCount is how many
+// transcript turns were attributed to it, and nil for a hook-reported model.
 type ModelSummary struct {
 	Attributes          map[string]string   `json:"attributes"`
 	Source              ModelSummarySource  `json:"source"`
@@ -454,12 +529,15 @@ type ModelSummary struct {
 	TurnCount           *int                `json:"turn_count,omitempty"`
 }
 
+// SkillSnapshot is a skill reported available to a session, with the SHA-256
+// of its content when known and why it counts as available.
 type SkillSnapshot struct {
 	Name     string        `json:"name"`
 	SHA256   string        `json:"sha256,omitempty"`
 	Coverage SkillCoverage `json:"coverage,omitempty"`
 }
 
+// SkillUse is a skill the session used and the evidence for that use.
 type SkillUse struct {
 	Name      string           `json:"name"`
 	SHA256    string           `json:"sha256,omitempty"`
