@@ -83,7 +83,11 @@ Project:       /Users/example/work/project
 History:       New sessions only
 Retention:     90 days
 
-Start archiving? [Y/n/edit]
+Start archiving?
+  1) Yes, start archiving
+  2) Edit a setting
+  3) Cancel (your setup draft is kept)
+Enter 1-3 [1]:
 ```
 
 Merge only owned lifecycle hooks, preserve unrelated handlers, and guide the user through each application's required trust flow. Install a macOS LaunchAgent that starts at login and schedules the collector. Store runtime files outside project repositories. Do not mark hooks as trusted automatically.
