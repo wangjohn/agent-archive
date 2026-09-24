@@ -510,6 +510,7 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 
 	reference := archive.SourceReference{Key: sourceKey, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
 	metadata, buildErr := archive.BuildMetadata(candidate, opts.MachineID, reg.SessionStartedAt, now, reference, archive.ParserInfo{Version: opts.parserVersion()})
+	metadata.ApplyRegistrationProvenance(reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		return outcomeSkipped, fmt.Errorf("derive metadata: %w", buildErr)
 	}

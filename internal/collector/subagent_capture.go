@@ -38,6 +38,9 @@ func materializeSubagentCandidate(local *LocalStore, candidate SubagentCandidate
 		TranscriptPath: candidate.TranscriptPath, RegisteredAt: candidate.ObservedAt,
 		ParentSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID,
 		SubagentID: candidate.AgentID, SubagentObservedAt: candidate.ObservedAt,
+		// The child is admitted with its parent, into the same destination,
+		// and by the same import when the parent was imported.
+		AdmittedAt: parent.AdmittedAt, Origin: parent.Origin, ImportBatch: parent.ImportBatch,
 	}
 	adapter, err := archive.NewAdapter(reg.Harness.Name)
 	if err != nil {
@@ -67,6 +70,10 @@ func materializeSubagentCandidate(local *LocalStore, candidate SubagentCandidate
 	}
 	if err := local.SaveRegistration(reg); err != nil {
 		return err
+	}
+	if candidate.Origin == archive.SessionOriginImport {
+		// No SubagentStop fired for a subagent backfill found.
+		return local.acknowledgeSubagentCandidate(candidate)
 	}
 	lifecycle, _, err := archive.FilterSupplementalEvidence([]archive.SupplementalEvidence{{
 		Kind: archive.EvidenceKindLifecycleHook, ObservedAt: candidate.ObservedAt,

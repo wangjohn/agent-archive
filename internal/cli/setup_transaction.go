@@ -218,6 +218,14 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	// draft. A crash after commit can leave a pre-commit draft on disk.
 	next.DestinationSince = old.DestinationSince
 	next.PreviousDestinations = append([]credentials.Config(nil), old.PreviousDestinations...)
+	// Backfill writes ImportedHarnesses; an app whose hooks setup now
+	// installs moves to Harnesses, where it admits its imports too.
+	next.ImportedHarnesses = nil
+	for _, app := range old.ImportedHarnesses {
+		if !containsString(next.Harnesses, app) {
+			next.ImportedHarnesses = append(next.ImportedHarnesses, app)
+		}
+	}
 	for _, ref := range old.RetiredCredentialRefs {
 		if !containsString(next.RetiredCredentialRefs, ref) {
 			next.RetiredCredentialRefs = append(next.RetiredCredentialRefs, ref)
