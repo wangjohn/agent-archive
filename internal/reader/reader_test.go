@@ -3,6 +3,7 @@ package reader
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -78,7 +79,7 @@ func TestRefreshRequiredForDeletedSource(t *testing.T) {
 	if err := store.Delete(context.Background(), metadata.SourceBundle.Key); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadSource(context.Background(), store, metadata, Limits{}); err != ErrRefreshRequired {
+	if _, err := LoadSource(context.Background(), store, metadata, Limits{}); !errors.Is(err, ErrRefreshRequired) {
 		t.Fatalf("err=%v", err)
 	}
 }

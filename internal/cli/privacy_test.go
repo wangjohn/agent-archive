@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -108,7 +109,7 @@ func TestCollectionRefreshesBucketPrivacyEvidence(t *testing.T) {
 	if _, err := config.SetPaused(home, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runOnePass(env, true); err != errPaused || remote.calls != 1 {
+	if _, err := runOnePass(env, true); !errors.Is(err, errPaused) || remote.calls != 1 {
 		t.Fatalf("paused pass inspected: calls %d, %v", remote.calls, err)
 	}
 	if view, err := readStatus(env); err != nil || view.PrivacyEvidence.Reason != "inspection_stale" {

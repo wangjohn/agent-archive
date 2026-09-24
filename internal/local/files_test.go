@@ -31,7 +31,7 @@ func TestLockExcludesOtherCollector(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = Lock(home); e != ErrBusy {
+	if _, e = Lock(home); !errors.Is(e, ErrBusy) {
 		t.Fatal("second writer admitted", e)
 	}
 	unlock()
@@ -44,8 +44,12 @@ func TestLockExcludesOtherCollector(t *testing.T) {
 func TestHomeRejectsGitSymlink(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
-	os.MkdirAll(filepath.Join(repo, ".git"), 0700)
-	os.Symlink(repo, filepath.Join(root, "link"))
+	if e := os.MkdirAll(filepath.Join(repo, ".git"), 0700); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.Symlink(repo, filepath.Join(root, "link")); e != nil {
+		t.Fatal(e)
+	}
 	t.Setenv("AGENT_ARCHIVE_HOME", filepath.Join(root, "link", "private"))
 	if _, e := Home(); e == nil {
 		t.Fatal("allowed private data under Git via symlink")

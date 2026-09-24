@@ -58,14 +58,20 @@ func TestStatusJSONAndTextUseObservedEvidence(t *testing.T) {
 	env.OpenStore = nil // status must not resolve storage at all.
 	cfg, _, _ := config.Load(home)
 	cfg.Paused = true
-	config.Save(home, cfg)
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
 	view, err = readStatus(env)
 	if err != nil || view.State != "Paused" {
 		t.Fatal(view, err)
 	}
 	cfg.Paused = false
-	config.Save(home, cfg)
-	local.Write(journalPath(home), setupJournal{})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := local.Write(journalPath(home), setupJournal{}); err != nil {
+		t.Fatal(err)
+	}
 	view, err = readStatus(env)
 	if err != nil || view.State != "Setup needs recovery" {
 		t.Fatal(view, err)
@@ -221,6 +227,7 @@ func TestPurgeConfirmationDoesNotBlockCapture(t *testing.T) {
 		}
 		unlock()
 	}}
+	env.IsTerminal = func(stream any) bool { return stream == any(input) }
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"uninstall", "--delete-local-data"}, input, &out, &errOut, env); code != 0 {
 		t.Fatal(errOut.String())

@@ -36,6 +36,10 @@ type CursorDatabaseChat struct {
 	// WorkspaceID is workspaceIdentifier.id, the workspaceStorage folder of
 	// the chat's workspace, "" when absent.
 	WorkspaceID string
+	// Malformed is set when composerId or workspaceIdentifier.id is present
+	// but not a string. The chat is not read and counts as unsafe_format,
+	// rather than being imported under an ID or workspace it does not have.
+	Malformed bool
 }
 
 // CursorUncheckedReason says why Cursor's database was not checked.
@@ -121,6 +125,9 @@ func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResu
 			return CursorDatabaseResult{}, err
 		}
 		if res.Checked {
+			// A copy an earlier plan left when it was killed goes before this
+			// plan can take another.
+			cursorstore.RemoveStaleSnapshots()
 			reader := cursorstore.NewReader(path)
 			res.ReadChat = func(ctx context.Context, id string) (cursorstore.Composer, error) {
 				c, _, err := reader.ReadComposer(ctx, id)
@@ -234,8 +241,9 @@ type composer struct {
 // not a shape this release knows. Only the fields that decide the count are
 // strict: isDraft and the message lists, and _v must be a positive integer.
 // A _v newer than maxComposerVersion is still read, and marked newer, when
-// those fields decode. The rest are read leniently and ignored when they are
-// some other shape.
+// those fields decode. A composerId or workspaceIdentifier.id of another
+// shape marks the chat Malformed (that chat's unsafe_format). The rest are
+// read leniently and ignored when they are some other shape.
 func decodeComposerData(key string, value []byte) (composer, bool) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(value, &fields); err != nil || fields == nil {
@@ -261,7 +269,13 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		return composer{}, false
 	}
 	// fullConversationHeadersOnly lists the messages; older chats keep them
-	// inline in conversation instead.
+	// inline in conversation instead. Messages are counted as cursorstore
+	// reads a chat (decodeHeaders): from the headers when the chat has them,
+	// even an empty list, and from conversation only when it has none, so a
+	// chat is planned only when the collector would find messages in it.
+	// Each header's own shape is not checked here: a header the reader can't
+	// use makes that one chat unsafe_format when it is read, whereas a
+	// listing error leaves the whole database unchecked.
 	messages := 0
 	for _, name := range []string{"fullConversationHeadersOnly", "conversation"} {
 		if raw, ok := present(name); ok {
@@ -269,12 +283,15 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 			if json.Unmarshal(raw, &list) != nil {
 				return composer{}, false
 			}
-			messages += len(list)
+			messages = len(list)
+			break
 		}
 	}
 
 	if raw, ok := present("composerId"); ok {
-		json.Unmarshal(raw, &c.chat.ID)
+		if json.Unmarshal(raw, &c.chat.ID) != nil {
+			c.chat.Malformed = true
+		}
 	}
 	c.chat.KeyID = strings.TrimPrefix(key, "composerData:")
 	if c.chat.ID == "" {
@@ -306,7 +323,9 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		if json.Unmarshal(raw, &ws) == nil {
 			c.chat.Folder = composerWorkspaceFolder(ws["uri"])
 			if rawID, ok := ws["id"]; ok {
-				json.Unmarshal(rawID, &c.chat.WorkspaceID)
+				if json.Unmarshal(rawID, &c.chat.WorkspaceID) != nil {
+					c.chat.Malformed = true
+				}
 			}
 		}
 	}
@@ -453,7 +472,10 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 			w.state = reason
 		}
 		w.filtered = dated && !inRange(chat.CreatedAt, since, until)
-		if w.state == "" && !w.filtered && !w.t.identityMismatch {
+		// A chat whose ID or workspace field is of another shape is that
+		// chat's unsafe_format, reported, not read.
+		w.unsafe = chat.Malformed
+		if w.state == "" && !w.filtered && !w.t.identityMismatch && !w.unsafe {
 			toRead = append(toRead, w)
 		}
 	}
