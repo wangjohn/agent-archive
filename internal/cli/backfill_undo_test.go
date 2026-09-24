@@ -813,7 +813,20 @@ func mustRead(t *testing.T, path string) []byte {
 func TestBackfillUndoSelectionGrew(t *testing.T) {
 	f, bucket := newUndoFixture(t)
 	parents, _ := importRegistrations(t, f.data, firstImport)
-	parent := parents[0]
+	// The late subagent is modelled on a transcript-file parent: a Cursor
+	// database session's source key must equal its native ID, so copying one
+	// under a new native ID would not be a valid registration. Registration
+	// order follows random archive IDs, so pick by kind, not by position.
+	var parent archive.SessionRegistration
+	for _, p := range parents {
+		if p.ReadsTranscriptFile() {
+			parent = p
+			break
+		}
+	}
+	if parent.ArchiveSessionID == "" {
+		t.Fatal("no transcript-file parent in the import")
+	}
 	stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() {
 		store, err := collector.NewLocalStore(f.data)
 		if err != nil {
