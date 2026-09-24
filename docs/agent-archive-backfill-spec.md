@@ -155,15 +155,33 @@ resumed since and have newer content; exclude the 5 projects the import
 added; and leave hook-captured sessions and the apps' own files alone. It then
 asks `[y/N]`. On a yes:
 
-- It holds `setup.lock` and `collector.lock` for the whole run, so nothing
-  can be republished while it deletes.
-- Each session is deleted as whole-session retention deletes one: metadata
-  first, then sources, using `deleteWholeSession`, which moves where both can
-  call it. Then the session is forgotten locally and a removal record with
-  reason `undo` is written ([Removal records](#removal-records)). A failure
-  leaves the session registered, so running undo again finishes the job.
-- Projects the import added are marked `Included: false`, and setup can
-  reverse that. Projects that were already included stay as they were.
+- **Refusals and checks.** Undo refuses while paused or while a setup
+  transaction is pending. When anything will be deleted from the bucket, it
+  checks storage before asking, as import does. With nothing left to undo it
+  says so before asking for confirmation.
+- **Locks.** It holds `setup.lock` from planning to exit. It takes
+  `collector.lock` only after the person confirms, so the prompt never stalls
+  the collector, then reloads the configuration, checks its fingerprint, and
+  rebuilds the selection. If the selection gained sessions, projects, or apps,
+  it aborts and asks for a rerun. `collector.lock` is then held through
+  deletion, so nothing can be republished meanwhile.
+- **Order.** It first records `undone_at` on the batch, then excludes the
+  projects the batch added (`Included: false`, which setup can reverse;
+  projects already included, or already excluded by an earlier undo, stay as
+  they were), then records them in `projects_excluded`. Only then does it
+  remove sessions. An interrupted undo therefore stops republishing at once,
+  a batch with `undone_at` is never continued by a later import, and a rerun
+  of undo finishes the job.
+- **Removal.** Each session is deleted as whole-session retention deletes
+  one, metadata first, then sources, through `collector.DeleteWholeSession`,
+  which both now call. A session whose objects are in a previous destination
+  is only forgotten locally. Subagents go before their parents. Each session
+  is forgotten with a removal record with reason `undo`
+  ([Removal records](#removal-records)). A failure leaves that session
+  registered and undo continues with the rest.
+- **Resumed sessions** are counted in the plan: those with hook evidence
+  since the import, or republished since (a superseded source), which covers
+  apps without hooks.
 - `--project` limits the undo to one project.
 
 ## Admission model
