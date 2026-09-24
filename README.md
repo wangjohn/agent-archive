@@ -58,7 +58,9 @@ The [architecture](docs/contributing/architecture.md) page has the details.
 git clone https://github.com/wangjohn/agent-archive.git
 cd agent-archive
 VERSION=dev ./scripts/build-release.sh              # needs Go 1.27.1 and Xcode command line tools
-mv ./dist/agent-archive-darwin-$(uname -m | sed 's/x86_64/amd64/') /opt/homebrew/bin/agent-archive
+sudo mkdir -p /usr/local/bin                        # may not exist on Apple Silicon
+sudo mv ./dist/agent-archive-darwin-$(uname -m | sed 's/x86_64/amd64/') /usr/local/bin/agent-archive
+# or, without sudo, any directory on your PATH (with Homebrew on Apple Silicon: /opt/homebrew/bin)
 
 agent-archive setup          # choose apps and projects, connect a private bucket
 agent-archive status         # check capture, then start a new agent session
@@ -75,7 +77,7 @@ A `status` run, from a sandboxed test installation:
 Agent Archive — Needs attention
 
 Storage:       s3 / test-bucket / agent-archive/
-Access checked: never
+Access:        confirmed 2026-01-02T00:00:00Z by the collector's last successful storage access
 Bucket privacy not verified.
   Checked: never; inspection_unavailable.
   Review: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html

@@ -14,10 +14,14 @@ or pull request for a vulnerability.
 
 Include what you found, the version or commit, how to reproduce it (a
 synthetic transcript or payload is ideal — never send real session content
-or credentials), and what an attacker gains. If private reporting isn't
-available to you, open a public issue asking the maintainer
-([@wangjohn](https://github.com/wangjohn)) to contact you, without any
-details.
+or credentials), and what an attacker gains.
+
+If that link says private reporting isn't enabled, don't describe the
+problem publicly. Open an issue with the **Bug report** template titled
+"Security contact request", say only that you have a security report and how
+to reach you, and leave out every detail of the problem; the maintainer
+([@wangjohn](https://github.com/wangjohn)) will contact you and arrange a
+private channel.
 
 ## What to expect
 

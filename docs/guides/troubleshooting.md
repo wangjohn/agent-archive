@@ -43,10 +43,16 @@ published, and read-back-verified evidence.
 - **Capture** distinguishes waiting for a session, observed hooks, local
   capture, and published sources with verified checksums. Configuration
   alone never establishes capture.
-- **Storage access** is checked by the collector with one synthetic round trip
-  for a new configuration, retried when it fails and refreshed after four
-  minutes. Status calls a verified check stale after ten minutes, unless
-  collection is paused, when the last check is shown with its time.
+- **Access** shows when the bucket was last confirmed reachable with the
+  configured credentials, and by whom: setup's check, or the collector (its
+  access probe, or a pass that uploaded). The collector checks storage with
+  one synthetic round trip for a new configuration, retries failed checks,
+  and refreshes the check after four minutes. **Authentication** calls a
+  verified check stale after ten minutes, unless collection is paused, when
+  the last check is shown with its time.
+- **Capture gaps.** `status --json` counts, per app, the sessions whose
+  last capture recorded a gap (`sessions_with_capture_gaps`). The fields are
+  described in [JSON output](../reference/json-output.md#status---json).
 - **Read-back.** Each publication is read back and compared. One that cannot
   be read back is retried with increasing delays (one minute up to a day), at
   most five per pass, oldest first; status reports it as pending, failed, or

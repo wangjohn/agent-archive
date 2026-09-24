@@ -16,7 +16,9 @@ Report unacceptable behavior to the maintainer,
 [@wangjohn](https://github.com/wangjohn), through a private channel: a
 [private security advisory](https://github.com/wangjohn/agent-archive/security/advisories/new)
 works for anything you don't want to raise publicly, whether or not it is
-about security. Reports are handled confidentially.
+about security. If that isn't enabled, ask for a private contact the way
+[SECURITY.md](SECURITY.md#reporting-a-vulnerability) describes, without
+details. Reports are handled confidentially.
 
 The maintainer will review each report and act as the Contributor
 Covenant's enforcement guidelines describe, from a private correction up to

@@ -390,7 +390,7 @@ new one. `history`, `undo`, and `status` read these files, and
 ## Removal records
 
 Retention's `ForgetSession` deletes the session's entry in the native session
-index ([lineage.go:147](../../internal/collector/lineage.go)). Without some other
+index ([internal/state/lineage.go](../../internal/state/lineage.go)). Without some other
 record, the next backfill would import the session again. Codex keeps its
 files forever, so the result would be a 90-day cycle of import and delete.
 

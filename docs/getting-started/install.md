@@ -12,8 +12,8 @@ After installing, continue with [setup](setup.md).
 
 ## Build from source
 
-You need Go 1.27.1 (go.mod pins `toolchain go1.27.1`; a Go 1.26 or later
-`go` command downloads it automatically) and Xcode's command line tools
+You need Go 1.27.1 (go.mod pins `toolchain go1.27.1`; any `go` command
+from Go 1.21 on downloads it automatically) and Xcode's command line tools
 (`xcode-select --install`), which the Keychain code needs through cgo.
 
 ```sh

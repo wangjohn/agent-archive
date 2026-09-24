@@ -36,19 +36,38 @@ In Go tests, everything goes through injection:
 ```sh
 scratch=$(mktemp -d)
 mkdir -p "$scratch/home" "$scratch/stub"
-printf '#!/bin/sh\necho "stub launchctl $*" >&2\nexit 0\n' > "$scratch/stub/launchctl"
+cat > "$scratch/stub/launchctl" <<'EOF'
+#!/bin/sh
+# Stand-in for launchctl: no job is ever loaded, and nothing reaches launchd.
+echo "stub launchctl $*" >&2
+if [ "$1" = print ]; then
+  echo "Could not find service \"$2\" in domain for port" >&2
+  exit 113
+fi
+exit 0
+EOF
 chmod +x "$scratch/stub/launchctl"
 
 export AGENT_ARCHIVE_HOME="$scratch/data"   # a data directory of its own
 export HOME="$scratch/home"                 # app configs and LaunchAgents live here
 export PATH="$scratch/stub:$PATH"           # agent-archive runs `launchctl` from PATH
+# Variables that would point setup back at your real configuration:
+unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE
 ```
 
 - `AGENT_ARCHIVE_HOME` gives the sandbox its own data directory and its own
   launchd label; a sandboxed `HOME` keeps setup away from your real app
   configs. Neither stops a completed setup from loading its job into your
-  real launchd, which is what the `launchctl` stub is for. Without the stub,
-  cancel setup at "Start archiving?".
+  real launchd, which is what the `launchctl` stub is for. The stub answers
+  `print` as launchd does for a job that isn't loaded ("Could not find
+  service", exit 113); a stub that just exits 0 there leaves the job's state
+  unknown, and setup refuses to continue. Without the stub, cancel setup at
+  "Start archiving?".
+- `CLAUDE_CONFIG_DIR` and `CODEX_HOME` would send setup's hooks to your real
+  app configuration even with a sandboxed `HOME`; the `AWS_*` file variables
+  would use your real AWS profiles. Unset them.
+- Choose S3 (a local MinIO, below) in a sandbox, not R2: R2 secrets are
+  saved in your real login Keychain, which a sandboxed `HOME` doesn't change.
 - Setup needs a terminal; `script -q /dev/null agent-archive setup` supplies
   one when you drive it from a script.
 - For storage, run a local S3-compatible server (MinIO works) and point an

@@ -44,7 +44,8 @@ flowchart LR
 | Package | Owns |
 | --- | --- |
 | `archive` | The privacy filter and adapters (one per app), source bundles, metadata derivation, the normalized view, and handoff rendering. No filesystem, network, or CLI dependencies, so it is fully testable on fixtures. |
-| `collector` | The scan, build, publish loop; change detection; local session state (`LocalStore`); subagent capture. |
+| `collector` | The scan, build, publish loop; change detection; subagent capture. |
+| `state` | Per-session local state: registrations, requests, published and pending publications, change detection, removal records, and the per-session locks (`Store`; see [local state](../reference/local-state.md)). `state/statetest` has test helpers. |
 | `retention` | Deleting superseded snapshots and expired sessions, with the remote metadata as the source of truth. |
 | `storage` | The object-store contract and the S3/R2 implementation; checksums, read-back, bucket privacy inspection. Keys are relative to the configured prefix. |
 | `credentials` | Resolving storage credentials: AWS profiles, and R2 secrets in the Keychain (cgo, Security.framework). |

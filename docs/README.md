@@ -36,7 +36,8 @@ below are grouped by who they are for.
 | [Versions](reference/versions.md) | Filter, adapter, parser, and schema versions, and when each is bumped. |
 | [Capture capabilities](reference/capture-capabilities.md) | What each app's hooks provide, and the versions observed. |
 | [Session eligibility](reference/session-eligibility.md) | Which sessions are captured, and why. |
-| [JSON schemas](../schemas) | `metadata.schema.json` and `source-bundle.schema.json`. |
+| [JSON output](reference/json-output.md) | `list --json`, `show`, and `status --json`: the contract for scripts. |
+| [JSON schemas](reference/schemas.md) | `metadata.schema.json` and `source-bundle.schema.json`, their $ids, and the tests that validate them. |
 
 ## Contributing
 

@@ -20,6 +20,15 @@ is no tagged release yet: build from source (see the
   Sessions whose transcripts are still on your Mac are refiltered and
   republished automatically; earlier snapshots are not rewritten. See the
   [filter changelog](docs/security/filter-changelog.md#source-filter-version-9).
+- **Privacy filter 10** (#44). In a Cursor plain-text transcript, only a role
+  name at the start of a line starts a section, so an indented `user:` or
+  `system:` in tool output (a docker-compose file) can no longer pose as a
+  prompt or hide the rest of the transcript. A quoted credential takes along
+  whatever a shell would glue onto it (`PASSWORD="abc"realsecret`).
+- **Handoff output is marked as a record** (#44). Agent text, prompts, and
+  summaries are block-quoted, plan items and file names can't add headings,
+  and the preamble tells the receiving agent not to follow instructions
+  inside the record.
 - **Hook files are edited in place** (#37). Setup changes only the `hooks`
   entry of each app's settings file, keeping every other setting's text,
   order, and numbers; uninstall restores a file byte for byte. A settings
@@ -28,6 +37,15 @@ is no tagged release yet: build from source (see the
 
 ### Added
 
+- `list --json` prints `{"schema_version": 1, "sessions": [...]}` for
+  scripts, and `show` accepts `--json` (#48). See
+  [JSON output](docs/reference/json-output.md).
+- `status --json` adds `storage_access_confirmed_at`/`_by` (when setup or
+  the collector last reached the bucket) and `sessions_with_capture_gaps`
+  per app (#48).
+- The JSON schemas are typed throughout, list every capture gap code, and
+  are validated against real output in the tests (#44). See
+  [JSON schemas](docs/reference/schemas.md).
 - `agent-archive setup --abandon-recovery`: a way out of an interrupted setup
   when a file changed since (#37).
 - `uninstall --yes` for use without a terminal (#37).
@@ -57,6 +75,14 @@ is no tagged release yet: build from source (see the
 
 ### Fixed
 
+- Metadata counts (parser 0.10.0, #44): a tool call's arguments no longer
+  count as more tool calls, calls come out in a stable order,
+  `[Request interrupted by user]` is not a prompt, and Claude Code's
+  `<synthetic>` messages are not a model and their usage isn't counted.
+  Sessions are re-derived automatically.
+- `status` counts sessions with a capture gap rather than gap entries, and
+  its `Access:` line no longer says `never` next to a verified
+  authentication (#48).
 - The collector keeps publishing across a source schema change, isolates one
   unreadable state file instead of stopping the whole pass, tolerates a clock
   that jumped ahead, and no longer hangs on a network that never answers; it
@@ -75,5 +101,7 @@ is no tagged release yet: build from source (see the
 
 - Lint (golangci-lint), `govulncheck`, Dependabot, SHA-pinned Actions, and
   issue and PR templates (#38).
+- Local session state moved into its own package, `internal/state`, loaded
+  once per collector pass (#43); more tests for backfill (#45).
 - Documentation reorganized under `docs/` with an index, a threat-model-first
   privacy page, reference pages, and a link check that runs with the tests.

@@ -16,10 +16,15 @@ agent-archive list --skill review --skill-usage available
 agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 agent-archive list --complete          # complete parser coverage, no capture gaps
 
+# For scripts: {"schema_version": 1, "sessions": [<metadata>...]}
+agent-archive list --json
+
 # One session's metadata sidecar, as JSON.
 agent-archive show SESSION_ID
 agent-archive show SESSION_ID --normalized   # also the verified conversation
 ```
+
+The JSON documents are described in [JSON output](../reference/json-output.md).
 
 `list` reuses unchanged metadata from a local cache (`--no-cache` to skip
 it). A session whose metadata can't be read, for example because a newer

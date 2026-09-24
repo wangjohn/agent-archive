@@ -1,6 +1,7 @@
 // Package doclinks checks the repository's Markdown documentation: every
 // relative link resolves to a file in the repository, and every #anchor to a
-// heading in it. It holds only this test, which `go test ./...` runs in CI.
+// heading in it, and docs/reference/versions.md matches the code. It holds
+// only these tests, which `go test ./...` runs in CI.
 package doclinks
 
 import (
@@ -32,8 +33,9 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
-// markdownFiles lists every .md file outside .git and vendored or generated
-// directories.
+// markdownFiles lists the repository's .md files. It skips hidden
+// directories other than .github (.git, and .claude, whose worktrees hold
+// whole copies of the repository), node_modules, and dist.
 func markdownFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var files []string
@@ -41,8 +43,11 @@ func markdownFiles(t *testing.T, root string) []string {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && (d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "dist") {
-			return filepath.SkipDir
+		if d.IsDir() && path != root {
+			name := d.Name()
+			if name == "node_modules" || name == "dist" || strings.HasPrefix(name, ".") && name != ".github" {
+				return filepath.SkipDir
+			}
 		}
 		if !d.IsDir() && strings.HasSuffix(d.Name(), ".md") {
 			files = append(files, path)
