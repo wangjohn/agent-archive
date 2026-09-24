@@ -204,6 +204,11 @@ secret input fails rather than falling back to visible keystrokes.
 
 ## Upgrade notes
 
+- `agent-archive backfill` keeps a local record of every session retention or
+  undo removes, so a later backfill doesn't import it again. Sessions that
+  retention removed before you upgraded have no such record, so the first
+  backfill after upgrading can import them once more if their transcripts
+  are still on disk. Check the plan, or use `--since`, if that matters.
 - Read-back evidence is now keyed per session to the application, project
   root, and project activation time, and the storage access record gained a
   capability contract field. The first run after upgrading therefore
