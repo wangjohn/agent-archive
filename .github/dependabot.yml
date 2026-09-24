@@ -1,13 +1,16 @@
 # Weekly dependency updates, one grouped pull request per ecosystem, so
 # updates arrive as a reviewable batch rather than a stream. GitHub Actions
 # stay pinned by commit SHA; Dependabot updates the SHA and its version
-# comment together.
+# comment together. The cooldown holds a new release back a week so a
+# compromised or yanked version is usually caught before it is proposed.
 version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       go-dependencies:
         patterns: ["*"]
@@ -15,6 +18,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
