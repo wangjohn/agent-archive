@@ -1,0 +1,2 @@
+go test fuzz v1
+string("POSTGRES_PASSWORD=\"correct horse battery staple\"")

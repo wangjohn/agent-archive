@@ -433,8 +433,9 @@ func TestFixtureBundlesCoverEveryHarnessPrefix(t *testing.T) {
 	for _, entry := range entries {
 		if entry.IsDir() {
 			// cursor-composer holds synthetic database chats; fixtureBundles
-			// round-trips chat.json from it.
-			if entry.Name() != "handoff" && entry.Name() != "cursor-composer" {
+			// round-trips chat.json from it. fuzz holds go test's seed corpora,
+			// not native transcripts.
+			if entry.Name() != "handoff" && entry.Name() != "cursor-composer" && entry.Name() != "fuzz" {
 				t.Errorf("fixture directory %s is not covered by the round-trip test", entry.Name())
 			}
 			continue

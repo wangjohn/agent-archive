@@ -1,0 +1,2 @@
+go test fuzz v1
+string("docker login --password-stdin < token.txt")

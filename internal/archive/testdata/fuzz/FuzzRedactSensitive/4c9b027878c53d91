@@ -1,0 +1,2 @@
+go test fuzz v1
+string("AWS_SESSION_TOKEN=IQoJb3JpZ2luX2VjEXAMPLE")

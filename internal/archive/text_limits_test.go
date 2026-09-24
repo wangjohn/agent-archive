@@ -170,7 +170,7 @@ func TestCursorTextSanitizesContinuationLinesAndOmitsHiddenTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := filtered.Text[0]
-	if want := "user: hello\n  [REDACTED]\nassistant: ok  visible tail\ntool: result"; text != want {
+	if want := "user: hello\n  token=[REDACTED]\nassistant: ok  visible tail\ntool: result"; text != want {
 		t.Fatalf("text = %q, want %q", text, want)
 	}
 	for _, leaked := range []string{"hidden", "injected", "synthetic-continuation-secret"} {

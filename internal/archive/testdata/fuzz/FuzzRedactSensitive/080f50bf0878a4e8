@@ -1,0 +1,2 @@
+go test fuzz v1
+string("DB_PASSWORD=hunter2hunter2")

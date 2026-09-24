@@ -1,0 +1,2 @@
+go test fuzz v1
+string("func parseToken(t Token) error { return nil }")

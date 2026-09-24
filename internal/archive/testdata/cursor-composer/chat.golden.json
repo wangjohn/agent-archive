@@ -11,7 +11,7 @@
       "message": {
         "content": [
           {
-            "text": "Fix the widget test. My key is [REDACTED] and [REDACTED]",
+            "text": "Fix the widget test. My key is [REDACTED] and password=[REDACTED]",
             "type": "text"
           }
         ]
@@ -40,7 +40,7 @@
             "type": "tool_use"
           },
           {
-            "content": "{\"contents\":\"package widget\\n// [REDACTED]",
+            "content": "{\"contents\":\"package widget\\n// token = [REDACTED]\"}",
             "status": "completed",
             "tool_use_id": "call-1",
             "type": "tool_result"
@@ -111,7 +111,7 @@
             "type": "tool_use"
           },
           {
-            "content": "exit status 1: [REDACTED]",
+            "content": "exit status 1: password=[REDACTED]",
             "is_error": true,
             "status": "error",
             "tool_use_id": "call-2",
@@ -172,7 +172,7 @@
   ],
   "boundary": {
     "retained_records": 6,
-    "retained_bytes": 1763
+    "retained_bytes": 1792
   },
   "session_ids": [
     "c0ffee00-0000-4000-8000-000000000001"

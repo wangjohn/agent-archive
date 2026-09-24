@@ -1,0 +1,2 @@
+go test fuzz v1
+string("db:\n  db_password: \"hunter2\"\n  host: x")
