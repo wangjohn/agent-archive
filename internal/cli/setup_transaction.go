@@ -141,9 +141,11 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 }
 
 // waitingForTranscript reports whether a registration has no transcript path,
-// has never published, and has no publication in flight.
+// has never published, and has no publication in flight. A Cursor database
+// chat has no transcript path by design and never waits for one: it is
+// read from the database, so a sync can publish it and it is pending.
 func waitingForTranscript(store *collector.LocalStore, r archive.SessionRegistration) (bool, error) {
-	if r.TranscriptPath != "" {
+	if r.TranscriptPath != "" || !r.ReadsTranscriptFile() {
 		return false, nil
 	}
 	_, _, published, err := store.LoadLastPublished(r.ArchiveSessionID)

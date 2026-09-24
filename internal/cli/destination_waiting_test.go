@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -163,5 +165,39 @@ func TestSwitchingBackToADestinationAcceptsItsSessionsAgain(t *testing.T) {
 	}
 	if pending, err := pendingSessions(home, backAtA); err != nil || pending != 1 {
 		t.Fatalf("its outstanding work is not pending again at A: %d err=%v", pending, err)
+	}
+}
+
+// An imported Cursor database chat has no transcript path by design, but it
+// is not waiting for one: a sync reads it from Cursor's database. Until it
+// is uploaded it is pending, and it blocks a destination change like any
+// pending session rather than being left behind with a wrong warning.
+func TestImportedCursorDatabaseChatBlocksADestinationChange(t *testing.T) {
+	now := time.Now().UTC()
+	env, home, userHome, project := cursorSetup(t, now)
+	cfg, _, _ := config.Load(home)
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted := now.Add(time.Minute)
+	reg, err := store.RegisterNewSession("db-chat", func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "db-chat", ProjectID: archive.ProjectID(project), ProjectRoot: project,
+			Harness: archive.Harness{Name: "cursor"}, SourceKind: archive.SourceKindCursorSQLite, SourceKey: "db-chat",
+			SessionStartedAt: now.Add(-time.Hour), StartedAtSource: archive.StartedAtSourceCursorComposer,
+			RegisteredAt: admitted, AdmittedAt: admitted, Origin: archive.SessionOriginImport, ImportBatch: "2026-09-23-1", DestinationID: cfg.DestinationID()}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveRequest(reg.ArchiveSessionID, "backfill", admitted); err != nil {
+		t.Fatal(err)
+	}
+	if blocking, waiting, err := pendingSessionCounts(home, cfg); err != nil || blocking != 1 || waiting != 0 {
+		t.Fatalf("blocking %d, waiting %d, err %v", blocking, waiting, err)
+	}
+	env.Now = func() time.Time { return now.Add(time.Hour) }
+	if _, err, out := changeBucket(t, env, home, userHome); err == nil || !strings.Contains(err.Error(), "still pending") || strings.Contains(out, "never received a transcript") {
+		t.Fatalf("the destination changed under an un-uploaded import: %v\n%s", err, out)
 	}
 }
