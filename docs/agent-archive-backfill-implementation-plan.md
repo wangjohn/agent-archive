@@ -295,8 +295,9 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
   cursor-sqlite `Filter` returns a clearly named "not wired" error.
 - A cursor-sqlite registration never adopts a hook's `transcript_path`.
 
-**B1b provides:** `archive.DestinationID(credentials.Config) string` (moved
-from `internal/backfill`), a `SessionRegistration.DestinationID` field (json
+**B1b provides:** `config.DestinationID(credentials.Config) string` (moved
+from `internal/backfill`; in `config` because `archive` imports no other
+internal package and `credentials` would bring in the AWS SDK), a `SessionRegistration.DestinationID` field (json
 `destination_id`, omitempty) set by hooks and backfill at registration, and
 `AcceptSession` and `InCurrentDestination` comparing it when set, falling back
 to the time rule when empty.
