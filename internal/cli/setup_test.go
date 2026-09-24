@@ -326,12 +326,12 @@ func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
 	if yes, err := p.yesNo("Enable?", false); err != nil || !yes {
 		t.Fatal(err)
 	}
-	if n, err := p.intWithDefault("Days", 90); err != nil || n != 30 {
+	if n, err := p.retentionDays(90); err != nil || n != 30 {
 		t.Fatal(n, err)
 	}
 	root := t.TempDir()
 	p = newPrompter(strings.NewReader("/does/not/exist\n"+root+"\n"+root+"/./\n\n"), &out)
-	projects, err := promptProjects(p, nil, nil, time.Time{})
+	projects, err := promptProjects(p, nil, nil)
 	if err != nil || len(projects) != 1 {
 		t.Fatal(projects, err)
 	}

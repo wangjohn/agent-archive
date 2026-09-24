@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -272,7 +271,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 		}
 		err = promptStopImported(p, draft)
 	case "projects":
-		projects, e := promptProjects(p, draft.Config.Archive.Projects, backfilled, time.Time{}, userHome)
+		projects, e := promptProjects(p, draft.Config.Archive.Projects, backfilled, userHome)
 		if e != nil {
 			return e
 		}
@@ -288,7 +287,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 		}
 		draft.Config.RequireSkillUse = !all
 	case "retention":
-		draft.Config.RetentionDays, err = p.intWithDefault("Keep sessions for how many days?", draft.Config.RetentionDays)
+		draft.Config.RetentionDays, err = p.retentionDays(draft.Config.RetentionDays)
 	case "storage":
 		draft.Step = 1
 	case "prefix":

@@ -129,7 +129,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 				if days <= 0 {
 					days = defaultRetentionDays
 				}
-				draft.Config.RetentionDays, e = p.intWithDefault("Keep sessions for how many days?", days)
+				draft.Config.RetentionDays, e = p.retentionDays(days)
 				if e != nil {
 					return e
 				}
@@ -154,7 +154,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			draft.Step = 1
 		case "retention":
 			draft.Step = 2
-			draft.Config.RetentionDays, err = p.intWithDefault("Keep sessions for how many days?", existing.RetentionDays)
+			draft.Config.RetentionDays, err = p.retentionDays(existing.RetentionDays)
 			if err != nil {
 				return err
 			}
@@ -365,7 +365,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 		}
 	}
 	if !acceptedProject {
-		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), time.Time{}, userHome)
+		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), userHome)
 		if err != nil {
 			return err
 		}
@@ -605,7 +605,7 @@ func appList(apps []string) string {
 // An excluded project stays in the list as excluded, so its exclusion keeps
 // holding: its imported sessions stop uploading and later backfills skip it.
 // A project that was not imported and is not kept is dropped, as before.
-func promptProjects(p *prompter, existing []archive.ProjectActivation, backfilled map[string]bool, now time.Time, userHomes ...string) ([]archive.ProjectActivation, error) {
+func promptProjects(p *prompter, existing []archive.ProjectActivation, backfilled map[string]bool, userHomes ...string) ([]archive.ProjectActivation, error) {
 	result := []archive.ProjectActivation{}
 	seen := map[string]bool{}
 	imported := 0
@@ -691,7 +691,8 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, backfille
 		if reincluded {
 			continue
 		}
-		project := archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true, ActivatedAt: now}
+		// ActivatedAt is left zero here; setup stamps it when it commits.
+		project := archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true}
 		for _, old := range existing {
 			if old.Root == root {
 				project.ActivatedAt = old.ActivatedAt

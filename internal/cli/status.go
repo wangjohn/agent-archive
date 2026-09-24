@@ -62,7 +62,7 @@ type appStatus struct {
 	Code  string `json:"code"`
 	Hooks string `json:"hooks"`
 	Name  string `json:"name"`
-	//lint:ignore LV1001 display label that statusCode maps to Code; tests across the package compare it to literals
+	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
 	State           string    `json:"state"`
 	Sessions        int       `json:"sessions"`
 	LastPublishedAt time.Time `json:"last_published_at,omitempty"`
@@ -90,7 +90,7 @@ type statusView struct {
 
 	Code    string `json:"code"`
 	Version int    `json:"schema_version"`
-	//lint:ignore LV1001 display label that statusCode maps to Code; tests across the package compare it to literals
+	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
 	State              string              `json:"state"`
 	Storage            string              `json:"storage,omitempty"`
 	StorageVerifiedAt  time.Time           `json:"storage_verified_at,omitempty"`
@@ -165,7 +165,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			terminal.Println(stdout, "  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
 		}
 		terminal.Printf(stdout, "  Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
-		if app.Capabilities.FreshStart.State == "unavailable" {
+		if app.Capabilities.FreshStart.State == capabilityUnavailable {
 			terminal.Printf(stdout, "  Fresh-start capture: unavailable. %s\n", app.Capabilities.FreshStart.NextAction)
 		}
 		for _, pair := range app.Projects {
@@ -499,7 +499,7 @@ func readStatus(env Env) (view statusView, err error) {
 			case verificationOutcomeFailed:
 				app.VerificationState = "read_back_failed"
 			case verificationOutcomeVerified:
-				// Not a read-back issue; readBackIssue is never set to it.
+				// A verified session is not a read-back issue.
 			}
 		}
 		view.Apps = append(view.Apps, app)
@@ -592,7 +592,7 @@ func readStatus(env Env) (view statusView, err error) {
 			}
 			view.State = "Waiting for capture"
 			switch {
-			case app.Capabilities.FreshStart.State == "unavailable" && !pair.HookObserved:
+			case app.Capabilities.FreshStart.State == capabilityUnavailable && !pair.HookObserved:
 				view.Next = app.Capabilities.FreshStart.NextAction
 			case pair.Published:
 				view.Next = "Run agent-archive sync to retry read-back verification for " + appName(app.Name) + " in " + pair.ProjectRoot + "."

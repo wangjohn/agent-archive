@@ -273,7 +273,7 @@ func TestStatusSuggestsCursorCaptureOnceFreshStartIsProvable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capability := view.Apps[0].Capabilities.FreshStart; capability.State != "documented" {
+	if capability := view.Apps[0].Capabilities.FreshStart; capability.State != capabilityDocumented {
 		t.Fatalf("Cursor fresh-start capability: %#v", capability)
 	}
 	if !strings.Contains(view.Next, "then start a new session") {

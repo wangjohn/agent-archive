@@ -207,9 +207,10 @@ func matchOption(answer string, options []option) (string, bool) {
 	return match, match != ""
 }
 
-func (p *prompter) intWithDefault(label string, def int) (int, error) {
+// retentionDays asks how many days to keep sessions, offering def.
+func (p *prompter) retentionDays(def int) (int, error) {
 	for {
-		answer, err := p.withDefault(label, strconv.Itoa(def))
+		answer, err := p.withDefault("Keep sessions for how many days?", strconv.Itoa(def))
 		if err != nil {
 			return 0, err
 		}

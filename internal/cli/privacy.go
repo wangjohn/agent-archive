@@ -27,7 +27,6 @@ const (
 )
 
 func privacyConfigurationID(cfg config.Config) string {
-	//lint:ignore musttag credentials.Config is persisted by Go field name; tags would change the config file format
 	data, _ := json.Marshal(cfg.Storage)
 	return storage.SHA256Hex(data)
 }

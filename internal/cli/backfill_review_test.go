@@ -95,7 +95,7 @@ func TestSetupGroupsBackfilledProjects(t *testing.T) {
 		want  int
 	}{{"y\ny\n\n", 4}, {"n\ny\n\n", 1}} {
 		var out bytes.Buffer
-		projects, err := promptProjects(newPrompter(strings.NewReader(tc.input), &out), existing, backfilled, time.Time{})
+		projects, err := promptProjects(newPrompter(strings.NewReader(tc.input), &out), existing, backfilled)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,14 +129,14 @@ func TestSetupKeepsExclusions(t *testing.T) {
 		{ProjectID: archive.ProjectID(root), Root: root, Included: false},
 	}
 	var out bytes.Buffer
-	projects, err := promptProjects(newPrompter(strings.NewReader("y\n\n"), &out), existing, nil, time.Time{})
+	projects, err := promptProjects(newPrompter(strings.NewReader("y\n\n"), &out), existing, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(projects) != 3 || includedProjects(projects) != 1 || strings.Contains(out.String(), "/work/excluded") {
 		t.Fatalf("%+v\n%s", projects, out.String())
 	}
-	projects, err = promptProjects(newPrompter(strings.NewReader("y\n"+root+"\n\n"), &out), existing, nil, time.Time{})
+	projects, err = promptProjects(newPrompter(strings.NewReader("y\n"+root+"\n\n"), &out), existing, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

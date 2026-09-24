@@ -55,6 +55,8 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	if transactionPending(home) {
 		return fmt.Errorf("run agent-archive setup to recover the interrupted installation first")
 	}
+	// Fail before prompting when the settings are unreadable; they are
+	// loaded again below, once the collector lock is held too.
 	if _, _, err := config.Load(home); err != nil {
 		return err
 	}

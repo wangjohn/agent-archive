@@ -220,7 +220,7 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan) (bool, error
 				days = defaultRetentionDays
 			}
 			terminal.Println(out, "Retention applies to every session in the archive, not only these.")
-			if plan.RetentionDays, err = p.intWithDefault("Keep sessions for how many days?", days); err != nil {
+			if plan.RetentionDays, err = p.retentionDays(days); err != nil {
 				return false, err
 			}
 			terminal.Println(out)

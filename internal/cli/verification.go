@@ -99,7 +99,7 @@ type storageHealth struct {
 func configurationID(cfg config.Config) string {
 	// These fields contain references, never credentials. Pausing, retention,
 	// and unrelated historical settings do not invalidate capture verification.
-	//lint:ignore musttag credentials.Config is persisted by Go field name; tags would change the config file format
+	//lint:ignore musttag hash input for the configuration ID: its key names are the Go field names, and changing them would invalidate stored verification evidence
 	data, _ := json.Marshal(struct {
 		Storage            any
 		Harnesses          []string
@@ -118,7 +118,7 @@ func sessionVerificationConfigurationID(cfg config.Config, reg archive.SessionRe
 			break
 		}
 	}
-	//lint:ignore musttag credentials.Config is persisted by Go field name; tags would change the config file format
+	//lint:ignore musttag hash input for the configuration ID: its key names are the Go field names, and changing them would invalidate stored verification evidence
 	data, _ := json.Marshal(struct {
 		Storage            any
 		Machine            string

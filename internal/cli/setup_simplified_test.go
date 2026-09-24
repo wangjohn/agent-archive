@@ -149,7 +149,7 @@ func TestManualProjectsExpandInjectedHomeAndDeduplicateSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, time.Time{}, home)
+	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, home)
 	canonical, _ := filepath.EvalSymlinks(project)
 	if err != nil || len(projects) != 1 || projects[0].Root != canonical {
 		t.Fatalf("projects=%+v err=%v", projects, err)
