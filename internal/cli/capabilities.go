@@ -151,6 +151,12 @@ func codexVersionCandidates(userHome string) [][]string {
 // claudeVersionCandidates lists where a Claude Code CLI may be: PATH, the
 // native and legacy local install locations (setup may run with a minimal
 // PATH), then the copies the Claude desktop app keeps, newest first.
+//
+// A bundled copy is only a fallback: the version recorded from it may belong
+// to an older bundle (when the newest one does not answer) or differ from a
+// CLI installed off PATH that the hooks actually run. That affects only
+// whether status labels the installed version verified or unverified. The
+// same holds for the Codex copy inside ChatGPT.app.
 func claudeVersionCandidates(userHome string) [][]string {
 	paths := []string{
 		"claude",
@@ -165,6 +171,11 @@ func claudeVersionCandidates(userHome string) [][]string {
 	return candidates
 }
 
+// versionDirPattern matches a directory named exactly for a version, such as
+// "2.1.280"; unlike versionPattern it does not find one inside other text,
+// so "backup-2.1.300" is not a version directory.
+var versionDirPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z.-]+)?$`)
+
 // claudeDesktopBundledCLIs returns the Claude Code executables the Claude
 // desktop app keeps under one directory per version, newest version first.
 // Versions compare numerically, so 2.1.100 sorts above 2.1.99.
@@ -176,7 +187,7 @@ func claudeDesktopBundledCLIs(userHome string) []string {
 	}
 	var versions []string
 	for _, entry := range entries {
-		if entry.IsDir() && versionPattern.MatchString(entry.Name()) {
+		if entry.IsDir() && versionDirPattern.MatchString(entry.Name()) {
 			versions = append(versions, entry.Name())
 		}
 	}

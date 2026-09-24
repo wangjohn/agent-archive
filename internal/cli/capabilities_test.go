@@ -129,7 +129,7 @@ func TestDiscoverCommandVersionTriesEveryPresentCandidate(t *testing.T) {
 func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
 	userHome := t.TempDir()
 	root := filepath.Join(userHome, "Library/Application Support/Claude/claude-code")
-	for _, dir := range []string{"2.1.99", "2.1.275", "2.1.280", "2.1.100", "not-a-version"} {
+	for _, dir := range []string{"2.1.99", "2.1.275", "2.1.280", "2.1.100", "not-a-version", "backup-2.1.300", "2.1.300.bak"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -193,6 +193,14 @@ func TestCompareDottedVersions(t *testing.T) {
 	} {
 		if got := compareDottedVersions(tt.a, tt.b); got != tt.want {
 			t.Fatalf("compare(%q, %q) = %d want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestVersionDirPatternIsAnchored(t *testing.T) {
+	for name, want := range map[string]bool{"2.1.280": true, "0.155.0-alpha.9.2": true, "backup-2.1.300": false, "2.1.300.bak": false, "v2.1.300": false, "2": false} {
+		if got := versionDirPattern.MatchString(name); got != want {
+			t.Fatalf("%q: got %v want %v", name, got, want)
 		}
 	}
 }

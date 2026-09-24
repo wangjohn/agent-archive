@@ -334,9 +334,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 
 func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) error {
 	p.step(1, "Choose what to capture")
-	detected := env.detectHarnesses(userHome)
-	var err error
-	cfg.Harnesses, err = promptHarnesses(p, detected, cfg.Harnesses)
+	err := chooseHarnesses(p, env.detectHarnesses(userHome), cfg)
 	if err != nil {
 		return err
 	}
@@ -454,6 +452,36 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 	return cfg, secret, secret.SecretAccessKey != "", err
 }
 
+// chooseHarnesses asks which apps to include and keeps cfg.DeclinedHarnesses
+// in step. Detected apps a reconfiguration offers and the user leaves out are
+// remembered, so later runs do not offer them again (detection only sees a
+// config directory, which stays after an app is excluded on purpose). An app
+// that ends up included is no longer declined.
+func chooseHarnesses(p *prompter, detected []string, cfg *config.Config) error {
+	var offered, found []string
+	for _, app := range detected {
+		if containsString(cfg.DeclinedHarnesses, app) {
+			continue
+		}
+		offered = append(offered, app)
+		if len(cfg.Harnesses) > 0 && !containsString(cfg.Harnesses, app) {
+			found = append(found, app)
+		}
+	}
+	harnesses, err := promptHarnesses(p, offered, cfg.Harnesses)
+	if err != nil {
+		return err
+	}
+	var declined []string
+	for _, app := range allHarnesses {
+		if !containsString(harnesses, app) && (containsString(cfg.DeclinedHarnesses, app) || containsString(found, app)) {
+			declined = append(declined, app)
+		}
+	}
+	cfg.Harnesses, cfg.DeclinedHarnesses = harnesses, declined
+	return nil
+}
+
 func promptHarnesses(p *prompter, detected, existing []string) ([]string, error) {
 	// Preserve an existing selection on reconfiguration. Detection supplies
 	// defaults for first-time setup and, on reconfiguration, offers apps the
@@ -478,28 +506,30 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 	switch {
 	case len(suggested) == 0:
 		fmt.Fprintln(p.out, "No apps found automatically.")
-	case len(found) > 0:
-		// Detected apps the saved selection leaves out are offered on their
-		// own, defaulting to yes; declining keeps the saved selection as is.
-		fmt.Fprintf(p.out, "Included: %s.\nAlso found on this computer: %s.\n", appList(suggested), appList(found))
-		add, err := p.yesNo(addPrompt(found), true)
-		if err != nil {
-			return nil, err
-		}
-		if !add {
-			return suggested, nil
-		}
-		var result []string
-		for _, app := range allHarnesses {
-			if containsString(suggested, app) || containsString(found, app) {
-				result = append(result, app)
-			}
-		}
-		return result, nil
 	case len(existing) > 0 && len(others) > 0:
-		// Name the apps left out so it is clear how to add them; "Keep X?"
-		// reads as if declining would remove X.
-		fmt.Fprintf(p.out, "Included: %s. Not included: %s.\n", appList(suggested), appList(others))
+		if len(found) > 0 {
+			// Detected apps the saved selection leaves out are offered on
+			// their own, defaulting to yes. Declining still allows other
+			// changes below.
+			fmt.Fprintf(p.out, "Included: %s.\nAlso found on this computer: %s.\n", appList(suggested), appList(found))
+			add, err := p.yesNo(addPrompt(found), true)
+			if err != nil {
+				return nil, err
+			}
+			if add {
+				var result []string
+				for _, app := range allHarnesses {
+					if containsString(suggested, app) || containsString(found, app) {
+						result = append(result, app)
+					}
+				}
+				return result, nil
+			}
+		} else {
+			// Name the apps left out so it is clear how to add them; "Keep X?"
+			// reads as if declining would remove X.
+			fmt.Fprintf(p.out, "Included: %s. Not included: %s.\n", appList(suggested), appList(others))
+		}
 		change, err := p.yesNo("Change which apps are included?", false)
 		if err != nil {
 			return nil, err

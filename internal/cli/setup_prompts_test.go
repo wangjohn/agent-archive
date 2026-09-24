@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,7 +29,8 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 		{"nothing detected", nil, nil, "n\ny\nn\n", []string{"claude"}, "No apps found automatically.", true},
 		{"keep prior selection", []string{"claude"}, []string{"claude"}, "\n", []string{"claude"}, "Included: Claude Code. Not included: Codex and Cursor.\nChange which apps are included? [y/N]", false},
 		{"add newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "\n", []string{"codex", "claude", "cursor"}, "Included: Cursor.\nAlso found on this computer: Codex and Claude Code.\nAdd them? [Y/n]", false},
-		{"decline newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\n", []string{"cursor"}, "Also found on this computer: Codex and Claude Code.", false},
+		{"decline newly found apps", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\n\n", []string{"cursor"}, "Also found on this computer: Codex and Claude Code.\nAdd them? [Y/n] Change which apps are included? [y/N]", false},
+		{"decline found apps then pick a subset", []string{"codex", "claude", "cursor"}, []string{"cursor"}, "n\ny\nn\ny\ny\n", []string{"claude", "cursor"}, "Change which apps are included?", true},
 		{"add one newly found app", []string{"claude"}, []string{"cursor"}, "y\n", []string{"claude", "cursor"}, "Included: Cursor.\nAlso found on this computer: Claude Code.\nAdd it? [Y/n]", false},
 		{"add to prior selection", nil, []string{"cursor"}, "y\ny\ny\n\n", []string{"codex", "claude", "cursor"}, "Change which apps are included?", true},
 		{"keep full prior selection", nil, []string{"cursor", "claude", "codex"}, "\n", []string{"codex", "claude", "cursor"}, "Keep Codex, Claude Code, and Cursor? [Y/n]", false},
@@ -165,5 +168,62 @@ func TestNewlyFoundAppsOmitAppsNotDetected(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "Codex") || strings.Contains(out.String(), "Not included") {
 		t.Fatalf("an app neither included nor detected was advertised:\n%s", &out)
+	}
+}
+
+// An app declined at "Also found on this computer" is remembered through the
+// setup draft and the saved configuration, is not offered again, and leaves
+// the declined list once the user includes it.
+func TestSetupRemembersDeclinedApps(t *testing.T) {
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.DetectHarnesses = func(string) []string { return []string{"cursor"} }
+	setupRun(t, env, strings.Join([]string{"y", project, "", "s3", "test-bucket", "profile", "us-east-1", "y"}, "\n")+"\n", 0)
+
+	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude", "cursor"} }
+	// Apps and projects; decline the found apps; change nothing else; keep
+	// the project; add none; cancel at the review so the draft is kept.
+	output := setupRun(t, env, "capture\nn\n\ny\n\nn\n", 0)
+	if !strings.Contains(output, "Also found on this computer: Codex and Claude Code.\nAdd them? [Y/n]") {
+		t.Fatalf("found apps not offered:\n%s", output)
+	}
+	draft, err := os.ReadFile(filepath.Join(home, "setup-draft.json"))
+	if err != nil || !strings.Contains(string(draft), `"declined_harnesses"`) {
+		t.Fatalf("draft lost the declined apps: %v\n%s", err, draft)
+	}
+	// Continue the draft and start archiving.
+	setupRun(t, env, "\ny\n", 0)
+	cfg, _, _ := config.Load(home)
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"cursor"}) || !reflect.DeepEqual(cfg.DeclinedHarnesses, []string{"codex", "claude"}) {
+		t.Fatalf("harnesses %v declined %v", cfg.Harnesses, cfg.DeclinedHarnesses)
+	}
+
+	output = setupRun(t, env, "capture\n\ny\n\ny\n", 0)
+	if strings.Contains(output, "Also found") || !strings.Contains(output, "Included: Cursor. Not included: Codex and Claude Code.") {
+		t.Fatalf("declined apps offered again:\n%s", output)
+	}
+
+	// Include Claude Code by hand: it is no longer declined; Codex still is.
+	setupRun(t, env, "capture\ny\nn\ny\ny\ny\n\ny\n", 0)
+	cfg, _, _ = config.Load(home)
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"claude", "cursor"}) || !reflect.DeepEqual(cfg.DeclinedHarnesses, []string{"codex"}) {
+		t.Fatalf("harnesses %v declined %v", cfg.Harnesses, cfg.DeclinedHarnesses)
+	}
+}
+
+// The review screen's app edit has no detection, so it never offers found
+// apps, and it keeps the declined list apart from any app it includes.
+func TestReviewEditNeverOffersFoundApps(t *testing.T) {
+	draft := setupDraft{Config: config.Config{Harnesses: []string{"cursor"}, DeclinedHarnesses: []string{"codex", "claude"}}}
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\n"), &out)
+	if err := editSetupReview(p, &draft, t.TempDir(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Also found") || !strings.Contains(out.String(), "Change which apps are included?") {
+		t.Fatalf("unexpected prompts:\n%s", &out)
+	}
+	if !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude", "cursor"}) || !reflect.DeepEqual(draft.Config.DeclinedHarnesses, []string{"codex"}) {
+		t.Fatalf("harnesses %v declined %v", draft.Config.Harnesses, draft.Config.DeclinedHarnesses)
 	}
 }

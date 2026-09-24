@@ -257,8 +257,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 	}
 	switch choice {
 	case "apps":
-		draft.Config.Harnesses, err = promptHarnesses(p, nil, draft.Config.Harnesses)
-		if err != nil {
+		if err = chooseHarnesses(p, nil, &draft.Config); err != nil {
 			return err
 		}
 		err = promptStopImported(p, draft)
