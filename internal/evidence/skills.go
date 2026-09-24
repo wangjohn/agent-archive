@@ -44,6 +44,10 @@ type SkillOptions struct {
 type skillRoot struct {
 	path  string
 	scope string
+	// project is the project root a project-level skill root belongs to, and
+	// empty for a user-level root. It bounds where a project skill's SKILL.md
+	// may resolve to (see skillBounds).
+	project string
 }
 
 // ObserveSkills inventories immediate SKILL.md children of documented skill
@@ -85,22 +89,36 @@ func skillRoots(options SkillOptions) []skillRoot {
 		user = ""
 	}
 	var roots []skillRoot
-	add := func(base, suffix, scope string) {
-		if base != "" {
-			roots = append(roots, skillRoot{path: filepath.Join(base, suffix), scope: scope})
+	addUser := func(suffix, scope string) {
+		if user != "" {
+			roots = append(roots, skillRoot{path: filepath.Join(user, suffix), scope: scope})
 		}
+	}
+	// A project root that is a user-level root (the session ran from the
+	// home directory) is observed once, under the user scope and its rules.
+	addProject := func(suffix, scope string) {
+		if project == "" {
+			return
+		}
+		path := filepath.Join(project, suffix)
+		for _, root := range roots {
+			if sameDirectory(root.path, path) {
+				return
+			}
+		}
+		roots = append(roots, skillRoot{path: path, scope: scope, project: project})
 	}
 	switch strings.ToLower(strings.TrimSpace(options.Harness)) {
 	case "codex":
-		add(user, ".agents/skills", "user_agents")
-		add(user, ".codex/skills", "user_codex_legacy")
-		add(project, ".agents/skills", "project_agents")
+		addUser(".agents/skills", "user_agents")
+		addUser(".codex/skills", "user_codex_legacy")
+		addProject(".agents/skills", "project_agents")
 	case "claude", "claude-code":
-		add(user, ".claude/skills", "user_claude")
-		add(project, ".claude/skills", "project_claude")
+		addUser(".claude/skills", "user_claude")
+		addProject(".claude/skills", "project_claude")
 	case "cursor":
-		add(user, ".cursor/skills", "user_cursor")
-		add(project, ".cursor/skills", "project_cursor")
+		addUser(".cursor/skills", "user_cursor")
+		addProject(".cursor/skills", "project_cursor")
 	}
 	return roots
 }
@@ -132,9 +150,11 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 	var snapshots []archive.SupplementalEvidence
 	omittedSnapshots := 0
 	uninspectedEntries := 0
+	bounds := newSkillBounds(root)
 	for _, entry := range entries {
-		path := filepath.Join(root.path, entry.Name(), "SKILL.md")
-		info, err := os.Stat(path) // follows supported skill-directory symlinks
+		// Symlinks are resolved first, and the SKILL.md actually read is the
+		// resolved file, which must be a regular file inside the root's bounds.
+		path, err := filepath.EvalSymlinks(filepath.Join(root.path, entry.Name(), "SKILL.md"))
 		if errors.Is(err, os.ErrNotExist) {
 			// Some legacy/configured roots contain grouped or plugin-managed
 			// subtrees. We do not recursively walk them; record the coverage gap.
@@ -143,12 +163,14 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 			}
 			continue
 		}
-		if err == nil && !info.Mode().IsRegular() {
+		if err != nil || !bounds.allow(path) {
+			// Permission denied on the entry or its SKILL.md, or a SKILL.md that
+			// resolves outside the root's bounds: coverage gap.
 			uninspectedEntries++
 			continue
 		}
-		if err != nil {
-			// Permission denied on the entry or its SKILL.md: coverage gap.
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
 			uninspectedEntries++
 			continue
 		}
@@ -182,7 +204,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		payload["sha256"] = hash // hash of original bytes, before filtering
 		body := string(original)
 		if len(body) > maxSnapshotBodyBytes {
-			body = body[:maxSnapshotBodyBytes]
+			body = archive.TruncateUTF8(body, maxSnapshotBodyBytes)
 			payload["truncated"] = true
 		}
 		payload["snapshot"] = body
@@ -224,6 +246,94 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		Payload: inventoryPayload,
 	}}
 	return append(result, snapshots...), nil
+}
+
+// skillBounds decides which resolved SKILL.md paths one skill root may read.
+// Without it a SKILL.md, or the skill directory holding it, could be a
+// symlink to any file the collector can read, and a repository a person
+// merely cloned could ship .claude/skills/x/SKILL.md -> ~/.aws/credentials,
+// or -> ../../../.env, to have that file archived with every session as a
+// skill snapshot.
+//
+// Symlinks are resolved on both sides.
+//
+//   - A user-level root is the person's own configuration. Its resolved file
+//     must lie inside the resolved skill root, or be itself named SKILL.md:
+//     a linked skill, not an arbitrary file under a skill's name. Linking a
+//     skill directory into a skills checkout elsewhere (~/.claude/skills/x
+//     -> ~/src/skills/x) keeps working.
+//   - A project-level root belongs to a repository, which controls its skill
+//     root as much as its links (.claude/skills -> .. makes the root the
+//     project itself), so "inside the skill root" proves nothing for it.
+//     Its resolved file must be named SKILL.md and lie inside the project
+//     root. A link inside the repository that shares one skills directory
+//     between harnesses (.claude/skills/x -> ../../skills/x) keeps working.
+//
+// A project root that is a user-level root (the session ran
+// from the home directory, so the project's .claude/skills is
+// ~/.claude/skills) is not observed a second time: see skillRoots.
+//
+// An entry that resolves outside its bounds counts as uninspected. The
+// bounds are checked on the resolved path, and the resolved path is what is
+// read; a symlink swapped in between the two is a race this does not close.
+type skillBounds struct {
+	// root and project are the resolved skill root and project root, or ""
+	// when the directory could not be resolved.
+	root    string
+	project string
+	// projectScoped is set for a project-level root.
+	projectScoped bool
+}
+
+func newSkillBounds(root skillRoot) skillBounds {
+	projectScoped := root.project != ""
+	resolvedRoot, resolvedProject := "", ""
+	if resolved, err := filepath.EvalSymlinks(root.path); err == nil {
+		resolvedRoot = resolved
+	}
+	if projectScoped {
+		if resolved, err := filepath.EvalSymlinks(root.project); err == nil {
+			resolvedProject = resolved
+		}
+	}
+	return skillBounds{
+		root:          resolvedRoot,
+		project:       resolvedProject,
+		projectScoped: projectScoped,
+	}
+}
+
+// allow reports whether a resolved SKILL.md path is inside the bounds.
+func (b skillBounds) allow(resolved string) bool {
+	named := strings.EqualFold(filepath.Base(resolved), "SKILL.md")
+	if b.projectScoped {
+		// The repository controls its skill root as much as its SKILL.md
+		// links (.claude/skills -> .. makes the root the project itself), so
+		// "inside the skill root" admits nothing more for it: only a file
+		// named SKILL.md, inside the project.
+		return named && within(b.project, resolved)
+	}
+	return named || within(b.root, resolved)
+}
+
+// within reports whether path lies inside dir; nothing lies inside "".
+func within(dir, path string) bool {
+	if dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// sameDirectory reports whether a and b are the same directory, compared
+// with symlinks resolved when both resolve and as written otherwise.
+func sameDirectory(a, b string) bool {
+	if ra, err := filepath.EvalSymlinks(a); err == nil {
+		if rb, err := filepath.EvalSymlinks(b); err == nil {
+			return ra == rb
+		}
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func inventoryObservation(harness, scope, rootStatus string, skills []any, complete bool, observedAt time.Time) archive.SupplementalEvidence {

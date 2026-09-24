@@ -1,0 +1,2 @@
+go test fuzz v1
+string("ENCRYPTION_KEY=0123456789abcdef")

@@ -253,7 +253,7 @@ func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
 	if _, kept := input["parsingResult"].(map[string]any); !kept {
 		t.Errorf("a plain object argument was dropped: %#v", input)
 	}
-	if failedResult["tool_use_id"] != "call-2" || failedResult["is_error"] != true || failedResult["content"] != "exit status 1: [REDACTED]" {
+	if failedResult["tool_use_id"] != "call-2" || failedResult["is_error"] != true || failedResult["content"] != "exit status 1: password=[REDACTED]" {
 		t.Fatalf("failed result = %#v", failedResult)
 	}
 }
@@ -810,7 +810,7 @@ func TestCursorComposerRecordsParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.Capture.SourceFormat != "cursor-composer" || bundle.Capture.FilterVersion != "8" {
+	if bundle.Capture.SourceFormat != "cursor-composer" || bundle.Capture.FilterVersion != "9" {
 		t.Fatalf("capture = %#v", bundle.Capture)
 	}
 	view, err := ParseNormalized(bundle)

@@ -7,6 +7,71 @@ native record, then text transcripts and supplemental evidence (source schema
 2). The line format changes how retained evidence is packaged, not what is
 retained: every line holds only what the source filter below kept.
 
+## Source filter version 9
+
+Filter 9 closes four ways content left the machine that the filter was meant
+to stop. Adapter version 0.9.0 goes with it.
+
+- **Credential assignments by any common name.** Filter 8 required the
+  trigger word to stand alone, and since `_` is part of a word that missed
+  every snake_case or SCREAMING_CASE name (`DB_PASSWORD=`,
+  `AWS_SECRET_ACCESS_KEY=`, `OPENAI_API_KEY=`, `GITHUB_TOKEN=`); a quote
+  between the name and the separator missed every JSON key
+  (`"password": "…"`). A credential name is now any name ending in a trigger
+  word, optionally followed by `key` or `access_key`, `base`, and a number,
+  in any case and with anything glued on before it (`db_password`,
+  `accessToken`, `PGPASSWORD`, `SECRET_KEY_BASE`, `DB_PASSWORD_1`,
+  `spring.datasource.password`), quoted or not; the separator is `=`, `:`,
+  `:=`, or `=>`, and `--name value` command-line flags are covered too. Only
+  the value is replaced now, and a quoted value keeps its quotes:
+  `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`,
+  `Authorization: Bearer [REDACTED]`. Filter 8 replaced the name as well. See
+  [Value-level redaction](#value-level-redaction) for the full rule and its
+  false positives.
+- **Images, documents, and other binary blocks are dropped.** A pasted
+  screenshot or PDF, or an image a tool read, arrives as a content block
+  whose data is base64. Its key names (`type`, `source`, `data`) were all on
+  the allowlist, so filter 8 kept it. Now a block of type `image`,
+  `document`, `input_image`, `input_file`, `input_audio`, or `image_url`, a
+  `file` block with inline data, and any block whose `source` has type
+  `base64` are dropped whole, at any depth (a tool result keeps its
+  `tool_use_id`), with a `binary_content_omitted` gap naming the kind. A
+  base64 `data:` URL inside a string keeps its media type and loses its
+  payload (`data:image/png;base64,[OMITTED]`), with the same gap. `data` is
+  no longer an allowed key anywhere: nothing the filter keeps needs it.
+- **Structured Cursor tool results are sanitized.** A Cursor tool result or
+  error that is an object, not a string, was encoded to one string before
+  the sanitizer saw it, so the key rules never ran on it. It is now sanitized
+  first, the way a tool call's arguments are (every key name kept,
+  `blockedKeys` and the credential-named deny list applied, every string
+  redacted, binary blocks dropped), then encoded. Keys dropped by the deny
+  list are named in `sensitive_or_hidden_field_omitted` as
+  `omitted tool result keys: …`. An empty result stays `{}`; one the
+  sanitizer leaves nothing of is dropped and named as `tool.result` (or
+  `tool.error`, `toolResult.result`) in `unknown_field_omitted`.
+- **Skill snapshots stay inside their skill root.** A skill's `SKILL.md` is
+  now resolved through symlinks before it is read, and the resolved file is
+  what is read; it must be a regular file. A user-level skill's file must lie
+  inside the skill root or be itself named `SKILL.md` (a linked skill, not an
+  arbitrary file under a skill's name), so a skill directory linked into a
+  skills checkout elsewhere (`~/.claude/skills/x -> ~/src/skills/x`) keeps
+  working. A project-level skill's file must be named `SKILL.md` and lie
+  inside the project: a repository controls its skill root as much as its
+  links (`.claude/skills -> ..`), so being inside that root proves nothing.
+  A cloned repository can therefore ship neither
+  `.claude/skills/x/SKILL.md -> ~/.aws/credentials`, nor `-> ../../../.env`,
+  nor a linked skill root with `x/SKILL.md -> ../master.key`, to have that
+  file archived; a skills directory the repository shares between harnesses
+  keeps working. When a session runs from
+  the home directory, its project skill directory is the user's own; it is
+  observed once, under the user scope. Any other entry counts as
+  uninspected in the root's inventory.
+- **Truncation keeps characters whole.** The 64 KB string cap and the 16 KB
+  skill-snapshot cap cut on a UTF-8 character boundary; filter 8 could split
+  a multi-byte character and leave invalid UTF-8.
+
+Every filter-8 rule below still applies.
+
 ## Source filter version 8
 
 Filter 8 adds one source format, `cursor-composer`: a Cursor chat read from
@@ -268,10 +333,30 @@ every value-level redaction below.
 Every retained string, at every depth, passes these patterns. A match is
 replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
 
-- Assignments of `api_key`, `access_key`, `secret`, `password`,
-  `authorization`, `bearer`, or `token` to a value (`name=value`, `name: value`,
-  `Authorization: Bearer …`), AWS access key IDs (`AKIA…`), and Anthropic/OpenAI
-  style `sk-` keys.
+- Credential assignments (filter 9). The name ends in `api_key`,
+  `access_key`, `private_key`, `encryption_key`, `signing_key`,
+  `master_key`, `secret`, `password`, `passwd`, `passphrase`, `token`,
+  `authorization`, `bearer`, or `credential(s)` (`_`, `-`, `.`, or nothing
+  between the parts of a two-word trigger), in any case, with anything glued
+  on before it; or in `pwd` or npm's `_auth` after a separator (`MYSQL_PWD`,
+  `DB_PWD`, `:_auth`), since a bare `PWD` or `OLDPWD` is the shell's working
+  directory. The trigger may be followed by `key` or `access_key`, then
+  `base`, then a number. So `DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY`,
+  `OPENAI_API_KEY`, `SECRET_KEY_BASE`, `DB_PASSWORD_1`, `accessToken`,
+  `PGPASSWORD`, `spring.datasource.password`, and `x-api-key` all match. The
+  name may be quoted (`"…"`, `'…'`, or escaped inside a string, `\"…\"`);
+  the separator is `=`, `:`, `:=`, or `=>`; a `--name value` command-line
+  flag counts too. The value, quoted up to its closing quote or unquoted up
+  to whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
+  `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`. An HTTP scheme
+  before the value stays: `Authorization: Bearer [REDACTED]`. A single token
+  in brackets or braces is a value too (`password=[hunter2]`,
+  `token={abc123}`), with anything glued on after it
+  (`password=[REDACTED]realsecret` loses `realsecret`, and a glued bracket
+  group goes whole). A value may begin with `=` unless whitespace follows
+  it; the extra `=` signs stay (`PASSWORD==[REDACTED]`).
+- AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials)
+  and Anthropic/OpenAI style `sk-` keys.
 - PEM private key blocks: `-----BEGIN … PRIVATE KEY-----` through the next
   `-----END … -----`, or to the end of the string when the END line is missing.
   Certificates and public keys are not redacted.
@@ -282,14 +367,49 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   Slack tokens (`xox[baprs]-`).
 
 Known false positives. The assignment pattern cannot tell a credential from
-code: `token = parse(x)` and `password: required` are redacted, and
-`token := parse(x)` loses its left-hand side. This is accepted rather than
-narrowed, because the cost of a missed credential is higher than the cost of a
-redacted identifier in an archived transcript; a reader sees the
+code or a path: `token = parse(x)`, `nextToken := lexer.Next()`,
+`credentials := loadCreds()`, and `password: required` have their
+right-hand side redacted; so do a saved directory in a `*_PWD` variable
+(`ORIG_PWD=$(pwd)`), a path to a credentials file
+(`GOOGLE_APPLICATION_CREDENTIALS=/path/key.json`), a one-item list
+(`password: [required]`, taken for a bracketed value), and the word after a
+flag in prose (`pass --token flag`). This is accepted rather
+than narrowed, because the cost of a missed credential is higher than the
+cost of a redacted identifier in an archived transcript; a reader sees the
 `sensitive_content_redacted` gap and can consult the original source if it
-still exists. Words that merely contain a trigger (`tokens`, `secretary`,
-`password_policy`) do not match, because the pattern requires a whole word
-followed by `=` or `:`.
+still exists. Names with anything after the trigger word other than the
+suffix above (`tokens`, `max_tokens`, `token_count`, `secretary`,
+`password_policy`, `TOKEN_URL`, `SECRET_NAME`, `--password-stdin`) do not
+match, nor do `PWD`, `OLDPWD`, `auth`, comparisons (`token == nil`), or a
+name with no value.
+
+Known misses.
+
+- An unquoted value stops at a quote, so a quote inside an unquoted
+  password leaves the rest of the password.
+- In JSON escaped more than once inside a string (`\\\"password\\\":…`),
+  the value ends at the first escaped quote of any depth, so the tail of a
+  value after an escaped quote inside it (`\\\"ab\\\\\\\"cd\\\"`: `cd`) is
+  kept. JSON escaped once (`\"password\":\"ab\\\"cd\"`) is handled.
+- A value that is an object or array holding whitespace, a comma, a colon,
+  or a quote (`"credentials": {"type": …}`, `password: [required, min 8]`)
+  is a structure and is not replaced as text: in parsed records its members
+  are checked by name, but in free text a secret inside it is caught only by
+  its own name or shape.
+- For the same reason, an unquoted value that begins with `[` or `{` but is
+  not a single closed token is kept whole: `password=[Kx9!q2Lm`,
+  `password={secret`, `password=[admin:hunter2]`, `password=[a b]realsecret`.
+  About 2% of random passwords drawn from the full symbol set begin with a
+  bracket or brace.
+- A project skill's `SKILL.md` that is a hard link to another file cannot be
+  told apart from a real file. A cloned repository cannot create one (git
+  does not store hard links); it needs local write access to the project.
+- A name that does not end in a trigger word (`AWS_ACCESS_KEY_ID`,
+  `DATABASE_URL`, `DSN`, `CONNECTION_STRING`) is not redacted by this
+  pattern; its value is redacted only if it has a recognizable shape
+  (`AKIA…`/`ASIA…`, URL userinfo).
+- A credential in prose (`the password is hunter2`) or on the line after
+  its YAML key is not recognized.
 
 Redaction is best effort in both directions: a legitimate value that looks like
 a credential is redacted, and a tool argument that happens to contain one of

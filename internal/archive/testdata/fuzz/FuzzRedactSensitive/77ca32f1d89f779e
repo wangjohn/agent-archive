@@ -1,0 +1,2 @@
+go test fuzz v1
+string("curl -H 'x-api-key: abc123' https://api.example.test")

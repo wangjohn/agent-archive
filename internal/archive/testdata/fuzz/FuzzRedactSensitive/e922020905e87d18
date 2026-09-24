@@ -1,0 +1,2 @@
+go test fuzz v1
+string("RAILS_MASTER_KEY=0123456789abcdef")

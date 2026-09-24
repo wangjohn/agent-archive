@@ -544,7 +544,7 @@ func trimResult(text string, maxLines, maxBytes int) string {
 	}
 	if len(text) > maxBytes {
 		half := maxBytes / 2
-		head, tail := truncateUTF8(text, half), text[len(text)-half:]
+		head, tail := TruncateUTF8(text, half), text[len(text)-half:]
 		for len(tail) > 0 && !isRuneStart(tail[0]) {
 			tail = tail[1:]
 		}
@@ -555,8 +555,9 @@ func trimResult(text string, maxLines, maxBytes int) string {
 
 func isRuneStart(b byte) bool { return b&0xC0 != 0x80 }
 
-// truncateUTF8 returns at most n bytes of s without splitting a character.
-func truncateUTF8(s string, n int) string {
+// TruncateUTF8 returns at most n bytes of s without splitting a character:
+// a cut that would land inside a UTF-8 sequence moves back to its start.
+func TruncateUTF8(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
@@ -573,7 +574,7 @@ func firstLine(s string, limit int) string {
 		s = strings.TrimSpace(s[:i]) + " …"
 	}
 	if len(s) > limit {
-		s = truncateUTF8(s, limit) + "…"
+		s = TruncateUTF8(s, limit) + "…"
 	}
 	return s
 }
@@ -854,7 +855,7 @@ func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bo
 		for i := range k {
 			exchange := &trial.Exchanges[i]
 			if len(exchange.Prompt) > handoffPromptCap {
-				exchange.Prompt = truncateUTF8(exchange.Prompt, handoffPromptCap)
+				exchange.Prompt = TruncateUTF8(exchange.Prompt, handoffPromptCap)
 				exchange.PromptTruncated = true
 				if elision.First == 0 {
 					elision.First = i + 1
@@ -982,7 +983,7 @@ func shortenAssistantText(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 	for i := range steps[:limit] {
 		step := &steps[i]
 		if (step.Kind == HandoffStepText || step.Kind == HandoffStepSummary) && len(step.Text) > handoffAssistantTextCap {
-			step.Text = truncateUTF8(step.Text, handoffAssistantTextCap)
+			step.Text = TruncateUTF8(step.Text, handoffAssistantTextCap)
 			step.TextTruncated = true
 			n++
 		}
