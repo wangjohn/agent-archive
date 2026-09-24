@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -44,6 +45,10 @@ type SkillOptions struct {
 type skillRoot struct {
 	path  string
 	scope string
+	// project is the project root a project-level skill root belongs to, and
+	// empty for a user-level root. It bounds where a project skill's SKILL.md
+	// may resolve to (see skillBounds).
+	project string
 }
 
 // ObserveSkills inventories immediate SKILL.md children of documented skill
@@ -85,22 +90,27 @@ func skillRoots(options SkillOptions) []skillRoot {
 		user = ""
 	}
 	var roots []skillRoot
-	add := func(base, suffix, scope string) {
-		if base != "" {
-			roots = append(roots, skillRoot{path: filepath.Join(base, suffix), scope: scope})
+	addUser := func(suffix, scope string) {
+		if user != "" {
+			roots = append(roots, skillRoot{path: filepath.Join(user, suffix), scope: scope})
+		}
+	}
+	addProject := func(suffix, scope string) {
+		if project != "" {
+			roots = append(roots, skillRoot{path: filepath.Join(project, suffix), scope: scope, project: project})
 		}
 	}
 	switch strings.ToLower(strings.TrimSpace(options.Harness)) {
 	case "codex":
-		add(user, ".agents/skills", "user_agents")
-		add(user, ".codex/skills", "user_codex_legacy")
-		add(project, ".agents/skills", "project_agents")
+		addUser(".agents/skills", "user_agents")
+		addUser(".codex/skills", "user_codex_legacy")
+		addProject(".agents/skills", "project_agents")
 	case "claude", "claude-code":
-		add(user, ".claude/skills", "user_claude")
-		add(project, ".claude/skills", "project_claude")
+		addUser(".claude/skills", "user_claude")
+		addProject(".claude/skills", "project_claude")
 	case "cursor":
-		add(user, ".cursor/skills", "user_cursor")
-		add(project, ".cursor/skills", "project_cursor")
+		addUser(".cursor/skills", "user_cursor")
+		addProject(".cursor/skills", "project_cursor")
 	}
 	return roots
 }
@@ -130,9 +140,11 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 	var snapshots []archive.SupplementalEvidence
 	omittedSnapshots := 0
 	uninspectedEntries := 0
+	bounds := newSkillBounds(root)
 	for _, entry := range entries {
-		path := filepath.Join(root.path, entry.Name(), "SKILL.md")
-		info, err := os.Stat(path) // follows supported skill-directory symlinks
+		// Symlinks are resolved first, and the SKILL.md actually read is the
+		// resolved file, which must be a regular file inside the root's bounds.
+		path, err := filepath.EvalSymlinks(filepath.Join(root.path, entry.Name(), "SKILL.md"))
 		if errors.Is(err, os.ErrNotExist) {
 			// Some legacy/configured roots contain grouped or plugin-managed
 			// subtrees. We do not recursively walk them; record the coverage gap.
@@ -141,12 +153,14 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 			}
 			continue
 		}
-		if err == nil && !info.Mode().IsRegular() {
+		if err != nil || !bounds.allow(path) {
+			// Permission denied on the entry or its SKILL.md, or a SKILL.md that
+			// resolves outside the root's bounds: coverage gap.
 			uninspectedEntries++
 			continue
 		}
-		if err != nil {
-			// Permission denied on the entry or its SKILL.md: coverage gap.
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
 			uninspectedEntries++
 			continue
 		}
@@ -180,7 +194,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		payload["sha256"] = hash // hash of original bytes, before filtering
 		body := string(original)
 		if len(body) > maxSnapshotBodyBytes {
-			body = body[:maxSnapshotBodyBytes]
+			body = truncateUTF8(body, maxSnapshotBodyBytes)
 			payload["truncated"] = true
 		}
 		payload["snapshot"] = body
@@ -222,6 +236,70 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		Payload: inventoryPayload,
 	}}
 	return append(result, snapshots...), nil
+}
+
+// skillBounds decides which resolved SKILL.md paths one skill root may read.
+// Without it a SKILL.md, or the skill directory holding it, could be a
+// symlink to any file the collector can read, and a repository a person
+// merely cloned could ship .claude/skills/x/SKILL.md -> ~/.aws/credentials
+// to have that file archived with every session as a skill snapshot.
+//
+//   - A project-level root belongs to a repository, which is not trusted to
+//     name files outside itself. Its SKILL.md must resolve to a file inside
+//     the project root (symlinks resolved on both sides). Links within the
+//     repository keep working, such as .claude/skills/x -> ../../skills/x,
+//     which lets one skills directory serve several harnesses.
+//   - A user-level root is the person's own configuration, where linking a
+//     skill directory into a skills checkout elsewhere (~/.claude/skills/x ->
+//     ~/src/skills/x) is a supported way to install one. Its SKILL.md may
+//     resolve anywhere inside the root itself, or anywhere at all as long as
+//     the resolved file is itself named SKILL.md: a linked skill, not an
+//     arbitrary file under a skill's name.
+//
+// An entry that resolves outside its bounds counts as uninspected. The
+// bounds are checked on the resolved path, and the resolved path is what is
+// read; a symlink swapped in between the two is a race this does not close.
+type skillBounds struct {
+	// within is the resolved directory a SKILL.md may resolve inside, or ""
+	// when it could not be resolved.
+	within string
+	// linkedSkill allows a SKILL.md resolving anywhere if it is named SKILL.md.
+	linkedSkill bool
+}
+
+func newSkillBounds(root skillRoot) skillBounds {
+	base := root.path
+	if root.project != "" {
+		base = root.project
+	}
+	bounds := skillBounds{linkedSkill: root.project == ""}
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		bounds.within = resolved
+	}
+	return bounds
+}
+
+// allow reports whether a resolved SKILL.md path is inside the bounds.
+func (b skillBounds) allow(resolved string) bool {
+	if b.linkedSkill && strings.EqualFold(filepath.Base(resolved), "SKILL.md") {
+		return true
+	}
+	if b.within == "" {
+		return false
+	}
+	rel, err := filepath.Rel(b.within, resolved)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// truncateUTF8 returns at most n bytes of s without splitting a character.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 func inventoryObservation(harness, scope, rootStatus string, skills []any, complete bool, observedAt time.Time) archive.SupplementalEvidence {
