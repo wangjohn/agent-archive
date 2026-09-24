@@ -303,7 +303,11 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 	fmt.Fprintf(w, "%-*s%6s  %5s  %6s  %5d  %s\n", width, p.rowLabel(s), cells[0], cells[1], cells[2], s.Total(), status)
 	switch s.Kind {
 	case ProjectKindScratch:
-		fmt.Fprintln(w, "  Chats started without a folder. New ones will be captured too.")
+		if p.isCodexWorkspaces(s.Root) {
+			fmt.Fprintln(w, "  Chats in the workspaces Codex creates for them. New ones will be captured too.")
+		} else {
+			fmt.Fprintln(w, "  Chats started without a folder. New ones will be captured too.")
+		}
 	case ProjectKindHome:
 		if s.Included {
 			break
@@ -317,11 +321,20 @@ func (p Plan) rowLabel(s ProjectSummary) string {
 	label := p.display(s.Root)
 	if s.Kind == ProjectKindScratch {
 		label = "Claude desktop scratch chats"
+		if p.isCodexWorkspaces(s.Root) {
+			label = "Codex desktop workspaces"
+		}
 	}
 	if !s.Exists {
 		label += " (folder no longer exists)"
 	}
 	return label
+}
+
+// isCodexWorkspaces reports whether root is Codex desktop's workspace
+// folder, ~/Documents/Codex.
+func (p Plan) isCodexWorkspaces(root string) bool {
+	return p.display(root) == filepath.Join("~", "Documents", "Codex")
 }
 
 func countCell(n int) string {

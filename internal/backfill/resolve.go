@@ -31,10 +31,9 @@ type resolver struct {
 	filters Filters
 	// home and homeRaw are the home directory resolved and as given.
 	home, homeRaw string
-	// scratch holds the Claude desktop scratch-workspaces folder, resolved
-	// and as given.
-	scratch []string
-	temps   []string
+	// workspaces are the folders desktop apps start chats in (rule 5).
+	workspaces []workspaceFolder
+	temps      []string
 	// worktreeStores are the folders Codex and Cursor keep their worktrees
 	// in; a missing worktree there cannot be mapped to its repository.
 	worktreeStores []string
@@ -44,8 +43,9 @@ type resolver struct {
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
 	r := &resolver{env: env, cfg: cfg, filters: filters, homeRaw: filepath.Clean(env.Home), cache: map[string]resolution{}}
 	r.home = env.resolved(env.Home)
-	scratch := filepath.Join(env.Home, "Library", "Application Support", "Claude", "scratch-workspaces")
-	r.scratch = uniquePaths(filepath.Clean(scratch), env.resolved(scratch))
+	for _, folder := range workspaceFolders(env.Home) {
+		r.workspaces = append(r.workspaces, workspaceFolder{root: env.resolved(folder), forms: uniquePaths(filepath.Clean(folder), env.resolved(folder))})
+	}
 	for _, t := range env.tempDirs() {
 		if t != "" {
 			r.temps = append(r.temps, uniquePaths(filepath.Clean(t), env.resolved(t))...)
@@ -135,10 +135,12 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 		return resolution{root: repo, kind: ProjectKindRepository}
 	}
 
-	// Rule 5: Claude desktop scratch chats share one project, the
-	// scratch-workspaces folder.
-	if withinAny(dir, r.scratch) {
-		return resolution{root: r.env.resolved(r.scratch[0]), kind: ProjectKindScratch}
+	// Rule 5: chats a desktop app started in its own workspace folder share
+	// one project, that folder.
+	for _, ws := range r.workspaces {
+		if withinAny(dir, ws.forms) {
+			return resolution{root: ws.root, kind: ProjectKindScratch}
+		}
 	}
 
 	// Rule 6: temporary directories.
@@ -156,6 +158,32 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 
 	// Rule 8: anything else is its own project, whether or not it exists.
 	return resolution{root: dir, kind: ProjectKindDirectory}
+}
+
+// workspaceFolder is one desktop app's workspace folder: root is its
+// resolved path, forms are its spellings as given and resolved.
+type workspaceFolder struct {
+	root  string
+	forms []string
+}
+
+// workspaceFolders are the folders desktop apps start chats in, under home:
+// Claude desktop's scratch chats and Codex desktop's dated workspaces
+// (<date>/<name>).
+func workspaceFolders(home string) []string {
+	return []string{
+		filepath.Join(home, "Library", "Application Support", "Claude", "scratch-workspaces"),
+		filepath.Join(home, "Documents", "Codex"),
+	}
+}
+
+func (r *resolver) isWorkspaceFolder(resolved string) bool {
+	for _, ws := range r.workspaces {
+		if resolved == ws.root {
+			return true
+		}
+	}
+	return false
 }
 
 // configured applies rule 2 to dir.
@@ -318,7 +346,7 @@ func (r *resolver) worktreeMain(checkout, gitFile string) (string, bool) {
 func (r *resolver) kindOf(root string) ProjectKind {
 	resolved := r.env.resolved(root)
 	switch {
-	case resolved == r.env.resolved(r.scratch[0]):
+	case r.isWorkspaceFolder(resolved):
 		return ProjectKindScratch
 	case resolved == r.home:
 		return ProjectKindHome
