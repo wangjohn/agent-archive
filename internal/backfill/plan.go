@@ -34,6 +34,9 @@ type Plan struct {
 	// when CursorDatabaseChecked says the count was available.
 	CursorDatabaseOnly    int
 	CursorDatabaseChecked bool
+	// UnreadableFolders counts the folders in the apps' stores that could not
+	// be listed; the sessions in them were not found.
+	UnreadableFolders int
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string
@@ -144,10 +147,8 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		Harnesses:     append([]string(nil), cfg.Harnesses...),
 		resolvedHome:  env.resolved(env.Home),
 	}
-	found, err := discover(env)
-	if err != nil {
-		return Plan{}, fmt.Errorf("find sessions: %w", err)
-	}
+	found, unreadable := discover(env)
+	plan.UnreadableFolders = unreadable
 	workers := env.Workers
 	if workers <= 0 {
 		workers = defaultWorkers()
@@ -272,14 +273,9 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		if w.vanished {
 			continue
 		}
-		if w.c.StartedAt.IsZero() && w.state == "" {
-			// No record carried a timestamp, or the file was not read: the
-			// file's creation is the best start available.
-			if created, err := env.fileCreated(w.t.path); err == nil {
-				w.c.StartedAt, w.c.StartedAtSource = created.UTC(), archive.StartedAtSourceFileCreated
-			}
-		}
-		if dated && w.state == "" && !inRange(w.c.StartedAt, since, until) {
+		// A session without a start is not judged by the date filters: it is
+		// skipped for the reason that left it without one.
+		if dated && w.state == "" && !w.c.StartedAt.IsZero() && !inRange(w.c.StartedAt, since, until) {
 			w.filtered = true
 		}
 		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
@@ -296,7 +292,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	// parents; one that fails is left out and counted.
 	var subagents []*subagentWork
 	for _, w := range parents {
-		for _, sub := range claudeSubagents(env, w.t) {
+		for _, sub := range claudeSubagents(env, w.t, &plan.UnreadableFolders) {
 			subagents = append(subagents, &subagentWork{parent: w, sub: sub})
 		}
 	}
@@ -307,10 +303,15 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 		n := budget.acquire(s.sub.Bytes)
 		defer budget.release(n)
-		if _, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{}); err != nil {
+		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{})
+		if err != nil {
 			s.vanished = isNotExist(err)
 			s.skipped = !s.vanished
+			return
 		}
+		// The collector registers the subagent only if it passes these
+		// checks; observed now, it is observed no later at the import.
+		s.skipped = collector.CheckImportedSubagent(filtered, s.parent.c.NativeSessionID, s.sub.AgentID, s.parent.c.StartedAt, now) != nil
 	}); err != nil {
 		return Plan{}, err
 	}
@@ -363,10 +364,13 @@ func (w *work) reason(now time.Time) SkipReason {
 		SkipFilteredOut:      w.filtered,
 		SkipIdentityMismatch: w.t.identityMismatch,
 		SkipEmpty:            w.empty,
+		SkipUnsafeFormat:     w.unsafe,
+		SkipTooLarge:         w.tooLarge,
 		// A session that would register without a start time cannot be
-		// imported: the registration requires one.
-		SkipUnsafeFormat:  w.unsafe || (w.state == "" && w.c.StartedAt.IsZero()),
-		SkipTooLarge:      w.tooLarge,
+		// imported: the registration requires one. Only Cursor's start
+		// comes from the file; a Claude Code or Codex session gets its
+		// start from its records or not at all.
+		SkipStartUnknown:  w.state == "" && w.c.StartedAt.IsZero(),
 		SkipStartInFuture: w.c.StartedAt.After(now),
 	} {
 		applies[reason] = applies[reason] || set
@@ -421,8 +425,11 @@ func runAdapter(env Environment, w *work) {
 	case "claude":
 		// The file stem is the ID hooks register. A fork or resume can copy
 		// records carrying an earlier session's ID, so the stem must be among
-		// the records' IDs rather than the only one.
-		if len(filtered.SessionIDs) > 0 && !containsString(filtered.SessionIDs, w.t.nativeID) {
+		// the records' IDs rather than the only one. A conversation whose
+		// records carry no ID at all cannot be matched with a hook's
+		// registration either; a file with no conversation is reported as
+		// empty, which says more.
+		if (len(filtered.SessionIDs) > 0 || !w.empty) && !containsString(filtered.SessionIDs, w.t.nativeID) {
 			w.t.identityMismatch = true
 		}
 		if !filtered.NativeStartAt.IsZero() {
@@ -469,14 +476,10 @@ func carriesConversation(filtered archive.FilteredTranscript) bool {
 
 // claudeSubagents lists <slug>/<session>/subagents/agent-<id>.jsonl for an
 // imported Claude Code parent.
-func claudeSubagents(env Environment, t *transcript) []Subagent {
+func claudeSubagents(env Environment, t *transcript, unreadable *int) []Subagent {
 	dir := filepath.Join(filepath.Dir(t.path), t.nativeID, "subagents")
-	entries, err := readDirIfExists(env, dir)
-	if err != nil {
-		return nil
-	}
 	var subagents []Subagent
-	for _, e := range entries {
+	for _, e := range listDir(env, dir, unreadable) {
 		if !e.regular || !strings.HasPrefix(e.name, "agent-") || !strings.HasSuffix(e.name, ".jsonl") {
 			continue
 		}

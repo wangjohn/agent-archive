@@ -246,16 +246,32 @@ func TestSubagentChecks(t *testing.T) {
 	start := fixedNow.Add(-time.Hour)
 	tr.write(filepath.Join("home", claudeFile("s", "parent")), claudeTranscript("parent", repo, start))
 	dir := filepath.Join("home", ".claude", "projects", "s", "parent", "subagents")
-	tr.write(filepath.Join(dir, "agent-ok1.jsonl"), claudeTranscript("parent", repo, start))
+	tr.write(filepath.Join(dir, "agent-ok1.jsonl"), subagentTranscript("parent", "ok1", start.Add(time.Minute)))
 	tr.write(filepath.Join(dir, "agent-bad.jsonl"), `{"type":"file-history-snapshot","snapshot":{}}`+"\n")
-	big := tr.write(filepath.Join(dir, "agent-big.jsonl"), claudeTranscript("parent", repo, start))
+	big := tr.write(filepath.Join(dir, "agent-big.jsonl"), subagentTranscript("parent", "big", start))
 	if err := os.Truncate(big, archive.MaxRecordBytes+1); err != nil {
 		t.Fatal(err)
 	}
+	// Each of these reads cleanly, but the collector would refuse to
+	// register it, so it is not counted as imported either.
+	refused := map[string]string{
+		"empty":        "",
+		"no-agent-id":  claudeTranscript("parent", repo, start),
+		"wrong-agent":  subagentTranscript("parent", "someone-else", start),
+		"wrong-parent": subagentTranscript("another-session", "wrong-parent", start),
+		"no-time":      `{"type":"assistant","sessionId":"parent","agentId":"no-time","message":{"role":"assistant","content":"looked"}}` + "\n",
+		"part-time": subagentTranscript("parent", "part-time", start) +
+			`{"type":"assistant","sessionId":"parent","agentId":"part-time","message":{"role":"assistant","content":"more"}}` + "\n",
+		"before-parent": subagentTranscript("parent", "before-parent", start.Add(-time.Minute)),
+		"ends-later":    subagentTranscript("parent", "ends-later", fixedNow.Add(time.Minute)),
+	}
+	for id, body := range refused {
+		tr.write(filepath.Join(dir, "agent-"+id+".jsonl"), body)
+	}
 	p := plan(t, tr.env(), nil, config.Config{}, Filters{})
 	c := candidate(t, p, "parent")
-	if len(c.Subagents) != 1 || c.Subagents[0].AgentID != "ok1" || c.SubagentsSkipped != 2 || p.SubagentsSkipped() != 2 {
-		t.Fatalf("subagents %+v, skipped %d", c.Subagents, c.SubagentsSkipped)
+	if want := 2 + len(refused); len(c.Subagents) != 1 || c.Subagents[0].AgentID != "ok1" || c.SubagentsSkipped != want || p.SubagentsSkipped() != want {
+		t.Fatalf("subagents %+v, skipped %d, want %d", c.Subagents, c.SubagentsSkipped, want)
 	}
 }
 
@@ -298,7 +314,7 @@ func TestSkipReasonsGolden(t *testing.T) {
 				Subagents: []Subagent{{AgentID: "a1", Bytes: 1000}}, SubagentsSkipped: 1},
 			{Harness: "claude", ProjectRoot: "/Users/p", ProjectKind: ProjectKindHome, ProjectIncluded: true, ProjectExists: true, StartedAt: start, Bytes: 500},
 		},
-		CursorDatabaseOnly: 1, CursorDatabaseChecked: true,
+		CursorDatabaseOnly: 1, CursorDatabaseChecked: true, UnreadableFolders: 2,
 	}
 	for _, reason := range skipOrder {
 		harness := "claude"
@@ -313,7 +329,7 @@ func TestSkipReasonsGolden(t *testing.T) {
 	var out bytes.Buffer
 	RenderText(&out, p)
 	out.WriteString("\n--- cursor database not checked, --include-home set ---\n")
-	p.CursorDatabaseOnly, p.CursorDatabaseChecked, p.Filters.IncludeHome = 0, false, true
+	p.CursorDatabaseOnly, p.CursorDatabaseChecked, p.Filters.IncludeHome, p.UnreadableFolders = 0, false, true, 1
 	p.Candidates = p.Candidates[:2]
 	RenderText(&out, p)
 	golden := filepath.Join("testdata", "skip-reasons.txt")

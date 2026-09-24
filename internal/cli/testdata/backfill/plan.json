@@ -23,7 +23,7 @@
         "cursor": 1
       },
       "subagents": 2,
-      "bytes": 2596,
+      "bytes": 2626,
       "first_started_at": "2026-09-19T09:00:00Z",
       "last_started_at": "2026-09-21T09:00:00Z"
     },
@@ -103,5 +103,6 @@
   "expires_on": "2026-12-22",
   "storage_checked": false,
   "cursor_database_checked": false,
-  "subagents_skipped": 0
+  "subagents_skipped": 0,
+  "unreadable_folders": 0
 }

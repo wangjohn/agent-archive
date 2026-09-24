@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -33,25 +34,28 @@ type transcript struct {
 }
 
 // discover lists every transcript file in the three apps' default stores. It
-// only lists directories; nothing is opened here.
-func discover(env Environment) ([]*transcript, error) {
-	var found []*transcript
-	claude, err := discoverClaude(env)
+// only lists directories; nothing is opened here. A folder that cannot be
+// listed is passed over and counted in unreadable, so one bad folder never
+// stops the plan, and its path is never shown.
+func discover(env Environment) (found []*transcript, unreadable int) {
+	found = append(found, discoverClaude(env, &unreadable)...)
+	found = append(found, discoverCodex(env, &unreadable)...)
+	found = append(found, discoverCursor(env, &unreadable)...)
+	return found, unreadable
+}
+
+// listDir lists a folder of an app's store. A missing folder, or a path that
+// is not a folder, is empty; one that cannot be read is counted in unreadable
+// and treated as empty.
+func listDir(env Environment, dir string, unreadable *int) []dirEntry {
+	entries, err := readDirIfExists(env, dir)
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, syscall.ENOTDIR) {
+			*unreadable++
+		}
+		return nil
 	}
-	found = append(found, claude...)
-	codex, err := discoverCodex(env)
-	if err != nil {
-		return nil, err
-	}
-	found = append(found, codex...)
-	cursor, err := discoverCursor(env)
-	if err != nil {
-		return nil, err
-	}
-	found = append(found, cursor...)
-	return found, nil
+	return entries
 }
 
 // readDirIfExists lists dir, treating a missing directory as empty.
@@ -89,22 +93,14 @@ func fileSize(env Environment, path string) (int64, bool) {
 
 // discoverClaude finds ~/.claude/projects/*/*.jsonl. The file stem is the
 // native session ID.
-func discoverClaude(env Environment) ([]*transcript, error) {
+func discoverClaude(env Environment, unreadable *int) []*transcript {
 	root := filepath.Join(env.Home, ".claude", "projects")
-	slugs, err := readDirIfExists(env, root)
-	if err != nil {
-		return nil, err
-	}
 	var found []*transcript
-	for _, slug := range slugs {
+	for _, slug := range listDir(env, root, unreadable) {
 		if !slug.dir {
 			continue
 		}
-		files, err := readDirIfExists(env, filepath.Join(root, slug.name))
-		if err != nil {
-			return nil, err
-		}
-		for _, f := range files {
+		for _, f := range listDir(env, filepath.Join(root, slug.name), unreadable) {
 			if !f.regular || !strings.HasSuffix(f.name, ".jsonl") {
 				continue
 			}
@@ -116,27 +112,21 @@ func discoverClaude(env Environment) ([]*transcript, error) {
 			found = append(found, &transcript{harness: "claude", path: path, size: size, nativeID: strings.TrimSuffix(f.name, ".jsonl")})
 		}
 	}
-	return found, nil
+	return found
 }
 
 // discoverCodex finds ~/.codex/sessions/**/rollout-*.jsonl and
 // ~/.codex/archived_sessions/rollout-*.jsonl. A file in both is taken from
 // sessions/.
-func discoverCodex(env Environment) ([]*transcript, error) {
+func discoverCodex(env Environment, unreadable *int) []*transcript {
 	var found []*transcript
 	seen := map[string]bool{}
-	var walk func(dir string) error
-	walk = func(dir string) error {
-		entries, err := readDirIfExists(env, dir)
-		if err != nil {
-			return err
-		}
-		for _, e := range entries {
+	var walk func(dir string)
+	walk = func(dir string) {
+		for _, e := range listDir(env, dir, unreadable) {
 			path := filepath.Join(dir, e.name)
 			if e.dir {
-				if err := walk(path); err != nil {
-					return err
-				}
+				walk(path)
 				continue
 			}
 			if !e.regular || !isRolloutName(e.name) || seen[e.name] {
@@ -149,17 +139,10 @@ func discoverCodex(env Environment) ([]*transcript, error) {
 			seen[e.name] = true
 			found = append(found, &transcript{harness: "codex", path: path, size: size})
 		}
-		return nil
 	}
-	if err := walk(filepath.Join(env.Home, ".codex", "sessions")); err != nil {
-		return nil, err
-	}
+	walk(filepath.Join(env.Home, ".codex", "sessions"))
 	archived := filepath.Join(env.Home, ".codex", "archived_sessions")
-	entries, err := readDirIfExists(env, archived)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range entries {
+	for _, e := range listDir(env, archived, unreadable) {
 		if !e.regular || !isRolloutName(e.name) || seen[e.name] {
 			continue
 		}
@@ -171,7 +154,7 @@ func discoverCodex(env Environment) ([]*transcript, error) {
 		seen[e.name] = true
 		found = append(found, &transcript{harness: "codex", path: path, size: size})
 	}
-	return found, nil
+	return found
 }
 
 func isRolloutName(name string) bool {
@@ -184,25 +167,17 @@ func isRolloutName(name string) bool {
 // (collector.FilterTranscriptFile falls back to the text filter). The folder
 // name is the chat ID hooks register; the JSONL file wins when a chat has
 // both.
-func discoverCursor(env Environment) ([]*transcript, error) {
+func discoverCursor(env Environment, unreadable *int) []*transcript {
 	root := filepath.Join(env.Home, ".cursor", "projects")
-	slugs, err := readDirIfExists(env, root)
-	if err != nil {
-		return nil, err
-	}
 	var found []*transcript
-	for _, slug := range slugs {
+	for _, slug := range listDir(env, root, unreadable) {
 		if !slug.dir {
 			continue
 		}
 		dir := filepath.Join(root, slug.name, "agent-transcripts")
-		entries, err := readDirIfExists(env, dir)
-		if err != nil {
-			return nil, err
-		}
 		chats := map[string]*transcript{}
 		var order []string
-		for _, e := range entries {
+		for _, e := range listDir(env, dir, unreadable) {
 			var id, path string
 			switch {
 			case e.dir:
@@ -232,7 +207,7 @@ func discoverCursor(env Environment) ([]*transcript, error) {
 			found = append(found, chats[id])
 		}
 	}
-	return found, nil
+	return found
 }
 
 // readHead reads the leading records a transcript's identity and working
