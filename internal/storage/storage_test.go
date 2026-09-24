@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -88,7 +89,7 @@ func TestS3StoreFakeHTTPRoundTrip(t *testing.T) {
 	if err := store.Delete(context.Background(), "sessions/id/source"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Get(context.Background(), "sessions/id/source"); err != ErrNotFound {
+	if _, err := store.Get(context.Background(), "sessions/id/source"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing Get error = %v", err)
 	}
 }

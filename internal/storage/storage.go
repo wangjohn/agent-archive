@@ -150,7 +150,7 @@ func setupKeyLabel(store ObjectStore, key string) string {
 
 func withCleanupError(primary error, cleanup func() error, label string) error {
 	if cleanupErr := cleanup(); cleanupErr != nil {
-		return fmt.Errorf("%w; setup test cleanup %s also failed: %v", primary, label, cleanupErr)
+		return fmt.Errorf("%w; setup test cleanup %s also failed: %w", primary, label, cleanupErr)
 	}
 	return primary
 }

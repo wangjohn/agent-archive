@@ -66,7 +66,7 @@ func readOrQuarantine[T any](s *LocalStore, path, lockName string) (value T, fou
 	}
 	unlock, lockErr := local.NamedLockWait(s.home, lockName, time.Second)
 	if lockErr != nil {
-		return value, false, fmt.Errorf("%w (and it could not be locked to move it aside: %v)", err, lockErr)
+		return value, false, fmt.Errorf("%w (and it could not be locked to move it aside: %w)", err, lockErr)
 	}
 	defer unlock()
 	value, found, err = readJSON[T](path)
@@ -79,10 +79,10 @@ func readOrQuarantine[T any](s *LocalStore, path, lockName string) (value T, fou
 	}
 	aside := quarantinePath(path)
 	if renameErr := os.Rename(path, aside); renameErr != nil {
-		return value, false, fmt.Errorf("%w (and it could not be moved aside: %v)", err, renameErr)
+		return value, false, fmt.Errorf("%w (and it could not be moved aside: %w)", err, renameErr)
 	}
 	pruneQuarantine(path)
-	return value, false, fmt.Errorf("%w: %s did not decode (%v) and is now %s", ErrQuarantined, rel, err, filepath.Join(filepath.Dir(rel), filepath.Base(aside)))
+	return value, false, fmt.Errorf("%w: %s did not decode (%w) and is now %s", ErrQuarantined, rel, err, filepath.Join(filepath.Dir(rel), filepath.Base(aside)))
 }
 
 // quarantineKeep is how many quarantined copies of one file are kept. A file

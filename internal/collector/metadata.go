@@ -43,38 +43,15 @@ func (s *LocalStore) loadPublishedMetadata(id string) ([]byte, error) {
 // the session, because the next content change publishes current-parser
 // metadata anyway. Only the publish attempt itself reports errors.
 func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, now time.Time, opts Options) (sessionOutcome, bool, error) {
-	// Only the real last publication is a valid source: a blocked, declined,
-	// or rate-limited candidate cached alongside it was never made
-	// discoverable, so a blocked session without one has nothing to refresh.
-	bundle, _, found, err := store.LoadLastPublished(reg.ArchiveSessionID)
-	if err != nil || !found {
-		return outcomeSkipped, false, err
-	}
-	encoded, err := store.loadPublishedMetadata(reg.ArchiveSessionID)
-	if err != nil {
-		return outcomeSkipped, false, err
-	}
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	legacy := len(encoded) == 0
-	if legacy {
-		// One-time migration for publications made before metadata was cached.
-		// A missing or unreachable copy is not fatal: nothing can be refreshed
-		// from it, and normal capture keeps working without it.
-		encoded, err = remote.Get(ctx, key)
-		if err != nil {
-			return outcomeSkipped, false, nil
-		}
+	last, ok, err := loadLastPublication(ctx, store, remote, reg, key, opts)
+	if err != nil || !ok {
+		return outcomeSkipped, false, err
 	}
-	var prior archive.Metadata
-	if err := json.Unmarshal(encoded, &prior); err != nil {
-		return outcomeSkipped, false, nil
-	}
-	if prior.SessionID != reg.ArchiveSessionID || prior.MachineID != opts.MachineID || prior.ValidateSourceReference() != nil {
-		return outcomeSkipped, false, nil
-	}
+	bundle, prior, encoded, legacy := last.bundle, last.metadata, last.encoded, last.legacy
 	sameParser := prior.Parser.Version == opts.parserVersion()
 	if sameParser && !legacy {
 		return outcomeSkipped, false, nil
@@ -98,33 +75,11 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	} else if found && skipped.ParserVersion == opts.parserVersion() && skipped.SourceKey == prior.SourceBundle.Key {
 		return outcomeSkipped, false, nil
 	}
-	// The source the refreshed metadata points at:
-	//   - This build reproduces the uploaded source's exact bytes: they are
-	//     carried, so the source is re-uploaded if it has gone missing.
-	//   - It builds the retained bundle, but to other bytes (a compressor
-	//     change): those bytes are published as a new source, which supersedes
-	//     the old one. The remote is repaired whatever state the old object is
-	//     in, and from then on the recorded source is one this build reproduces.
-	//   - It cannot build the bundle at all (a source schema bump): only the
-	//     recorded reference is carried, and the source is checked in storage
-	//     against it (see publishPending).
-	var source struct {
-		ref   archive.SourceReference
-		bytes []byte
-	}
-	if compressed, err := archive.BuildCompressedSource(bundle); err == nil {
-		if key, err := archive.SourceObjectKey(bundle, compressed.SHA256); err == nil {
-			source.ref = archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
-			source.bytes = compressed.Bytes
-		}
-	}
-	if source.bytes == nil {
-		if !known {
-			// Neither the bytes nor a recorded reference: nothing to publish
-			// against. The next content change publishes current metadata.
-			return outcomeSkipped, false, nil
-		}
-		source.ref = uploaded
+	source, ok := chooseRefreshSource(bundle, uploaded, known)
+	if !ok {
+		// Neither the bytes nor a recorded reference: nothing to publish
+		// against. The next content change publishes current metadata.
+		return outcomeSkipped, false, nil
 	}
 	// Cache before any early return below, so a legacy publication is
 	// migrated exactly once rather than re-read on every scan.
@@ -175,6 +130,79 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	}
 	outcome, err := publishPending(ctx, store, remote, reg.ArchiveSessionID, pending, now, opts)
 	return outcome, true, err
+}
+
+// lastPublication is what regenerateMetadata refreshes: the last published
+// bundle and the metadata document published with it.
+type lastPublication struct {
+	bundle   archive.SourceBundle
+	metadata archive.Metadata
+	encoded  []byte
+	// legacy means no metadata was cached locally and encoded is the copy
+	// read from storage (publications made before metadata was cached).
+	legacy bool
+}
+
+// loadLastPublication loads a session's last publication for a refresh. ok
+// is false when there is nothing usable to refresh: nothing was ever
+// published (a blocked, declined, or rate-limited candidate cached alongside
+// it was never made discoverable), or the metadata is unreadable, missing
+// from storage, or describes another session, machine, or source.
+func loadLastPublication(ctx context.Context, store *LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, metadataKey string, opts Options) (lastPublication, bool, error) {
+	bundle, _, found, err := store.LoadLastPublished(reg.ArchiveSessionID)
+	if err != nil || !found {
+		return lastPublication{}, false, err
+	}
+	encoded, err := store.loadPublishedMetadata(reg.ArchiveSessionID)
+	if err != nil {
+		return lastPublication{}, false, err
+	}
+	legacy := len(encoded) == 0
+	if legacy {
+		// One-time migration for publications made before metadata was cached.
+		// A missing or unreachable copy is not fatal: nothing can be refreshed
+		// from it, and normal capture keeps working without it.
+		if encoded, err = remote.Get(ctx, metadataKey); err != nil {
+			return lastPublication{}, false, nil
+		}
+	}
+	var metadata archive.Metadata
+	if err := json.Unmarshal(encoded, &metadata); err != nil {
+		return lastPublication{}, false, nil
+	}
+	if metadata.SessionID != reg.ArchiveSessionID || metadata.MachineID != opts.MachineID || metadata.ValidateSourceReference() != nil {
+		return lastPublication{}, false, nil
+	}
+	return lastPublication{bundle: bundle, metadata: metadata, encoded: encoded, legacy: legacy}, true, nil
+}
+
+// refreshSource is the source a refreshed metadata document points at, and
+// the bytes to publish it with, if this build has them.
+type refreshSource struct {
+	ref   archive.SourceReference
+	bytes []byte
+}
+
+// chooseRefreshSource picks the source a metadata refresh points at:
+//   - This build reproduces the uploaded source's exact bytes: they are
+//     carried, so the source is re-uploaded if it has gone missing.
+//   - It builds the retained bundle, but to other bytes (a compressor
+//     change): those bytes are published as a new source, which supersedes
+//     the old one. The remote is repaired whatever state the old object is
+//     in, and from then on the recorded source is one this build reproduces.
+//   - It cannot build the bundle at all (a source schema bump): only the
+//     recorded reference (uploaded, when known) is carried, and the source is
+//     checked in storage against it (see publishPending).
+//
+// ok is false when it has neither bytes nor a recorded reference.
+func chooseRefreshSource(bundle archive.SourceBundle, uploaded archive.SourceReference, known bool) (refreshSource, bool) {
+	if compressed, err := archive.BuildCompressedSource(bundle); err == nil {
+		if key, err := archive.SourceObjectKey(bundle, compressed.SHA256); err == nil {
+			ref := archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
+			return refreshSource{ref: ref, bytes: compressed.Bytes}, true
+		}
+	}
+	return refreshSource{ref: uploaded}, known
 }
 
 // liveTranscriptChanged reports whether normal capture will publish this

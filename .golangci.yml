@@ -191,15 +191,3 @@ linters:
       - path: internal/cli/prompt\.go
         text: (help|lines) is unused
         linters: [unused]
-      #
-      # TODO(W1-B, fix/collector-durability): collector, storage, local.
-      - path: internal/local/files\.go
-        text: syscall.Flock
-        linters: [errcheck]
-      - path: internal/(local/files|collector/register_race)_test\.go
-        linters: [errcheck]
-      - path: internal/(local/files|collector/collector|storage/storage)_test\.go
-        linters: [errorlint]
-      - path: internal/storage/storage\.go
-        text: non-wrapping format verb
-        linters: [errorlint]

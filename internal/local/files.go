@@ -249,7 +249,7 @@ func lockOpened(path string, f *os.File) (release func(), current bool, e error)
 		}
 		return nil, false, e
 	}
-	release = func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }
+	release = func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }
 	locked, e := f.Stat()
 	if e != nil {
 		release()
