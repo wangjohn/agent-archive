@@ -324,9 +324,10 @@ func readStatus(env Env) (view statusView, err error) {
 	if err != nil {
 		return view, err
 	}
+	// One unreadable import file must not hide the rest of status.
 	batches, err := backfill.LoadBatches(home)
 	if err != nil {
-		return view, err
+		view.Warnings = append(view.Warnings, err.Error())
 	}
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID

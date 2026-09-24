@@ -18,7 +18,8 @@ import (
 )
 
 // backfillCheckpoint, when set, is called after the configuration commit
-// ("committed") and after each registration hold ("registered"). A test
+// ("committed"), after each registration hold ("registered"), and before
+// the upload ("uploading"). A test
 // returns an error from it to stop the import there, as a crash would.
 var backfillCheckpoint func(step string) error
 
@@ -71,6 +72,11 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 		return fail("%v", err)
 	}
 
+	// Ctrl-C from here on stops between registration holds, or before the
+	// next session uploads. After the first, a second one quits at once.
+	interrupt := newInterruption(env)
+	defer interrupt.release()
+
 	// Step 5: register, in short holds of hooks.lock.
 	store, err := collector.NewLocalStore(home)
 	if err != nil {
@@ -87,17 +93,22 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 			}
 			return checkpoint("registered")
 		},
+		Stop: interrupt.requested,
 	}
 	result, err := registration.Run(candidates)
 	if err != nil {
-		if errors.Is(err, backfill.ErrPaused) {
-			return fail("%v", err)
+		// Whatever the last hold registered is in the store even if the
+		// batch file missed it; record it before stopping.
+		if reconcileErr := batch.Reconcile(store); reconcileErr == nil {
+			_ = backfill.SaveBatch(home, batch)
 		}
-		return fail("%v. %s registered before this; run agent-archive backfill again to finish.", err, countNoun(len(result.Sessions), "session"))
+		if errors.Is(err, backfill.ErrStopped) {
+			fmt.Fprintf(stdout, "Stopped. %s registered as import %s; run agent-archive backfill again with the same options to finish it.\n", countNoun(len(result.Sessions), "session"), batch.ID)
+			return 1
+		}
+		return fail("%v. %s registered before this; run agent-archive backfill again with the same options to finish.", err, countNoun(len(result.Sessions), "session"))
 	}
-	completed := env.now().UTC()
-	batch.CompletedAt = &completed
-	if err := backfill.SaveBatch(home, batch); err != nil {
+	if err := completeBatch(env, home, store, &batch); err != nil {
 		return fail("%v", err)
 	}
 	releaseCollector()
@@ -109,8 +120,74 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 		return 0
 	}
 	// Step 6: upload.
-	return uploadImport(env, stdout, stderr, home, batch.ID, plan)
+	if err := checkpoint("uploading"); err != nil {
+		return fail("%v", err)
+	}
+	return uploadImport(env, stdout, stderr, home, batch.ID, plan, interrupt)
 }
+
+// completeBatch rebuilds the batch's sessions from the registrations, which
+// are the source of truth, and marks it complete.
+func completeBatch(env Env, home string, store *collector.LocalStore, batch *backfill.Batch) error {
+	if err := batch.Reconcile(store); err != nil {
+		return err
+	}
+	completed := env.now().UTC()
+	batch.CompletedAt = &completed
+	return backfill.SaveBatch(home, *batch)
+}
+
+// finishInterruptedBatch completes the latest import when it was
+// interrupted, a run with the same options finds nothing left to import,
+// and so no later run would ever complete it.
+func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfill.Plan, cfg config.Config) error {
+	batches, err := backfill.LoadBatches(home)
+	if err != nil || len(batches) == 0 {
+		return err
+	}
+	last := batches[len(batches)-1]
+	if last.CompletedAt != nil || !last.Matches(plan.BatchFilters(), backfill.DestinationID(cfg.Storage)) {
+		return nil
+	}
+	release, err := local.NamedLock(home, "setup.lock")
+	if err != nil {
+		return errors.New("setup or another backfill is running; run backfill again when it finishes")
+	}
+	defer release()
+	if err := completeBatch(env, home, collector.OpenLocalStoreReadOnly(home), &last); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
+	return nil
+}
+
+// interruption watches for Ctrl-C. The first one is recorded and stops the
+// watch, so a second one ends the process as usual.
+type interruption struct {
+	signals <-chan os.Signal
+	stop    func()
+	seen    bool
+}
+
+func newInterruption(env Env) *interruption {
+	signals, stop := env.interrupts()
+	return &interruption{signals: signals, stop: releaseOnce(stop)}
+}
+
+// requested reports whether Ctrl-C has been pressed. It never blocks.
+func (i *interruption) requested() bool {
+	if !i.seen {
+		select {
+		case <-i.signals:
+			i.seen = true
+			i.stop()
+		default:
+		}
+	}
+	return i.seen
+}
+
+func (i *interruption) release() { i.stop() }
 
 // commitImport is step 4. With collector.lock held, it takes hooks.lock,
 // rereads the configuration, and checks that it is the one the plan was made
@@ -142,8 +219,12 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err := backfill.CheckClock(cfg, plan, admittedAt); err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
-	batch, err = backfill.OpenBatch(home, backfill.NewBatchFilters(plan.Filters), backfill.DestinationID(cfg.Storage), now)
+	batch, err = backfill.OpenBatch(home, plan.BatchFilters(), backfill.DestinationID(cfg.Storage), now)
 	if err != nil {
+		return batch, admittedAt, 0, err
+	}
+	// A continued import may have registered sessions its file missed.
+	if err := batch.Reconcile(collector.OpenLocalStoreReadOnly(home)); err != nil {
 		return batch, admittedAt, 0, err
 	}
 	projects, apps := backfill.ApplyToConfig(&cfg, plan, admittedAt)
@@ -180,8 +261,14 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 	if n := result.NotAdmitted; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d no longer accepted by the setup", n))
 	}
+	if n := result.Invalid; n > 0 {
+		skipped = append(skipped, fmt.Sprintf("%d that could not be registered", n))
+	}
+	if n := result.SubagentsInvalid; n > 0 {
+		skipped = append(skipped, fmt.Sprintf("%s that conflict with one recorded earlier", countNoun(n, "subagent transcript")))
+	}
 	if len(skipped) > 0 {
-		fmt.Fprintf(out, "Changed since the plan, and not registered: %s.\n", strings.Join(skipped, ", "))
+		fmt.Fprintf(out, "Not registered: %s.\n", strings.Join(skipped, ", "))
 	}
 }
 
@@ -198,7 +285,7 @@ const uploadBusyGiveUp = 2 * time.Minute
 // session of the batch has work left or a pass makes no progress. Ctrl-C
 // ends the pass after the session in flight; what is left is uploaded by
 // the background collector.
-func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan) int {
+func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *interruption) int {
 	sizes := map[string]int64{}
 	for _, c := range plan.Candidates {
 		size := c.Bytes
@@ -212,19 +299,9 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
 		return 1
 	}
-	signals, stopSignals := env.interrupts()
-	defer stopSignals()
 	// Ctrl-C is looked for before each session and between passes, so the
 	// session in flight always finishes.
-	interrupted := false
-	stop := func() bool {
-		select {
-		case <-signals:
-			interrupted = true
-		default:
-		}
-		return interrupted
-	}
+	stop := interrupt.requested
 
 	var passErr error
 	lastProgress := time.Now()
@@ -243,10 +320,8 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 			if time.Since(lastProgress) > uploadBusyGiveUp {
 				break
 			}
-			select {
-			case <-time.After(2 * time.Second):
-			case <-signals:
-				interrupted = true
+			for wait := 0; wait < 20 && !stop(); wait++ {
+				time.Sleep(100 * time.Millisecond)
 			}
 			continue
 		}
@@ -266,7 +341,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	switch {
 	case len(u.pending) == 0:
 		fmt.Fprintf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
-	case interrupted:
+	case interrupt.seen:
 		fmt.Fprintf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", countNoun(len(u.pending), "session"))
 	case errors.Is(passErr, errPaused):
 		fmt.Fprintf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", countNoun(len(u.pending), "session"))
@@ -274,7 +349,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		fmt.Fprintf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", countNoun(len(u.pending), "session"))
 	}
 	printImportHints(stdout, batchID)
-	if interrupted || errors.Is(passErr, errPaused) {
+	if interrupt.seen || errors.Is(passErr, errPaused) {
 		return 0
 	}
 	if passErr != nil {
@@ -399,10 +474,10 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	batches, err := backfill.LoadBatches(home)
 	if err != nil {
+		// An unreadable import file is named; the others are still listed.
 		fmt.Fprintf(stderr, "agent-archive: backfill history: %v\n", err)
-		return 1
 	}
-	if len(batches) == 0 {
+	if len(batches) == 0 && err == nil {
 		fmt.Fprintln(stdout, "No imports yet. Run agent-archive backfill --dry-run to see what an import would do.")
 		return 0
 	}
@@ -415,8 +490,8 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "IMPORT\tSTARTED\tSESSIONS\tPROJECTS ADDED\tUPLOAD")
 	loc := env.now().Location()
-	for _, b := range batches {
-		state, err := batchUploadState(store, cfg, regs, b)
+	for i, b := range batches {
+		state, err := batchUploadState(store, cfg, regs, b, i == len(batches)-1)
 		if err != nil {
 			fmt.Fprintf(stderr, "agent-archive: backfill history: %v\n", err)
 			return 1
@@ -430,13 +505,11 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 	return 0
 }
 
-// batchUploadState is history's UPLOAD column: interrupted, removed (none
-// of its sessions is registered any more), how many are waiting, or
-// uploaded.
-func batchUploadState(store *collector.LocalStore, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch) (string, error) {
-	if b.CompletedAt == nil {
-		return "interrupted; run agent-archive backfill to finish", nil
-	}
+// batchUploadState is history's UPLOAD column: interrupted, nothing
+// registered, removed (none of its sessions is registered any more), how
+// many are waiting, or uploaded. Only the latest import can still be
+// finished by running backfill again.
+func batchUploadState(store *collector.LocalStore, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
 	registered, waiting := 0, 0
 	for _, reg := range regs {
 		if reg.ImportBatch != b.ID || reg.ParentSessionID != "" {
@@ -452,7 +525,13 @@ func batchUploadState(store *collector.LocalStore, cfg config.Config, regs []arc
 		}
 	}
 	switch {
-	case registered == 0 && len(b.Sessions) > 0:
+	case b.CompletedAt == nil && latest:
+		return fmt.Sprintf("interrupted; %d registered; run agent-archive backfill with the same options to finish", registered), nil
+	case b.CompletedAt == nil:
+		return fmt.Sprintf("interrupted; %d registered", registered), nil
+	case len(b.Sessions) == 0:
+		return "nothing registered", nil
+	case registered == 0:
 		return "removed", nil
 	case waiting > 0:
 		return fmt.Sprintf("%d waiting", waiting), nil

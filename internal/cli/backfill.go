@@ -72,8 +72,8 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if *jsonOut && !*dryRun {
 		return usageError("--json applies only to --dry-run")
 	}
-	if *dryRun && (*yes || *background) {
-		return usageError("--yes and --background apply only to an import, not --dry-run")
+	if *dryRun && *background {
+		return usageError("--background applies only to an import, not --dry-run")
 	}
 
 	home, err := env.readHome()
@@ -137,6 +137,10 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if len(plan.Imported()) == 0 {
 		fmt.Fprintln(stdout)
 		backfill.RenderText(stdout, plan)
+		if err := finishInterruptedBatch(env, stdout, home, plan, cfg); err != nil {
+			fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
+			return 1
+		}
 		return 0
 	}
 

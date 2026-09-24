@@ -37,6 +37,9 @@ type Plan struct {
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string
+	// projectFilter holds the --project directories, resolved as the plan
+	// compared them.
+	projectFilter []string
 }
 
 // Destination names the bucket imports go to.
@@ -207,6 +210,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 		projectFilter = append(projectFilter, env.resolved(p))
 	}
+	plan.projectFilter = projectFilter
 	since, until := dateRange(filters, now.Location())
 
 	sessions := map[string][]*work{}

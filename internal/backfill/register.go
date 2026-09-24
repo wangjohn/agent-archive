@@ -12,8 +12,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// ErrPaused stops registration when collection was paused while it ran.
-var ErrPaused = errors.New("collection was paused during the import; run agent-archive resume, then agent-archive backfill to finish it")
+// ErrStopped is returned when Stop asked registration to end early.
+var ErrStopped = errors.New("registration stopped")
 
 // Hooks wait at most one second for hooks.lock and then drop their event, so
 // registration holds it only briefly: at most maxHoldSteps steps or
@@ -29,7 +29,9 @@ const (
 // Registration is step 5 of an import: it registers the confirmed plan's
 // sessions, in short holds of hooks.lock. The caller holds setup.lock and
 // collector.lock throughout, so no collector pass runs between a session's
-// subagent candidates and its registration.
+// subagent candidates and its registration. Holding collector.lock also
+// keeps `pause` out (it takes that lock), so collection cannot be paused
+// while registration runs; each hold still rereads the configuration.
 type Registration struct {
 	Home       string
 	Store      *collector.LocalStore
@@ -42,6 +44,9 @@ type Registration struct {
 	// sessions and subagents registered during it. The CLI appends them to
 	// the batch file. An error stops registration.
 	AfterHold func(sessions, subagents []string) error
+	// Stop, when set, is checked between holds; once it reports true, Run
+	// returns ErrStopped. Ctrl-C ends registration this way.
+	Stop func() bool
 }
 
 // RegistrationResult counts what registration did with the plan's sessions.
@@ -57,6 +62,10 @@ type RegistrationResult struct {
 	// NotAdmitted counts sessions the configuration stopped accepting after
 	// the plan, for example because their project was excluded.
 	NotAdmitted int
+	// Invalid counts sessions whose registration would not be valid, and
+	// SubagentsInvalid subagents whose candidate conflicts with an earlier
+	// one or is incomplete. Neither stops the import.
+	Invalid, SubagentsInvalid int
 }
 
 // parentWork is one imported session in progress. Its subagent candidates
@@ -88,6 +97,9 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		return r.AfterHold(sessions, subagents)
 	}
 	for i := 0; i < len(works); {
+		if r.Stop != nil && r.Stop() {
+			return result, ErrStopped
+		}
 		err := r.hold(works, &i, &result)
 		if flushErr := flush(); err == nil {
 			err = flushErr
@@ -106,8 +118,11 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 // candidates from *i until the hold's budget is spent.
 func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResult) error {
 	unlock, err := local.NamedLockWait(r.Home, "hooks.lock", hooksLockWait)
+	if errors.Is(err, local.ErrBusy) {
+		return fmt.Errorf("capture hooks held hooks.lock for %s", hooksLockWait)
+	}
 	if err != nil {
-		return fmt.Errorf("wait for capture hooks: %w", err)
+		return fmt.Errorf("lock capture hooks: %w", err)
 	}
 	defer unlock()
 	cfg, found, err := config.Load(r.Home)
@@ -116,9 +131,6 @@ func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResu
 	}
 	if !found {
 		return errors.New("the configuration disappeared during the import")
-	}
-	if cfg.Paused {
-		return ErrPaused
 	}
 	limit := maxHoldSteps
 	if r.MaxHoldSteps > 0 {
@@ -143,6 +155,10 @@ func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResu
 func (r Registration) step(cfg config.Config, w *parentWork, result *RegistrationResult) (done bool, err error) {
 	c := w.c
 	if w.id == "" {
+		if err := r.registration(c, "check").Validate(); err != nil {
+			result.Invalid++
+			return true, nil
+		}
 		skip, err := r.skip(cfg, c, &result.AlreadyArchived, &result.Gone, &result.NotAdmitted)
 		if err != nil || skip {
 			return true, err
@@ -153,7 +169,12 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 	if w.next < len(c.Subagents) {
 		sub := c.Subagents[w.next]
 		w.next++
-		return false, r.subagent(w, sub)
+		err := r.subagent(w, sub)
+		if errors.Is(err, collector.ErrSubagentCandidateConflict) || errors.Is(err, collector.ErrSubagentCandidateIncomplete) {
+			result.SubagentsInvalid++
+			err = nil
+		}
+		return false, err
 	}
 	// The configuration may have changed since the session was checked, in
 	// an earlier hold.

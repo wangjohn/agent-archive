@@ -631,9 +631,19 @@ func requestFor(store *collector.LocalStore, id string) (collector.Request, bool
 func TestBackfillInterruptedUpload(t *testing.T) {
 	f, _ := newImportFixture(t)
 	signals := make(chan os.Signal, 1)
-	signals <- os.Interrupt
-	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+	stopped := 0
+	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() { stopped++ } }
+	backfillCheckpoint = func(step string) error {
+		if step == "uploading" {
+			signals <- os.Interrupt
+		}
+		return nil
+	}
+	t.Cleanup(func() { backfillCheckpoint = nil })
 	out, errOut, code := f.importRun(t, nil, false, "--yes")
+	if stopped != 1 {
+		t.Errorf("signal watch stopped %d times; the first Ctrl-C must hand the next one back", stopped)
+	}
 	if code != 0 || !strings.Contains(out, "Stopped. The remaining 11 sessions will be uploaded by the background collector.") || !strings.Contains(out, "list --imported") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}

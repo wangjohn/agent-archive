@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -57,23 +58,64 @@ type BatchFilters struct {
 	IncludeRemoved bool     `json:"include_removed"`
 }
 
-// NewBatchFilters records f without paths.
-func NewBatchFilters(f Filters) BatchFilters {
+// BatchFilters records the plan's filters without paths. A --project
+// directory is named by the project ID of its resolved path, as the plan
+// compared it, so the same folder typed two ways continues the same batch.
+func (p Plan) BatchFilters() BatchFilters {
+	f := p.Filters
 	out := BatchFilters{
 		Harnesses: []string{}, ProjectIDs: []string{},
 		Since: f.Since, Until: f.Until,
 		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
 	}
 	for _, h := range f.Harnesses {
-		out.Harnesses = append(out.Harnesses, canonicalHarness(h))
+		out.Harnesses = addUnique(out.Harnesses, canonicalHarness(h))
 	}
-	for _, dir := range f.Projects {
-		if abs, err := filepath.Abs(dir); err == nil {
-			dir = abs
-		}
-		out.ProjectIDs = append(out.ProjectIDs, archive.ProjectID(dir))
+	sort.Strings(out.Harnesses)
+	for _, dir := range p.projectFilter {
+		out.ProjectIDs = addUnique(out.ProjectIDs, archive.ProjectID(dir))
 	}
+	sort.Strings(out.ProjectIDs)
 	return out
+}
+
+// Reconcile rebuilds the batch's sessions from the local store, which is the
+// source of truth: every registration carrying the batch's ID, and every
+// imported subagent candidate of those sessions. A crash inside a
+// registration hold registers sessions the batch file never heard of.
+func (b *Batch) Reconcile(store *collector.LocalStore) error {
+	regs, err := store.LoadRegistrations()
+	if err != nil {
+		return err
+	}
+	parents := map[string]bool{}
+	for _, reg := range regs {
+		if reg.ImportBatch != b.ID {
+			continue
+		}
+		if reg.ParentSessionID != "" {
+			b.Subagents = addUnique(b.Subagents, reg.ArchiveSessionID)
+		} else {
+			b.Sessions = addUnique(b.Sessions, reg.ArchiveSessionID)
+			parents[reg.ArchiveSessionID] = true
+		}
+	}
+	candidates, err := store.LoadSubagentCandidates()
+	if err != nil {
+		return err
+	}
+	for _, c := range candidates {
+		if parents[c.ParentArchiveSessionID] && c.Origin == archive.SessionOriginImport {
+			b.Subagents = addUnique(b.Subagents, c.ArchiveSessionID)
+		}
+	}
+	return nil
+}
+
+// Matches reports whether a run with these filters and destination
+// continues the batch.
+func (b Batch) Matches(filters BatchFilters, destinationID string) bool {
+	return b.Filters.equal(filters) && b.DestinationID == destinationID
 }
 
 func (f BatchFilters) equal(o BatchFilters) bool {
@@ -97,7 +139,10 @@ func batchDir(home string) string { return filepath.Join(home, "imports") }
 
 func batchPath(home, id string) string { return filepath.Join(batchDir(home), id+".json") }
 
-// LoadBatches returns every import batch, oldest first.
+// LoadBatches returns every readable import batch, oldest first. A batch
+// file that cannot be read is left out and named in err, which is returned
+// alongside the batches that could be read: a caller that only reports on
+// imports can go on, one that must see every batch treats err as fatal.
 func LoadBatches(home string) ([]Batch, error) {
 	entries, err := os.ReadDir(batchDir(home))
 	if errors.Is(err, os.ErrNotExist) {
@@ -107,13 +152,15 @@ func LoadBatches(home string) ([]Batch, error) {
 		return nil, fmt.Errorf("list imports: %w", err)
 	}
 	var out []Batch
+	var unreadable []error
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
 		var b Batch
 		if err := local.Read(filepath.Join(batchDir(home), e.Name()), &b); err != nil {
-			return nil, fmt.Errorf("read import %q: %w", strings.TrimSuffix(e.Name(), ".json"), err)
+			unreadable = append(unreadable, fmt.Errorf("read import %q: %w", strings.TrimSuffix(e.Name(), ".json"), err))
+			continue
 		}
 		out = append(out, b)
 	}
@@ -123,7 +170,7 @@ func LoadBatches(home string) ([]Batch, error) {
 		}
 		return out[i].ID < out[j].ID
 	})
-	return out, nil
+	return out, errors.Join(unreadable...)
 }
 
 // SaveBatch durably writes b, replacing any earlier version.
@@ -149,7 +196,7 @@ func OpenBatch(home string, filters BatchFilters, destinationID string, now time
 	}
 	if n := len(batches); n > 0 {
 		last := batches[n-1]
-		if last.CompletedAt == nil && last.Filters.equal(filters) && last.DestinationID == destinationID {
+		if last.CompletedAt == nil && last.Matches(filters, destinationID) {
 			return last, nil
 		}
 	}

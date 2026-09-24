@@ -32,6 +32,15 @@ type SubagentCandidate struct {
 	Origin archive.SessionOrigin `json:"origin,omitempty"`
 }
 
+var (
+	// ErrSubagentCandidateIncomplete: a candidate is missing a required field.
+	ErrSubagentCandidateIncomplete = errors.New("subagent candidate is incomplete")
+	// ErrSubagentCandidateConflict: an earlier candidate for the same
+	// archive ID has a different path or owner, which a later one never
+	// replaces.
+	ErrSubagentCandidateConflict = errors.New("subagent candidate ownership changed")
+)
+
 func (s *LocalStore) subagentCandidatePath(id string) string {
 	return filepath.Join(s.home, "subagent-candidates", id+".json")
 }
@@ -40,7 +49,7 @@ func (s *LocalStore) subagentCandidatePath(id string) string {
 // a later event to replace the path or ownership established by the first.
 func (s *LocalStore) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || candidate.ParentArchiveSessionID == "" || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
-		return errors.New("subagent candidate is incomplete")
+		return ErrSubagentCandidateIncomplete
 	}
 	unlock, err := s.lockSubagentCandidate(candidate.ArchiveSessionID)
 	if err != nil {
@@ -51,7 +60,7 @@ func (s *LocalStore) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	var prior SubagentCandidate
 	if err := local.Read(path, &prior); err == nil {
 		if prior.NativeSessionID != candidate.NativeSessionID || prior.ParentArchiveSessionID != candidate.ParentArchiveSessionID || prior.ParentNativeSessionID != candidate.ParentNativeSessionID || prior.ProjectID != candidate.ProjectID || prior.ProjectRoot != candidate.ProjectRoot || !strings.EqualFold(prior.Harness.Name, candidate.Harness.Name) || prior.AgentID != candidate.AgentID || prior.TranscriptPath != candidate.TranscriptPath {
-			return errors.New("subagent candidate ownership changed")
+			return ErrSubagentCandidateConflict
 		}
 		if prior.ObservedAt.After(candidate.ObservedAt) {
 			candidate.ObservedAt = prior.ObservedAt

@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +18,7 @@ import (
 // a run with the same filters and destination, and by no other.
 func TestOpenBatch(t *testing.T) {
 	home := t.TempDir()
-	filters := NewBatchFilters(Filters{Harnesses: []string{"claude-code"}, Projects: []string{"/work/repo"}, IncludeTemp: true})
+	filters := Plan{Filters: Filters{Harnesses: []string{"claude-code"}, IncludeTemp: true}, projectFilter: []string{"/work/repo"}}.BatchFilters()
 	if filters.Harnesses[0] != "claude" || filters.ProjectIDs[0] != archive.ProjectID("/work/repo") {
 		t.Fatalf("filters %+v", filters)
 	}
@@ -34,7 +35,7 @@ func TestOpenBatch(t *testing.T) {
 	for _, other := range []struct {
 		filters BatchFilters
 		dest    string
-	}{{NewBatchFilters(Filters{}), "dest"}, {filters, "elsewhere"}} {
+	}{{Plan{}.BatchFilters(), "dest"}, {filters, "elsewhere"}} {
 		if next, _ := OpenBatch(home, other.filters, other.dest, fixedNow); next.ID != "2026-09-23-2" {
 			t.Fatalf("different run continued the batch: %s", next.ID)
 		}
@@ -120,7 +121,7 @@ func TestApplyToConfigAndClock(t *testing.T) {
 
 // Registration skips, and counts, what changed since the plan: a transcript
 // that is gone, a session registered meanwhile, and a project no longer
-// admitted. Pausing stops it.
+// admitted.
 func TestRegistrationSkipsChanges(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	admitted := fixedNow.UTC()
@@ -164,10 +165,92 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 		t.Fatalf("%+v", reg)
 	}
 
-	if _, err := config.SetPaused(home, true); err != nil {
+	// A session that cannot be registered, and a subagent whose candidate
+	// conflicts with an earlier one, are skipped and counted; the import
+	// goes on.
+	noStart := candidate("no-start", project)
+	noStart.StartedAt = time.Time{}
+	parent := candidate("parent", project)
+	subPath := filepath.Join(project, "agent-s1.jsonl")
+	if err := os.WriteFile(subPath, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Run([]Candidate{candidate("later", project)}); err != ErrPaused {
-		t.Fatalf("paused: %v", err)
+	parent.Subagents = []Subagent{{Path: subPath, AgentID: "s1"}, {Path: subPath, AgentID: "s2"}}
+	parentID, _, _ := store.EnsureArchiveSessionID("parent")
+	childID, _, _ := store.EnsureArchiveSessionID("parent:subagent:s1")
+	if err := store.SaveSubagentCandidate(collector.SubagentCandidate{
+		ArchiveSessionID: childID, NativeSessionID: "parent:subagent:s1", ParentArchiveSessionID: parentID, ParentNativeSessionID: "parent",
+		ProjectID: archive.ProjectID(project), ProjectRoot: project, Harness: archive.Harness{Name: "claude"},
+		AgentID: "s1", TranscriptPath: "/elsewhere/agent-s1.jsonl", ObservedAt: admitted,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	later := candidate("later", project)
+	result, err = r.Run([]Candidate{noStart, parent, later})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != 2 || result.Invalid != 1 || result.SubagentsInvalid != 1 || len(result.Subagents) != 1 {
+		t.Fatalf("%+v", result)
+	}
+
+	// Stop ends registration between holds.
+	r.MaxHoldSteps = 1
+	holds := 0
+	r.Stop = func() bool { holds++; return holds > 1 }
+	result, err = r.Run([]Candidate{candidate("stop-1", project), candidate("stop-2", project)})
+	if !errors.Is(err, ErrStopped) || len(result.Sessions) != 0 {
+		t.Fatalf("stop: %+v, %v", result, err)
+	}
+}
+
+// Reconcile rebuilds a batch's sessions from the registrations carrying its
+// ID, and its subagents from their imported candidates.
+func TestBatchReconcile(t *testing.T) {
+	home := t.TempDir()
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := func(id, batch, parent string) {
+		t.Helper()
+		reg := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "n-" + id, ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"},
+			SessionStartedAt: fixedNow, ImportBatch: batch, ParentSessionID: parent}
+		if err := store.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("a", "b1", "")
+	save("b", "b1", "")
+	save("c", "b2", "")
+	save("a-child", "b1", "a")
+	if err := store.SaveSubagentCandidate(collector.SubagentCandidate{
+		ArchiveSessionID: "b-child", NativeSessionID: "n-b:subagent:x", ParentArchiveSessionID: "b", ParentNativeSessionID: "n-b",
+		ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"}, AgentID: "x", TranscriptPath: "/p/x.jsonl",
+		ObservedAt: fixedNow, Origin: archive.SessionOriginImport,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b := Batch{ID: "b1", Sessions: []string{"a"}}
+	if err := b.Reconcile(store); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(b.Sessions, ",") != "a,b" || strings.Join(b.Subagents, ",") != "a-child,b-child" {
+		t.Fatalf("sessions %v, subagents %v", b.Sessions, b.Subagents)
+	}
+}
+
+// The same --project folder typed through a symlink records the same
+// filters, so either spelling continues the batch.
+func TestBatchFiltersResolveProjects(t *testing.T) {
+	tr := newTree(t)
+	repo := tr.repo("home/repo")
+	if err := os.Symlink(tr.home, tr.path("alias")); err != nil {
+		t.Fatal(err)
+	}
+	direct := plan(t, tr.env(), nil, config.Config{}, Filters{Projects: []string{repo}}).BatchFilters()
+	aliased := plan(t, tr.env(), nil, config.Config{}, Filters{Projects: []string{filepath.Join(tr.path("alias"), "repo")}}).BatchFilters()
+	if !direct.equal(aliased) {
+		t.Fatalf("%+v != %+v", direct, aliased)
 	}
 }
