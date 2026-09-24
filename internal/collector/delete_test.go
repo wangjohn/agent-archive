@@ -67,6 +67,24 @@ func TestDeleteWholeSession(t *testing.T) {
 		}
 	})
 
+	t.Run("failed source delete finishes on a rerun", func(t *testing.T) {
+		store := seed(sources[1])
+		if err := DeleteWholeSession(ctx, store, "claude", "session-1"); err == nil {
+			t.Fatal("a failed source delete was not reported")
+		}
+		// The metadata is gone, so nothing live points at the source left.
+		if got := keys(store); !slices.Equal(got, []string{sources[1], other}) {
+			t.Fatalf("left %v after the failure", got)
+		}
+		store.failKey = ""
+		if err := DeleteWholeSession(ctx, store, "claude", "session-1"); err != nil {
+			t.Fatalf("rerun: %v", err)
+		}
+		if got := keys(store); !slices.Equal(got, []string{other}) {
+			t.Fatalf("left %v after the rerun", got)
+		}
+	})
+
 	t.Run("failed metadata delete leaves the sources", func(t *testing.T) {
 		store := seed(metadata)
 		if err := DeleteWholeSession(ctx, store, "claude", "session-1"); err == nil {
