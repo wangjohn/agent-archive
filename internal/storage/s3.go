@@ -146,6 +146,8 @@ func (s *S3Store) ObjectKey(relative string) string {
 	return key
 }
 
+// Put uploads data to relative under the store's prefix with a SHA-256
+// checksum, which S3 verifies on receipt and Stat later reports.
 func (s *S3Store) Put(ctx context.Context, relative string, data []byte) error {
 	key, err := s.key(relative)
 	if err != nil {
@@ -161,6 +163,9 @@ func (s *S3Store) Put(ctx context.Context, relative string, data []byte) error {
 	return err
 }
 
+// Get downloads the object at relative under the store's prefix. A missing
+// object is ErrNotFound, and one larger than the store's read limit is
+// ErrObjectTooLarge.
 func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
 	key, err := s.key(relative)
 	if err != nil {
@@ -222,6 +227,10 @@ func (s *S3Store) Stat(ctx context.Context, relative string) (ObjectInfo, error)
 	return info, nil
 }
 
+// List returns every object whose key starts with relativePrefix under the
+// store's prefix, following all result pages, with keys relative to the
+// store's prefix and no bodies. An empty relativePrefix lists the whole
+// prefix.
 func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, error) {
 	prefix, err := s.keyForList(relativePrefix)
 	if err != nil {
@@ -264,6 +273,7 @@ func (s *S3Store) keyForList(relativePrefix string) (string, error) {
 	return s.key(relativePrefix)
 }
 
+// Delete removes the object at relative under the store's prefix.
 func (s *S3Store) Delete(ctx context.Context, relative string) error {
 	key, err := s.key(relative)
 	if err != nil {

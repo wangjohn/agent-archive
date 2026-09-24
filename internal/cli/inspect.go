@@ -35,7 +35,7 @@ const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
 // prints, with exit 0 and no rows. No parser version records both a complete
 // eligible-skill set and complete use observation, so no sidecar carries the
 // observed_none detection the query compares against and it can match nothing.
-// help.go and docs/install.md state the same thing in the same words.
+// help.go and docs/guides/list-and-show.md state the same thing.
 const eligibleNoUseUnavailableMessage = "--skill-usage eligible_no_use cannot return sessions yet: no parser version\n" +
 	"records both a complete eligible-skill set and complete use observation, so\n" +
 	"non-use is never proven. The value stays accepted for forward compatibility."

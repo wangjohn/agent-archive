@@ -38,7 +38,7 @@ For included projects, skipped starts (including a declined Cursor first prompt)
 ## Imported sessions
 
 `agent-archive backfill` registers sessions the hooks never saw, after the
-person confirms a plan ([backfill spec](agent-archive-backfill-spec.md)). An
+person confirms a plan ([backfill spec](../design/backfill.md)). An
 imported registration has `origin: import` and two times:
 
 - `session_started_at` is the true start, from the transcript

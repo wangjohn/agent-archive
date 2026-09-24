@@ -1,10 +1,10 @@
 # Private agent-run archive: product and engineering specification
 
-Status: proposed plan for review. This document describes the target design, not the current implementation.
+Status: design reference. This specification was written before the implementation, which now covers most of it; where they differ, the code and the [reference documentation](../README.md) describe current behavior. Remaining gaps are tracked in the [capture capabilities](../reference/capture-capabilities.md) record.
 
 ## Product purpose
 
-Collect private evidence of how coding agents perform, with and without skills, across Codex, Claude Code, and Cursor. Make it possible to compare skill versions, models, and harnesses without slowing down normal work or storing private history in this public repository.
+Collect private evidence of how coding agents perform, with and without skills, across Codex, Claude Code, and Cursor. Make it possible to compare skill versions, models, and harnesses without slowing down normal work or putting private history anywhere public.
 
 The archive answers questions such as:
 
@@ -37,7 +37,7 @@ Support `--help` and `--version`. Keep background-worker and hook entry points i
 
 The onboarding sequence is download → select applications/projects → connect storage → review and enable → verify real capture.
 
-The implemented CLI refinement is described in [the setup and CLI plan](agent-archive-cli-plan.md). Setup saves non-secret drafts between completed steps, offers focused edits on rerun, and finishes configuration while app verification is pending. Command help is side-effect-free. Status supports human-readable and versioned JSON output. Uninstall keeps local evidence and credentials unless `--delete-local-data` is explicitly confirmed.
+The implemented CLI refinement is described in [the setup and CLI plan](../history/cli-plan.md). Setup saves non-secret drafts between completed steps, offers focused edits on rerun, and finishes configuration while app verification is pending. Command help is side-effect-free. Status supports human-readable and versioned JSON output. Uninstall keeps local evidence and credentials unless `--delete-local-data` is explicitly confirmed.
 
 The three user-facing steps are choose apps and projects, connect storage, and
 review. Detected apps are offered together; declining opens individual choices.
@@ -70,7 +70,7 @@ Import existing conversation history?        No
 Retention:                                  90 days
 ```
 
-No-skill capture remains the default to preserve comparison evidence. The initial release captures only sessions started after the per-project activation time. Resuming an older conversation must not silently upload its previous contents. If the start time cannot be established, leave the session uncollected and explain why. Setup never imports history. `agent-archive backfill` is the separate, explicit import flow; see the [backfill spec](agent-archive-backfill-spec.md). Re-running setup must preserve activation times for existing included projects.
+No-skill capture remains the default to preserve comparison evidence. The initial release captures only sessions started after the per-project activation time. Resuming an older conversation must not silently upload its previous contents. If the start time cannot be established, leave the session uncollected and explain why. Setup never imports history. `agent-archive backfill` is the separate, explicit import flow; see the [backfill spec](backfill.md). Re-running setup must preserve activation times for existing included projects.
 
 Retention is configurable and explicitly accepted during setup before any cleanup begins. Show what content is retained, that filtering is best effort, and that sensitive content can remain.
 
@@ -434,7 +434,7 @@ Acceptance criteria:
 
 ## Existing implementation and migration
 
-The repository currently contains a Codex-only prototype using per-tool hooks, agent-reported skill markers, a local SQLite store, and per-run compressed bundles. That is not this target design.
+Before this design, a Codex-only prototype (in the agent-skills repository this CLI came from) used per-tool hooks, agent-reported skill markers, a local SQLite store, and per-run compressed bundles. That is not this design; setup retires it as described below.
 
 Migration must remove only the prototype's owned hooks, preserve unrelated hooks, retain existing private records, and replace the upload job deliberately. Existing records should retain their original schema and coverage labels; do not silently reinterpret them as complete session snapshots. No rollout or credential configuration is performed by committing this plan.
 

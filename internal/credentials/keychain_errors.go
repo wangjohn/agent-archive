@@ -45,9 +45,12 @@ var (
 // revealing anything stored, and is an ErrUnavailable.
 type KeychainStatusError struct{ Status int }
 
+// Error reports the numeric OSStatus, never any stored value.
 func (e *KeychainStatusError) Error() string {
 	return fmt.Sprintf("Keychain error (OSStatus %d)", e.Status)
 }
+
+// Unwrap returns ErrUnavailable, so errors.Is(err, ErrUnavailable) holds.
 func (e *KeychainStatusError) Unwrap() error { return ErrUnavailable }
 
 // errorForOSStatus maps a Security.framework result code to this package's

@@ -144,7 +144,7 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "agent-archive ${{ steps.version.outputs.version }}" \
-            --notes "See docs/install.md for installation instructions and SHA256SUMS below for checksums." \
+            --notes "See CHANGELOG.md for what changed, docs/getting-started/install.md for installation, and SHA256SUMS below for checksums." \
             dist/agent-archive-darwin-amd64 \
             dist/agent-archive-darwin-arm64 \
             dist/SHA256SUMS

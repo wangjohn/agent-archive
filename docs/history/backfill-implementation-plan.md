@@ -1,6 +1,8 @@
 # `agent-archive backfill` — implementation plan
 
-Status: in progress. This plan turns the [backfill spec](agent-archive-backfill-spec.md)
+> **Historical.** This is a working record kept for context; it is not maintained and parts of it are superseded. For current behavior see the [documentation index](../README.md).
+
+Status: complete (#17–#23, #28–#31). This plan turns the [backfill spec](../design/backfill.md)
 into work packages that separate agents can build and review. The spec is the
 source of truth for behaviour; this plan fixes ownership, contracts between
 packages, order, and the bar for "done". Where they disagree, the spec wins and
@@ -240,8 +242,8 @@ sandboxed `HOME`.
 
 Phase 1 (B1–B4 and follow-ups A and B, PRs #17–#23) is merged. The same
 roles and review rules apply. This part covers
-[B1b](agent-archive-backfill-spec.md#destination-id-b1b) and
-[phase 2](agent-archive-backfill-spec.md#phase-2-cursor-database-chats):
+[B1b](../design/backfill.md#destination-id-b1b) and
+[phase 2](../design/backfill.md#phase-2-cursor-database-chats):
 importing Cursor chats that exist only in `state.vscdb`.
 
 ### Waves

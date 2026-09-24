@@ -1,11 +1,9 @@
-# Privacy
+# Filter changelog
 
-What leaves this machine for a session is its metadata sidecar and its
-filtered source bundle, `sessions/<harness>/<id>/source.<sha256>.jsonl.gz`:
-gzip of newline-delimited JSON with a header line, one line per retained
-native record, then text transcripts and supplemental evidence (source schema
-2). The line format changes how retained evidence is packaged, not what is
-retained: every line holds only what the source filter below kept.
+What each version of the source filter changed, newest first. The current
+rules, as a whole, are in [privacy](privacy.md); version numbers and bump
+rules are in [versions](../reference/versions.md). Each archived session
+records the filter version that produced it (`filter_version`).
 
 ## Source filter version 10
 
@@ -50,7 +48,7 @@ to stop. Adapter version 0.9.0 goes with it.
   the value is replaced now, and a quoted value keeps its quotes:
   `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`,
   `Authorization: Bearer [REDACTED]`. Filter 8 replaced the name as well. See
-  [Value-level redaction](#value-level-redaction) for the full rule and its
+  [Value-level redaction](privacy.md#value-level-redaction) for the full rule and its
   false positives.
 - **Images, documents, and other binary blocks are dropped.** A pasted
   screenshot or PDF, or an image a tool read, arrives as a content block
@@ -94,7 +92,7 @@ to stop. Adapter version 0.9.0 goes with it.
   skill-snapshot cap cut on a UTF-8 character boundary; filter 8 could split
   a multi-byte character and leave invalid UTF-8.
 
-Every filter-8 rule below still applies.
+Every filter-8 rule still applies.
 
 ## Source filter version 8
 
@@ -167,7 +165,7 @@ sanitizer as a JSONL record.
   one `cursor_chat_rewritten` gap, which names no content, counting the
   rewrites.
 
-Every filter-7 rule below still applies.
+Every filter-7 rule still applies.
 
 ## Source filter version 7
 
@@ -192,7 +190,7 @@ plain-text transcript made of role sections: a `user:`, `assistant:`, or
   collector's transcript cap) instead of 2 MB. Over the limit it is a
   `record_size_limit` capture gap rather than a refusal on every pass.
 
-Every filter-6 rule below still applies.
+Every filter-6 rule still applies.
 
 ## Source filter version 6
 
@@ -212,7 +210,7 @@ Filter 6 is filter 5 plus two narrow retentions and one more injected block.
   message, is removed like `<environment_context>`, with the same
   `hidden_instruction_omitted` gap.
 
-Every filter-5 rule below still applies.
+Every filter-5 rule still applies.
 
 ## Source filter version 5
 
@@ -228,7 +226,7 @@ whose text is a model-written summary of the conversation so far.
   those typed values rather than passed through the ordinary filter, since a
   system record is otherwise hidden whole. An id is kept only when it looks
   like one (a string of at most 256 bytes with no whitespace and no tag
-  brackets, which the credential redaction below would leave unchanged, or
+  brackets, which the credential redaction would leave unchanged, or
   null), the timestamp only when it parses, and `isSidechain` only as a
   boolean.
   Everything else — the boundary's text, `compactMetadata` (trigger and token
@@ -241,7 +239,7 @@ whose text is a model-written summary of the conversation so far.
   `isMeta`; any other value under those names is omitted).
 - **Kept, unlike an `isMeta` record:** the summary's text. It is model output
   describing the session, which is what a handoff to another agent needs. It
-  passes every value rule below (injected-instruction stripping, credential
+  passes every value rule in [privacy](privacy.md#filter-rules) (injected-instruction stripping, credential
   redaction, the 64 KB cap) like any other message.
 
 The shape is taken from Claude Code's behavior; no transcript on the
@@ -271,7 +269,7 @@ kind as a `<system-reminder>` block, not something the person wrote.
 The typed slash command itself (`<command-name>/review-pr</command-name>`) and
 local-command output (`<local-command-stdout>`) are not `isMeta` and are kept
 as before; they are what the person did and what the command printed. Every
-filter-3 rule below still applies.
+filter-3 rule still applies.
 
 ## Source filter version 3
 
@@ -324,149 +322,3 @@ Skill snapshots embedded in supplemental evidence keep their inventory entry
 (name, sha256 of the whole original file, scope) but the archived body is
 capped at 16 KB, with `original_bytes` recording the real size and `truncated`
 marking the cut. Moving bodies to content-addressed objects is deferred.
-
-### Tool-argument deny list
-
-Retaining tool arguments wholesale has two exceptions, applied at every depth
-of a tool-argument subtree. In both cases the argument's key name is recorded
-in a `sensitive_or_hidden_field_omitted` gap (`omitted tool argument keys: …`,
-sorted, capped at 64, names only) and the value is never retained.
-
-- **Typed or submitted text.** An argument named `text`, `value`, or `values`
-  is dropped when the tool's name (`name` or `tool_name` beside the argument
-  subtree, compared case-insensitively) is `type`, `form_input`, `computer`,
-  `key`, `enter_verification_code`, or `autofill_credential`; ends with `_`
-  followed by one of those (an MCP tool such as `mcp__browser__computer`); or
-  ends with `_type`, `_input`, or `_fill`. These tools send their text outward
-  into a browser field, a terminal, or a device, and a login form's contents
-  are exactly what a transcript must not keep. `Edit`, `Write`, and other tools
-  keep their `text`/`value` arguments.
-- **Credential-named arguments.** For every tool, an argument whose lowercase
-  key contains `password`, `secret`, `token`, `credential`, `api_key`,
-  `apikey`, `cookie`, or `authorization` is dropped. This is a substring rule,
-  broader than `blockedKeys`, and it knowingly catches budgets such as
-  `max_tokens`. An argument object whose members were all dropped is pruned
-  with them.
-
-Codex `custom_tool_call.input` and `function_call.arguments` are JSON encoded
-as one string, so the deny list cannot see their keys; the string still passes
-every value-level redaction below.
-
-### Value-level redaction
-
-Every retained string, at every depth, passes these patterns. A match is
-replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
-
-- Credential assignments (filter 9). The name ends in `api_key`,
-  `access_key`, `private_key`, `encryption_key`, `signing_key`,
-  `master_key`, `secret`, `password`, `passwd`, `passphrase`, `token`,
-  `authorization`, `bearer`, or `credential(s)` (`_`, `-`, `.`, or nothing
-  between the parts of a two-word trigger), in any case, with anything glued
-  on before it; or in `pwd` or npm's `_auth` after a separator (`MYSQL_PWD`,
-  `DB_PWD`, `:_auth`), since a bare `PWD` or `OLDPWD` is the shell's working
-  directory. The trigger may be followed by `key` or `access_key`, then
-  `base`, then a number. So `DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY`,
-  `OPENAI_API_KEY`, `SECRET_KEY_BASE`, `DB_PASSWORD_1`, `accessToken`,
-  `PGPASSWORD`, `spring.datasource.password`, and `x-api-key` all match. The
-  name may be quoted (`"…"`, `'…'`, or escaped inside a string, `\"…\"`);
-  the separator is `=`, `:`, `:=`, or `=>`; a `--name value` command-line
-  flag counts too. The value, quoted up to its closing quote (plus anything
-  glued on after it, as a shell reads it; filter 10) or unquoted up to
-  whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
-  `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`. An HTTP scheme
-  before the value stays: `Authorization: Bearer [REDACTED]`. A single token
-  in brackets or braces is a value too (`password=[hunter2]`,
-  `token={abc123}`), with anything glued on after it
-  (`password=[REDACTED]realsecret` loses `realsecret`, and a glued bracket
-  group goes whole). A value may begin with `=` unless whitespace follows
-  it; the extra `=` signs stay (`PASSWORD==[REDACTED]`).
-- AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials)
-  and Anthropic/OpenAI style `sk-` keys.
-- PEM private key blocks: `-----BEGIN … PRIVATE KEY-----` through the next
-  `-----END … -----`, or to the end of the string when the END line is missing.
-  Certificates and public keys are not redacted.
-- JWTs: three base64url segments, the first beginning with `eyJ`.
-- URL userinfo: in `scheme://user:pass@host` (or `scheme://user@host`) the
-  userinfo is replaced and the scheme and host are kept.
-- GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) and
-  Slack tokens (`xox[baprs]-`).
-
-Known false positives. The assignment pattern cannot tell a credential from
-code or a path: `token = parse(x)`, `nextToken := lexer.Next()`,
-`credentials := loadCreds()`, and `password: required` have their
-right-hand side redacted; so do a saved directory in a `*_PWD` variable
-(`ORIG_PWD=$(pwd)`), a path to a credentials file
-(`GOOGLE_APPLICATION_CREDENTIALS=/path/key.json`), a one-item list
-(`password: [required]`, taken for a bracketed value), and the word after a
-flag in prose (`pass --token flag`). This is accepted rather
-than narrowed, because the cost of a missed credential is higher than the
-cost of a redacted identifier in an archived transcript; a reader sees the
-`sensitive_content_redacted` gap and can consult the original source if it
-still exists. Names with anything after the trigger word other than the
-suffix above (`tokens`, `max_tokens`, `token_count`, `secretary`,
-`password_policy`, `TOKEN_URL`, `SECRET_NAME`, `--password-stdin`) do not
-match, nor do `PWD`, `OLDPWD`, `auth`, comparisons (`token == nil`), or a
-name with no value.
-
-Known misses.
-
-- An unquoted value stops at a quote, so a quote inside an unquoted
-  password leaves the rest of the password.
-- Text glued after a closing quote is taken with the value (filter 10) only
-  up to a closing `]`, `}`, or `)`, which usually closes the structure
-  around the value (`{"password":"abc"}`, `f(PASSWORD="abc")`) and must stay.
-  So in the rare `PASSWORD="abc")realsecret`, `realsecret` is kept.
-- A Cursor plain-text transcript has no structure beyond its role headers,
-  so a line in tool output that itself starts at column 0 with `user:`,
-  `assistant:`, `tool:`, or a hidden role (`system:`, `thinking:`, …) reads
-  as a header, exactly as Cursor's own format would: it starts a section
-  (a Person turn in the handoff) or hides what follows. Filter 10 stopped
-  treating indented role words this way; a column-0 one cannot be told
-  apart. Cursor's JSONL transcripts and database chats are not affected.
-- In JSON escaped more than once inside a string (`\\\"password\\\":…`),
-  the value ends at the first escaped quote of any depth, so the tail of a
-  value after an escaped quote inside it (`\\\"ab\\\\\\\"cd\\\"`: `cd`) is
-  kept. JSON escaped once (`\"password\":\"ab\\\"cd\"`) is handled.
-- A value that is an object or array holding whitespace, a comma, a colon,
-  or a quote (`"credentials": {"type": …}`, `password: [required, min 8]`)
-  is a structure and is not replaced as text: in parsed records its members
-  are checked by name, but in free text a secret inside it is caught only by
-  its own name or shape.
-- For the same reason, an unquoted value that begins with `[` or `{` but is
-  not a single closed token is kept whole: `password=[Kx9!q2Lm`,
-  `password={secret`, `password=[admin:hunter2]`, `password=[a b]realsecret`.
-  About 2% of random passwords drawn from the full symbol set begin with a
-  bracket or brace.
-- A project skill's `SKILL.md` that is a hard link to another file cannot be
-  told apart from a real file. A cloned repository cannot create one (git
-  does not store hard links); it needs local write access to the project.
-- A name that does not end in a trigger word (`AWS_ACCESS_KEY_ID`,
-  `DATABASE_URL`, `DSN`, `CONNECTION_STRING`) is not redacted by this
-  pattern; its value is redacted only if it has a recognizable shape
-  (`AKIA…`/`ASIA…`, URL userinfo).
-- A credential in prose (`the password is hunter2`) or on the line after
-  its YAML key is not recognized.
-
-Redaction is best effort in both directions: a legitimate value that looks like
-a credential is redacted, and a tool argument that happens to contain one of
-the instruction tags above loses that span. Both are recorded as gaps.
-
-# Bucket privacy evidence
-
-Setup tests object access and inspects native bucket public-access controls separately. Successful uploads do not prove a bucket is private. Inspection uses existing credentials, is read-only, and has a five-second total deadline. Failure or missing inspection permission does not require administrator credentials.
-
-For AWS S3, all four bucket-level Block Public Access flags must be observed enabled before the tool reports `verified_private`. Otherwise it checks policy status and the bucket ACL for public configuration. A public policy or ACL yields `public_or_risky`; incomplete or denied checks yield `not_verified`. Account-level controls might further restrict access, so `public_or_risky` identifies configuration that needs review, not proof of anonymous object access. A private bucket policy or ACL alone is insufficient because object ACLs and access points can expose data.
-
-For R2, setup stores S3-compatible object credentials, not a Cloudflare management API token. These cannot inspect managed/custom public domains. R2 therefore remains `not_verified` and links the public-bucket settings instructions. The tool does not request another token or send object credentials to the management API.
-
-Inspection covers native bucket public access. It does not assess applications that proxy authorized reads, shared signed URLs, or copies of archived data.
-
-The result includes fixed diagnostic codes, scope, check time, and a storage-configuration fingerprint. Setup records it in the resumable setup draft as soon as the storage connection succeeds and commits it to the active configuration only when setup is confirmed; resuming a draft inspects again. Status reads the local result, never a remote API. After 24 hours, a clock rollback, or a storage configuration change, status reports privacy as unverified. The scheduled background collector refreshes the evidence with the same read-only inspection whenever the saved result is missing, is for another storage configuration, or is more than 12 hours old, so an active install stays verified without rerunning setup; a paused install is never inspected, and running setup also refreshes it. Provider errors and credentials are not included in the report.
-
-References used for the implementation:
-
-- [AWS Block Public Access semantics](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html)
-- [R2 S3 API compatibility](https://developers.cloudflare.com/r2/api/s3/api/)
-- [R2 public bucket settings](https://developers.cloudflare.com/r2/buckets/public-buckets/)
-
-Synthetic tests cover allowed, denied, incomplete, public-policy, public-ACL, R2-unavailable, expired, and changed-configuration results. Actual AWS inspection and R2 dashboard verification remain live acceptance checks.

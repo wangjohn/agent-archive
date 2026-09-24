@@ -1,8 +1,10 @@
 # Agent Archive implementation and verification ledger
 
+> **Historical.** This is a working record kept for context; it is not maintained and parts of it are superseded. For current behavior see the [documentation index](../README.md).
+
 ## Current remediation status
 
-See [the eight-PR acceptance record](agent-archive-remediation-acceptance.md)
+See [the eight-PR acceptance record](remediation-acceptance.md)
 for current implementation evidence and remaining capability/live gates.
 The historical notes below are retained for context and are superseded where
 that record differs. In particular, first-seen Cursor starts are no longer
@@ -40,7 +42,7 @@ installed-only evidence, with coverage gaps for uninspected roots/plugins.
 Evaluate Skill recommendations remain separate work as specified in the plan.
 
 
-Source of requirements: [engineering specification](agent-run-archive-spec.md).
+Source of requirements: [engineering specification](../design/archive-spec.md).
 
 Status: implementation in progress. Passing synthetic tests does not establish live application or cloud compatibility. Entries remain incomplete until reviewed evidence exists.
 
@@ -71,9 +73,9 @@ Status: implementation in progress. Passing synthetic tests does not establish l
 
 \*\*\*\* `internal/retention.Sweep` runs as an additional pass after every successful `collector.Run` (wired into `_collect`/`sync` via `internal/cli/collect.go`), driven by an append-only local ledger of superseded (no-longer-current) source keys recorded in `internal/collector/lineage.go` whenever a republish changes a session's current source — rather than a single-predecessor-slot pointer, so rapid successive republishes before a sweep ever runs cannot leak an untracked orphan; a key that is superseded again after content reverted to it moves to the end of the ledger, so append order is always supersession order. Before deleting anything the sweep fetches the session's remote `metadata.json` and validates it as the current pointer (it fails closed, preserving every snapshot, when that metadata is missing, unreadable, or belongs to another session). The currently referenced source is never a candidate regardless of age, and neither is its immediate predecessor (the most recently superseded snapshot); any older superseded source is deleted once it has been superseded for longer than a 24-hour grace period. The remote fetch is skipped when no ledger entry other than the newest is past its grace period and the session is not locally past its retention age, so idle sessions cost no round trip. Whole-session deletion triggers once a session's most recently captured evidence — the later of the local cache and the remote metadata's capture time — is older than `Config.RetentionDays` (90-day default), deleting the metadata pointer before its source snapshots, so an interruption partway leaves at worst unreferenced objects for the next sweep, never a live pointer to missing data; a failed expiry leaves the local registration (ownership) in place so the same machine retries it. Only the machine that registered a session ever sweeps it, since registrations are local-only. One session's sweep failure is isolated and left retryable on the next pass, matching `collector.Run`'s own error-isolation model.
 
-\*\*\*\*\* `.github/workflows/release.yml` triggers on a `vX.Y.Z` tag push, cross-builds both `darwin/amd64` and `darwin/arm64` from one `macos-14` runner via `scripts/build-release.sh` (the same script a maintainer runs locally, so CI and a local build can never drift), embeds the release version with `-ldflags -X .../internal/cli.Version=...`, and verifies the embedded version before proceeding. Codesigning (import a Developer ID Application certificate into a temporary keychain, `codesign --options runtime --timestamp`) and notarization (`xcrun notarytool submit --wait` against a zip of each binary, since notarytool doesn't accept a bare executable) require `APPLE_SIGNING_ENABLED=true` and all signing secrets. Tagged releases now fail closed when signing is unavailable; both notarization submissions must report `Accepted` before publication. Local development builds remain unsigned. `docs/install.md` documents download-and-verify, building from source, what signing currently requires, and removal via `agent-archive uninstall` (with the manual recipe kept as a fallback). None of the signing/notarization path can be exercised for real in this environment — no Apple Developer credentials are available here — so it is implemented and reviewable but unverified, the same status the ledger already gives Hooks/Scheduling for their own live-environment gaps.
+\*\*\*\*\* `.github/workflows/release.yml` triggers on a `vX.Y.Z` tag push, cross-builds both `darwin/amd64` and `darwin/arm64` from one `macos-14` runner via `scripts/build-release.sh` (the same script a maintainer runs locally, so CI and a local build can never drift), embeds the release version with `-ldflags -X .../internal/cli.Version=...`, and verifies the embedded version before proceeding. Codesigning (import a Developer ID Application certificate into a temporary keychain, `codesign --options runtime --timestamp`) and notarization (`xcrun notarytool submit --wait` against a zip of each binary, since notarytool doesn't accept a bare executable) require `APPLE_SIGNING_ENABLED=true` and all signing secrets. Tagged releases now fail closed when signing is unavailable; both notarization submissions must report `Accepted` before publication. Local development builds remain unsigned. `docs/getting-started/install.md` documents download-and-verify, building from source, what signing currently requires, and removal via `agent-archive uninstall` (with the manual recipe kept as a fallback). None of the signing/notarization path can be exercised for real in this environment — no Apple Developer credentials are available here — so it is implemented and reviewable but unverified, the same status the ledger already gives Hooks/Scheduling for their own live-environment gaps.
 
-\*\*\*\*\*\* `_hook`'s SessionStart handling declines to register a never-seen native session whose payload says it continues an earlier conversation, since that conversation's true start time cannot be established and the spec excludes older resumed sessions by default. This originally applied only to Claude Code's `"source":"resume"`; Codex's hook documentation (https://learn.chatgpt.com/docs/hooks.md, "Common input fields" and SessionStart) now documents the same `source` field with values `startup`, `resume`, `clear`, `compact`, so the check covers Codex too. The rule is now positive rather than a resume blocklist (see `docs/agent-archive-session-eligibility.md`): a never-seen Codex or Claude Code session is registered only when `source` is `startup` or `clear`; a missing, unknown, `resume`, or `compact` source leaves it uncollected, and `compact` (or `resume`) of an already-registered session keeps its original start time and transcript path, matched by project identity (a continuation reported from a subdirectory of the registered project is the same session; a different harness or a different configured project is rejected). Cursor documents no equivalent start-provenance signal, so a never-seen Cursor start is also left uncollected rather than assumed fresh; that is a capture limitation pending live verification, not a claim of Cursor support. For included projects each declined start leaves a content-free local diagnostic that `status` reports and that is pruned when the project is later excluded.
+\*\*\*\*\*\* `_hook`'s SessionStart handling declines to register a never-seen native session whose payload says it continues an earlier conversation, since that conversation's true start time cannot be established and the spec excludes older resumed sessions by default. This originally applied only to Claude Code's `"source":"resume"`; Codex's hook documentation (https://learn.chatgpt.com/docs/hooks.md, "Common input fields" and SessionStart) now documents the same `source` field with values `startup`, `resume`, `clear`, `compact`, so the check covers Codex too. The rule is now positive rather than a resume blocklist (see `docs/reference/session-eligibility.md`): a never-seen Codex or Claude Code session is registered only when `source` is `startup` or `clear`; a missing, unknown, `resume`, or `compact` source leaves it uncollected, and `compact` (or `resume`) of an already-registered session keeps its original start time and transcript path, matched by project identity (a continuation reported from a subdirectory of the registered project is the same session; a different harness or a different configured project is rejected). Cursor documents no equivalent start-provenance signal, so a never-seen Cursor start is also left uncollected rather than assumed fresh; that is a capture limitation pending live verification, not a claim of Cursor support. For included projects each declined start leaves a content-free local diagnostic that `status` reports and that is pruned when the project is later excluded.
 
 Evaluate Skill authoring and controlled evaluation runner are explicitly separate work in the engineering spec. This implementation must provide their reader/data interface, not silently omit it or claim the evaluation skill itself exists.
 
@@ -87,7 +89,7 @@ With PR #7 (Collector) in review, this is the full remaining sequence to close e
 
 **PR #10 — Retention — done, in review.** `internal/retention` and its `_collect`/`sync` wiring landed as described above.
 
-**PR #11 — Distribution — done, in review.** `.github/workflows/release.yml`, `scripts/build-release.sh`, and `docs/install.md` landed as described above. Producing an actually signed, notarized artifact remains blocked on the Apple credentials already listed below as unavailable to this environment.
+**PR #11 — Distribution — done, in review.** `.github/workflows/release.yml`, `scripts/build-release.sh`, and `docs/getting-started/install.md` landed as described above. Producing an actually signed, notarized artifact remains blocked on the Apple credentials already listed below as unavailable to this environment.
 
 **Not a PR — System verification**
 Two Macs, two providers, each installed harness, and an enabled/disabled latency comparison. This is a live-access milestone gated on the same external prerequisites listed below, not code to write.
@@ -112,7 +114,7 @@ Root reviews each implementation diff and test evidence before a PR becomes merg
 
 ## Setup and CLI refinement (September 2026)
 
-The [CLI plan](agent-archive-cli-plan.md) is implemented in the existing Go
+The [CLI plan](cli-plan.md) is implemented in the existing Go
 module: centralized help/argument preflight, three-step setup with non-secret
 resumable drafts and hidden terminal input, staged Keychain references, a durable
 installation recovery journal, human/JSON status, and data-preserving uninstall.
@@ -281,7 +283,7 @@ with filter 3):
   multiple blocks, the deny list for Claude and Cursor shapes and for
   supplemental evidence, each credential shape, a negative set of ordinary
   code, and byte-identical output across repeated scans of each fixture.
-- `docs/install.md` no longer describes filter 2 / adapter 0.2.0 as current.
+- `docs/getting-started/install.md` no longer describes filter 2 / adapter 0.2.0 as current.
 
 ## PR B2 — Parser v0.6
 
@@ -645,7 +647,7 @@ Review (Fable 5.1) fixes on the branch:
 - The timed no-writes test asserts its one-second target only in the plain
   run; under `-race` it still proves nothing was read or written, without a
   wall-clock deadline that could flake on CI.
-- Setup's destination-change message and `docs/install.md` now say old
+- Setup's destination-change message and `docs/getting-started/install.md` now say old
   sessions stay published at the previous destination and their local
   evidence is removed from this Mac after the retention period.
 
@@ -760,8 +762,8 @@ Cursor app chat.
    without error: no `LastError`, not counted as failed, any queued request
    kept, retried every pass, and published on the first pass after the path
    arrives.
-4. Codex and Claude Code are unchanged. `docs/capture-capabilities.md`,
-   `docs/agent-archive-session-eligibility.md`, and the Cursor capability
+4. Codex and Claude Code are unchanged. `docs/reference/capture-capabilities.md`,
+   `docs/reference/session-eligibility.md`, and the Cursor capability
    text in `status` describe the observed 3.21.13 behavior.
 
 Tests: `internal/cli/cursor_first_prompt_test.go` (a new chat registers at a
@@ -934,7 +936,7 @@ Review fixes on the same branch:
   bucket calls, since it can never have published. Registrations without a
   path can exist on `main` already (`hook.go` allows an empty path).
 - The purge test also exercises the lineage ledger and the reader cache;
-  `docs/install.md` names the `broken` hook and background states.
+  `docs/getting-started/install.md` names the `broken` hook and background states.
 
 ## PR C4 — Compaction summaries
 
@@ -951,7 +953,7 @@ human prompt and a message.
 **Filter 5.** Keeps exactly the `compact_boundary` record: `type`, `subtype`,
 its ids, a parseable timestamp, and `isSidechain`. It is rebuilt from typed
 values, and nothing else of the record is kept (see
-`docs/agent-archive-privacy.md`). The flag `isSidechain` goes slightly beyond
+`docs/security/privacy.md`). The flag `isSidechain` goes slightly beyond
 the plan's list, for one reason: without it, a subagent's compaction inlined
 in its parent transcript would count toward the parent's compactions. Every
 other system record is still hidden, and only the Claude adapter admits the
@@ -1102,7 +1104,7 @@ Limits:
 
 Filter version `6`, adapter version `0.6.0`, parser version `0.9.0` (PR C4 took filter 5 / parser 0.8.0 first). Metadata
 schema version 1 is unchanged. Found by probing real Claude Code, Codex, and
-Cursor transcripts for `docs/agent-archive-handoff-spec.md`; every fixture is
+Cursor transcripts for `docs/design/handoff.md`; every fixture is
 synthetic.
 
 1. **Task notifications are not prompts.** Claude Code writes a background
@@ -1129,7 +1131,7 @@ synthetic.
 Not fixable from the record: the desktop app's "The app was quit while you
 were working…" message has `promptSource: "sdk"` and no `origin`, exactly like
 an SDK-submitted prompt, so it still counts as one (see
-`docs/capture-capabilities.md`).
+`docs/reference/capture-capabilities.md`).
 
 Fixtures: `claude-task-notification.jsonl` (a prompt, a reply, a notification
 whose `origin` carries an extra member, a reply), `codex-list-output.jsonl`
@@ -1139,7 +1141,7 @@ tool call each with list output, a reply). Tests:
 
 ## PR H2/H3 — `agent-archive handoff`
 
-Implements `docs/agent-archive-handoff-spec.md`.
+Implements `docs/design/handoff.md`.
 
 - **Builder and renderer** (`internal/archive/handoff.go`, pure).
   `BuildHandoff` groups a filtered bundle's turns and tool calls by record
@@ -1459,8 +1461,8 @@ is refused by name; the uncompressed limit still applies). Existing tests use
 
 `schemas/source-bundle.schema.json` now describes one line (`oneOf` on
 `kind`) and states the ordering rules in its description.
-`docs/agent-run-archive-spec.md`, `docs/agent-archive-privacy.md`, and
-`docs/install.md` describe the new file and format.
+`docs/design/archive-spec.md`, `docs/security/privacy.md`, and
+`docs/getting-started/install.md` describe the new file and format.
 
 
 ## PR D3 — Cursor plain-text transcript limits
@@ -1556,8 +1558,8 @@ transcript as a whole, which is the unit the limit bounds on the text path.
 
 ## PRs B1–B4 — `agent-archive backfill`
 
-Implements phase 1 of the [backfill spec](agent-archive-backfill-spec.md),
-following the [implementation plan](agent-archive-backfill-implementation-plan.md).
+Implements phase 1 of the [backfill spec](../design/backfill.md),
+following the [implementation plan](backfill-implementation-plan.md).
 Filter, adapter, and parser versions are unchanged; hook-captured metadata is
 byte-identical to before. Each package was built by one agent and reviewed by
 another; B2, B3, and B4 each had a second, focused review of their fix round.
@@ -1708,6 +1710,20 @@ real `HOME` and a sandboxed archive home reported the database checked with
 has a transcript file), and `ls -laT` of Cursor's `globalStorage` was
 identical before and after. The closed-Cursor path is covered by tests, not by
 a live run.
+
+## Backfill phase 2 and the review fixes (pointer)
+
+Work between backfill follow-up B and the W2-A entry below is recorded in its
+pull requests rather than here:
+
+- Phase 2, Cursor database chats: #28 (destination IDs on registrations,
+  B1b), #29 (the `cursor-composer` adapter, filter 8 / adapter 0.8.0), #30
+  (the read-only Cursor database source), #31 (importing database-only chats).
+- The September 2026 staff review's fixes: #35 (privacy filter 9), #36
+  (collector durability), #37 (hook configuration safety), #38 (lint and
+  supply chain), #39 (CLI help consistency), #42 (backfill undo safety), and
+  the PRs after them. The [changelog](../../CHANGELOG.md) summarizes their
+  user-visible effects.
 
 ## W2-A — parser and handoff correctness, schemas (2026-09-24)
 

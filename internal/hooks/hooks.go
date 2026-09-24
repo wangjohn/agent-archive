@@ -9,6 +9,11 @@ import (
 	"strings"
 )
 
+// Owner marks the hook handlers agent-archive installs, so setup and
+// uninstall can find and replace or remove exactly their own entries and
+// leave everything else alone. Cursor handlers carry it as a trailing shell
+// comment on the command; other harnesses carry it as the statusMessage the
+// application shows while the hook runs.
 const Owner = "agent-archive lifecycle capture"
 
 // prototypeOwner marks the handlers the pre-release prototype installed;

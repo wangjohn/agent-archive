@@ -2,8 +2,9 @@
 
 Status: implemented (PRs H1–H3). Written 2026-09-22 from a probe of real
 Claude Code, Codex, and Cursor transcripts run through filter 3 / parser
-0.6.0. Depends on PR C1 (`fix/prompt-accuracy`, parser 0.7 / filter 4) being
-merged first; see [Sequencing](#sequencing).
+0.6.0; the versions named below are those of the time (see
+[versions](../reference/versions.md) for today's). How to use it:
+[handoff guide](../guides/handoff.md).
 
 ## Problem
 
@@ -79,7 +80,7 @@ Exit codes follow `show`: 0 success, 1 runtime failure, 2 usage error. When
 setup has never run, the command prints the shared `notSetUpMessage` to
 stderr and exits 1, except with `--file`, which needs no setup.
 
-Documented recipes (help text and `docs/install.md`):
+Documented recipes (help text and `docs/guides/handoff.md`):
 
 ```sh
 # Continue in Claude Code what you started in Codex, same repo
@@ -305,7 +306,7 @@ remaining work.
 > <text>
 - `Bash` go test ./internal/archive → ok (12 lines)
 - `Edit` internal/archive/views.go
-- `Read` docs/agent-archive-privacy.md
+- `Read` docs/security/privacy.md
 
 ### 2 · Person
 …
@@ -421,7 +422,7 @@ adapter 0.6.0 / parser 0.9.0 (C4 took filter 5 / parser 0.8.0 first).
 4. Not fixable from the record: the desktop app's "The app was quit while
    you were working…" message has `promptSource: "sdk"` and no `origin`,
    exactly like an SDK prompt. Leave it as a prompt and record the reason
-   in `docs/capture-capabilities.md`.
+   in `docs/reference/capture-capabilities.md`.
 
 ## Privacy
 
@@ -453,8 +454,8 @@ adapter 0.6.0 / parser 0.9.0 (C4 took filter 5 / parser 0.8.0 first).
 | `internal/cli/uninstall.go` | add `handoffs` to `localStateEntries` so `--delete-local-data` removes it |
 | `internal/cli/cli.go` | `case "handoff"` dispatch |
 | `internal/cli/help.go` | `handoff` help entry and command-guide line |
-| `docs/install.md`, `README.md` | command list and recipes |
-| `docs/capture-capabilities.md` | per-harness handoff fidelity (Cursor: no tool results) |
+| `docs/guides/handoff.md`, `README.md` | command list and recipes |
+| `docs/reference/capture-capabilities.md` | per-harness handoff fidelity (Cursor: no tool results) |
 
 ## Tests
 
@@ -516,7 +517,7 @@ Each PR follows the existing review process in
   files at a1b2c3; they are not on this machine" when it matters.
 - **Project name and filter for `list`.** With the repository key, record
   the project directory's basename in metadata, add `list --project`, and
-  document the new field in `docs/agent-archive-privacy.md`.
+  document the new field in `docs/security/privacy.md`.
 - `--include-subagents`: render linked child sessions as nested sections.
 - `--since-prompt N`: hand off only the tail of a long session.
 - `handoff --copy` to put the output on the clipboard via `pbcopy`.
