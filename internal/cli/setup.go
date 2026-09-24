@@ -72,7 +72,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	p := newPrompter(stdin, out)
 	p.now = env.now
 	if !found {
-		fmt.Fprintln(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Type help at the storage prompt for instructions.")
+		fmt.Fprintln(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
 	}
 	draft := setupDraft{Version: 1, Config: existing}
 	draftPath := filepath.Join(home, "setup-draft.json")
@@ -85,7 +85,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if saved.Version != 1 || saved.Step < 0 || saved.Step > 2 {
 			return fmt.Errorf("saved setup has an unsupported version")
 		}
-		choice, e := promptChoice(p, "Saved setup: continue, capture, storage, retention, or restart", "continue", "continue", "capture", "storage", "retention", "restart")
+		choice, e := p.menu("You have an unfinished setup. What would you like to do?", "continue",
+			option{"continue", "Continue where you left off"},
+			option{"capture", "Change apps and projects"},
+			option{"storage", "Change storage"},
+			option{"retention", "Change how long sessions are kept"},
+			option{"restart", "Start over"})
 		if e != nil {
 			return e
 		}
@@ -119,7 +124,11 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			}
 		}
 	} else if found {
-		choice, e := promptChoice(p, "Edit capture, storage, retention, or all settings", "capture", "capture", "storage", "retention", "all")
+		choice, e := p.menu("Agent Archive is already set up. What would you like to change?", "capture",
+			option{"capture", "Apps and projects"},
+			option{"storage", "Storage (bucket and credentials)"},
+			option{"retention", "How long sessions are kept"},
+			option{"all", "All settings"})
 		if e != nil {
 			return e
 		}
@@ -216,7 +225,10 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			if e != nil {
 				failure := fmt.Errorf("storage test failed: %w (check access and retry; saved choices are kept)", e)
 				fmt.Fprintln(out, failure)
-				choice, promptErr := promptChoice(p, "Edit storage settings, retry, or cancel", "cancel", "edit", "retry", "cancel")
+				choice, promptErr := p.menu("What would you like to do?", "cancel",
+					option{"edit", "Edit settings"},
+					option{"retry", "Retry the storage check"},
+					option{"cancel", "Cancel (your choices are kept)"})
 				if promptErr != nil || choice == "cancel" {
 					return failure
 				}
@@ -246,11 +258,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
 			return err
 		}
-		label := "Start archiving?"
-		if found {
-			label = "Save these changes?"
-		}
-		action, e := reviewAction(p, label)
+		action, e := reviewAction(p, found)
 		if e != nil {
 			return e
 		}
@@ -353,14 +361,19 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 func promptStorage(p *prompter, existing credentials.Config, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
 	var secret credentials.R2Credentials
-	choice, err := promptChoice(p, "Storage provider: r2 (Cloudflare) or s3 (Amazon); help for instructions", firstNonEmpty(existing.Provider, "r2"), "r2", "s3", "help")
+	providers := []option{
+		{"r2", "Cloudflare R2"},
+		{"s3", "Amazon S3"},
+		{"help", "Show setup instructions"},
+	}
+	choice, err := p.menu("Where should sessions be stored?", firstNonEmpty(existing.Provider, "r2"), providers...)
 	for err == nil && choice == "help" {
 		fmt.Fprintln(p.out, "Cloudflare R2: create a private bucket and bucket-scoped Object Read & Write credentials. Keep public access disabled.")
 		fmt.Fprintln(p.out, "https://developers.cloudflare.com/r2/get-started/s3/")
 		fmt.Fprintln(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
 		fmt.Fprintln(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
 		fmt.Fprintln(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
-		choice, err = promptChoice(p, "Storage provider", firstNonEmpty(existing.Provider, "r2"), "r2", "s3", "help")
+		choice, err = p.menu("Where should sessions be stored?", firstNonEmpty(existing.Provider, "r2"), providers[:2]...)
 	}
 	if err != nil {
 		return cfg, secret, false, err
@@ -421,19 +434,6 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 	return cfg, secret, secret.SecretAccessKey != "", err
 }
 
-func promptChoice(p *prompter, label, def string, choices ...string) (string, error) {
-	for {
-		value, err := p.withDefault(label, def)
-		if err != nil {
-			return "", err
-		}
-		value = strings.ToLower(value)
-		if containsString(choices, value) {
-			return value, nil
-		}
-		fmt.Fprintf(p.out, "Choose %s.\n", strings.Join(choices, " or "))
-	}
-}
 func promptHarnesses(p *prompter, detected, existing []string) ([]string, error) {
 	// Preserve an existing selection on reconfiguration. Detection supplies
 	// defaults only for first-time setup; it never proves capture is working.
