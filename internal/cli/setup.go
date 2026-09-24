@@ -153,7 +153,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			}
 		}
 		if draft.Step == 1 {
-			fmt.Fprintln(out, "\n2 of 3 — Connect storage")
+			p.step(2, "Connect storage")
 			cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env)
 			if e != nil {
 				return e
@@ -233,19 +233,22 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			draft.Config.BucketPrivacy = inspectBucketPrivacy(draft.Config, store, env.now())
 			draft.Config.StorageVerifiedAt = env.now().UTC()
 			verifiedStorage = draft.Config.Storage
-			fmt.Fprintln(out, "Connected.")
+			fmt.Fprintln(out, p.style.green("✓ Connected."))
 		}
 
 		if draft.Config.RetentionDays <= 0 {
 			draft.Config.RetentionDays = defaultRetentionDays
 		}
-		showSetupReview(p, draft.Config, found, discoveries)
-		if existing.Paused {
-			fmt.Fprintln(out, "Capture stays paused until you run agent-archive resume.")
-		}
+		showSetupReview(p, draft.Config, existing, found, discoveries)
+		fmt.Fprintln(out, "\n"+p.style.bold("Before you confirm"))
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
 			return err
 		}
+		if existing.Paused {
+			p.note("Capture stays paused until you run agent-archive resume.")
+		}
+		printReviewNotes(p, draft.Config, discoveries)
+		fmt.Fprintln(out)
 		label := "Start archiving?"
 		if found {
 			label = "Save these changes?"
@@ -305,7 +308,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 }
 
 func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) error {
-	fmt.Fprintln(p.out, "\n1 of 3 — Choose what to capture")
+	p.step(1, "Choose what to capture")
 	detected := env.detectHarnesses(userHome)
 	var err error
 	cfg.Harnesses, err = promptHarnesses(p, detected, cfg.Harnesses)

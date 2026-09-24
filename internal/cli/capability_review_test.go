@@ -24,7 +24,7 @@ func TestSetupShowsVersionsBeforeActivationAndDiscoversOnce(t *testing.T) {
 	}
 	input := s3SetupInput("test", "us-east-1", "profile", true, false, false, project)
 	output := setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0)
-	if calls != 1 || !strings.Contains(output, "installed version 1.2.3") {
+	if calls != 1 || !strings.Contains(output, "Codex 1.2.3") {
 		t.Fatalf("calls %d output %s", calls, output)
 	}
 	if !strings.Contains(output, "Checking installed applications...") {
