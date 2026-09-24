@@ -112,14 +112,21 @@ var cursorSettledComposerStatuses = map[string]bool{
 
 // cursorComposerFilter accumulates one FilterComposer call.
 type cursorComposerFilter struct {
-	result                         FilteredTranscript
-	gapSet                         map[string]bool
-	omitted, denied, context       keyNameSet
-	args, argSources               keyNameSet
-	messages, missing, idMismatch  int
-	blobMessages, unknownType      int
-	incompleteTail, unreadableTail int
-	composerBlob                   bool
+	result         FilteredTranscript
+	gapSet         map[string]bool
+	omitted        keyNameSet
+	denied         keyNameSet
+	context        keyNameSet
+	args           keyNameSet
+	argSources     keyNameSet
+	messages       int
+	missing        int
+	idMismatch     int
+	blobMessages   int
+	unknownType    int
+	incompleteTail int
+	unreadableTail int
+	composerBlob   bool
 }
 
 func (f *cursorComposerFilter) addGap(code string, _ int, detail string) {
@@ -183,13 +190,17 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 	if strings.TrimSpace(composerID) == "" {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor composer has no composer ID"}
 	}
-	f := &cursorComposerFilter{
-		result: FilteredTranscript{Format: cursorComposerFormat, SessionIDs: []string{composerID}},
-		gapSet: map[string]bool{},
-	}
+	// createdAt is the zero time when the chat records no creation time.
 	createdAt, hasCreatedAt := cursorTime(composer["createdAt"])
-	if hasCreatedAt {
-		f.result.NativeStartAt, f.result.FirstEventAt, f.result.NativeStartComplete = createdAt, createdAt, true
+	f := &cursorComposerFilter{
+		result: FilteredTranscript{
+			Format:              cursorComposerFormat,
+			SessionIDs:          []string{composerID},
+			NativeStartAt:       createdAt,
+			FirstEventAt:        createdAt,
+			NativeStartComplete: hasCreatedAt,
+		},
+		gapSet: map[string]bool{},
 	}
 	for _, key := range sortedKeys(composer) {
 		switch {
@@ -601,6 +612,7 @@ func (f *cursorComposerFilter) toolResultBlocks(raw any) []any {
 		}
 		block := map[string]any{"type": "tool_result"}
 		for _, key := range sortedKeys(entry) {
+			//lint:ignore LV1001 keys of Cursor's stored JSON are an external, open vocabulary
 			switch key {
 			case "toolCallId":
 				if id, ok := entry[key].(string); ok && id != "" {

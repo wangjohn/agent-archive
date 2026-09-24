@@ -53,7 +53,7 @@ func filterGoldenOf(t *testing.T, name string) filterGoldenEntry {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	filtered, err := adapterForFixture(t, name).FilterJSONL(file)
 	if err != nil {
 		return filterGoldenEntry{Error: true}

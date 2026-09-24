@@ -75,17 +75,19 @@ func composerGoldenOf(t *testing.T, name string) []byte {
 	filtered, err := (CursorAdapter{}).FilterComposer(loadComposerFixture(t, name))
 	var golden composerGolden
 	if err != nil {
-		golden.Error = err.Error()
+		golden = composerGolden{Error: err.Error()}
 	} else {
 		boundary := filtered.Boundary
+		var records []json.RawMessage
+		for _, record := range filtered.Records {
+			records = append(records, json.RawMessage(record))
+		}
 		golden = composerGolden{
 			Format: filtered.Format, Gaps: filtered.Gaps, Boundary: &boundary,
 			SessionIDs: filtered.SessionIDs, AgentIDs: filtered.AgentIDs,
 			FirstEventAt: goldenTime(filtered.FirstEventAt), NativeStartAt: goldenTime(filtered.NativeStartAt),
 			NativeEndAt: goldenTime(filtered.NativeEndAt), NativeStartComplete: filtered.NativeStartComplete,
-		}
-		for _, record := range filtered.Records {
-			golden.Records = append(golden.Records, json.RawMessage(record))
+			Records: records,
 		}
 	}
 	encoded, err := json.MarshalIndent(golden, "", "  ")
@@ -132,9 +134,9 @@ func TestCursorComposerGolden(t *testing.T) {
 	}
 }
 
-func filterComposerFixture(t *testing.T, name string) (FilteredTranscript, []map[string]any) {
+func filterComposerFixture(t *testing.T) (FilteredTranscript, []map[string]any) {
 	t.Helper()
-	filtered, err := (CursorAdapter{}).FilterComposer(loadComposerFixture(t, name))
+	filtered, err := (CursorAdapter{}).FilterComposer(loadComposerFixture(t, "chat.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +155,7 @@ func filterComposerFixture(t *testing.T, name string) (FilteredTranscript, []map
 // and timestamps, and nothing of the context Cursor attached, the reasoning,
 // secrets, injected instructions, or the chat's own settings.
 func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
-	filtered, records := filterComposerFixture(t, "chat.json")
+	filtered, records := filterComposerFixture(t)
 	encoded := string(bytes.Join(filtered.Records, []byte("\n")))
 	for _, leaked := range []string{
 		"CONTEXT-SENTINEL", "THINKING-SENTINEL", "sk-SYNTHETIC", "hunter2", "SYNTHETIC-TOKEN-VALUE",
@@ -257,7 +259,7 @@ func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
 }
 
 func TestCursorComposerReportsWhatItCouldNotKeep(t *testing.T) {
-	filtered, _ := filterComposerFixture(t, "chat.json")
+	filtered, _ := filterComposerFixture(t)
 	want := map[string]string{
 		"cursor_bubble_missing":           "1 of 7 messages have no message row",
 		"cursor_blob_content_unavailable": "1 of 7 messages reference content blobs, which are not read",
@@ -318,7 +320,7 @@ func TestCursorComposerReportsWhatItCouldNotKeep(t *testing.T) {
 // The chat starts at createdAt and ends when its last message completed, even
 // though the last header is not the latest-updated field in the chat.
 func TestCursorComposerTimestampsAndIdentity(t *testing.T) {
-	filtered, _ := filterComposerFixture(t, "chat.json")
+	filtered, _ := filterComposerFixture(t)
 	start := time.UnixMilli(1790000000000).UTC()
 	if !filtered.NativeStartAt.Equal(start) || !filtered.FirstEventAt.Equal(start) || !filtered.NativeStartComplete {
 		t.Fatalf("start = %v first = %v complete = %v", filtered.NativeStartAt, filtered.FirstEventAt, filtered.NativeStartComplete)
@@ -801,7 +803,7 @@ func TestCursorComposerToolArgumentsUseTheSharedDenyList(t *testing.T) {
 // assistant messages are turns, the tool call links to its result, and token
 // counts are summed.
 func TestCursorComposerRecordsParse(t *testing.T) {
-	filtered, _ := filterComposerFixture(t, "chat.json")
+	filtered, _ := filterComposerFixture(t)
 	reg := registration()
 	reg.Harness = Harness{Name: "cursor"}
 	bundle, err := NewSourceBundle(reg, CursorAdapter{}, filtered, time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC), nil)
@@ -825,6 +827,8 @@ func TestCursorComposerRecordsParse(t *testing.T) {
 			if turn.Model != "synthetic-model-a" && turn.Model != "" {
 				t.Errorf("turn model = %q", turn.Model)
 			}
+		case TurnKindToolResult, TurnKindHarnessMeta, TurnKindCommandOutput, TurnKindShellCommand,
+			TurnKindLocalCommand, TurnKindCompactSummary, TurnKindHarnessNotification:
 		}
 	}
 	if prompts != 2 || replies != 3 {

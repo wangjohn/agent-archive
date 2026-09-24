@@ -271,8 +271,8 @@ func TestFilterV3RetainsCursorNestedMessagesAndTurnEnded(t *testing.T) {
 func TestFilterV3ReportsOmittedKeyNamesOnceAndCapsThem(t *testing.T) {
 	var builder strings.Builder
 	builder.WriteString(`{"type":"assistant","uuid":"a","timestamp":"2026-09-20T10:00:00Z","message":{"role":"assistant","content":"visible"}`)
-	for i := 0; i < maxOmittedKeyNames+20; i++ {
-		builder.WriteString(fmt.Sprintf(`,"unknown_%03d":"value-%03d"`, i, i))
+	for i := range maxOmittedKeyNames + 20 {
+		fmt.Fprintf(&builder, `,"unknown_%03d":"value-%03d"`, i, i)
 	}
 	builder.WriteString("}")
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(builder.String()))

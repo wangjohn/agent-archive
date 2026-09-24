@@ -16,9 +16,9 @@ import (
 // shaped like the ones observed in large local sessions: a small message
 // content block, and the bulk (bulkBytes of it) in toolUseResult, a field the
 // filter drops.
-func bigToolResultRecord(uuid string, bulkBytes int) string {
+func bigToolResultRecord(bulkBytes int) string {
 	bulk := strings.Repeat("x", bulkBytes)
-	return fmt.Sprintf(`{"type":"user","uuid":%q,"sessionId":"native-claude","timestamp":"2026-09-22T12:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"short summary of the output"}]},"toolUseResult":{"stdout":%q,"stderr":""}}`, uuid, bulk)
+	return fmt.Sprintf(`{"type":"user","uuid":"r1","sessionId":"native-claude","timestamp":"2026-09-22T12:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"short summary of the output"}]},"toolUseResult":{"stdout":%q,"stderr":""}}`, bulk)
 }
 
 const smallClaudePrompt = `{"type":"user","uuid":"p1","sessionId":"native-claude","timestamp":"2026-09-22T12:00:00Z","message":{"role":"user","content":"Run the tests."}}`
@@ -27,7 +27,7 @@ const smallClaudePrompt = `{"type":"user","uuid":"p1","sessionId":"native-claude
 // record whose bulk is a dropped field now filters, and only allowed fields
 // are retained.
 func TestFilterReadsARecordOverTheOldTwoMegabyteLimit(t *testing.T) {
-	jsonl := smallClaudePrompt + "\n" + bigToolResultRecord("r1", 5<<20) + "\n"
+	jsonl := smallClaudePrompt + "\n" + bigToolResultRecord(5<<20) + "\n"
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(jsonl))
 	if err != nil {
 		t.Fatalf("a 5 MB record was refused: %v", err)
@@ -62,7 +62,7 @@ func withRecordLimit(t *testing.T, limit int) {
 // FilterError, and a record of exactly the limit is still read.
 func TestFilterRefusesARecordOverTheLimit(t *testing.T) {
 	withRecordLimit(t, 4096)
-	exact := bigToolResultRecord("r1", 0)
+	exact := bigToolResultRecord(0)
 	exact = exact[:len(exact)-2] + `,"pad":"` + strings.Repeat("y", 4096-len(exact)-9) + `"}}`
 	if len(exact) != 4096 {
 		t.Fatalf("test record is %d bytes, want 4096", len(exact))
@@ -72,7 +72,7 @@ func TestFilterRefusesARecordOverTheLimit(t *testing.T) {
 			t.Fatalf("a record of exactly the limit (trailing %q) was refused: %v", trailing, err)
 		}
 	}
-	_, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(smallClaudePrompt + "\n" + bigToolResultRecord("r1", 8192) + "\n" + smallClaudePrompt + "\n"))
+	_, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(smallClaudePrompt + "\n" + bigToolResultRecord(8192) + "\n" + smallClaudePrompt + "\n"))
 	if !errors.Is(err, ErrRecordTooLarge) || !IsFilterError(err) {
 		t.Fatalf("err = %v, want ErrRecordTooLarge", err)
 	}
@@ -89,7 +89,7 @@ func TestLargeRecordMemoryCeiling(t *testing.T) {
 		t.Skip("allocates a 32 MB record")
 	}
 	const recordBytes = 32 << 20
-	jsonl := smallClaudePrompt + "\n" + bigToolResultRecord("r1", recordBytes) + "\n"
+	jsonl := smallClaudePrompt + "\n" + bigToolResultRecord(recordBytes) + "\n"
 
 	runtime.GC()
 	var before runtime.MemStats

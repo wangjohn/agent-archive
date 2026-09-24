@@ -239,7 +239,10 @@ func TestObserveSkillsRecordsExistingEmptyRoot(t *testing.T) {
 
 func TestObserveSkillsUsesAggregateSnapshotBudgetAndDistinctCodexScopes(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
-	items := []struct{ root, name string }{
+	items := []struct {
+		root string
+		name string
+	}{
 		{filepath.Join(home, ".agents", "skills"), "current"},
 		{filepath.Join(home, ".agents", "skills"), "extra-one"},
 		{filepath.Join(home, ".agents", "skills"), "extra-two"},
@@ -286,7 +289,7 @@ func TestObserveSkillsUsesAggregateSnapshotBudgetAndDistinctCodexScopes(t *testi
 func TestObserveSkillsLabelsTruncatedInventory(t *testing.T) {
 	home := t.TempDir()
 	root := filepath.Join(home, ".agents", "skills")
-	for i := 0; i < maxSkillsPerRoot+1; i++ {
+	for i := range maxSkillsPerRoot + 1 {
 		dir := filepath.Join(root, fmt.Sprintf("skill-%03d", i))
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)

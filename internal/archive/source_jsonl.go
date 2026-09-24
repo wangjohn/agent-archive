@@ -23,11 +23,14 @@ import (
 // holding the whole decompressed document, which schema 1 (one JSON document)
 // required.
 const (
-	SourceLineHeader               = "header"
-	SourceLineNativeRecord         = "native_record"
-	SourceLineNativeText           = "native_text"
-	SourceLineSupplementalEvidence = "supplemental_evidence"
+	SourceLineHeader               SourceLineKind = "header"
+	SourceLineNativeRecord         SourceLineKind = "native_record"
+	SourceLineNativeText           SourceLineKind = "native_text"
+	SourceLineSupplementalEvidence SourceLineKind = "supplemental_evidence"
 )
+
+// SourceLineKind is the "kind" of one source bundle line.
+type SourceLineKind string
 
 // MaxSourceLineBytes bounds one decoded source line: the largest native
 // record the filter reads (MaxRecordBytes, which also bounds the transcripts
@@ -44,7 +47,7 @@ type SourceCounts struct {
 
 // SourceHeader is the first line of a source bundle.
 type SourceHeader struct {
-	Kind             string                   `json:"kind"`
+	Kind             SourceLineKind           `json:"kind"`
 	SchemaVersion    int                      `json:"schema_version"`
 	ArchiveSessionID string                   `json:"archive_session_id"`
 	NativeSessionID  string                   `json:"native_session_id"`
@@ -57,7 +60,7 @@ type SourceHeader struct {
 
 // SourceLine is one decoded line. Kind names which one field is set.
 type SourceLine struct {
-	Kind         string
+	Kind         SourceLineKind
 	Header       *SourceHeader
 	NativeRecord map[string]any
 	NativeText   *TextTranscript
@@ -65,20 +68,20 @@ type SourceLine struct {
 }
 
 type nativeRecordLine struct {
-	Kind   string         `json:"kind"`
+	Kind   SourceLineKind `json:"kind"`
 	Record map[string]any `json:"record"`
 }
 
 type nativeTextLine struct {
-	Kind    string `json:"kind"`
-	Format  string `json:"format"`
-	Content string `json:"content"`
+	Kind    SourceLineKind `json:"kind"`
+	Format  string         `json:"format"`
+	Content string         `json:"content"`
 }
 
 // Supplemental evidence has its own "kind" field (skill_inventory, ...), so
 // it is nested under "evidence" rather than flattened beside the line's kind.
 type evidenceLine struct {
-	Kind     string               `json:"kind"`
+	Kind     SourceLineKind       `json:"kind"`
 	Evidence SupplementalEvidence `json:"evidence"`
 }
 
@@ -159,7 +162,7 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 	if err != nil {
 		return fmt.Errorf("open source gzip: %w", err)
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	var plain io.Reader = gz
 	counter := &countingReader{r: gz, limit: options.MaxUncompressedBytes}
 	if options.MaxUncompressedBytes > 0 {
@@ -181,10 +184,7 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 		}
 		return 0, nil, nil
 	})
-	initial := 64 << 10
-	if initial > maxLine {
-		initial = maxLine
-	}
+	initial := min(64<<10, maxLine)
 	// The scanner must buffer a line and its newline together, so a line of
 	// exactly maxLine bytes (the largest the encoder writes) needs one byte
 	// more than the cap; one of maxLine+1 bytes still fails.
@@ -193,14 +193,14 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 	var header *SourceHeader
 	var seen SourceCounts
 	stage := 0 // index into the kind order below
-	order := map[string]int{SourceLineNativeRecord: 1, SourceLineNativeText: 2, SourceLineSupplementalEvidence: 3}
+	order := map[SourceLineKind]int{SourceLineNativeRecord: 1, SourceLineNativeText: 2, SourceLineSupplementalEvidence: 3}
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
 		raw := scanner.Bytes()
 		var probe struct {
-			Kind          string `json:"kind"`
-			SchemaVersion *int   `json:"schema_version"`
+			Kind          SourceLineKind `json:"kind"`
+			SchemaVersion *int           `json:"schema_version"`
 		}
 		if unterminated {
 			if lineNo == 1 && json.Unmarshal(raw, &probe) == nil && probe.Kind == "" && probe.SchemaVersion != nil {
@@ -259,6 +259,8 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 		stage = position
 		line := SourceLine{Kind: probe.Kind}
 		switch probe.Kind {
+		case SourceLineHeader:
+			// A header after the first line was rejected above.
 		case SourceLineNativeRecord:
 			var decoded nativeRecordLine
 			if err := json.Unmarshal(raw, &decoded); err != nil {

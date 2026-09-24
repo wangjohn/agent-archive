@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -79,8 +80,10 @@ func NewAdapter(name string) (Adapter, error) {
 // foundation. Unsupported Codex record types are gaps, never pass-through.
 type CodexAdapter struct{}
 
-func (CodexAdapter) Name() string    { return "codex" }
+func (CodexAdapter) Name() string { return "codex" }
+
 func (CodexAdapter) Version() string { return adapterVersion }
+
 func (CodexAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "codex-jsonl", map[string]bool{
 		"session_meta": true, "turn_context": true, "response_item": true,
@@ -92,8 +95,10 @@ func (CodexAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // types. It does not claim schema coverage for every installed version.
 type ClaudeAdapter struct{}
 
-func (ClaudeAdapter) Name() string    { return "claude" }
+func (ClaudeAdapter) Name() string { return "claude" }
+
 func (ClaudeAdapter) Version() string { return adapterVersion }
+
 func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "claude-jsonl", map[string]bool{
 		"user": true, "assistant": true, "tool_use": true, "tool_result": true,
@@ -107,8 +112,10 @@ func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // unsupported capture gaps upstream.
 type CursorAdapter struct{}
 
-func (CursorAdapter) Name() string    { return "cursor" }
+func (CursorAdapter) Name() string { return "cursor" }
+
 func (CursorAdapter) Version() string { return adapterVersion }
+
 func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	return filterJSONL(r, "cursor-jsonl", map[string]bool{
 		"session": true, "message": true, "tool_call": true, "tool_result": true,
@@ -168,7 +175,7 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	// Split into sections, keeping each visible section's lines as they were.
 	var sections [][]string
 	hidden := false
-	for _, line := range strings.Split(string(content), "\n") {
+	for line := range strings.SplitSeq(string(content), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
@@ -648,6 +655,7 @@ func compactBoundaryRecord(raw map[string]any, omit func(string)) map[string]any
 	out := map[string]any{"type": "system", "subtype": "compact_boundary"}
 	for key, value := range raw {
 		switch {
+		//lint:ignore LV1001 keys of an external JSON record are an open domain
 		case key == "type" || key == "subtype":
 		case key == "timestamp":
 			if stamp, ok := value.(string); ok && !parseNativeTimestamp(map[string]any{"timestamp": stamp}).IsZero() {
@@ -789,10 +797,8 @@ func appendUniqueString(values []string, candidate string) []string {
 	if candidate == "" {
 		return values
 	}
-	for _, existing := range values {
-		if existing == candidate {
-			return values
-		}
+	if slices.Contains(values, candidate) {
+		return values
 	}
 	return append(values, candidate)
 }

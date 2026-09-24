@@ -107,17 +107,19 @@ func skillRoots(options SkillOptions) []skillRoot {
 
 func observeRoot(harness string, root skillRoot, observedAt time.Time, remainingSnapshotBytes *int64) ([]archive.SupplementalEvidence, error) {
 	entries, err := os.ReadDir(root.path)
-	if errors.Is(err, os.ErrNotExist) {
-		// Root-local absence is observable and lets a later pass record removal
-		// of every skill previously seen in this scope. Installed-only coverage
-		// still says nothing about what the harness discovered or invoked.
-		return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, "absent", nil, true, observedAt)}, nil
-	}
 	if err != nil {
 		// Not a directory, permission denied, or any other read failure: the
 		// root exists but its inventory is unknown. Record that instead of
 		// failing publication of a session over an unrelated directory.
-		return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, "unreadable", nil, false, observedAt)}, nil
+		rootStatus, complete := "unreadable", false
+		if errors.Is(err, os.ErrNotExist) {
+			// Root-local absence is observable and lets a later pass record
+			// removal of every skill previously seen in this scope.
+			// Installed-only coverage still says nothing about what the
+			// harness discovered or invoked.
+			rootStatus, complete = "absent", true
+		}
+		return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, rootStatus, nil, complete, observedAt)}, nil
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	omittedEntries := 0
@@ -247,7 +249,7 @@ func readBounded(path string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return nil, err
