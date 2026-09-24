@@ -377,7 +377,7 @@ func composerWorkspaceFolder(raw json.RawMessage) string {
 // none is project_unknown. If a chat can't be read safely after all (Cursor
 // held a lock, the copy failed), the database counts as not checked and none
 // of its chats is included, as when it can't be listed.
-func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState, r *resolver, projectFilter []string, since, until time.Time, workers int, plan *Plan) error {
+func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState, r *resolver, projectFilter []string, since, until time.Time, workers int, plan *Plan) (err error) {
 	if env.CursorDatabase == nil || !harnessMatches(plan.Filters.Harnesses, "cursor") {
 		return nil
 	}
@@ -390,7 +390,14 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 		return fmt.Errorf("read Cursor's database: %w", err)
 	}
 	if res.Close != nil {
-		defer res.Close()
+		// The plan's copy of the database holds every chat; one that can't
+		// be removed is reported, not left silently in the temporary folder
+		// (the next sweep removes it once it is stale).
+		defer func() {
+			if closeErr := res.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 	}
 	plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = res.Checked, res.Reason
 	plan.CursorDatabaseNewerFormat = res.NewerFormat
@@ -405,8 +412,16 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 	}
 	dated := !since.IsZero() || !until.IsZero()
 	var items, toRead []*work
-	seen := map[string]bool{}
-	for _, chat := range res.Chats {
+	// Two rows with one composerId are one chat found twice. The row kept is
+	// one whose key is its ID, which the chat can be read back by, so a
+	// stray row naming another chat's ID never displaces the real one.
+	kept := map[string]int{}
+	for i, chat := range res.Chats {
+		if k, ok := kept[chat.ID]; !ok || (res.Chats[k].KeyID != chat.ID && chat.KeyID == chat.ID) {
+			kept[chat.ID] = i
+		}
+	}
+	for i, chat := range res.Chats {
 		if fileChats[chat.ID] {
 			continue
 		}
@@ -420,12 +435,10 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 			},
 		}
 		items = append(items, w)
-		// Two rows with one composerId are one chat found twice.
-		if seen[chat.ID] {
+		if kept[chat.ID] != i {
 			w.duplicate = true
 			continue
 		}
-		seen[chat.ID] = true
 		// The collector reads the chat by its ID; a row whose composerId is
 		// not its key's can't be read back under the ID it would register.
 		w.t.identityMismatch = chat.ID != chat.KeyID
@@ -456,7 +469,11 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 	if err := forEach(ctx, workers, toRead, func(w *work) {
 		mu.Lock()
 		c, err := res.ReadChat(ctx, w.chat.KeyID)
-		if err != nil && !isNotExist(err) && readErr == nil {
+		// A value of this chat's that does not decode is the chat's
+		// problem, unsafe_format; only a failure of the database itself
+		// (a lock, a failed copy, a changed file) leaves it unchecked.
+		chatOnly := err != nil && (isNotExist(err) || cursorstore.ReasonOf(err) == cursorstore.UnknownFormat)
+		if err != nil && !chatOnly && readErr == nil {
 			readErr = err
 		}
 		mu.Unlock()
