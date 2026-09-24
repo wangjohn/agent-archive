@@ -25,7 +25,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := storage.NewMemoryStore()
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)
@@ -70,7 +70,7 @@ func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := storage.NewMemoryStore()
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
 		if err != nil {
 			t.Fatal(err)

@@ -12,6 +12,16 @@ import (
 
 const Owner = "agent-archive lifecycle capture"
 
+// harnessName is an app whose hook configuration this package edits. The
+// exported functions take its string form, as archive.Harness.Name holds it.
+type harnessName string
+
+const (
+	harnessCodex  harnessName = "codex"
+	harnessClaude harnessName = "claude"
+	harnessCursor harnessName = "cursor"
+)
+
 // Merge preserves unrelated handlers and top-level settings. The executable must
 // be the installed absolute path, not a developer checkout or shell fragment.
 func Merge(existing []byte, harness, executable string) ([]byte, error) {
@@ -24,13 +34,14 @@ func Merge(existing []byte, harness, executable string) ([]byte, error) {
 	} else if err := json.Unmarshal(existing, &root); err != nil || root == nil {
 		return nil, errors.New("invalid existing hook configuration")
 	}
+	app := harnessName(harness)
 	var events []string
-	switch harness {
-	case "codex":
+	switch app {
+	case harnessCodex:
 		events = []string{"SessionStart", "UserPromptSubmit", "Stop", "Interrupt", "SessionEnd", "SubagentStop"}
-	case "claude":
+	case harnessClaude:
 		events = []string{"SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd", "SubagentStop"}
-	case "cursor":
+	case harnessCursor:
 		events = []string{"sessionStart", "beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionEnd", "subagentStop"}
 		if v, ok := root["version"]; ok && v != float64(1) {
 			return nil, errors.New("unsupported Cursor hook configuration version")
@@ -48,13 +59,13 @@ func Merge(existing []byte, harness, executable string) ([]byte, error) {
 		root["hooks"] = hs
 	}
 	command := quote(executable) + " _hook --harness " + harness + " # " + Owner
-	if _, err := stripOwned(hs, harness); err != nil {
+	if _, err := stripOwned(hs, app); err != nil {
 		return nil, err
 	}
 	for _, event := range events {
 		handler := map[string]any{"command": command, "timeout": 2}
 		var entry any = handler
-		if harness != "cursor" {
+		if app != harnessCursor {
 			handler["type"] = "command"
 			handler["statusMessage"] = Owner
 			entry = map[string]any{"hooks": []any{handler}}
@@ -73,8 +84,9 @@ func Merge(existing []byte, harness, executable string) ([]byte, error) {
 // ever matches our own marker (or the exact known prototype handler), never
 // a substring of an unrelated command.
 func Remove(existing []byte, harness string) ([]byte, bool, error) {
-	switch harness {
-	case "codex", "claude", "cursor":
+	app := harnessName(harness)
+	switch app {
+	case harnessCodex, harnessClaude, harnessCursor:
 	default:
 		return nil, false, errors.New("unsupported harness")
 	}
@@ -92,7 +104,7 @@ func Remove(existing []byte, harness string) ([]byte, bool, error) {
 		}
 		return existing, false, nil
 	}
-	removed, err := stripOwned(hs, harness)
+	removed, err := stripOwned(hs, app)
 	if err != nil {
 		return nil, false, err
 	}
@@ -114,7 +126,7 @@ func Remove(existing []byte, harness string) ([]byte, bool, error) {
 // from every event in hs, including events no longer used by the current
 // implementation. It never removes by substring alone. It reports whether
 // any handler was removed.
-func stripOwned(hs map[string]any, harness string) (bool, error) {
+func stripOwned(hs map[string]any, app harnessName) (bool, error) {
 	removed := false
 	for event, raw := range hs {
 		groups, ok := raw.([]any)
@@ -127,7 +139,7 @@ func stripOwned(hs map[string]any, harness string) (bool, error) {
 			if !ok {
 				return false, errors.New("invalid hook entry")
 			}
-			if harness == "cursor" {
+			if app == harnessCursor {
 				if old, ok := g["command"].(string); ok && strings.HasSuffix(old, " # "+Owner) {
 					removed = true
 					continue

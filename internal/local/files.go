@@ -19,8 +19,11 @@ func ID() (string, error) {
 	}
 	return hex.EncodeToString(b), nil
 }
-func Home() (string, error)     { return resolveHome(true) }
+
+func Home() (string, error) { return resolveHome(true) }
+
 func ReadHome() (string, error) { return resolveHome(false) }
+
 func resolveHome(create bool) (string, error) {
 	path := os.Getenv("AGENT_ARCHIVE_HOME")
 	if path == "" {
@@ -28,7 +31,7 @@ func resolveHome(create bool) (string, error) {
 		if e != nil {
 			return "", e
 		}
-		path = filepath.Join(home, ".local/share/agent-archive")
+		path = filepath.Join(home, ".local", "share", "agent-archive")
 	}
 	path, e := ResolveExistingSymlinks(path)
 	if e != nil {
@@ -75,7 +78,7 @@ func ResolveExistingSymlinks(path string) (string, error) {
 		}
 		ancestor = next
 	}
-	real, e := filepath.EvalSymlinks(ancestor)
+	resolved, e := filepath.EvalSymlinks(ancestor)
 	if e != nil {
 		return "", e
 	}
@@ -83,7 +86,7 @@ func ResolveExistingSymlinks(path string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	return filepath.Join(real, rel), nil
+	return filepath.Join(resolved, rel), nil
 }
 
 func Write(path string, value any) error {
@@ -93,6 +96,7 @@ func Write(path string, value any) error {
 	}
 	return WriteBytes(path, append(b, '\n'))
 }
+
 func WriteBytes(path string, b []byte) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return e
@@ -101,7 +105,8 @@ func WriteBytes(path string, b []byte) error {
 	if e != nil {
 		return e
 	}
-	defer os.Remove(f.Name())
+	// After a successful rename there is nothing left to remove.
+	defer func() { _ = os.Remove(f.Name()) }()
 	if e = f.Chmod(0600); e == nil {
 		_, e = f.Write(b)
 	}
@@ -122,9 +127,10 @@ func WriteBytes(path string, b []byte) error {
 	if e != nil {
 		return e
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	return d.Sync()
 }
+
 func Read(path string, value any) error {
 	b, e := os.ReadFile(path)
 	if e != nil {
@@ -143,13 +149,16 @@ func NamedLock(home, name string) (func(), error) {
 		return nil, e
 	}
 	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		f.Close()
+		_ = f.Close()
 		if errors.Is(e, syscall.EWOULDBLOCK) || errors.Is(e, syscall.EAGAIN) {
 			return nil, ErrBusy
 		}
 		return nil, e
 	}
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
 
 // NamedLockWait tolerates short contention while preserving the hook deadline.

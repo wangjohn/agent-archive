@@ -33,10 +33,14 @@ func TestLaunchAgentProgramReadsWhatLaunchAgentWrites(t *testing.T) {
 
 func TestPlanApplyAndRollback(t *testing.T) {
 	home := t.TempDir()
-	path := filepath.Join(home, ".claude/settings.json")
-	os.MkdirAll(filepath.Dir(path), 0700)
+	path := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
 	original := []byte(`{"permissions":{"allow":["Read"]}}`)
-	os.WriteFile(path, original, 0600)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatal(err)
+	}
 	plan, e := Plan(home, "/Applications/agent-archive", []string{"claude", "codex", "cursor"})
 	if e != nil {
 		t.Fatal(e)
@@ -51,20 +55,26 @@ func TestPlanApplyAndRollback(t *testing.T) {
 	if string(b) != string(original) {
 		t.Fatal("original changed")
 	}
-	if _, e = os.Stat(filepath.Join(home, ".codex/hooks.json")); !os.IsNotExist(e) {
+	if _, e = os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(e) {
 		t.Fatal("new file not removed")
 	}
 }
+
 func TestConcurrentEditPreserved(t *testing.T) {
 	home := t.TempDir()
 	plan, _ := Plan(home, "/bin/agent-archive", []string{"codex"})
 	path := plan[0].Path
-	os.MkdirAll(filepath.Dir(path), 0700)
-	os.WriteFile(path, []byte(`{"changed":true}`), 0600)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"changed":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if Apply(plan) == nil {
 		t.Fatal("overwrote concurrent edit")
 	}
 }
+
 func TestLaunchAgentEscapesPaths(t *testing.T) {
 	b, e := LaunchAgent("/a & b/agent-archive", "/private/data")
 	if e != nil {
@@ -80,14 +90,22 @@ func TestLaunchAgentEscapesPaths(t *testing.T) {
 
 func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 	home := t.TempDir()
-	claudePath := filepath.Join(home, ".claude/settings.json")
-	os.MkdirAll(filepath.Dir(claudePath), 0700)
+	claudePath := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(claudePath), 0700); err != nil {
+		t.Fatal(err)
+	}
 	// An unrelated hook on an event we also use, plus unrelated settings.
 	original := []byte(`{"permissions":{"allow":["Read"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
-	os.WriteFile(claudePath, original, 0600)
-	cursorPath := filepath.Join(home, ".cursor/hooks.json")
-	os.MkdirAll(filepath.Dir(cursorPath), 0700)
-	os.WriteFile(cursorPath, []byte(`{"version":1,"hooks":{"stop":[{"command":"echo unrelated"}]}}`), 0600)
+	if err := os.WriteFile(claudePath, original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cursorPath := filepath.Join(home, ".cursor", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(cursorPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cursorPath, []byte(`{"version":1,"hooks":{"stop":[{"command":"echo unrelated"}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	plan, err := Plan(home, "/Applications/agent-archive", []string{"claude", "codex", "cursor"})
 	if err != nil {
@@ -108,7 +126,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{claudePath, filepath.Join(home, ".codex/hooks.json"), cursorPath} {
+	for _, path := range []string{claudePath, filepath.Join(home, ".codex", "hooks.json"), cursorPath} {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)
@@ -141,10 +159,14 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 
 func TestPlanRemovalSkipsMissingAndUnrelatedFiles(t *testing.T) {
 	home := t.TempDir()
-	path := filepath.Join(home, ".codex/hooks.json")
-	os.MkdirAll(filepath.Dir(path), 0700)
+	path := filepath.Join(home, ".codex", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
 	unrelated := []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
-	os.WriteFile(path, unrelated, 0600)
+	if err := os.WriteFile(path, unrelated, 0600); err != nil {
+		t.Fatal(err)
+	}
 	plan, err := PlanRemoval(home, []string{"codex", "claude", "cursor"})
 	if err != nil {
 		t.Fatal(err)

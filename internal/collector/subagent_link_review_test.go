@@ -60,7 +60,7 @@ func TestRepeatedParentLinkNotificationDoesNotGrowTheRequest(t *testing.T) {
 	}
 
 	store := storage.NewMemoryStore()
-	for pass := 0; pass < 5; pass++ {
+	for pass := range 5 {
 		now := at.Add(time.Duration(pass) * time.Hour)
 		if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil {
 			t.Fatal(err)

@@ -144,15 +144,16 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			if err := os.WriteFile(childPath, []byte(`{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-09-21T10:02:00Z","message":{"role":"assistant","content":"child"}}`+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			var startedAtSource archive.StartedAtSource
+			if tc.origin == archive.SessionOriginImport {
+				startedAtSource = archive.StartedAtSourceTranscript
+			}
 			parent := archive.SessionRegistration{
 				ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project",
 				Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: parentStart, RegisteredAt: tc.admittedAt,
-				AdmittedAt: tc.admittedAt, Origin: tc.origin, ImportBatch: tc.batch,
+				AdmittedAt: tc.admittedAt, Origin: tc.origin, ImportBatch: tc.batch, StartedAtSource: startedAtSource,
 				// The destination configured below: a zero storage.
 				DestinationID: config.Config{}.DestinationID(),
-			}
-			if tc.origin == archive.SessionOriginImport {
-				parent.StartedAtSource = archive.StartedAtSourceTranscript
 			}
 			if err := local.SaveRegistration(parent); err != nil {
 				t.Fatal(err)
@@ -249,6 +250,7 @@ func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 	if record, _, _ := local.Removal("codex", "native-secret"); record.Reason != RemovalReasonUndo {
 		t.Fatalf("later removal did not replace the record: %#v", record)
 	}
+	//lint:ignore LV1001 the test passes a reason outside the closed set on purpose
 	if err := local.RecordRemoval("codex", "native-secret", "expired", at); err == nil {
 		t.Fatal("unknown reason accepted")
 	}
@@ -372,13 +374,15 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 			if err := os.WriteFile(childPath, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
+			var startedAtSource archive.StartedAtSource
+			var importBatch string
+			if tc.origin == archive.SessionOriginImport {
+				startedAtSource, importBatch = archive.StartedAtSourceTranscript, "2026-09-23-1"
+			}
 			parent := archive.SessionRegistration{
 				ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project",
 				Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: parentStart, RegisteredAt: importedAt,
-				AdmittedAt: importedAt, Origin: tc.origin,
-			}
-			if tc.origin == archive.SessionOriginImport {
-				parent.StartedAtSource, parent.ImportBatch = archive.StartedAtSourceTranscript, "2026-09-23-1"
+				AdmittedAt: importedAt, Origin: tc.origin, StartedAtSource: startedAtSource, ImportBatch: importBatch,
 			}
 			if err := local.SaveRegistration(parent); err != nil {
 				t.Fatal(err)
@@ -390,7 +394,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			for pass := 0; pass < 2; pass++ {
+			for range 2 {
 				materializeSubagentCandidates(local, Options{})
 			}
 			candidates, err := local.LoadSubagentCandidates()

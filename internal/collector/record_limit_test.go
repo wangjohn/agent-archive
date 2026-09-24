@@ -194,5 +194,6 @@ func TestRecordLimitReader(t *testing.T) {
 	}
 }
 
-func dirOf(path string) string  { return path[:strings.LastIndexByte(path, '/')] }
+func dirOf(path string) string { return path[:strings.LastIndexByte(path, '/')] }
+
 func baseOf(path string) string { return path[strings.LastIndexByte(path, '/')+1:] }

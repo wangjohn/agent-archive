@@ -25,13 +25,14 @@ func TestPrivateAtomicFile(t *testing.T) {
 		t.Fatal(st.Mode())
 	}
 }
+
 func TestLockExcludesOtherCollector(t *testing.T) {
 	home := t.TempDir()
 	unlock, e := Lock(home)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = Lock(home); e != ErrBusy {
+	if _, e = Lock(home); !errors.Is(e, ErrBusy) {
 		t.Fatal("second writer admitted", e)
 	}
 	unlock()
@@ -41,11 +42,16 @@ func TestLockExcludesOtherCollector(t *testing.T) {
 	}
 	unlock()
 }
+
 func TestHomeRejectsGitSymlink(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
-	os.MkdirAll(filepath.Join(repo, ".git"), 0700)
-	os.Symlink(repo, filepath.Join(root, "link"))
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(repo, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("AGENT_ARCHIVE_HOME", filepath.Join(root, "link", "private"))
 	if _, e := Home(); e == nil {
 		t.Fatal("allowed private data under Git via symlink")

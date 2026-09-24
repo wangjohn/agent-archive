@@ -47,12 +47,20 @@ const (
 )
 
 type Filter struct {
-	Harness, Model, Skill, SkillSHA256 string
-	From, To                           time.Time
-	RequireCompleteCoverage            bool
-	SkillUsage                         SkillUsage
+	Harness                 string
+	Model                   string
+	Skill                   string
+	SkillSHA256             string
+	From                    time.Time
+	To                      time.Time
+	RequireCompleteCoverage bool
+	SkillUsage              SkillUsage
 }
-type Limits struct{ MaxCompressedBytes, MaxUncompressedBytes int }
+
+type Limits struct {
+	MaxCompressedBytes   int
+	MaxUncompressedBytes int
+}
 
 func (l Limits) compressed() int {
 	if l.MaxCompressedBytes > 0 {
@@ -60,6 +68,7 @@ func (l Limits) compressed() int {
 	}
 	return 32 << 20
 }
+
 func (l Limits) uncompressed() int {
 	if l.MaxUncompressedBytes > 0 {
 		return l.MaxUncompressedBytes
@@ -286,13 +295,13 @@ func FindMetadataKeys(ctx context.Context, store storage.ObjectStore, prefix, ar
 var eligibilityParserVersion = [3]int{0, 4, 0}
 
 // parserVersionAtLeast reports whether version parses as a plain numeric
-// major.minor.patch triple at or above min. Anything unparsable — the empty
+// major.minor.patch triple at or above minimum. Anything unparsable — the empty
 // string, a custom collector.Options.ParserVersion override, a pre-release
-// suffix — is not at least min, because only a version this function can
+// suffix — is not at least minimum, because only a version this function can
 // order says which parser wrote the sidecar.
-func parserVersionAtLeast(version string, min [3]int) bool {
+func parserVersionAtLeast(version string, minimum [3]int) bool {
 	fields := strings.Split(version, ".")
-	if len(fields) != len(min) {
+	if len(fields) != len(minimum) {
 		return false
 	}
 	var parsed [3]int
@@ -312,8 +321,8 @@ func parserVersionAtLeast(version string, min [3]int) bool {
 		parsed[i] = n
 	}
 	for i := range parsed {
-		if parsed[i] != min[i] {
-			return parsed[i] > min[i]
+		if parsed[i] != minimum[i] {
+			return parsed[i] > minimum[i]
 		}
 	}
 	return true
@@ -373,7 +382,9 @@ func matches(m archive.Metadata, f Filter) bool {
 			if !eligibleNoUse {
 				return false
 			}
-		default: // SkillUsageUsed, or the zero value
+		case SkillUsageUsed:
+			fallthrough
+		default: // the zero value
 			if !used {
 				return false
 			}
@@ -426,7 +437,7 @@ func LoadSource(ctx context.Context, store storage.ObjectStore, metadata archive
 // RefreshAndLoad retries once after rereading metadata, covering the normal
 // metadata-pointer refresh race after old source cleanup.
 func RefreshAndLoad(ctx context.Context, store storage.ObjectStore, metadataKey string, limits Limits) (archive.Metadata, archive.SourceBundle, error) {
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		m, err := ReadMetadata(ctx, store, metadataKey)
 		if err != nil {
 			return archive.Metadata{}, archive.SourceBundle{}, err

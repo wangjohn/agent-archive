@@ -148,7 +148,8 @@ func writeCacheFile(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
+	// After a successful rename there is nothing left to remove.
+	defer func() { _ = os.Remove(f.Name()) }()
 	if err = f.Chmod(0o600); err == nil {
 		_, err = f.Write(data)
 	}
