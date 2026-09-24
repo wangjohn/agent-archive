@@ -352,8 +352,9 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   before the value stays: `Authorization: Bearer [REDACTED]`. A single token
   in brackets or braces is a value too (`password=[hunter2]`,
   `token={abc123}`), with anything glued on after it
-  (`password=[REDACTED]realsecret` loses `realsecret`). A value may begin
-  with `=` (`PASSWORD==abc`) unless whitespace follows it.
+  (`password=[REDACTED]realsecret` loses `realsecret`, and a glued bracket
+  group goes whole). A value may begin with `=` unless whitespace follows
+  it; the extra `=` signs stay (`PASSWORD==[REDACTED]`).
 - AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials)
   and Anthropic/OpenAI style `sk-` keys.
 - PEM private key blocks: `-----BEGIN … PRIVATE KEY-----` through the next
@@ -370,8 +371,9 @@ code or a path: `token = parse(x)`, `nextToken := lexer.Next()`,
 `credentials := loadCreds()`, and `password: required` have their
 right-hand side redacted; so do a saved directory in a `*_PWD` variable
 (`ORIG_PWD=$(pwd)`), a path to a credentials file
-(`GOOGLE_APPLICATION_CREDENTIALS=/path/key.json`), and the word after a flag
-in prose (`pass --token flag`). This is accepted rather
+(`GOOGLE_APPLICATION_CREDENTIALS=/path/key.json`), a one-item list
+(`password: [required]`, taken for a bracketed value), and the word after a
+flag in prose (`pass --token flag`). This is accepted rather
 than narrowed, because the cost of a missed credential is higher than the
 cost of a redacted identifier in an archived transcript; a reader sees the
 `sensitive_content_redacted` gap and can consult the original source if it
@@ -394,6 +396,11 @@ Known misses.
   is a structure and is not replaced as text: in parsed records its members
   are checked by name, but in free text a secret inside it is caught only by
   its own name or shape.
+- For the same reason, an unquoted value that begins with `[` or `{` but is
+  not a single closed token is kept whole: `password=[Kx9!q2Lm`,
+  `password={secret`, `password=[admin:hunter2]`, `password=[a b]realsecret`.
+  About 2% of random passwords drawn from the full symbol set begin with a
+  bracket or brace.
 - A project skill's `SKILL.md` that is a hard link to another file cannot be
   told apart from a real file. A cloned repository cannot create one (git
   does not store hard links); it needs local write access to the project.

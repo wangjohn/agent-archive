@@ -335,21 +335,23 @@ const (
 	// to the end of the line when it has none. In order: JSON escaped once
 	// inside a string (`\"…\"`, where an escaped quote inside is `\\\"`);
 	// JSON escaped more than once (`\\\"…\\\"`, up to the first escaped
-	// quote of any depth); double quotes, with backslash escapes; single
-	// quotes.
+	// quote of any depth); double quotes, with backslash escapes (a value
+	// cut off after a lone backslash takes it along, so none is left for a
+	// second pass to glue onto the marker); single quotes.
 	credentialQuotedValue = `\\"(?:\\\\\\"|[^"\\\n]|\\[^"\n])*(?:\\")?|` +
 		`\\{2,}"(?:[^"\\\n]|\\+[^"\\\n])*(?:\\+")?|` +
-		`"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`
+		`"(?:[^"\\\n]|\\.)+\\?"?|'[^'\n]+'?`
 	// credentialBracketedValue is a single token in brackets or braces
 	// (`[hunter2]`, `{abc123}`, an earlier `[REDACTED]`), with whatever is
-	// glued on after it (`[REDACTED]realsecret`). A bracket holding
+	// glued on after it (`[REDACTED]realsecret`, `[REDACTED][a,b]realsecret`:
+	// a glued bracket group is taken whole, whatever it holds). A bracket holding
 	// whitespace, a comma, a colon, or a quote is a structure
 	// (`"credentials": {"type": …}`, `password: [required, min 8]`), whose
 	// members are checked on their own, and is not a value: replacing its
 	// opening bracket would break the line around it. Taking an earlier
 	// [REDACTED] as a value also keeps redacting twice a no-op
 	// (`Bearer [REDACTED]` is not read as the value `Bearer`).
-	credentialBracketedValue = `(?:\[[^\s,:;"'\[\]{}]+\]|\{[^\s,:;"'\[\]{}]+\})[^\s,;"']*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
+	credentialBracketedValue = `(?:\[[^\s,:;"'\[\]{}]+\]|\{[^\s,:;"'\[\]{}]+\})(?:\[[^\]\n]*\]|\{[^}\n]*\}|[^\s,;"'])*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialValue is a quoted value, a bracketed one, or an unquoted one,
 	// which runs up to whitespace, `,`, `;`, or a quote, so a value inside a
 	// quoted string (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`) leaves the
@@ -396,8 +398,14 @@ func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool)
 	for _, match := range matches {
 		start, end := match[2*group], match[2*group+1]
 		out.WriteString(value[last:start])
-		// A quoted value keeps its quotes, with any backslashes escaping them.
-		secret, quote := value[start:end], ""
+		// Extra `=` signs before the value stay (`PASSWORD==[REDACTED]`), and a
+		// quoted value keeps its quotes, with any backslashes escaping them,
+		// so the marker is never glued to text a second pass would take as
+		// part of the value.
+		secret := value[start:end]
+		equals := len(secret) - len(strings.TrimLeft(secret, "="))
+		out.WriteString(secret[:equals])
+		secret, quote := secret[equals:], ""
 		if escapes := len(secret) - len(strings.TrimLeft(secret, `\`)); escapes < len(secret) && (secret[escapes] == '"' || secret[escapes] == '\'') {
 			quote = secret[:escapes+1]
 		}
