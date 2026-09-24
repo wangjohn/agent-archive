@@ -36,6 +36,11 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery) 
 	rows := []reviewRow{
 		{"Apps", []string{strings.Join(apps, ", ")}},
 	}
+	if len(cfg.DeclinedHarnesses) > 0 {
+		// An app leaves this list only by being included, which changes the
+		// Apps row, so the row need not appear when the list is empty.
+		rows = append(rows, reviewRow{"Skipped", []string{appList(cfg.DeclinedHarnesses) + " (setup will not offer again)"}})
+	}
 	if len(cfg.ImportedHarnesses) > 0 {
 		rows = append(rows, reviewRow{"Imported", []string{friendlyApps(cfg.ImportedHarnesses) + " (sessions imported by backfill stay published; new sessions are not captured)"}})
 	}
@@ -69,6 +74,22 @@ func appWithVersion(app string, discovery applicationDiscovery) string {
 		return appName(app) + " (not found)"
 	}
 	return appName(app) + " (version unknown)"
+}
+
+// reviewDiscoveries returns discoveries as the review shows them. An app
+// discovery could not find but whose config directory detection saw is
+// reported as installed with an unknown version rather than "not found":
+// its CLI may live somewhere discovery does not look. Recorded discoveries
+// keep the absent state, which version support relies on.
+func reviewDiscoveries(discoveries map[string]applicationDiscovery, detected []string) map[string]applicationDiscovery {
+	result := make(map[string]applicationDiscovery, len(discoveries))
+	for app, discovery := range discoveries {
+		if discovery.VersionState == "absent" && containsString(detected, app) {
+			discovery = applicationDiscovery{Installed: true, VersionState: "unknown"}
+		}
+		result[app] = discovery
+	}
+	return result
 }
 
 // showSetupReview prints the summary of what will be saved. When
@@ -241,8 +262,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 	}
 	switch choice {
 	case "apps":
-		draft.Config.Harnesses, err = promptHarnesses(p, nil, draft.Config.Harnesses)
-		if err != nil {
+		if err = chooseHarnesses(p, nil, &draft.Config); err != nil {
 			return err
 		}
 		err = promptStopImported(p, draft)
