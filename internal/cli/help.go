@@ -24,7 +24,10 @@ Example: agent-archive setup
 
 Show local capture evidence, background health, and a next step.
 No conversations are printed and no cloud request is made.
---json prints the same status as a versioned JSON document.
+--json prints the same status as a versioned JSON document. In it,
+storage_verified_at is when setup's storage check last passed, and
+storage_access_confirmed_at is the latest confirmation of access (by
+"setup" or the "collector", in storage_access_confirmed_by).
 Example: agent-archive status --json
 `,
 	"sync": `Usage: agent-archive sync
@@ -81,8 +84,11 @@ Find sessions using metadata; does not download conversation content.
                                  reusing unchanged ones from the local
                                  metadata cache (metadata only; never
                                  conversation content)
-  --json                         Print the matching sessions' metadata as a
-                                 versioned JSON document
+  --json                         Print {"schema_version": 1, "sessions": [...]}:
+                                 each matching session's metadata, as show
+                                 prints it (never conversation content). A
+                                 query that cannot return sessions yet has
+                                 "sessions": [] and an "unavailable" reason.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
 	"show": `Usage: agent-archive show SESSION_ID [--harness NAME] [--normalized] [--json]

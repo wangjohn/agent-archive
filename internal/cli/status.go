@@ -89,18 +89,27 @@ type statusView struct {
 	ConfigurationID string                `json:"configuration_id,omitempty"`
 	Authentication  storageHealth         `json:"authentication"`
 
-	Code               string              `json:"code"`
-	Version            int                 `json:"schema_version"`
-	State              string              `json:"state"`
-	Storage            string              `json:"storage,omitempty"`
-	StorageVerifiedAt  time.Time           `json:"storage_verified_at,omitempty"`
-	Privacy            string              `json:"privacy"`
-	Background         string              `json:"background"`
-	Paused             bool                `json:"paused"`
-	Projects           []string            `json:"projects"`
-	Apps               []appStatus         `json:"applications"`
-	Collector          state.Status        `json:"collector"`
-	CaptureDiagnostics []captureDiagnostic `json:"capture_diagnostics,omitempty"`
+	Code    string `json:"code"`
+	Version int    `json:"schema_version"`
+	State   string `json:"state"`
+	Storage string `json:"storage,omitempty"`
+	// StorageVerifiedAt is when setup's storage check (write, read, list,
+	// and delete of a probe object) last passed for this configuration.
+	StorageVerifiedAt time.Time `json:"storage_verified_at,omitempty"`
+	// StorageAccessConfirmedAt is the latest confirmation that this
+	// destination is reachable with the configured credentials: setup's
+	// check, or the collector's last verified storage health for the same
+	// configuration (its access probe or a pass that uploaded).
+	// StorageAccessConfirmedBy names which: "setup" or "collector".
+	StorageAccessConfirmedAt time.Time           `json:"storage_access_confirmed_at,omitempty"`
+	StorageAccessConfirmedBy string              `json:"storage_access_confirmed_by,omitempty"`
+	Privacy                  string              `json:"privacy"`
+	Background               string              `json:"background"`
+	Paused                   bool                `json:"paused"`
+	Projects                 []string            `json:"projects"`
+	Apps                     []appStatus         `json:"applications"`
+	Collector                state.Status        `json:"collector"`
+	CaptureDiagnostics       []captureDiagnostic `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
 	// has to upload, and ImportedWithIssues those with a capture gap or a
@@ -145,7 +154,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 0
 	}
 	if view.Storage != "" {
-		fmt.Fprintf(stdout, "Storage:       %s\nAccess checked: %s\n", view.Storage, formatTimeOrNever(view.StorageVerifiedAt))
+		fmt.Fprintf(stdout, "Storage:       %s\nAccess:        %s\n", view.Storage, storageAccessLine(view))
 		printBucketPrivacy(stdout, view.PrivacyEvidence)
 	}
 	checked := "not checked yet"
@@ -220,6 +229,18 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	fmt.Fprintf(stdout, "\nNext: %s\n", view.Next)
 	return 0
+}
+
+// storageAccessLine is the text status's Access line: when access to the
+// destination was last confirmed, and by what.
+func storageAccessLine(view statusView) string {
+	switch view.StorageAccessConfirmedBy {
+	case "setup":
+		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by setup's storage check (write, read, list, delete)"
+	case "collector":
+		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by the collector's last successful storage access"
+	}
+	return "not confirmed yet"
 }
 
 // storageLabel names the destination as "provider / bucket / prefix",
@@ -334,12 +355,16 @@ func readStatus(env Env) (view statusView, err error) {
 	if view.Authentication.ConfigurationID != "" && view.Authentication.ConfigurationID != view.ConfigurationID {
 		view.Authentication.State = "stale_configuration"
 	}
-	// Setup records when it verified access; afterwards the collector
-	// re-checks the same destination (its access probe, or a pass that
-	// published). Report the latest confirmation, so this line never says
-	// "never" beside an Authentication line that says verified.
-	if view.Authentication.State == "verified" && view.Authentication.ConfigurationID == view.ConfigurationID && view.Authentication.CheckedAt.After(view.StorageVerifiedAt) {
-		view.StorageVerifiedAt = view.Authentication.CheckedAt
+	// Setup records when its storage check passed; afterwards the collector
+	// confirms the same destination again (its access probe, or a pass that
+	// uploaded). Report the latest, so the Access line never says "not
+	// confirmed" beside an Authentication line that says verified. Health
+	// without this configuration's ID is not evidence for it.
+	if !view.StorageVerifiedAt.IsZero() {
+		view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy = view.StorageVerifiedAt, "setup"
+	}
+	if view.Authentication.State == "verified" && view.Authentication.ConfigurationID == view.ConfigurationID && view.Authentication.CheckedAt.After(view.StorageAccessConfirmedAt) {
+		view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy = view.Authentication.CheckedAt, "collector"
 	}
 	// The background probe only runs while collection is active, so a paused
 	// install keeps its last known state (with its checked time) rather than
