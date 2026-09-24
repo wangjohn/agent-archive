@@ -36,9 +36,9 @@ type setupDraft struct {
 }
 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("setup")
+	fs := newCommandFlags("setup", stderr)
 	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
-	if !parseCommandFlags(fs, args, stderr) {
+	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
 	if *abandon {

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"slices"
@@ -19,7 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-// runBackfillUndo implements `agent-archive backfill undo [ID] [--project
+// runBackfillUndo implements `agent-archive backfill undo [IMPORT_ID] [--project
 // DIR] [--yes]`: it removes the sessions an import registered from the
 // bucket and from this Mac, and excludes the projects the import added.
 //
@@ -33,26 +32,12 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		fmt.Fprintf(stderr, "agent-archive: backfill undo: "+format+"\n", args...)
 		return 1
 	}
-	fs := flag.NewFlagSet("backfill undo", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("backfill undo", stderr)
 	project := fs.String("project", "", "only undo this project's sessions")
 	yes := fs.Bool("yes", false, "skip the confirmation")
 	// The ID may come before or after the flags.
-	id := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		id, args = args[0], args[1:]
-	}
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() > 0 && id == "" {
-		id = fs.Arg(0)
-		if err := fs.Parse(fs.Args()[1:]); err != nil {
-			return 2
-		}
-	}
-	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "agent-archive: backfill undo: unexpected argument %q\n", fs.Arg(0))
+	id, ok := fs.parseWithArgument(args)
+	if !ok {
 		return 2
 	}
 
@@ -138,7 +123,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 	}
 
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill undo", env.now(), backfillCollectorWait)
 	if err != nil {
 		return fail("a collector pass is still running; run undo again. Nothing was changed.")
 	}
