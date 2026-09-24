@@ -197,7 +197,7 @@ func validLowerSHA256(value string) bool {
 	return err == nil
 }
 
-// runShowCommand implements `agent-archive show <archive-session-id>`. By
+// runShowCommand implements `agent-archive show SESSION_ID`. By
 // default it prints only the session's metadata sidecar. Conversation
 // content — the normalized view derived from the verified source bundle —
 // is printed only when the user passes --normalized explicitly, keeping the
@@ -338,6 +338,10 @@ func parseSince(value string, now time.Time) (time.Time, error) {
 	return parseTimeArg(value, now, time.UTC)
 }
 
+// maxAgeDays bounds an age in days (about 270 years), far inside what a
+// time.Duration can hold.
+const maxAgeDays = 100000
+
 // parseTimeArg reads the time forms every command's --since (and backfill's
 // --until) accepts: a calendar date (2026-01-31, midnight in loc), an RFC
 // 3339 time, or an age relative to now written as a Go duration (12h, 90m)
@@ -351,7 +355,8 @@ func parseTimeArg(value string, now time.Time, loc *time.Location) (time.Time, e
 		return t, nil
 	}
 	if strings.HasSuffix(value, "d") {
-		if days, err := strconv.Atoi(strings.TrimSuffix(value, "d")); err == nil && days >= 0 {
+		// Past maxAgeDays a time.Duration would overflow.
+		if days, err := strconv.Atoi(strings.TrimSuffix(value, "d")); err == nil && days >= 0 && days <= maxAgeDays {
 			return now.Add(-time.Duration(days) * 24 * time.Hour), nil
 		}
 	}

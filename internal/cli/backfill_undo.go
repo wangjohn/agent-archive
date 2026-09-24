@@ -17,7 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-// runBackfillUndo implements `agent-archive backfill undo [ID] [--project
+// runBackfillUndo implements `agent-archive backfill undo [IMPORT_ID] [--project
 // DIR] [--yes]`: it removes the sessions an import registered from the
 // bucket and from this Mac, and excludes the projects the import added.
 //

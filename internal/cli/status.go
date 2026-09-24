@@ -271,9 +271,10 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Apps[i].Code = statusCode(view.Apps[i].State)
 		}
 	}()
-	// Before setup there is no collector or storage to ask about: they are
-	// reported as not installed and not configured, not as unknown.
-	view = statusView{Version: 3, State: "Not set up", Privacy: "not_verified", Background: "not_installed", Projects: []string{}, Apps: []appStatus{}, Next: "Run agent-archive setup to get started."}
+	// Before setup there is no collector or storage to ask about: the job is
+	// missing, as launchd reports a job that is not loaded, and storage not
+	// configured; neither is unknown.
+	view = statusView{Version: 3, State: "Not set up", Privacy: "not_verified", Background: "missing", Projects: []string{}, Apps: []appStatus{}, Next: "Run agent-archive setup to get started."}
 	view.Authentication.State = "not_configured"
 	home, err := env.readHome()
 	if err != nil {

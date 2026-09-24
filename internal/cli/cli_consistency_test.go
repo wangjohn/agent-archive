@@ -72,7 +72,7 @@ func TestSinceFormsAreShared(t *testing.T) {
 			t.Errorf("%q: %q %v, want %q", value, got, err, want)
 		}
 	}
-	for _, value := range []string{"yesterday", "-7d"} {
+	for _, value := range []string{"yesterday", "-7d", "100001d", "9999999999999d"} {
 		if _, err := backfillDay(value, now); err == nil {
 			t.Errorf("%q accepted", value)
 		}
@@ -99,7 +99,7 @@ func TestStatusBeforeSetupIsPlain(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &view); err != nil {
 		t.Fatal(err)
 	}
-	if view["background"] != "not_installed" || view["authentication"].(map[string]any)["state"] != "not_configured" {
+	if view["background"] != "missing" || view["authentication"].(map[string]any)["state"] != "not_configured" {
 		t.Fatalf("json: background=%v authentication=%v", view["background"], view["authentication"])
 	}
 }
@@ -118,7 +118,7 @@ func TestFeedbackWhilePausedSaysWhen(t *testing.T) {
 		t.Fatalf("registrations %d", len(regs))
 	}
 	file := filepath.Join(t.TempDir(), "feedback.txt")
-	os.WriteFile(file, []byte("worked well"), 0600)
+	must(t, os.WriteFile(file, []byte("worked well"), 0600))
 	run := func() string {
 		var out, errOut bytes.Buffer
 		if code := Run([]string{"feedback", regs[0].ArchiveSessionID, "--file", file}, nil, &out, &errOut, env); code != 0 {
