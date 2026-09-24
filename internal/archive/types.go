@@ -35,7 +35,7 @@ const (
 	// drops base64 image, document, and file blocks, sanitizes structured
 	// Cursor tool results before encoding them, keeps skill snapshots inside
 	// their skill root, and truncates on a UTF-8 boundary. See
-	// docs/agent-archive-privacy.md.
+	// docs/security/privacy.md.
 	FilterVersion = "9"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not

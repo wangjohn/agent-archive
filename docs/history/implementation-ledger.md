@@ -951,7 +951,7 @@ human prompt and a message.
 **Filter 5.** Keeps exactly the `compact_boundary` record: `type`, `subtype`,
 its ids, a parseable timestamp, and `isSidechain`. It is rebuilt from typed
 values, and nothing else of the record is kept (see
-`docs/agent-archive-privacy.md`). The flag `isSidechain` goes slightly beyond
+`docs/security/privacy.md`). The flag `isSidechain` goes slightly beyond
 the plan's list, for one reason: without it, a subagent's compaction inlined
 in its parent transcript would count toward the parent's compactions. Every
 other system record is still hidden, and only the Claude adapter admits the
@@ -1459,7 +1459,7 @@ is refused by name; the uncompressed limit still applies). Existing tests use
 
 `schemas/source-bundle.schema.json` now describes one line (`oneOf` on
 `kind`) and states the ordering rules in its description.
-`docs/design/archive-spec.md`, `docs/agent-archive-privacy.md`, and
+`docs/design/archive-spec.md`, `docs/security/privacy.md`, and
 `docs/getting-started/install.md` describe the new file and format.
 
 

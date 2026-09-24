@@ -303,7 +303,7 @@ internal/archive/views.go, internal/archive/types.go, …
 **Agent:** <text>
 - `Bash` go test ./internal/archive → ok (12 lines)
 - `Edit` internal/archive/views.go
-- `Read` docs/agent-archive-privacy.md
+- `Read` docs/security/privacy.md
 
 ### 2 · Person
 …
@@ -498,7 +498,7 @@ Each PR follows the existing review process in
   files at a1b2c3; they are not on this machine" when it matters.
 - **Project name and filter for `list`.** With the repository key, record
   the project directory's basename in metadata, add `list --project`, and
-  document the new field in `docs/agent-archive-privacy.md`.
+  document the new field in `docs/security/privacy.md`.
 - `--include-subagents`: render linked child sessions as nested sections.
 - `--since-prompt N`: hand off only the tail of a long session.
 - `handoff --copy` to put the output on the clipboard via `pbcopy`.

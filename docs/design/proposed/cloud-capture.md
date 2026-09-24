@@ -100,7 +100,7 @@ The metadata schema has `additionalProperties: false`, so cloud fields require `
 
 ### 5. Adapter coverage
 
-- **Claude.** Review each cloud-only record type and key above against the [privacy rules](../../agent-archive-privacy.md): allow what carries conversation structure (likely `attachment` with filtered contents), keep bookkeeping types as counted gaps, and bump the filter version. Add sanitized fixtures from a cloud transcript.
+- **Claude.** Review each cloud-only record type and key above against the [privacy rules](../../security/privacy.md): allow what carries conversation structure (likely `attachment` with filtered contents), keep bookkeeping types as counted gaps, and bump the filter version. Add sanitized fixtures from a cloud transcript.
 - **Cursor.** Reuse the desktop rules: register at the first `beforeSubmitPrompt` when `transcript_path` is null or empty, and adopt the path later. If the Phase 0 probe shows transcripts are disabled on cloud VMs, push capture cannot work and Cursor falls back to pull.
 - **Codex.** Depends entirely on the Phase 0 probe.
 
@@ -154,7 +154,7 @@ Commands:
 - **`agent-archive cloud rotate`** mints a new scoped credential, updates every target it can update programmatically, prints the paste block for the rest, and deletes the old credential only after the user confirms that the paste is done. A `cloud verify` pass, run in a new cloud session after the paste, confirms that the environment has switched to the new credential.
 - **`agent-archive cloud verify`**, run inside a cloud VM (or by the setup script), checks the gate variables, reachability, and a synthetic write, read-back and delete test under a unique key, mirroring setup's storage test. It reports which step failed without printing credentials.
 
-The bootstrap token changes a rule in the [privacy document](../../agent-archive-privacy.md): today the tool "does not request another token" beyond object credentials. `provision` asks for one only when the user opts into automated provisioning, keeps it in Keychain, never sends it to a cloud environment, and `cloud provision --forget-bootstrap` deletes it.
+The bootstrap token changes a rule in the [privacy document](../../security/privacy.md): today the tool "does not request another token" beyond object credentials. `provision` asks for one only when the user opts into automated provisioning, keeps it in Keychain, never sends it to a cloud environment, and `cloud provision --forget-bootstrap` deletes it.
 
 Short-lived R2 credentials do not remove the paste. Credentials stored in a vendor's environment settings must outlive the 7-day maximum, so those environments get a long-lived, bucket-scoped key. Short-lived credentials fit only where each launch supplies its own: Cursor launches through the API or SDK, CI jobs, and Claude Code self-hosted runners, whose wrapper script can mint per-session credentials.
 

@@ -389,7 +389,7 @@ const (
 // credentialFlag a `--name value` command-line flag. Both capture the value
 // as "value" so redactCredentialValues replaces only it. Their assignment
 // form is deliberately broad and is a known false-positive class: ordinary
-// code such as `token = parse(x)` matches it. See docs/agent-archive-privacy.md.
+// code such as `token = parse(x)` matches it. See docs/security/privacy.md.
 var (
 	credentialAssignment = regexp.MustCompile(`(?i)` + credentialLead + credentialQuote + credentialName + credentialQuote + credentialSeparator + credentialScheme + `(?P<value>` + credentialValue + `)`)
 	credentialFlag       = regexp.MustCompile(`(?i)(?:^|[ \t])--` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`)
