@@ -96,6 +96,12 @@ type statusView struct {
 	Apps               []appStatus         `json:"applications"`
 	Collector          collector.Status    `json:"collector"`
 	CaptureDiagnostics []captureDiagnostic `json:"capture_diagnostics,omitempty"`
+	// ImportedSessions counts sessions `agent-archive backfill` registered,
+	// not their subagents; ImportedPending counts those the collector still
+	// has to upload. LastImport names the most recent import batch.
+	ImportedSessions int    `json:"imported_sessions"`
+	ImportedPending  int    `json:"imported_pending"`
+	LastImport       string `json:"last_import"`
 	// Warnings lists advisory local files that could not be read; status
 	// still reports everything else.
 	Warnings []string `json:"warnings,omitempty"`
@@ -132,6 +138,13 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintln(stdout, "Collection:    paused")
 	}
 	fmt.Fprintf(stdout, "Projects:      %d included\nPending:       %d session(s)\nLast scan:     %s\nLast publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
+	if view.ImportedSessions > 0 {
+		imported := fmt.Sprintf("%d session(s), %d waiting to upload", view.ImportedSessions, view.ImportedPending)
+		if view.LastImport != "" {
+			imported += "; last import " + view.LastImport
+		}
+		fmt.Fprintf(stdout, "Imported:      %s\n", imported)
+	}
 	for _, app := range view.Apps {
 		gaps := ""
 		if len(app.CaptureGaps) > 0 {
@@ -301,6 +314,10 @@ func readStatus(env Env) (view statusView, err error) {
 	if err != nil {
 		return view, err
 	}
+	view.ImportedSessions, view.ImportedPending, err = importedSessionCounts(store, cfg, regs)
+	if err != nil {
+		return view, err
+	}
 	for _, name := range cfg.Harnesses {
 		app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified"}
 		pairIndex := map[string]int{}
@@ -322,7 +339,10 @@ func readStatus(env Env) (view statusView, err error) {
 		}
 		readBackIssue := ""
 		for _, reg := range regs {
-			if reg.Harness.Name != name || !cfg.AcceptSession(reg) {
+			// An import is not evidence that this app's hooks work: it
+			// never counts toward the app's sessions, hook observation,
+			// or verification. The Imported line reports it instead.
+			if reg.Imported() || reg.Harness.Name != name || !cfg.AcceptSession(reg) {
 				continue
 			}
 			// AcceptSession only admits a root without a configured pair
@@ -613,6 +633,38 @@ func readStatus(env Env) (view statusView, err error) {
 		view.Next = "Run agent-archive setup to recover the interrupted installation."
 	}
 	return view, nil
+}
+
+// importedSessionCounts counts the sessions backfill imported, leaving out
+// their subagents, and how many of those the collector still has to upload:
+// ones it still publishes that have no publication yet (a recorded gap or a
+// declined capture aside) or have one in flight.
+func importedSessionCounts(store *collector.LocalStore, cfg config.Config, regs []archive.SessionRegistration) (imported, pending int, err error) {
+	for _, reg := range regs {
+		if !reg.Imported() || reg.ParentSessionID != "" {
+			continue
+		}
+		imported++
+		if !cfg.AcceptSession(reg) {
+			continue
+		}
+		_, _, state, _, err := store.LoadPublished(reg.ArchiveSessionID)
+		if err != nil {
+			return 0, 0, err
+		}
+		_, _, published, err := store.LoadLastPublished(reg.ArchiveSessionID)
+		if err != nil {
+			return 0, 0, err
+		}
+		inFlight, err := store.HasPending(reg.ArchiveSessionID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if inFlight || (!published && state != collector.CacheStatusBlocked && state != collector.CacheStatusDeclined) {
+			pending++
+		}
+	}
+	return imported, pending, nil
 }
 
 const (
