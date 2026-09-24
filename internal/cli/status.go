@@ -615,6 +615,10 @@ func readStatus(env Env) (view statusView, err error) {
 	if view.Background != "running" && view.Background != "loaded" {
 		view.State = "Needs attention"
 		view.Next = "Run agent-archive setup to restore the background collector."
+		if view.Background == jobAnotherInstallation {
+			// setup refuses to replace that job, so it is not the way out.
+			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchLabel(plist))
+		}
 	}
 	if !view.Collector.LastScanAt.IsZero() && env.now().Sub(view.Collector.LastScanAt) > 5*time.Minute {
 		view.State = "Needs attention"

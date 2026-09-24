@@ -142,7 +142,11 @@ Macs are supported.
 
    Status distinguishes waiting for a session, observed hooks, local capture,
    and published sources with verified checksums. Background `loaded` means
-   launchd knows the scheduled job; `running` means a pass is executing.
+   launchd knows the scheduled job; `running` means a pass is executing;
+   `another_installation` means launchd runs this installation's label from
+   a different plist. That job belongs to another installation and is left
+   alone: set `AGENT_ARCHIVE_HOME` to a data directory of this
+   installation's own, or uninstall the other one.
    Hooks or background `broken` means the configuration is in place but runs
    an agent-archive executable that has since been moved, deleted, or made
    non-executable; rerun `agent-archive setup` from the binary's new location.

@@ -104,14 +104,19 @@ func Apply(changes []Change) error {
 		if (err != nil && !os.IsNotExist(err)) || exists != c.Existed || string(current) != string(c.Before) {
 			return errors.Join(fmt.Errorf("%s %w", c.Path, ErrChanged), rollback(applied))
 		}
-		if err = atomicWrite(c.Path, c.After, c.Mode); err != nil {
+		target, err := writeTarget(c.Path)
+		if err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
+		undo := snapshot(target)
+		if err = writeFile(target, c.After, c.Mode); err != nil {
+			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), undo.restore(), rollback(applied))
+		}
 		// What the application will read is the file through c.Path, links
-		// and all; a write that landed anywhere else is not a success.
+		// and all; a write that landed anywhere else is not a success, and
+		// is taken back along with the earlier changes.
 		if written, err := os.ReadFile(c.Path); err != nil || string(written) != string(c.After) {
-			target, _ := resolveTarget(c.Path)
-			return errors.Join(fmt.Errorf("cannot update %s: the file written (%s) does not read back through it", c.Path, target), rollback(applied))
+			return errors.Join(fmt.Errorf("cannot update %s: the file written (%s) does not read back through it", c.Path, target), undo.restore(), rollback(applied))
 		}
 		applied = append(applied, c)
 	}
@@ -233,10 +238,63 @@ func resolveTarget(path string) (string, error) {
 // directory, so the link survives and the repository copy is the one
 // updated.
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
-	path, err := resolveTarget(path)
+	target, err := resolveTarget(path)
 	if err != nil {
 		return err
 	}
+	return writeFile(target, data, mode)
+}
+
+// writeTarget is where Apply writes a change to path: resolveTarget,
+// replaceable so a test can make a write land in the wrong place.
+var writeTarget = resolveTarget
+
+// priorFile is what was at a path before Apply wrote it, so a write that
+// must be taken back can be: the old content, or its absence together with
+// the directories the write created.
+type priorFile struct {
+	path    string
+	data    []byte
+	mode    os.FileMode
+	existed bool
+	created []string // directories that did not exist, deepest first
+}
+
+func snapshot(path string) priorFile {
+	prior := priorFile{path: path}
+	if info, err := os.Stat(path); err == nil {
+		prior.mode = info.Mode().Perm()
+		if data, err := os.ReadFile(path); err == nil {
+			prior.data, prior.existed = data, true
+		}
+	}
+	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(dir); err == nil || filepath.Dir(dir) == dir {
+			break
+		}
+		prior.created = append(prior.created, dir)
+	}
+	return prior
+}
+
+// restore puts the path back as snapshot found it. Directories it created
+// are removed only while empty.
+func (p priorFile) restore() error {
+	if p.existed {
+		return writeFile(p.path, p.data, p.mode)
+	}
+	if err := os.Remove(p.path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, dir := range p.created {
+		_ = os.Remove(dir) // fails, and keeps the directory, if it is not empty
+	}
+	return nil
+}
+
+// writeFile atomically replaces the regular file at path (no link
+// following: see atomicWrite) with data.
+func writeFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}

@@ -396,8 +396,37 @@ func TestUninstallLeavesAnotherInstallationsJob(t *testing.T) {
 	if !strings.Contains(out.String(), "another installation") {
 		t.Fatalf("not reported:\n%s", &out)
 	}
-	_ = home
-	_ = userHome
+	// This installation's plist stays, since its job was not stopped.
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); err != nil {
+		t.Fatalf("plist removed although its bootout was skipped: %v", err)
+	}
+}
+
+// When another installation runs this installation's label, status points
+// at that, not at setup, which refuses to replace the job.
+func TestStatusNamesAnotherInstallationsJob(t *testing.T) {
+	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
+	env.JobState = func(string) string { return jobAnotherInstallation }
+	view, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Background != jobAnotherInstallation || !strings.Contains(view.Next, "Another agent-archive installation") || strings.Contains(view.Next, "restore the background collector") {
+		t.Fatalf("background %q next %q", view.Background, view.Next)
+	}
+}
+
+// Even a first setup refuses when launchd cannot say whether a job already
+// runs under the label.
+func TestFirstSetupRefusesAnUnknownJobState(t *testing.T) {
+	home, userHome := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	env.JobState = func(string) string { return "unknown" }
+	env.LoadLaunchAgent = func(p string) error { t.Fatalf("loaded %s", p); return nil }
+	out := setupRun(t, env, s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()), 1)
+	if !strings.Contains(out, "launchctl") {
+		t.Fatalf("output:\n%s", out)
+	}
 }
 
 // stubLaunchctl replaces launchctl for one test.

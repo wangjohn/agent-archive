@@ -355,7 +355,12 @@ func (d *document) setBefore(before, key string, value any) error {
 	if err := encodeString(&name, key); err != nil {
 		return err
 	}
-	d.root.members = append([]member{{key, value}}, d.root.members...)
+	for j, m := range d.root.members {
+		if m.key == before {
+			d.root.members = append(d.root.members[:j], append([]member{{key, value}}, d.root.members[j:]...)...)
+			break
+		}
+	}
 	entry := name.String() + ":" + text + ","
 	if d.indent != "" {
 		entry = name.String() + ": " + text + "," + d.newline + d.indent

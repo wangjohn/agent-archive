@@ -136,13 +136,17 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	if previous := env.installation(home, userHome).previousCollectorPlist(); previous != "" {
 		plists = append(plists, previous)
 	}
+	// A plist whose label launchd runs from another plist stays: removing
+	// it would leave this installation with nothing to reinstall from.
+	kept := map[string]bool{}
 	for _, plist := range plists {
 		state := env.jobState(plist)
 		if state == "unknown" {
 			return fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
 		}
 		if state == jobAnotherInstallation {
-			fmt.Fprintf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation.\n", launchLabel(plist))
+			fmt.Fprintf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchLabel(plist), plist)
+			kept[plist] = true
 			continue
 		}
 		if state == "running" || state == "loaded" {
@@ -165,6 +169,9 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		return err
 	}
 	for _, plist := range plists {
+		if kept[plist] {
+			continue
+		}
 		if err = os.Remove(plist); err != nil && !os.IsNotExist(err) {
 			return err
 		}

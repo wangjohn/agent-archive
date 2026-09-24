@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
@@ -88,19 +87,15 @@ func TestLegacyMigrationRejectsUnownedJob(t *testing.T) {
 	}
 }
 
-func TestFreshSetupToleratesUnknownLaunchctlWithoutLegacyJob(t *testing.T) {
-	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+// Without a legacy plist, the legacy migration needs no answer from
+// launchctl. (Setup itself still does, for its own job's label: see
+// TestFirstSetupRefusesAnUnknownJobState.)
+func TestLegacyMigrationWithoutALegacyJobNeedsNoLaunchctl(t *testing.T) {
+	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.JobState = func(string) string { return "unknown" }
 	if job, err := planLegacyMigration(userHome, env); err != nil || job != nil {
 		t.Fatalf("no legacy plist must not need launchctl: job=%+v err=%v", job, err)
-	}
-	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
-	if _, found, err := config.Load(home); err != nil || !found {
-		t.Fatalf("fresh setup blocked by unknown launchctl state: found=%v err=%v", found, err)
-	}
-	if transactionPending(home) {
-		t.Fatal("journal left behind")
 	}
 }
 
