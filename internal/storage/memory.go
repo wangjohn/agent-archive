@@ -21,10 +21,14 @@ type memoryObject struct {
 	when time.Time
 }
 
+// NewMemoryStore returns an empty MemoryStore.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{objects: make(map[string]memoryObject)}
 }
 
+// Put stores a copy of data under key, replacing any existing object. The
+// object's ETag is the MD5 of its bytes, as S3 reports for a single-part
+// upload.
 func (s *MemoryStore) Put(ctx context.Context, key string, data []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -40,6 +44,7 @@ func (s *MemoryStore) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
+// Get returns a copy of the object's bytes, or ErrNotFound.
 func (s *MemoryStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -67,6 +72,9 @@ func (s *MemoryStore) Stat(ctx context.Context, key string) (ObjectInfo, error) 
 	return ObjectInfo{Size: int64(len(obj.data)), SHA256: sha256Hex(obj.data)}, nil
 }
 
+// List returns the objects under prefix, sorted by key, without their
+// bodies. A prefix matches whole path components: "a" lists "a" and "a/b"
+// but not "ab". An empty prefix lists everything.
 func (s *MemoryStore) List(ctx context.Context, prefix string) ([]Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -88,6 +96,7 @@ func (s *MemoryStore) List(ctx context.Context, prefix string) ([]Object, error)
 	return objects, nil
 }
 
+// Delete removes the object at key; a missing object is not an error.
 func (s *MemoryStore) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err

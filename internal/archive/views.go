@@ -54,7 +54,8 @@ const (
 	// TurnKindHumanPrompt is a user record carrying text or any other
 	// non-tool-result content: what a person actually sent.
 	TurnKindHumanPrompt TurnKind = "human_prompt"
-	TurnKindAssistant   TurnKind = "assistant"
+	// TurnKindAssistant is a record in the assistant role.
+	TurnKindAssistant TurnKind = "assistant"
 	// TurnKindToolResult is a record whose content is only tool results.
 	TurnKindToolResult TurnKind = "tool_result"
 	// TurnKindHarnessMeta is a user record the harness wrote and marked
@@ -88,12 +89,23 @@ const (
 // TurnModelSource names where a NormalizedTurn's model attribution came from.
 type TurnModelSource string
 
+// Turn model sources, one per harness.
 const (
-	TurnModelSourceTurnContext      TurnModelSource = "turn_context"
-	TurnModelSourceNativeResponse   TurnModelSource = "native_response"
+	// TurnModelSourceTurnContext is Codex: the model and reasoning level of
+	// the latest turn_context record, as requested.
+	TurnModelSourceTurnContext TurnModelSource = "turn_context"
+	// TurnModelSourceNativeResponse is Claude Code: the model named on the
+	// response message itself (NormalizedTurn.ResponseModel).
+	TurnModelSourceNativeResponse TurnModelSource = "native_response"
+	// TurnModelSourceNativeTranscript is any other harness: a model field on
+	// the record, treated as the requested model.
 	TurnModelSourceNativeTranscript TurnModelSource = "native_transcript"
 )
 
+// NormalizedTurn is one visible message record of a filtered source in a
+// harness-independent shape: its role and TurnKind, retained
+// text, model attribution, and the IDs and timestamp the record carried.
+// RecordIndex is its position in SourceBundle.NativeRecords.
 type NormalizedTurn struct {
 	RecordIndex int      `json:"record_index"`
 	Role        string   `json:"role"`
@@ -117,11 +129,21 @@ type NormalizedTurn struct {
 // against the native transcript's turns.
 type HookFinalStatus string
 
+// Hook final statuses.
 const (
+	// HookFinalStatusUnreconciledIdentity means no transcript turn carried
+	// the final response's message or turn ID.
 	HookFinalStatusUnreconciledIdentity HookFinalStatus = "unreconciled_identity"
-	HookFinalStatusSeparateSubagent     HookFinalStatus = "separate_subagent"
-	HookFinalStatusMatchedMessageID     HookFinalStatus = "matched_message_id"
-	HookFinalStatusMatchedTurnID        HookFinalStatus = "matched_turn_id"
+	// HookFinalStatusSeparateSubagent means the final response came from a
+	// subagent (it names an agent ID), so it is not matched to this session's
+	// turns.
+	HookFinalStatusSeparateSubagent HookFinalStatus = "separate_subagent"
+	// HookFinalStatusMatchedMessageID means a turn has the final response's
+	// message ID.
+	HookFinalStatusMatchedMessageID HookFinalStatus = "matched_message_id"
+	// HookFinalStatusMatchedTurnID means an assistant turn has the final
+	// response's turn ID.
+	HookFinalStatusMatchedTurnID HookFinalStatus = "matched_turn_id"
 )
 
 // HookFinalReconciliation keeps hook-only finals separate from native source.
@@ -134,6 +156,9 @@ type HookFinalReconciliation struct {
 	AgentID       string          `json:"agent_id,omitempty"`
 }
 
+// NormalizedToolCall is one tool call found in a filtered source, with the
+// result linked to it when one was observed. RecordIndex is the position of
+// the record that holds it in SourceBundle.NativeRecords.
 type NormalizedToolCall struct {
 	RecordIndex int    `json:"record_index"`
 	CallID      string `json:"call_id,omitempty"`
@@ -1271,6 +1296,9 @@ func IsParseError(err error) bool {
 	return errors.As(err, &target)
 }
 
+// ValidateSourceReference reports whether m is a metadata document this
+// version reads (MetadataSchemaVersion) and names a verified source bundle: a
+// key and a 64-character SHA-256. Readers check it before trusting m.
 func (m Metadata) ValidateSourceReference() error {
 	if m.SchemaVersion != MetadataSchemaVersion {
 		return fmt.Errorf("unsupported metadata schema version %d", m.SchemaVersion)

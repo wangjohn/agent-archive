@@ -174,7 +174,13 @@ func PlanRemovalOf(files Files, harness string) (change Change, found bool, err 
 	return Change{path, before, after, true, info.Mode().Perm()}, true, nil
 }
 
+// Rollback undoes applied changes in reverse order: each file is restored to
+// its Before content, or removed if the change created it. A file whose
+// content is no longer the change's After was edited since, so it is left
+// untouched and reported as needing manual recovery. All failures are joined
+// into the returned error.
 func Rollback(changes []Change) error { return rollback(changes) }
+
 func rollback(changes []Change) error {
 	var failures []error
 	for i := len(changes) - 1; i >= 0; i-- {

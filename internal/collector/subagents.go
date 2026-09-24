@@ -33,9 +33,10 @@ type SubagentCandidate struct {
 }
 
 var (
-	// ErrSubagentCandidateIncomplete: a candidate is missing a required field.
+	// ErrSubagentCandidateIncomplete means a candidate is missing a required
+	// field.
 	ErrSubagentCandidateIncomplete = errors.New("subagent candidate is incomplete")
-	// ErrSubagentCandidateConflict: an earlier candidate for the same
+	// ErrSubagentCandidateConflict means an earlier candidate for the same
 	// archive ID has a different path or owner, which a later one never
 	// replaces.
 	ErrSubagentCandidateConflict = errors.New("subagent candidate ownership changed")
@@ -71,6 +72,9 @@ func (s *LocalStore) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	return local.Write(path, candidate)
 }
 
+// LoadSubagentCandidates returns every saved subagent candidate, sorted by
+// archive session ID. A missing directory means none; a candidate removed
+// while the directory is listed is skipped.
 func (s *LocalStore) LoadSubagentCandidates() ([]SubagentCandidate, error) {
 	dir := filepath.Join(s.home, "subagent-candidates")
 	entries, err := os.ReadDir(dir)
@@ -112,6 +116,8 @@ func subagentLockName(id string) string {
 	return filepath.Join("request-locks", "subagent-"+id+".lock")
 }
 
+// RemoveSubagentCandidate deletes the candidate for archive session id under
+// its lock. A candidate that is already gone is not an error.
 func (s *LocalStore) RemoveSubagentCandidate(id string) error {
 	unlock, err := s.lockSubagentCandidate(id)
 	if err != nil {

@@ -87,6 +87,10 @@ type Handoff struct {
 	FullRecordPath string `json:"full_record_path,omitempty"`
 }
 
+// HandoffSession identifies the session a Handoff continues: its IDs, harness,
+// the models it used, when it started and was last active, and, when metadata
+// was supplied, its lifecycle state and last turn outcome. Source names where
+// the bundle came from (HandoffOptions.Source).
 type HandoffSession struct {
 	ArchiveSessionID string        `json:"archive_session_id,omitempty"`
 	NativeSessionID  string        `json:"native_session_id,omitempty"`
@@ -107,6 +111,8 @@ type HandoffWorkspace struct {
 	Branch    string `json:"branch,omitempty"`
 }
 
+// HandoffPlanItem is one entry of the agent's latest plan or todo list, with
+// its status as the agent recorded it (for example "completed").
 type HandoffPlanItem struct {
 	Text   string `json:"text"`
 	Status string `json:"status,omitempty"`
@@ -133,6 +139,9 @@ type HandoffStep struct {
 	Tool          *HandoffToolCall `json:"tool,omitempty"`
 }
 
+// HandoffToolCall is one tool call in a HandoffStep: the tool's name, a short
+// summary of its input, whether it failed, and its trimmed result.
+// ResultOmitted is true when the budget dropped the result.
 type HandoffToolCall struct {
 	Name    string `json:"name"`
 	Summary string `json:"summary,omitempty"`
@@ -145,6 +154,7 @@ type HandoffToolCall struct {
 	ResultOmitted bool   `json:"result_omitted,omitempty"`
 }
 
+// HandoffGap counts the source bundle's capture gaps that share one code.
 type HandoffGap struct {
 	Code  string `json:"code"`
 	Count int    `json:"count"`
@@ -159,11 +169,18 @@ type HandoffElision struct {
 	Count int    `json:"count"`
 }
 
+// HandoffElision kinds, in the order FitHandoff applies them. The first three
+// never touch the protected tail of recent steps.
 const (
-	HandoffElisionToolOutput    = "tool_output"
-	HandoffElisionToolCalls     = "tool_calls"
+	// HandoffElisionToolOutput drops tool results.
+	HandoffElisionToolOutput = "tool_output"
+	// HandoffElisionToolCalls collapses runs of tool calls to per-tool counts.
+	HandoffElisionToolCalls = "tool_calls"
+	// HandoffElisionAssistantText shortens assistant text.
 	HandoffElisionAssistantText = "assistant_text"
-	HandoffElisionPromptText    = "prompt_text"
+	// HandoffElisionPromptText truncates long prompts; prompts are never
+	// dropped.
+	HandoffElisionPromptText = "prompt_text"
 )
 
 // BuildHandoff arranges a filtered bundle for handoff without any budget.

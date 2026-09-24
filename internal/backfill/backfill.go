@@ -25,25 +25,62 @@ import (
 // apply, the earliest in skipOrder wins.
 type SkipReason string
 
+// Skip reasons, listed in precedence order (skipOrder). Each is shown to the
+// user in the backfill plan with a count and, where one exists, the flag or
+// setting that would import the sessions anyway.
 const (
-	SkipAlreadyArchived       SkipReason = "already_archived"
-	SkipDuplicateSession      SkipReason = "duplicate_session"
+	// SkipAlreadyArchived means the session is already in the archive.
+	SkipAlreadyArchived SkipReason = "already_archived"
+	// SkipDuplicateSession means the same session was found more than once;
+	// one copy is imported and the rest carry this reason.
+	SkipDuplicateSession SkipReason = "duplicate_session"
+	// SkipRegisteredNotAdmitted means the session was registered earlier but
+	// is not accepted by the current setup (an earlier bucket, or a project
+	// excluded and then included again). Backfill does not re-admit it.
 	SkipRegisteredNotAdmitted SkipReason = "registered_not_admitted"
-	SkipRemovedByUndo         SkipReason = "removed_by_undo"
-	SkipRemovedByRetention    SkipReason = "removed_by_retention"
-	SkipFilteredOut           SkipReason = "filtered_out"
-	SkipExcludedProject       SkipReason = "excluded_project"
-	SkipHomeDirectory         SkipReason = "home_directory"
-	SkipAboveHome             SkipReason = "above_home"
-	SkipTemporaryDirectory    SkipReason = "temporary_directory"
-	SkipProjectUnknown        SkipReason = "project_unknown"
-	SkipWorktreeUnresolved    SkipReason = "worktree_unresolved"
-	SkipIdentityMismatch      SkipReason = "identity_mismatch"
-	SkipEmpty                 SkipReason = "empty"
-	SkipUnsafeFormat          SkipReason = "unsafe_format"
-	SkipTooLarge              SkipReason = "too_large"
-	SkipStartUnknown          SkipReason = "start_unknown"
-	SkipStartInFuture         SkipReason = "start_in_future"
+	// SkipRemovedByUndo means an earlier backfill undo removed the session.
+	// --include-removed imports it again.
+	SkipRemovedByUndo SkipReason = "removed_by_undo"
+	// SkipRemovedByRetention means retention removed the session.
+	// --include-removed imports it again.
+	SkipRemovedByRetention SkipReason = "removed_by_retention"
+	// SkipFilteredOut means the session does not match the run's filters
+	// (such as --since or --until). It is shown only when filters are set.
+	SkipFilteredOut SkipReason = "filtered_out"
+	// SkipExcludedProject means the session's project is excluded in setup.
+	SkipExcludedProject SkipReason = "excluded_project"
+	// SkipHomeDirectory means the session ran from the home folder itself.
+	// --include-home imports it.
+	SkipHomeDirectory SkipReason = "home_directory"
+	// SkipAboveHome means the session ran from /, /Users, or another
+	// directory above home. No flag overrides it.
+	SkipAboveHome SkipReason = "above_home"
+	// SkipTemporaryDirectory means the session ran from a temporary directory
+	// (/tmp, /private/tmp, /var/folders, or $TMPDIR). --include-temp imports
+	// it.
+	SkipTemporaryDirectory SkipReason = "temporary_directory"
+	// SkipProjectUnknown means no working directory, and so no project, could
+	// be determined for the session.
+	SkipProjectUnknown SkipReason = "project_unknown"
+	// SkipWorktreeUnresolved means the session ran in a Git worktree that no
+	// longer exists and cannot be mapped to its repository.
+	SkipWorktreeUnresolved SkipReason = "worktree_unresolved"
+	// SkipIdentityMismatch means the session IDs inside the transcript do not
+	// match the file (or the Cursor chat's key).
+	SkipIdentityMismatch SkipReason = "identity_mismatch"
+	// SkipEmpty means the session holds no conversation.
+	SkipEmpty SkipReason = "empty"
+	// SkipUnsafeFormat means the transcript is in a format the privacy filter
+	// cannot read safely, so nothing of it is kept.
+	SkipUnsafeFormat SkipReason = "unsafe_format"
+	// SkipTooLarge means the transcript is over the 64 MiB size limit.
+	SkipTooLarge SkipReason = "too_large"
+	// SkipStartUnknown means the session's start time could not be
+	// determined (no record timestamp, or no createdAt for a Cursor chat).
+	SkipStartUnknown SkipReason = "start_unknown"
+	// SkipStartInFuture means the session starts after the import time,
+	// which points to a wrong clock.
+	SkipStartInFuture SkipReason = "start_in_future"
 )
 
 // skipOrder is the spec's precedence: the first applicable reason wins.
