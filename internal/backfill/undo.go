@@ -29,8 +29,15 @@ type UndoPlan struct {
 	// Sessions are removed in this order: subagents before their parents.
 	Sessions []UndoSession
 	// ExcludeProjects are the projects the import added that are still
-	// included; undo marks them Included: false and keeps their entries.
+	// included and no other import still has sessions in; undo marks them
+	// Included: false and keeps their entries.
 	ExcludeProjects []archive.ProjectActivation
+	// KeepProjects are projects the import added that stay included because
+	// another import still has sessions there: excluding them would stop
+	// those sessions updating without the other import being undone. The
+	// batch records them (ProjectsKept), and the undo of the last import
+	// with sessions there excludes them.
+	KeepProjects []KeptProject
 	// RemoveApps are apps the import added to ImportedHarnesses that no
 	// imported session left after the undo needs.
 	RemoveApps []string
@@ -40,6 +47,28 @@ type UndoPlan struct {
 	HookCapturedStopping int
 
 	view Plan
+}
+
+// KeptProject is a project undo leaves included, and why: the other
+// imports that still have sessions there, and how many.
+type KeptProject struct {
+	Project  archive.ProjectActivation
+	Imports  []string
+	Sessions int
+}
+
+// SharedBatchIDError means sessions registered outside an import carry its
+// ID: an earlier import had the same ID and its batch file is gone. Undo
+// selects sessions by that ID and cannot tell the two imports apart, so it
+// refuses rather than remove both.
+type SharedBatchIDError struct {
+	Batch    string
+	Sessions int
+}
+
+func (e *SharedBatchIDError) Error() string {
+	return fmt.Sprintf("import %s shares its ID with an earlier import whose file is no longer in imports/: %s carrying the ID %s registered outside import %s's own run. Undo cannot tell the two imports apart, so it removes neither. Nothing was changed",
+		e.Batch, CountNoun(e.Sessions, "session"), wasWere(e.Sessions), e.Batch)
 }
 
 // UndoSession is one registered session of the import.
@@ -59,8 +88,14 @@ type UndoSession struct {
 }
 
 // PlanUndo decides what undoing b does. project limits it to one project
-// directory, resolved as BuildPlan resolves --project. It writes nothing.
-func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b Batch, project string) (UndoPlan, error) {
+// directory, resolved as BuildPlan resolves --project. batches are every
+// import, b among them, which decide the projects b's undo takes over from
+// earlier undos (see undoProjects). It writes nothing.
+//
+// It refuses (SharedBatchIDError) when a session carrying b's ID was
+// admitted before b started or after it completed: it belongs to an earlier
+// import that had the same ID.
+func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, batches []Batch, b Batch, project string) (UndoPlan, error) {
 	p := UndoPlan{Batch: b, view: Plan{GeneratedAt: env.now(),
 		Home: env.Home, resolvedHome: env.resolved(env.Home),
 		Destination: Destination{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix},
@@ -78,6 +113,9 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		return UndoPlan{}, err
+	}
+	if n := sessionsOutsideBatch(regs, b); n > 0 {
+		return UndoPlan{}, &SharedBatchIDError{Batch: b.ID, Sessions: n}
 	}
 	requests, err := store.LoadRequests()
 	if err != nil {
@@ -127,12 +165,10 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 	}
 	p.Sessions = append(children, parents...)
 
+	p.ExcludeProjects, p.KeepProjects = undoProjects(cfg, regs, batches, b, inProject)
 	excludedRoots := map[string]bool{}
-	for _, project := range cfg.Archive.Projects {
-		if project.Included && slices.Contains(b.ProjectsAdded, project.ProjectID) && !slices.Contains(b.ProjectsExcluded, project.ProjectID) && inProject(project.Root) {
-			p.ExcludeProjects = append(p.ExcludeProjects, project)
-			excludedRoots[project.Root] = true
-		}
+	for _, project := range p.ExcludeProjects {
+		excludedRoots[project.Root] = true
 	}
 	// Excluding a project also stops its hook-captured sessions uploading.
 	for _, reg := range regs {
@@ -159,6 +195,83 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 		}
 	}
 	return p, nil
+}
+
+// sessionsOutsideBatch counts the sessions (not subagents) that carry b's ID
+// but were admitted before b started or after it completed. Every session
+// b's own run registers is admitted at or after StartedAt (the admission is
+// stamped when the batch is opened, and a continued batch keeps its start)
+// and before CompletedAt, so any other one is an earlier import's that had
+// the same ID.
+func sessionsOutsideBatch(regs []archive.SessionRegistration, b Batch) int {
+	n := 0
+	for _, reg := range regs {
+		if reg.ImportBatch != b.ID || reg.ParentSessionID != "" || reg.AdmittedAt.IsZero() {
+			continue
+		}
+		if reg.AdmittedAt.Before(b.StartedAt) || b.CompletedAt != nil && reg.AdmittedAt.After(*b.CompletedAt) {
+			n++
+		}
+	}
+	return n
+}
+
+// undoProjects splits the projects undoing b could exclude into those it
+// excludes and those it keeps. The candidates are the included projects in
+// scope that b added and has not excluded already, and those an earlier undo
+// kept (ProjectsKept) that b has sessions in: b is one of the imports that
+// undo kept them for, so b's undo takes them over. A project setup included
+// again after b excluded it is never a candidate.
+//
+// A candidate stays included while another import has sessions there.
+// Excluding it would stop those sessions updating (the configuration no
+// longer accepts them), silently, as part of undoing an import they are not
+// in. Hook-captured sessions do not keep a project: the import added it, so
+// undoing the import is what stops them, as the plan says.
+func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches []Batch, b Batch, inProject func(string) bool) (exclude []archive.ProjectActivation, keep []KeptProject) {
+	inside := func(reg archive.SessionRegistration, project archive.ProjectActivation) bool {
+		return reg.ProjectID == project.ProjectID || reg.ProjectRoot == project.Root
+	}
+	for _, project := range cfg.Archive.Projects {
+		if !project.Included || !inProject(project.Root) || slices.Contains(b.ProjectsExcluded, project.ProjectID) {
+			continue
+		}
+		candidate := slices.Contains(b.ProjectsAdded, project.ProjectID)
+		if !candidate && slices.ContainsFunc(batches, func(o Batch) bool {
+			return o.ID != b.ID && o.UndoneAt != nil && slices.Contains(o.ProjectsKept, project.ProjectID)
+		}) {
+			candidate = slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
+				return reg.ImportBatch == b.ID && reg.ParentSessionID == "" && inside(reg, project)
+			})
+		}
+		if !candidate {
+			continue
+		}
+		kept := KeptProject{Project: project}
+		for _, reg := range regs {
+			if reg.Imported() && reg.ImportBatch != b.ID && reg.ParentSessionID == "" && inside(reg, project) {
+				kept.Sessions++
+				kept.Imports = addUnique(kept.Imports, reg.ImportBatch)
+			}
+		}
+		if kept.Sessions == 0 {
+			exclude = append(exclude, project)
+			continue
+		}
+		sort.Strings(kept.Imports)
+		keep = append(keep, kept)
+	}
+	return exclude, keep
+}
+
+// KeptProjectIDs are the IDs of the projects the plan keeps included, which
+// the batch records as ProjectsKept.
+func (p UndoPlan) KeptProjectIDs() []string {
+	ids := make([]string, 0, len(p.KeepProjects))
+	for _, k := range p.KeepProjects {
+		ids = append(ids, k.Project.ProjectID)
+	}
+	return ids
 }
 
 // resumedSinceImport reports whether the app ran an imported session again
@@ -204,18 +317,14 @@ func resumedByEvidence(env Environment, store *collector.LocalStore, reg archive
 	if hasHookEvidence(req.HookEvidence) {
 		return true, nil
 	}
-	pending, found, err := store.LoadPending(reg.ArchiveSessionID)
+	// Only the stored bundles' evidence is decoded: decoding the whole
+	// pending and published bundles cost several times their size per
+	// session, partly under collector.lock.
+	evidence, err := store.StoredEvidence(reg.ArchiveSessionID)
 	if err != nil {
 		return false, err
 	}
-	if found && hasHookEvidence(pending.Bundle.SupplementalEvidence) {
-		return true, nil
-	}
-	bundle, _, _, found, err := store.LoadPublished(reg.ArchiveSessionID)
-	if err != nil {
-		return false, err
-	}
-	return found && hasHookEvidence(bundle.SupplementalEvidence), nil
+	return hasHookEvidence(evidence), nil
 }
 
 func hasHookEvidence(evidence []archive.SupplementalEvidence) bool {
@@ -381,27 +490,27 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 	if c.Sessions+c.Subagents > 0 {
 		fmt.Fprintln(w, "If you continue:")
 	}
-	sessions := undoNoun(c.Sessions, c.Subagents)
+	sessions := SessionsAndSubagents(c.Sessions, c.Subagents)
 	switch {
 	case c.Deleted > 0 && c.Forgotten == 0:
-		fmt.Fprintf(w, "  • %s %s deleted from\n    %s.\n", sessions, isAre(c.Sessions+c.Subagents), p.view.destination())
+		fmt.Fprintf(w, "  • %s %s deleted from\n    %s.\n", sessions, IsAre(c.Sessions+c.Subagents), p.view.destination())
 	case c.Deleted > 0:
-		fmt.Fprintf(w, "  • %s %s deleted from\n    %s.\n", count(c.Deleted, "session"), isAre(c.Deleted), p.view.destination())
-		fmt.Fprintf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", count(c.Forgotten, "session"), isAre(c.Forgotten))
+		fmt.Fprintf(w, "  • %s %s deleted from\n    %s.\n", CountNoun(c.Deleted, "session"), IsAre(c.Deleted), p.view.destination())
+		fmt.Fprintf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", CountNoun(c.Forgotten, "session"), IsAre(c.Forgotten))
 	case c.Forgotten > 0:
-		fmt.Fprintf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, isAre(c.Sessions+c.Subagents))
+		fmt.Fprintf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, IsAre(c.Sessions+c.Subagents))
 	}
 	if c.Resumed > 0 {
-		fmt.Fprintf(w, "    This includes %s resumed since the import, with %s newer content.\n", count(c.Resumed, "session"), theirIts(c.Resumed))
+		fmt.Fprintf(w, "    This includes %s resumed since the import, with %s newer content.\n", CountNoun(c.Resumed, "session"), theirIts(c.Resumed))
 	}
 	if n := c.ResumeUnknown; n > 0 {
-		fmt.Fprintf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", count(n, "Cursor chat")+" "+wasWere(n))
+		fmt.Fprintf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", CountNoun(n, "Cursor chat")+" "+wasWere(n))
 	}
 	if n := len(p.ExcludeProjects); n > 0 {
 		if c.Sessions+c.Subagents == 0 {
 			fmt.Fprintln(w, "If you continue:")
 		}
-		fmt.Fprintf(w, "  • %s the import added %s excluded from capture; setup can\n    include %s again:\n", count(n, "project"), isAre(n), themIt(n))
+		fmt.Fprintf(w, "  • %s the import added %s excluded from capture; setup can\n    include %s again:\n", CountNoun(n, "project"), IsAre(n), themIt(n))
 		roots := make([]string, 0, n)
 		for _, project := range p.ExcludeProjects {
 			roots = append(roots, p.view.display(project.Root))
@@ -418,7 +527,7 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 			if h == 1 {
 				verb, what = "stops", "it is"
 			}
-			fmt.Fprintf(w, "    %s in %s %s uploading; %s not deleted.\n", count(h, "hook-captured session"), where, verb, what)
+			fmt.Fprintf(w, "    %s in %s %s uploading; %s not deleted.\n", CountNoun(h, "hook-captured session"), where, verb, what)
 		}
 	}
 	if len(p.RemoveApps) > 0 {
@@ -432,6 +541,25 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 		}
 		fmt.Fprintf(w, "  • %s imports without hooks are no longer published.\n", joinAnd(names))
 	}
+	if n := len(p.KeepProjects); n > 0 {
+		if c.Sessions+c.Subagents == 0 && len(p.ExcludeProjects) == 0 {
+			fmt.Fprintln(w, "If you continue:")
+		}
+		fmt.Fprintf(w, "  • %s the import added %s included: other imports still have\n    sessions there, which excluding %s would stop updating:\n", CountNoun(n, "project"), stayStays(n), themIt(n))
+		kept := make([]string, 0, n)
+		for _, k := range p.KeepProjects {
+			imports := "import " + joinAnd(k.Imports)
+			if len(k.Imports) > 1 {
+				imports = "imports " + joinAnd(k.Imports)
+			}
+			kept = append(kept, fmt.Sprintf("%s (%s from %s)", p.view.display(k.Project.Root), CountNoun(k.Sessions, "session"), imports))
+		}
+		sort.Strings(kept)
+		for _, line := range kept {
+			fmt.Fprintf(w, "      %s\n", line)
+		}
+		fmt.Fprintf(w, "    Undoing the last of those imports excludes %s.\n", themIt(n))
+	}
 	fmt.Fprintln(w, "  • Hook-captured sessions and the apps' own files are not touched.")
 	if c.Sessions+c.Subagents > 0 {
 		fmt.Fprintln(w, "  • These sessions are not imported again unless you run\n    agent-archive backfill --include-removed.")
@@ -442,13 +570,13 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 func UndoQuestion(p UndoPlan) string {
 	c := p.Counts()
 	if c.Sessions+c.Subagents == 0 {
-		return fmt.Sprintf("Exclude %s?", count(len(p.ExcludeProjects), "project"))
+		return fmt.Sprintf("Exclude %s?", CountNoun(len(p.ExcludeProjects), "project"))
 	}
 	// Sessions are named when there are any; otherwise only subagents are
 	// left.
-	deleted, forgotten := count(c.DeletedSessions, "session"), count(c.ForgottenSessions, "session")
+	deleted, forgotten := CountNoun(c.DeletedSessions, "session"), CountNoun(c.ForgottenSessions, "session")
 	if c.Sessions == 0 {
-		deleted, forgotten = count(c.Deleted, "subagent transcript"), count(c.Forgotten, "subagent transcript")
+		deleted, forgotten = CountNoun(c.Deleted, "subagent transcript"), CountNoun(c.Forgotten, "subagent transcript")
 	}
 	switch {
 	case c.Deleted == 0:
@@ -459,21 +587,31 @@ func UndoQuestion(p UndoPlan) string {
 	return fmt.Sprintf("Delete %s from the archive and forget %s from a previous destination? This cannot be undone.", deleted, forgotten)
 }
 
-func undoNoun(sessions, subagents int) string {
+// SessionsAndSubagents counts sessions and subagent transcripts together,
+// naming only the kinds there are: "2 sessions and 1 subagent transcript".
+func SessionsAndSubagents(sessions, subagents int) string {
 	switch {
 	case subagents == 0:
-		return count(sessions, "session")
+		return CountNoun(sessions, "session")
 	case sessions == 0:
-		return count(subagents, "subagent transcript")
+		return CountNoun(subagents, "subagent transcript")
 	}
-	return count(sessions, "session") + " and " + count(subagents, "subagent transcript")
+	return CountNoun(sessions, "session") + " and " + CountNoun(subagents, "subagent transcript")
 }
 
-func isAre(n int) string {
+// IsAre is the verb that agrees with a count of n.
+func IsAre(n int) string {
 	if n == 1 {
 		return "is"
 	}
 	return "are"
+}
+
+func stayStays(n int) string {
+	if n == 1 {
+		return "stays"
+	}
+	return "stay"
 }
 
 func wasWere(n int) string {

@@ -149,22 +149,3 @@ linters:
       - path: internal/reader/reader\.go
         text: "`matches`"
         linters: [gocyclo]
-
-      # Baseline: findings in packages with fix PRs in flight, excluded here
-      # only to avoid conflicting with those PRs. Each block is removed, and
-      # its findings fixed, once the named PR has merged.
-      #
-      # TODO(W2-B, fix/backfill-undo-safety): backfill, cursorstore, reader.
-      - path: internal/backfill/cursordb\.go
-        text: json.Unmarshal
-        linters: [errcheck]
-      - path: internal/cursorstore/composer\.go
-        text: tx.Rollback
-        linters: [errcheck]
-      - path: internal/cursorstore/snapshots\.go
-        text: syscall.Flock
-        linters: [errcheck]
-      - path: internal/(backfill/cursordb|cursorstore/composer|cursorstore/helpers)_test\.go
-        linters: [errcheck]
-      - path: internal/reader/reader_test\.go
-        linters: [errorlint]

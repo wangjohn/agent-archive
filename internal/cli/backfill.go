@@ -126,10 +126,20 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if !*jsonOut {
 		fmt.Fprint(stdout, backfill.SearchLine(filters)+" ")
 	}
-	plan, err := backfill.BuildPlan(context.Background(), env.backfillEnvironment(userHome), newArchiveState(home, cfg), cfg, filters)
+	// Ctrl-C during planning cancels it, so the plan's copy of Cursor's
+	// database is removed on the way out instead of left in the temporary
+	// folder. A second Ctrl-C quits at once.
+	planCtx, stopPlanning := interruptibleContext(env)
+	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome), newArchiveState(home, cfg), cfg, filters)
+	interrupted := planCtx.Err() != nil
+	stopPlanning()
 	if err != nil {
 		if !*jsonOut {
 			fmt.Fprintln(stdout)
+		}
+		if interrupted {
+			fmt.Fprintln(stderr, "agent-archive: backfill: stopped. Nothing was changed.")
+			return 1
 		}
 		fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
 		return 1
@@ -192,6 +202,38 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	return importPlan(env, stdout, stderr, home, plan, configFingerprint(cfg), *background)
 }
 
+// interruptibleContext returns a context that the first Ctrl-C cancels. The
+// watch stops at that first one, so a second ends the process as usual. stop
+// ends the watch and waits for it; it is called once.
+func interruptibleContext(env Env) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	signals, stopSignals := env.interrupts()
+	stopSignals = releaseOnce(stopSignals)
+	// A Ctrl-C already waiting cancels before planning starts.
+	select {
+	case <-signals:
+		stopSignals()
+		cancel()
+	default:
+	}
+	done, exited := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(exited)
+		select {
+		case <-signals:
+			stopSignals()
+			cancel()
+		case <-done:
+		}
+	}()
+	return ctx, func() {
+		close(done)
+		<-exited
+		stopSignals()
+		cancel()
+	}
+}
+
 // importRefusal says why an import cannot start now, or "".
 func importRefusal(home string, cfg config.Config) string {
 	switch {
@@ -246,12 +288,12 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan) (bool, error
 	}
 }
 
-func countNoun(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
+// countNoun and isAre are backfill's, so the CLI and the plans it prints
+// count alike.
+var (
+	countNoun = backfill.CountNoun
+	isAre     = backfill.IsAre
+)
 
 // configFingerprint identifies the configuration a plan was made from. The
 // collector refreshes bucket privacy evidence in place, which is evidence
