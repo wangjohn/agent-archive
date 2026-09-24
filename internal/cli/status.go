@@ -205,7 +205,7 @@ func blockedReasonDetail(reason collector.BlockedReason) string {
 	case collector.BlockedReasonTranscriptMissing:
 		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
 	case collector.BlockedReasonRecordTooLarge:
-		return fmt.Sprintf("One record in the transcript is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
+		return fmt.Sprintf("One record in the transcript (or a plain-text transcript as a whole) is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
 }

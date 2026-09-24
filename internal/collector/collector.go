@@ -796,7 +796,16 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	if !ok || !errors.Is(err, archive.ErrUnsafeSourceFormat) {
 		return archive.FilteredTranscript{}, stat, err
 	}
+	// A plain-text transcript is one unit, bounded like one record: over the
+	// limit it is the same recorded gap, not a per-pass error. (With the
+	// defaults the transcript size check above sees it first.)
+	if boundary > recordLimit {
+		return archive.FilteredTranscript{}, stat, errRecordTooLarge
+	}
 	filtered, err = cursorAdapter.FilterText(io.NewSectionReader(file, 0, boundary), reg.SessionStartedAt)
+	if errors.Is(err, archive.ErrRecordTooLarge) {
+		return archive.FilteredTranscript{}, stat, errRecordTooLarge
+	}
 	return filtered, stat, err
 }
 
