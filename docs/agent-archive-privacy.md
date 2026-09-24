@@ -9,9 +9,7 @@ retained: every line holds only what the source filter below kept.
 
 ## Source filter version 10
 
-Filter 10 changes how a Cursor plain-text transcript is split into role
-sections. Adapter version 0.10.0 goes with it; JSONL and composer output is
-unchanged.
+Filter 10 fixes two things. Adapter version 0.10.0 goes with it.
 
 - **Role headers only at column 0.** Filter 9 treated any line whose trimmed
   text began with `user:`, `system:`, or another role name as a role header.
@@ -21,7 +19,17 @@ unchanged.
   role name and a colon at the start of the line (in any case), followed by
   a space or the end of the line. An indented role word is content: it is
   retained, sanitized like the rest of its section, and never hides or
-  reveals anything.
+  reveals anything. Only Cursor plain-text transcripts change.
+- **Text glued after a closing quote.** Filter 9 ended a quoted credential
+  value at its closing quote, so `PASSWORD="abc"realsecret`, which a shell
+  reads as the value `abcrealsecret`, became `PASSWORD="[REDACTED]"realsecret`,
+  and `.PWD=='0'0` kept its trailing `0`. Whatever a shell would read as the
+  same word after the closing quote (more text, or more closed quoted
+  segments: `TOKEN='a'"b"c`) is now part of the value and is redacted with
+  it: `PASSWORD="[REDACTED]"`. It stops at whitespace, `,`, `;`, a closing
+  `]`, `}`, or `)` (so `{"password":"abc"}` keeps its brace), and shell
+  punctuation (`&`, `|`, `<`, `>`). Redacting twice still changes nothing.
+  Every format with text changes.
 
 ## Source filter version 9
 
@@ -362,8 +370,9 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   `PGPASSWORD`, `spring.datasource.password`, and `x-api-key` all match. The
   name may be quoted (`"…"`, `'…'`, or escaped inside a string, `\"…\"`);
   the separator is `=`, `:`, `:=`, or `=>`; a `--name value` command-line
-  flag counts too. The value, quoted up to its closing quote or unquoted up
-  to whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
+  flag counts too. The value, quoted up to its closing quote (plus anything
+  glued on after it, as a shell reads it; filter 10) or unquoted up to
+  whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
   `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`. An HTTP scheme
   before the value stays: `Authorization: Bearer [REDACTED]`. A single token
   in brackets or braces is a value too (`password=[hunter2]`,

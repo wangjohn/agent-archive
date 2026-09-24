@@ -122,15 +122,24 @@ const (
 	// (`Authorization: Bearer [REDACTED]`).
 	credentialScheme = `(?:(?:bearer|basic|digest|token)[ \t]+)?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialQuotedValue is a value in quotes, up to its closing quote, or
-	// to the end of the line when it has none. In order: JSON escaped once
-	// inside a string (`\"…\"`, where an escaped quote inside is `\\\"`);
+	// to the end of the line when it has none, and for plain quotes whatever
+	// is glued on after the closing quote (credentialQuotedGlue). In order:
+	// JSON escaped once inside a string (`\"…\"`, where an escaped quote inside is `\\\"`);
 	// JSON escaped more than once (`\\\"…\\\"`, up to the first escaped
 	// quote of any depth); double quotes, with backslash escapes (a value
 	// cut off after a lone backslash takes it along, so none is left for a
 	// second pass to glue onto the marker); single quotes.
-	credentialQuotedValue = `\\"(?:\\\\\\"|[^"\\\n]|\\[^"\n])*(?:\\")?|` +
-		`\\{2,}"(?:[^"\\\n]|\\+[^"\\\n])*(?:\\+")?|` +
-		`"(?:[^"\\\n]|\\.)+\\?"?|'[^'\n]+'?`
+	credentialQuotedValue = credentialQuoted + `|(?:` + credentialPlainQuoted + `)` + credentialQuotedGlue
+	credentialQuoted      = `\\"(?:\\\\\\"|[^"\\\n]|\\[^"\n])*(?:\\")?|` +
+		`\\{2,}"(?:[^"\\\n]|\\+[^"\\\n])*(?:\\+")?`
+	credentialPlainQuoted = `"(?:[^"\\\n]|\\.)+\\?"?|'[^'\n]+'?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
+	// credentialQuotedGlue is what a shell reads as part of the same word
+	// after a closing quote: more text, or more closed quoted segments
+	// (`PASSWORD="abc"realsecret` is the value `abcrealsecret`). It is
+	// taken as part of the value, so it is redacted with it. It stops at
+	// whitespace, a separator, a closing bracket (the end of a JSON object
+	// or array), or shell punctuation (`&&`, `|`, a redirection).
+	credentialQuotedGlue = `(?:"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|[^\s,;"'\]})&|<>])*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialBracketedValue is a single token in brackets or braces
 	// (`[hunter2]`, `{abc123}`, an earlier `[REDACTED]`), with whatever is
 	// glued on after it (`[REDACTED]realsecret`, `[REDACTED][a,b]realsecret`:
@@ -174,6 +183,10 @@ var (
 // style `sk-` keys.
 var credentialShape = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*-----|.*)|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{12,}\b`)
 
+// quotedPrefix matches the quoted part at the start of a quoted value,
+// without anything glued on after its closing quote.
+var quotedPrefix = regexp.MustCompile(`^(?:` + credentialQuoted + `|` + credentialPlainQuoted + `)`)
+
 // redactCredentialValues replaces the "value" group of every match of pattern
 // with [REDACTED], keeping a quoted value's quotes, and reports whether
 // anything was replaced.
@@ -200,6 +213,13 @@ func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool)
 			quote = secret[:escapes+1]
 		}
 		out.WriteString(quote + "[REDACTED]")
+		// Text glued on after the closing quote is part of the value and
+		// goes with it; only the quoted part's closing quote is kept.
+		if quote != "" {
+			if quoted := quotedPrefix.FindString(secret); quoted != "" {
+				secret = quoted
+			}
+		}
 		// The closing quote, with whatever backslashes escape it (they can
 		// differ from the opening's in malformed input), stays too.
 		if quote != "" && len(secret) > len(quote) && secret[len(secret)-1] == quote[len(quote)-1] {

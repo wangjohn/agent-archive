@@ -1720,6 +1720,12 @@ D-7, and the schema rows of D-5.
   "Person" turn, and an indented `system:` no longer hides the rest of the
   transcript. Filtered text changes for such transcripts, so the filter
   version moves to 10.
+- **Glued quoted values (R1, filter 10).** A quoted credential value takes
+  along whatever a shell would glue onto it after the closing quote
+  (`PASSWORD="abc"realsecret`, `TOKEN='a'"b"c`), stopping at whitespace,
+  separators, closing brackets, and shell punctuation. New positives, fuzz
+  templates, and seeds; both redaction fuzzers ran 150 s each
+  (`-fuzzminimizetime 2s`) without a finding.
 - **Handoff escaping (A-2).** Agent text, "Where it left off", prompts, and
   compaction summaries are block-quoted; plan items are one line with
   leading Markdown escaped; file names, tool names, and commands are code
