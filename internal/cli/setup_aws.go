@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -93,9 +94,6 @@ func promptAWSProfile(p *prompter, cfg *credentials.Config, env Env) error {
 	for _, profile := range profiles {
 		names = append(names, profile.Name)
 	}
-	if len(names) > 0 {
-		fmt.Fprintf(p.out, "AWS profiles: %s\n", strings.Join(names, ", "))
-	}
 	def := cfg.AWSProfile
 	if def == "" {
 		if containsString(names, "default") {
@@ -104,7 +102,12 @@ func promptAWSProfile(p *prompter, cfg *credentials.Config, env Env) error {
 			def = names[0]
 		}
 	}
-	profile, err := p.required("AWS profile", def)
+	var profile string
+	if len(names) > 0 {
+		profile, err = pickAWSProfile(p, names, def)
+	} else {
+		profile, err = p.required("AWS profile", def)
+	}
 	if err != nil {
 		return err
 	}
@@ -126,4 +129,31 @@ func promptAWSProfile(p *prompter, cfg *credentials.Config, env Env) error {
 	}
 	fmt.Fprintf(p.out, "Using region %s. You can change it at the final review.\n", cfg.Region)
 	return nil
+}
+
+// pickAWSProfile lists the discovered profiles by number. A profile that
+// discovery missed can still be typed by name.
+func pickAWSProfile(p *prompter, names []string, def string) (string, error) {
+	fmt.Fprintln(p.out, "Which AWS profile has access to the bucket?")
+	defNum := def
+	for i, name := range names {
+		fmt.Fprintf(p.out, "  %d) %s\n", i+1, name)
+		if name == def {
+			defNum = strconv.Itoa(i + 1)
+		}
+	}
+	label := fmt.Sprintf("Enter 1-%d, or another profile name", len(names))
+	for {
+		answer, err := p.withDefault(label, defNum)
+		if err != nil {
+			return "", err
+		}
+		if n, e := strconv.Atoi(answer); e == nil && n >= 1 && n <= len(names) {
+			return names[n-1], nil
+		}
+		if answer != "" {
+			return answer, nil
+		}
+		fmt.Fprintln(p.out, "This value is required.")
+	}
 }

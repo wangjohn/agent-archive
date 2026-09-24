@@ -79,13 +79,13 @@ Macs are supported.
    asks for a region only when one is missing.
 
    The final summary shows the apps, projects, destination, session scope,
-   and automatic deletion period. At “Start archiving? [Y/n/edit]”, choose
-   `edit` to adjust apps, projects, session scope, retention, storage, the
+   and automatic deletion period. At “Start archiving?”, enter the number
+   for “Edit a setting” to adjust apps, projects, session scope, retention, storage, the
    folder inside the bucket, or the AWS region. Ordinary setup has no
    advanced-settings questions. Storage changes are checked again before
    starting; editing other choices does not repeat the connection test.
-   If the connection test fails, choose `edit` to correct the region, bucket
-   folder, or other settings, or `retry` after restoring access.
+   If the connection test fails, choose “Edit settings” to correct the region,
+   bucket folder, or other settings, or “Retry” after restoring access.
 
    Review the exact project paths and retention period before enabling.
    The default is 90 days; older sessions are deleted automatically.
@@ -475,7 +475,7 @@ unavailable-or-expired; one missing child does not block the parent. Links do no
 extend retention. Children are never downloaded recursively.
 
 This adds optional fields to schema version 1 and parser 0.5.0; the current
-filter version is 6, adapter 0.6.0, and parser 0.9.0 (see
+filter version is 7, adapter 0.7.0, and parser 0.9.0 (see
 `docs/agent-archive-privacy.md`).
 Existing bundles remain readable. Claude is fixture-tested;
 real app capture is pending. Codex/Cursor child capture and native skill

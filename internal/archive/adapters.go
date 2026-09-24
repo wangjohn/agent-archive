@@ -50,7 +50,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.6.0"
+const adapterVersion = "0.7.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -117,21 +117,55 @@ func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // FilterText retains a hook-provided Cursor text transcript only when the hook
 // has established that this is a fresh eligible session. It labels the source
 // as text rather than fabricating message events from unstructured content.
+//
+// The transcript as a whole is bounded by the record size limit (a text
+// transcript is one unit, like one JSONL record); a longer one fails with
+// ErrRecordTooLarge, which the collector records as a capture gap. Filter 6
+// and earlier stopped at 2 MB.
+//
+// Each visible role section — a `user:`, `assistant:`, or `tool:` line and the
+// continuation lines under it — is sanitized on its own, so redaction and the
+// 64 KB string cap apply per message, as they do to JSONL records. Filter 6
+// sanitized the whole joined text as one string, which truncated any text
+// transcript over 64 KB to its first 64 KB. The sanitized sections are joined
+// again in their original order, one line per original line, so the result is
+// read back by the same section prefixes (see textSectionPrefixes). Hidden
+// sections (`system:`, `developer:`, `thinking:`, `analysis:`) and their
+// continuation lines are omitted. Each gap is recorded once.
+//
+// The collector's rewrite guard compares the retained text by prefix across
+// passes. Per-section sanitizing keeps every completed section's bytes
+// stable, but the last section, if it is still being written, can change
+// bytes it already produced once more of it lands (a credential that only
+// matches when complete, or an injected block whose stripping trims the
+// section's edges). That is a property of sanitizing a growing string, not
+// of this function, and a text transcript offers no record boundary to stop
+// short of.
 func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (FilteredTranscript, error) {
 	if freshStartedAt.IsZero() {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no reliable fresh-session start"}
 	}
-	const maxText = 2 * 1024 * 1024
-	content, err := io.ReadAll(io.LimitReader(r, maxText+1))
+	content, err := io.ReadAll(io.LimitReader(r, int64(maxRecordBytes)+1))
 	if err != nil {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript cannot be read"}
 	}
-	if len(content) > maxText {
-		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript exceeds safe size limit"}
+	if len(content) > maxRecordBytes {
+		return FilteredTranscript{}, ErrRecordTooLarge
 	}
-	result := FilteredTranscript{Format: "cursor-text", FirstEventAt: freshStartedAt.UTC(), Gaps: []CaptureGap{{Code: "text_structure_partial", Detail: "Cursor role sections retained without manufactured events"}}}
-	var retained []string
-	section := ""
+	result := FilteredTranscript{Format: "cursor-text", FirstEventAt: freshStartedAt.UTC()}
+	gapSet := map[CaptureGap]bool{}
+	addGap := func(code, detail string) {
+		gap := CaptureGap{Code: code, Detail: detail}
+		if !gapSet[gap] {
+			gapSet[gap] = true
+			result.Gaps = append(result.Gaps, gap)
+		}
+	}
+	addGap("text_structure_partial", "Cursor role sections retained without manufactured events")
+
+	// Split into sections, keeping each visible section's lines as they were.
+	var sections [][]string
+	hidden := false
 	for _, line := range strings.Split(string(content), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -140,34 +174,40 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 		lower := strings.ToLower(trimmed)
 		switch {
 		case strings.HasPrefix(lower, "system:") || strings.HasPrefix(lower, "developer:") || strings.HasPrefix(lower, "thinking:") || strings.HasPrefix(lower, "analysis:"):
-			section = "hidden"
-			result.Gaps = append(result.Gaps, CaptureGap{Code: "hidden_instruction_omitted", Detail: "text section omitted"})
+			hidden = true
+			addGap("hidden_instruction_omitted", "text section omitted")
 		case strings.HasPrefix(lower, "user:") || strings.HasPrefix(lower, "assistant:") || strings.HasPrefix(lower, "tool:"):
-			section = "visible"
-			retained = append(retained, line)
-		case section == "hidden":
+			hidden = false
+			sections = append(sections, []string{line})
+		case hidden:
 			// continuation line of an already-hidden section; omit.
-		case section == "visible":
+		case len(sections) > 0:
 			// continuation line of the current visible section's message body.
-			retained = append(retained, line)
+			sections[len(sections)-1] = append(sections[len(sections)-1], line)
 		default:
 			return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has unrecognized role section"}
 		}
 	}
-	if len(retained) == 0 {
+	if len(sections) == 0 {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable visible sections"}
 	}
-	state := sanitizeState{addGap: func(code string, _ int, detail string) {
-		result.Gaps = append(result.Gaps, CaptureGap{Code: code, Detail: detail})
-	}}
-	safe, keep := sanitizeValue(strings.Join(retained, "\n"), &state)
-	if !keep {
+	state := sanitizeState{addGap: func(code string, _ int, detail string) { addGap(code, detail) }}
+	retained := make([]string, 0, len(sections))
+	for _, section := range sections {
+		safe, keep := sanitizeValue(strings.Join(section, "\n"), &state)
+		if !keep {
+			continue
+		}
+		text, ok := safe.(string)
+		if !ok {
+			return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript is not text"}
+		}
+		retained = append(retained, text)
+	}
+	if len(retained) == 0 {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable content"}
 	}
-	text, ok := safe.(string)
-	if !ok {
-		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript is not text"}
-	}
+	text := strings.Join(retained, "\n")
 	result.Text = []string{text}
 	result.Boundary.RetainedBytes = len(text)
 	return result, nil

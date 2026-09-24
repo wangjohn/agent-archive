@@ -104,6 +104,65 @@ func (p *prompter) yesNo(label string, def bool) (bool, error) {
 	}
 }
 
+// option is one numbered entry in a menu. Key is what the caller receives;
+// Label is what the user reads.
+type option struct {
+	Key, Label string
+}
+
+// menu prints a question with numbered options and returns the chosen key.
+// The user answers with the option's number; a blank answer takes def. The
+// option's key, or an unambiguous prefix of it such as y for yes, is also
+// accepted, so scripted input keeps working.
+func (p *prompter) menu(question, def string, options ...option) (string, error) {
+	fmt.Fprintln(p.out, question)
+	defNum := ""
+	for i, o := range options {
+		fmt.Fprintf(p.out, "  %d) %s\n", i+1, o.Label)
+		if o.Key == def {
+			defNum = strconv.Itoa(i + 1)
+		}
+	}
+	label := fmt.Sprintf("Enter 1-%d", len(options))
+	for {
+		answer, err := p.withDefault(label, defNum)
+		if err != nil {
+			return "", err
+		}
+		if n, e := strconv.Atoi(answer); e == nil && n >= 1 && n <= len(options) {
+			return options[n-1].Key, nil
+		}
+		if key, ok := matchOption(answer, options); ok {
+			return key, nil
+		}
+		fmt.Fprintf(p.out, "Enter a number from 1 to %d.\n", len(options))
+	}
+}
+
+// matchOption finds the option whose key equals answer, or failing that the
+// only option whose key starts with it.
+func matchOption(answer string, options []option) (string, bool) {
+	answer = strings.ToLower(answer)
+	if answer == "" {
+		return "", false
+	}
+	for _, o := range options {
+		if answer == o.Key {
+			return o.Key, true
+		}
+	}
+	match := ""
+	for _, o := range options {
+		if strings.HasPrefix(o.Key, answer) {
+			if match != "" {
+				return "", false
+			}
+			match = o.Key
+		}
+	}
+	return match, match != ""
+}
+
 func (p *prompter) intWithDefault(label string, def int) (int, error) {
 	for {
 		answer, err := p.withDefault(label, strconv.Itoa(def))
