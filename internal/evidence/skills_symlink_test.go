@@ -111,6 +111,36 @@ func TestObserveSkillsIgnoresProjectSkillLinkedToNonSkillFileInProject(t *testin
 	}
 }
 
+// A repository controls its skill root too: with .claude/skills itself a
+// link to the project (or a folder in it), "inside the skill root" would
+// admit any project file. A project skill must be a file named SKILL.md.
+func TestObserveSkillsIgnoresProjectFileBehindALinkedSkillRoot(t *testing.T) {
+	for _, tc := range []struct{ name, rootTarget, secret, link string }{
+		{"root is the project", "..", ".env", filepath.Join("envskill", "SKILL.md")},
+		{"root is a project folder", filepath.Join("..", "config"), filepath.Join("config", "master.key"), filepath.Join("k", "SKILL.md")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := newSkillLayout(t)
+			writeSkillFile(t, filepath.Join(l.project, tc.secret), "0123456789abcdef-sentinel-project-secret\n")
+			symlink(t, tc.rootTarget, filepath.Join(l.project, ".claude", "skills"))
+			root, err := filepath.EvalSymlinks(filepath.Join(l.project, ".claude", "skills"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			target, err := filepath.Rel(filepath.Join(root, filepath.Dir(tc.link)), filepath.Join(l.project, tc.secret))
+			if err != nil {
+				t.Fatal(err)
+			}
+			symlink(t, target, filepath.Join(root, tc.link))
+
+			_, snapshots, all := observeClaudeSkills(t, l, "project_claude")
+			if strings.Contains(all, "sentinel-project-secret") || len(snapshots) != 0 {
+				t.Fatalf("project file archived through a linked skill root: %s", all)
+			}
+		})
+	}
+}
+
 // Run from the home directory, the project's .claude/skills is the user's
 // ~/.claude/skills. It is observed once, under the user scope and its rules,
 // so the project rule (anything inside the project, here all of $HOME) never

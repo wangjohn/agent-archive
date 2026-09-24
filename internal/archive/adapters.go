@@ -342,11 +342,16 @@ const (
 		`"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`
 	// credentialValue is a quoted value or an unquoted one, which runs up to
 	// whitespace, `,`, `;`, or a quote, so a value inside a quoted string
-	// (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`) leaves the closing quote. An
-	// unquoted value may begin with `=` (`PASSWORD==abc`, `token: =abc`) only
-	// when something other than `=` or whitespace follows, so `token == nil`
-	// is a comparison, not an assignment.
-	credentialValue = credentialQuotedValue + `|=*[^\s,;"'=][^\s,;"']*`
+	// (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`) leaves the closing quote.
+	// Either may follow extra `=` signs (`PASSWORD==abc`, `PASSWORD=="abc"`,
+	// `token: =abc`), but an unquoted value cannot begin with whitespace, so
+	// `token == nil` is a comparison, not an assignment. Nor can it begin
+	// with `{` or `[`: that is a structure (`"credentials": {"type": …}`),
+	// whose members are checked on their own, and replacing its opening
+	// bracket would break the line around it. An earlier [REDACTED] is a
+	// value, so redacting twice changes nothing (`Bearer [REDACTED]` must not
+	// be read as the value `Bearer`).
+	credentialValue = `=*(?:` + credentialQuotedValue + `)|\[REDACTED\]|=*[^\s,;"'={\[][^\s,;"']*`
 	// credentialFlagValue is the value after a space-separated command-line
 	// flag (`--token abc`); one beginning with `-` is the next flag.
 	credentialFlagValue = credentialQuotedValue + `|[^\s,;"'=-][^\s,;"']*`
@@ -392,8 +397,11 @@ func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool)
 			quote = secret[:escapes+1]
 		}
 		out.WriteString(quote + "[REDACTED]")
-		if quote != "" && len(secret) > len(quote) && strings.HasSuffix(secret, quote) {
-			out.WriteString(quote)
+		// The closing quote, with whatever backslashes escape it (they can
+		// differ from the opening's in malformed input), stays too.
+		if quote != "" && len(secret) > len(quote) && secret[len(secret)-1] == quote[len(quote)-1] {
+			body := strings.TrimRight(secret[len(quote):len(secret)-1], `\`)
+			out.WriteString(secret[len(quote)+len(body):])
 		}
 		last = end
 	}

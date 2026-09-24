@@ -51,14 +51,18 @@ to stop. Adapter version 0.9.0 goes with it.
   `tool.error`, `toolResult.result`) in `unknown_field_omitted`.
 - **Skill snapshots stay inside their skill root.** A skill's `SKILL.md` is
   now resolved through symlinks before it is read, and the resolved file is
-  what is read. It must be a regular file that lies inside the skill root or
-  is itself named `SKILL.md`: a linked skill, not an arbitrary file under a
-  skill's name. A skill directory linked into a skills checkout elsewhere
-  (`~/.claude/skills/x -> ~/src/skills/x`), or into a skills directory the
-  repository shares between harnesses, keeps working. A project-level
-  skill's file must also lie inside the project, so a cloned repository can
-  ship neither `.claude/skills/x/SKILL.md -> ~/.aws/credentials` nor
-  `-> ../../../.env` to have that file archived. When a session runs from
+  what is read; it must be a regular file. A user-level skill's file must lie
+  inside the skill root or be itself named `SKILL.md` (a linked skill, not an
+  arbitrary file under a skill's name), so a skill directory linked into a
+  skills checkout elsewhere (`~/.claude/skills/x -> ~/src/skills/x`) keeps
+  working. A project-level skill's file must be named `SKILL.md` and lie
+  inside the project: a repository controls its skill root as much as its
+  links (`.claude/skills -> ..`), so being inside that root proves nothing.
+  A cloned repository can therefore ship neither
+  `.claude/skills/x/SKILL.md -> ~/.aws/credentials`, nor `-> ../../../.env`,
+  nor a linked skill root with `x/SKILL.md -> ../master.key`, to have that
+  file archived; a skills directory the repository shares between harnesses
+  keeps working. When a session runs from
   the home directory, its project skill directory is the user's own; it is
   observed once, under the user scope. Any other entry counts as
   uninspected in the root's inventory.
@@ -359,9 +363,12 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   Slack tokens (`xox[baprs]-`).
 
 Known false positives. The assignment pattern cannot tell a credential from
-code: `token = parse(x)`, `nextToken := lexer.Next()`, and
-`password: required` have their right-hand side redacted, and so does the
-word after a flag in prose (`pass --token flag`). This is accepted rather
+code or a path: `token = parse(x)`, `nextToken := lexer.Next()`,
+`credentials := loadCreds()`, and `password: required` have their
+right-hand side redacted; so do a saved directory in a `*_PWD` variable
+(`ORIG_PWD=$(pwd)`), a path to a credentials file
+(`GOOGLE_APPLICATION_CREDENTIALS=/path/key.json`), and the word after a flag
+in prose (`pass --token flag`). This is accepted rather
 than narrowed, because the cost of a missed credential is higher than the
 cost of a redacted identifier in an archived transcript; a reader sees the
 `sensitive_content_redacted` gap and can consult the original source if it
@@ -376,9 +383,13 @@ Known misses.
 - An unquoted value stops at a quote, so a quote inside an unquoted
   password leaves the rest of the password.
 - In JSON escaped more than once inside a string (`\\\"password\\\":…`),
-  the value ends at the first escaped quote of any depth, so an escaped
-  quote inside such a value leaves the rest of it. JSON escaped once
-  (`\"password\":\"ab\\\"cd\"`) is handled.
+  the value ends at the first escaped quote of any depth, so the tail of a
+  value after an escaped quote inside it (`\\\"ab\\\\\\\"cd\\\"`: `cd`) is
+  kept. JSON escaped once (`\"password\":\"ab\\\"cd\"`) is handled.
+- A value that is an object or array (`"credentials": {…}`, `password: […]`)
+  is not replaced as text: in parsed records its members are checked by
+  name, but in free text a secret inside it is caught only by its own name
+  or shape.
 - A name that does not end in a trigger word (`AWS_ACCESS_KEY_ID`,
   `DATABASE_URL`, `DSN`, `CONNECTION_STRING`) is not redacted by this
   pattern; its value is redacted only if it has a recognizable shape

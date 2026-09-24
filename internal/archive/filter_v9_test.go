@@ -72,6 +72,7 @@ func TestFilterV9RedactsCredentialAssignments(t *testing.T) {
 		{"sts key id", "aws_access_key_id = ASIAIOSFODNN7EXAMPLE", "aws_access_key_id = [REDACTED]"},
 		{"value starting with equals", "PASSWORD==abc", "PASSWORD=[REDACTED]"},
 		{"yaml value starting with equals", "token: =abc", "token: [REDACTED]"},
+		{"quoted value after equals", `PASSWORD=="abc"`, `PASSWORD=[REDACTED]`},
 		{"escaped quote inside escaped json", `{\"password\":\"ab\\\"cd\"}`, `{\"password\":\"[REDACTED]\"}`},
 		{"doubly escaped json", `{\\\"password\\\":\\\"hunter2\\\"}`, `{\\\"password\\\":\\\"[REDACTED]\\\"}`},
 		// Earlier shapes still redacted
@@ -116,6 +117,9 @@ func TestFilterV9LeavesNonCredentialNamesUnchanged(t *testing.T) {
 		"credential_helper=osxkeychain",
 		"keyboard: us",
 		"primary_key = id",
+		`{"credentials": {"type": "service_account"}, "tokens": [1, 2]}`,
+		"password: [required, min 8]",
+		`if token == "" { return }`,
 		"docker login --password-stdin < token.txt",
 		"git config credential.helper osxkeychain",
 		"gh auth login --with-token --hostname github.com",

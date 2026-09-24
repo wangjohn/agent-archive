@@ -253,17 +253,21 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 // or -> ../../../.env, to have that file archived with every session as a
 // skill snapshot.
 //
-// Symlinks are resolved on both sides. For every root, the resolved file
-// must lie inside the resolved skill root, or be itself named SKILL.md: a
-// linked skill, not an arbitrary file under a skill's name. Linking a skill
-// directory into a skills checkout elsewhere (~/.claude/skills/x ->
-// ~/src/skills/x) keeps working, and so does a link inside a repository
-// that shares one skills directory between harnesses
-// (.claude/skills/x -> ../../skills/x).
+// Symlinks are resolved on both sides.
 //
-// A project-level root belongs to a repository, which is not trusted to
-// name files outside itself, so its SKILL.md must also lie inside the
-// project root. A project root that is a user-level root (the session ran
+//   - A user-level root is the person's own configuration. Its resolved file
+//     must lie inside the resolved skill root, or be itself named SKILL.md:
+//     a linked skill, not an arbitrary file under a skill's name. Linking a
+//     skill directory into a skills checkout elsewhere (~/.claude/skills/x
+//     -> ~/src/skills/x) keeps working.
+//   - A project-level root belongs to a repository, which controls its skill
+//     root as much as its links (.claude/skills -> .. makes the root the
+//     project itself), so "inside the skill root" proves nothing for it.
+//     Its resolved file must be named SKILL.md and lie inside the project
+//     root. A link inside the repository that shares one skills directory
+//     between harnesses (.claude/skills/x -> ../../skills/x) keeps working.
+//
+// A project root that is a user-level root (the session ran
 // from the home directory, so the project's .claude/skills is
 // ~/.claude/skills) is not observed a second time: see skillRoots.
 //
@@ -293,10 +297,15 @@ func newSkillBounds(root skillRoot) skillBounds {
 
 // allow reports whether a resolved SKILL.md path is inside the bounds.
 func (b skillBounds) allow(resolved string) bool {
-	if b.projectScoped && !within(b.project, resolved) {
-		return false
+	named := strings.EqualFold(filepath.Base(resolved), "SKILL.md")
+	if b.projectScoped {
+		// The repository controls its skill root as much as its SKILL.md
+		// links (.claude/skills -> .. makes the root the project itself), so
+		// "inside the skill root" admits nothing more for it: only a file
+		// named SKILL.md, inside the project.
+		return named && within(b.project, resolved)
 	}
-	return strings.EqualFold(filepath.Base(resolved), "SKILL.md") || within(b.root, resolved)
+	return named || within(b.root, resolved)
 }
 
 // within reports whether path lies inside dir; nothing lies inside "".
