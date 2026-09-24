@@ -66,7 +66,8 @@ Macs are supported.
    Setup offers the apps it finds together: “Include Codex and Claude Code?”
    Accept to continue, or decline to choose apps individually. If no apps are
    found, it opens the individual choices immediately. On reconfiguration,
-   it offers to keep your existing selection.
+   it lists the apps included and not included, then asks “Change which apps
+   are included? [y/N]” Accept to add or remove apps individually.
 
    If setup finds the current Git project, it shows its full path and asks
    “Archive sessions in this project?” Accept to continue, or decline to
