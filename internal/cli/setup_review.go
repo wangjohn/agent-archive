@@ -137,7 +137,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 		if e != nil {
 			return e
 		}
-		if len(projects) == 0 {
+		if includedProjects(projects) == 0 {
 			fmt.Fprintln(p.out, "At least one project is needed. Your previous selection is kept.")
 		} else {
 			draft.Config.Archive.Projects = projects
