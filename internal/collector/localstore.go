@@ -59,6 +59,19 @@ func NewLocalStore(home string) (*LocalStore, error) {
 // storeDirs are the directories NewLocalStore creates under home.
 var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "scan-signatures", "subagent-candidates"}
 
+// lazyStoreDirs are the directories the store creates under home on first
+// use rather than up front.
+var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
+
+// OwnedEntries lists every top-level entry a LocalStore can create under its
+// home: its directories and its status file. Uninstall deletes a data
+// directory entry by entry and must know all of them; a test there checks
+// its list against this one, so a new directory cannot be left behind.
+func OwnedEntries() []string {
+	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
+	return append(entries, "status.json")
+}
+
 func safeFileComponent(value string) bool {
 	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, "/\\") {
 		return false

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -255,5 +256,32 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 	status, statusErr := collector.OpenLocalStoreReadOnly(home).LoadStatus()
 	if statusErr != nil || !strings.Contains(status.LastError, "read-back verification") {
 		t.Fatalf("status = %#v %v", status, statusErr)
+	}
+}
+
+// Read-back verification works within the pass's deadline: with no time
+// left, a due read-back is deferred to the next pass, not attempted.
+func TestReadBackDefersOnceThePassDeadlineHasPassed(t *testing.T) {
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	home, env, remote := collectFixture(t, now)
+	if result, err := runOnePass(env, false); err != nil || len(result.Published) != 1 {
+		t.Fatalf("%#v %v", result, err)
+	}
+	if err := os.Remove(verificationPath(home, theRegistration(t, home).ArchiveSessionID)); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	summary, err := verifyPublicationsWithin(ctx, home, cfg, env, store, remote)
+	if err != nil || summary.Attempted != 0 || summary.Deferred != 1 {
+		t.Fatalf("summary = %#v %v", summary, err)
 	}
 }

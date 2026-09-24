@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -60,6 +61,7 @@ func TestPutMetadataForSourceChecksTheRecordedSource(t *testing.T) {
 		{"size unknown", source, sum, 0, nil},
 		{"missing", nil, sum, len(source), ErrNotFound},
 		{"different bytes", []byte("other bytes"), sum, len(source), ErrChecksumMismatch},
+		{"same size, different bytes", []byte(strings.Repeat("x", len(source))), sum, len(source), ErrChecksumMismatch},
 		{"different size", source, sum, len(source) + 1, ErrChecksumMismatch},
 	}
 	for _, statter := range []bool{true, false} {
@@ -106,6 +108,7 @@ func TestS3StatReportsTheStoredChecksum(t *testing.T) {
 		{"full object", header, "FULL_OBJECT", http.StatusOK, SHA256Hex(data), nil},
 		{"no checksum", "", "", http.StatusOK, "", nil},
 		{"composite", header + "-3", "COMPOSITE", http.StatusOK, "", nil},
+		{"composite with a whole digest", header, "COMPOSITE", http.StatusOK, "", nil},
 		{"missing", "", "", http.StatusNotFound, "", ErrNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -225,7 +226,7 @@ func Lock(home string) (func(), error) { return NamedLock(home, "collector.lock"
 // not, the lock is dropped and taken again on whatever the path names now.
 func NamedLock(home, name string) (func(), error) {
 	path := filepath.Join(home, name)
-	for {
+	for attempt := 0; attempt < lockAttempts; attempt++ {
 		f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 		if e != nil {
 			return nil, e
@@ -236,7 +237,13 @@ func NamedLock(home, name string) (func(), error) {
 		}
 		// Unlinked (or replaced) between the open and the lock: try again.
 	}
+	return nil, fmt.Errorf("lock %s: the file kept being replaced while it was locked", path)
 }
+
+// lockAttempts bounds NamedLock's retries on a lock file that is unlinked or
+// replaced between its open and its lock. Each retry means another process
+// removed the file just then; far fewer than this happen in practice.
+const lockAttempts = 100
 
 // lockOpened flocks f, which was opened at path, and reports whether path
 // still names f's file once the lock is held. When it does not, or on error,

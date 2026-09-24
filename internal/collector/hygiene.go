@@ -242,8 +242,8 @@ const staleTempAge = time.Hour
 // left in the directories this store owns. Best effort: a failure only
 // leaves the file for the next pass.
 func (s *LocalStore) removeStaleTemps() {
-	dirs := []string{s.home, filepath.Join(s.home, "superseded"), filepath.Join(s.home, "forgotten")}
-	for _, dir := range storeDirs {
+	dirs := []string{s.home}
+	for _, dir := range append(append([]string{}, storeDirs...), lazyStoreDirs...) {
 		dirs = append(dirs, filepath.Join(s.home, dir))
 	}
 	// Per-session evidence directories (see SessionDir) sit one level down.

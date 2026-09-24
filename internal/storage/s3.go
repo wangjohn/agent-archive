@@ -197,6 +197,14 @@ func (s *S3Store) Stat(ctx context.Context, relative string) (ObjectInfo, error)
 	}
 	output, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled})
 	if err != nil {
+		// A HEAD response has no body, so it carries no error code: a 404
+		// for a missing bucket looks exactly like one for a missing object,
+		// and both read as ErrNotFound here (Get, whose body names
+		// NoSuchBucket, can tell them apart). For the collector the cost is
+		// bounded: a metadata refresh over a bucket that is gone is recorded
+		// as impossible (a refresh-skip) and not retried until the session
+		// publishes again or the parser changes, and a missing bucket fails
+		// every other storage call loudly anyway.
 		if isNotFound(err) {
 			return ObjectInfo{}, ErrNotFound
 		}
