@@ -71,10 +71,19 @@ agent-archive backfill undo [ID]  remove the latest import, or import ID
 | `--yes` | Skip the confirmation. Required when stdin is not a terminal. |
 | `--background` | Register the sessions and exit. The scheduled collector uploads them. |
 
-Backfill requires a completed setup. It refuses to run while collection is
-paused or a setup transaction is pending; `--dry-run` works in both cases. It
-exits `0` when the import completes, when there is nothing to import, or when
-the person declines, and `1` on any failure.
+Backfill requires a completed setup with archiving enabled. It refuses to run
+while collection is paused or a setup transaction is pending; `--dry-run` works
+in both cases. It exits `0` when the import completes, when there is nothing to
+import, or when the person declines; `2` on a usage error (an unknown flag or
+app, a bad date, `--json` without `--dry-run`); and `1` on any other failure.
+Ctrl-C during registration exits `1`, because the import is incomplete until a
+rerun; Ctrl-C during upload exits `0`, because the collector finishes it.
+
+The storage check (step 2 of [Registration and
+concurrency](#registration-and-concurrency)) writes, reads, and deletes one
+synthetic test object, as setup's check does. It never touches a session, so
+"nothing is written until the person confirms" holds for everything the import
+itself writes.
 
 ### The default run
 
@@ -149,7 +158,9 @@ registered sessions persist locally, and the next collector pass uploads them.
 and upload state.
 
 `undo [ID] [--project DIR] [--yes]` removes the most recent import, or the one
-with the given ID from `history`. It first shows what it will do. For example:
+with the given ID from `history`. Once the most recent import is undone, a
+plain `undo` says it has nothing left rather than moving on to an older
+import; an older one needs its ID. It first shows what it will do. For example:
 delete 28 sessions and 101 subagents from the bucket, including 2 that were
 resumed since and have newer content; exclude the 5 projects the import
 added; and leave hook-captured sessions and the apps' own files alone. It then
@@ -436,14 +447,28 @@ collector will, so the plan's counts are what gets imported. Transcripts that
 would become permanently blocked registrations are skipped instead: those the
 adapter refuses, those over `archive.MaxRecordBytes`, and those with no
 conversation (no retained user, assistant, message, response, or tool record,
-and no text). Only counts, times, and sizes are kept. Symlinked transcript
-files are skipped. Header reads (a Claude `cwd`, a Codex `session_meta`) are
+and no text). A Claude Code or Codex transcript with no record timestamp is
+`start_unknown`: only Cursor, whose files have no timestamps at all, falls
+back to the file's birth time. Only counts, times, and sizes are kept.
+Symlinked transcript files are skipped. A folder in an app's store that can't
+be listed is skipped and counted on one "Not imported" line
+(`unreadable_folders` in JSON), without printing its path. If an app's whole
+session folder can't be listed (`~/.claude/projects`, `~/.codex/sessions`,
+`~/.codex/archived_sessions`, or `~/.cursor/projects`), the plan names the app
+instead and says none of its sessions are included (`unreadable_stores` in
+JSON); the other apps still import. Header reads (a Claude `cwd`, a Codex `session_meta`) are
 capped at 1 MiB per line. The same session found more than once, for example a
-Claude file under two project folders, is imported once: the file whose
-identity matches best wins, then the larger file, then the lexically first
-path. The rest are `duplicate_session`. Subagent transcripts get the same size
-and adapter checks; those that fail are left out of the subagent count and
-reported on one "Not imported" line.
+Claude file under two project folders, is imported once. The winner is, in
+order: a copy that would import over one that wouldn't, the best identity
+match, a Codex file in `sessions/` over `archived_sessions/`, the larger file,
+then the lexically first path. The rest are `duplicate_session`. Subagent
+transcripts get the size check and the same acceptance checks the collector
+applies when it registers a child (`collector.CheckImportedSubagent`:
+non-empty, complete native timestamps, matching agent and parent IDs, not
+starting before the parent). Those that fail are left out of the subagent
+count and reported on one "Not imported" line. The collector rejects an
+imported subagent whose transcript is empty rather than waiting for it, since a
+historical transcript won't grow; a hook-reported one still waits.
 
 The plan uses `min(8, max(2, runtime.NumCPU()/2))` workers. Filtering is
 CPU-bound and scales almost linearly with workers. On an 18-core Mac, the
@@ -466,7 +491,7 @@ being read at the same time, so a file that doesn't fit waits for room.
 | | Claude Code | Codex | Cursor |
 |---|---|---|---|
 | Files | `~/.claude/projects/*/*.jsonl` | `~/.codex/sessions/**/rollout-*.jsonl` and `~/.codex/archived_sessions/rollout-*.jsonl`; `sessions/` wins if a file is in both | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`, plus the text form |
-| Native ID | File stem. Must be among the records' `sessionId` values; a forked file also carries its parent's ID. | `session_meta.payload.id`. Must equal `session_id` (when present) and the UUID in the file name. | `<id>`, which is what hooks register |
+| Native ID | File stem. Must be among the records' `sessionId` values; a forked file also carries its parent's ID. A conversation with no `sessionId` at all is `identity_mismatch`. | `session_meta.payload.id`. Must equal `session_id` (when present) and the UUID in the file name. | `<id>`, which is what hooks register |
 | Start | Earliest record (`transcript`) | `session_meta` timestamp, else earliest record (`transcript`) | File birth time (`file_created`). Records have no timestamps. |
 | Project | `cwd` | `payload.cwd` | Slug match, below |
 
@@ -484,13 +509,15 @@ being read at the same time, so a file that doesn't fit waits for room.
   registers the child, with two changes: the child copies the parent's
   `AdmittedAt`, `Origin`, and `ImportBatch`, and an imported child gets no
   `subagentstop` lifecycle evidence, because no hook fired.
-- **Cursor slugs.** The folder slug is the path with `/` replaced by `-`,
-  which can't be reversed reliably. Instead, each candidate path is converted
+- **Cursor slugs.** The folder slug is the path with every character other
+  than an ASCII letter or digit replaced by `-` (so `personal_website` becomes
+  `personal-website`), which can't be reversed reliably. Instead, each candidate path is converted
   with Cursor's rule and compared with the slug. Candidates come from
   configured roots, roots resolved from Claude Code and Codex sessions, the
   `folder` in Cursor's `workspaceStorage/*/workspace.json`, and finally a walk
-  of the file system that tries each `-` as `/`. Exactly one match is
-  required; otherwise the session is `project_unknown`.
+  of the file system that tries each `-` as `/`, bounded to 4,096
+  directories. Exactly one match is required; otherwise the session is
+  `project_unknown`.
 - **Cursor database count.** Phase 1 opens `state.vscdb` read-only only to
   count database-only chats: `composerData:*` entries with headers, not
   drafts, and no file on disk. They are reported as `cursor_database_only`.
@@ -512,7 +539,9 @@ several reasons apply, the first in this list wins.
 | `above_home` | — |
 | `temporary_directory` | `--include-temp` |
 | `project_unknown`, `worktree_unresolved`, `identity_mismatch` | — |
-| `empty`, `unsafe_format`, `too_large` (over 64 MiB), `start_in_future` | — |
+| `empty`, `unsafe_format`, `too_large` (over 64 MiB) | — |
+| `start_unknown` (no record timestamp; Claude Code and Codex) | — |
+| `start_in_future` | — |
 | `cursor_database_only` | phase 2 |
 
 ## Evidence imports lack
@@ -542,25 +571,35 @@ waits at most one second for `hooks.lock`, then drops its event
 ([hook.go:119](../internal/cli/hook.go)). So backfill holds `hooks.lock` for
 only a few milliseconds at a time.
 
-1. **Plan.** No locks. Record a fingerprint of `config.json`.
+1. **Plan.** No locks. Record a fingerprint of the configuration: a hash of
+   the parsed configuration without its bucket-privacy evidence, which the
+   collector refreshes in the background, as setup's own check ignores it.
 2. **Check storage.** Run `storage.VerifyAccess`. On failure, stop before the
    prompt and print `credentials.RecoveryAction`. `--dry-run` skips this.
 3. **Confirm.**
 4. **Commit the configuration.** Take `setup.lock` and hold it until exit.
    Reload the configuration. Abort if its fingerprint changed ("run backfill
    again"), if it is paused, or if a setup transaction is pending. Stamp
-   `AdmittedAt` and check the clock. Take `collector.lock` and then
-   `hooks.lock`. Write the new projects, `ImportedHarnesses`, any retention
-   edit, and the batch file. Release both locks.
+   `AdmittedAt` and check the clock: admission must not be earlier than
+   `DestinationSince`, any target project's `ActivatedAt`, or the time the plan
+   was made. `collector.lock` is taken before the
+   reload and held through registration (step 5), so no collector pass runs
+   while candidates are half-written, and `pause`, which also takes it, waits
+   until registration ends. Take `hooks.lock` briefly to write the batch file,
+   then the new projects, `ImportedHarnesses`, and any retention edit.
 5. **Register** in batches of at most 50 sessions or 100 ms:
-   - Take `hooks.lock` and reload the configuration. Stop if paused, and skip
-     anything no longer admitted.
+   - Take `hooks.lock` and reload the configuration. Skip anything no longer
+     admitted. A session whose start is after `AdmittedAt` is skipped as
+     `start_in_future`, a backstop for the clock check in step 4.
    - For each session, re-stat the transcript and skip it if it's gone. Call
      `RegisterNewSession`. If the native index already has the session, a
      hook or another run got there first, so count it `already_archived`.
      Otherwise save a request with reason `backfill`.
    - Release `hooks.lock`.
-   - Subagent candidates follow their parent.
+   - Subagent candidates are written just before their parent is
+     registered. A crash in between leaves a candidate with no parent, which
+     the collector discards, and a rerun writes it again with the same
+     archive ID.
 6. **Upload.** Unless `--background` is set, run `runOnePass` repeatedly,
    exactly as `sync` does, until the batch has no pending work or a pass makes
    no progress. Progress is reported through a new
@@ -667,7 +706,7 @@ implementation.
 | `internal/retention` | `Admitted()`, removal records, and a shared `deleteWholeSession` |
 | `internal/collector` | Origin-aware skill observer and subagent lifecycle, `Progress`, oldest-first ordering |
 | `internal/archive/views.go`, `schemas/` | Metadata fields and the capture gap |
-| `internal/backfill` (new) | Discovery, resolution, plan, commit, batches, and undo. Pure over an injected file system and clock. |
+| `internal/backfill` (new) | Discovery, resolution, plan, commit, batches, and undo. Discovery and resolution run over an injected file system and clock; the adapter pass, registration re-checks, and batch files use the real file system. |
 | `internal/cli` | `backfill.go` (new), plus origin-aware status, verification, list, show, and setup |
 | docs | The eligibility doc gains an "Imported sessions" section and the use-site table. The main spec and install.md point to this command where they say history is not imported. |
 

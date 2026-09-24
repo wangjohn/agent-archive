@@ -62,6 +62,9 @@ type RegistrationResult struct {
 	// NotAdmitted counts sessions the configuration stopped accepting after
 	// the plan, for example because their project was excluded.
 	NotAdmitted int
+	// StartInFuture counts sessions that start after the admission, so no
+	// registration ever starts after it was admitted.
+	StartInFuture int
 	// Invalid counts sessions whose registration would not be valid, and
 	// SubagentsInvalid subagents whose candidate conflicts with an earlier
 	// one or is incomplete. Neither stops the import.
@@ -155,7 +158,7 @@ func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResu
 func (r Registration) step(cfg config.Config, w *parentWork, result *RegistrationResult) (done bool, err error) {
 	c := w.c
 	if w.id == "" {
-		skip, err := r.skip(cfg, c, &result.AlreadyArchived, &result.Gone, &result.NotAdmitted)
+		skip, err := r.skip(cfg, c, result)
 		if err != nil || skip {
 			return true, err
 		}
@@ -178,7 +181,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 	}
 	// The configuration may have changed since the session was checked, in
 	// an earlier hold.
-	skip, err := r.skip(cfg, c, &result.AlreadyArchived, &result.Gone, &result.NotAdmitted)
+	skip, err := r.skip(cfg, c, result)
 	if err != nil || skip {
 		return true, err
 	}
@@ -197,26 +200,38 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 }
 
 // skip reports whether a session is no longer imported, counting why: the
-// configuration no longer accepts it, its transcript is gone, or a hook or
-// another run registered it since the plan was made.
-func (r Registration) skip(cfg config.Config, c Candidate, alreadyArchived, gone, notAdmitted *int) (bool, error) {
+// configuration no longer accepts it, its transcript is gone, a hook or
+// another run registered it since the plan was made, or it starts after the
+// admission. CheckClock already refuses an admission before the plan, so the
+// last is a backstop: no registration ever starts after its admission.
+func (r Registration) skip(cfg config.Config, c Candidate, result *RegistrationResult) (bool, error) {
 	if !cfg.AcceptSession(r.registration(c, "")) {
-		*notAdmitted++
+		result.NotAdmitted++
 		return true, nil
 	}
 	if !regularFile(c.TranscriptPath) {
-		*gone++
+		result.Gone++
 		return true, nil
 	}
 	id, found, err := r.Store.ArchiveSessionID(c.NativeSessionID)
-	if err != nil || !found {
+	if err != nil {
 		return false, err
 	}
-	if _, registered, err := r.Store.LoadRegistration(id); err != nil || !registered {
-		return false, err
+	if found {
+		_, registered, err := r.Store.LoadRegistration(id)
+		if err != nil {
+			return false, err
+		}
+		if registered {
+			result.AlreadyArchived++
+			return true, nil
+		}
 	}
-	*alreadyArchived++
-	return true, nil
+	if c.StartedAt.After(r.AdmittedAt) {
+		result.StartInFuture++
+		return true, nil
+	}
+	return false, nil
 }
 
 // subagent writes one subagent candidate, as a SubagentStop hook does, and
