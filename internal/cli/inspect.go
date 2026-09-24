@@ -25,8 +25,10 @@ import (
 // archive.SourceObjectKey, which both produce "sessions/<harness>/<id>/...".
 const archiveSessionsPrefix = "sessions"
 
-// notSetUpMessage is what every read-only command prints, with exit 0,
-// when setup has never run. It is deliberately the same line `status`
+// notSetUpMessage is what every read-only command prints, to stderr with
+// exit 1 like sync and pause, when setup has never run: its output is often
+// captured (claude "$(agent-archive handoff --latest)"), and must not pass
+// the message off as a result. It is deliberately the same line `status`
 // prints, so a first-time user gets one consistent answer.
 const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
 
@@ -136,8 +138,8 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	if !found {
-		fmt.Fprintln(stdout, notSetUpMessage)
-		return 0
+		fmt.Fprintln(stderr, notSetUpMessage)
+		return 1
 	}
 	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, filter, reader.ListOptions{Cache: listCache(env, *noCache)})
 	if err != nil {
@@ -240,8 +242,8 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	if !found {
-		fmt.Fprintln(stdout, notSetUpMessage)
-		return 0
+		fmt.Fprintln(stderr, notSetUpMessage)
+		return 1
 	}
 	ctx := context.Background()
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)

@@ -278,8 +278,8 @@ bundle written by a pre-release build as a single JSON document
 (`source.<sha256>.json.gz`, schema 1) is not read; `show --normalized` and
 `handoff` report "unsupported source schema version 1" for it. If the same session
 ID was somehow published under more than one harness, pass `--harness` to
-pick one. Both commands print `Not set up.` and exit 0 before setup has run,
-the same as `status`.
+pick one. Before setup has run, both commands print `Not set up.` to stderr and
+exit 1, like `sync`.
 
 ### Continue a session in another agent
 
