@@ -90,6 +90,10 @@ type parentWork struct {
 	next     int
 	children []string
 	links    []archive.SupplementalEvidence
+	// chatChecked and chatGone are the result of checking, before the hold,
+	// whether a chat found only in Cursor's database is still there (see
+	// checkChats).
+	chatChecked, chatGone bool
 }
 
 // Run registers every candidate, in order.
@@ -112,6 +116,7 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		if r.Stop != nil && r.Stop() {
 			return result, ErrStopped
 		}
+		r.checkChats(works[i:])
 		err := r.hold(works, &i, &result)
 		if flushErr := flush(); err == nil {
 			err = flushErr
@@ -124,6 +129,26 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// checkChats checks, before hooks.lock is taken, whether each Cursor
+// database chat the next hold can reach is still in the database. Reading
+// Cursor's database can wait on Cursor's own lock, and a hook waits at most
+// a second for hooks.lock before dropping its event, so the read is kept out
+// of the hold. The answer can be a hold old by the time it is used; it only
+// ever was a check against the plan, and the collector handles a chat
+// deleted later.
+func (r Registration) checkChats(works []*parentWork) {
+	limit := maxHoldSteps
+	if r.MaxHoldSteps > 0 {
+		limit = r.MaxHoldSteps
+	}
+	// A hold finishes at most one session per step.
+	for _, w := range works[:min(limit, len(works))] {
+		if w.c.SourceKind == archive.SourceKindCursorSQLite && !w.chatChecked {
+			w.chatChecked, w.chatGone = true, r.chatGone(w.c)
+		}
+	}
 }
 
 // hold takes hooks.lock, rereads the configuration, and works through the
@@ -167,7 +192,7 @@ func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResu
 func (r Registration) step(cfg config.Config, w *parentWork, result *RegistrationResult) (done bool, err error) {
 	c := w.c
 	if w.id == "" {
-		skip, err := r.skip(cfg, c, result)
+		skip, err := r.skip(cfg, w, result)
 		if err != nil || skip {
 			return true, err
 		}
@@ -190,7 +215,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 	}
 	// The configuration may have changed since the session was checked, in
 	// an earlier hold.
-	skip, err := r.skip(cfg, c, result)
+	skip, err := r.skip(cfg, w, result)
 	if err != nil || skip {
 		return true, err
 	}
@@ -213,13 +238,15 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 // another run registered it since the plan was made, or it starts after the
 // admission. CheckClock already refuses an admission before the plan, so the
 // last is a backstop: no registration ever starts after its admission.
-func (r Registration) skip(cfg config.Config, c Candidate, result *RegistrationResult) (bool, error) {
+func (r Registration) skip(cfg config.Config, w *parentWork, result *RegistrationResult) (bool, error) {
+	c := w.c
 	if !cfg.AcceptSession(r.registration(c, "")) {
 		result.NotAdmitted++
 		return true, nil
 	}
 	if c.SourceKind == archive.SourceKindCursorSQLite {
-		if r.chatGone(c) {
+		// Checked before the hold (checkChats), never under hooks.lock.
+		if w.chatGone {
 			result.Gone++
 			return true, nil
 		}
@@ -312,9 +339,13 @@ func (r Registration) chatGone(c Candidate) bool {
 	if r.CursorDatabase == "" {
 		return false
 	}
-	_, err := cursorstore.ReadSignature(context.Background(), r.CursorDatabase, c.SourceKey)
+	_, err := readChatSignature(context.Background(), r.CursorDatabase, c.SourceKey)
 	return isNotExist(err)
 }
+
+// readChatSignature is cursorstore.ReadSignature, as a variable only so a
+// test can see when registration reads Cursor's database.
+var readChatSignature = cursorstore.ReadSignature
 
 // regularFile reports whether path is still a regular file, without
 // following a symlink.

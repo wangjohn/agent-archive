@@ -1,12 +1,15 @@
 package backfill
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -33,6 +36,21 @@ func TestRegistrationOfCursorDatabaseChats(t *testing.T) {
 		return Candidate{Harness: "cursor", NativeSessionID: id, SourceKind: archive.SourceKindCursorSQLite, SourceKey: id, ProjectRoot: project,
 			StartedAt: admitted.Add(-time.Hour), StartedAtSource: archive.StartedAtSourceCursorComposer}
 	}
+	// Cursor's database is never read while hooks.lock is held: a hook waits
+	// at most a second for it, and a read can wait on Cursor's own lock.
+	reads := 0
+	original := readChatSignature
+	t.Cleanup(func() { readChatSignature = original })
+	readChatSignature = func(ctx context.Context, path, id string) (cursorstore.Signature, error) {
+		reads++
+		release, err := local.NamedLock(home, "hooks.lock")
+		if err != nil {
+			t.Errorf("Cursor's database read while hooks.lock is held (%v)", err)
+		} else {
+			release()
+		}
+		return original(ctx, path, id)
+	}
 	r := Registration{Home: home, Store: store, Batch: "2026-09-23-1", AdmittedAt: admitted, DestinationID: config.DestinationID(bucket), CursorDatabase: db}
 	result, err := r.Run([]Candidate{candidate("here"), candidate("deleted")})
 	if err != nil || len(result.Sessions) != 1 || result.Gone != 1 {
@@ -42,6 +60,9 @@ func TestRegistrationOfCursorDatabaseChats(t *testing.T) {
 	if reg.SourceKind != archive.SourceKindCursorSQLite || reg.SourceKey != "here" || reg.TranscriptPath != "" ||
 		reg.DestinationID != config.DestinationID(bucket) || reg.Origin != archive.SessionOriginImport || reg.StartedAtSource != archive.StartedAtSourceCursorComposer {
 		t.Fatalf("registration %+v", reg)
+	}
+	if reads == 0 {
+		t.Fatal("Cursor's database was never checked")
 	}
 	if _, pending, err := store.LoadPending(reg.ArchiveSessionID); err != nil || pending {
 		t.Fatalf("pending publication %v %v", pending, err)

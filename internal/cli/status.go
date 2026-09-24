@@ -109,12 +109,15 @@ type statusView struct {
 	// still reports everything else.
 	Warnings []string `json:"warnings,omitempty"`
 	Next     string   `json:"next_action"`
+	// configured is whether a configuration exists; the text status shows
+	// only the state and next step without one.
+	configured bool
 }
 
 func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("status")
+	fs := newCommandFlags("status", stderr)
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
-	if !parseCommandFlags(fs, args, stderr) {
+	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
 	view, err := readStatus(env)
@@ -132,15 +135,23 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 0
 	}
 	fmt.Fprintf(stdout, "Agent Archive — %s\n\n", view.State)
+	if !view.configured {
+		// Nothing is installed to report on: no storage, collector, or apps.
+		fmt.Fprintf(stdout, "Next: %s\n", view.Next)
+		return 0
+	}
 	if view.Storage != "" {
 		fmt.Fprintf(stdout, "Storage:       %s\nAccess checked: %s\n", view.Storage, formatTimeOrNever(view.StorageVerifiedAt))
 		printBucketPrivacy(stdout, view.PrivacyEvidence)
 	}
-	authentication := fmt.Sprintf("%s (checked %s", view.Authentication.State, formatTimeOrNever(view.Authentication.CheckedAt))
-	if view.Authentication.Context != "" {
-		authentication += "; " + view.Authentication.Context
+	checked := "not checked yet"
+	if !view.Authentication.CheckedAt.IsZero() {
+		checked = "checked " + formatTimeOrNever(view.Authentication.CheckedAt)
 	}
-	fmt.Fprintf(stdout, "Authentication: %s)\n", authentication)
+	if view.Authentication.Context != "" {
+		checked += "; " + view.Authentication.Context
+	}
+	fmt.Fprintf(stdout, "Authentication: %s (%s)\n", view.Authentication.State, checked)
 	fmt.Fprintf(stdout, "Background:    %s\n", view.Background)
 	if view.Paused {
 		fmt.Fprintln(stdout, "Collection:    paused")
@@ -193,6 +204,12 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	if view.Collector.LastError != "" {
 		fmt.Fprintf(stdout, "Last error:    %s\n", view.Collector.LastError)
+	}
+	if n := len(view.Collector.QuarantinedFiles); n > 0 {
+		fmt.Fprintf(stdout, "Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)
+	}
+	if n := view.Collector.UnrefreshableSummaries; n > 0 {
+		fmt.Fprintf(stdout, "Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
 	}
 	for _, warning := range view.Warnings {
 		fmt.Fprintf(stdout, "Warning:       %s\n", warning)
@@ -260,7 +277,11 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Apps[i].Code = statusCode(view.Apps[i].State)
 		}
 	}()
-	view = statusView{Version: 3, State: "Not set up", Privacy: "not_verified", Background: "unknown", Projects: []string{}, Apps: []appStatus{}, Next: "Run agent-archive setup to get started."}
+	// Before setup there is no collector or storage to ask about: the job is
+	// missing, as launchd reports a job that is not loaded, and storage not
+	// configured; neither is unknown.
+	view = statusView{Version: 3, State: "Not set up", Privacy: "not_verified", Background: "missing", Projects: []string{}, Apps: []appStatus{}, Next: "Run agent-archive setup to get started."}
+	view.Authentication.State = "not_configured"
 	home, err := env.readHome()
 	if err != nil {
 		return view, err
@@ -280,6 +301,8 @@ func readStatus(env Env) (view statusView, err error) {
 	if !found {
 		return view, nil
 	}
+	view.configured = true
+	view.Background = "unknown"
 	view.Storage = fmt.Sprintf("%s / %s / %s", cfg.Storage.Provider, cfg.Storage.Bucket, cfg.Storage.Prefix)
 	view.StorageVerifiedAt = cfg.StorageVerifiedAt
 	view.PrivacyEvidence = currentBucketPrivacy(cfg, env.now())
@@ -624,6 +647,13 @@ func readStatus(env Env) (view statusView, err error) {
 		view.State = "Needs attention"
 		view.Next = "The last scan is over 5 minutes old. Run agent-archive sync to check collection."
 	}
+	// sync cannot help while another process holds the collector lock. The
+	// holder records when it took the lock, so a pass that started a moment
+	// ago is never mistaken for a hung one.
+	if record, ok := readCollectorLockRecord(home); ok && env.now().Sub(record.Since) > collectLockStuckAfter && processAlive(record.PID) && collectorLockHeld(home) {
+		view.State = "Needs attention"
+		view.Next = fmt.Sprintf("Collection is stuck: %s (process %d) has held the collector lock since %s, %s, well past a pass's time limit. If that command is no longer doing anything, quit process %d (in Activity Monitor or with kill %d); the next pass then resumes.", record.Holder, record.PID, record.Since.UTC().Format("2006-01-02 15:04 UTC"), durationAgo(env.now().Sub(record.Since)), record.PID, record.PID)
+	}
 	if view.Collector.LastError != "" {
 		view.State = "Needs attention"
 		view.Next = "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
@@ -657,6 +687,19 @@ func readStatus(env Env) (view statusView, err error) {
 		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}
 	return view, nil
+}
+
+// collectorLockHeld reports whether another process holds collector.lock
+// right now. flock has no query, so it tries the lock and releases it at
+// once; a collector starting in that instant skips one pass, as it would
+// for any other holder.
+func collectorLockHeld(home string) bool {
+	unlock, err := local.Lock(home)
+	if err != nil {
+		return errors.Is(err, local.ErrBusy)
+	}
+	unlock()
+	return false
 }
 
 // importedSessionCounts counts the sessions backfill imported, leaving out

@@ -282,7 +282,7 @@ func TestStatusOmitsEmptyAuthenticationContext(t *testing.T) {
 	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 {
 		t.Fatalf("exit=%d output=%s", code, out.String())
 	}
-	if !strings.Contains(out.String(), "Authentication: unknown (checked never)\n") || strings.Contains(out.String(), "; )") {
+	if !strings.Contains(out.String(), "Authentication: unknown (not checked yet)\n") || strings.Contains(out.String(), "; )") {
 		t.Fatalf("output=%s", out.String())
 	}
 }

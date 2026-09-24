@@ -3,9 +3,9 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -18,7 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-// runBackfillUndo implements `agent-archive backfill undo [ID] [--project
+// runBackfillUndo implements `agent-archive backfill undo [IMPORT_ID] [--project
 // DIR] [--yes]`: it removes the sessions an import registered from the
 // bucket and from this Mac, and excludes the projects the import added.
 //
@@ -32,26 +32,12 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		fmt.Fprintf(stderr, "agent-archive: backfill undo: "+format+"\n", args...)
 		return 1
 	}
-	fs := flag.NewFlagSet("backfill undo", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("backfill undo", stderr)
 	project := fs.String("project", "", "only undo this project's sessions")
 	yes := fs.Bool("yes", false, "skip the confirmation")
 	// The ID may come before or after the flags.
-	id := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		id, args = args[0], args[1:]
-	}
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() > 0 && id == "" {
-		id = fs.Arg(0)
-		if err := fs.Parse(fs.Args()[1:]); err != nil {
-			return 2
-		}
-	}
-	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "agent-archive: backfill undo: unexpected argument %q\n", fs.Arg(0))
+	id, ok := fs.parseWithArgument(args)
+	if !ok {
 		return 2
 	}
 
@@ -79,7 +65,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	defer releaseSetup()
 
-	batch, err := selectUndoBatch(home, id)
+	batches, batch, err := selectUndoBatch(home, id)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -88,7 +74,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return 0
 	}
 	bfEnv := env.backfillEnvironment(userHome)
-	plan, err := backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, *batch, *project)
+	plan, err := backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -137,7 +123,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 	}
 
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill undo", env.now(), backfillCollectorWait)
 	if err != nil {
 		return fail("a collector pass is still running; run undo again. Nothing was changed.")
 	}
@@ -158,7 +144,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return fail("the configuration changed while this was open; run undo again. Nothing was changed.")
 	}
 	confirmed := plan
-	if plan, err = backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, *batch, *project); err != nil {
+	if plan, err = backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project); err != nil {
 		return fail("%v", err)
 	}
 	if plan.Grew(confirmed) {
@@ -208,26 +194,27 @@ func undoRefusal(home string, cfg config.Config) string {
 	return ""
 }
 
-// selectUndoBatch returns the import named id, or the latest when id is
-// empty, or nil when there are no imports. Every batch file must be
-// readable: the latest cannot be chosen past one that is not.
-func selectUndoBatch(home, id string) (*backfill.Batch, error) {
+// selectUndoBatch returns every import and the one named id, or the latest
+// when id is empty, or nil when there are no imports. Every batch file must
+// be readable: the latest cannot be chosen past one that is not, and which
+// projects an undo excludes depends on the others (see backfill.PlanUndo).
+func selectUndoBatch(home, id string) ([]backfill.Batch, *backfill.Batch, error) {
 	batches, err := backfill.LoadBatches(home)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("%w. Nothing was changed. Repair the file to undo any import", err)
 	}
 	if id == "" {
 		if len(batches) == 0 {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return &batches[len(batches)-1], nil
+		return batches, &batches[len(batches)-1], nil
 	}
 	for i := range batches {
 		if batches[i].ID == id {
-			return &batches[i], nil
+			return batches, &batches[i], nil
 		}
 	}
-	return nil, fmt.Errorf("there is no import %q. Run agent-archive backfill history to see import IDs", id)
+	return nil, nil, fmt.Errorf("there is no import %q. Run agent-archive backfill history to see import IDs", id)
 }
 
 // commitUndo marks the batch undone and then writes the configuration
@@ -237,6 +224,11 @@ func selectUndoBatch(home, id string) (*backfill.Batch, error) {
 func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fingerprint string, now time.Time) ([]string, error) {
 	markUndone := func() error {
 		batch.UndoneAt = &now
+		for _, id := range plan.KeptProjectIDs() {
+			if !slices.Contains(batch.ProjectsKept, id) {
+				batch.ProjectsKept = append(batch.ProjectsKept, id)
+			}
+		}
 		if err := backfill.SaveBatch(home, *batch); err != nil {
 			return fmt.Errorf("%w. Nothing was changed", err)
 		}
@@ -290,10 +282,10 @@ func reportUndo(stdout, stderr io.Writer, batch backfill.Batch, plan backfill.Un
 	}
 	var parts []string
 	if s, a := split(result.Deleted); s+a > 0 {
-		parts = append(parts, "deleted "+sessionsAndSubagents(s, a)+" from the archive")
+		parts = append(parts, "deleted "+backfill.SessionsAndSubagents(s, a)+" from the archive")
 	}
 	if s, a := split(result.Forgotten); s+a > 0 {
-		parts = append(parts, "forgot "+sessionsAndSubagents(s, a)+" from a previous storage destination")
+		parts = append(parts, "forgot "+backfill.SessionsAndSubagents(s, a)+" from a previous storage destination")
 	}
 	if len(excluded) > 0 {
 		parts = append(parts, "excluded "+countNoun(len(excluded), "project"))
@@ -316,21 +308,4 @@ func reportUndo(stdout, stderr io.Writer, batch backfill.Batch, plan backfill.Un
 	fmt.Fprintf(stderr, "agent-archive: backfill undo: %s could not be removed and %s still registered; run agent-archive backfill undo %s again to finish.\n",
 		countNoun(len(ids), "session"), isAre(len(ids)), batch.ID)
 	return 1
-}
-
-func sessionsAndSubagents(sessions, subagents int) string {
-	switch {
-	case subagents == 0:
-		return countNoun(sessions, "session")
-	case sessions == 0:
-		return countNoun(subagents, "subagent transcript")
-	}
-	return countNoun(sessions, "session") + " and " + countNoun(subagents, "subagent transcript")
-}
-
-func isAre(n int) string {
-	if n == 1 {
-		return "is"
-	}
-	return "are"
 }

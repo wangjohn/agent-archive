@@ -63,7 +63,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	defer releaseSetup()
 
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
 	if err != nil {
 		return fail("a collector pass is still running; run backfill again. Nothing was changed.")
 	}
@@ -164,7 +164,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	}
 	defer release()
 	// No collector pass or retention may remove what is being listed.
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
 	if err != nil {
 		return errors.New("a collector pass is still running; run backfill again")
 	}
@@ -274,9 +274,12 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err := backfill.CheckClock(cfg, plan, admittedAt); err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
-	batch, err = backfill.OpenBatch(home, plan.BatchFilters(), cfg.DestinationID(), now)
+	batch, err = backfill.OpenBatch(home, state.OpenReadOnly(home), plan.BatchFilters(), cfg.DestinationID(), now)
+	if errors.Is(err, backfill.ErrUnreadableImport) {
+		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed. Repair the unreadable file in %s, then run backfill again. Moving it out of the folder also lets backfill run, but its sessions stay archived and backfill undo can no longer remove them", err, filepath.Join(home, "imports"))
+	}
 	if err != nil {
-		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed. Repair or move the unreadable file out of %s, then run backfill again", err, filepath.Join(home, "imports"))
+		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
 	projects, apps := backfill.ApplyToConfig(&cfg, plan, admittedAt)
 	if plan.RetentionDays > 0 {
@@ -521,8 +524,7 @@ func (u *upload) draw(newline bool) {
 // import with its ID, start, sessions, projects added, and upload state. It
 // reads local state only.
 func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
-	if len(args) != 0 {
-		fmt.Fprintf(stderr, "agent-archive: backfill history: unexpected argument %q\n", args[0])
+	if !newCommandFlags("backfill history", stderr).parseFlagsOnly(args) {
 		return 2
 	}
 	home, err := env.readHome()
@@ -602,7 +604,8 @@ func batchUploadState(store *state.Store, cfg config.Config, regs []archive.Sess
 	if b.UndoneAt != nil {
 		projects := 0
 		for _, p := range cfg.Archive.Projects {
-			if p.Included && slices.Contains(b.ProjectsAdded, p.ProjectID) && !slices.Contains(b.ProjectsExcluded, p.ProjectID) {
+			// A project undo kept for another import is that import's now.
+			if p.Included && slices.Contains(b.ProjectsAdded, p.ProjectID) && !slices.Contains(b.ProjectsExcluded, p.ProjectID) && !slices.Contains(b.ProjectsKept, p.ProjectID) {
 				projects++
 			}
 		}

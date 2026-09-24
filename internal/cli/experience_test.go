@@ -20,7 +20,13 @@ import (
 func TestEveryPublicHelpIsReadOnly(t *testing.T) {
 	env := Env{Home: func() (string, error) { t.Fatal("help accessed runtime"); return "", nil }}
 	for cmd := range commandHelp {
-		for _, args := range [][]string{{cmd, "--help"}, {"help", cmd}, {cmd, "-h"}} {
+		name := strings.Fields(cmd)
+		with := func(before, after string) []string {
+			args := append([]string{}, before)
+			args = append(args, name...)
+			return append(args, after)
+		}
+		for _, args := range [][]string{with("", "--help")[1:], with("help", "")[:len(name)+1], with("", "-h")[1:], with("", "-help")[1:]} {
 			var out, errOut bytes.Buffer
 			if code := Run(args, nil, &out, &errOut, env); code != 0 || !strings.Contains(out.String(), "Usage:") {
 				t.Fatalf("%v: %d %s %s", args, code, &out, &errOut)

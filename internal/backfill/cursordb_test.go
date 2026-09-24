@@ -255,7 +255,9 @@ func TestCursorDatabaseReader(t *testing.T) {
 			if res.ReadChat == nil || res.Close == nil {
 				t.Fatal("a checked result can't read its chats")
 			}
-			res.Close()
+			if err := res.Close(); err != nil {
+				t.Fatal(err)
+			}
 			assertUnchanged(t, dir, before)
 		})
 	}
@@ -495,7 +497,9 @@ func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 			if err := os.WriteFile(path, data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			os.Chtimes(path, info.ModTime(), info.ModTime())
+			if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+				t.Fatal(err)
+			}
 		},
 		// Same size, time, and inode; only SQLite's change counter moved.
 		"header": func(t *testing.T, path string) {
@@ -568,7 +572,7 @@ func startCursorWriter(t *testing.T, path string, wal bool) *cursorWriter {
 	w := &cursorWriter{t: t, cmd: cmd, stdin: stdin, replies: bufio.NewScanner(stdout)}
 	t.Cleanup(func() {
 		stdin.Close()
-		cmd.Wait()
+		_ = cmd.Wait() // the writer exits once stdin closes; its status is not under test
 	})
 	return w
 }
@@ -590,7 +594,7 @@ func (w *cursorWriter) kill() {
 	if err := w.cmd.Process.Kill(); err != nil {
 		w.t.Fatal(err)
 	}
-	w.cmd.Wait()
+	_ = w.cmd.Wait() // killed, so it reports the kill
 }
 
 // TestCursorWriterProcess is the writer process of cursorWriter: it never
@@ -869,8 +873,9 @@ func TestCursorDatabaseSkippedWhenTranscriptsUnreadable(t *testing.T) {
 // the plan is made, and nothing next to the database changes.
 func TestCursorDatabasePlanLive(t *testing.T) {
 	temp := t.TempDir()
+	previous := cursorstore.SnapshotTempDirForTesting
 	cursorstore.SnapshotTempDirForTesting = temp
-	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = "" })
+	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = previous })
 	tr := newTree(t)
 	path := CursorStateDatabase(tr.home)
 	w := startCursorWriter(t, path, true)

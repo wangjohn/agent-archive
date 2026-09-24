@@ -357,14 +357,14 @@ func TestStrayEmptyWAL(t *testing.T) {
 
 	// Cursor starts during the read: the -wal grows or a -shm appears.
 	for name, change := range map[string]func(string){
-		"wal grew":    func(p string) { os.WriteFile(p+"-wal", []byte("frames"), 0o644) },
-		"shm appears": func(p string) { os.WriteFile(p+"-shm", nil, 0o644) },
+		"wal grew":    func(p string) { mustWrite(t, p+"-wal", []byte("frames")) },
+		"shm appears": func(p string) { mustWrite(t, p+"-shm", nil) },
 	} {
 		err := Read(context.Background(), path, Options{AfterImmutableRead: change}, func(context.Context, *sql.DB) error { return nil })
 		if ReasonOf(err) != ChangedDuringRead {
 			t.Fatalf("%s: err %v", name, err)
 		}
-		os.WriteFile(path+"-wal", nil, 0o644)
+		mustWrite(t, path+"-wal", nil)
 		os.Remove(path + "-shm")
 	}
 
@@ -435,7 +435,9 @@ func TestReadComposerErrors(t *testing.T) {
 		// ReadComposer with Cursor closed is Read's checked immutable read.
 		err := Read(context.Background(), path, Options{AfterImmutableRead: func(p string) {
 			later := time.Now().Add(time.Minute)
-			os.Chtimes(p, later, later)
+			if err := os.Chtimes(p, later, later); err != nil {
+				t.Error(err)
+			}
 		}}, func(ctx context.Context, db *sql.DB) error {
 			_, _, err := queryComposer(ctx, db, "c")
 			return err
@@ -483,7 +485,7 @@ func TestReadComposerErrors(t *testing.T) {
 								t.Error("no panic")
 							}
 						}()
-						ReadComposer(context.Background(), path, tc.id)
+						_, _, _ = ReadComposer(context.Background(), path, tc.id) // expected to panic
 					}()
 					afterSnapshot = nil
 				} else {

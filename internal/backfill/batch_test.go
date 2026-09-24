@@ -18,25 +18,26 @@ import (
 // a run with the same filters and destination, and by no other.
 func TestOpenBatch(t *testing.T) {
 	home := t.TempDir()
+	store := state.OpenReadOnly(home)
 	filters := Plan{Filters: Filters{Harnesses: []string{"claude-code"}, IncludeTemp: true}, projectFilter: []string{"/work/repo"}}.BatchFilters()
 	if filters.Harnesses[0] != "claude" || filters.ProjectIDs[0] != archive.ProjectID("/work/repo") {
 		t.Fatalf("filters %+v", filters)
 	}
-	b, err := OpenBatch(home, filters, "dest", fixedNow)
+	b, err := OpenBatch(home, store, filters, "dest", fixedNow)
 	if err != nil || b.ID != "2026-09-23-1" {
 		t.Fatalf("%+v, %v", b, err)
 	}
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
-	if again, _ := OpenBatch(home, filters, "dest", fixedNow.Add(time.Minute)); again.ID != b.ID {
+	if again, _ := OpenBatch(home, store, filters, "dest", fixedNow.Add(time.Minute)); again.ID != b.ID {
 		t.Fatalf("interrupted batch not continued: %s", again.ID)
 	}
 	for _, other := range []struct {
 		filters BatchFilters
 		dest    string
 	}{{Plan{}.BatchFilters(), "dest"}, {filters, "elsewhere"}} {
-		if next, _ := OpenBatch(home, other.filters, other.dest, fixedNow); next.ID != "2026-09-23-2" {
+		if next, _ := OpenBatch(home, store, other.filters, other.dest, fixedNow); next.ID != "2026-09-23-2" {
 			t.Fatalf("different run continued the batch: %s", next.ID)
 		}
 	}
@@ -45,10 +46,10 @@ func TestOpenBatch(t *testing.T) {
 	if err := SaveBatch(home, b); err != nil {
 		t.Fatal(err)
 	}
-	if next, _ := OpenBatch(home, filters, "dest", fixedNow); next.ID != "2026-09-23-2" {
+	if next, _ := OpenBatch(home, store, filters, "dest", fixedNow); next.ID != "2026-09-23-2" {
 		t.Fatalf("completed batch continued: %s", next.ID)
 	}
-	if tomorrow, _ := OpenBatch(home, filters, "dest", fixedNow.Add(24*time.Hour)); tomorrow.ID != "2026-09-24-1" {
+	if tomorrow, _ := OpenBatch(home, store, filters, "dest", fixedNow.Add(24*time.Hour)); tomorrow.ID != "2026-09-24-1" {
 		t.Fatalf("next day: %s", tomorrow.ID)
 	}
 	batches, err := LoadBatches(home)

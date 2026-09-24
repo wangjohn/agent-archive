@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -26,6 +26,19 @@ func (l *stringList) Set(value string) error {
 	return nil
 }
 
+// backfillDay is the local day (YYYY-MM-DD) a --since or --until value
+// names, in the forms parseTimeArg reads, or "" for "".
+func backfillDay(value string, now time.Time) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	t, err := parseTimeArg(value, now, now.Location())
+	if err != nil {
+		return "", err
+	}
+	return t.In(now.Location()).Format("2006-01-02"), nil
+}
+
 // runBackfillCommand implements `agent-archive backfill`: it finds the
 // sessions already on this Mac, shows the plan, and after confirmation
 // imports them (see docs/agent-archive-backfill-spec.md). `--dry-run
@@ -37,8 +50,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if len(args) > 0 && args[0] == "undo" {
 		return runBackfillUndo(args[1:], stdin, stdout, stderr, env)
 	}
-	fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("backfill", stderr)
 	var harnesses, projects stringList
 	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor); repeatable")
 	fs.Var(&projects, "project", "only sessions in this project directory; repeatable")
@@ -51,18 +63,22 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	jsonOut := fs.Bool("json", false, "with --dry-run, print the plan as JSON")
 	yes := fs.Bool("yes", false, "skip the confirmation")
 	background := fs.Bool("background", false, "register the sessions and let the collector upload them")
-	if err := fs.Parse(args); err != nil {
+	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	usageError := func(message string) int {
-		fmt.Fprintf(stderr, "agent-archive: backfill: %s\n", message)
-		return 2
+	usageError := func(message string) int { return fs.usageError("%s", message) }
+	// Backfill selects whole local days, so --since and --until accept the
+	// same forms as list's --since and name the local day they fall on.
+	sinceDay, err := backfillDay(*since, env.now())
+	if err != nil {
+		return usageError("--since: " + err.Error())
 	}
-	if fs.NArg() != 0 {
-		return usageError(fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	untilDay, err := backfillDay(*until, env.now())
+	if err != nil {
+		return usageError("--until: " + err.Error())
 	}
 	filters := backfill.Filters{
-		Harnesses: harnesses, Projects: projects, Since: *since, Until: *until,
+		Harnesses: harnesses, Projects: projects, Since: sinceDay, Until: untilDay,
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
 	}
 	if err := filters.Validate(); err != nil {
@@ -110,10 +126,20 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if !*jsonOut {
 		fmt.Fprint(stdout, backfill.SearchLine(filters)+" ")
 	}
-	plan, err := backfill.BuildPlan(context.Background(), env.backfillEnvironment(userHome), newArchiveState(home, cfg), cfg, filters)
+	// Ctrl-C during planning cancels it, so the plan's copy of Cursor's
+	// database is removed on the way out instead of left in the temporary
+	// folder. A second Ctrl-C quits at once.
+	planCtx, stopPlanning := interruptibleContext(env)
+	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome), newArchiveState(home, cfg), cfg, filters)
+	interrupted := planCtx.Err() != nil
+	stopPlanning()
 	if err != nil {
 		if !*jsonOut {
 			fmt.Fprintln(stdout)
+		}
+		if interrupted {
+			fmt.Fprintln(stderr, "agent-archive: backfill: stopped. Nothing was changed.")
+			return 1
 		}
 		fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
 		return 1
@@ -176,6 +202,38 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	return importPlan(env, stdout, stderr, home, plan, configFingerprint(cfg), *background)
 }
 
+// interruptibleContext returns a context that the first Ctrl-C cancels. The
+// watch stops at that first one, so a second ends the process as usual. stop
+// ends the watch and waits for it; it is called once.
+func interruptibleContext(env Env) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	signals, stopSignals := env.interrupts()
+	stopSignals = releaseOnce(stopSignals)
+	// A Ctrl-C already waiting cancels before planning starts.
+	select {
+	case <-signals:
+		stopSignals()
+		cancel()
+	default:
+	}
+	done, exited := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(exited)
+		select {
+		case <-signals:
+			stopSignals()
+			cancel()
+		case <-done:
+		}
+	}()
+	return ctx, func() {
+		close(done)
+		<-exited
+		stopSignals()
+		cancel()
+	}
+}
+
 // importRefusal says why an import cannot start now, or "".
 func importRefusal(home string, cfg config.Config) string {
 	switch {
@@ -230,12 +288,12 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan) (bool, error
 	}
 }
 
-func countNoun(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", n, noun)
-}
+// countNoun and isAre are backfill's, so the CLI and the plans it prints
+// count alike.
+var (
+	countNoun = backfill.CountNoun
+	isAre     = backfill.IsAre
+)
 
 // configFingerprint identifies the configuration a plan was made from. The
 // collector refreshes bucket privacy evidence in place, which is evidence

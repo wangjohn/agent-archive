@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -62,8 +61,7 @@ var currentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
 func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := flag.NewFlagSet("handoff", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("handoff", stderr)
 	latest := fs.Bool("latest", false, "the most recent session for the project")
 	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
 	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")
@@ -74,25 +72,11 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	output := fs.String("output", "", "write to this file (mode 0600) instead of stdout")
 	force := fs.Bool("force", false, "with --output, replace an existing file")
 	noPreamble := fs.Bool("no-preamble", false, "omit the note addressed to the receiving agent")
-	if err := fs.Parse(args); err != nil {
+	sessionID, ok := fs.parseWithArgument(args)
+	if !ok {
 		return 2
 	}
-	sessionID := ""
-	if fs.NArg() > 0 {
-		sessionID = fs.Arg(0)
-		// Accept flags after the positional ID too, as `show` does.
-		if err := fs.Parse(fs.Args()[1:]); err != nil {
-			return 2
-		}
-		if fs.NArg() != 0 {
-			fmt.Fprintf(stderr, "agent-archive: handoff: unexpected argument %q\n", fs.Arg(0))
-			return 2
-		}
-	}
-	usageError := func(message string) int {
-		fmt.Fprintf(stderr, "agent-archive: handoff: %s\n", message)
-		return 2
-	}
+	usageError := func(message string) int { return fs.usageError("%s", message) }
 	selectors := 0
 	for _, set := range []bool{sessionID != "", *latest, *file != ""} {
 		if set {
@@ -158,7 +142,7 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			fmt.Fprintln(stderr, notSetUpMessage)
 			return 1
 		}
-		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source, skip: currentSessions(env)}
+		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source, skip: currentSessions(env), stderr: stderr}
 		if *latest {
 			dir := *project
 			if dir == "" {
@@ -331,6 +315,8 @@ type handoffResolver struct {
 	// skip holds native session IDs `--latest` must pass over: the agent
 	// session running the command.
 	skip map[string]bool
+	// stderr receives warnings, such as a skipped metadata sidecar.
+	stderr io.Writer
 }
 
 // byID resolves an explicit archive session ID: the local registration first
@@ -450,7 +436,7 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	if err != nil {
 		return handoffTarget{}, fmt.Errorf("no local session for %s, and the archive could not be opened: %w", dir, err)
 	}
-	sessions, err := reader.ListMetadataWithOptions(r.ctx, store, archiveSessionsPrefix, reader.Filter{Harness: r.harness}, reader.ListOptions{Cache: listCache(r.env, false)})
+	sessions, err := reader.ListMetadataWithOptions(r.ctx, store, archiveSessionsPrefix, reader.Filter{Harness: r.harness}, reader.ListOptions{Cache: listCache(r.env, false), Skipped: warnSkippedSidecar(r.stderr, "handoff")})
 	if err != nil {
 		return handoffTarget{}, err
 	}
