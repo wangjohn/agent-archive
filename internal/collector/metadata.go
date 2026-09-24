@@ -77,28 +77,35 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	// The metadata must describe the source actually uploaded last, as
 	// recorded at upload. (For state older than that record, lastPublishedSource
 	// reads it from the cached metadata itself, so this holds trivially.)
-	if uploaded, known, err := store.loadLastPublishedSource(reg.ArchiveSessionID); err != nil {
+	uploaded, known, err := store.LoadLastPublishedSource(reg.ArchiveSessionID)
+	if err != nil {
 		return outcomeSkipped, false, err
-	} else if known && prior.SourceBundle != uploaded {
+	}
+	if known && prior.SourceBundle != uploaded {
 		return outcomeSkipped, false, nil
 	}
-	// A metadata-only publication re-verifies its source in storage, and
-	// re-uploads it if it is missing, so it needs the source's exact bytes.
-	// They exist only if this build reproduces them from the retained bundle:
-	// it cannot after a source schema bump, and may not after a compressor
-	// change. Then the summary waits for the session's next content change,
-	// which publishes a new source with current metadata; it is never a
-	// failure of the session.
-	compressed, err := archive.BuildCompressedSource(bundle)
-	if err != nil {
-		return outcomeSkipped, false, nil
+	// A metadata-only publication points at the source already uploaded.
+	// When this build reproduces that source's exact bytes from the retained
+	// bundle, it carries them, so the source is re-uploaded if it has gone
+	// missing. After a source schema bump it cannot reproduce them, and after
+	// a compressor change it may not; then it carries only the recorded
+	// reference, and the source is checked in storage against it instead.
+	var source struct {
+		key, sha string
+		bytes    []byte
 	}
-	sourceKey, err := archive.SourceObjectKey(bundle, compressed.SHA256)
-	if err != nil {
-		return outcomeSkipped, false, nil
+	if compressed, err := archive.BuildCompressedSource(bundle); err == nil {
+		if key, err := archive.SourceObjectKey(bundle, compressed.SHA256); err == nil && prior.SourceBundle == (archive.SourceReference{Key: key, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}) {
+			source.key, source.sha, source.bytes = key, compressed.SHA256, compressed.Bytes
+		}
 	}
-	if prior.SourceBundle.Key != sourceKey || prior.SourceBundle.SHA256 != compressed.SHA256 || prior.SourceBundle.CompressedBytes != len(compressed.Bytes) {
-		return outcomeSkipped, false, nil
+	if source.bytes == nil {
+		if !known {
+			// Neither the bytes nor a recorded reference: nothing to publish
+			// against. The next content change publishes current metadata.
+			return outcomeSkipped, false, nil
+		}
+		source.key, source.sha = uploaded.Key, uploaded.SHA256
 	}
 	// Cache before any early return below, so a legacy publication is
 	// migrated exactly once rather than re-read on every scan.
@@ -119,7 +126,11 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	next, buildErr := archive.BuildMetadata(bundle, opts.MachineID, reg.SessionStartedAt, now, prior.SourceBundle, archive.ParserInfo{Version: opts.parserVersion()})
 	next.ApplyRegistrationProvenance(reg)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
-		return outcomeSkipped, false, buildErr
+		// This build cannot derive metadata from the retained bundle at all
+		// (one cached under an older source schema, say). Like every other
+		// reason regeneration cannot proceed, that is a skip, not a failure
+		// of the session on every pass.
+		return outcomeSkipped, false, nil
 	}
 	comparison := next
 	comparison.MetadataDerivedAt = prior.MetadataDerivedAt
@@ -138,7 +149,7 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	if err != nil {
 		return outcomeSkipped, false, err
 	}
-	pending := PendingPublication{MetadataOnly: true, Bundle: bundle, SourceKey: sourceKey, MetadataKey: key, SourceSHA256: compressed.SHA256, SourceBytes: compressed.Bytes, MetadataBytes: metadataBytes, ReadyAt: now}
+	pending := PendingPublication{MetadataOnly: true, Bundle: bundle, SourceKey: source.key, MetadataKey: key, SourceSHA256: source.sha, SourceBytes: source.bytes, SourceSize: prior.SourceBundle.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: now}
 	if err := store.SavePending(reg.ArchiveSessionID, pending); err != nil {
 		return outcomeSkipped, false, err
 	}

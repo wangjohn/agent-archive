@@ -20,21 +20,37 @@ import (
 // someone to inspect; Status.QuarantinedFiles lists it until then.
 var ErrQuarantined = errors.New("unreadable local state file was moved aside")
 
-// quarantineSuffix is appended to a quarantined file's name. Listings only
-// read *.json, so a quarantined file is never read again.
+// quarantineSuffix ends a quarantined file's name, after the time it was
+// moved aside (see quarantinePath). Listings only read *.json, so a
+// quarantined file is never read again.
 const quarantineSuffix = ".corrupt"
 
 // quarantineDirs are the directories whose files the collector lists on
 // every pass and so may quarantine.
 var quarantineDirs = []string{"registrations", "requests", "subagent-candidates"}
 
-// isCorruptJSON reports whether err means the file's bytes are not the JSON
-// document expected (truncated, garbled, or of the wrong shape), as opposed
-// to a read that failed and may succeed next time.
+// quarantinePath names the file path is moved aside to. The time in the name
+// keeps a second quarantine of the same file (a hook rewrote it, and it was
+// corrupted again) from replacing the first.
+func quarantinePath(path string) string {
+	return path + "." + time.Now().UTC().Format("20060102T150405.000000000Z") + quarantineSuffix
+}
+
+// isCorruptJSON reports whether err means the file's bytes are not JSON at
+// all: truncated, empty, or garbled, which no version of this program could
+// read either. A well-formed document of an unexpected shape
+// (json.UnmarshalTypeError) is not corruption: it is likely a file a newer
+// version wrote before a downgrade, and it is reported, never moved aside.
 func isCorruptJSON(err error) bool {
 	var syntaxErr *json.SyntaxError
+	return errors.As(err, &syntaxErr)
+}
+
+// isUndecodable reports whether err is any JSON decoding failure, corrupt or
+// of an unexpected shape.
+func isUndecodable(err error) bool {
 	var typeErr *json.UnmarshalTypeError
-	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
+	return isCorruptJSON(err) || errors.As(err, &typeErr)
 }
 
 // readOrQuarantine reads the JSON file at path. found is false when it does
@@ -61,10 +77,11 @@ func readOrQuarantine[T any](s *LocalStore, path, lockName string) (value T, fou
 	if relErr != nil {
 		rel = path
 	}
-	if renameErr := os.Rename(path, path+quarantineSuffix); renameErr != nil {
+	aside := quarantinePath(path)
+	if renameErr := os.Rename(path, aside); renameErr != nil {
 		return value, false, fmt.Errorf("%w (and it could not be moved aside: %v)", err, renameErr)
 	}
-	return value, false, fmt.Errorf("%w: %s did not decode (%v) and is now %s", ErrQuarantined, rel, err, rel+quarantineSuffix)
+	return value, false, fmt.Errorf("%w: %s did not decode (%v) and is now %s", ErrQuarantined, rel, err, filepath.Join(filepath.Dir(rel), filepath.Base(aside)))
 }
 
 func readJSON[T any](path string) (T, bool, error) {

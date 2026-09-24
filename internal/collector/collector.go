@@ -180,7 +180,9 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		}
 	}()
 
-	pending := 0
+	// A session whose registration could not be read is left for the next
+	// pass like any other outstanding work.
+	pending := len(registrationIssues)
 	for i, reg := range registrations {
 		// A pass past its deadline ends like a stopped one: nothing more can
 		// reach storage, so the rest keep their work rather than each
@@ -266,6 +268,14 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 			pending++
 		}
 		outcome, err := processSession(ctx, local, store, reg, req, now, opts)
+		if err != nil && ctx.Err() != nil {
+			// The pass ran out of time (or was cancelled) with this session
+			// in flight. That is not the session failing: its pending
+			// publication is intact and the next pass carries on with it.
+			pending++
+			opts.progress(reg.ArchiveSessionID, false)
+			continue
+		}
 		if err != nil {
 			fail(err)
 			continue
@@ -305,7 +315,7 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 	// A status file that no longer decodes is replaced below; it only ever
 	// carries the previous pass's summary.
 	previousStatus, err := local.LoadStatus()
-	if err != nil && !isCorruptJSON(err) {
+	if err != nil && !isUndecodable(err) {
 		return result, err
 	}
 	status := Status{LastScanAt: now.UTC(), PendingCount: pending, LastPublishedAt: previousStatus.LastPublishedAt, QuarantinedFiles: local.quarantinedFiles()}
@@ -847,14 +857,28 @@ func blockSession(local *LocalStore, id string, req Request, reason BlockedReaso
 }
 
 func publishPending(ctx context.Context, local *LocalStore, store storage.ObjectStore, id string, pending PendingPublication, now time.Time, opts Options) (sessionOutcome, error) {
-	if !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
+	if !pending.carriesNoSource() && !storage.VerifySHA256(pending.SourceBytes, pending.SourceSHA256) {
 		return outcomeSkipped, errors.New("pending source checksum does not match its persisted bytes")
 	}
 	pending.Attempted = true
 	if err := local.SavePending(id, pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("mark pending publication attempted: %w", err)
 	}
-	if err := storage.PutSourceThenMetadata(ctx, store, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, opts.Retry); err != nil {
+	if pending.carriesNoSource() {
+		err := storage.PutMetadataForSource(ctx, store, pending.SourceKey, pending.SourceSHA256, pending.MetadataKey, pending.MetadataBytes, opts.Retry)
+		if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch) {
+			// The recorded source is not in storage as recorded, and without
+			// its bytes this publication can never succeed. Dropping it
+			// keeps it from holding back normal capture; the metadata still
+			// points at whatever it pointed at before.
+			if removeErr := local.RemovePending(id); removeErr != nil {
+				err = errors.Join(err, removeErr)
+			}
+		}
+		if err != nil {
+			return outcomeSkipped, fmt.Errorf("publish metadata: %w", err)
+		}
+	} else if err := storage.PutSourceThenMetadata(ctx, store, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, opts.Retry); err != nil {
 		return outcomeSkipped, fmt.Errorf("publish: %w", err)
 	}
 	// The object this publication replaced is the one recorded when it was
@@ -862,7 +886,7 @@ func publishPending(ctx context.Context, local *LocalStore, store storage.Object
 	// publishedSnapshot.Source). If it is unknown, only state from an old
 	// version without cached metadata, nothing is recorded: the old object
 	// then stays until the whole session expires, which is safe.
-	previous, hadPrevious, err := local.loadLastPublishedSource(id)
+	previous, hadPrevious, err := local.LoadLastPublishedSource(id)
 	if err != nil {
 		return outcomeSkipped, err
 	}

@@ -33,13 +33,22 @@ const (
 
 // Deadlines for one pass. A pass holds the collector lock, and every
 // scheduled tick that finds it held gives up quietly, so a pass that never
-// ended would stop capture without a word. Collection and the retention
-// sweep get separate budgets so a slow upload cannot starve cleanup. A
-// collection that runs out ends like an interrupted one: the sessions it did
-// not reach keep their work for the next pass.
-const (
-	collectTimeout = 10 * time.Minute
-	sweepTimeout   = 5 * time.Minute
+// ended would stop capture without a word.
+//
+// Collection has two. Past collectSoftDeadline the pass starts no new
+// session, as when backfill is interrupted: the session in flight finishes
+// and the rest keep their work for the next pass. collectHardDeadline cuts
+// off the session in flight too, and is set well above the time the largest
+// source a session can have (archive.MaxRecordBytes, 64 MiB) takes over a
+// slow uplink, so one big upload is not cut off and restarted on every pass.
+// A session cut off this way is not reported as failing. The retention sweep
+// gets its own budget, so a slow collection cannot starve cleanup.
+//
+// Variables only so tests can shorten them.
+var (
+	collectSoftDeadline = 10 * time.Minute
+	collectHardDeadline = 60 * time.Minute
+	sweepTimeout        = 5 * time.Minute
 )
 
 // runCollectCommand implements the hidden `_collect` entry point
@@ -137,8 +146,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return collector.Result{}, errPaused
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), collectTimeout)
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), collectHardDeadline)
 	defer cancel()
+	stop := func() bool {
+		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
+	}
 	objectStore, err := env.openStore(cfg)
 	if err != nil {
 		storeErr := fmt.Errorf("open storage: %w", err)
@@ -182,15 +195,18 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		Now:                  env.Now,
 		RequireSkillUse:      cfg.RequireSkillUse,
 		Progress:             pass.progress,
-		Stop:                 pass.stop,
+		Stop:                 stop,
 		CursorDatabase:       env.cursorDatabase(),
 	})
 	if err != nil {
 		return result, err
 	}
 
+	// A read-back verification failure is reported, but only once the
+	// retention sweep below has run: it is no reason to skip cleanup.
+	var verifyErr error
 	if _, err := verifyPublications(home, cfg, env, localStore, objectStore); err != nil {
-		return result, err
+		verifyErr = fmt.Errorf("read-back verification: %w", err)
 	}
 	if health := passStorageHealth(result); health != "not_checked" {
 		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
@@ -240,10 +256,14 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		SessionMaxAge: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
 	})
 	if sweepErr != nil {
-		return result, fmt.Errorf("collection succeeded but retention cleanup failed: %w", sweepErr)
+		return result, errors.Join(verifyErr, fmt.Errorf("collection succeeded but retention cleanup failed: %w", sweepErr))
 	}
 	if len(sweepResult.Errors) > 0 {
 		recordRetentionErrors(localStore, &result, sweepResult)
+	}
+	if verifyErr != nil {
+		recordPreflightError(localStore, verifyErr)
+		return result, verifyErr
 	}
 	return result, nil
 }

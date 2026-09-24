@@ -154,9 +154,15 @@ func (s *LocalStore) removeSubagentCandidate(id string) error {
 // subagent or its parent. Another session's unreadable candidate does not
 // stand in the way (the scan quarantines one that does not decode).
 func (s *LocalStore) removeSubagentCandidatesForSession(id string) error {
-	candidates, _, err := s.scanSubagentCandidates()
+	candidates, issues, err := s.scanSubagentCandidates()
 	if err != nil {
 		return err
+	}
+	// The session's own candidate could not be read, so it cannot be
+	// removed: forgetting the session anyway would leave a candidate that
+	// registers it again once readable. A quarantined one is already gone.
+	if issue := issues[id]; issue != nil && !errors.Is(issue, ErrQuarantined) {
+		return issue
 	}
 	for _, candidate := range candidates {
 		if candidate.ArchiveSessionID == id || candidate.ParentArchiveSessionID == id {

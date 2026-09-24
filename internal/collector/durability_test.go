@@ -95,7 +95,7 @@ func assertRepublishedSuperseding(t *testing.T, local *LocalStore, store storage
 	// The source key the new publication recorded is the one its metadata
 	// names, so the publication after it supersedes the right object.
 	current := fetchMetadata(t, store, "codex", "session-1").SourceBundle
-	if source, found, err := local.loadLastPublishedSource("session-1"); err != nil || !found || source != current {
+	if source, found, err := local.LoadLastPublishedSource("session-1"); err != nil || !found || source != current {
 		t.Fatalf("recorded source = %#v %v %v, want %#v", source, found, err, current)
 	}
 }
@@ -273,15 +273,24 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 			t.Fatalf("%s: error = %v, want ErrQuarantined", id, result.Errors[id])
 		}
 	}
-	want := []string{"registrations/broken.json.corrupt", "requests/orphan.json.corrupt", "requests/session-2.json.corrupt", "subagent-candidates/child.json.corrupt"}
-	for _, rel := range want {
-		if _, err := os.Stat(filepath.Join(local.home, rel)); err != nil {
+	want := []string{"registrations/broken.json", "requests/orphan.json", "requests/session-2.json", "subagent-candidates/child.json"}
+	status, err := local.LoadStatus()
+	if err != nil || len(status.QuarantinedFiles) != len(want) {
+		t.Fatalf("status quarantined = %v %v", status.QuarantinedFiles, err)
+	}
+	for i, rel := range want {
+		if _, err := os.Stat(filepath.Join(local.home, rel)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s is still in place: %v", rel, err)
+		}
+		if got := status.QuarantinedFiles[i]; !strings.HasPrefix(got, rel+".") || !strings.HasSuffix(got, quarantineSuffix) {
+			t.Fatalf("quarantined as %q, want %s.<time>%s", got, rel, quarantineSuffix)
+		}
+		if _, err := os.Stat(filepath.Join(local.home, status.QuarantinedFiles[i])); err != nil {
 			t.Fatalf("not quarantined: %v", err)
 		}
 	}
-	status, err := local.LoadStatus()
-	if err != nil || strings.Join(status.QuarantinedFiles, ",") != strings.Join(want, ",") {
-		t.Fatalf("status quarantined = %v %v", status.QuarantinedFiles, err)
+	if status.PendingCount != 1 {
+		t.Fatalf("pending = %d, want the unreadable registration counted", status.PendingCount)
 	}
 	// Quarantined once: the next pass is clean, and hooks can write again.
 	if err := local.SaveRequest("session-2", "stop", now.Add(time.Hour)); err != nil {

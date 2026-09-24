@@ -10,6 +10,7 @@
 package collector
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -589,11 +590,25 @@ func (p publishedState) lastPublishedSource() (archive.SourceReference, bool) {
 	if len(p.MetadataBytes) == 0 {
 		return archive.SourceReference{}, false
 	}
-	var metadata archive.Metadata
-	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil || metadata.ValidateSourceReference() != nil {
+	// Only the reference is read, so metadata written under an older (or
+	// newer) metadata schema still yields it.
+	var metadata struct {
+		SourceBundle archive.SourceReference `json:"source_bundle"`
+	}
+	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil || !validSourceReference(metadata.SourceBundle) {
 		return archive.SourceReference{}, false
 	}
 	return metadata.SourceBundle, true
+}
+
+// validSourceReference reports whether ref names an object and carries a
+// SHA-256 digest in hex.
+func validSourceReference(ref archive.SourceReference) bool {
+	if ref.Key == "" || len(ref.SHA256) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(ref.SHA256)
+	return err == nil
 }
 
 func (s *LocalStore) publishedPath(archiveSessionID string) string {
@@ -614,9 +629,12 @@ func (s *LocalStore) savePublication(archiveSessionID string, bundle archive.Sou
 	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusPublished, "", [][]byte{metadata}, nil, &source)
 }
 
-// loadLastPublishedSource returns the source reference of a session's last
-// publication (see publishedState.lastPublishedSource).
-func (s *LocalStore) loadLastPublishedSource(archiveSessionID string) (archive.SourceReference, bool, error) {
+// LoadLastPublishedSource returns the source reference of a session's last
+// publication, exactly as uploaded: the object its live metadata points at.
+// found is false when nothing was published, or when state from an old
+// version records no reference (see publishedState.lastPublishedSource);
+// callers must then not assume one, least of all by rebuilding it.
+func (s *LocalStore) LoadLastPublishedSource(archiveSessionID string) (archive.SourceReference, bool, error) {
 	var state publishedState
 	err := local.Read(s.publishedPath(archiveSessionID), &state)
 	if errors.Is(err, os.ErrNotExist) {
@@ -780,22 +798,36 @@ func (s *LocalStore) LoadLastPublished(archiveSessionID string) (bundle archive.
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
-	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
-	Bundle        archive.SourceBundle `json:"bundle"`
-	SourceKey     string               `json:"source_key"`
-	MetadataKey   string               `json:"metadata_key"`
-	SourceSHA256  string               `json:"source_sha256"`
-	SourceBytes   []byte               `json:"source_bytes"`
-	MetadataBytes []byte               `json:"metadata_bytes"`
-	RequestToken  string               `json:"request_token,omitempty"`
-	ReadyAt       time.Time            `json:"ready_at"`
-	Attempted     bool                 `json:"attempted,omitempty"`
+	MetadataOnly bool                 `json:"metadata_only,omitempty"`
+	Bundle       archive.SourceBundle `json:"bundle"`
+	SourceKey    string               `json:"source_key"`
+	MetadataKey  string               `json:"metadata_key"`
+	SourceSHA256 string               `json:"source_sha256"`
+	SourceBytes  []byte               `json:"source_bytes"`
+	// SourceSize is the source's compressed size when SourceBytes is empty:
+	// a metadata-only publication over a source this build cannot reproduce
+	// byte for byte, which is checked in storage instead of re-uploaded.
+	SourceSize    int       `json:"source_size,omitempty"`
+	MetadataBytes []byte    `json:"metadata_bytes"`
+	RequestToken  string    `json:"request_token,omitempty"`
+	ReadyAt       time.Time `json:"ready_at"`
+	Attempted     bool      `json:"attempted,omitempty"`
 }
 
 // sourceReference is the reference the publication's metadata carries for
 // its source object.
 func (p PendingPublication) sourceReference() archive.SourceReference {
-	return archive.SourceReference{Key: p.SourceKey, SHA256: p.SourceSHA256, CompressedBytes: len(p.SourceBytes)}
+	size := len(p.SourceBytes)
+	if p.carriesNoSource() {
+		size = p.SourceSize
+	}
+	return archive.SourceReference{Key: p.SourceKey, SHA256: p.SourceSHA256, CompressedBytes: size}
+}
+
+// carriesNoSource reports a metadata-only publication that points at an
+// existing source without carrying its bytes (see SourceSize).
+func (p PendingPublication) carriesNoSource() bool {
+	return p.MetadataOnly && len(p.SourceBytes) == 0
 }
 
 func (s *LocalStore) pendingPath(id string) string {
@@ -809,7 +841,7 @@ func (s *LocalStore) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.SourceBytes) == 0 || len(pending.MetadataBytes) == 0 {
+	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
 		return errors.New("pending publication is incomplete")
 	}
 	return local.Write(s.pendingPath(id), pending)

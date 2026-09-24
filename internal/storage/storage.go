@@ -198,6 +198,30 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 	return nil
 }
 
+// PutMetadataForSource publishes metadata that points at a source object
+// already in storage, for a caller that no longer has the source's bytes. The
+// source is read back and checked against sourceSHA256 first, so metadata
+// never points at a missing or different object: a missing source is
+// ErrNotFound and a different one ErrChecksumMismatch, and neither publishes.
+func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256, metadataKey string, metadata []byte, retry RetryPolicy) error {
+	if sourceKey == "" || metadataKey == "" || sourceSHA256 == "" {
+		return errors.New("source key, source checksum, and metadata key are required")
+	}
+	if sourceKey == metadataKey {
+		return errors.New("source and metadata keys must differ")
+	}
+	if err := retry.run(ctx, func() error {
+		_, err := ReadAndVerify(ctx, store, sourceKey, sourceSHA256)
+		return err
+	}); err != nil {
+		return fmt.Errorf("verify source %q: %w", sourceKey, err)
+	}
+	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
+		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)
+	}
+	return nil
+}
+
 // RetryPolicy controls bounded retries for transient storage operations.
 // MaxAttempts includes the first attempt. Zero uses the default of three.
 // Only an error isTransient accepts is retried: a denied request, a missing

@@ -174,8 +174,17 @@ func (s *LocalStore) ForgetSession(archiveSessionID, nativeSessionID string) err
 	if nativeSessionID != "" {
 		paths = append(paths, nativeSessionIndexPath(s.home, nativeSessionID))
 	}
-	// The session's candidate is gone (removed above, under this lock), so
-	// nothing is left for the lock to guard.
+	// The session's own candidate is gone (removed above, under this lock).
+	// Unlinking the lock file leaves the residual race of any flock file: a
+	// SaveSubagentCandidate already waiting on the old inode and one that
+	// opens the new file can both hold "the" lock at once. Each writes a
+	// whole candidate, so the worst case is two deliveries for the same child
+	// coalescing without the first-writer-wins ownership check. The candidate
+	// that remains is then validated against its parent when it is
+	// materialized, and rejected like any other if the parent no longer owns
+	// it. (SaveSubagentCandidate cannot instead recheck the parent's
+	// registration under the lock: backfill records a subagent candidate
+	// before its parent's registration is written.)
 	paths = append(paths, filepath.Join(s.home, subagentLockName(archiveSessionID)))
 	// The request lock goes last. Unlinking it lets a waiting hook lock a
 	// fresh file at once, so everything a hook rechecks under that lock (the
