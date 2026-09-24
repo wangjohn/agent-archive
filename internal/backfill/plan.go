@@ -262,7 +262,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 			// No record carried a timestamp, or the file was not read: the
 			// file's creation is the best start available.
 			if created, err := env.fileCreated(w.t.path); err == nil {
-				w.c.StartedAt, w.c.StartedAtSource = created.UTC(), StartedAtSourceFileCreated
+				w.c.StartedAt, w.c.StartedAtSource = created.UTC(), archive.StartedAtSourceFileCreated
 			}
 		}
 		if dated && w.state == "" && !inRange(w.c.StartedAt, since, until) {
@@ -383,7 +383,7 @@ func runAdapter(env Environment, w *work) {
 			return
 		}
 		freshStart = created.UTC()
-		w.c.StartedAt, w.c.StartedAtSource = freshStart, StartedAtSourceFileCreated
+		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
 	filtered, _, err := collector.FilterTranscriptFile(w.t.harness, w.t.path, freshStart)
 	if err != nil {
@@ -412,14 +412,14 @@ func runAdapter(env Environment, w *work) {
 			w.t.identityMismatch = true
 		}
 		if !filtered.NativeStartAt.IsZero() {
-			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), StartedAtSourceTranscript
+			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), archive.StartedAtSourceTranscript
 		}
 	case "codex":
 		switch {
 		case !w.t.metaStart.IsZero():
-			w.c.StartedAt, w.c.StartedAtSource = w.t.metaStart, StartedAtSourceTranscript
+			w.c.StartedAt, w.c.StartedAtSource = w.t.metaStart, archive.StartedAtSourceTranscript
 		case !filtered.NativeStartAt.IsZero():
-			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), StartedAtSourceTranscript
+			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), archive.StartedAtSourceTranscript
 		}
 	}
 }

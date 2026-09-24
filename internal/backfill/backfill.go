@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // SkipReason says why a found session is not imported. Every session found is
@@ -62,16 +64,6 @@ type ArchiveState interface {
 	Classify(harness, nativeSessionID string) (SkipReason, error)
 }
 
-// StartedAtSource says where a candidate's start time came from. The values
-// match archive.StartedAtSource, which the admission-model package adds; this
-// local type is replaced by it when the two packages are integrated.
-type StartedAtSource string
-
-const (
-	StartedAtSourceTranscript  StartedAtSource = "transcript"
-	StartedAtSourceFileCreated StartedAtSource = "file_created"
-)
-
 // ProjectKind is what a resolved project root is, which decides where the
 // plan lists it.
 type ProjectKind string
@@ -109,7 +101,7 @@ type Candidate struct {
 	// ProjectExists is whether the root folder still exists.
 	ProjectExists   bool
 	StartedAt       time.Time
-	StartedAtSource StartedAtSource
+	StartedAtSource archive.StartedAtSource
 	Bytes           int64
 	// Subagents are the readable Claude Code subagent transcripts of an
 	// imported parent.

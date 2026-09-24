@@ -205,7 +205,7 @@ func TestCursorTextForm(t *testing.T) {
 	if len(p.Candidates) != 2 {
 		t.Fatalf("got %d candidates", len(p.Candidates))
 	}
-	if c := candidate(t, p, "t1"); c.Skip != "" || c.ProjectRoot != repo || c.StartedAtSource != StartedAtSourceFileCreated {
+	if c := candidate(t, p, "t1"); c.Skip != "" || c.ProjectRoot != repo || c.StartedAtSource != archive.StartedAtSourceFileCreated {
 		t.Fatalf("text form: %+v", c)
 	}
 	if c := candidate(t, p, "t2"); c.TranscriptPath != json {

@@ -136,14 +136,6 @@ func (e Env) backfillEnvironment(userHome string) backfill.Environment {
 type archiveState struct {
 	store *collector.LocalStore
 	cfg   config.Config
-	// removal reports a removal record for a native session, written when
-	// retention or undo forgot it.
-	//
-	// INTEGRATION: nil until the admission-model package lands. Wire it to
-	// collector.LocalStore.Removal, mapping RemovalReasonRetention to
-	// backfill.SkipRemovedByRetention and RemovalReasonUndo to
-	// backfill.SkipRemovedByUndo.
-	removal func(harness, nativeSessionID string) (backfill.SkipReason, bool, error)
 }
 
 func newArchiveState(home string, cfg config.Config) archiveState {
@@ -171,11 +163,14 @@ func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipRe
 			return backfill.SkipRegisteredNotAdmitted, nil
 		}
 	}
-	if s.removal != nil {
-		reason, found, err := s.removal(harness, nativeSessionID)
-		if err != nil || found {
-			return reason, err
-		}
+	// Retention and undo leave a removal record when they forget a session,
+	// so a transcript still on disk is not imported again.
+	record, found, err := s.store.Removal(harness, nativeSessionID)
+	if err != nil || !found {
+		return "", err
 	}
-	return "", nil
+	if record.Reason == collector.RemovalReasonUndo {
+		return backfill.SkipRemovedByUndo, nil
+	}
+	return backfill.SkipRemovedByRetention, nil
 }

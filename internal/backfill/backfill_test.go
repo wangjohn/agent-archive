@@ -227,7 +227,7 @@ func TestCursorSlugs(t *testing.T) {
 	}
 	p := plan(t, tr.env(), nil, config.Config{}, Filters{})
 
-	if c := candidate(t, p, "chat-one"); c.Skip != "" || c.ProjectRoot != one || c.StartedAtSource != StartedAtSourceFileCreated {
+	if c := candidate(t, p, "chat-one"); c.Skip != "" || c.ProjectRoot != one || c.StartedAtSource != archive.StartedAtSourceFileCreated {
 		t.Fatalf("one match: %+v", c)
 	}
 	if c := candidate(t, p, "chat-two"); c.Skip != SkipProjectUnknown {
@@ -305,7 +305,7 @@ func TestIdentityAndClassification(t *testing.T) {
 	if len(codex) != 4 || codex[filepath.Base(codexFile(good))] != "" || codex[filepath.Base(codexFile(other))] != SkipDuplicateSession || codex[filepath.Base(codexFile("0a9b3c4d-0000-4000-8000-000000000003"))] != SkipIdentityMismatch {
 		t.Fatalf("codex skips: %v", codex)
 	}
-	if c := candidate(t, p, "ok"); !c.StartedAt.Equal(start.UTC().Truncate(time.Second)) || c.StartedAtSource != StartedAtSourceTranscript || c.ProjectRoot != repo {
+	if c := candidate(t, p, "ok"); !c.StartedAt.Equal(start.UTC().Truncate(time.Second)) || c.StartedAtSource != archive.StartedAtSourceTranscript || c.ProjectRoot != repo {
 		t.Fatalf("ok: %+v", c)
 	}
 	if c := candidate(t, p, "forked"); !c.StartedAt.Equal(start.Add(-time.Hour).UTC().Truncate(time.Second)) {
