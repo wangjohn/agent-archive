@@ -4,7 +4,31 @@
 runtime dependencies to install separately. Both Intel and Apple Silicon
 Macs are supported.
 
+## Install with the script
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
+```
+
+[`install.sh`](../install.sh) is short; read it first if you prefer. It
+downloads the release binary for your Mac's architecture, checks it against
+the release's `SHA256SUMS`, and installs it as `agent-archive`, without
+`sudo`. If `agent-archive` is already on your `PATH`, it replaces that copy,
+so the hooks and background collector keep pointing at it. Otherwise it
+uses `/usr/local/bin` when that is writable, and `~/.local/bin` if not,
+printing the line to add to your shell profile when the directory isn't on
+your `PATH`. It never runs setup; continue with step 5 below.
+
+Run the same command again to upgrade. To choose a release or a directory,
+set the variables on the `sh` side of the pipe:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | AGENT_ARCHIVE_VERSION=v0.1.0 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
+```
+
 ## Install a release build
+
+To install by hand instead:
 
 1. Download the binary for your Mac from the
    [latest release](https://github.com/wangjohn/agent-archive/releases/latest):
@@ -376,7 +400,7 @@ without listing anything.
 
 ## Build from source
 
-Requires Go 1.24+ and, for real macOS Keychain access, Xcode's command
+Requires Go 1.26 or later (go.mod pins toolchain go1.27.1, which Go downloads automatically) and, for real macOS Keychain access, Xcode's command
 line tools (`xcode-select --install`).
 
 ```sh
