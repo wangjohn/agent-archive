@@ -57,6 +57,7 @@ var errCursorFormatUnknown = fmt.Errorf("cursor composer format version is not k
 var cursorComposerConsumed = map[string]bool{
 	"_v": true, "composerId": true, "createdAt": true,
 	"fullConversationHeadersOnly": true, "conversation": true,
+	"generatingBubbleIds": true, "status": true,
 }
 
 // cursorBubbleConsumed are the message keys the filter maps onto a record
@@ -93,9 +94,21 @@ var cursorContextKeys = map[string]bool{
 // cursorHiddenKeys carry the model's reasoning, which no adapter retains.
 var cursorHiddenKeys = map[string]bool{"thinking": true, "allThinkingBlocks": true}
 
-// cursorPendingToolStatuses are the toolFormerData statuses of a tool call
-// that has not finished; its message is not complete yet.
-var cursorPendingToolStatuses = map[string]bool{"loading": true, "pending": true}
+// cursorSettledToolStatuses are the toolFormerData statuses of a tool call
+// that has finished. Any other status, including none, is treated as still
+// running ("loading" and "pending" are the ones Cursor is known to write), so
+// its message is in flight. The probed database had only "completed" and
+// "error".
+var cursorSettledToolStatuses = map[string]bool{"completed": true, "error": true, "cancelled": true, "canceled": true}
+
+// cursorSettledComposerStatuses are the composerData statuses of a chat that
+// is not generating. Any other value is treated as generating its last
+// message, as a backstop to generatingBubbleIds. The probed database had
+// only "completed" and "none".
+var cursorSettledComposerStatuses = map[string]bool{
+	"": true, "completed": true, "none": true, "aborted": true,
+	"cancelled": true, "canceled": true, "error": true,
+}
 
 // cursorComposerFilter accumulates one FilterComposer call.
 type cursorComposerFilter struct {
@@ -144,11 +157,11 @@ func (f *cursorComposerFilter) omit(level, key string) { f.omitted.add(level + "
 // one of an unknown type are each omitted and counted in a gap.
 //
 // Records are append-only across snapshots of a chat that is still in use:
-// messages are emitted only up to the last complete one, so a reply still
-// streaming, or a tool call still running, is left for a later pass (and
-// counted in cursor_incomplete_tail_omitted), and nothing that changes as the
-// chat is merely used (lastUpdatedAt, the chat's current model) is written
-// into a record.
+// output stops at the first message in flight (see cursorGenerating), so a
+// reply still streaming, or a tool call still running, is left for a later
+// pass (and counted in cursor_incomplete_tail_omitted), and nothing that
+// changes as the chat is merely used (lastUpdatedAt, the chat's current
+// model) is written into a record.
 func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error) {
 	if len(c.Composer) > maxRecordBytes {
 		return FilteredTranscript{}, ErrRecordTooLarge
@@ -188,7 +201,7 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 	}
 
 	headers, _ := composer["fullConversationHeadersOnly"].([]any)
-	messages, err := f.filterHeaderMessages(headers, c.Bubbles)
+	messages, err := f.filterHeaderMessages(headers, c.Bubbles, cursorGenerating(composer))
 	if err != nil {
 		return FilteredTranscript{}, err
 	}
@@ -212,10 +225,11 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 
 // filterHeaderMessages builds the records for the messages listed in
 // fullConversationHeadersOnly, which the reader supplies as bubbles in the
-// same order, stopping at the first message that is not complete. A list
+// same order, stopping at the first message in flight. generating reports
+// whether a header's message is one the chat is still generating. A list
 // that does not match the headers is refused: the reader and the chat
 // disagree about what the conversation is.
-func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []CursorBubble) ([]map[string]any, error) {
+func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []CursorBubble, generating func(index, count int, id string) bool) ([]map[string]any, error) {
 	if len(headers) != len(bubbles) {
 		return nil, &FilterError{Reason: "cursor composer messages do not match its headers"}
 	}
@@ -228,6 +242,10 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 			return nil, &FilterError{Reason: "cursor composer messages do not match its headers"}
 		}
 		f.messages++
+		if generating(i, len(headers), headerID) {
+			f.incompleteTail = len(headers) - i
+			break
+		}
 		headerType, hasHeaderType := cursorInt(header["type"])
 		value := bytes.TrimSpace(bubbles[i].Value)
 		if len(value) == 0 || string(value) == "null" {
@@ -253,6 +271,10 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 			f.idMismatch++
 			continue
 		}
+		if cursorToolRunning(bubble) {
+			f.incompleteTail = len(headers) - i
+			break
+		}
 		bubbleType, _ := cursorInt(bubble["type"])
 		if hasHeaderType && bubbleType != headerType {
 			// The header and the row disagree about who wrote the message.
@@ -268,10 +290,6 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 		default:
 			f.unknownType++
 			continue
-		}
-		if !cursorMessageComplete(bubble, header, bubbleType) {
-			f.incompleteTail = len(headers) - i
-			break
 		}
 		record, blob := f.bubbleRecord(bubble, role)
 		if blob {
@@ -293,22 +311,39 @@ func (f *cursorComposerFilter) filterHeaderMessages(headers []any, bubbles []Cur
 	return records, nil
 }
 
-// cursorMessageComplete reports whether a message will not change any more:
-// an assistant message has completedAtMs (on its row or its header), and no
-// tool call in it is still loading or pending. A person's message is complete
-// once it exists.
-func cursorMessageComplete(bubble, header map[string]any, bubbleType int) bool {
-	if tool, ok := bubble["toolFormerData"].(map[string]any); ok {
-		if status, _ := tool["status"].(string); cursorPendingToolStatuses[strings.ToLower(strings.TrimSpace(status))] {
-			return false
+// A message is in flight, and may still change, when the chat lists it in
+// generatingBubbleIds; when the chat's status is not a settled one (see
+// cursorSettledComposerStatuses) and it is the chat's last message; or when
+// its tool call's status is not a settled one (see cursorToolRunning).
+// completedAtMs is not a signal: most finished assistant messages in the
+// probed database had none.
+
+// cursorGenerating returns the chat-level half of that rule for the message
+// at index of count with the given ID.
+func cursorGenerating(composer map[string]any) func(index, count int, id string) bool {
+	ids := map[string]bool{}
+	if list, ok := composer["generatingBubbleIds"].([]any); ok {
+		for _, raw := range list {
+			if id, ok := raw.(string); ok {
+				ids[id] = true
+			}
 		}
 	}
-	if bubbleType != cursorBubbleAssistant {
-		return true
+	status, _ := composer["status"].(string)
+	chatGenerating := !cursorSettledComposerStatuses[strings.ToLower(strings.TrimSpace(status))]
+	return func(index, count int, id string) bool {
+		return ids[id] || (chatGenerating && index == count-1)
 	}
-	_, onRow := cursorTime(bubble["completedAtMs"])
-	_, onHeader := cursorTime(header["completedAtMs"])
-	return onRow || onHeader
+}
+
+// cursorToolRunning reports whether a message's tool call has not settled.
+func cursorToolRunning(bubble map[string]any) bool {
+	tool, ok := bubble["toolFormerData"].(map[string]any)
+	if !ok {
+		return false
+	}
+	status, _ := tool["status"].(string)
+	return !cursorSettledToolStatuses[strings.ToLower(strings.TrimSpace(status))]
 }
 
 // bubbleRecord maps one message onto the record shape FilterComposer
@@ -623,7 +658,7 @@ func (f *cursorComposerFilter) finishGaps() {
 		f.addGap("cursor_message_type_unknown", 0, fmt.Sprintf("%d of %d messages have an unknown or inconsistent type", f.unknownType, f.messages))
 	}
 	if f.incompleteTail > 0 {
-		f.addGap("cursor_incomplete_tail_omitted", 0, fmt.Sprintf("%d messages from the first incomplete one on are left for a later pass", f.incompleteTail))
+		f.addGap("cursor_incomplete_tail_omitted", 0, fmt.Sprintf("%d messages from the first one still in flight on are left for a later pass", f.incompleteTail))
 	}
 	if detail := f.context.detail("omitted context fields: "); detail != "" {
 		f.addGap("cursor_context_omitted", 0, detail)

@@ -57,7 +57,6 @@
       }
     },
     {
-      "completed_at_ms": 1790000004500,
       "id": "b4",
       "message": {
         "content": [
@@ -169,7 +168,7 @@
   ],
   "boundary": {
     "retained_records": 6,
-    "retained_bytes": 1795
+    "retained_bytes": 1763
   },
   "session_ids": [
     "c0ffee00-0000-4000-8000-000000000001"

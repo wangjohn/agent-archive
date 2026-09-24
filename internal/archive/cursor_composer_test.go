@@ -413,70 +413,158 @@ func TestCursorComposerEmptyChatHasNoRecords(t *testing.T) {
 	}
 }
 
-// Successive snapshots of a chat in use (a prompt, a reply streaming, a tool
-// call running, the reply done, the next prompt) filter to record sequences
-// each of which is a prefix of the next, so the collector's append-only check
-// holds. The unfinished tail is counted.
-func TestCursorComposerSnapshotsAreAppendOnly(t *testing.T) {
-	user1 := `{"_v":3,"bubbleId":"u1","type":1,"text":"Run the tests.","createdAt":1790000001000}`
-	user2 := `{"_v":3,"bubbleId":"u2","type":1,"text":"Thanks.","createdAt":1790000009000}`
-	assistant := func(text, status string, completed bool) string {
-		row := map[string]any{"_v": 3, "bubbleId": "a1", "type": 2, "text": text, "createdAt": 1790000002000, "startedAtMs": 1790000002000,
-			"toolFormerData": map[string]any{"toolCallId": "t1", "name": "run_terminal_command_v2", "status": status, "params": `{"command":"go test ./..."}`}}
-		if status == "completed" {
-			row["toolFormerData"].(map[string]any)["result"] = "ok"
-		}
-		if completed {
-			row["completedAtMs"] = 1790000008000
+// liveMessage is one message of a synthetic chat in use. toolStatus, when
+// set, gives it a tool call with that status. No message has completedAtMs:
+// most finished assistant messages in a real database have none.
+type liveMessage struct {
+	id         string
+	kind       int
+	text       string
+	toolStatus string
+}
+
+// liveChat builds a chat snapshot with the given composer status and
+// generatingBubbleIds.
+func liveChat(status string, generating []string, messages ...liveMessage) CursorComposer {
+	var headers []string
+	c := CursorComposer{}
+	for i, m := range messages {
+		headers = append(headers, fmt.Sprintf(`{"bubbleId":%q,"type":%d}`, m.id, m.kind))
+		row := map[string]any{"_v": 3, "bubbleId": m.id, "type": m.kind, "text": m.text, "createdAt": 1790000001000 + 1000*i}
+		if m.toolStatus != "" {
+			tool := map[string]any{"toolCallId": "t-" + m.id, "name": "run_terminal_command_v2", "status": m.toolStatus, "params": `{"command":"go test ./..."}`}
+			if m.toolStatus == "completed" {
+				tool["result"] = "ok"
+			}
+			row["toolFormerData"] = tool
 		}
 		encoded, _ := json.Marshal(row)
-		return string(encoded)
+		c.Bubbles = append(c.Bubbles, CursorBubble{ID: m.id, Value: encoded})
 	}
-	chat := func(rows ...string) CursorComposer {
-		ids, types := []string{"u1", "a1", "u2"}, []int{1, 2, 1}
-		var headers []string
-		c := CursorComposer{}
-		for i, row := range rows {
-			headers = append(headers, fmt.Sprintf(`{"bubbleId":%q,"type":%d}`, ids[i], types[i]))
-			c.Bubbles = append(c.Bubbles, CursorBubble{ID: ids[i], Value: json.RawMessage(row)})
-		}
-		c.Composer = json.RawMessage(`{"_v":18,"composerId":"c","createdAt":1790000000000,"fullConversationHeadersOnly":[` + strings.Join(headers, ",") + `]}`)
-		return c
+	ids, _ := json.Marshal(generating)
+	if generating == nil {
+		ids = []byte("[]")
 	}
-	snapshots := []struct {
-		chat       CursorComposer
-		records    int
-		incomplete bool
-	}{
-		{chat(user1), 2, false},
-		{chat(user1, assistant("Running", "loading", false)), 2, true},
-		{chat(user1, assistant("Running the tests", "completed", false)), 2, true},
-		{chat(user1, assistant("Running the tests now.", "loading", true)), 2, true},
-		{chat(user1, assistant("Running the tests now.", "completed", true)), 3, false},
-		{chat(user1, assistant("Running the tests now.", "completed", true), user2), 4, false},
-	}
-	var previous [][]byte
-	for i, snapshot := range snapshots {
-		filtered, err := (CursorAdapter{}).FilterComposer(snapshot.chat)
+	c.Composer = json.RawMessage(fmt.Sprintf(`{"_v":18,"composerId":"c","createdAt":1790000000000,"status":%q,"generatingBubbleIds":%s,"fullConversationHeadersOnly":[%s]}`, status, ids, strings.Join(headers, ",")))
+	return c
+}
+
+// A finished chat is emitted whole even though none of its assistant
+// messages has completedAtMs, and completedAtMs is not what decides it.
+func TestCursorComposerFinishedChatWithoutCompletionTimes(t *testing.T) {
+	for _, status := range []string{"completed", "none", ""} {
+		filtered, err := (CursorAdapter{}).FilterComposer(liveChat(status, nil,
+			liveMessage{"u1", 1, "Run the tests.", ""},
+			liveMessage{"a1", 2, "", ""}, // a thinking-only message: no text
+			liveMessage{"a2", 2, "Running them.", "completed"},
+			liveMessage{"a3", 2, "One failed.", "error"},
+			liveMessage{"a4", 2, "Done.", ""},
+		))
 		if err != nil {
-			t.Fatalf("snapshot %d: %v", i, err)
+			t.Fatal(err)
 		}
-		if len(filtered.Records) != snapshot.records || hasGap(filtered.Gaps, "cursor_incomplete_tail_omitted") != snapshot.incomplete {
-			t.Fatalf("snapshot %d: %d records, gaps %#v", i, len(filtered.Records), filtered.Gaps)
+		if len(filtered.Records) != 6 || hasGap(filtered.Gaps, "cursor_incomplete_tail_omitted") {
+			t.Fatalf("status %q: %d records, gaps %#v", status, len(filtered.Records), filtered.Gaps)
 		}
-		if len(filtered.Records) < len(previous) {
-			t.Fatalf("snapshot %d lost records", i)
-		}
-		for j := range previous {
-			if !bytes.Equal(previous[j], filtered.Records[j]) {
-				t.Fatalf("snapshot %d rewrote record %d:\n%s\n%s", i, j, previous[j], filtered.Records[j])
-			}
-		}
-		previous = filtered.Records
 	}
-	filtered, _ := (CursorAdapter{}).FilterComposer(snapshots[1].chat)
-	if got := gapDetail(filtered.Gaps, "cursor_incomplete_tail_omitted"); got != "1 messages from the first incomplete one on are left for a later pass" {
+}
+
+// A message is in flight when the chat lists it in generatingBubbleIds, when
+// its tool call has not settled (any status but completed, error, or
+// cancelled, or none), or, as a backstop, when it is the last message of a
+// chat whose status is not a settled one. Output stops there.
+func TestCursorComposerInFlightMessages(t *testing.T) {
+	user := liveMessage{"u1", 1, "Run the tests.", ""}
+	cases := []struct {
+		name    string
+		chat    CursorComposer
+		records int
+	}{
+		{"generating ID", liveChat("completed", []string{"a1"}, user, liveMessage{"a1", 2, "Run", ""}, liveMessage{"a2", 2, "later", ""}), 2},
+		{"generating ID without a row", liveChat("none", []string{"a1"}, user, liveMessage{"a1", 2, "", ""}), 2},
+		{"tool loading", liveChat("none", nil, user, liveMessage{"a1", 2, "Running", "loading"}), 2},
+		{"tool pending", liveChat("none", nil, user, liveMessage{"a1", 2, "Running", "pending"}), 2},
+		{"tool status unknown", liveChat("none", nil, user, liveMessage{"a1", 2, "Running", "streaming"}), 2},
+		{"chat generating", liveChat("generating", nil, user, liveMessage{"a1", 2, "Done.", ""}, liveMessage{"a2", 2, "Runn", ""}), 3},
+		{"chat status unknown", liveChat("thinking", nil, user), 0},
+		{"chat aborted", liveChat("aborted", nil, user, liveMessage{"a1", 2, "Cut off", ""}), 3},
+		{"tool cancelled", liveChat("none", nil, user, liveMessage{"a1", 2, "Stopped", "cancelled"}), 3},
+	}
+	for _, tc := range cases {
+		if tc.name == "generating ID without a row" {
+			tc.chat.Bubbles[1].Value = nil
+		}
+		filtered, err := (CursorAdapter{}).FilterComposer(tc.chat)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		inFlight := hasGap(filtered.Gaps, "cursor_incomplete_tail_omitted")
+		if len(filtered.Records) != tc.records || inFlight != (tc.records < len(tc.chat.Bubbles)+1) {
+			t.Errorf("%s: %d records, gaps %#v", tc.name, len(filtered.Records), filtered.Gaps)
+		}
+		if hasGap(filtered.Gaps, "cursor_bubble_missing") {
+			t.Errorf("%s: an in-flight message was counted as missing", tc.name)
+		}
+	}
+	filtered, _ := (CursorAdapter{}).FilterComposer(cases[0].chat)
+	if got := gapDetail(filtered.Gaps, "cursor_incomplete_tail_omitted"); got != "2 messages from the first one still in flight on are left for a later pass" {
 		t.Fatalf("gap = %q", got)
+	}
+}
+
+// Successive snapshots of chats in use filter to record sequences each of
+// which is a prefix of the next, so the collector's append-only check holds.
+func TestCursorComposerSnapshotsAreAppendOnly(t *testing.T) {
+	user1 := liveMessage{"u1", 1, "Run the tests.", ""}
+	user2 := liveMessage{"u2", 1, "Thanks.", ""}
+	sequences := map[string][]CursorComposer{
+		// A reply streams while listed in generatingBubbleIds, then is
+		// removed from it.
+		"streaming reply": {
+			liveChat("completed", nil, user1),
+			liveChat("generating", []string{"a1"}, user1, liveMessage{"a1", 2, "", ""}),
+			liveChat("generating", []string{"a1"}, user1, liveMessage{"a1", 2, "Running", ""}),
+			liveChat("generating", []string{"a1"}, user1, liveMessage{"a1", 2, "Running the tests now.", ""}),
+			liveChat("completed", nil, user1, liveMessage{"a1", 2, "Running the tests now.", ""}),
+			liveChat("completed", nil, user1, liveMessage{"a1", 2, "Running the tests now.", ""}, user2),
+		},
+		// A tool call is loading, then completes.
+		"tool call": {
+			liveChat("none", nil, user1),
+			liveChat("none", nil, user1, liveMessage{"a1", 2, "Running", "loading"}),
+			liveChat("none", nil, user1, liveMessage{"a1", 2, "Running the tests", "loading"}),
+			liveChat("none", nil, user1, liveMessage{"a1", 2, "Running the tests", "completed"}),
+			liveChat("none", nil, user1, liveMessage{"a1", 2, "Running the tests", "completed"}, user2),
+		},
+		// Only the chat's status says it is generating.
+		"status backstop": {
+			liveChat("generating", nil, user1, liveMessage{"a1", 2, "Run", ""}),
+			liveChat("generating", nil, user1, liveMessage{"a1", 2, "Running.", ""}),
+			liveChat("completed", nil, user1, liveMessage{"a1", 2, "Running.", ""}),
+		},
+	}
+	for name, snapshots := range sequences {
+		var previous [][]byte
+		grew := false
+		for i, snapshot := range snapshots {
+			filtered, err := (CursorAdapter{}).FilterComposer(snapshot)
+			if err != nil {
+				t.Fatalf("%s %d: %v", name, i, err)
+			}
+			if len(filtered.Records) < len(previous) {
+				t.Fatalf("%s %d lost records", name, i)
+			}
+			for j := range previous {
+				if !bytes.Equal(previous[j], filtered.Records[j]) {
+					t.Fatalf("%s %d rewrote record %d:\n%s\n%s", name, i, j, previous[j], filtered.Records[j])
+				}
+			}
+			grew = grew || len(filtered.Records) > len(previous) && len(previous) > 0
+			previous = filtered.Records
+		}
+		if last := len(snapshots[len(snapshots)-1].Bubbles) + 1; len(previous) != last || !grew {
+			t.Fatalf("%s: ended with %d records, want %d", name, len(previous), last)
+		}
 	}
 }
 
@@ -511,12 +599,12 @@ func TestCursorComposerToolArguments(t *testing.T) {
 		return args, filtered
 	}
 
-	args, filtered := input(t, `{"toolCallId":"t1","name":"run_terminal_command_v2","rawArgs":"{\"command\":\"go te","params":"{\"command\":\"go te"}`)
+	args, filtered := input(t, `{"toolCallId":"t1","status":"completed","name":"run_terminal_command_v2","rawArgs":"{\"command\":\"go te","params":"{\"command\":\"go te"}`)
 	if args != nil || gapDetail(filtered.Gaps, "cursor_tool_argument_omitted") != "omitted tool arguments: params, rawArgs" {
 		t.Fatalf("undecodable arguments: input = %#v gaps = %#v", args, filtered.Gaps)
 	}
 
-	args, filtered = input(t, `{"toolCallId":"t1","name":"run_terminal_command_v2","rawArgs":"{\"command\":\"ls\",\"env\":[\"A=1\",\"[\\\"NESTED-SENTINEL\\\"]\"],\"options\":{\"deep\":{\"blob\":\"{\\\"x\\\":\\\"NESTED-SENTINEL\\\"}\"}}}"}`)
+	args, filtered = input(t, `{"toolCallId":"t1","status":"completed","name":"run_terminal_command_v2","rawArgs":"{\"command\":\"ls\",\"env\":[\"A=1\",\"[\\\"NESTED-SENTINEL\\\"]\"],\"options\":{\"deep\":{\"blob\":\"{\\\"x\\\":\\\"NESTED-SENTINEL\\\"}\"}}}"}`)
 	if args["command"] != "ls" || len(args["env"].([]any)) != 1 || bytes.Contains(bytes.Join(filtered.Records, nil), []byte("SENTINEL")) {
 		t.Fatalf("nested JSON: input = %#v", args)
 	}
@@ -527,7 +615,7 @@ func TestCursorComposerToolArguments(t *testing.T) {
 		t.Fatalf("nested JSON gap = %q", got)
 	}
 
-	args, filtered = input(t, `{"toolCallId":"t1","name":"glob_file_search","rawArgs":"{}"}`)
+	args, filtered = input(t, `{"toolCallId":"t1","status":"completed","name":"glob_file_search","rawArgs":"{}"}`)
 	if args != nil || hasGap(filtered.Gaps, "record_without_allowed_fields_omitted") || hasGap(filtered.Gaps, "cursor_tool_argument_omitted") {
 		t.Fatalf("empty arguments: input = %#v gaps = %#v", args, filtered.Gaps)
 	}

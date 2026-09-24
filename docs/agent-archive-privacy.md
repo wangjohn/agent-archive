@@ -51,11 +51,15 @@ sanitizer as a JSONL record.
   `cursor_bubble_id_mismatch`); content kept in blobs, which are never read,
   is `cursor_blob_content_unavailable`; an unknown or inconsistent message
   type is `cursor_message_type_unknown`. Each gives a count, never an ID.
-- **Complete messages only.** Messages are kept up to the last complete one:
-  a reply without a completion time, or with a tool call still loading, and
+- **Finished messages only.** Output stops at the first message still in
+  flight: one the chat lists in `generatingBubbleIds`; one whose tool call's
+  status is anything but `completed`, `error`, or `cancelled`; or, as a
+  backstop, the chat's last message when the chat's `status` is anything but
+  `completed`, `none`, `aborted`, `cancelled`, `error`, or empty. It and
   everything after it wait for a later pass
-  (`cursor_incomplete_tail_omitted`). Records therefore only ever grow, and
-  a chat with no kept message has no records at all.
+  (`cursor_incomplete_tail_omitted`). A completion time is not required:
+  most finished replies have none. Records therefore only ever grow, and a
+  chat with no kept message has no records at all.
 
 Every filter-7 rule below still applies.
 
