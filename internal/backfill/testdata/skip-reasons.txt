@@ -29,8 +29,8 @@ Not imported:
    1  larger than 64 MiB
    1  Claude Code session whose start time could not be determined
    1  starting in the future (check the clock)
-   1  Cursor chat stored only in Cursor's database (a later release)
    1  subagent transcript that can't be imported
+   2  Cursor subagent chats are not imported yet
    2  folders in the app stores could not be read
       Claude Code's session folder could not be read (check permissions);
       none of its sessions are included.

@@ -155,7 +155,7 @@ func advancingClock() func() time.Time {
 	}
 }
 
-func unchanged(t *testing.T,local *LocalStore, reg archive.SessionRegistration, opts Options) bool {
+func unchanged(t *testing.T, local *LocalStore, reg archive.SessionRegistration, opts Options) bool {
 	t.Helper()
 	u, err := unchangedSinceLastScan(context.Background(), local, reg, opts)
 	if err != nil {

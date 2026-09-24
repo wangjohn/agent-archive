@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -51,6 +53,9 @@ type Registration struct {
 	// Stop, when set, is checked between holds; once it reports true, Run
 	// returns ErrStopped. Ctrl-C ends registration this way.
 	Stop func() bool
+	// CursorDatabase is Cursor's state.vscdb, which a chat found only there
+	// is checked against before it is registered. Empty skips the check.
+	CursorDatabase string
 }
 
 // RegistrationResult counts what registration did with the plan's sessions.
@@ -213,7 +218,12 @@ func (r Registration) skip(cfg config.Config, c Candidate, result *RegistrationR
 		result.NotAdmitted++
 		return true, nil
 	}
-	if !regularFile(c.TranscriptPath) {
+	if c.SourceKind == archive.SourceKindCursorSQLite {
+		if r.chatGone(c) {
+			result.Gone++
+			return true, nil
+		}
+	} else if !regularFile(c.TranscriptPath) {
 		result.Gone++
 		return true, nil
 	}
@@ -282,6 +292,8 @@ func (r Registration) registration(c Candidate, archiveID string) archive.Sessio
 		ProjectRoot:      c.ProjectRoot,
 		Harness:          archive.Harness{Name: c.Harness},
 		TranscriptPath:   c.TranscriptPath,
+		SourceKind:       c.SourceKind,
+		SourceKey:        c.SourceKey,
 		SessionStartedAt: c.StartedAt,
 		StartedAtSource:  c.StartedAtSource,
 		RegisteredAt:     r.AdmittedAt,
@@ -290,6 +302,18 @@ func (r Registration) registration(c Candidate, archiveID string) archive.Sessio
 		ImportBatch:      r.Batch,
 		DestinationID:    r.DestinationID,
 	}
+}
+
+// chatGone reports whether a chat found only in Cursor's database is no
+// longer there. It reads a few indexed rows in place, never a copy. A
+// database that can't be read now (Cursor holds a lock) is not "gone": the
+// chat is registered, and the collector reads it when it can.
+func (r Registration) chatGone(c Candidate) bool {
+	if r.CursorDatabase == "" {
+		return false
+	}
+	_, err := cursorstore.ReadSignature(context.Background(), r.CursorDatabase, c.SourceKey)
+	return isNotExist(err)
 }
 
 // regularFile reports whether path is still a regular file, without

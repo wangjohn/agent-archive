@@ -236,16 +236,25 @@ func TestCursorDatabaseReader(t *testing.T) {
 				byID[c.ID] = c
 			}
 			for id, w := range map[string]CursorDatabaseChat{
-				"a":        {ID: "a", CreatedAt: sept10},
-				"b":        {ID: "b", CreatedAt: sept10.AddDate(0, 0, 11), Folder: "/work/site"},
-				"c":        {ID: "c", Folder: "/work/other dir"},
-				"d":        {ID: "d"},
-				"ws-empty": {ID: "ws-empty"},
+				"a":        {ID: "a", KeyID: "a", CreatedAt: sept10},
+				"b":        {ID: "b", KeyID: "b", CreatedAt: sept10.AddDate(0, 0, 11), Folder: "/work/site", WorkspaceID: "w"},
+				"c":        {ID: "c", KeyID: "c", Folder: "/work/other dir"},
+				"d":        {ID: "d", KeyID: "d"},
+				"ws-empty": {ID: "ws-empty", KeyID: "ws-empty"},
+				"k2":       {ID: "k2", KeyID: "k2"},
 			} {
 				if got := byID[id]; !reflect.DeepEqual(got, w) {
 					t.Errorf("%s: %+v, want %+v", id, got, w)
 				}
 			}
+			// Subagent chats, listed under the chat that names them.
+			if want := map[string][]string{"parent": {"sub1"}, "draft": {"sub2"}}; !reflect.DeepEqual(res.Subagents, want) {
+				t.Errorf("subagents %v, want %v", res.Subagents, want)
+			}
+			if res.ReadChat == nil || res.Close == nil {
+				t.Fatal("a checked result can't read its chats")
+			}
+			res.Close()
 			assertUnchanged(t, dir, before)
 		})
 	}
@@ -611,6 +620,13 @@ func TestCursorWriterProcess(t *testing.T) {
 			if _, err := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 				t.Fatal(err)
 			}
+		case "full:" + strings.TrimPrefix(c, "full:"):
+			// A whole chat the composer filter accepts.
+			for k, v := range chatRows(strings.TrimPrefix(c, "full:"), nil, "hi", "Hello.") {
+				if _, err := conn.ExecContext(context.Background(), `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, v); err != nil {
+					t.Fatal(err)
+				}
+			}
 		default:
 			if _, err := conn.ExecContext(context.Background(), `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, "composerData:"+c, composerJSON(c, 1, nil)); err != nil {
 				t.Fatal(err)
@@ -701,10 +717,11 @@ func TestCursorDatabaseReaderCancelled(t *testing.T) {
 	}
 }
 
-// TestCursorDatabasePlan runs the real reader under BuildPlan. A chat with a
-// transcript on disk is the file's session, the archive's reasons come
-// first, and the filters apply as they do to file sessions: a chat without
-// the field a filter needs does not match it.
+// TestCursorDatabasePlan runs the real reader under BuildPlan, with Cursor
+// closed. A chat with a transcript on disk is the file's session, the
+// archive's reasons come first, and the filters apply as they do to file
+// sessions: a chat without the field a filter needs does not match it.
+// Nothing next to the database changes.
 func TestCursorDatabasePlan(t *testing.T) {
 	tr := newTree(t)
 	site := tr.repo("home/site")
@@ -715,45 +732,51 @@ func TestCursorDatabasePlan(t *testing.T) {
 	}
 	sept := func(day int) int64 { return millis(time.Date(2026, 9, day, 18, 0, 0, 0, time.UTC)) }
 	path := CursorStateDatabase(tr.home)
-	writeCursorDB(t, path, true, map[string]any{
-		"composerData:k1":       composerJSON("k1", 3, map[string]any{"createdAt": sept(20), "workspaceIdentifier": uri(site)}),
-		"composerData:early":    composerJSON("early", 1, map[string]any{"createdAt": sept(2), "workspaceIdentifier": uri(site)}),
-		"composerData:site":     composerJSON("site", 1, map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(site)}),
-		"composerData:other":    composerJSON("other", 1, map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(other)}),
-		"composerData:bare":     composerJSON("bare", 1, nil),
-		"composerData:archived": composerJSON("archived", 1, map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(site)}),
-		"composerData:draft":    composerJSON("draft", 1, map[string]any{"isDraft": true, "createdAt": sept(21)}),
-	})
+	writeCursorDB(t, path, true, mergeRows(
+		chatRows("k1", map[string]any{"createdAt": sept(20), "workspaceIdentifier": uri(site)}, "a", "b", "c"),
+		chatRows("early", map[string]any{"createdAt": sept(2), "workspaceIdentifier": uri(site)}, "a"),
+		chatRows("site", map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(site)}, "a"),
+		chatRows("other", map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(other)}, "a"),
+		chatRows("bare", map[string]any{"createdAt": nil}, "a"),
+		chatRows("archived", map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(site)}, "a"),
+		chatRows("draft", map[string]any{"isDraft": true, "createdAt": sept(21)}, "a"),
+	))
 	dir := filepath.Dir(path)
 	before := snapshotDir(t, dir)
 	env := tr.env()
 	env.CursorDatabase = CursorDatabaseReader(tr.home)
 	st := states{"archived": SkipAlreadyArchived}
 
+	// "bare" names no workspace, so it has no project (and no start).
 	for _, tc := range []struct {
-		name               string
-		filters            Filters
-		dbOnly, filteredDB int
+		name                          string
+		filters                       Filters
+		imported, filtered, noProject int
 	}{
-		{"no filters", Filters{}, 4, 0},
-		{"since", Filters{Since: "2026-09-10"}, 2, 2},
-		{"until", Filters{Until: "2026-09-10"}, 1, 3},
-		{"project", Filters{Projects: []string{site}}, 2, 2},
-		{"project and since", Filters{Projects: []string{site}, Since: "2026-09-10"}, 1, 3},
+		{"no filters", Filters{}, 3, 0, 1},
+		{"since", Filters{Since: "2026-09-10"}, 2, 2, 0},
+		{"until", Filters{Until: "2026-09-10"}, 1, 3, 0},
+		{"project", Filters{Projects: []string{site}}, 2, 2, 0},
+		{"project and since", Filters{Projects: []string{site}, Since: "2026-09-10"}, 1, 3, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := plan(t, env, st, config.Config{}, tc.filters)
-			if !p.CursorDatabaseChecked || p.CursorDatabaseOnly != tc.dbOnly || p.CursorDatabaseFiltered != tc.filteredDB {
-				t.Fatalf("checked %v, only %d, filtered %d", p.CursorDatabaseChecked, p.CursorDatabaseOnly, p.CursorDatabaseFiltered)
+			want := map[SkipReason]int{"": tc.imported, SkipFilteredOut: tc.filtered, SkipProjectUnknown: tc.noProject, SkipAlreadyArchived: 1}
+			for reason, n := range want {
+				if n == 0 {
+					delete(want, reason)
+				}
 			}
-			if !reflect.DeepEqual(p.CursorDatabaseSkipped, map[SkipReason]int{SkipAlreadyArchived: 1}) {
-				t.Fatalf("skipped by the archive: %v", p.CursorDatabaseSkipped)
+			if got := databaseOutcomes(p); !p.CursorDatabaseChecked || !reflect.DeepEqual(got, want) {
+				t.Fatalf("checked %v, outcomes %v, want %v", p.CursorDatabaseChecked, got, want)
 			}
-			if want := len(p.Candidates) + tc.dbOnly + tc.filteredDB + 1; p.Found() != want {
-				t.Fatalf("found %d, want %d", p.Found(), want)
+			for _, c := range databaseCandidates(p) {
+				if c.NativeSessionID == "k1" || c.NativeSessionID == "draft" {
+					t.Fatalf("%s planned from the database", c.NativeSessionID)
+				}
 			}
-			if got := p.Skipped()[SkipCursorDatabaseOnly]; got != tc.dbOnly {
-				t.Fatalf("skipped %v", p.Skipped())
+			if p.Found() != len(p.Candidates) {
+				t.Fatalf("found %d of %d candidates", p.Found(), len(p.Candidates))
 			}
 			var out strings.Builder
 			RenderText(&out, p)
@@ -765,8 +788,7 @@ func TestCursorDatabasePlan(t *testing.T) {
 
 	// --harness without cursor does not open the database at all.
 	p := plan(t, env, st, config.Config{}, Filters{Harnesses: []string{"codex"}})
-	if p.CursorDatabaseChecked || p.CursorDatabaseOnly != 0 || p.CursorDatabaseFiltered != 0 || len(p.CursorDatabaseSkipped) != 0 ||
-		p.Skipped()[SkipCursorDatabaseOnly] != 0 || p.Found() != len(p.Candidates) {
+	if p.CursorDatabaseChecked || len(databaseCandidates(p)) != 0 || p.Found() != len(p.Candidates) {
 		t.Fatalf("harness codex: %+v, skipped %v", p, p.Skipped())
 	}
 	var out strings.Builder
@@ -782,8 +804,8 @@ func TestCursorDatabasePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	p = plan(t, env, st, config.Config{}, Filters{})
-	if p.CursorDatabaseChecked || p.CursorDatabaseOnly != 0 || p.CursorDatabaseUnchecked != CursorUncheckedUnreadable {
-		t.Fatalf("checked %v, only %d, reason %q", p.CursorDatabaseChecked, p.CursorDatabaseOnly, p.CursorDatabaseUnchecked)
+	if p.CursorDatabaseChecked || len(databaseCandidates(p)) != 0 || p.CursorDatabaseUnchecked != CursorUncheckedUnreadable {
+		t.Fatalf("checked %v, %d from the database, reason %q", p.CursorDatabaseChecked, len(databaseCandidates(p)), p.CursorDatabaseUnchecked)
 	}
 	out.Reset()
 	RenderText(&out, p)
@@ -828,15 +850,47 @@ func TestCursorDatabaseSkippedWhenTranscriptsUnreadable(t *testing.T) {
 				return CursorDatabaseResult{}, nil
 			}
 			p := plan(t, env, states{}, config.Config{}, Filters{})
-			if p.CursorDatabaseChecked || p.CursorDatabaseUnchecked != CursorUncheckedTranscriptsUnreadable || p.CursorDatabaseOnly != 0 {
-				t.Fatalf("checked %v, reason %q, only %d", p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, p.CursorDatabaseOnly)
+			if p.CursorDatabaseChecked || p.CursorDatabaseUnchecked != CursorUncheckedTranscriptsUnreadable || len(databaseCandidates(p)) != 0 {
+				t.Fatalf("checked %v, reason %q, %d from the database", p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, len(databaseCandidates(p)))
 			}
 		})
 	}
 	// Unaffected when every folder is readable.
 	env := tr.env()
 	env.CursorDatabase = CursorDatabaseReader(tr.home)
-	if p := plan(t, env, states{}, config.Config{}, Filters{}); !p.CursorDatabaseChecked || p.CursorDatabaseOnly != 1 {
-		t.Fatalf("readable store: checked %v, only %d", p.CursorDatabaseChecked, p.CursorDatabaseOnly)
+	if p := plan(t, env, states{}, config.Config{}, Filters{}); !p.CursorDatabaseChecked || len(databaseCandidates(p)) != 1 {
+		t.Fatalf("readable store: checked %v, %d from the database", p.CursorDatabaseChecked, len(databaseCandidates(p)))
+	}
+}
+
+// TestCursorDatabasePlanLive plans with Cursor running: the chats are read
+// from one snapshot in the per-user temporary directory, which is gone when
+// the plan is made, and nothing next to the database changes.
+func TestCursorDatabasePlanLive(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("TMPDIR", temp)
+	tr := newTree(t)
+	path := CursorStateDatabase(tr.home)
+	w := startCursorWriter(t, path, true)
+	w.do("full:one", "full:two")
+	dir := filepath.Dir(path)
+	before := snapshotDir(t, dir)
+	env := tr.env()
+	env.CursorDatabase = CursorDatabaseReader(tr.home)
+	p := plan(t, env, states{}, config.Config{}, Filters{})
+	got := databaseCandidates(p)
+	if !p.CursorDatabaseChecked || len(got) != 2 {
+		t.Fatalf("checked %v (%q), %+v", p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, got)
+	}
+	for _, c := range got {
+		// Read whole (it has a size) and filtered; it names no workspace.
+		if c.Bytes == 0 || c.Skip != SkipProjectUnknown {
+			t.Fatalf("%+v", c)
+		}
+	}
+	assertUnchanged(t, dir, before)
+	entries, err := os.ReadDir(filepath.Join(temp, fmt.Sprintf("agent-archive-cursor-%d", os.Getuid())))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("snapshots left after the plan: %v %v", entries, err)
 	}
 }

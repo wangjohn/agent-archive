@@ -5,7 +5,7 @@ Backfill imports every session found on this Mac into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
 
 PROJECT                                CLAUDE  CODEX  CURSOR  TOTAL
-~/agent-archive                             2      1       1      4  already included
+~/agent-archive                             2      1       2      5  already included
 ~/levenshtein                               3      –       –      3  will be added
 ~/personal-website                          –      –       1      1  will be added
 
@@ -14,7 +14,7 @@ Claude desktop scratch chats                2      –       –      2  will be
   Chats started without a folder. New ones will be captured too.
 ~/old-notes (folder no longer exists)       1      –       –      1  will be added
 
-Total: 11 sessions (plus 2 subagent transcripts), 7 KB,
+Total: 12 sessions (plus 2 subagent transcripts), 8 KB,
        started 2026-09-17 to 2026-09-22.
 
 Not imported:
@@ -23,7 +23,6 @@ Not imported:
    2  run from temporary directories            add --include-temp
    1  Cursor chat whose project could not be determined
    1  with no conversation
-   1  Cursor chat stored only in Cursor's database (a later release)
 
 If you continue:
   • 4 projects are added, and new Claude Code sessions in them are captured.
@@ -32,13 +31,13 @@ If you continue:
     Choose `edit` to keep them longer.
   • Undo any time with `agent-archive backfill undo`.
 
-Import 11 sessions from 5 projects? [y/N/edit] Retention applies to every session in the archive, not only these.
+Import 12 sessions from 5 projects? [y/N/edit] Retention applies to every session in the archive, not only these.
 Keep sessions for how many days? [90]: 
 Backfill imports every session found on this Mac into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
 
 PROJECT                                CLAUDE  CODEX  CURSOR  TOTAL
-~/agent-archive                             2      1       1      4  already included
+~/agent-archive                             2      1       2      5  already included
 ~/levenshtein                               3      –       –      3  will be added
 ~/personal-website                          –      –       1      1  will be added
 
@@ -47,7 +46,7 @@ Claude desktop scratch chats                2      –       –      2  will be
   Chats started without a folder. New ones will be captured too.
 ~/old-notes (folder no longer exists)       1      –       –      1  will be added
 
-Total: 11 sessions (plus 2 subagent transcripts), 7 KB,
+Total: 12 sessions (plus 2 subagent transcripts), 8 KB,
        started 2026-09-17 to 2026-09-22.
 
 Not imported:
@@ -56,7 +55,6 @@ Not imported:
    2  run from temporary directories            add --include-temp
    1  Cursor chat whose project could not be determined
    1  with no conversation
-   1  Cursor chat stored only in Cursor's database (a later release)
 
 If you continue:
   • 4 projects are added, and new Claude Code sessions in them are captured.
@@ -65,7 +63,7 @@ If you continue:
     Choose `edit` to keep them longer.
   • Undo any time with `agent-archive backfill undo`.
 
-Import 11 sessions from 5 projects? [y/N/edit] Added 4 projects. Registered 11 sessions and 2 subagent transcripts as import 2026-09-23-1.
+Import 12 sessions from 5 projects? [y/N/edit] Added 4 projects. Registered 12 sessions and 2 subagent transcripts as import 2026-09-23-1.
 The background collector uploads them. Run agent-archive status to follow it.
 See them with `agent-archive list --imported`.
 Undo with `agent-archive backfill undo 2026-09-23-1`.

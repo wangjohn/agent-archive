@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -163,7 +164,9 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 //     later than AdmittedAt. Discovery read every transcript before the
 //     import was stamped, and nothing in the archive writes to one, so only
 //     the app did. This covers apps without hooks, hooks whose payload left
-//     no evidence, and content not yet uploaded.
+//     no evidence, and content not yet uploaded. For a chat read from
+//     Cursor's database, which has no file of its own, it is the chat's
+//     lastUpdatedAt, read in place from the database under env.Home.
 //   - Hook evidence other than subagent links, waiting in a request, built
 //     into a pending publication, or already published. Backfill records
 //     none (its links are archive-generated, provenance hook:subagent-link),
@@ -173,6 +176,12 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 // when its subagents publish (a link-only change), and a parser upgrade
 // republishes everything, neither of which is a resume.
 func resumedSinceImport(env Environment, store *collector.LocalStore, reg archive.SessionRegistration, req collector.Request) (bool, error) {
+	if reg.SourceKind == archive.SourceKindCursorSQLite && !reg.AdmittedAt.IsZero() {
+		sig, err := cursorstore.ReadSignature(context.Background(), CursorStateDatabase(env.Home), reg.SourceKey)
+		if err == nil && sig.LastUpdatedAt > reg.AdmittedAt.UnixMilli() {
+			return true, nil
+		}
+	}
 	if reg.TranscriptPath != "" && !reg.AdmittedAt.IsZero() {
 		if info, err := env.stat(reg.TranscriptPath); err == nil && info.ModTime().After(reg.AdmittedAt) {
 			return true, nil

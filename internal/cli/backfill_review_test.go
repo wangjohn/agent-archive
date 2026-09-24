@@ -245,7 +245,7 @@ func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
 	}
 	parents, _ := importRegistrations(t, f.data, firstImport)
 	b, _ = loadBatch(t, f.data, firstImport)
-	if len(parents) != 11 || len(b.Sessions) != 11 || len(b.Subagents) != 2 || b.CompletedAt == nil {
+	if len(parents) != 12 || len(b.Sessions) != 12 || len(b.Subagents) != 2 || b.CompletedAt == nil {
 		t.Fatalf("%d registered, batch %+v", len(parents), b)
 	}
 }
@@ -263,11 +263,11 @@ func TestBackfillCompletesInterruptedImportWithNothingLeft(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, code := f.importRun(t, nil, false, "--yes")
-	if code != 0 || !strings.Contains(out, "Nothing to import.") || !strings.Contains(out, "Import "+firstImport+", which was interrupted, is complete: 11 sessions registered.") {
+	if code != 0 || !strings.Contains(out, "Nothing to import.") || !strings.Contains(out, "Import "+firstImport+", which was interrupted, is complete: 12 sessions registered.") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
 	b, _ = loadBatch(t, f.data, firstImport)
-	if b.CompletedAt == nil || len(b.Sessions) != 11 {
+	if b.CompletedAt == nil || len(b.Sessions) != 12 {
 		t.Fatalf("batch %+v", b)
 	}
 	// Other filters would not have continued it, so they leave it alone.
@@ -300,7 +300,7 @@ func TestBackfillInterruptedRegistration(t *testing.T) {
 	}
 	partial, _ := importRegistrations(t, f.data, firstImport)
 	b, _ := loadBatch(t, f.data, firstImport)
-	if b.CompletedAt != nil || len(partial) == 0 || len(partial) == 11 || len(b.Sessions) != len(partial) {
+	if b.CompletedAt != nil || len(partial) == 0 || len(partial) == 12 || len(b.Sessions) != len(partial) {
 		t.Fatalf("%d registered, batch %+v", len(partial), b)
 	}
 
@@ -310,7 +310,7 @@ func TestBackfillInterruptedRegistration(t *testing.T) {
 		t.Fatalf("rerun: %s", errOut)
 	}
 	b, _ = loadBatch(t, f.data, firstImport)
-	if b.CompletedAt == nil || len(b.Sessions) != 11 {
+	if b.CompletedAt == nil || len(b.Sessions) != 12 {
 		t.Fatalf("batch %+v", b)
 	}
 }

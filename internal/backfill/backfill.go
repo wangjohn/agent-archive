@@ -44,7 +44,6 @@ const (
 	SkipTooLarge              SkipReason = "too_large"
 	SkipStartUnknown          SkipReason = "start_unknown"
 	SkipStartInFuture         SkipReason = "start_in_future"
-	SkipCursorDatabaseOnly    SkipReason = "cursor_database_only"
 )
 
 // skipOrder is the spec's precedence: the first applicable reason wins.
@@ -53,7 +52,6 @@ var skipOrder = []SkipReason{
 	SkipFilteredOut, SkipExcludedProject, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
 	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIdentityMismatch,
 	SkipEmpty, SkipUnsafeFormat, SkipTooLarge, SkipStartUnknown, SkipStartInFuture,
-	SkipCursorDatabaseOnly,
 }
 
 // ArchiveState is what backfill needs to know about the local archive. The
@@ -90,7 +88,12 @@ const (
 type Candidate struct {
 	Harness         string
 	NativeSessionID string
-	TranscriptPath  string
+	// TranscriptPath is the session's transcript file. A Cursor chat found
+	// only in Cursor's database has none: its SourceKind is
+	// archive.SourceKindCursorSQLite and SourceKey its chat ID.
+	TranscriptPath string
+	SourceKind     archive.SourceKind
+	SourceKey      string
 	// ProjectRoot is where the session is imported, in the spelling it is
 	// registered under: a configured project's own spelling, or the resolved
 	// path. It is set for a skip that has a would-be root (home, temporary,
@@ -207,9 +210,10 @@ type Environment struct {
 	// default reads it from the file system where it is recorded (macOS);
 	// where it is not, or it fails, the modification time is used.
 	FileCreated func(string) (time.Time, error)
-	// CursorDatabase reads the chats in Cursor's database (composerData
-	// entries with messages, not drafts, and not subagents). Nil means not
-	// checked; the CLI uses CursorDatabaseReader.
+	// CursorDatabase lists the chats in Cursor's database (composerData
+	// entries with messages, not drafts, and not subagents) and reads them.
+	// Nil means not checked; the CLI uses CursorDatabaseReader. Undo reads
+	// the database under Home instead (see resumedSinceImport).
 	CursorDatabase func(ctx context.Context) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int

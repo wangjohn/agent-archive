@@ -93,7 +93,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 	registration := backfill.Registration{
 		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
-		MaxHoldSteps: backfillHoldSteps,
+		MaxHoldSteps: backfillHoldSteps, CursorDatabase: env.cursorDatabase(),
 		AfterHold: func(sessions, subagents []string) error {
 			batch.AddSessions(sessions, subagents)
 			if err := backfill.SaveBatch(home, batch); err != nil {
