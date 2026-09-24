@@ -88,6 +88,11 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if *imported && *hookCaptured {
 		return fs.usageError("choose one of --imported and --hook-captured")
 	}
+	canonical, ok := harnessFlag(*harness)
+	if !ok {
+		return fs.usageError("%s", harnessFlagError(*harness))
+	}
+	*harness = canonical
 	if *skillSHA256 != "" && !validLowerSHA256(*skillSHA256) {
 		return fs.usageError("--skill-sha256 must be exactly 64 lowercase hexadecimal characters")
 	}
@@ -171,6 +176,24 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	return 0
 }
 
+// harnessFlag checks a --harness value and returns its canonical name, as
+// archived metadata records it ("claude-code" is Claude). An empty value
+// means no filter.
+func harnessFlag(value string) (string, bool) {
+	if value == "" {
+		return "", true
+	}
+	switch name := canonicalHarness(value); name {
+	case "claude", "codex", "cursor":
+		return name, true
+	}
+	return "", false
+}
+
+func harnessFlagError(value string) string {
+	return fmt.Sprintf("--harness must be claude, codex, or cursor, not %q", value)
+}
+
 // listSchemaVersion versions the `list --json` document.
 const listSchemaVersion = 1
 
@@ -252,6 +275,11 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if sessionID == "" {
 		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
 	}
+	canonical, ok := harnessFlag(*harness)
+	if !ok {
+		return fs.usageError("%s", harnessFlagError(*harness))
+	}
+	*harness = canonical
 
 	store, found, err := openReadOnlyStore(env)
 	if err != nil {

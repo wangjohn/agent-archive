@@ -28,7 +28,7 @@ type appStatus struct {
 	CapturedLocally   bool      `json:"captured_locally"`
 	Published         bool      `json:"published"`
 	ReadBackVerified  bool      `json:"read_back_verified"`
-	VerifiedAt        time.Time `json:"verified_at,omitempty"`
+	VerifiedAt        time.Time `json:"verified_at,omitzero"`
 	VerificationState string    `json:"verification_state"`
 	// VerificationDetail explains a read-back that has not succeeded yet for
 	// the current publication: the last error, attempts so far, and when the
@@ -49,7 +49,7 @@ type appStatus struct {
 	Installed               bool      `json:"installed"`
 	InstalledVersion        string    `json:"installed_version,omitempty"`
 	VersionSource           string    `json:"installed_version_source,omitempty"`
-	VersionObservedAt       time.Time `json:"installed_version_observed_at,omitempty"`
+	VersionObservedAt       time.Time `json:"installed_version_observed_at,omitzero"`
 	VersionKind             string    `json:"installed_version_kind,omitempty"`
 	VersionState            string    `json:"installed_version_state"`
 	VersionSupport          string    `json:"installed_version_support"`
@@ -67,7 +67,7 @@ type appStatus struct {
 	Name            string    `json:"name"`
 	State           string    `json:"state"`
 	Sessions        int       `json:"sessions"`
-	LastPublishedAt time.Time `json:"last_published_at,omitempty"`
+	LastPublishedAt time.Time `json:"last_published_at,omitzero"`
 }
 
 type projectCaptureStatus struct {
@@ -82,7 +82,7 @@ type projectCaptureStatus struct {
 	PublishedSessions int       `json:"published_sessions"`
 	VerifiedSessions  int       `json:"verified_sessions"`
 	VerificationState string    `json:"verification_state"`
-	VerifiedAt        time.Time `json:"verified_at,omitempty"`
+	VerifiedAt        time.Time `json:"verified_at,omitzero"`
 }
 type statusView struct {
 	PrivacyEvidence storage.PrivacyReport `json:"privacy_evidence"`
@@ -95,13 +95,13 @@ type statusView struct {
 	Storage string `json:"storage,omitempty"`
 	// StorageVerifiedAt is when setup's storage check (write, read, list,
 	// and delete of a probe object) last passed for this configuration.
-	StorageVerifiedAt time.Time `json:"storage_verified_at,omitempty"`
+	StorageVerifiedAt time.Time `json:"storage_verified_at,omitzero"`
 	// StorageAccessConfirmedAt is the latest confirmation that this
 	// destination is reachable with the configured credentials: setup's
 	// check, or the collector's last verified storage health for the same
 	// configuration (its access probe or a pass that uploaded).
 	// StorageAccessConfirmedBy names which: "setup" or "collector".
-	StorageAccessConfirmedAt time.Time           `json:"storage_access_confirmed_at,omitempty"`
+	StorageAccessConfirmedAt time.Time           `json:"storage_access_confirmed_at,omitzero"`
 	StorageAccessConfirmedBy string              `json:"storage_access_confirmed_by,omitempty"`
 	Privacy                  string              `json:"privacy"`
 	Background               string              `json:"background"`

@@ -577,7 +577,7 @@ func (s *Store) RemovePending(id string) error {
 type Status struct {
 	SessionIssues   map[string]string `json:"session_issues,omitempty"`
 	LastScanAt      time.Time         `json:"last_scan_at"`
-	LastPublishedAt time.Time         `json:"last_published_at,omitempty"`
+	LastPublishedAt time.Time         `json:"last_published_at,omitzero"`
 	PendingCount    int               `json:"pending_count"`
 	LastError       string            `json:"last_error,omitempty"`
 	// QuarantinedFiles lists, relative to the archive directory, the local

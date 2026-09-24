@@ -168,8 +168,14 @@ func TestRunRateLimitsRepublishAndReusesFirstDetectedCapturedAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Skipped) != 1 || len(result.Published) != 0 {
-		t.Fatalf("expected rate-limited skip, got %#v", result)
+	// Held for the interval: reported as waiting, due one interval after
+	// the last publication, and not as unchanged.
+	if len(result.Waiting) != 1 || len(result.Skipped) != 0 || len(result.Published) != 0 || !result.NextReadyAt.Equal(t0.Add(3*time.Minute)) {
+		t.Fatalf("expected a publication waiting for the interval, got %#v", result)
+	}
+	// A pass that finds it still waiting (the resume path) reports the same.
+	if again, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return tDetected.Add(time.Minute) }, MinUploadInterval: 3 * time.Minute}); err != nil || len(again.Waiting) != 1 || len(again.Skipped) != 0 || !again.NextReadyAt.Equal(t0.Add(3*time.Minute)) {
+		t.Fatalf("still-waiting pass: %#v err=%v", again, err)
 	}
 	// Metadata in storage must still be the original, unpublished candidate.
 	unchanged := fetchMetadata(t, store, "codex", "session-1")
@@ -319,8 +325,8 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 	tDetected := t0.Add(30 * time.Second)
 	if result, err := Run(context.Background(), local1, store, Options{MachineID: "m", Now: func() time.Time { return tDetected }}); err != nil {
 		t.Fatal(err)
-	} else if len(result.Skipped) != 1 {
-		t.Fatalf("expected rate-limited skip before restart: %#v", result)
+	} else if len(result.Waiting) != 1 {
+		t.Fatalf("expected a publication waiting before restart: %#v", result)
 	}
 
 	// Simulate a process restart: a fresh Store handle over the same
@@ -474,7 +480,7 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 			t.Fatal(err)
 		}
 		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return at }, MinUploadInterval: 3 * time.Minute})
-		if err != nil || len(result.Published) != 0 || len(result.Skipped) != 1 {
+		if err != nil || len(result.Published) != 0 || len(result.Waiting) != 1 {
 			t.Fatalf("prompt %d forced an upload inside the interval: result=%#v err=%v", i, result, err)
 		}
 	}
