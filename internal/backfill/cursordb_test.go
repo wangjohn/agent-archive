@@ -387,10 +387,17 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 		"_v not a number":        {value(composerJSON("b", 1, map[string]any{"_v": "3"})), CursorUncheckedUnknownFormat},
 		"_v zero":                {value(composerJSON("b", 1, map[string]any{"_v": 0})), CursorUncheckedUnknownFormat},
 		// A WAL database with one side file and not the other can't be
-		// read without SQLite creating the missing one.
+		// read without SQLite creating the missing one. (An empty -wal
+		// alone is the exception; see TestCursorDatabaseReaderStrayWAL.)
 		"wal without shm": {func(t *testing.T, path string) {
 			writeCursorDB(t, path, true, good)
-			if err := os.WriteFile(path+"-wal", nil, 0o644); err != nil {
+			if err := os.WriteFile(path+"-wal", []byte("frames"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, CursorUncheckedUnreadable},
+		"shm without wal": {func(t *testing.T, path string) {
+			writeCursorDB(t, path, true, good)
+			if err := os.WriteFile(path+"-shm", nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}, CursorUncheckedUnreadable},
@@ -416,6 +423,25 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 			assertUnchanged(t, dir, before)
 		})
 	}
+}
+
+// TestCursorDatabaseReaderStrayWAL: the empty -wal SQLite can leave when
+// Cursor quits just as a reader opens the database has no frames to replay,
+// so the database is counted as closed, and left exactly as it was, rather
+// than being unreadable until Cursor next runs.
+func TestCursorDatabaseReaderStrayWAL(t *testing.T) {
+	home := t.TempDir()
+	path := CursorStateDatabase(home)
+	writeCursorDB(t, path, true, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
+	if err := os.WriteFile(path+"-wal", nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(path)
+	before := snapshotDir(t, dir)
+	if res := readCursor(t, home); !res.Checked || !reflect.DeepEqual(chatIDs(res), []string{"a"}) {
+		t.Fatalf("%+v", res)
+	}
+	assertUnchanged(t, dir, before)
 }
 
 // TestCursorDatabaseReaderChangedDuringRead: with Cursor closed the database

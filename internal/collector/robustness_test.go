@@ -255,7 +255,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 	opts := Options{MachineID: "m"}
 	check := func(t *testing.T, local *LocalStore, reg archive.SessionRegistration, o Options) bool {
 		t.Helper()
-		unchanged, err := unchangedSinceLastScan(local, reg, o)
+		unchanged, err := unchangedSinceLastScan(context.Background(), local, reg, o)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -730,7 +730,7 @@ func TestUnchangedRewrittenTranscriptLeavesNoSignature(t *testing.T) {
 	if _, found, _ := local.loadScanSignature(reg.ArchiveSessionID); found {
 		t.Fatal("a still-blocked session was signed as settled")
 	}
-	if unchanged, _ := unchangedSinceLastScan(local, reg, Options{MachineID: "m"}); unchanged {
+	if unchanged, _ := unchangedSinceLastScan(context.Background(), local, reg, Options{MachineID: "m"}); unchanged {
 		t.Fatal("a recorded gap would be skipped on a stat")
 	}
 }
