@@ -520,8 +520,7 @@ func (u *upload) draw(newline bool) {
 // import with its ID, start, sessions, projects added, and upload state. It
 // reads local state only.
 func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
-	if len(args) != 0 {
-		fmt.Fprintf(stderr, "agent-archive: backfill history: unexpected argument %q\n", args[0])
+	if !newCommandFlags("backfill history", stderr).parseFlagsOnly(args) {
 		return 2
 	}
 	home, err := env.readHome()

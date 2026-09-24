@@ -22,10 +22,10 @@ import (
 // explicit destructive option and its separate confirmation (or --yes) are
 // supplied.
 func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("uninstall")
+	fs := newCommandFlags("uninstall", stderr)
 	purge := fs.Bool("delete-local-data", false, "also delete owned local files and stored credentials")
 	yes := fs.Bool("yes", false, "skip the confirmations")
-	if !parseCommandFlags(fs, args, stderr) {
+	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
 	if !*yes && !env.isTerminal(stdin) {

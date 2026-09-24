@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"sort"
@@ -71,8 +70,7 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, bool, error) {
 // metadata fields, so its output can never contain transcript content. It
 // reuses unchanged sidecars from the local metadata cache unless --no-cache.
 func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("list", stderr)
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
 	model := fs.String("model", "", "only sessions that requested or observed this model")
 	skill := fs.String("skill", "", "only sessions involving this skill (see --skill-usage)")
@@ -83,20 +81,14 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "agent-archive: list: unexpected argument %q\n", fs.Arg(0))
+	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
 	if *imported && *hookCaptured {
-		fmt.Fprintln(stderr, "agent-archive: list: choose one of --imported and --hook-captured")
-		return 2
+		return fs.usageError("choose one of --imported and --hook-captured")
 	}
 	if *skillSHA256 != "" && !validLowerSHA256(*skillSHA256) {
-		fmt.Fprintln(stderr, "agent-archive: list: --skill-sha256 must be exactly 64 lowercase hexadecimal characters")
-		return 2
+		return fs.usageError("--skill-sha256 must be exactly 64 lowercase hexadecimal characters")
 	}
 	// The value is checked before the --skill/--skill-sha256 requirement so
 	// that a misspelled value is reported as the misspelling it is, rather
@@ -105,12 +97,10 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	switch usage {
 	case reader.SkillUsageUsed, reader.SkillUsageAvailable, reader.SkillUsageEligibleNoUse:
 	default:
-		fmt.Fprintf(stderr, "agent-archive: list: --skill-usage must be used, available, or eligible_no_use, not %q\n", *skillUsage)
-		return 2
+		return fs.usageError("--skill-usage must be used, available, or eligible_no_use, not %q", *skillUsage)
 	}
 	if usage != reader.SkillUsageUsed && *skill == "" && *skillSHA256 == "" {
-		fmt.Fprintln(stderr, "agent-archive: list: --skill-usage requires --skill or --skill-sha256")
-		return 2
+		return fs.usageError("--skill-usage requires --skill or --skill-sha256")
 	}
 	// No parser version records both a complete eligible-skill set and
 	// complete use observation, so nothing in the bucket can carry the
@@ -126,8 +116,7 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if *since != "" {
 		from, err := parseSince(*since, env.now())
 		if err != nil {
-			fmt.Fprintf(stderr, "agent-archive: list: --since: %v\n", err)
-			return 2
+			return fs.usageError("--since: %v", err)
 		}
 		filter.From = from
 	}
@@ -214,26 +203,16 @@ func validLowerSHA256(value string) bool {
 // is printed only when the user passes --normalized explicitly, keeping the
 // spec's rule that nothing prints transcript contents unless asked.
 func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := flag.NewFlagSet("show", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
 	normalized := fs.Bool("normalized", false, "also download, verify, and print the normalized conversation view (this prints transcript content)")
-	if err := fs.Parse(args); err != nil {
+	// Flags may follow SESSION_ID too (`show SESSION_ID --normalized`).
+	sessionID, ok := fs.parseWithArgument(args)
+	if !ok {
 		return 2
 	}
-	if fs.NArg() == 0 {
-		fmt.Fprintln(stderr, "agent-archive: show: an archive session ID is required (see `agent-archive list`)")
-		return 2
-	}
-	sessionID := fs.Arg(0)
-	// Accept flags after the positional ID too (`show ID --normalized`),
-	// which the flag package otherwise stops parsing at.
-	if err := fs.Parse(fs.Args()[1:]); err != nil {
-		return 2
-	}
-	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "agent-archive: show: unexpected argument %q\n", fs.Arg(0))
-		return 2
+	if sessionID == "" {
+		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
 	}
 
 	store, found, err := openReadOnlyStore(env)
@@ -353,15 +332,22 @@ func printJSON(stdout, stderr io.Writer, value any) int {
 	return 0
 }
 
-// parseSince accepts a calendar date (2026-01-31, taken as midnight UTC), an
-// RFC 3339 time, or an age relative to now written as a Go duration (12h,
-// 90m) or in whole days (7d).
+// parseSince is list's --since: parseTimeArg with a date taken as midnight
+// UTC, as metadata capture times are recorded.
 func parseSince(value string, now time.Time) (time.Time, error) {
+	return parseTimeArg(value, now, time.UTC)
+}
+
+// parseTimeArg reads the time forms every command's --since (and backfill's
+// --until) accepts: a calendar date (2026-01-31, midnight in loc), an RFC
+// 3339 time, or an age relative to now written as a Go duration (12h, 90m)
+// or in whole days (7d).
+func parseTimeArg(value string, now time.Time, loc *time.Location) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t, nil
 	}
-	if t, err := time.Parse("2006-01-02", value); err == nil {
+	if t, err := time.ParseInLocation("2006-01-02", value, loc); err == nil {
 		return t, nil
 	}
 	if strings.HasSuffix(value, "d") {

@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"sort"
@@ -32,26 +31,12 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		fmt.Fprintf(stderr, "agent-archive: backfill undo: "+format+"\n", args...)
 		return 1
 	}
-	fs := flag.NewFlagSet("backfill undo", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("backfill undo", stderr)
 	project := fs.String("project", "", "only undo this project's sessions")
 	yes := fs.Bool("yes", false, "skip the confirmation")
 	// The ID may come before or after the flags.
-	id := ""
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		id, args = args[0], args[1:]
-	}
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() > 0 && id == "" {
-		id = fs.Arg(0)
-		if err := fs.Parse(fs.Args()[1:]); err != nil {
-			return 2
-		}
-	}
-	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "agent-archive: backfill undo: unexpected argument %q\n", fs.Arg(0))
+	id, ok := fs.parseWithArgument(args)
+	if !ok {
 		return 2
 	}
 
