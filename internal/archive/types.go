@@ -27,8 +27,13 @@ const (
 	// transcript, and bounds it by MaxRecordBytes instead of 2 MB. JSONL
 	// output is unchanged. Filter 8 adds the cursor-composer format, a chat
 	// read from Cursor's database (CursorAdapter.FilterComposer); every other
-	// format's output is unchanged. See docs/agent-archive-privacy.md.
-	FilterVersion = "8"
+	// format's output is unchanged. Filter 9 redacts credential assignments
+	// by snake_case, SCREAMING_CASE, camelCase, and quoted names (value only),
+	// drops base64 image, document, and file blocks, sanitizes structured
+	// Cursor tool results before encoding them, keeps skill snapshots inside
+	// their skill root, and truncates on a UTF-8 boundary. See
+	// docs/agent-archive-privacy.md.
+	FilterVersion = "9"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

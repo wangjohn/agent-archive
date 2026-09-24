@@ -56,7 +56,7 @@ widget/size.go
   ```
 
 ### 2 · Person
-> Use [REDACTED] when you rerun.
+> Use token = [REDACTED] when you rerun.
 
 **Agent:** Tests pass now. Next: add a regression test for Size.
 

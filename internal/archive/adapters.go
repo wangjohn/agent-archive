@@ -50,7 +50,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.8.0"
+const adapterVersion = "0.9.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -286,20 +286,105 @@ func injectedInstructionEnd(value string, from int, tag string) int {
 	return pos
 }
 
-// sensitiveValue matches credential assignments and the well-known key
-// prefixes filter 2 already redacted. Its assignment form is deliberately
-// broad and is a known false-positive class: ordinary code such as
-// `token = parse(x)` matches it. See docs/agent-archive-privacy.md.
-var sensitiveValue = regexp.MustCompile(`(?i)(?:\bauthorization\b\s*:\s*bearer\s+[^\s,;]+|\b(?:api[_-]?key|access[_-]?key|secret|password|authorization|bearer|token)\b\s*[=:]\s*[^\s,;]+|\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{12,}\b)`)
+// A credential assignment is a name that says it holds a credential, a
+// separator, and a value: `DB_PASSWORD=…`, `export AWS_SECRET_ACCESS_KEY=…`,
+// `"api_key": "…"`, `password: …`, `accessToken = "…"`, `--token=…`. Filter 8
+// and earlier required the trigger word to stand alone (`\bpassword\b`), and
+// since `_` is a word character that missed every snake_case or
+// SCREAMING_CASE name, and a quote between the name and the separator missed
+// every JSON key. The pattern is built from the named parts below. It is
+// case-insensitive throughout. Only the value is replaced; the name and
+// separator are kept so a reader can see which credential was there.
+const (
+	// credentialWords are the words that mark a name as holding a
+	// credential. `pwd` is deliberately absent: PWD is the shell's working
+	// directory.
+	credentialWords = `api[_.-]?key|access[_.-]?key|private[_.-]?key|secret|password|passwd|passphrase|token|authorization|bearer`
+	// credentialName is a name ending in a credential word, optionally followed
+	// by `key` or `access_key` (SECRET_KEY, AWS_SECRET_ACCESS_KEY). Anything
+	// may be glued on before the word (DB_PASSWORD, accessToken, PGPASSWORD,
+	// spring.datasource.password, --password), but nothing after it except
+	// that suffix, so `tokens`, `max_tokens`, `secretary`, `password_policy`,
+	// and `TOKEN_URL` are not credential names.
+	credentialName = `[a-z0-9_.-]*?(?:` + credentialWords + `)(?:[_.-]?(?:access[_.-]?)?key)?`
+	// credentialLead is what may precede a name: the start of the string or a
+	// character that cannot be part of one. It keeps a match from starting in
+	// the middle of an identifier.
+	credentialLead = `(?:^|[^a-z0-9_.-])`
+	// credentialQuote is an optional quote around a name, as in JSON, Python,
+	// or JSON escaped inside a string (`\"password\"`).
+	credentialQuote = `(?:\\?["'])?`
+	// credentialSeparator is `=`, `:`, `:=`, or `=>`, with spaces or tabs
+	// around it but not newlines, so a YAML key with its value on the next
+	// line does not swallow the line after it.
+	credentialSeparator = `[ \t]*(?::=|=>|=|:)[ \t]*`
+	// credentialScheme is an HTTP authorization scheme kept before the value
+	// (`Authorization: Bearer [REDACTED]`).
+	credentialScheme = `(?:(?:bearer|basic|digest|token)[ \t]+)?`
+	// credentialQuotedValue is a value in quotes, up to its closing quote, or
+	// to the end of the line when it has none: JSON escaped inside a string
+	// (`\"…\"`), double quotes (with backslash escapes), or single quotes.
+	credentialQuotedValue = `\\"(?:[^"\\\n]|\\[^"\n])*(?:\\")?|"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`
+	// credentialValue is a quoted value or an unquoted one, which runs up to
+	// whitespace, `,`, `;`, or a quote, so a value inside a quoted string
+	// (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`) leaves the closing quote. An
+	// unquoted value cannot begin with `=`, so `token == nil` is a
+	// comparison, not an assignment.
+	credentialValue = credentialQuotedValue + `|[^\s,;"'=][^\s,;"']*`
+	// credentialFlagValue is the value after a space-separated command-line
+	// flag (`--token abc`); one beginning with `-` is the next flag.
+	credentialFlagValue = credentialQuotedValue + `|[^\s,;"'=-][^\s,;"']*`
+)
+
+// credentialAssignment matches `name<sep>value` for a credential name, and
+// credentialFlag a `--name value` command-line flag. Both capture the value
+// as "value" so redactCredentialValues replaces only it. Their assignment
+// form is deliberately broad and is a known false-positive class: ordinary
+// code such as `token = parse(x)` matches it. See docs/agent-archive-privacy.md.
+var (
+	credentialAssignment = regexp.MustCompile(`(?i)` + credentialLead + credentialQuote + credentialName + credentialQuote + credentialSeparator + credentialScheme + `(?P<value>` + credentialValue + `)`)
+	credentialFlag       = regexp.MustCompile(`(?i)(?:^|[ \t])--` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`)
+)
 
 // credentialShape matches credentials recognizable by their own structure
 // rather than by an assignment around them: a PEM private key block (from
 // its BEGIN line through the next END line, or to the end of the string when
 // the END line is missing), a JWT (three base64url segments, the first
 // beginning with `eyJ`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`,
-// `ghr_`, `github_pat_`), and Slack tokens (`xox[baprs]-`). Anthropic and
-// OpenAI style `sk-` keys are covered by sensitiveValue.
-var credentialShape = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*-----|.*)|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}`)
+// `ghr_`, `github_pat_`), Slack tokens (`xox[baprs]-`), AWS access key IDs
+// (`AKIA…`), and Anthropic and OpenAI style `sk-` keys.
+var credentialShape = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*-----|.*)|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{12,}\b`)
+
+// redactCredentialValues replaces the "value" group of every match of pattern
+// with [REDACTED], keeping a quoted value's quotes, and reports whether
+// anything was replaced.
+func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool) {
+	matches := pattern.FindAllStringSubmatchIndex(value, -1)
+	if matches == nil {
+		return value, false
+	}
+	group := pattern.SubexpIndex("value")
+	var out strings.Builder
+	last := 0
+	for _, match := range matches {
+		start, end := match[2*group], match[2*group+1]
+		out.WriteString(value[last:start])
+		secret, quote := value[start:end], ""
+		for _, candidate := range []string{`\"`, `"`, "'"} {
+			if strings.HasPrefix(secret, candidate) {
+				quote = candidate
+				break
+			}
+		}
+		out.WriteString(quote + "[REDACTED]")
+		if quote != "" && len(secret) > len(quote) && strings.HasSuffix(secret, quote) {
+			out.WriteString(quote)
+		}
+		last = end
+	}
+	out.WriteString(value[last:])
+	return out.String(), true
+}
 
 // urlUserinfo matches the userinfo of a URL (`scheme://user:pass@host`, or a
 // bare `scheme://user@host`). Only the userinfo is replaced; the scheme and
@@ -308,7 +393,7 @@ var urlUserinfo = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@]+@`)
 
 // redactSensitive applies every value-level credential pattern to one string
 // and reports whether anything was replaced. The narrow structural patterns
-// run before the broad assignment pattern so that, for example, a
+// run before the broad assignment patterns so that, for example, a
 // `x-access-token:…@host` URL keeps its host instead of losing everything
 // after the word "token".
 func redactSensitive(value string) (string, bool) {
@@ -321,11 +406,49 @@ func redactSensitive(value string) (string, bool) {
 		value = credentialShape.ReplaceAllString(value, "[REDACTED]")
 		redacted = true
 	}
-	if sensitiveValue.MatchString(value) {
-		value = sensitiveValue.ReplaceAllString(value, "[REDACTED]")
-		redacted = true
+	for _, pattern := range []*regexp.Regexp{credentialAssignment, credentialFlag} {
+		if replaced, hit := redactCredentialValues(pattern, value); hit {
+			value, redacted = replaced, true
+		}
 	}
 	return value, redacted
+}
+
+// base64DataURL matches a base64 `data:` URL, the form Codex and browser
+// tools use to inline an image or file in a string. The media type is kept;
+// the payload is replaced (see sanitizeValue). Short payloads are left alone.
+var base64DataURL = regexp.MustCompile(`(?i)\bdata:([a-z0-9.+-]+/[a-z0-9.+-]+)?((?:;[a-z0-9.+-]+=[a-z0-9.+-]+)*);base64,[A-Za-z0-9+/_-]{16,}=*`)
+
+// binaryBlockTypes are content-block types that carry an image, a document,
+// or audio rather than text: Claude's `image` and `document` blocks (their
+// `source` is base64 data, a URL, or a file ID) and the OpenAI Responses and
+// Chat Completions input shapes Codex writes. A block of one of these types
+// is dropped whole at any depth, with a binary_content_omitted gap.
+var binaryBlockTypes = map[string]bool{
+	"image": true, "document": true, "input_image": true, "input_file": true,
+	"input_audio": true, "image_url": true,
+}
+
+// binaryContentBlock reports whether an object is a content block carrying
+// binary content: one of binaryBlockTypes, a `file` block with inline data,
+// or any object whose `source` is `{"type": "base64", …}`. The returned
+// detail is a fixed string, never taken from the input.
+func binaryContentBlock(in map[string]any) (string, bool) {
+	kind := strings.ToLower(strings.TrimSpace(firstString(in, "type")))
+	if binaryBlockTypes[kind] {
+		return kind + " block omitted", true
+	}
+	if source, ok := in["source"].(map[string]any); ok && strings.EqualFold(strings.TrimSpace(firstString(source, "type")), "base64") {
+		return "base64 source block omitted", true
+	}
+	if kind == "file" {
+		for _, key := range []string{"source", "data", "file_data"} {
+			if _, present := in[key]; present {
+				return "file block omitted", true
+			}
+		}
+	}
+	return "", false
 }
 
 var allowedKeys = map[string]bool{
@@ -337,7 +460,7 @@ var allowedKeys = map[string]bool{
 	"tool_name": true, "tool_input": true, "tool_output": true, "tool_use": true,
 	"tool_result": true, "call_id": true, "input": true, "output": true, "result": true, "arguments": true,
 	"command": true, "path": true, "query": true, "url": true, "description": true,
-	"status": true, "event_name": true, "turn_id": true, "reasoning_effort": true, "name": true, "items": true, "data": true,
+	"status": true, "event_name": true, "turn_id": true, "reasoning_effort": true, "name": true, "items": true,
 	"sha256": true, "message_id": true, "settings": true, "model_id": true, "discovered": true, "installed": true, "snapshot": true, "source": true,
 	"coverage": true, "skills": true, "redacted": true, "observed_at": true,
 	"model_params": true, "value": true, "cli_version": true, "agent_id": true,
@@ -393,7 +516,7 @@ var booleanFlagKeys = map[string]bool{"ismeta": true, "iscompactsummary": true, 
 // Filter 2 applied allowedKeys recursively inside them, which dropped every
 // Edit old_string/new_string, Agent prompt, Grep pattern, and MCP argument and
 // left tool evidence unusable. Inside these subtrees every argument name is
-// retained; blockedKeys, sensitiveValue redaction, the string cap, and the
+// retained; blockedKeys, value redaction (redactSensitive), the string cap, and the
 // hidden role/channel rules all still apply to the values. Codex's
 // payload.input is covered by the same "input" entry.
 var toolArgumentKeys = map[string]bool{"input": true, "arguments": true, "tool_input": true}
@@ -888,6 +1011,14 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 		state.addGap("hidden_instruction_omitted", state.record, "record omitted")
 		return nil, false
 	}
+	// Filter 9: a pasted screenshot, a PDF, or an image a tool read arrives
+	// as a content block whose data is base64. Its key names pass the
+	// allowlist (type, source), so the block is recognized by shape and
+	// dropped whole, wherever it sits, rather than kept key by key.
+	if detail, binary := binaryContentBlock(in); binary && !state.numericOnly {
+		state.addGap("binary_content_omitted", state.record, detail)
+		return nil, false
+	}
 	out := make(map[string]any)
 	keys := make([]string, 0, len(in))
 	for key := range in {
@@ -1029,14 +1160,20 @@ func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 			}
 			v = stripped
 		}
+		if base64DataURL.MatchString(v) {
+			state.addGap("binary_content_omitted", state.record, "base64 data URL omitted")
+			v = base64DataURL.ReplaceAllString(v, "data:${1}${2};base64,[OMITTED]")
+		}
 		if redacted, hit := redactSensitive(v); hit {
 			state.addGap("sensitive_content_redacted", state.record, "content redacted")
 			v = redacted
 		}
 		const maxTextBytes = 64 * 1024
 		if len(v) > maxTextBytes {
+			// Cut on a character boundary, so a retained string stays valid
+			// UTF-8 (filter 8 could split a multi-byte character).
 			state.addGap("content_truncated", state.record, "content truncated")
-			v = v[:maxTextBytes]
+			v = truncateUTF8(v, maxTextBytes)
 		}
 		return v, true
 	case map[string]any:

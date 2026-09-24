@@ -487,7 +487,7 @@ unavailable-or-expired; one missing child does not block the parent. Links do no
 extend retention. Children are never downloaded recursively.
 
 This adds optional fields to schema version 1 and parser 0.5.0; the current
-filter version is 8, adapter 0.8.0, and parser 0.9.0 (see
+filter version is 9, adapter 0.9.0, and parser 0.9.0 (see
 `docs/agent-archive-privacy.md`).
 Existing bundles remain readable. Claude is fixture-tested;
 real app capture is pending. Codex/Cursor child capture and native skill
