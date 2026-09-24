@@ -291,13 +291,13 @@ func currentSessions(env Env) map[string]bool {
 
 // localTarget builds a handoff target from a registration's transcript.
 func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTarget, error) {
-	bundle, err := collector.ReadLocalBundle(r.home, reg, r.env.now().UTC())
+	bundle, err := collector.ReadLocalBundle(r.ctx, r.home, reg, r.env.now().UTC(), r.env.cursorDatabase())
 	if err != nil {
 		return handoffTarget{}, err
 	}
 	target := handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt}
-	if info, err := os.Stat(reg.TranscriptPath); err == nil {
-		target.lastActivityAt = info.ModTime()
+	if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase()); ok {
+		target.lastActivityAt = at
 	}
 	return target, nil
 }
@@ -411,8 +411,8 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 				continue
 			}
 			active := reg.RegisteredAt
-			if info, err := os.Stat(reg.TranscriptPath); err == nil && reg.TranscriptPath != "" {
-				active = info.ModTime()
+			if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase()); ok {
+				active = at
 			}
 			candidates = append(candidates, candidate{reg, active})
 		}

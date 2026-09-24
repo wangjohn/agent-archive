@@ -588,11 +588,25 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		guardBundle, haveGuard = prevBundle, true
 	}
 	if haveGuard && !nativeEvidenceExtends(guardBundle, candidate) {
-		// Truncated, compacted, or rewritten: the retained snapshot is richer
-		// than what the file now holds, and nothing the collector can do will
-		// change that. Record the gap so later passes are no-ops until the
-		// transcript changes again, rather than an error on every pass.
-		return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonTranscriptRewritten, &candidate)
+		if reg.SourceKind != archive.SourceKindCursorSQLite {
+			// Truncated, compacted, or rewritten: the retained snapshot is
+			// richer than what the file now holds, and nothing the collector
+			// can do will change that. Record the gap so later passes are
+			// no-ops until the transcript changes again, rather than an
+			// error on every pass.
+			return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonTranscriptRewritten, &candidate)
+		}
+		// Cursor rewrites finished messages in its database as a matter of
+		// course (token counts filled in late, an edited prompt, a
+		// checkpoint restore), so a chat that no longer extends what was
+		// published is the chat as it now is, not a damaged copy of it, and
+		// blocking it would stop capturing the chat for good. The new
+		// snapshot replaces the old one, and each replacement is recorded
+		// as a gap, which names no content.
+		supplemental = mergeSupplementalEvidence(supplemental, []archive.SupplementalEvidence{cursorRewriteGap(now)})
+		if candidate, err = archive.NewSourceBundle(reg, adapter, filtered, now, supplemental); err != nil {
+			return outcomeSkipped, fmt.Errorf("build rewritten source bundle: %w", err)
+		}
 	}
 
 	compressed, err := archive.BuildCompressedSource(candidate)

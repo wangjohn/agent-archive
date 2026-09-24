@@ -69,15 +69,23 @@ func (d *cursorDB) put(key, value string) {
 	}
 }
 
-// chat writes chat id with the given message IDs, each with a row.
+// chat writes chat id with the given message IDs, each with a row the
+// composer filter accepts: the person's messages, saying "hi".
 func (d *cursorDB) chat(id string, lastUpdatedAt int64, bubbles ...string) {
+	d.t.Helper()
+	d.chatSaying(id, lastUpdatedAt, "hi", bubbles...)
+}
+
+// chatSaying is chat with every message's text.
+func (d *cursorDB) chatSaying(id string, lastUpdatedAt int64, text string, bubbles ...string) {
 	d.t.Helper()
 	headers := []map[string]any{}
 	for _, b := range bubbles {
 		headers = append(headers, map[string]any{"bubbleId": b, "type": 1})
-		d.put("bubbleId:"+id+":"+b, `{"type":1,"text":"hi"}`)
+		row, _ := json.Marshal(map[string]any{"_v": 3, "bubbleId": b, "type": 1, "text": text, "createdAt": 1767225600000})
+		d.put("bubbleId:"+id+":"+b, string(row))
 	}
-	value, _ := json.Marshal(map[string]any{"_v": 18, "composerId": id, "lastUpdatedAt": lastUpdatedAt, "fullConversationHeadersOnly": headers})
+	value, _ := json.Marshal(map[string]any{"_v": 18, "composerId": id, "createdAt": 1767225600000, "lastUpdatedAt": lastUpdatedAt, "status": "completed", "fullConversationHeadersOnly": headers})
 	d.put("composerData:"+id, string(value))
 }
 
@@ -115,7 +123,8 @@ func run(t *testing.T, local *LocalStore, remote storage.ObjectStore, opts Optio
 }
 
 // settleCursorSession records the scan signature a completed scan of the
-// chat as it is now would leave. Filter is not wired yet, so no pass can.
+// chat as it is now would leave, without a pass, for a state no pass could
+// capture (a composerData value the filter refuses).
 func settleCursorSession(t *testing.T, local *LocalStore, reg archive.SessionRegistration, opts Options) {
 	t.Helper()
 	sig, err := cursorstore.ReadSignature(context.Background(), opts.CursorDatabase, reg.SourceKey)
@@ -136,7 +145,17 @@ func settleCursorSession(t *testing.T, local *LocalStore, reg archive.SessionReg
 	}
 }
 
-func unchanged(t *testing.T, local *LocalStore, reg archive.SessionRegistration, opts Options) bool {
+// advancingClock is a clock that moves an hour on every reading, so no
+// publication is held back by the upload interval.
+func advancingClock() func() time.Time {
+	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	return func() time.Time {
+		now = now.Add(time.Hour)
+		return now
+	}
+}
+
+func unchanged(t *testing.T,local *LocalStore, reg archive.SessionRegistration, opts Options) bool {
 	t.Helper()
 	u, err := unchangedSinceLastScan(context.Background(), local, reg, opts)
 	if err != nil {
@@ -147,16 +166,16 @@ func unchanged(t *testing.T, local *LocalStore, reg archive.SessionRegistration,
 
 // TestCursorSQLiteSourceChangeDetection: with Cursor running, a
 // cursor-sqlite session is read (one copy of the database) only when its
-// chat's Signature changed. Until the composer adapter is wired, that read
-// fails as not wired, which fails neither the pass nor another session, and
-// is remembered at the chat's state: later passes report it again without
+// chat's Signature changed, and published as format cursor-composer. A read
+// the filter refuses fails neither the pass nor another session, and is
+// remembered at the chat's state: later passes report it again without
 // reading, until the chat changes.
 func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 	passes := countSnapshots(t)
 	local := newTestStore(t)
 	db := newCursorDB(t, true)
 	db.chat("chat-1", 1000, "b1", "b2")
-	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: func() time.Time { return time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC) }}
+	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 
 	reg := cursorRegistration("cursor-session", "chat-1")
 	if err := local.SaveRegistration(reg); err != nil {
@@ -168,29 +187,43 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 	}
 	remote := storage.NewMemoryStore()
 
-	// Never scanned: the chat is read, and the not-wired error is recorded
-	// for it alone.
+	// Never scanned: the chat is read and published, beside the file.
 	result, copies := run(t, local, remote, opts, passes)
-	if !errors.Is(result.Errors[reg.ArchiveSessionID], errCursorSourceNotWired) || copies != 1 {
-		t.Fatalf("errors %v, %d copies", result.Errors, copies)
+	if len(result.Errors) != 0 || len(result.Published) != 2 || copies != 1 {
+		t.Fatalf("%+v, %d copies", result, copies)
 	}
-	if len(result.Published) != 1 || result.Published[0] != file.ArchiveSessionID || result.Errors[file.ArchiveSessionID] != nil {
-		t.Fatalf("the file session was held up: %+v", result)
+	if bundle, _, found, _ := local.LoadLastPublished(reg.ArchiveSessionID); !found || bundle.Capture.SourceFormat != "cursor-composer" || len(bundle.NativeRecords) != 3 {
+		t.Fatalf("published %v: %+v", found, bundle.Capture)
 	}
 
-	// Unchanged: the failure is reported again, without a read.
+	// Unchanged: skipped without a read.
+	for i := 0; i < 2; i++ {
+		result, copies = run(t, local, remote, opts, passes)
+		if len(result.Errors) != 0 || !contains(result.Skipped, reg.ArchiveSessionID) || copies != 0 {
+			t.Fatalf("pass %d: %+v, %d copies", i, result, copies)
+		}
+	}
+	// A new message: read and published again.
+	db.chat("chat-1", 1000, "b1", "b2", "b3")
+	result, copies = run(t, local, remote, opts, passes)
+	if len(result.Errors) != 0 || !contains(result.Published, reg.ArchiveSessionID) || copies != 1 {
+		t.Fatalf("%+v, %d copies", result, copies)
+	}
+
+	// A message the filter refuses (an unknown format version): the failure
+	// is reported for the chat alone, then again without a read.
+	db.put("bubbleId:chat-1:b4", `{"_v":99,"bubbleId":"b4","type":1,"text":"new"}`)
+	db.put("composerData:chat-1", `{"_v":18,"composerId":"chat-1","lastUpdatedAt":1500,"fullConversationHeadersOnly":[{"bubbleId":"b1"},{"bubbleId":"b2"},{"bubbleId":"b3"},{"bubbleId":"b4"}]}`)
+	result, copies = run(t, local, remote, opts, passes)
+	if !errors.Is(result.Errors[reg.ArchiveSessionID], archive.ErrUnsafeSourceFormat) || copies != 1 {
+		t.Fatalf("errors %v, %d copies", result.Errors, copies)
+	}
 	for i := 0; i < 2; i++ {
 		result, copies = run(t, local, remote, opts, passes)
 		var again errUnchangedSinceFailure
-		if !errors.As(result.Errors[reg.ArchiveSessionID], &again) || !strings.Contains(again.Error(), errCursorSourceNotWired.Error()) || copies != 0 {
+		if !errors.As(result.Errors[reg.ArchiveSessionID], &again) || !strings.Contains(again.Error(), "unsafe") || copies != 0 {
 			t.Fatalf("pass %d: errors %v, %d copies", i, result.Errors, copies)
 		}
-	}
-	// A new message: read again.
-	db.chat("chat-1", 1000, "b1", "b2", "b3")
-	result, copies = run(t, local, remote, opts, passes)
-	if !errors.Is(result.Errors[reg.ArchiveSessionID], errCursorSourceNotWired) || copies != 1 {
-		t.Fatalf("errors %v, %d copies", result.Errors, copies)
 	}
 
 	// Settled: another chat's writes leave the chat's Signature alone, so
@@ -252,13 +285,8 @@ func TestCursorSQLiteOneSnapshotPerPass(t *testing.T) {
 		}
 	}
 	result, copies := run(t, local, storage.NewMemoryStore(), opts, passes)
-	if len(result.Errors) != 4 || copies != 1 {
-		t.Fatalf("%d errors, %d copies", len(result.Errors), copies)
-	}
-	for id, err := range result.Errors {
-		if !errors.Is(err, errCursorSourceNotWired) {
-			t.Fatalf("%s: %v", id, err)
-		}
+	if len(result.Errors) != 0 || len(result.Published) != 4 || copies != 1 {
+		t.Fatalf("%+v, %d copies", result, copies)
 	}
 	root, err := cursorstore.SnapshotRoot()
 	if err != nil {

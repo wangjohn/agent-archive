@@ -95,7 +95,7 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 		// result, including a failed parse: nothing to rebuild.
 		return outcomeSkipped, false, nil
 	}
-	if liveTranscriptChanged(store, reg, bundle, now, opts) {
+	if liveTranscriptChanged(ctx, store, reg, bundle, now, opts) {
 		// Normal capture is about to publish current-parser metadata with
 		// the new content; a metadata-only publication first would only be
 		// wasted work that also starts the upload interval early.
@@ -132,16 +132,18 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 }
 
 // liveTranscriptChanged reports whether normal capture will publish this
-// scan: the transcript on disk carries evidence the cached comparison bundle
-// does not, and it still extends what capture guards against (the same
-// rules processSession applies), so a rewrite that capture will only record
-// as a gap does not count. It compares against the cached candidate rather
+// scan: the source (a transcript on disk, or a Cursor database chat) carries
+// evidence the cached comparison bundle does not, and it still extends what
+// capture guards against (the same rules processSession applies), so a
+// rewrite that capture will only record as a gap does not count. A Cursor
+// database chat that was rewritten does count: capture publishes it. It compares against the cached candidate rather
 // than only the last publication so a declined candidate the transcript
 // still matches leaves regeneration free to proceed. A transcript that
 // cannot be compared (rotated, oversize, unsafe) reports no change:
 // regeneration is then the only way the summary can move.
-func liveTranscriptChanged(store *LocalStore, reg archive.SessionRegistration, lastPublished archive.SourceBundle, now time.Time, opts Options) bool {
-	if reg.TranscriptPath == "" {
+func liveTranscriptChanged(ctx context.Context, store *LocalStore, reg archive.SessionRegistration, lastPublished archive.SourceBundle, now time.Time, opts Options) bool {
+	source, ok := newSourceReader(reg, opts)
+	if !ok {
 		return false
 	}
 	cached, _, status, found, err := store.LoadPublished(reg.ArchiveSessionID)
@@ -152,7 +154,7 @@ func liveTranscriptChanged(store *LocalStore, reg archive.SessionRegistration, l
 	if err != nil {
 		return false
 	}
-	filtered, _, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
+	filtered, _, err := source.Filter(ctx, adapter, opts.maxTranscriptBytes())
 	if err != nil {
 		return false
 	}
@@ -163,6 +165,9 @@ func liveTranscriptChanged(store *LocalStore, reg archive.SessionRegistration, l
 	same, err := bundleEvidenceEqual(cached, candidate)
 	if err != nil || same {
 		return false
+	}
+	if reg.SourceKind == archive.SourceKindCursorSQLite {
+		return true
 	}
 	guard := cached
 	if status == CacheStatusBlocked {

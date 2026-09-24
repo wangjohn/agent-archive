@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
@@ -105,18 +106,65 @@ func (r cursorSQLiteReader) Signature(ctx context.Context) (sourceState, bool) {
 	return sourceState{kind: archive.SourceKindCursorSQLite, cursor: sig}, true
 }
 
-// errCursorSourceNotWired is what the cursor-sqlite reader's Filter returns
-// until the composer adapter (archive.CursorAdapter.FilterComposer) is wired
-// into filterCursorComposer.
-var errCursorSourceNotWired = errors.New("reading Cursor database chats is not wired to the composer adapter yet")
+// filterCursorComposer filters one chat read from Cursor's database with the
+// Cursor adapter's composer filter, after the size limits a transcript file
+// gets: the chat's rows together are its size, and each row is one record.
+func filterCursorComposer(adapter archive.Adapter, c cursorstore.Composer, maxBytes int64) (archive.FilteredTranscript, error) {
+	cursor, ok := adapter.(archive.CursorAdapter)
+	if !ok {
+		return archive.FilteredTranscript{}, fmt.Errorf("a Cursor database chat can't be read by the %s adapter", adapter.Name())
+	}
+	if err := checkCursorChatSize(c, maxBytes); err != nil {
+		return archive.FilteredTranscript{}, err
+	}
+	bubbles := make([]archive.CursorBubble, len(c.Bubbles))
+	for i, b := range c.Bubbles {
+		bubbles[i] = archive.CursorBubble{ID: b.ID, Value: b.Value}
+	}
+	filtered, err := cursor.FilterComposer(archive.CursorComposer{Composer: c.Composer, Bubbles: bubbles})
+	if errors.Is(err, archive.ErrRecordTooLarge) {
+		return archive.FilteredTranscript{}, errRecordTooLarge
+	}
+	return filtered, err
+}
 
-// filterCursorComposer filters one chat read from Cursor's database.
-//
-// TODO(P3): return archive.CursorAdapter{}.FilterComposer(archive.CursorComposer(c))
-// once P1's archive.CursorComposer exists; cursorstore.Composer has its
-// shape field for field.
-func filterCursorComposer(_ archive.Adapter, _ cursorstore.Composer) (archive.FilteredTranscript, error) {
-	return archive.FilteredTranscript{}, errCursorSourceNotWired
+// CursorChatSize is the size of a chat as read from Cursor's database: its
+// composerData value and its message rows.
+func CursorChatSize(c cursorstore.Composer) int64 {
+	size := int64(len(c.Composer))
+	for _, b := range c.Bubbles {
+		size += int64(len(b.Value))
+	}
+	return size
+}
+
+// checkCursorChatSize is errRecordTooLarge for a row over recordLimit and
+// errTranscriptTooLarge for a chat over maxBytes.
+func checkCursorChatSize(c cursorstore.Composer, maxBytes int64) error {
+	if int64(len(c.Composer)) > recordLimit {
+		return errRecordTooLarge
+	}
+	for _, b := range c.Bubbles {
+		if int64(len(b.Value)) > recordLimit {
+			return errRecordTooLarge
+		}
+	}
+	if CursorChatSize(c) > maxBytes {
+		return fmt.Errorf("%w of %d bytes", errTranscriptTooLarge, maxBytes)
+	}
+	return nil
+}
+
+// FilterCursorChat filters one chat read from Cursor's database as a
+// collector pass does, for a chat with no registration yet. A chat over the
+// size limits is an error wrapping archive.ErrRecordTooLarge. Nothing is
+// registered, written, or uploaded.
+func FilterCursorChat(c cursorstore.Composer) (archive.FilteredTranscript, error) {
+	filtered, err := filterCursorComposer(archive.CursorAdapter{}, c, DefaultMaxTranscriptBytes)
+	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
+		return archive.FilteredTranscript{}, fmt.Errorf("%w: %w", archive.ErrRecordTooLarge, err)
+	}
+	return filtered, err
 }
 
 // Filter first reads the chat's signature in place, so a chat Cursor deleted
@@ -138,20 +186,7 @@ func (r cursorSQLiteReader) Filter(ctx context.Context, adapter archive.Adapter,
 		return archive.FilteredTranscript{}, sourceState{}, fmt.Errorf("read Cursor chat: %w", err)
 	}
 	state := sourceState{kind: archive.SourceKindCursorSQLite, cursor: sig}
-	size := int64(len(c.Composer))
-	if size > recordLimit {
-		return archive.FilteredTranscript{}, state, errRecordTooLarge
-	}
-	for _, b := range c.Bubbles {
-		if int64(len(b.Value)) > recordLimit {
-			return archive.FilteredTranscript{}, state, errRecordTooLarge
-		}
-		size += int64(len(b.Value))
-	}
-	if size > maxBytes {
-		return archive.FilteredTranscript{}, state, fmt.Errorf("%w of %d bytes", errTranscriptTooLarge, maxBytes)
-	}
-	filtered, err := filterCursorComposer(adapter, c)
+	filtered, err := filterCursorComposer(adapter, c, maxBytes)
 	return filtered, state, err
 }
 
@@ -214,6 +249,27 @@ func rememberFailedRead(local *LocalStore, reg archive.SessionRegistration, adap
 		CursorMessageRows: state.cursor.MessageRows, CursorLastMessageHash: state.cursor.LastMessageHash,
 		Failed: true, FailedError: message,
 	})
+}
+
+// CaptureGapCursorChatRewritten marks a Cursor database chat whose messages
+// changed after they were published, so a later snapshot replaced one that
+// did not lead to it (see processSession). There is one per replacement.
+const CaptureGapCursorChatRewritten = "cursor_chat_rewritten"
+
+// cursorRewriteProvenance is the rewrite gap's provenance: the collector's
+// own, never a hook's, so it is not taken for a resume.
+const cursorRewriteProvenance = "collector:cursor-rewrite"
+
+// cursorRewriteGap is the capture gap one rewrite adds, as supplemental
+// evidence so it is carried into every later snapshot of the chat.
+func cursorRewriteGap(at time.Time) archive.SupplementalEvidence {
+	return archive.SupplementalEvidence{
+		Kind: archive.EvidenceKindCaptureGap, ObservedAt: at.UTC(), Provenance: cursorRewriteProvenance,
+		Payload: map[string]any{
+			"code":   CaptureGapCursorChatRewritten,
+			"detail": "Cursor changed messages that were already archived; this snapshot replaced the earlier one",
+		},
+	}
 }
 
 // errUnchangedSinceFailure reports a remembered failure again on a pass that

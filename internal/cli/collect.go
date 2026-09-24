@@ -157,6 +157,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		RequireSkillUse:      cfg.RequireSkillUse,
 		Progress:             pass.progress,
 		Stop:                 pass.stop,
+		CursorDatabase:       env.cursorDatabase(),
 	})
 	if err != nil {
 		return result, err
