@@ -132,7 +132,7 @@ func snapshotInUse(dir string) bool {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return true
 	}
-	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN) // closing f releases it anyway
 	return false
 }
 

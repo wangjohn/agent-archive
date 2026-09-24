@@ -284,7 +284,7 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 	}
 
 	if raw, ok := present("composerId"); ok {
-		json.Unmarshal(raw, &c.chat.ID)
+		_ = json.Unmarshal(raw, &c.chat.ID) // another shape leaves the ID from the key
 	}
 	c.chat.KeyID = strings.TrimPrefix(key, "composerData:")
 	if c.chat.ID == "" {
@@ -316,7 +316,7 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		if json.Unmarshal(raw, &ws) == nil {
 			c.chat.Folder = composerWorkspaceFolder(ws["uri"])
 			if rawID, ok := ws["id"]; ok {
-				json.Unmarshal(rawID, &c.chat.WorkspaceID)
+				_ = json.Unmarshal(rawID, &c.chat.WorkspaceID) // read leniently, as documented above
 			}
 		}
 	}

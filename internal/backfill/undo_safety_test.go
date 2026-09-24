@@ -201,7 +201,6 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	records, bundle = nil, archive.SourceBundle{}
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
