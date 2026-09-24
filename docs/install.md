@@ -156,6 +156,12 @@ agent-archive backfill undo          # remove the latest import from the bucket
   setup. Setup asks once whether to keep them.
 - Codex and Cursor sessions import even without their hooks installed. New
   sessions from those apps are captured only after you add them in setup.
+- Cursor chats that exist only in Cursor's own database (older chats, and
+  those without a transcript file) are imported too. Backfill reads the
+  database without changing it; while Cursor is running it reads a private
+  copy in your temporary folder and deletes the copy when it is done. The
+  collector keeps capturing such a chat from the database afterwards. Their
+  subagent chats are not imported yet, and the plan says how many there are.
 - Sessions run from your home directory or a temporary directory are skipped
   unless you pass `--include-home` or `--include-temp`.
 - Retention applies to imports from the day they are imported, so a whole
