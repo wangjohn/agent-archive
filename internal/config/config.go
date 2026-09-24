@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -40,6 +41,12 @@ type Config struct {
 	// Harnesses lists which applications setup installed hooks for
 	// (values match archive.Harness.Name: "codex", "claude", "cursor").
 	Harnesses []string `json:"harnesses,omitempty"`
+	// ImportedHarnesses lists apps whose sessions were imported by
+	// `agent-archive backfill` without their hooks installed. It admits those
+	// apps' imported sessions only; hook registrations still need Harnesses.
+	// Backfill adds to it and setup carries it over from the committed
+	// configuration, dropping an app once its hooks are installed.
+	ImportedHarnesses []string `json:"imported_harnesses,omitempty"`
 	// InstalledExecutable is the executable path setup wrote into the hooks
 	// and the LaunchAgent. Status checks the installed hooks against this
 	// path rather than whichever path status itself was run through (a
@@ -99,26 +106,41 @@ func SetPaused(home string, paused bool) (Config, error) {
 }
 
 // AcceptSession prevents excluded apps/projects and previous destinations from
-// continuing to publish or delete sessions after reconfiguration.
+// continuing to publish or delete sessions after reconfiguration. Both time
+// boundaries compare the registration's admission, never its start: an
+// imported session began long before the project was activated, and is
+// admitted by the import itself.
 func (c Config) AcceptSession(r archive.SessionRegistration) bool {
-	if !c.DestinationSince.IsZero() && r.SessionStartedAt.Before(c.DestinationSince) {
+	admitted := r.Admitted()
+	if !c.DestinationSince.IsZero() && admitted.Before(c.DestinationSince) {
 		return false
 	}
-	if len(c.Harnesses) > 0 {
-		found := false
-		for _, h := range c.Harnesses {
-			if h == r.Harness.Name {
-				found = true
-			}
-		}
-		if !found {
-			return false
-		}
+	if !c.acceptsHarness(r) {
+		return false
 	}
 	for _, p := range c.Archive.Projects {
 		if p.Included && p.Root == r.ProjectRoot {
-			return p.ActivatedAt.IsZero() || !r.SessionStartedAt.Before(p.ActivatedAt)
+			return p.ActivatedAt.IsZero() || !admitted.Before(p.ActivatedAt)
 		}
 	}
 	return len(c.Archive.Projects) == 0 // older programmatic configurations
+}
+
+// InCurrentDestination reports whether a registration published to the
+// storage destination configured now, rather than to one it replaced. Like
+// AcceptSession it compares the admission: an import published here even
+// though it started before this destination was configured.
+func (c Config) InCurrentDestination(r archive.SessionRegistration) bool {
+	return c.DestinationSince.IsZero() || !r.Admitted().Before(c.DestinationSince)
+}
+
+// acceptsHarness reports whether the registration's app may publish. Hook
+// registrations need the app's hooks (Harnesses); an import may also come
+// from an app that was imported without hooks (ImportedHarnesses). An empty
+// Harnesses list is an older programmatic configuration and admits every app.
+func (c Config) acceptsHarness(r archive.SessionRegistration) bool {
+	if len(c.Harnesses) == 0 || slices.Contains(c.Harnesses, r.Harness.Name) {
+		return true
+	}
+	return r.Imported() && slices.Contains(c.ImportedHarnesses, r.Harness.Name)
 }

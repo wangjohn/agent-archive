@@ -190,7 +190,22 @@ func fileChange(path string, after []byte) (hooks.Change, error) {
 	return hooks.Change{Path: path, Before: before, After: after, Existed: err == nil, Mode: 0600}, nil
 }
 
-func applySetup(home, userHome, executable string, old config.Config, next *config.Config, env Env) error {
+// carriedImportedHarnesses is the ImportedHarnesses a setup commits. Backfill
+// writes the list, so it comes from the committed configuration, never a
+// draft. An app whose hooks setup now installs moves to Harnesses, where it
+// admits its imports too, and an app the person chose to stop publishing
+// imports for (stopImported) is dropped.
+func carriedImportedHarnesses(committed, harnesses, stopImported []string) []string {
+	var out []string
+	for _, app := range committed {
+		if !containsString(harnesses, app) && !containsString(stopImported, app) {
+			out = append(out, app)
+		}
+	}
+	return out
+}
+
+func applySetup(home, userHome, executable string, old config.Config, next *config.Config, stopImported []string, env Env) error {
 	unlock, err := local.Lock(home)
 	if err != nil {
 		return fmt.Errorf("another operation is running; retry setup when it finishes: %w", err)
@@ -218,6 +233,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	// draft. A crash after commit can leave a pre-commit draft on disk.
 	next.DestinationSince = old.DestinationSince
 	next.PreviousDestinations = append([]credentials.Config(nil), old.PreviousDestinations...)
+	next.ImportedHarnesses = carriedImportedHarnesses(old.ImportedHarnesses, next.Harnesses, stopImported)
 	for _, ref := range old.RetiredCredentialRefs {
 		if !containsString(next.RetiredCredentialRefs, ref) {
 			next.RetiredCredentialRefs = append(next.RetiredCredentialRefs, ref)

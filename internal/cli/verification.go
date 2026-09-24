@@ -222,7 +222,15 @@ func verifyPublications(home string, cfg config.Config, env Env, store *collecto
 		}
 		due = append(due, candidate{reg, bundle, at, prior, verificationConfigurationID})
 	}
-	sort.SliceStable(due, func(i, j int) bool { return due[i].at.Before(due[j].at) })
+	// Imports are read back too, but only hook-captured publications prove an
+	// app's capture works (status never promotes an app on an import), so
+	// they go first: a large import must not hold them behind the cap.
+	sort.SliceStable(due, func(i, j int) bool {
+		if due[i].reg.Imported() != due[j].reg.Imported() {
+			return !due[i].reg.Imported()
+		}
+		return due[i].at.Before(due[j].at)
+	})
 	if len(due) > maxVerificationsPerPass {
 		summary.Deferred += len(due) - maxVerificationsPerPass
 		due = due[:maxVerificationsPerPass]
