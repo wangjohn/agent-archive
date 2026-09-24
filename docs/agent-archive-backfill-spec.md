@@ -377,13 +377,22 @@ matching rule wins.
    `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
    each directory becomes its own project. These sessions are mostly tool
    runs whose folders are gone.
-7. **Home and above.** Home, `/`, `/Users`, and anything else above home are
-   skipped with `home_directory`. With `--include-home`, home becomes a
-   project, and the plan warns that it will then capture every future session
-   under home that isn't in a nearer project.
+7. **Home and above.** Home is skipped with `home_directory`. With
+   `--include-home`, it becomes a project, and unless home is already
+   included, the plan warns that it will then capture every future session
+   under home that isn't in a nearer project. `/`, `/Users`, and anything else
+   above home are skipped with `above_home`, which no flag overrides.
 8. **Anything else** becomes its own project, whether or not it still exists.
 
-Existing paths have their symlinks resolved, as hooks do. The project ID is
+When rules 3 or 4 map a directory to a repository, rule 2 runs again on that
+repository, so a worktree outside its repository still honours the
+repository's inclusion or exclusion, with its configured spelling. A worktree
+whose `gitdir` target no longer exists is `worktree_unresolved`, unless the
+`.claude/worktrees` path rule applies.
+
+Existing paths have their symlinks resolved, as hooks do. A missing path
+resolves its longest existing ancestor and keeps the rest, so its spelling
+matches what hooks would record. The project ID is
 `archive.ProjectID(root)`, so imports and later hook sessions share it. A new
 project is added with `Included: true`, and its `ActivatedAt` is the import
 time. From then on it behaves like any project included in setup.
@@ -395,7 +404,15 @@ plan runs each app's existing adapter over the whole transcript, as the
 collector will, so the plan's counts are what gets imported. Transcripts that
 would become permanently blocked registrations are skipped instead: those the
 adapter refuses, those over `archive.MaxRecordBytes`, and those with no
-conversation. Only counts, times, and sizes are kept.
+conversation (no retained user, assistant, message, response, or tool record,
+and no text). Only counts, times, and sizes are kept. Symlinked transcript
+files are skipped. Header reads (a Claude `cwd`, a Codex `session_meta`) are
+capped at 1 MiB per line. The same session found more than once, for example a
+Claude file under two project folders, is imported once: the file whose
+identity matches best wins, then the larger file, then the lexically first
+path. The rest are `duplicate_session`. Subagent transcripts get the same size
+and adapter checks; those that fail are left out of the subagent count and
+reported on one "Not imported" line.
 
 The plan uses `min(8, max(2, runtime.NumCPU()/2))` workers. Filtering is
 CPU-bound and scales almost linearly with workers. On an 18-core Mac, the
@@ -418,7 +435,7 @@ being read at the same time, so a file that doesn't fit waits for room.
 | | Claude Code | Codex | Cursor |
 |---|---|---|---|
 | Files | `~/.claude/projects/*/*.jsonl` | `~/.codex/sessions/**/rollout-*.jsonl` and `~/.codex/archived_sessions/rollout-*.jsonl`; `sessions/` wins if a file is in both | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`, plus the text form |
-| Native ID | File stem. Must equal the records' `sessionId`. | `session_meta.payload.id`. Must equal `session_id` (when present) and the UUID in the file name. | `<id>`, which is what hooks register |
+| Native ID | File stem. Must be among the records' `sessionId` values; a forked file also carries its parent's ID. | `session_meta.payload.id`. Must equal `session_id` (when present) and the UUID in the file name. | `<id>`, which is what hooks register |
 | Start | Earliest record (`transcript`) | `session_meta` timestamp, else earliest record (`transcript`) | File birth time (`file_created`). Records have no timestamps. |
 | Project | `cwd` | `payload.cwd` | Slug match, below |
 
@@ -456,11 +473,13 @@ several reasons apply, the first in this list wins.
 | Code | Override |
 |---|---|
 | `already_archived` | — |
+| `duplicate_session` | — |
 | `registered_not_admitted` | future `--readmit` |
 | `removed_by_undo`, `removed_by_retention` | `--include-removed` |
 | `filtered_out` (shown only when filters are set) | — |
 | `excluded_project` | `setup` |
 | `home_directory` | `--include-home` |
+| `above_home` | — |
 | `temporary_directory` | `--include-temp` |
 | `project_unknown`, `worktree_unresolved`, `identity_mismatch` | — |
 | `empty`, `unsafe_format`, `too_large` (over 64 MiB), `start_in_future` | — |
