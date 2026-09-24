@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -42,6 +43,20 @@ func (s *deleteRecordingStore) Delete(ctx context.Context, key string) error {
 	return s.MemoryStore.Delete(ctx, key)
 }
 
+// sessionDeletes are the deletes of archived sessions' objects, leaving out
+// the storage check's test object.
+func (s *deleteRecordingStore) sessionDeletes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, key := range s.deletes {
+		if strings.HasPrefix(key, "sessions/") {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
 func (s *deleteRecordingStore) reset(failOn string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -53,6 +68,7 @@ func (s *deleteRecordingStore) reset(failOn string) {
 func newUndoFixture(t *testing.T, importArgs ...string) (*backfillFixture, *deleteRecordingStore) {
 	t.Helper()
 	f, memory := newImportFixture(t)
+	backdateTranscripts(t, f)
 	bucket := &deleteRecordingStore{MemoryStore: memory}
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
 	if _, errOut, code := f.importRun(t, nil, false, append([]string{"--yes"}, importArgs...)...); code != 0 {
@@ -60,6 +76,34 @@ func newUndoFixture(t *testing.T, importArgs ...string) (*backfillFixture, *dele
 	}
 	bucket.reset("")
 	return f, bucket
+}
+
+// backdateTranscripts sets every transcript written after the day before the
+// fixture's clock back to that day, as on a real Mac, where a transcript is
+// always written before an import of it. Undo counts a transcript written
+// after the import as resumed. Earlier times, such as the Cursor files'
+// birth times, are kept.
+func backdateTranscripts(t *testing.T, f *backfillFixture) {
+	t.Helper()
+	before := backfillNow.Add(-24 * time.Hour)
+	err := filepath.Walk(f.userHome, func(path string, info os.FileInfo, err error) error {
+		if err != nil || !info.Mode().IsRegular() || !info.ModTime().After(before) {
+			return err
+		}
+		return os.Chtimes(path, before, before)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// touchAfterImport marks a transcript as written an hour after the import.
+func touchAfterImport(t *testing.T, path string) {
+	t.Helper()
+	at := backfillNow.Add(time.Hour)
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (f *backfillFixture) undoRun(t *testing.T, stdin io.Reader, terminal bool, args ...string) (string, string, int) {
@@ -213,9 +257,10 @@ func TestBackfillUndoGolden(t *testing.T) {
 		t.Fatalf("history: %q", line)
 	}
 
-	// A second undo finds nothing left, and changes nothing.
+	// A second undo finds nothing left, and changes nothing. It needs no
+	// terminal to say so.
 	before := snapshotAll(t, f, bucket.MemoryStore)
-	out, errOut, code = f.undoRun(t, nil, false, "--yes", firstImport)
+	out, errOut, code = f.undoRun(t, nil, false, firstImport)
 	if code != 0 || !strings.Contains(out, "Import "+firstImport+" has nothing left to undo.") {
 		t.Fatalf("second undo: code %d, %s\n%s", code, errOut, out)
 	}
@@ -247,13 +292,37 @@ func TestBackfillUndoProject(t *testing.T) {
 	f, bucket := newUndoFixture(t)
 	levenshtein := filepath.Join(f.userHome, "levenshtein")
 	all, allChildren := importRegistrations(t, f.data, firstImport)
+	// A hook captured a session in levenshtein after the import added it.
+	store, err := collector.NewLocalStore(f.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooked, err := store.RegisterNewSession("h-lev", func(id string) archive.SessionRegistration {
+		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "h-lev", ProjectID: archive.ProjectID(levenshtein), ProjectRoot: levenshtein,
+			Harness: archive.Harness{Name: "claude"}, SessionStartedAt: backfillNow, RegisteredAt: backfillNow, AdmittedAt: backfillNow, Origin: archive.SessionOriginHook}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing of the import in a project it never touched; no terminal is
+	// needed to say so.
+	nowhere := filepath.Join(f.userHome, "nowhere")
+	if out, errOut, code := f.undoRun(t, nil, false, "--project", nowhere); code != 0 || !strings.Contains(out, "No sessions from ~/nowhere are left in import "+firstImport+".") {
+		t.Fatalf("nowhere: code %d, %s\n%s", code, errOut, out)
+	}
 
 	out, errOut, code := f.undoRun(t, nil, false, "--project", levenshtein, "--yes")
 	if code != 0 {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
-	if !strings.Contains(out, "Undo import "+firstImport+" in ~/levenshtein") || !strings.Contains(out, "1 project the import added is excluded") {
-		t.Fatalf("output:\n%s", out)
+	for _, want := range []string{"Undo import " + firstImport + " in ~/levenshtein", "1 project the import added is excluded", "1 hook-captured session in this project stops uploading; it is not deleted."} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if _, found, _ := store.LoadRegistration(hooked.ArchiveSessionID); !found {
+		t.Fatal("the hook-captured session was removed")
 	}
 	parents, children := importRegistrations(t, f.data, firstImport)
 	if len(parents) != 8 || len(children) != 2 {
@@ -404,6 +473,12 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 	if sources < 2 {
 		t.Fatalf("the resumed session did not publish newer content: %v", keys)
 	}
+	// Only the hook evidence says it was resumed: the transcript's
+	// modification time is moved back to before the import.
+	earlier := backfillNow.Add(-time.Hour)
+	if err := os.Chtimes(reg.TranscriptPath, earlier, earlier); err != nil {
+		t.Fatal(err)
+	}
 
 	out, errOut, code := f.undoRun(t, strings.NewReader("y\n"), true)
 	if code != 0 {
@@ -417,6 +492,71 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 	}
 	if _, found, _ := store.LoadRegistration(id); found {
 		t.Fatal("still registered")
+	}
+}
+
+// A session of an app without hooks that was resumed after the import, and
+// republished by a rescan with no hook evidence, is counted as resumed: its
+// transcript was written after the import.
+func TestBackfillUndoResumedWithoutHooks(t *testing.T) {
+	f, bucket := newUndoFixture(t)
+	parents, _ := importRegistrations(t, f.data, firstImport)
+	var reg archive.SessionRegistration
+	for _, p := range parents {
+		if p.Harness.Name == "codex" {
+			reg = p
+		}
+	}
+	if reg.ArchiveSessionID == "" {
+		t.Fatal("no Codex import")
+	}
+	before := sessionKeys(t, bucket, reg)
+	file, err := os.OpenFile(reg.TranscriptPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"type":"response_item","timestamp":"2026-09-23T20:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"and the other file"}]}}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	touchAfterImport(t, reg.TranscriptPath)
+	f.env.Now = func() time.Time { return backfillNow.Add(2 * time.Hour) }
+	if _, errOut, code := f.command(t, "sync"); code != 0 {
+		t.Fatalf("sync: %s", errOut)
+	}
+	if after := sessionKeys(t, bucket, reg); len(after) <= len(before) {
+		t.Fatalf("the rescan did not republish: %v", after)
+	}
+	bundle, _, _, _, err := collector.OpenLocalStoreReadOnly(f.data).LoadPublished(reg.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range bundle.SupplementalEvidence {
+		if strings.HasPrefix(e.Provenance, "hook:") {
+			t.Fatalf("hook evidence %+v", e)
+		}
+	}
+	out, errOut, code := f.undoRun(t, strings.NewReader("y\n"), true)
+	if code != 0 || !strings.Contains(out, "This includes 1 session resumed since the import") {
+		t.Fatalf("code %d, %s\n%s", code, errOut, out)
+	}
+	if keys := sessionKeys(t, bucket, reg); len(keys) != 0 {
+		t.Fatalf("left %v", keys)
+	}
+}
+
+// A session resumed while the prompt is open is still removed: the person
+// confirmed deleting it.
+func TestBackfillUndoResumedDuringPrompt(t *testing.T) {
+	f, _ := newUndoFixture(t)
+	parents, _ := importRegistrations(t, f.data, firstImport)
+	stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() { touchAfterImport(t, parents[0].TranscriptPath) }}
+	out, errOut, code := f.undoRun(t, stdin, true)
+	if code != 0 || strings.Contains(out, "resumed since") {
+		t.Fatalf("code %d, %s\n%s", code, errOut, out)
+	}
+	if p, c := importRegistrations(t, f.data, firstImport); len(p)+len(c) != 0 {
+		t.Fatalf("%d left", len(p)+len(c))
 	}
 }
 
@@ -450,42 +590,59 @@ func TestBackfillUndoHoldsCollectorLock(t *testing.T) {
 
 // Sessions whose objects are in a destination this machine no longer uses
 // are only forgotten locally: the current bucket is not called for them.
+// Either guard alone decides it: a different destination, even with no
+// DestinationSince recorded, or the same destination switched back to after
+// the import, which DestinationSince records.
 func TestBackfillUndoPreviousDestination(t *testing.T) {
-	f, bucket := newUndoFixture(t)
-	cfg, _, _ := config.Load(f.data)
-	cfg.PreviousDestinations = append(cfg.PreviousDestinations, cfg.Storage)
-	cfg.Storage = credentials.Config{Provider: credentials.ProviderS3, Bucket: "new-bucket", Region: "us-east-1", AWSProfile: "test"}
-	cfg.DestinationSince = backfillNow.Add(time.Hour).UTC()
-	if err := config.Save(f.data, cfg); err != nil {
-		t.Fatal(err)
-	}
-	parents, _ := importRegistrations(t, f.data, firstImport)
-	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
-		t.Error("undo opened the bucket")
-		return bucket, nil
-	}
-	before := bucketSnapshot(t, bucket.MemoryStore)
+	for _, tc := range []struct {
+		name   string
+		change func(cfg *config.Config)
+	}{
+		{"different destination", func(cfg *config.Config) {
+			cfg.PreviousDestinations = append(cfg.PreviousDestinations, cfg.Storage)
+			cfg.Storage = credentials.Config{Provider: credentials.ProviderS3, Bucket: "new-bucket", Region: "us-east-1", AWSProfile: "test"}
+			cfg.DestinationSince = time.Time{}
+		}},
+		{"same destination switched back to", func(cfg *config.Config) {
+			cfg.DestinationSince = backfillNow.Add(time.Hour).UTC()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, bucket := newUndoFixture(t)
+			cfg, _, _ := config.Load(f.data)
+			tc.change(&cfg)
+			if err := config.Save(f.data, cfg); err != nil {
+				t.Fatal(err)
+			}
+			parents, _ := importRegistrations(t, f.data, firstImport)
+			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+				t.Error("undo opened the bucket")
+				return bucket, nil
+			}
+			before := bucketSnapshot(t, bucket.MemoryStore)
 
-	out, errOut, code := f.undoRun(t, strings.NewReader("y\n"), true)
-	if code != 0 {
-		t.Fatalf("code %d, %s\n%s", code, errOut, out)
-	}
-	for _, want := range []string{"11 sessions and 2 subagent transcripts from a previous storage destination are forgotten", "Forget 11 sessions? This cannot be undone. [y/N]", "Forgot 11 sessions and 2 subagent transcripts from a previous storage destination"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("output lacks %q:\n%s", want, out)
-		}
-	}
-	if bucketSnapshot(t, bucket.MemoryStore) != before || len(bucket.deletes) != 0 {
-		t.Fatal("the bucket changed")
-	}
-	store := collector.OpenLocalStoreReadOnly(f.data)
-	for _, reg := range parents {
-		if record, found, _ := store.Removal(reg.Harness.Name, reg.NativeSessionID); !found || record.Reason != collector.RemovalReasonUndo {
-			t.Errorf("%s: no undo record", reg.ArchiveSessionID)
-		}
-	}
-	if p, c := importRegistrations(t, f.data, firstImport); len(p)+len(c) != 0 {
-		t.Fatalf("%d still registered", len(p)+len(c))
+			out, errOut, code := f.undoRun(t, strings.NewReader("y\n"), true)
+			if code != 0 {
+				t.Fatalf("code %d, %s\n%s", code, errOut, out)
+			}
+			for _, want := range []string{"11 sessions and 2 subagent transcripts from a previous storage destination are forgotten", "Forget 11 sessions? This cannot be undone. [y/N]", "Forgot 11 sessions and 2 subagent transcripts from a previous storage destination"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("output lacks %q:\n%s", want, out)
+				}
+			}
+			if bucketSnapshot(t, bucket.MemoryStore) != before || len(bucket.deletes) != 0 {
+				t.Fatal("the bucket changed")
+			}
+			store := collector.OpenLocalStoreReadOnly(f.data)
+			for _, reg := range parents {
+				if record, found, _ := store.Removal(reg.Harness.Name, reg.NativeSessionID); !found || record.Reason != collector.RemovalReasonUndo {
+					t.Errorf("%s: no undo record", reg.ArchiveSessionID)
+				}
+			}
+			if p, c := importRegistrations(t, f.data, firstImport); len(p)+len(c) != 0 {
+				t.Fatalf("%d still registered", len(p)+len(c))
+			}
+		})
 	}
 }
 
@@ -501,8 +658,8 @@ func TestBackfillUndoChangesNothingUnlessConfirmed(t *testing.T) {
 		if after, _ := os.ReadFile(filepath.Join(f.data, "config.json")); !bytes.Equal(after, config0) {
 			t.Fatalf("%s: config.json changed", name)
 		}
-		if len(bucket.deletes) != 0 {
-			t.Fatalf("%s: deleted %v", name, bucket.deletes)
+		if deleted := bucket.sessionDeletes(); len(deleted) != 0 {
+			t.Fatalf("%s: deleted %v", name, deleted)
 		}
 	}
 	for _, answer := range []string{"\n", "n\n", "maybe\nno\n"} {
@@ -545,10 +702,38 @@ func TestBackfillUndoChangesNothingUnlessConfirmed(t *testing.T) {
 	}
 	check("setup pending")
 
-	// No imports at all.
+	// No imports at all needs no terminal either.
 	g := newBackfillFixture(t)
-	if out, errOut, code := g.importRun(t, nil, false, "undo", "--yes"); code != 0 || !strings.Contains(out, "No imports to undo.") {
+	if out, errOut, code := g.importRun(t, nil, false, "undo"); code != 0 || !strings.Contains(out, "No imports to undo.") {
 		t.Fatalf("no imports: code %d, %s\n%s", code, errOut, out)
+	}
+}
+
+// A failed storage check stops before the prompt and changes nothing; a
+// Keychain failure says how to fix it.
+func TestBackfillUndoStorageCheckFails(t *testing.T) {
+	f, bucket := newUndoFixture(t)
+	before := snapshotAll(t, f, bucket.MemoryStore)
+	config0 := mustRead(t, filepath.Join(f.data, "config.json"))
+	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return failingPutStore{bucket}, nil }
+	out, errOut, code := f.undoRun(t, strings.NewReader("y\n"), true)
+	if code != 1 || !strings.Contains(out, "Checking storage… failed.") || strings.Contains(out, "[y/N]") || !strings.Contains(errOut, "nothing was changed") {
+		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+	}
+	before.check(t, f, bucket.MemoryStore)
+
+	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return nil, fmt.Errorf("read credential: %w", credentials.ErrKeychainLocked)
+	}
+	if _, errOut, code := f.undoRun(t, nil, false, "--yes"); code != 1 || !strings.Contains(errOut, credentials.RecoveryAction(credentials.ErrKeychainLocked)) {
+		t.Fatalf("code %d, %s", code, errOut)
+	}
+	before.check(t, f, bucket.MemoryStore)
+	if !bytes.Equal(mustRead(t, filepath.Join(f.data, "config.json")), config0) {
+		t.Fatal("config.json changed")
+	}
+	if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt != nil {
+		t.Fatal("batch marked undone")
 	}
 }
 
@@ -671,6 +856,133 @@ func TestBackfillUndoIgnoresUnregisteredBatchEntries(t *testing.T) {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
 	if line := historyLine(t, f, firstImport); !strings.HasSuffix(line, "  undone") {
+		t.Fatalf("history: %q", line)
+	}
+}
+
+// A project undo excluded, and setup then included again, stays included
+// when a later undo of the same import finishes the sessions.
+func TestBackfillUndoKeepsReincludedProject(t *testing.T) {
+	f, bucket := newUndoFixture(t)
+	levenshtein := filepath.Join(f.userHome, "levenshtein")
+	parents, _ := importRegistrations(t, f.data, firstImport)
+	var failing archive.SessionRegistration
+	for _, reg := range parents {
+		if reg.Harness.Name == "codex" {
+			failing = reg
+		}
+	}
+	bucket.reset(failing.ArchiveSessionID)
+	if _, _, code := f.undoRun(t, nil, false, "--yes"); code != 1 {
+		t.Fatal("undo did not fail")
+	}
+	// Setup includes levenshtein again.
+	cfg, _, _ := config.Load(f.data)
+	for i, p := range cfg.Archive.Projects {
+		if p.Root == levenshtein {
+			cfg.Archive.Projects[i].Included = true
+		}
+	}
+	if err := config.Save(f.data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	bucket.reset("")
+	out, errOut, code := f.undoRun(t, nil, false, "--yes")
+	if code != 0 || strings.Contains(out, "excluded from capture") {
+		t.Fatalf("code %d, %s\n%s", code, errOut, out)
+	}
+	cfg, _, _ = config.Load(f.data)
+	for _, p := range cfg.Archive.Projects {
+		if p.Root == levenshtein && !p.Included {
+			t.Fatal("undo excluded the re-included project again")
+		}
+	}
+	if len(sessionKeys(t, bucket, failing)) != 0 {
+		t.Fatal("the failed session was not finished")
+	}
+}
+
+// A configuration change while the prompt is open aborts the undo, both when
+// it is found after confirming and when it lands just before the
+// configuration is written. Either way nothing is removed or recorded.
+func TestBackfillUndoConfigChanged(t *testing.T) {
+	change := func(t *testing.T, home string) {
+		cfg, _, _ := config.Load(home)
+		cfg.RequireSkillUse = true
+		if err := config.Save(home, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, at := range []string{"prompt", "commit"} {
+		t.Run(at, func(t *testing.T) {
+			f, bucket := newUndoFixture(t)
+			before := bucketSnapshot(t, bucket.MemoryStore)
+			stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() {
+				if at == "prompt" {
+					change(t, f.data)
+				}
+			}}
+			backfillCheckpoint = func(step string) error {
+				if step == "undoing" && at == "commit" {
+					change(t, f.data)
+				}
+				return nil
+			}
+			t.Cleanup(func() { backfillCheckpoint = nil })
+			out, errOut, code := f.undoRun(t, stdin, true)
+			if code != 1 || !strings.Contains(errOut, "the configuration changed while this was open; run undo again") {
+				t.Fatalf("code %d, %s\n%s", code, errOut, out)
+			}
+			if bucketSnapshot(t, bucket.MemoryStore) != before {
+				t.Fatal("the bucket changed")
+			}
+			if p, c := importRegistrations(t, f.data, firstImport); len(p) != 11 || len(c) != 2 {
+				t.Fatalf("%d sessions and %d subagents left", len(p), len(c))
+			}
+			cfg, _, _ := config.Load(f.data)
+			if len(cfg.ImportedHarnesses) != 2 {
+				t.Fatalf("imported apps %v", cfg.ImportedHarnesses)
+			}
+			for _, p := range cfg.Archive.Projects {
+				if !p.Included {
+					t.Fatalf("project %s excluded", p.Root)
+				}
+			}
+			if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt != nil {
+				t.Fatal("batch marked undone")
+			}
+		})
+	}
+}
+
+// The batch is marked undone and the configuration written before any
+// session is removed: with every delete failing, the projects are excluded,
+// the apps removed, and the import marked undone, while every session stays
+// registered for a rerun.
+func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
+	f, bucket := newUndoFixture(t)
+	bucket.reset("sessions/")
+	_, errOut, code := f.undoRun(t, nil, false, "--yes")
+	if code != 1 || !strings.Contains(errOut, "13 sessions could not be removed") {
+		t.Fatalf("code %d, %s", code, errOut)
+	}
+	if p, c := importRegistrations(t, f.data, firstImport); len(p) != 11 || len(c) != 2 {
+		t.Fatalf("%d sessions and %d subagents left", len(p), len(c))
+	}
+	cfg, _, _ := config.Load(f.data)
+	excluded := 0
+	for _, p := range cfg.Archive.Projects {
+		if !p.Included {
+			excluded++
+		}
+	}
+	if excluded != 4 || len(cfg.ImportedHarnesses) != 0 {
+		t.Fatalf("%d excluded, imported apps %v", excluded, cfg.ImportedHarnesses)
+	}
+	if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt == nil || len(b.ProjectsExcluded) != 4 {
+		t.Fatalf("batch %+v", b)
+	}
+	if line := historyLine(t, f, firstImport); !strings.Contains(line, "partly undone; 11 sessions left") {
 		t.Fatalf("history: %q", line)
 	}
 }
