@@ -1,0 +1,54 @@
+{
+  "format": "cursor-composer",
+  "records": [
+    {
+      "session_id": "c0ffee00-0000-4000-8000-000000000002",
+      "type": "session"
+    },
+    {
+      "id": "i1",
+      "message": {
+        "content": [
+          {
+            "text": "What does this function do?",
+            "type": "text"
+          }
+        ]
+      },
+      "role": "user"
+    },
+    {
+      "id": "i2",
+      "message": {
+        "content": [
+          {
+            "text": "It parses the widget header.",
+            "type": "text"
+          }
+        ]
+      },
+      "role": "assistant"
+    }
+  ],
+  "gaps": [
+    {
+      "code": "cursor_context_omitted",
+      "detail": "omitted context fields: attachedCodeChunks"
+    },
+    {
+      "code": "cursor_conversation_entry_unsupported",
+      "detail": "2 of 4 inline conversation entries are not in the message shape"
+    },
+    {
+      "code": "unknown_field_omitted",
+      "detail": "omitted keys: timingInfo"
+    }
+  ],
+  "boundary": {
+    "retained_records": 3,
+    "retained_bytes": 280
+  },
+  "session_ids": [
+    "c0ffee00-0000-4000-8000-000000000002"
+  ]
+}

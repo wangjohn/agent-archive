@@ -716,7 +716,8 @@ results the file lacks. Phase 2 still imports only chats that have no file:
    `codebaseContextChunks`, `attachedCodeChunks`, `originalFileStates`,
    `diffHistories`, `images`, `consoleLogs`, and `recentlyViewedFiles`.
    Source format `cursor-composer`, a filter version bump, and golden tests
-   from synthetic chats.
+   from synthetic chats. Implemented as `CursorAdapter.FilterComposer` in
+   `internal/archive/cursor_composer.go`, with filter version 8.
 6. **Fail closed.** An unknown `_v` is `unsafe_format`. Missing message rows
    add a `cursor_bubble_missing` gap with a count; the probe had 432 headers
    and only 415 message rows, all in chats that also have a file. Blobs are not read, and add

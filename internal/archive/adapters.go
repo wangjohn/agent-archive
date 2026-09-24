@@ -50,7 +50,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.7.0"
+const adapterVersion = "0.8.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -101,8 +101,10 @@ func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	})
 }
 
-// CursorAdapter is intentionally limited to hook-provided JSONL records. Text
-// paths and undocumented formats remain unsupported capture gaps upstream.
+// CursorAdapter filters hook-provided JSONL records, a hook-provided text
+// transcript (FilterText), and a chat read from Cursor's database
+// (FilterComposer, in cursor_composer.go). Undocumented formats remain
+// unsupported capture gaps upstream.
 type CursorAdapter struct{}
 
 func (CursorAdapter) Name() string    { return "cursor" }
