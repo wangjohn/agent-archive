@@ -63,7 +63,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	defer releaseSetup()
 
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
 	if err != nil {
 		return fail("a collector pass is still running; run backfill again. Nothing was changed.")
 	}
@@ -164,7 +164,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	}
 	defer release()
 	// No collector pass or retention may remove what is being listed.
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
 	if err != nil {
 		return errors.New("a collector pass is still running; run backfill again")
 	}
@@ -525,8 +525,7 @@ func (u *upload) draw(newline bool) {
 // import with its ID, start, sessions, projects added, and upload state. It
 // reads local state only.
 func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
-	if len(args) != 0 {
-		terminal.Printf(stderr, "agent-archive: backfill history: unexpected argument %q\n", args[0])
+	if !newCommandFlags("backfill history", stderr).parseFlagsOnly(args) {
 		return 2
 	}
 	home, err := env.readHome()

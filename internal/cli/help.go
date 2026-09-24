@@ -2,7 +2,9 @@ package cli
 
 import (
 	"flag"
+	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -71,7 +73,9 @@ Find sessions using metadata; does not download conversation content.
                                  eligible-skill set and complete use
                                  observation, so non-use is never proven. The
                                  value stays accepted for forward compatibility.
-  --since DATE|AGE               For example 2026-01-31 or 7d
+  --since DATE|TIME|AGE          Captured at or after a date (2026-01-31,
+                                 midnight UTC), an RFC 3339 time, or an age
+                                 (7d, 12h)
   --complete                     Require complete parser coverage
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
@@ -81,14 +85,14 @@ Find sessions using metadata; does not download conversation content.
                                  conversation content)
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
-	"show": `Usage: agent-archive show ID [--harness NAME] [--normalized]
+	"show": `Usage: agent-archive show SESSION_ID [--harness NAME] [--normalized]
 
 Print session metadata as JSON. An imported session also shows origin,
 imported_at, and started_at_source. --normalized explicitly downloads and
 verifies its source bundle and prints conversation content as well.
 Example: agent-archive show SESSION_ID --normalized
 `,
-	"handoff": `Usage: agent-archive handoff ID|--latest|--file PATH [options]
+	"handoff": `Usage: agent-archive handoff SESSION_ID|--latest|--file PATH [options]
 
 Print a session as a prompt another coding agent can continue from. This
 prints conversation content, filtered as it is for the archive: injected
@@ -101,11 +105,16 @@ waiting for a sync; otherwise it is downloaded from the archive.
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
   --source auto|local|archive
+                        Where the content comes from: auto (default) reads
+                        this Mac's transcript when there is one, else the
+                        archive; local or archive uses only that one
   --max-bytes N         Output limit, default 120000 (about 30k tokens); 0 for
                         no limit. When trimmed, the full version is saved in
                         the data directory for 7 days and its path is named
                         at the end
   --format markdown|json
+                        markdown (default) prints the prompt; json prints
+                        the structured handoff document it is rendered from
   --output FILE         Write to FILE (mode 0600); --force replaces it
   --no-preamble         Omit the note addressed to the receiving agent
 Example: claude "$(agent-archive handoff --latest --harness codex)"
@@ -113,7 +122,7 @@ Example: codex "$(agent-archive handoff --latest --harness claude)"
 `,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history
-       agent-archive backfill undo [ID] [--project DIR] [--yes]
+       agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
 
 Import the Claude Code, Codex, and Cursor sessions already on this Mac that
 the archive has not captured. First shows each project with its session count
@@ -122,8 +131,10 @@ confirm. Projects the import needs are added to capture. Prints project
 folders and counts only, never conversation content.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
-  --since DATE          Sessions started on or after DATE (YYYY-MM-DD, local)
-  --until DATE          Sessions started on or before DATE
+  --since DATE|TIME|AGE Sessions started on or after this local day: a date
+                        (2026-09-01), an RFC 3339 time, or an age (7d, 12h);
+                        a time or age selects from the start of its day
+  --until DATE|TIME|AGE Sessions started on or before this local day
   --include-home        Include sessions run from the home folder
   --include-temp        Include sessions run from temporary directories
   --include-removed     Include sessions retention or undo removed
@@ -132,18 +143,31 @@ folders and counts only, never conversation content.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Register the sessions and exit; the background
                         collector uploads them
-history lists past imports with their upload state. undo removes the latest
-import, or import ID from history: it deletes the import's sessions from the
-bucket and this Mac, and excludes the projects it added; --project limits it
-to one project. It shows what it will do and asks first. Hook-captured
-sessions and the apps' own files are not touched.
-Example: agent-archive backfill --dry-run --since 2026-09-01
+See agent-archive help backfill history and agent-archive help backfill undo.
+Example: agent-archive backfill --dry-run --since 30d
 `,
-	"feedback": `Usage: agent-archive feedback ID --file PATH
+	"backfill history": `Usage: agent-archive backfill history
+
+List past imports, oldest first: each import's IMPORT_ID, when it started,
+how many sessions and projects it added, and its upload state (waiting,
+uploaded, interrupted, or undone). Reads this Mac's records only.
+Example: agent-archive backfill history
+`,
+	"backfill undo": `Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
+
+Remove the latest import, or the import IMPORT_ID from backfill history: its
+sessions are deleted from the bucket and this Mac, and the projects it added
+are excluded from capture. Shows what it will do and asks first.
+Hook-captured sessions and the apps' own files are never touched.
+  --project DIR         Only this project's sessions from the import
+  --yes                 Skip the confirmation (required without a terminal)
+Example: agent-archive backfill undo --project ~/src/old-experiment
+`,
+	"feedback": `Usage: agent-archive feedback SESSION_ID --file PATH
 
 Attach an explicit user assessment to a locally captured session. The file is
 read locally, privacy-filtered, and queued for the next collection pass. Its
-path is not archived. Collection remains paused until you resume it.
+path is not archived. While capture is paused, it waits until you resume.
 Example: agent-archive feedback SESSION_ID --file /private/path/feedback.txt
 `,
 }
@@ -157,8 +181,8 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 			terminal.Print(out, usage)
 			return true, 0
 		}
-		if cmd == "help" && len(args) == 2 {
-			if help, ok := commandHelp[args[1]]; ok {
+		if cmd == "help" && (len(args) == 2 || len(args) == 3) {
+			if help, ok := commandHelp[strings.Join(args[1:], " ")]; ok {
 				terminal.Print(out, help)
 				return true, 0
 			}
@@ -178,9 +202,15 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 	if !public {
 		return false, 0
 	}
+	// A subcommand (backfill undo, backfill history) has help of its own.
+	if len(args) > 1 {
+		if sub, ok := commandHelp[cmd+" "+args[1]]; ok {
+			help = sub
+		}
+	}
 	for _, arg := range args[1:] {
 		//lint:ignore LV1001 arg is raw argv, checked for a help flag
-		if arg == "--help" || arg == "-h" {
+		if arg == "--help" || arg == "-h" || arg == "-help" {
 			terminal.Print(out, help)
 			return true, 0
 		}
@@ -190,21 +220,94 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 	return false, 0
 }
 
-// newCommandFlags is the flag set of a command whose arguments are all
-// flags; parseCommandFlags parses it.
-func newCommandFlags(name string) *flag.FlagSet {
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	return fs
+// commandFlags is a public command's flag set. Every command reports a bad
+// command line the same way, through usageError: one line on stderr naming
+// the problem and the command's help, and exit 2. The flag package's own
+// messages and usage dump (with single-dash flag names) never reach the
+// user.
+type commandFlags struct {
+	*flag.FlagSet
+	errOut io.Writer
 }
 
-// parseCommandFlags parses args into fs. It reports anything else, from an
-// unknown flag to a stray argument, as a usage error before the command
-// touches anything, and returns false; the command then exits 2.
-func parseCommandFlags(fs *flag.FlagSet, args []string, errOut io.Writer) bool {
-	if err := fs.Parse(args); err == nil && fs.NArg() == 0 {
-		return true
+// newCommandFlags returns the flag set of command, named as the user types
+// it ("backfill undo").
+func newCommandFlags(command string, errOut io.Writer) *commandFlags {
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	return &commandFlags{FlagSet: fs, errOut: errOut}
+}
+
+// usageError reports a problem with the command line and returns exit
+// code 2.
+func (f *commandFlags) usageError(format string, args ...any) int {
+	terminal.Printf(f.errOut, "agent-archive: %s: %s; run agent-archive %s --help\n", f.Name(), fmt.Sprintf(format, args...), f.Name())
+	return 2
+}
+
+// parse parses the flags in args, leaving positional arguments in Args. It
+// reports a bad flag and returns false; the command then exits 2.
+func (f *commandFlags) parse(args []string) bool {
+	if err := f.Parse(args); err != nil {
+		f.usageError("%s", describeFlagError(err))
+		return false
 	}
-	terminal.Printf(errOut, "agent-archive %s: unexpected arguments %s\nRun agent-archive %s --help.\n", fs.Name(), strings.Join(args, " "), fs.Name())
-	return false
+	return true
+}
+
+// parseFlagsOnly is parse for a command that takes no positional
+// arguments: one is reported like a bad flag.
+func (f *commandFlags) parseFlagsOnly(args []string) bool {
+	if !f.parse(args) {
+		return false
+	}
+	if f.NArg() != 0 {
+		f.usageError("unexpected argument %q", f.Arg(0))
+		return false
+	}
+	return true
+}
+
+// parseWithArgument is parse for a command that takes at most one
+// positional argument (a session ID), before or after its flags: the flag
+// package otherwise stops at the first positional value. It returns the
+// argument, or "" when there is none.
+func (f *commandFlags) parseWithArgument(args []string) (string, bool) {
+	if !f.parse(args) {
+		return "", false
+	}
+	if f.NArg() == 0 {
+		return "", true
+	}
+	argument := f.Arg(0)
+	if !f.parse(f.Args()[1:]) {
+		return "", false
+	}
+	if f.NArg() != 0 {
+		f.usageError("unexpected argument %q", f.Arg(0))
+		return "", false
+	}
+	return argument, true
+}
+
+var flagValueError = regexp.MustCompile(`^invalid (?:boolean )?value ("(?:[^"\\]|\\.)*") for (?:flag )?-+([^:]+): (.*)$`)
+
+// describeFlagError rewrites the flag package's error in the CLI's terms,
+// with flags spelled the way help shows them (--name).
+func describeFlagError(err error) string {
+	message := err.Error()
+	flagName := func(s string) string { return "--" + strings.TrimLeft(strings.TrimSpace(s), "-") }
+	switch {
+	case strings.HasPrefix(message, "flag provided but not defined: "):
+		return "unknown flag " + flagName(strings.TrimPrefix(message, "flag provided but not defined: "))
+	case strings.HasPrefix(message, "flag needs an argument: "):
+		return flagName(strings.TrimPrefix(message, "flag needs an argument: ")) + " needs a value"
+	case strings.HasPrefix(message, "bad flag syntax: "):
+		return "bad flag " + strings.TrimPrefix(message, "bad flag syntax: ")
+	}
+	if m := flagValueError.FindStringSubmatch(message); m != nil {
+		return fmt.Sprintf("invalid value %s for --%s: %s", m[1], m[2], m[3])
+	}
+	return message
 }

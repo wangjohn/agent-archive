@@ -17,7 +17,7 @@ func runPauseCommand(stdout, stderr io.Writer, env Env, paused bool) int {
 		terminal.Printf(stderr, "agent-archive: resolve home: %v\n", err)
 		return 1
 	}
-	unlock, err := local.Lock(home)
+	unlock, err := lockCollector(home, "pause", env.now())
 	if err != nil {
 		terminal.Println(stderr, "Another archive operation is finishing. No settings changed; retry this command when it completes.")
 		return 1

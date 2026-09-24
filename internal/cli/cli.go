@@ -245,8 +245,8 @@ Manage capture
 
 Inspect history
   agent-archive list        Find archived sessions
-  agent-archive show ID     Read a session's metadata
-  agent-archive feedback ID Add explicit feedback from a local file
+  agent-archive show        Read a session's metadata
+  agent-archive feedback    Add explicit feedback from a local file
 
 Import history
   agent-archive backfill    Import sessions already on this Mac
@@ -299,7 +299,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "sync":
 		return runSyncCommand(args[1:], stdout, stderr, env)
 	case "pause", "resume":
-		if !parseCommandFlags(newCommandFlags(args[0]), args[1:], stderr) {
+		if !newCommandFlags(args[0], stderr).parseFlagsOnly(args[1:]) {
 			return 2
 		}
 		return runPauseCommand(stdout, stderr, env, args[0] == "pause")

@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
@@ -28,6 +28,19 @@ func (l *stringList) Set(value string) error {
 	return nil
 }
 
+// backfillDay is the local day (YYYY-MM-DD) a --since or --until value
+// names, in the forms parseTimeArg reads, or "" for "".
+func backfillDay(value string, now time.Time) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	t, err := parseTimeArg(value, now, now.Location())
+	if err != nil {
+		return "", err
+	}
+	return t.In(now.Location()).Format("2006-01-02"), nil
+}
+
 // runBackfillCommand implements `agent-archive backfill`: it finds the
 // sessions already on this Mac, shows the plan, and after confirmation
 // imports them (see docs/agent-archive-backfill-spec.md). `--dry-run
@@ -39,8 +52,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if len(args) > 0 && args[0] == "undo" {
 		return runBackfillUndo(args[1:], stdin, stdout, stderr, env)
 	}
-	fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("backfill", stderr)
 	var harnesses, projects stringList
 	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor); repeatable")
 	fs.Var(&projects, "project", "only sessions in this project directory; repeatable")
@@ -53,18 +65,22 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	jsonOut := fs.Bool("json", false, "with --dry-run, print the plan as JSON")
 	yes := fs.Bool("yes", false, "skip the confirmation")
 	background := fs.Bool("background", false, "register the sessions and let the collector upload them")
-	if err := fs.Parse(args); err != nil {
+	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	usageError := func(message string) int {
-		terminal.Printf(stderr, "agent-archive: backfill: %s\n", message)
-		return 2
+	usageError := func(message string) int { return fs.usageError("%s", message) }
+	// Backfill selects whole local days, so --since and --until accept the
+	// same forms as list's --since and name the local day they fall on.
+	sinceDay, err := backfillDay(*since, env.now())
+	if err != nil {
+		return usageError("--since: " + err.Error())
 	}
-	if fs.NArg() != 0 {
-		return usageError(fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	untilDay, err := backfillDay(*until, env.now())
+	if err != nil {
+		return usageError("--until: " + err.Error())
 	}
 	filters := backfill.Filters{
-		Harnesses: harnesses, Projects: projects, Since: *since, Until: *until,
+		Harnesses: harnesses, Projects: projects, Since: sinceDay, Until: untilDay,
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
 	}
 	if err := filters.Validate(); err != nil {

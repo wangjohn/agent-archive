@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -23,34 +22,23 @@ const maxFeedbackBytes = 64 << 10
 // only privacy-filtered file content and fixed provenance reach the durable
 // request consumed by the next collector pass.
 func runFeedbackCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := flag.NewFlagSet("feedback", flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs := newCommandFlags("feedback", stderr)
 	file := fs.String("file", "", "read explicit feedback from this local UTF-8 text file")
-	if err := fs.Parse(args); err != nil {
+	// Accepts the documented `feedback SESSION_ID --file PATH` form as well
+	// as flags before SESSION_ID.
+	sessionID, ok := fs.parseWithArgument(args)
+	if !ok {
 		return 2
 	}
-	if fs.NArg() == 0 {
-		terminal.Println(stderr, "agent-archive: feedback: an archive session ID is required")
-		return 2
-	}
-	sessionID := fs.Arg(0)
-	// Accept the documented `feedback ID --file PATH` form as well as flags
-	// before ID; flag.FlagSet otherwise stops at the first positional value.
-	if err := fs.Parse(fs.Args()[1:]); err != nil {
-		return 2
-	}
-	if fs.NArg() != 0 {
-		terminal.Printf(stderr, "agent-archive: feedback: unexpected argument %q\n", fs.Arg(0))
-		return 2
+	if sessionID == "" {
+		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
 	}
 	if *file == "" {
-		terminal.Println(stderr, "agent-archive: feedback: --file PATH is required")
-		return 2
+		return fs.usageError("--file PATH is required")
 	}
 	//lint:ignore LV1001 a session ID is an open external identifier; "." and ".." are rejected path components, not choices
-	if sessionID == "" || sessionID == "." || sessionID == ".." || strings.ContainsAny(sessionID, "/\\") {
-		terminal.Println(stderr, "agent-archive: feedback: invalid archive session ID")
-		return 2
+	if sessionID == "." || sessionID == ".." || strings.ContainsAny(sessionID, "/\\") {
+		return fs.usageError("invalid SESSION_ID %q", sessionID)
 	}
 
 	content, err := readFeedbackFile(*file)
@@ -113,6 +101,9 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	terminal.Printf(stdout, "Feedback queued for session %s.\n", sessionID)
+	if cfg.Paused {
+		terminal.Println(stdout, "Capture is paused, so it is published after you run agent-archive resume.")
+	}
 	return 0
 }
 

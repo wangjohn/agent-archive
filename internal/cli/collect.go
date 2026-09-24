@@ -116,7 +116,14 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
 
-	unlock, err := local.Lock(home)
+	holder := "sync"
+	switch {
+	case pass.progress != nil:
+		holder = "backfill upload"
+	case quietOnBusy:
+		holder = "scheduled collection"
+	}
+	unlock, err := lockCollector(home, holder, env.now())
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
 			if quietOnBusy {

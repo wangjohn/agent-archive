@@ -13,7 +13,7 @@ import (
 // pass, preserving queued work on failure. It respects paused state and
 // does not implicitly resume, per the spec.
 func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	if !parseCommandFlags(newCommandFlags("sync"), args, stderr) {
+	if !newCommandFlags("sync", stderr).parseFlagsOnly(args) {
 		return 2
 	}
 	result, err := runOnePass(env, false)
