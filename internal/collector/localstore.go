@@ -162,6 +162,10 @@ func (s *LocalStore) LoadRegistrations() ([]archive.SessionRegistration, error) 
 		}
 		var reg archive.SessionRegistration
 		if err := local.Read(filepath.Join(dir, entry.Name()), &reg); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// Forgotten between listing and reading.
+				continue
+			}
 			return nil, fmt.Errorf("read registration %q: %w", entry.Name(), err)
 		}
 		out = append(out, reg)

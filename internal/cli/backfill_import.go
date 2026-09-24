@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"text/tabwriter"
 	"time"
 
@@ -74,7 +77,8 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 
 	// Ctrl-C from here on stops between registration holds, or before the
 	// next session uploads. After the first, a second one quits at once.
-	interrupt := newInterruption(env)
+	stdout = &lockedWriter{w: stdout}
+	interrupt := newInterruption(env, stdout)
 	defer interrupt.release()
 
 	// Step 5: register, in short holds of hooks.lock.
@@ -103,7 +107,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 			_ = backfill.SaveBatch(home, batch)
 		}
 		if errors.Is(err, backfill.ErrStopped) {
-			fmt.Fprintf(stdout, "Stopped. %s registered as import %s; run agent-archive backfill again with the same options to finish it.\n", countNoun(len(result.Sessions), "session"), batch.ID)
+			fmt.Fprintf(stdout, "Stopped. %s registered as import %s; run agent-archive backfill again with the same options to finish it.\n", countNoun(len(batch.Sessions), "session"), batch.ID)
 			return 1
 		}
 		return fail("%v. %s registered before this; run agent-archive backfill again with the same options to finish.", err, countNoun(len(result.Sessions), "session"))
@@ -154,6 +158,12 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return errors.New("setup or another backfill is running; run backfill again when it finishes")
 	}
 	defer release()
+	// No collector pass or retention may remove what is being listed.
+	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	if err != nil {
+		return errors.New("a collector pass is still running; run backfill again")
+	}
+	defer releaseCollector()
 	if err := completeBatch(env, home, collector.OpenLocalStoreReadOnly(home), &last); err != nil {
 		return err
 	}
@@ -162,32 +172,62 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 }
 
 // interruption watches for Ctrl-C. The first one is recorded and stops the
-// watch, so a second one ends the process as usual.
+// watch at once, even in the middle of a long upload, so a second one ends
+// the process as usual.
 type interruption struct {
-	signals <-chan os.Signal
-	stop    func()
-	seen    bool
+	stop         func()
+	done, exited chan struct{}
+	seen         atomic.Bool
 }
 
-func newInterruption(env Env) *interruption {
+func newInterruption(env Env, out io.Writer) *interruption {
 	signals, stop := env.interrupts()
-	return &interruption{signals: signals, stop: releaseOnce(stop)}
+	i := &interruption{stop: releaseOnce(stop), done: make(chan struct{}), exited: make(chan struct{})}
+	go func() {
+		defer close(i.exited)
+		select {
+		case <-signals:
+			i.seen.Store(true)
+			i.stop()
+			fmt.Fprintln(out, "Stopping after the current session; press Ctrl-C again to quit.")
+		case <-i.done:
+		}
+	}()
+	return i
 }
 
 // requested reports whether Ctrl-C has been pressed. It never blocks.
-func (i *interruption) requested() bool {
-	if !i.seen {
-		select {
-		case <-i.signals:
-			i.seen = true
-			i.stop()
-		default:
-		}
-	}
-	return i.seen
+func (i *interruption) requested() bool { return i.seen.Load() }
+
+// release ends the watch and waits for it, so nothing is written after
+// the command returns. It is called once.
+func (i *interruption) release() {
+	close(i.done)
+	<-i.exited
+	i.stop()
 }
 
-func (i *interruption) release() { i.stop() }
+// lockedWriter serializes writes, so the interruption's message never
+// interleaves with the command's own output.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+// underlyingWriter is w without a lockedWriter around it, for terminal
+// checks.
+func underlyingWriter(w io.Writer) io.Writer {
+	if l, ok := w.(*lockedWriter); ok {
+		return l.w
+	}
+	return w
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
 
 // commitImport is step 4. With collector.lock held, it takes hooks.lock,
 // rereads the configuration, and checks that it is the one the plan was made
@@ -221,11 +261,7 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	}
 	batch, err = backfill.OpenBatch(home, plan.BatchFilters(), backfill.DestinationID(cfg.Storage), now)
 	if err != nil {
-		return batch, admittedAt, 0, err
-	}
-	// A continued import may have registered sessions its file missed.
-	if err := batch.Reconcile(collector.OpenLocalStoreReadOnly(home)); err != nil {
-		return batch, admittedAt, 0, err
+		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed. Repair or move the unreadable file out of %s, then run backfill again", err, filepath.Join(home, "imports"))
 	}
 	projects, apps := backfill.ApplyToConfig(&cfg, plan, admittedAt)
 	if plan.RetentionDays > 0 {
@@ -265,7 +301,7 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 		skipped = append(skipped, fmt.Sprintf("%d that could not be registered", n))
 	}
 	if n := result.SubagentsInvalid; n > 0 {
-		skipped = append(skipped, fmt.Sprintf("%s that conflict with one recorded earlier", countNoun(n, "subagent transcript")))
+		skipped = append(skipped, fmt.Sprintf("%s whose record conflicts with an earlier one or is incomplete", countNoun(n, "subagent transcript")))
 	}
 	if len(skipped) > 0 {
 		fmt.Fprintf(out, "Not registered: %s.\n", strings.Join(skipped, ", "))
@@ -294,7 +330,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		}
 		sizes[c.Harness+"\x00"+c.NativeSessionID] = size
 	}
-	u := &upload{env: env, home: home, batch: batchID, sizes: sizes, terminal: env.isTerminal(stdout), out: stdout}
+	u := &upload{env: env, home: home, batch: batchID, sizes: sizes, terminal: env.isTerminal(underlyingWriter(stdout)), out: stdout}
 	if err := u.refresh(); err != nil {
 		fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
 		return 1
@@ -341,7 +377,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	switch {
 	case len(u.pending) == 0:
 		fmt.Fprintf(stdout, "Uploaded %s (%s).\n", countNoun(u.total, "session"), backfill.FormatSize(u.totalBytes))
-	case interrupt.seen:
+	case interrupt.requested():
 		fmt.Fprintf(stdout, "Stopped. The remaining %s will be uploaded by the background collector.\n", countNoun(len(u.pending), "session"))
 	case errors.Is(passErr, errPaused):
 		fmt.Fprintf(stdout, "Collection is paused. The remaining %s will be uploaded after agent-archive resume.\n", countNoun(len(u.pending), "session"))
@@ -349,7 +385,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		fmt.Fprintf(stdout, "%s not uploaded yet. The background collector keeps trying; run agent-archive status to follow it.\n", countNoun(len(u.pending), "session"))
 	}
 	printImportHints(stdout, batchID)
-	if interrupt.seen || errors.Is(passErr, errPaused) {
+	if interrupt.requested() || errors.Is(passErr, errPaused) {
 		return 0
 	}
 	if passErr != nil {
@@ -477,7 +513,11 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 		// An unreadable import file is named; the others are still listed.
 		fmt.Fprintf(stderr, "agent-archive: backfill history: %v\n", err)
 	}
-	if len(batches) == 0 && err == nil {
+	if len(batches) == 0 && err != nil {
+		fmt.Fprintln(stdout, "No import could be read. Repair or move the files named above, then run agent-archive backfill history again.")
+		return 1
+	}
+	if len(batches) == 0 {
 		fmt.Fprintln(stdout, "No imports yet. Run agent-archive backfill --dry-run to see what an import would do.")
 		return 0
 	}

@@ -631,18 +631,39 @@ func requestFor(store *collector.LocalStore, id string) (collector.Request, bool
 func TestBackfillInterruptedUpload(t *testing.T) {
 	f, _ := newImportFixture(t)
 	signals := make(chan os.Signal, 1)
-	stopped := 0
-	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() { stopped++ } }
+	var mu sync.Mutex
+	var events []string
+	record := func(event string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	}
+	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() { record("watch stopped") } }
 	backfillCheckpoint = func(step string) error {
-		if step == "uploading" {
-			signals <- os.Interrupt
+		if step != "uploading" {
+			return nil
 		}
+		signals <- os.Interrupt
+		// The watch stops on the first Ctrl-C itself, not when the command
+		// next looks, which can be a whole upload later.
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			mu.Lock()
+			n := len(events)
+			mu.Unlock()
+			if n > 0 {
+				break
+			}
+		}
+		record("upload starts")
 		return nil
 	}
 	t.Cleanup(func() { backfillCheckpoint = nil })
 	out, errOut, code := f.importRun(t, nil, false, "--yes")
-	if stopped != 1 {
-		t.Errorf("signal watch stopped %d times; the first Ctrl-C must hand the next one back", stopped)
+	if strings.Join(events, ", ") != "watch stopped, upload starts" {
+		t.Errorf("events %v: the first Ctrl-C must hand the next one back at once, and only once", events)
+	}
+	if !strings.Contains(out, "Stopping after the current session; press Ctrl-C again to quit.") {
+		t.Errorf("no notice of the stop:\n%s", out)
 	}
 	if code != 0 || !strings.Contains(out, "Stopped. The remaining 11 sessions will be uploaded by the background collector.") || !strings.Contains(out, "list --imported") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -97,13 +99,114 @@ func TestSetupGroupsBackfilledProjects(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(projects) != tc.want {
-			t.Fatalf("%q: kept %d, want %d", tc.input, len(projects), tc.want)
+		// Declined imported projects stay, excluded, so the decision holds.
+		if len(projects) != 4 || includedProjects(projects) != tc.want {
+			t.Fatalf("%q: %+v, want %d included", tc.input, projects, tc.want)
+		}
+		for _, p := range projects {
+			if backfilled[p.ProjectID] && p.Included != (tc.want == 4) {
+				t.Errorf("%q: %+v", tc.input, p)
+			}
 		}
 		text := out.String()
-		if strings.Count(text, "Keep the 3 projects added by backfill? [Y/n]") != 1 || strings.Count(text, "Keep project") != 1 || !strings.Contains(text, "Keep project /work/mine?") {
+		if strings.Count(text, "Keep the 3 projects added by backfill? If not, their imported sessions stop uploading and later backfills skip them. [Y/n]") != 1 ||
+			strings.Count(text, "Keep project") != 1 || !strings.Contains(text, "Keep project /work/mine?") {
 			t.Fatalf("prompts:\n%s", text)
 		}
+	}
+}
+
+// Exclusions, such as those undo leaves, survive a setup edit of the
+// projects, and typing an excluded project's path includes it again.
+func TestSetupKeepsExclusions(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := []archive.ProjectActivation{
+		{ProjectID: "p-kept", Root: "/work/kept", Included: true},
+		{ProjectID: "p-gone", Root: "/work/excluded", Included: false},
+		{ProjectID: archive.ProjectID(root), Root: root, Included: false},
+	}
+	var out bytes.Buffer
+	projects, err := promptProjects(newPrompter(strings.NewReader("y\n\n"), &out), existing, nil, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 3 || includedProjects(projects) != 1 || strings.Contains(out.String(), "/work/excluded") {
+		t.Fatalf("%+v\n%s", projects, out.String())
+	}
+	projects, err = promptProjects(newPrompter(strings.NewReader("y\n"+root+"\n\n"), &out), existing, nil, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 3 || includedProjects(projects) != 2 {
+		t.Fatalf("re-including: %+v", projects)
+	}
+}
+
+// A setup draft saved before an import, then continued, keeps the projects
+// the import added.
+func TestSetupDraftKeepsBackfilledProjects(t *testing.T) {
+	f, bucket := newImportFixture(t)
+	before, _, _ := config.Load(f.data)
+	if err := local.Write(filepath.Join(f.data, "setup-draft.json"), setupDraft{Version: 1, Step: 2, Config: before}); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
+		t.Fatalf("import: %s", errOut)
+	}
+	env := setupTestEnv(t, f.data, f.userHome, newFakeKeychain(), backfillNow)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
+	setupRun(t, env, "continue\ny\n", 0)
+	cfg, _, _ := config.Load(f.data)
+	if len(cfg.Archive.Projects) != 5 || includedProjects(cfg.Archive.Projects) != 5 {
+		t.Fatalf("projects after continuing the draft: %+v", cfg.Archive.Projects)
+	}
+}
+
+// A registration error after an earlier run crashed inside a hold still
+// leaves the batch with every session registered under it: the error path
+// rebuilds the batch from the registrations.
+func TestBackfillErrorPathReconciles(t *testing.T) {
+	f, _ := newImportFixture(t)
+	imports := filepath.Join(f.data, "imports")
+	backfillHoldSteps = 3
+	backfillCheckpoint = func(step string) error {
+		if step == "committed" {
+			return os.Chmod(imports, 0o500)
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		backfillCheckpoint, backfillHoldSteps = nil, 0
+		_ = os.Chmod(imports, 0o700)
+	})
+	if _, _, code := f.importRun(t, nil, false, "--yes", "--background"); code != 1 {
+		t.Fatal("the first run did not fail")
+	}
+	if err := os.Chmod(imports, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := loadBatch(t, f.data, firstImport)
+	crashed, _ := importRegistrations(t, f.data, firstImport)
+	if len(b.Sessions) >= len(crashed) {
+		t.Fatalf("no gap to repair: %d recorded, %d registered", len(b.Sessions), len(crashed))
+	}
+
+	backfillCheckpoint = func(step string) error {
+		if step == "registered" {
+			return errors.New("simulated registration error")
+		}
+		return nil
+	}
+	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 1 || !strings.Contains(errOut, "simulated registration error") {
+		t.Fatalf("second run: code %d, %s", code, errOut)
+	}
+	registered, _ := importRegistrations(t, f.data, firstImport)
+	b, _ = loadBatch(t, f.data, firstImport)
+	if len(registered) <= len(crashed) || len(b.Sessions) != len(registered) || b.CompletedAt != nil {
+		t.Fatalf("%d registered, batch records %d", len(registered), len(b.Sessions))
 	}
 }
 
@@ -255,5 +358,32 @@ func TestBackfillHistoryStates(t *testing.T) {
 	}
 	if view.LastImport != "2026-09-22-1" || !strings.Contains(strings.Join(view.Warnings, "\n"), "broken") {
 		t.Fatalf("last import %q, warnings %v", view.LastImport, view.Warnings)
+	}
+}
+
+// With every import file unreadable, history says so instead of printing an
+// empty table, and an import refuses without changing anything.
+func TestBackfillAllImportsUnreadable(t *testing.T) {
+	f, _ := newImportFixture(t)
+	if err := os.MkdirAll(filepath.Join(f.data, "imports"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.data, "imports", "broken.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := f.command(t, "backfill", "history")
+	if code != 1 || !strings.Contains(out, "No import could be read") || strings.Contains(out, "IMPORT") || !strings.Contains(errOut, "broken") {
+		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+	}
+	cfgBefore, _ := os.ReadFile(filepath.Join(f.data, "config.json"))
+	_, errOut, code = f.importRun(t, nil, false, "--yes")
+	if code != 1 || !strings.Contains(errOut, "Nothing was changed") || !strings.Contains(errOut, "imports") {
+		t.Fatalf("code %d, %s", code, errOut)
+	}
+	if cfgAfter, _ := os.ReadFile(filepath.Join(f.data, "config.json")); !bytes.Equal(cfgBefore, cfgAfter) {
+		t.Fatal("config changed")
+	}
+	if parents, _ := importRegistrations(t, f.data, firstImport); len(parents) != 0 {
+		t.Fatal("sessions registered")
 	}
 }

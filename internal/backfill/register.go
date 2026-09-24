@@ -155,13 +155,13 @@ func (r Registration) hold(works []*parentWork, i *int, result *RegistrationResu
 func (r Registration) step(cfg config.Config, w *parentWork, result *RegistrationResult) (done bool, err error) {
 	c := w.c
 	if w.id == "" {
-		if err := r.registration(c, "check").Validate(); err != nil {
-			result.Invalid++
-			return true, nil
-		}
 		skip, err := r.skip(cfg, c, &result.AlreadyArchived, &result.Gone, &result.NotAdmitted)
 		if err != nil || skip {
 			return true, err
+		}
+		if err := r.registration(c, "check").Validate(); err != nil {
+			result.Invalid++
+			return true, nil
 		}
 		w.id, _, err = r.Store.EnsureArchiveSessionID(c.NativeSessionID)
 		return false, err
