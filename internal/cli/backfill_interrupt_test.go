@@ -58,6 +58,27 @@ func TestBackfillPlanningStopsOnInterrupt(t *testing.T) {
 }
 
 // Without Ctrl-C, stop ends the watch and cancels the context.
+// A Ctrl-C already waiting when planning starts has cancelled the context by
+// the time interruptibleContext returns, before any planning, and the watch
+// has let go of Ctrl-C.
+func TestPlanningInterruptAlreadyPending(t *testing.T) {
+	signals := make(chan os.Signal, 1)
+	signals <- os.Interrupt
+	stops := 0
+	env := Env{Interrupts: func() (<-chan os.Signal, func()) { return signals, func() { stops++ } }}
+	ctx, stop := interruptibleContext(env)
+	if ctx.Err() == nil {
+		t.Fatal("a pending Ctrl-C did not cancel before planning")
+	}
+	if stops != 1 {
+		t.Fatalf("watch stopped %d times before return, want 1", stops)
+	}
+	stop()
+	if stops != 1 {
+		t.Fatalf("watch stopped %d times in all, want 1", stops)
+	}
+}
+
 func TestPlanningInterruptStopWithoutSignal(t *testing.T) {
 	signals := make(chan os.Signal, 1)
 	stops := 0

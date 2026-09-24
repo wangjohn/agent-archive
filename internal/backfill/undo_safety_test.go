@@ -72,6 +72,33 @@ func (f *undoFixture) batch(id string, started time.Time, projectsAdded ...strin
 
 // B-1: a new import is numbered past every ID a registration still carries,
 // so an ID whose batch file was moved aside is never reused.
+// OpenBatch tells an unreadable batch file (ErrUnreadableImport, which the
+// CLI answers with advice about imports/) from registrations it can't list,
+// which is a different problem.
+func TestOpenBatchSeparatesRegistrationErrorsFromImportFiles(t *testing.T) {
+	f := newUndoFixture(t)
+	if err := os.RemoveAll(filepath.Join(f.home, "registrations")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.home, "registrations"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := OpenBatch(f.home, f.store, BatchFilters{}, "dest", fixedNow)
+	if err == nil || errors.Is(err, ErrUnreadableImport) || !strings.Contains(err.Error(), "read registrations") {
+		t.Fatalf("registrations: %v", err)
+	}
+	f = newUndoFixture(t)
+	if err := os.MkdirAll(filepath.Join(f.home, "imports"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.home, "imports", "2026-09-22-1.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenBatch(f.home, f.store, BatchFilters{}, "dest", fixedNow); !errors.Is(err, ErrUnreadableImport) {
+		t.Fatalf("batch file: %v", err)
+	}
+}
+
 func TestOpenBatchSkipsIDsRegistrationsStillCarry(t *testing.T) {
 	f := newUndoFixture(t)
 	first, err := OpenBatch(f.home, f.store, BatchFilters{}, "dest", fixedNow)
