@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // harnessOrder is the order apps appear in, in columns and lists.
@@ -26,8 +30,9 @@ type ProjectSummary struct {
 	Sessions  map[string]int
 	Subagents int
 	// Bytes counts the sessions' and their subagents' transcripts.
-	Bytes                 int64
-	FirstStart, LastStart time.Time
+	Bytes      int64
+	FirstStart time.Time
+	LastStart  time.Time
 }
 
 // Total is the number of sessions the project imports.
@@ -134,7 +139,7 @@ func (p Plan) AppsWithoutHooks() []string {
 		importing[c.Harness] = true
 	}
 	for _, h := range harnessOrder {
-		if importing[h] && !containsString(p.Harnesses, h) {
+		if importing[h] && !slices.Contains(p.Harnesses, h) {
 			out = append(out, h)
 		}
 	}
@@ -167,16 +172,16 @@ func SearchLine(f Filters) string {
 func RenderText(w io.Writer, p Plan) {
 	projects := p.Projects()
 	if len(projects) == 0 {
-		fmt.Fprintln(w, "Nothing to import.")
+		terminal.Println(w, "Nothing to import.")
 		renderSkipped(w, p)
 		return
 	}
 	if p.Filters.Active() {
-		fmt.Fprintf(w, "Backfill imports sessions matching %s\ninto %s. Nothing has been uploaded yet.\n", p.filterFlags(), p.destination())
+		terminal.Printf(w, "Backfill imports sessions matching %s\ninto %s. Nothing has been uploaded yet.\n", p.filterFlags(), p.destination())
 	} else {
-		fmt.Fprintf(w, "Backfill imports every session found on this Mac into\n%s. Nothing has been uploaded yet.\n", p.destination())
+		terminal.Printf(w, "Backfill imports every session found on this Mac into\n%s. Nothing has been uploaded yet.\n", p.destination())
 	}
-	fmt.Fprintln(w)
+	terminal.Println(w)
 
 	var repos, others []ProjectSummary
 	for _, s := range projects {
@@ -190,20 +195,20 @@ func RenderText(w io.Writer, p Plan) {
 	for _, s := range projects {
 		width = max(width, utf8.RuneCountInString(p.rowLabel(s))+2)
 	}
-	fmt.Fprintf(w, "%-*s%6s  %5s  %6s  %5s\n", width, "PROJECT", "CLAUDE", "CODEX", "CURSOR", "TOTAL")
+	terminal.Printf(w, "%-*s%6s  %5s  %6s  %5s\n", width, "PROJECT", "CLAUDE", "CODEX", "CURSOR", "TOTAL")
 	for _, s := range repos {
 		p.renderRow(w, width, s)
 	}
 	if len(others) > 0 {
 		if len(repos) > 0 {
-			fmt.Fprintln(w)
+			terminal.Println(w)
 		}
-		fmt.Fprintln(w, "Not a repository:")
+		terminal.Println(w, "Not a repository:")
 		for _, s := range others {
 			p.renderRow(w, width, s)
 		}
 	}
-	fmt.Fprintln(w)
+	terminal.Println(w)
 
 	sessions, subagents := 0, 0
 	var bytes int64
@@ -223,18 +228,18 @@ func RenderText(w io.Writer, p Plan) {
 	if subagents > 0 {
 		total += fmt.Sprintf(" (plus %s)", count(subagents, "subagent transcript"))
 	}
-	fmt.Fprintf(w, "%s, %s,\n", total, FormatSize(bytes))
+	terminal.Printf(w, "%s, %s,\n", total, FormatSize(bytes))
 	loc := p.GeneratedAt.Location()
 	firstDay, lastDay := first.In(loc).Format(dateLayout), last.In(loc).Format(dateLayout)
 	if firstDay == lastDay {
-		fmt.Fprintf(w, "       started %s.\n", firstDay)
+		terminal.Printf(w, "       started %s.\n", firstDay)
 	} else {
-		fmt.Fprintf(w, "       started %s to %s.\n", firstDay, lastDay)
+		terminal.Printf(w, "       started %s to %s.\n", firstDay, lastDay)
 	}
 
 	renderSkipped(w, p)
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "If you continue:")
+	terminal.Println(w)
+	terminal.Println(w, "If you continue:")
 	added := 0
 	for _, s := range projects {
 		if !s.Included {
@@ -243,7 +248,7 @@ func RenderText(w io.Writer, p Plan) {
 	}
 	var hooked []string
 	for _, h := range harnessOrder {
-		if containsString(p.Harnesses, h) {
+		if slices.Contains(p.Harnesses, h) {
 			hooked = append(hooked, harnessNames[h])
 		}
 	}
@@ -271,19 +276,19 @@ func RenderText(w io.Writer, p Plan) {
 		if len(hooked) > 0 {
 			captured = strings.Replace(captured, "new sessions", "new "+joinAnd(hooked)+" sessions", 1)
 		}
-		fmt.Fprintf(w, "  • %d %s added, and %s\n", added, verb, captured)
+		terminal.Printf(w, "  • %d %s added, and %s\n", added, verb, captured)
 		if needSetup != "" {
-			fmt.Fprintf(w, "    %s\n", needSetup)
+			terminal.Printf(w, "    %s\n", needSetup)
 		}
 	case needSetup != "":
-		fmt.Fprintf(w, "  • %s\n", needSetup)
+		terminal.Printf(w, "  • %s\n", needSetup)
 	}
 	if expires, ok := p.ExpiresOn(); ok {
-		fmt.Fprintf(w, "  • Retention is %d days, so these sessions are deleted on %s.\n    Choose `edit` to keep them longer.\n", p.RetentionDays, expires)
+		terminal.Printf(w, "  • Retention is %d days, so these sessions are deleted on %s.\n    Choose `edit` to keep them longer.\n", p.RetentionDays, expires)
 	} else {
-		fmt.Fprintln(w, "  • Retention is off, so these sessions are kept until you delete them.")
+		terminal.Println(w, "  • Retention is off, so these sessions are kept until you delete them.")
 	}
-	fmt.Fprintln(w, "  • Undo any time with `agent-archive backfill undo`.")
+	terminal.Println(w, "  • Undo any time with `agent-archive backfill undo`.")
 }
 
 func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
@@ -295,20 +300,22 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 	if s.Included {
 		status = "already included"
 	}
-	fmt.Fprintf(w, "%-*s%6s  %5s  %6s  %5d  %s\n", width, p.rowLabel(s), cells[0], cells[1], cells[2], s.Total(), status)
+	terminal.Printf(w, "%-*s%6s  %5s  %6s  %5d  %s\n", width, p.rowLabel(s), cells[0], cells[1], cells[2], s.Total(), status)
 	switch s.Kind {
 	case ProjectKindScratch:
 		if p.isCodexWorkspaces(s.Root) {
-			fmt.Fprintln(w, "  Chats in the workspaces Codex creates for them. New ones will be captured too.")
+			terminal.Println(w, "  Chats in the workspaces Codex creates for them. New ones will be captured too.")
 		} else {
-			fmt.Fprintln(w, "  Chats started without a folder. New ones will be captured too.")
+			terminal.Println(w, "  Chats started without a folder. New ones will be captured too.")
 		}
 	case ProjectKindHome:
 		if s.Included {
 			break
 		}
-		fmt.Fprintln(w, "  Every future session under your home folder that isn't in a nearer project")
-		fmt.Fprintln(w, "  will be captured too.")
+		terminal.Println(w, "  Every future session under your home folder that isn't in a nearer project")
+		terminal.Println(w, "  will be captured too.")
+	case ProjectKindRepository, ProjectKindTemporary, ProjectKindDirectory:
+		// No note under the row.
 	}
 }
 
@@ -336,7 +343,7 @@ func countCell(n int) string {
 	if n == 0 {
 		return "–"
 	}
-	return fmt.Sprint(n)
+	return strconv.Itoa(n)
 }
 
 // skipLabels describe each reason, after its count.
@@ -387,8 +394,9 @@ func renderSkipped(w io.Writer, p Plan) {
 		}
 	}
 	type line struct {
-		n               int
-		label, override string
+		n        int
+		label    string
+		override string
 	}
 	var lines []line
 	width := 0
@@ -428,27 +436,27 @@ func renderSkipped(w io.Writer, p Plan) {
 		lines = append(lines, line{n, label, ""})
 	}
 	width = max(width+2, 42)
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Not imported:")
+	terminal.Println(w)
+	terminal.Println(w, "Not imported:")
 	for _, l := range lines {
 		if l.override == "" {
-			fmt.Fprintf(w, "%4d  %s\n", l.n, l.label)
+			terminal.Printf(w, "%4d  %s\n", l.n, l.label)
 		} else {
-			fmt.Fprintf(w, "%4d  %-*s%s\n", l.n, width, l.label, l.override)
+			terminal.Printf(w, "%4d  %-*s%s\n", l.n, width, l.label, l.override)
 		}
 	}
 	for _, h := range p.UnreadableStores {
 		if h == "codex" && p.codexArchivedOnly {
-			fmt.Fprintln(w, "      Codex's archived session folder could not be read (check permissions);")
-			fmt.Fprintln(w, "      none of its archived sessions are included.")
+			terminal.Println(w, "      Codex's archived session folder could not be read (check permissions);")
+			terminal.Println(w, "      none of its archived sessions are included.")
 			continue
 		}
-		fmt.Fprintf(w, "      %s's session folder could not be read (check permissions);\n", harnessNames[h])
-		fmt.Fprintln(w, "      none of its sessions are included.")
+		terminal.Printf(w, "      %s's session folder could not be read (check permissions);\n", harnessNames[h])
+		terminal.Println(w, "      none of its sessions are included.")
 	}
 	if databaseUnchecked {
-		fmt.Fprintln(w, "      Cursor chats stored only in Cursor's database were not checked:")
-		fmt.Fprintf(w, "      %s.\n", uncheckedCauses[p.CursorDatabaseUnchecked])
+		terminal.Println(w, "      Cursor chats stored only in Cursor's database were not checked:")
+		terminal.Printf(w, "      %s.\n", uncheckedCauses[p.CursorDatabaseUnchecked])
 	}
 }
 
@@ -609,10 +617,18 @@ type filtersJSON struct {
 	IncludeRemoved bool     `json:"include_removed"`
 }
 
+// projectStatus says whether a project is already configured.
+type projectStatus string
+
+const (
+	projectStatusWillBeAdded     projectStatus = "will_be_added"
+	projectStatusAlreadyIncluded projectStatus = "already_included"
+)
+
 type projectJSON struct {
 	Root           string         `json:"root"`
 	Kind           ProjectKind    `json:"kind"`
-	Status         string         `json:"status"`
+	Status         projectStatus  `json:"status"`
 	Exists         bool           `json:"exists"`
 	Sessions       map[string]int `json:"sessions"`
 	Subagents      int            `json:"subagents"`
@@ -657,9 +673,9 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 	}
 	out.ExpiresOn, _ = p.ExpiresOn()
 	for _, s := range p.Projects() {
-		status := "will_be_added"
+		status := projectStatusWillBeAdded
 		if s.Included {
-			status = "already_included"
+			status = projectStatusAlreadyIncluded
 		}
 		sessions := map[string]int{}
 		for _, h := range harnessOrder {

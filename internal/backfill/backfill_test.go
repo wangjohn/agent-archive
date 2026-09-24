@@ -24,8 +24,9 @@ var fixedCreated = time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 // tree is a constructed file system: root holds home and a temporary
 // directory, so nothing depends on where t.TempDir lives.
 type tree struct {
-	t          *testing.T
-	root, home string
+	t    *testing.T
+	root string
+	home string
 }
 
 func newTree(t *testing.T) *tree {

@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -132,7 +133,8 @@ type Filters struct {
 	Projects  []string
 	// Since and Until are local dates, YYYY-MM-DD, compared inclusively with
 	// the session's start.
-	Since, Until   string
+	Since          string
+	Until          string
 	IncludeHome    bool
 	IncludeTemp    bool
 	IncludeRemoved bool
@@ -153,10 +155,8 @@ func (f Filters) Validate() error {
 			return fmt.Errorf("--harness must be claude, codex, or cursor, not %q", h)
 		}
 	}
-	for _, p := range f.Projects {
-		if p == "" {
-			return errors.New("--project needs a directory")
-		}
+	if slices.Contains(f.Projects, "") {
+		return errors.New("--project needs a directory")
 	}
 	var since, until time.Time
 	var err error
@@ -176,9 +176,20 @@ func (f Filters) Validate() error {
 	return nil
 }
 
+// harness is an app whose sessions backfill imports, by the name the archive
+// uses for it.
+type harness string
+
+const (
+	harnessClaude harness = "claude"
+	harnessCodex  harness = "codex"
+	harnessCursor harness = "cursor"
+)
+
 // canonicalHarness returns the harness name the archive uses, or "" for an
 // unknown one.
 func canonicalHarness(name string) string {
+	//lint:ignore LV1001 name is free-form: a --harness value or a stored harness name, aliases included
 	switch name {
 	case "claude", "claude-code":
 		return "claude"

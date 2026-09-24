@@ -215,8 +215,11 @@ func TestUnreadableStoreIsNamed(t *testing.T) {
 	tr.write(filepath.Join("home", ".cursor", "projects", "slug", "agent-transcripts", "k-1", "k-1.jsonl"), cursorTranscript)
 	home := tr.home
 	for _, tc := range []struct {
-		name, root, app, line string
-		missing               []string
+		name    string
+		root    string
+		app     string
+		line    string
+		missing []string
 	}{
 		{"claude", filepath.Join(home, ".claude", "projects"), "claude", "Claude Code's session folder could not be read (check permissions);\n      none of its sessions are included.", []string{"claude-1"}},
 		{"codex", filepath.Join(home, ".codex", "sessions"), "codex", "Codex's session folder could not be read (check permissions);\n      none of its sessions are included.", []string{codexID}},

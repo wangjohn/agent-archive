@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -101,16 +102,20 @@ type work struct {
 	filtered bool
 	// duplicated is set when another file carries the same harness and
 	// native ID; duplicate when this file is not the one kept.
-	duplicated, duplicate bool
+	duplicated bool
+	duplicate  bool
 	// Adapter outcomes.
-	empty, unsafe, tooLarge bool
+	empty    bool
+	unsafe   bool
+	tooLarge bool
 }
 
 // subagentWork is one subagent transcript of an imported parent.
 type subagentWork struct {
-	parent            *work
-	sub               Subagent
-	skipped, vanished bool
+	parent   *work
+	sub      Subagent
+	skipped  bool
+	vanished bool
 }
 
 // importable reports whether nothing about the file itself stops it being
@@ -163,15 +168,6 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		return Plan{}, err
 	}
 	now := env.now()
-	plan := Plan{
-		GeneratedAt:   now,
-		Home:          env.Home,
-		Filters:       filters,
-		Destination:   Destination{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix},
-		RetentionDays: cfg.RetentionDays,
-		Harnesses:     append([]string(nil), cfg.Harnesses...),
-		resolvedHome:  env.resolved(env.Home),
-	}
 	found, unread := discover(env)
 	workers := env.Workers
 	if workers <= 0 {
@@ -180,7 +176,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 
 	items := make([]*work, len(found))
 	for i, t := range found {
-		items[i] = &work{t: t, c: Candidate{Harness: t.harness, TranscriptPath: t.path, Bytes: t.size}}
+		items[i] = &work{t: t, c: Candidate{Harness: string(t.harness), TranscriptPath: t.path, Bytes: t.size}}
 	}
 	// Identity and working directory come from each transcript's leading
 	// records.
@@ -205,7 +201,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		cursorCandidates = append(cursorCandidates, p.Root)
 	}
 	for _, w := range items {
-		if w.t.harness == "cursor" || w.vanished {
+		if w.t.harness == harnessCursor || w.vanished {
 			continue
 		}
 		w.res = r.resolve(w.t.cwd)
@@ -218,7 +214,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	}
 	matcher := newCursorMatcher(env, cursorCandidates)
 	for _, w := range items {
-		if w.t.harness != "cursor" {
+		if w.t.harness != harnessCursor {
 			continue
 		}
 		if folder, ok := matcher.match(w.t.cursorSlug); ok {
@@ -235,7 +231,6 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 		projectFilter = append(projectFilter, env.resolved(p))
 	}
-	plan.projectFilter = projectFilter
 	since, until := dateRange(filters, now.Location())
 
 	sessions := map[string][]*work{}
@@ -244,7 +239,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 			continue
 		}
 		if strings.TrimSpace(w.c.NativeSessionID) != "" {
-			reason, err := state.Classify(w.t.harness, w.c.NativeSessionID)
+			reason, err := state.Classify(string(w.t.harness), w.c.NativeSessionID)
 			if err != nil {
 				return Plan{}, fmt.Errorf("check the archive: %w", err)
 			}
@@ -252,10 +247,10 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 				reason = ""
 			}
 			w.state = reason
-			key := w.t.harness + "\x00" + w.c.NativeSessionID
+			key := string(w.t.harness) + "\x00" + w.c.NativeSessionID
 			sessions[key] = append(sessions[key], w)
 		}
-		w.filtered = !harnessMatches(filters.Harnesses, w.t.harness) || !projectMatches(env, projectFilter, w.res.root)
+		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)
 		w.tooLarge = w.t.size > archive.MaxRecordBytes
 	}
 	for _, group := range sessions {
@@ -307,7 +302,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 			w.c.ProjectExists = env.exists(w.res.root)
 		}
 		w.c.Skip = w.reason(now)
-		if w.c.Skip == "" && w.t.harness == "claude" {
+		if w.c.Skip == "" && w.t.harness == harnessClaude {
 			parents = append(parents, w)
 		}
 	}
@@ -320,15 +315,6 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 			subagents = append(subagents, &subagentWork{parent: w, sub: sub})
 		}
 	}
-	plan.UnreadableFolders = unread.folders
-	for _, h := range harnessOrder {
-		// A store the filters leave out is not reported.
-		if unread.stores[h] && harnessMatches(filters.Harnesses, h) {
-			plan.UnreadableStores = append(plan.UnreadableStores, h)
-		}
-	}
-	plan.codexArchivedOnly = unread.codexArchivedOnly
-	plan.cursorIncomplete = unread.cursorIncomplete
 	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
 		if s.sub.Bytes > archive.MaxRecordBytes {
 			s.skipped = true
@@ -357,10 +343,33 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 			s.parent.c.Subagents = append(s.parent.c.Subagents, s.sub)
 		}
 	}
+	var candidates []Candidate
 	for _, w := range items {
 		if !w.vanished {
-			plan.Candidates = append(plan.Candidates, w.c)
+			candidates = append(candidates, w.c)
 		}
+	}
+	var unreadableStores []string
+	for _, h := range harnessOrder {
+		// A store the filters leave out is not reported.
+		if unread.stores[h] && harnessMatches(filters.Harnesses, h) {
+			unreadableStores = append(unreadableStores, h)
+		}
+	}
+	plan := Plan{
+		GeneratedAt:       now,
+		Home:              env.Home,
+		Filters:           filters,
+		Destination:       Destination{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix},
+		RetentionDays:     cfg.RetentionDays,
+		Harnesses:         append([]string(nil), cfg.Harnesses...),
+		Candidates:        candidates,
+		UnreadableFolders: unread.folders,
+		UnreadableStores:  unreadableStores,
+		resolvedHome:      env.resolved(env.Home),
+		projectFilter:     projectFilter,
+		codexArchivedOnly: unread.codexArchivedOnly,
+		cursorIncomplete:  unread.cursorIncomplete,
 	}
 
 	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
@@ -414,7 +423,7 @@ func (w *work) reason(now time.Time) SkipReason {
 // records carry, and the earliest record's time.
 func runAdapter(env Environment, w *work) {
 	var freshStart time.Time
-	if w.t.harness == "cursor" {
+	if w.t.harness == harnessCursor {
 		// Cursor records carry no timestamps; the file's creation is the
 		// start, and the text filter needs it as its fresh-start proof.
 		created, err := env.fileCreated(w.t.path)
@@ -429,7 +438,7 @@ func runAdapter(env Environment, w *work) {
 		freshStart = created.UTC()
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, archive.StartedAtSourceFileCreated
 	}
-	filtered, _, err := collector.FilterTranscriptFile(w.t.harness, w.t.path, freshStart)
+	filtered, _, err := collector.FilterTranscriptFile(string(w.t.harness), w.t.path, freshStart)
 	if err != nil {
 		info, statErr := env.lstat(w.t.path)
 		switch {
@@ -448,26 +457,28 @@ func runAdapter(env Environment, w *work) {
 	}
 	w.empty = !carriesConversation(filtered)
 	switch w.t.harness {
-	case "claude":
+	case harnessClaude:
 		// The file stem is the ID hooks register. A fork or resume can copy
 		// records carrying an earlier session's ID, so the stem must be among
 		// the records' IDs rather than the only one. A conversation whose
 		// records carry no ID at all cannot be matched with a hook's
 		// registration either; a file with no conversation is reported as
 		// empty, which says more.
-		if (len(filtered.SessionIDs) > 0 || !w.empty) && !containsString(filtered.SessionIDs, w.t.nativeID) {
+		if (len(filtered.SessionIDs) > 0 || !w.empty) && !slices.Contains(filtered.SessionIDs, w.t.nativeID) {
 			w.t.identityMismatch = true
 		}
 		if !filtered.NativeStartAt.IsZero() {
 			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), archive.StartedAtSourceTranscript
 		}
-	case "codex":
+	case harnessCodex:
 		switch {
 		case !w.t.metaStart.IsZero():
 			w.c.StartedAt, w.c.StartedAtSource = w.t.metaStart, archive.StartedAtSourceTranscript
 		case !filtered.NativeStartAt.IsZero():
 			w.c.StartedAt, w.c.StartedAtSource = filtered.NativeStartAt.UTC(), archive.StartedAtSourceTranscript
 		}
+	case harnessCursor:
+		// Its start is the file's creation, set above.
 	}
 }
 
@@ -539,13 +550,7 @@ func projectMatches(env Environment, projects []string, root string) bool {
 	if root == "" {
 		return false
 	}
-	root = env.resolved(root)
-	for _, p := range projects {
-		if p == root {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(projects, env.resolved(root))
 }
 
 // dateRange turns --since and --until into [since, until) in loc.
@@ -566,15 +571,6 @@ func inRange(t, since, until time.Time) bool {
 		return false
 	}
 	return (since.IsZero() || !t.Before(since)) && (until.IsZero() || t.Before(until))
-}
-
-func containsString(values []string, want string) bool {
-	for _, v := range values {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }
 
 // forEach runs fn over items with a fixed number of workers.
