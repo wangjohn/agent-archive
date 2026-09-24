@@ -448,14 +448,15 @@ func TestCursorDatabaseCount(t *testing.T) {
 	calls := 0
 	env.CursorDatabase = func(context.Context) (CursorDatabaseResult, error) {
 		calls++
-		return CursorDatabaseResult{Checked: true, Chats: []CursorDatabaseChat{{ID: "k1"}, {ID: "d1"}, {ID: "d2"}, {ID: "d3"}}}, nil
+		return CursorDatabaseResult{Checked: true, Chats: []CursorDatabaseChat{{ID: "k1"}, {ID: "d1"}, {ID: "d2"}, {ID: "d3"}, {ID: "d1"}}}, nil
 	}
 	// k1 has a file, so the file is the session; the archive's own reasons
-	// win over cursor_database_only.
+	// win over cursor_database_only; a second row for d1 is a duplicate.
 	st := states{"d2": SkipRemovedByUndo, "d3": SkipAlreadyArchived}
 	p := plan(t, env, st, config.Config{}, Filters{})
 	skipped := p.Skipped()
-	if skipped[SkipCursorDatabaseOnly] != 1 || skipped[SkipRemovedByUndo] != 1 || skipped[SkipAlreadyArchived] != 1 || p.Found() != 4 {
+	if skipped[SkipCursorDatabaseOnly] != 1 || skipped[SkipRemovedByUndo] != 1 || skipped[SkipAlreadyArchived] != 1 ||
+		skipped[SkipDuplicateSession] != 1 || p.Found() != 5 {
 		t.Fatalf("skipped %v, found %d", skipped, p.Found())
 	}
 	if p := plan(t, env, st, config.Config{}, Filters{IncludeRemoved: true}); p.Skipped()[SkipCursorDatabaseOnly] != 2 {

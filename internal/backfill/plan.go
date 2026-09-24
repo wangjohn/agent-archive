@@ -40,6 +40,9 @@ type Plan struct {
 	CursorDatabaseSkipped   map[SkipReason]int
 	CursorDatabaseChecked   bool
 	CursorDatabaseUnchecked CursorUncheckedReason
+	// CursorDatabaseNewerFormat counts the database rows read with a newer
+	// format version than this release knows.
+	CursorDatabaseNewerFormat int
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string

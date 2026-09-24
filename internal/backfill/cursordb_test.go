@@ -250,6 +250,56 @@ func TestCursorDatabaseReader(t *testing.T) {
 	}
 }
 
+// TestCursorDatabaseReaderNewerFormat: rows with a newer _v are still read
+// when the fields the count needs decode, and are counted for the plan.
+func TestCursorDatabaseReaderNewerFormat(t *testing.T) {
+	home := t.TempDir()
+	writeCursorDB(t, CursorStateDatabase(home), false, map[string]any{
+		"composerData:known": composerJSON("known", 1, nil),
+		"composerData:newer": composerJSON("newer", 1, map[string]any{"_v": maxComposerVersion + 1, "someNewField": map[string]any{"x": 1}}),
+		"composerData:draft": composerJSON("draft", 1, map[string]any{"_v": maxComposerVersion + 7, "isDraft": true}),
+	})
+	res := readCursor(t, home)
+	if !res.Checked || res.NewerFormat != 2 || !reflect.DeepEqual(chatIDs(res), []string{"known", "newer"}) {
+		t.Fatalf("%+v", res)
+	}
+}
+
+// TestCursorDatabaseReaderSymlink follows a symlinked database to find its
+// side files: read beside the link, a live WAL would be missed and the
+// chats only it holds silently left out.
+func TestCursorDatabaseReaderSymlink(t *testing.T) {
+	home := t.TempDir()
+	real := filepath.Join(t.TempDir(), "elsewhere", "state.vscdb")
+	w := startCursorWriter(t, real, true)
+	w.do("a", "checkpoint", "b", "c")
+	link := CursorStateDatabase(home)
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	dir, linkDir := filepath.Dir(real), filepath.Dir(link)
+	before, linkBefore := snapshotDir(t, dir), snapshotDir(t, linkDir)
+	if res := readCursor(t, home); !res.Checked || !reflect.DeepEqual(chatIDs(res), []string{"a", "b", "c"}) {
+		t.Fatalf("%+v", res)
+	}
+	assertUnchanged(t, dir, before)
+	assertUnchanged(t, linkDir, linkBefore)
+
+	// A link to nothing is no database.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "missing.vscdb"), link); err != nil {
+		t.Fatal(err)
+	}
+	if res := readCursor(t, home); !res.Checked || len(res.Chats) != 0 {
+		t.Fatalf("dangling link: %+v", res)
+	}
+}
+
 func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.vscdb")
 	db := openCursorWriter(t, path, false)
@@ -332,8 +382,9 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 		"isDraft not a bool":     {value(`{"composerId":"b","isDraft":"no","fullConversationHeadersOnly":[{}]}`), CursorUncheckedUnknownFormat},
 		"headers not a list":     {value(`{"composerId":"b","fullConversationHeadersOnly":{"n":3}}`), CursorUncheckedUnknownFormat},
 		"conversation not alist": {value(`{"composerId":"b","conversation":"hi"}`), CursorUncheckedUnknownFormat},
-		"newer _v":               {value(composerJSON("b", 1, map[string]any{"_v": maxComposerVersion + 1})), CursorUncheckedUnknownFormat},
+		"newer _v, bad isDraft":  {value(composerJSON("b", 1, map[string]any{"_v": maxComposerVersion + 1, "isDraft": 1})), CursorUncheckedUnknownFormat},
 		"_v not a number":        {value(composerJSON("b", 1, map[string]any{"_v": "3"})), CursorUncheckedUnknownFormat},
+		"_v zero":                {value(composerJSON("b", 1, map[string]any{"_v": 0})), CursorUncheckedUnknownFormat},
 		// A WAL database with one side file and not the other can't be
 		// read without SQLite creating the missing one.
 		"wal without shm": {func(t *testing.T, path string) {
@@ -401,6 +452,24 @@ func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 			}
 			os.Chtimes(path, info.ModTime(), info.ModTime())
 		},
+		// Same size, time, and inode; only SQLite's change counter moved.
+		"header": func(t *testing.T, path string) {
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.OpenFile(path, os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.WriteAt([]byte{0xff}, 27); err != nil {
+				t.Fatal(err)
+			}
+			f.Close()
+			if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"cursor started": func(t *testing.T, path string) {
 			if err := os.WriteFile(path+"-wal", nil, 0o644); err != nil {
 				t.Fatal(err)
@@ -459,7 +528,7 @@ func startCursorWriter(t *testing.T, path string, wal bool) *cursorWriter {
 	return w
 }
 
-// do sends commands: "begin", or a chat ID to insert.
+// do sends commands: "begin", "checkpoint", or a chat ID to insert.
 func (w *cursorWriter) do(commands ...string) {
 	w.t.Helper()
 	for _, c := range commands {
@@ -501,6 +570,10 @@ func TestCursorWriterProcess(t *testing.T) {
 		switch c := in.Text(); c {
 		case "begin":
 			if _, err := conn.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
+				t.Fatal(err)
+			}
+		case "checkpoint":
+			if _, err := conn.ExecContext(context.Background(), `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 				t.Fatal(err)
 			}
 		default:

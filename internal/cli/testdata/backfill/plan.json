@@ -104,5 +104,6 @@
   "expires_on": "2026-12-22",
   "storage_checked": false,
   "cursor_database_checked": true,
+  "cursor_database_newer_format": 0,
   "subagents_skipped": 0
 }

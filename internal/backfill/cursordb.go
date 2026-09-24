@@ -38,8 +38,9 @@ type CursorDatabaseChat struct {
 type CursorUncheckedReason string
 
 const (
-	// CursorUncheckedLocked: Cursor held a lock past the busy timeout, or a
-	// rollback journal shows a write in progress.
+	// CursorUncheckedLocked: a rollback journal shows an unfinished write
+	// (which may be a hot journal only Cursor can roll back), or Cursor held
+	// a lock past the busy timeout.
 	CursorUncheckedLocked CursorUncheckedReason = "locked"
 	// CursorUncheckedUnreadable: the file is not a database SQLite can open,
 	// or its side files are in a state that can't be read without changing
@@ -60,6 +61,9 @@ type CursorDatabaseResult struct {
 	Chats   []CursorDatabaseChat
 	Checked bool
 	Reason  CursorUncheckedReason
+	// NewerFormat counts the composerData rows with a _v newer than this
+	// release knows, read anyway.
+	NewerFormat int
 }
 
 // CursorStateDatabase is where Cursor keeps its chats under home.
@@ -73,8 +77,9 @@ const cursorBusyTimeout = 500 * time.Millisecond
 // cursorReadTimeout bounds the whole database read.
 const cursorReadTimeout = 30 * time.Second
 
-// maxComposerVersion is the newest composerData _v this release knows. A
-// newer one makes the database unknown_format rather than guessing at it.
+// maxComposerVersion is the newest composerData _v this release knows. Newer
+// rows are still counted when the fields the count needs decode, and the plan
+// reports how many there were.
 const maxComposerVersion = 18
 
 // cursorComposerQuery reads the composerData rows. The range, rather than
@@ -119,16 +124,27 @@ func unchecked(reason CursorUncheckedReason) CursorDatabaseResult {
 //   - Cursor closed: no side file exists, so the database is complete in the
 //     one file. It is opened with immutable=1, which opens no side file and
 //     takes no lock, and afterwards the file must have the same size,
-//     modification time, and inode, with still no side file; otherwise
-//     Cursor started and wrote during the read, which immutable=1 could have
-//     read torn, and the result is changed_during_read.
+//     modification time, inode, and 100-byte header (which holds SQLite's
+//     change counter), with still no side file; otherwise Cursor started and
+//     wrote during the read, which immutable=1 could have read torn, and the
+//     result is changed_during_read.
+//
+// A symlinked database is followed first: SQLite keeps the side files beside
+// the file the link points to, so they are looked for there.
 //
 // Anything else (a rollback journal, or one WAL side file without the other)
 // is not checked. If Cursor quits between the side-file check and the open,
 // SQLite may create a 0-byte -wal beside the database; that race is accepted.
 // A 0-byte -wal is harmless to Cursor, and nothing next to the real database
 // is ever deleted.
-func readCursorDatabase(ctx context.Context, path string) CursorDatabaseResult {
+func readCursorDatabase(ctx context.Context, link string) CursorDatabaseResult {
+	path, err := filepath.EvalSymlinks(link)
+	if errors.Is(err, os.ErrNotExist) {
+		return CursorDatabaseResult{Checked: true}
+	}
+	if err != nil {
+		return unchecked(CursorUncheckedUnreadable)
+	}
 	before, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return CursorDatabaseResult{Checked: true}
@@ -136,10 +152,12 @@ func readCursorDatabase(ctx context.Context, path string) CursorDatabaseResult {
 	if err != nil || !before.Mode().IsRegular() {
 		return unchecked(CursorUncheckedUnreadable)
 	}
-	wal, ok := sqliteHeader(path)
+	header, ok := sqliteHeader(path)
 	if !ok {
 		return unchecked(CursorUncheckedUnreadable)
 	}
+	// File format read or write version 2 is WAL mode.
+	wal := header[18] == 2 || header[19] == 2
 	sides := existingSideFiles(path)
 	var immutable bool
 	switch {
@@ -171,8 +189,9 @@ func readCursorDatabase(ctx context.Context, path string) CursorDatabaseResult {
 			cursorAfterRead(path)
 		}
 		after, err := os.Stat(path)
-		if err != nil || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) ||
-			!os.SameFile(before, after) || len(existingSideFiles(path)) != 0 {
+		headerAfter, ok := sqliteHeader(path)
+		if err != nil || !ok || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) ||
+			!os.SameFile(before, after) || !bytes.Equal(header, headerAfter) || len(existingSideFiles(path)) != 0 {
 			return unchecked(CursorUncheckedChangedDuringRead)
 		}
 	}
@@ -193,6 +212,7 @@ func queryCursorDatabase(ctx context.Context, dsn string) CursorDatabaseResult {
 	defer rows.Close()
 
 	var chats []CursorDatabaseChat
+	newer := 0
 	subagents := map[string]bool{}
 	for rows.Next() {
 		var key string
@@ -206,6 +226,9 @@ func queryCursorDatabase(ctx context.Context, dsn string) CursorDatabaseResult {
 		d, ok := decodeComposerData(key, value)
 		if !ok {
 			return unchecked(CursorUncheckedUnknownFormat)
+		}
+		if d.newer {
+			newer++
 		}
 		for _, id := range d.subagents {
 			subagents[id] = true
@@ -225,7 +248,7 @@ func queryCursorDatabase(ctx context.Context, dsn string) CursorDatabaseResult {
 			kept = append(kept, c)
 		}
 	}
-	return CursorDatabaseResult{Chats: kept, Checked: true}
+	return CursorDatabaseResult{Chats: kept, Checked: true, NewerFormat: newer}
 }
 
 // uncheckedReason classifies a SQLite error.
@@ -243,23 +266,22 @@ func uncheckedReason(err error) CursorUncheckedReason {
 	return CursorUncheckedUnreadable
 }
 
-// sqliteHeader reads the 100-byte database header: ok is false for a file
-// that is not a SQLite database, and wal is whether it is in WAL mode (file
-// format read or write version 2).
-func sqliteHeader(path string) (wal, ok bool) {
+// sqliteHeader reads the 100-byte database header; ok is false for a file
+// that is not a SQLite database.
+func sqliteHeader(path string) (header []byte, ok bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return false, false
+		return nil, false
 	}
 	defer f.Close()
-	header := make([]byte, 100)
+	header = make([]byte, 100)
 	if _, err := io.ReadFull(f, header); err != nil {
-		return false, false
+		return nil, false
 	}
 	if !bytes.Equal(header[:16], []byte("SQLite format 3\x00")) {
-		return false, false
+		return nil, false
 	}
-	return header[18] == 2 || header[19] == 2, true
+	return header, true
 }
 
 // existingSideFiles reports which of path's side files exist.
@@ -280,12 +302,16 @@ type composer struct {
 	counted bool
 	// subagents are the composer IDs of its subagents.
 	subagents []string
+	// newer is set when its _v is newer than this release knows.
+	newer bool
 }
 
 // decodeComposerData decodes one composerData value; ok is false when it is
 // not a shape this release knows. Only the fields that decide the count are
-// strict: _v, isDraft, and the message lists. The rest are read leniently and
-// ignored when they are some other shape.
+// strict: isDraft and the message lists, and _v must be a positive integer.
+// A _v newer than maxComposerVersion is still read, and marked newer, when
+// those fields decode. The rest are read leniently and ignored when they are
+// some other shape.
 func decodeComposerData(key string, value []byte) (composer, bool) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(value, &fields); err != nil || fields == nil {
@@ -298,11 +324,13 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		}
 		return raw, true
 	}
+	var c composer
 	if raw, ok := present("_v"); ok {
 		var v int
-		if json.Unmarshal(raw, &v) != nil || v < 1 || v > maxComposerVersion {
+		if json.Unmarshal(raw, &v) != nil || v < 1 {
 			return composer{}, false
 		}
+		c.newer = v > maxComposerVersion
 	}
 	var isDraft bool
 	if raw, ok := present("isDraft"); ok && json.Unmarshal(raw, &isDraft) != nil {
@@ -321,7 +349,6 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		}
 	}
 
-	var c composer
 	if raw, ok := present("composerId"); ok {
 		json.Unmarshal(raw, &c.chat.ID)
 	}
@@ -420,6 +447,7 @@ func countCursorDatabase(ctx context.Context, env Environment, state ArchiveStat
 		return fmt.Errorf("count Cursor database chats: %w", err)
 	}
 	plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = res.Checked, res.Reason
+	plan.CursorDatabaseNewerFormat = res.NewerFormat
 	if !res.Checked {
 		return nil
 	}
@@ -430,9 +458,20 @@ func countCursorDatabase(ctx context.Context, env Environment, state ArchiveStat
 		}
 	}
 	dated := !since.IsZero() || !until.IsZero()
+	skip := func(reason SkipReason) {
+		if plan.CursorDatabaseSkipped == nil {
+			plan.CursorDatabaseSkipped = map[SkipReason]int{}
+		}
+		plan.CursorDatabaseSkipped[reason]++
+	}
 	seen := map[string]bool{}
 	for _, chat := range res.Chats {
-		if fileChats[chat.ID] || seen[chat.ID] {
+		if fileChats[chat.ID] {
+			continue
+		}
+		// Two rows with one composerId are one chat found twice.
+		if seen[chat.ID] {
+			skip(SkipDuplicateSession)
 			continue
 		}
 		seen[chat.ID] = true
@@ -445,10 +484,7 @@ func countCursorDatabase(ctx context.Context, env Environment, state ArchiveStat
 				reason = ""
 			}
 			if reason != "" {
-				if plan.CursorDatabaseSkipped == nil {
-					plan.CursorDatabaseSkipped = map[SkipReason]int{}
-				}
-				plan.CursorDatabaseSkipped[reason]++
+				skip(reason)
 				continue
 			}
 		}
