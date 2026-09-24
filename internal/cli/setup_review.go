@@ -8,6 +8,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // reviewRow is one labeled line of the review summary. A row with several
@@ -128,7 +129,7 @@ func showSetupReview(p *prompter, cfg, existing config.Config, reconfiguring boo
 			if isChanged {
 				value = p.style.yellow(value)
 			}
-			fmt.Fprintf(p.out, "%s%s %s\n", mark, p.style.dim(fmt.Sprintf("%-9s", label)), value)
+			terminal.Printf(p.out, "%s%s %s\n", mark, p.style.dim(fmt.Sprintf("%-9s", label)), value)
 			mark = "  "
 		}
 		if isChanged {
@@ -136,13 +137,13 @@ func showSetupReview(p *prompter, cfg, existing config.Config, reconfiguring boo
 			if had && len(old) > 0 {
 				was = strings.Join(old, ", ")
 			}
-			fmt.Fprintf(p.out, "  %9s %s\n", "", p.style.dim("was "+was))
+			terminal.Printf(p.out, "  %9s %s\n", "", p.style.dim("was "+was))
 		}
 	}
 	if reconfiguring && changed == 0 {
-		fmt.Fprintln(p.out, p.style.dim("\n  Nothing above differs from your current settings."))
+		terminal.Println(p.out, p.style.dim("\n  Nothing above differs from your current settings."))
 	} else if reconfiguring {
-		fmt.Fprintln(p.out, p.style.dim("\n  * changed from your current settings"))
+		terminal.Println(p.out, p.style.dim("\n  * changed from your current settings"))
 	}
 }
 
@@ -164,6 +165,7 @@ func printReviewNotes(p *prompter, cfg config.Config, discoveries map[string]app
 // prompter's clock, so the review screen agrees with status output.
 func printReviewPrivacy(p *prompter, cfg config.Config) {
 	report := currentBucketPrivacy(cfg, p.clock())
+	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
 	switch report.State {
 	case "verified_private":
 		p.item(p.style.green("✓"), "Bucket privacy: native public access blocked at the last check.", nil)
@@ -175,6 +177,7 @@ func printReviewPrivacy(p *prompter, cfg config.Config) {
 }
 
 func privacyReasonText(reason string) string {
+	//lint:ignore LV1001 reason codes come from package storage, and unknown ones are shown as words
 	switch reason {
 	case "r2_management_credentials_not_configured":
 		return "R2 storage keys cannot read public-access settings"
@@ -205,6 +208,7 @@ func reviewAction(p *prompter, reconfiguring bool) (string, error) {
 		option{"yes", yes},
 		option{"edit", "Edit a setting"},
 		option{"no", "Cancel (your setup draft is kept)"})
+	//lint:ignore LV1001 menu keys are the option keys listed just above
 	switch choice {
 	case "yes":
 		return "start", err
@@ -260,6 +264,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 	if err != nil {
 		return err
 	}
+	//lint:ignore LV1001 menu keys are the option keys listed just above
 	switch choice {
 	case "apps":
 		if err = chooseHarnesses(p, nil, &draft.Config); err != nil {
@@ -272,7 +277,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 			return e
 		}
 		if includedProjects(projects) == 0 {
-			fmt.Fprintln(p.out, "At least one project is needed. Your previous selection is kept.")
+			terminal.Println(p.out, "At least one project is needed. Your previous selection is kept.")
 		} else {
 			draft.Config.Archive.Projects = projects
 		}
@@ -296,7 +301,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 				draft.Config.Storage.Prefix = prefix
 				break
 			}
-			fmt.Fprintln(p.out, "Use a relative folder name, such as agent-archive/; do not include .. or a leading slash.")
+			terminal.Println(p.out, "Use a relative folder name, such as agent-archive/; do not include .. or a leading slash.")
 		}
 	case "region":
 		draft.Config.Storage.Region, err = p.required("Bucket region", draft.Config.Storage.Region)

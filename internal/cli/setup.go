@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,9 +16,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 const defaultPrefix = "agent-archive/"
+
 const defaultRetentionDays = 90
 
 var allHarnesses = []string{"codex", "claude", "cursor"}
@@ -36,7 +39,7 @@ type setupDraft struct {
 
 func runSetupCommand(_ []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	if err := setup(stdin, stdout, stderr, env); err != nil {
-		fmt.Fprintf(stderr, "Setup incomplete: %v\nRun agent-archive setup to continue.\n", err)
+		terminal.Printf(stderr, "Setup incomplete: %v\nRun agent-archive setup to continue.\n", err)
 		return 1
 	}
 	return 0
@@ -71,7 +74,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Checking installed applications...")
+	terminal.Println(out, "Checking installed applications...")
 	discoveries := env.discoverApplications(userHome)
 	discoveredAt := env.now()
 	// The review shows these; discoveries themselves are recorded unchanged.
@@ -79,7 +82,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	p := newPrompter(stdin, out)
 	p.now = env.now
 	if !found {
-		fmt.Fprintln(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
+		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
 	}
 	draft := setupDraft{Version: 1, Config: existing}
 	draftPath := filepath.Join(home, "setup-draft.json")
@@ -145,6 +148,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if e != nil {
 			return e
 		}
+		//lint:ignore LV1001 menu keys are the option keys listed just above
 		switch choice {
 		case "storage":
 			draft.Step = 1
@@ -227,7 +231,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			}
 		}
 		if draft.Config.Storage != verifiedStorage {
-			fmt.Fprintln(out, "\nChecking your storage connection…")
+			terminal.Println(out, "\nChecking your storage connection…")
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			store, e := env.openStore(draft.Config)
 			if e != nil {
@@ -240,7 +244,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			cancel()
 			if e != nil {
 				failure := fmt.Errorf("storage test failed: %w (check access and retry; saved choices are kept)", e)
-				fmt.Fprintln(out, failure)
+				terminal.Println(out, failure)
 				choice, promptErr := p.menu("What would you like to do?", "cancel",
 					option{"edit", "Edit settings"},
 					option{"retry", "Retry the storage check"},
@@ -261,7 +265,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			draft.Config.BucketPrivacy = inspectBucketPrivacy(draft.Config, store, env.now())
 			draft.Config.StorageVerifiedAt = env.now().UTC()
 			verifiedStorage = draft.Config.Storage
-			fmt.Fprintln(out, p.style.green("✓ Connected."))
+			terminal.Println(out, p.style.green("✓ Connected."))
 		}
 
 		if draft.Config.RetentionDays <= 0 {
@@ -270,7 +274,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		// Review what will be committed, not what a draft may have saved.
 		draft.Config.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
 		showSetupReview(p, draft.Config, existing, found, reviewed)
-		fmt.Fprintln(out, "\n"+p.style.bold("Before you confirm"))
+		terminal.Println(out, "\n"+p.style.bold("Before you confirm"))
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
 			return err
 		}
@@ -283,7 +287,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			return e
 		}
 		if action == "cancel" {
-			fmt.Fprintln(out, "Cancelled. Active settings are unchanged; your setup draft is saved.")
+			terminal.Println(out, "Cancelled. Active settings are unchanged; your setup draft is saved.")
 			return nil
 		}
 		if action == "edit" {
@@ -306,7 +310,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			return err
 		}
 		if err = recordApplicationDiscoveries(home, discoveries, discoveredAt); err != nil {
-			fmt.Fprintf(out, "Warning: installed application versions could not be recorded: %v\n", err)
+			terminal.Printf(out, "Warning: installed application versions could not be recorded: %v\n", err)
 		}
 		if err = os.Remove(draftPath); err != nil && !os.IsNotExist(err) {
 			return err
@@ -314,20 +318,20 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		// The configuration is committed; a diagnostic for a project that
 		// was just excluded is stale local state, not a reason to fail.
 		if e := pruneCaptureDiagnostics(home, draft.Config.Archive.Projects); e != nil {
-			fmt.Fprintf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
+			terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
 		}
-		fmt.Fprintln(out, "\nConfiguration saved.")
+		terminal.Println(out, "\nConfiguration saved.")
 		if existing.Paused {
-			fmt.Fprintln(out, "Next: run agent-archive resume when you’re ready to start archiving.")
+			terminal.Println(out, "Next: run agent-archive resume when you’re ready to start archiving.")
 		} else if containsString(draft.Config.Harnesses, "codex") {
-			fmt.Fprintln(out, "Next: in Codex CLI, open /hooks to approve the archive hooks, then start a new session in an included project.")
+			terminal.Println(out, "Next: in Codex CLI, open /hooks to approve the archive hooks, then start a new session in an included project.")
 			if len(draft.Config.Harnesses) > 1 {
-				fmt.Fprintln(out, "Repeat hook approval and a new session in your other selected apps.")
+				terminal.Println(out, "Repeat hook approval and a new session in your other selected apps.")
 			}
 		} else {
-			fmt.Fprintln(out, "Next: approve the archive hooks in your selected apps, then start a new session in an included project.")
+			terminal.Println(out, "Next: approve the archive hooks in your selected apps, then start a new session in an included project.")
 		}
-		fmt.Fprintln(out, "Check progress with agent-archive status.")
+		terminal.Println(out, "Check progress with agent-archive status.")
 		return nil
 	}
 }
@@ -349,7 +353,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 		}
 		if e == nil {
 			if root := suggestedProject(dir); root != "" {
-				fmt.Fprintf(p.out, "Project: %s\n", root)
+				terminal.Printf(p.out, "Project: %s\n", root)
 				acceptedProject, err = p.yesNo("Archive sessions in this project?", true)
 				if err != nil {
 					return err
@@ -386,11 +390,11 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 	}
 	choice, err := p.menu("Where should sessions be stored?", firstNonEmpty(existing.Provider, "r2"), providers...)
 	for err == nil && choice == "help" {
-		fmt.Fprintln(p.out, "Cloudflare R2: create a private bucket and bucket-scoped Object Read & Write credentials. Keep public access disabled.")
-		fmt.Fprintln(p.out, "https://developers.cloudflare.com/r2/get-started/s3/")
-		fmt.Fprintln(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
-		fmt.Fprintln(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
-		fmt.Fprintln(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
+		terminal.Println(p.out, "Cloudflare R2: create a private bucket and bucket-scoped Object Read & Write credentials. Keep public access disabled.")
+		terminal.Println(p.out, "https://developers.cloudflare.com/r2/get-started/s3/")
+		terminal.Println(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
+		terminal.Println(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
+		terminal.Println(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
 		choice, err = p.menu("Where should sessions be stored?", firstNonEmpty(existing.Provider, "r2"), providers[:2]...)
 	}
 	if err != nil {
@@ -421,7 +425,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 				cfg.R2Endpoint = normalized
 				break
 			}
-			fmt.Fprintln(p.out, "Enter the Cloudflare R2 S3 endpoint or account ID from your dashboard.")
+			terminal.Println(p.out, "Enter the Cloudflare R2 S3 endpoint or account ID from your dashboard.")
 		}
 		reuse := false
 		if cfg.R2CredentialRef != "" {
@@ -507,13 +511,13 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 	}
 	switch {
 	case len(suggested) == 0:
-		fmt.Fprintln(p.out, "No apps found automatically.")
+		terminal.Println(p.out, "No apps found automatically.")
 	case len(existing) > 0 && len(others) > 0:
 		if len(found) > 0 {
 			// Detected apps the saved selection leaves out are offered on
 			// their own, defaulting to yes. Declining still allows other
 			// changes below.
-			fmt.Fprintf(p.out, "Included: %s.\nAlso found on this computer: %s.\n", appList(suggested), appList(found))
+			terminal.Printf(p.out, "Included: %s.\nAlso found on this computer: %s.\n", appList(suggested), appList(found))
 			add, err := p.yesNo(addPrompt(found), true)
 			if err != nil {
 				return nil, err
@@ -530,7 +534,7 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 		} else {
 			// Name the apps left out so it is clear how to add them; "Keep X?"
 			// reads as if declining would remove X.
-			fmt.Fprintf(p.out, "Included: %s. Not included: %s.\n", appList(suggested), appList(others))
+			terminal.Printf(p.out, "Included: %s. Not included: %s.\n", appList(suggested), appList(others))
 		}
 		change, err := p.yesNo("Change which apps are included?", false)
 		if err != nil {
@@ -552,7 +556,7 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 			return suggested, nil
 		}
 	}
-	fmt.Fprintln(p.out, "Choose which apps to include:")
+	terminal.Println(p.out, "Choose which apps to include:")
 	for {
 		var result []string
 		for _, app := range allHarnesses {
@@ -567,7 +571,7 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 		if len(result) > 0 {
 			return result, nil
 		}
-		fmt.Fprintln(p.out, "Choose at least one app to continue.")
+		terminal.Println(p.out, "Choose at least one app to continue.")
 	}
 }
 
@@ -640,7 +644,7 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, backfille
 			result = append(result, project)
 		}
 	}
-	fmt.Fprintln(p.out, "Add project directories, one per line. Enter a blank line when finished.")
+	terminal.Println(p.out, "Add project directories, one per line. Enter a blank line when finished.")
 	for {
 		root, err := p.line("Project path: ")
 		if err != nil {
@@ -665,16 +669,16 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, backfille
 			root, err = filepath.EvalSymlinks(root)
 		}
 		if err != nil {
-			fmt.Fprintln(p.out, "That directory does not exist. Enter an existing project path.")
+			terminal.Println(p.out, "That directory does not exist. Enter an existing project path.")
 			continue
 		}
 		info, err := os.Stat(root)
 		if err != nil || !info.IsDir() {
-			fmt.Fprintln(p.out, "Enter a directory, not a file.")
+			terminal.Println(p.out, "Enter a directory, not a file.")
 			continue
 		}
 		if seen[root] {
-			fmt.Fprintln(p.out, "That project is already included.")
+			terminal.Println(p.out, "That project is already included.")
 			continue
 		}
 		seen[root] = true
@@ -708,6 +712,7 @@ func includedProjects(projects []archive.ProjectActivation) int {
 	}
 	return n
 }
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -716,15 +721,13 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
 func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, target)
 }
+
 func appName(app string) string {
+	//lint:ignore LV1001 harness names are plain strings in config and archive; an unknown name is shown as given
 	switch app {
 	case "codex":
 		return "Codex"
@@ -735,6 +738,7 @@ func appName(app string) string {
 	}
 	return app
 }
+
 func friendlyApps(apps []string) string {
 	if len(apps) == 0 {
 		return "none"

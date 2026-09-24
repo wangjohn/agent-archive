@@ -27,6 +27,7 @@ type setupJournal struct {
 }
 
 func journalPath(home string) string { return filepath.Join(home, "setup-transaction.json") }
+
 func transactionPending(home string) bool {
 	_, err := os.Stat(journalPath(home))
 	return !os.IsNotExist(err)
@@ -105,7 +106,7 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 		if err != nil {
 			return 0, 0, err
 		}
-		if !(scanPending || requested[r.ArchiveSessionID] || !found || state == collector.CacheStatusRateLimited) {
+		if !scanPending && !requested[r.ArchiveSessionID] && found && state != collector.CacheStatusRateLimited {
 			continue
 		}
 		idle, err := waitingForTranscript(store, r)
@@ -155,6 +156,7 @@ func waitingForTranscript(store *collector.LocalStore, r archive.SessionRegistra
 	pending, err := store.HasPending(r.ArchiveSessionID)
 	return !pending, err
 }
+
 func reviewChanges(home string, old, next config.Config, p *prompter, env Env) error {
 	if old.MachineID == "" {
 		return nil
@@ -371,7 +373,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err != nil {
 		return err
 	}
-	journal := setupJournal{Legacy: legacy, Changes: changes, Plist: plistPath, WasLoaded: job == "loaded" || job == "running"}
+	journal := setupJournal{Legacy: legacy, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
 	if err = local.Write(journalPath(home), journal); err != nil {
 		return err
 	}
@@ -401,11 +403,18 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	return nil
 }
 
+// launchJobActive reports whether a launchd job state from Env.JobState means
+// the job is loaded, whether or not it is running at the moment.
+func launchJobActive(state string) bool {
+	//lint:ignore LV1001 Env.JobState (cli.go) reports launchd states as plain strings, and tests stub it with string-returning funcs
+	return state == "loaded" || state == "running"
+}
+
 // Recover only files still equal to our before/after snapshots. A user's later
 // edits are never overwritten by crash recovery.
 func restoreSetup(home string, journal setupJournal, env Env) error {
 	state := env.jobState(journal.Plist)
-	if state == "loaded" || state == "running" {
+	if launchJobActive(state) {
 		if err := env.unloadLaunchAgent(journal.Plist); err != nil {
 			return err
 		}
@@ -436,6 +445,7 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 	}
 	return os.Remove(journalPath(home))
 }
+
 func recoverSetup(home string, env Env) error {
 	var journal setupJournal
 	err := local.Read(journalPath(home), &journal)

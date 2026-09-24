@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // archiveSessionsPrefix is the provider-relative prefix every published
@@ -85,15 +86,15 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "agent-archive: list: unexpected argument %q\n", fs.Arg(0))
+		terminal.Printf(stderr, "agent-archive: list: unexpected argument %q\n", fs.Arg(0))
 		return 2
 	}
 	if *imported && *hookCaptured {
-		fmt.Fprintln(stderr, "agent-archive: list: choose one of --imported and --hook-captured")
+		terminal.Println(stderr, "agent-archive: list: choose one of --imported and --hook-captured")
 		return 2
 	}
 	if *skillSHA256 != "" && !validLowerSHA256(*skillSHA256) {
-		fmt.Fprintln(stderr, "agent-archive: list: --skill-sha256 must be exactly 64 lowercase hexadecimal characters")
+		terminal.Println(stderr, "agent-archive: list: --skill-sha256 must be exactly 64 lowercase hexadecimal characters")
 		return 2
 	}
 	// The value is checked before the --skill/--skill-sha256 requirement so
@@ -103,11 +104,11 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	switch usage {
 	case reader.SkillUsageUsed, reader.SkillUsageAvailable, reader.SkillUsageEligibleNoUse:
 	default:
-		fmt.Fprintf(stderr, "agent-archive: list: --skill-usage must be used, available, or eligible_no_use, not %q\n", *skillUsage)
+		terminal.Printf(stderr, "agent-archive: list: --skill-usage must be used, available, or eligible_no_use, not %q\n", *skillUsage)
 		return 2
 	}
 	if usage != reader.SkillUsageUsed && *skill == "" && *skillSHA256 == "" {
-		fmt.Fprintln(stderr, "agent-archive: list: --skill-usage requires --skill or --skill-sha256")
+		terminal.Println(stderr, "agent-archive: list: --skill-usage requires --skill or --skill-sha256")
 		return 2
 	}
 	// No parser version records both a complete eligible-skill set and
@@ -117,31 +118,32 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	// answer. The value stays accepted so scripts keep working once a
 	// parser version emits that evidence.
 	if usage == reader.SkillUsageEligibleNoUse {
-		fmt.Fprintln(stdout, eligibleNoUseUnavailableMessage)
+		terminal.Println(stdout, eligibleNoUseUnavailableMessage)
 		return 0
 	}
-	filter := reader.Filter{Harness: *harness, Model: *model, Skill: *skill, SkillSHA256: *skillSHA256, RequireCompleteCoverage: *complete, SkillUsage: usage}
+	var from time.Time
 	if *since != "" {
-		from, err := parseSince(*since, env.now())
+		parsed, err := parseSince(*since, env.now())
 		if err != nil {
-			fmt.Fprintf(stderr, "agent-archive: list: --since: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: list: --since: %v\n", err)
 			return 2
 		}
-		filter.From = from
+		from = parsed
 	}
+	filter := reader.Filter{Harness: *harness, Model: *model, Skill: *skill, SkillSHA256: *skillSHA256, RequireCompleteCoverage: *complete, SkillUsage: usage, From: from}
 
 	store, found, err := openReadOnlyStore(env)
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: list: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
 	if !found {
-		fmt.Fprintln(stdout, notSetUpMessage)
+		terminal.Println(stdout, notSetUpMessage)
 		return 0
 	}
 	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, filter, reader.ListOptions{Cache: listCache(env, *noCache)})
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: list: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
 	if *imported || *hookCaptured {
@@ -154,19 +156,19 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		sessions = kept
 	}
 	if len(sessions) == 0 {
-		fmt.Fprintln(stdout, "No archived sessions match.")
+		terminal.Println(stdout, "No archived sessions match.")
 		return 0
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
+	terminal.Println(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
 	for _, m := range sessions {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.SessionID, m.Harness.Name, formatTimeOrNever(m.CapturedAt), sessionOrigin(m), m.Parser.Status, listOrDash(modelNames(m)), listOrDash(skillNames(m)))
+		terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.SessionID, m.Harness.Name, formatTimeOrNever(m.CapturedAt), sessionOrigin(m), m.Parser.Status, listOrDash(modelNames(m)), listOrDash(skillNames(m)))
 	}
 	if err := tw.Flush(); err != nil {
-		fmt.Fprintf(stderr, "agent-archive: list: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "%d session(s).\n", len(sessions))
+	terminal.Printf(stdout, "%d session(s).\n", len(sessions))
 	return 0
 }
 
@@ -220,7 +222,7 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 2
 	}
 	if fs.NArg() == 0 {
-		fmt.Fprintln(stderr, "agent-archive: show: an archive session ID is required (see `agent-archive list`)")
+		terminal.Println(stderr, "agent-archive: show: an archive session ID is required (see `agent-archive list`)")
 		return 2
 	}
 	sessionID := fs.Arg(0)
@@ -230,30 +232,30 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "agent-archive: show: unexpected argument %q\n", fs.Arg(0))
+		terminal.Printf(stderr, "agent-archive: show: unexpected argument %q\n", fs.Arg(0))
 		return 2
 	}
 
 	store, found, err := openReadOnlyStore(env)
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: show: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return 1
 	}
 	if !found {
-		fmt.Fprintln(stdout, notSetUpMessage)
+		terminal.Println(stdout, notSetUpMessage)
 		return 0
 	}
 	ctx := context.Background()
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: show: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return 1
 	}
 
 	if !*normalized {
 		metadata, err := reader.ReadMetadata(ctx, store, key)
 		if err != nil {
-			fmt.Fprintf(stderr, "agent-archive: show: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
 		return printJSON(stdout, stderr, metadataWithLinks(ctx, store, metadata))
@@ -262,15 +264,15 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	metadata, bundle, err := reader.RefreshAndLoad(ctx, store, key, reader.Limits{})
 	if err != nil {
 		if errors.Is(err, reader.ErrRefreshRequired) {
-			fmt.Fprintf(stderr, "agent-archive: show: the session's source bundle is not available (it may have just been replaced or deleted by retention); retry, or run `agent-archive show %s` without --normalized for its metadata\n", sessionID)
+			terminal.Printf(stderr, "agent-archive: show: the session's source bundle is not available (it may have just been replaced or deleted by retention); retry, or run `agent-archive show %s` without --normalized for its metadata\n", sessionID)
 		} else {
-			fmt.Fprintf(stderr, "agent-archive: show: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		}
 		return 1
 	}
 	view, err := archive.ParseNormalized(bundle)
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
 		return 1
 	}
 	if code := printJSON(stdout, stderr, metadataWithLinks(ctx, store, metadata)); code != 0 {
@@ -344,10 +346,10 @@ func locateMetadataKey(ctx context.Context, store storage.ObjectStore, harness, 
 func printJSON(stdout, stderr io.Writer, value any) int {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: show: encode output: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: show: encode output: %v\n", err)
 		return 1
 	}
-	fmt.Fprintln(stdout, string(data))
+	terminal.Println(stdout, string(data))
 	return 0
 }
 
@@ -362,8 +364,8 @@ func parseSince(value string, now time.Time) (time.Time, error) {
 	if t, err := time.Parse("2006-01-02", value); err == nil {
 		return t, nil
 	}
-	if strings.HasSuffix(value, "d") {
-		if days, err := strconv.Atoi(strings.TrimSuffix(value, "d")); err == nil && days >= 0 {
+	if daysText, ok := strings.CutSuffix(value, "d"); ok {
+		if days, err := strconv.Atoi(daysText); err == nil && days >= 0 {
 			return now.Add(-time.Duration(days) * 24 * time.Hour), nil
 		}
 	}

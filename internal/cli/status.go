@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 type appStatus struct {
@@ -58,9 +59,10 @@ type appStatus struct {
 	verifiedHarnessVersions []string
 	Projects                []projectCaptureStatus `json:"projects"`
 
-	Code            string    `json:"code"`
-	Hooks           string    `json:"hooks"`
-	Name            string    `json:"name"`
+	Code  string `json:"code"`
+	Hooks string `json:"hooks"`
+	Name  string `json:"name"`
+	//lint:ignore LV1001 display label that statusCode maps to Code; tests across the package compare it to literals
 	State           string    `json:"state"`
 	Sessions        int       `json:"sessions"`
 	LastPublishedAt time.Time `json:"last_published_at,omitempty"`
@@ -80,13 +82,15 @@ type projectCaptureStatus struct {
 	VerificationState string    `json:"verification_state"`
 	VerifiedAt        time.Time `json:"verified_at,omitempty"`
 }
+
 type statusView struct {
 	PrivacyEvidence storage.PrivacyReport `json:"privacy_evidence"`
 	ConfigurationID string                `json:"configuration_id,omitempty"`
 	Authentication  storageHealth         `json:"authentication"`
 
-	Code               string              `json:"code"`
-	Version            int                 `json:"schema_version"`
+	Code    string `json:"code"`
+	Version int    `json:"schema_version"`
+	//lint:ignore LV1001 display label that statusCode maps to Code; tests across the package compare it to literals
 	State              string              `json:"state"`
 	Storage            string              `json:"storage,omitempty"`
 	StorageVerifiedAt  time.Time           `json:"storage_verified_at,omitempty"`
@@ -114,33 +118,33 @@ type statusView struct {
 func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	view, err := readStatus(env)
 	if err != nil {
-		fmt.Fprintf(stderr, "Cannot read archive status: %v\n", err)
+		terminal.Printf(stderr, "Cannot read archive status: %v\n", err)
 		return 1
 	}
 	if containsString(args, "--json") {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(view); err != nil {
-			fmt.Fprintln(stderr, err)
+			terminal.Println(stderr, err)
 			return 1
 		}
 		return 0
 	}
-	fmt.Fprintf(stdout, "Agent Archive — %s\n\n", view.State)
+	terminal.Printf(stdout, "Agent Archive — %s\n\n", view.State)
 	if view.Storage != "" {
-		fmt.Fprintf(stdout, "Storage:       %s\nAccess checked: %s\n", view.Storage, formatTimeOrNever(view.StorageVerifiedAt))
+		terminal.Printf(stdout, "Storage:       %s\nAccess checked: %s\n", view.Storage, formatTimeOrNever(view.StorageVerifiedAt))
 		printBucketPrivacy(stdout, view.PrivacyEvidence)
 	}
 	authentication := fmt.Sprintf("%s (checked %s", view.Authentication.State, formatTimeOrNever(view.Authentication.CheckedAt))
 	if view.Authentication.Context != "" {
 		authentication += "; " + view.Authentication.Context
 	}
-	fmt.Fprintf(stdout, "Authentication: %s)\n", authentication)
-	fmt.Fprintf(stdout, "Background:    %s\n", view.Background)
+	terminal.Printf(stdout, "Authentication: %s)\n", authentication)
+	terminal.Printf(stdout, "Background:    %s\n", view.Background)
 	if view.Paused {
-		fmt.Fprintln(stdout, "Collection:    paused")
+		terminal.Println(stdout, "Collection:    paused")
 	}
-	fmt.Fprintf(stdout, "Projects:      %d included\nPending:       %d session(s)\nLast scan:     %s\nLast publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
+	terminal.Printf(stdout, "Projects:      %d included\nPending:       %d session(s)\nLast scan:     %s\nLast publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("%d session(s), %d waiting to upload", view.ImportedSessions, view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
@@ -149,50 +153,50 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		if view.LastImport != "" {
 			imported += "; last import " + view.LastImport
 		}
-		fmt.Fprintf(stdout, "Imported:      %s\n", imported)
+		terminal.Printf(stdout, "Imported:      %s\n", imported)
 	}
 	for _, app := range view.Apps {
 		gaps := ""
 		if len(app.CaptureGaps) > 0 {
 			gaps = fmt.Sprintf("; %d with a capture gap", len(app.CaptureGaps))
 		}
-		fmt.Fprintf(stdout, "%s: %s (%d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Sessions, gaps, app.Hooks)
+		terminal.Printf(stdout, "%s: %s (%d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Sessions, gaps, app.Hooks)
 		if app.Trust == "unknown" {
-			fmt.Fprintln(stdout, "  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
+			terminal.Println(stdout, "  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
 		}
-		fmt.Fprintf(stdout, "  Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
+		terminal.Printf(stdout, "  Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
 		if app.Capabilities.FreshStart.State == "unavailable" {
-			fmt.Fprintf(stdout, "  Fresh-start capture: unavailable. %s\n", app.Capabilities.FreshStart.NextAction)
+			terminal.Printf(stdout, "  Fresh-start capture: unavailable. %s\n", app.Capabilities.FreshStart.NextAction)
 		}
 		for _, pair := range app.Projects {
-			fmt.Fprintf(stdout, "  Project %s: %s.\n", pair.ProjectRoot, pair.VerificationState)
+			terminal.Printf(stdout, "  Project %s: %s.\n", pair.ProjectRoot, pair.VerificationState)
 		}
 		switch {
 		case app.ReadBackVerified && !app.VerifiedAt.IsZero():
-			fmt.Fprintf(stdout, "  Read-back verified: %s; evidence is for that publication.\n", formatTimeOrNever(app.VerifiedAt))
+			terminal.Printf(stdout, "  Read-back verified: %s; evidence is for that publication.\n", formatTimeOrNever(app.VerifiedAt))
 		case !app.VerifiedAt.IsZero():
 			// Some evidence exists but not every project (or session) is
 			// covered, so do not call the app verified on the line below
 			// its "read-back pending" state.
-			fmt.Fprintf(stdout, "  Last read-back: %s (%s).\n", formatTimeOrNever(app.VerifiedAt), readBackProgress(app))
+			terminal.Printf(stdout, "  Last read-back: %s (%s).\n", formatTimeOrNever(app.VerifiedAt), readBackProgress(app))
 		}
 		if app.VerificationDetail != "" {
-			fmt.Fprintf(stdout, "  Read-back: %s\n", app.VerificationDetail)
+			terminal.Printf(stdout, "  Read-back: %s\n", app.VerificationDetail)
 		}
 		if len(app.CaptureGaps) > 0 {
-			fmt.Fprintf(stdout, "  Capture gaps: %d; see status --json for details.\n", len(app.CaptureGaps))
+			terminal.Printf(stdout, "  Capture gaps: %d; see status --json for details.\n", len(app.CaptureGaps))
 		}
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
-		fmt.Fprintf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), captureDiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+		terminal.Printf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), captureDiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
 	if view.Collector.LastError != "" {
-		fmt.Fprintf(stdout, "Last error:    %s\n", view.Collector.LastError)
+		terminal.Printf(stdout, "Last error:    %s\n", view.Collector.LastError)
 	}
 	for _, warning := range view.Warnings {
-		fmt.Fprintf(stdout, "Warning:       %s\n", warning)
+		terminal.Printf(stdout, "Warning:       %s\n", warning)
 	}
-	fmt.Fprintf(stdout, "\nNext: %s\n", view.Next)
+	terminal.Printf(stdout, "\nNext: %s\n", view.Next)
 	return 0
 }
 
@@ -206,6 +210,8 @@ func blockedReasonDetail(reason collector.BlockedReason) string {
 		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
 	case collector.BlockedReasonRecordTooLarge:
 		return fmt.Sprintf("One record in the transcript (or a plain-text transcript as a whole) is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
+	case collector.BlockedReasonTranscriptRewritten, collector.BlockedReasonTranscriptTooLarge:
+		// Permanent for the current transcript: the general wording below.
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
 }
@@ -213,6 +219,7 @@ func blockedReasonDetail(reason collector.BlockedReason) string {
 // versionSupportNote explains an unverified installed version in the text
 // status without changing the support state or reason code.
 func versionSupportNote(app appStatus) string {
+	//lint:ignore LV1001 the reason codes are untyped constants in capabilities.go, which computes this field
 	switch app.VersionSupportReason {
 	case supportReasonNoVerifiedCapture:
 		return " (no session from this version has been published and read back yet)"
@@ -248,6 +255,7 @@ func installedVersionLabel(app appStatus) string {
 	}
 	return "unknown"
 }
+
 func readStatus(env Env) (view statusView, err error) {
 	defer func() {
 		view.Code = statusCode(view.State)
@@ -351,7 +359,7 @@ func readStatus(env Env) (view statusView, err error) {
 				ActivatedAt: project.ActivatedAt, Configured: true, VerificationState: "not_verified",
 			})
 		}
-		readBackIssue := ""
+		var readBackIssue verificationOutcome
 		for _, reg := range regs {
 			// An import is not evidence that this app's hooks work: it
 			// never counts toward the app's sessions, hook observation,
@@ -381,7 +389,7 @@ func readStatus(env Env) (view statusView, err error) {
 			if app.State == "waiting for first session" {
 				app.State = "hook observed; waiting for capture"
 			}
-			bundle, at, state, found, err := store.LoadPublished(reg.ArchiveSessionID)
+			bundle, _, state, found, err := store.LoadPublished(reg.ArchiveSessionID)
 			if err != nil {
 				return view, err
 			}
@@ -409,13 +417,11 @@ func readStatus(env Env) (view statusView, err error) {
 			if found && state != collector.CacheStatusBlocked && app.LastPublishedAt.IsZero() {
 				app.State = "captured locally"
 			}
-			publishedBundle, actualAt, published, e := store.LoadLastPublished(reg.ArchiveSessionID)
+			publishedBundle, at, published, e := store.LoadLastPublished(reg.ArchiveSessionID)
 			if e != nil {
 				return view, e
 			}
 			if published {
-				at = actualAt
-
 				app.Published = true
 				app.PublishedSessions++
 				if pair != nil {
@@ -492,6 +498,8 @@ func readStatus(env Env) (view statusView, err error) {
 				app.VerificationState = "read_back_mismatch"
 			case verificationOutcomeFailed:
 				app.VerificationState = "read_back_failed"
+			case verificationOutcomeVerified:
+				// Not a read-back issue; readBackIssue is never set to it.
 			}
 		}
 		view.Apps = append(view.Apps, app)
@@ -606,7 +614,7 @@ func readStatus(env Env) (view statusView, err error) {
 			break
 		}
 	}
-	if view.Background != "running" && view.Background != "loaded" {
+	if !launchJobActive(view.Background) {
 		view.State = "Needs attention"
 		view.Next = "Run agent-archive setup to restore the background collector."
 	}

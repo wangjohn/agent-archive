@@ -243,8 +243,9 @@ func TestResumeDraftLeftAfterDestinationCommitPreservesOwnership(t *testing.T) {
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 	setupRun(t, env, s3SetupInput("original", "us-east-1", "profile", true, false, false, project), 0)
 	old, _, _ := config.Load(home)
-	stale := setupDraft{Version: 1, Step: 2, Config: old}
-	stale.Config.Storage.Bucket = "new-bucket"
+	changed := old
+	changed.Storage.Bucket = "new-bucket"
+	stale := setupDraft{Version: 1, Step: 2, Config: changed}
 	// Persist the pre-commit draft, then commit without the wizard's deletion:
 	// exactly the state left by a crash or failed draft removal after apply.
 	if err := local.Write(filepath.Join(home, "setup-draft.json"), stale); err != nil {
@@ -334,7 +335,7 @@ func TestBlockedCaptureIsNotPendingAndStatusReportsGap(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.Now = func() time.Time { return now.Add(2 * time.Second) }
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		result, err := runOnePass(env, false)
 		if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 			t.Fatalf("pass %d: result=%+v err=%v", pass, result, err)

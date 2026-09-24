@@ -16,17 +16,19 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // Uninstall leaves data and credentials available for reinstall unless the
 // explicit destructive option and its separate confirmation are supplied.
 func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	if err := uninstall(args, stdin, stdout, env); err != nil {
-		fmt.Fprintf(stderr, "Uninstall incomplete: %v\n", err)
+		terminal.Printf(stderr, "Uninstall incomplete: %v\n", err)
 		return 1
 	}
 	return 0
 }
+
 func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	home, err := env.home()
 	if err != nil {
@@ -53,16 +55,15 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	if transactionPending(home) {
 		return fmt.Errorf("run agent-archive setup to recover the interrupted installation first")
 	}
-	cfg, found, err := config.Load(home)
-	if err != nil {
+	if _, _, err := config.Load(home); err != nil {
 		return err
 	}
 	purge := containsString(args, "--delete-local-data")
-	fmt.Fprintln(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
+	terminal.Println(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
 	if purge {
-		fmt.Fprintf(out, "Also delete owned local state and credentials under %s.\n", home)
+		terminal.Printf(out, "Also delete owned local state and credentials under %s.\n", home)
 	} else {
-		fmt.Fprintln(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
+		terminal.Println(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
 	}
 	p := newPrompter(stdin, out)
 	yes, err := p.yesNo("Remove integrations?", false)
@@ -70,7 +71,7 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 		return err
 	}
 	if !yes {
-		fmt.Fprintln(out, "Cancelled. No changes were made.")
+		terminal.Println(out, "Cancelled. No changes were made.")
 		return nil
 	}
 	previewPending := 0
@@ -80,13 +81,13 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 			return e
 		}
 		previewPending = pending
-		fmt.Fprintf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
+		terminal.Printf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
 		yes, err = p.yesNo("Delete local data and stored credentials too?", false)
 		if err != nil {
 			return err
 		}
 		if !yes {
-			fmt.Fprintln(out, "Cancelled. No changes were made.")
+			terminal.Println(out, "Cancelled. No changes were made.")
 			return nil
 		}
 	}
@@ -103,7 +104,7 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	releaseHooks = releaseOnce(releaseHooks)
 	defer releaseHooks()
 	// Reload after acquiring the lock; pause/resume may have completed meanwhile.
-	cfg, found, err = config.Load(home)
+	cfg, found, err := config.Load(home)
 	if err != nil {
 		return err
 	}
@@ -125,7 +126,7 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	if state == "unknown" {
 		return fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
 	}
-	if state == "running" || state == "loaded" {
+	if launchJobActive(state) {
 		if err = env.unloadLaunchAgent(plist); err != nil {
 			return fmt.Errorf("stop collector: %w", err)
 		}
@@ -214,7 +215,7 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 			return errors.New(strings.Join(problems, "; "))
 		}
 	}
-	fmt.Fprintln(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
+	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
 	return nil
 }
 
@@ -320,6 +321,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
+		//lint:ignore LV1001 file names found in the state directory, an open set; these are the lock files
 		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" {
 			continue
 		}

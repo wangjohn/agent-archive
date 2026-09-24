@@ -171,7 +171,7 @@ func TestListFiltersExactSkillHashFromMetadataOnly(t *testing.T) {
 // row, skipping the header and the trailing count line.
 func listedSessionIDs(out string) []string {
 	var ids []string
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 || fields[0] == "SESSION" || strings.HasSuffix(line, "session(s).") {
 			continue

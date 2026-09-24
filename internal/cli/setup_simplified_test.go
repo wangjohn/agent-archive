@@ -16,9 +16,11 @@ import (
 
 func TestShortSetupAndReviewEdits(t *testing.T) {
 	for _, tc := range []struct {
-		name, edits  string
-		probes, days int
-		prefix       string
+		name   string
+		edits  string
+		probes int
+		days   int
+		prefix string
 	}{
 		{"accept", "y\n", 1, 90, defaultPrefix},
 		{"retention", "edit\nretention\n30\ny\n", 1, 30, defaultPrefix},
@@ -117,8 +119,9 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 
 func TestReviewEditCancellationDoesNotInstall(t *testing.T) {
 	for _, tc := range []struct {
-		name, ending string
-		code         int
+		name   string
+		ending string
+		code   int
 	}{
 		{"cancel", "n\n", 0}, {"EOF", "", 1},
 	} {

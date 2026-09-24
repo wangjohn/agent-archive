@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"golang.org/x/term"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // prompter handles terminal and redirected input without echoing secrets.
@@ -40,15 +43,20 @@ func (s textStyle) wrap(code, text string) string {
 	}
 	return "\x1b[" + code + "m" + text + "\x1b[0m"
 }
-func (s textStyle) bold(text string) string   { return s.wrap("1", text) }
-func (s textStyle) dim(text string) string    { return s.wrap("2", text) }
-func (s textStyle) green(text string) string  { return s.wrap("32", text) }
+
+func (s textStyle) bold(text string) string { return s.wrap("1", text) }
+
+func (s textStyle) dim(text string) string { return s.wrap("2", text) }
+
+func (s textStyle) green(text string) string { return s.wrap("32", text) }
+
 func (s textStyle) yellow(text string) string { return s.wrap("33", text) }
-func (s textStyle) red(text string) string    { return s.wrap("31", text) }
+
+func (s textStyle) red(text string) string { return s.wrap("31", text) }
 
 // step prints a wizard step heading, set apart from the prompts above it.
 func (p *prompter) step(n int, title string) {
-	fmt.Fprintf(p.out, "\n%s\n\n", p.style.bold(fmt.Sprintf("Step %d of 3 · %s", n, title)))
+	terminal.Printf(p.out, "\n%s\n\n", p.style.bold(fmt.Sprintf("Step %d of 3 · %s", n, title)))
 }
 
 // warn and note print one review item. Continuation lines, such as a link,
@@ -56,13 +64,15 @@ func (p *prompter) step(n int, title string) {
 func (p *prompter) warn(text string, continuation ...string) {
 	p.item(p.style.yellow("!"), text, continuation)
 }
+
 func (p *prompter) note(text string, continuation ...string) {
 	p.item(p.style.dim("·"), text, continuation)
 }
+
 func (p *prompter) item(mark, text string, continuation []string) {
-	fmt.Fprintf(p.out, "  %s %s\n", mark, text)
+	terminal.Printf(p.out, "  %s %s\n", mark, text)
 	for _, l := range continuation {
-		fmt.Fprintln(p.out, "    "+l)
+		terminal.Println(p.out, "    "+l)
 	}
 }
 
@@ -80,10 +90,10 @@ func newPrompter(in io.Reader, out io.Writer) *prompter {
 }
 
 func (p *prompter) line(label string) (string, error) {
-	fmt.Fprint(p.out, label)
+	terminal.Print(p.out, label)
 	text, err := p.in.ReadString('\n')
 	if err != nil {
-		if err == io.EOF && text != "" {
+		if errors.Is(err, io.EOF) && text != "" {
 			// A final answer with no trailing newline is still a real one.
 			return strings.TrimSpace(text), nil
 		}
@@ -95,18 +105,6 @@ func (p *prompter) line(label string) (string, error) {
 		return "", fmt.Errorf("no more input: %w", err)
 	}
 	return strings.TrimSpace(text), nil
-}
-
-// help prints guidance for the prompt that follows: the question flush with
-// the prompts, then any continuation lines (a note, or a menu of choices)
-// indented beneath it.
-func (p *prompter) help(question string, continuation ...string) {
-	if question != "" {
-		fmt.Fprintln(p.out, question)
-	}
-	for _, l := range continuation {
-		fmt.Fprintln(p.out, "  "+l)
-	}
 }
 
 // withDefault prompts once, returning def when the answer is blank. A blank
@@ -144,7 +142,7 @@ func (p *prompter) yesNo(label string, def bool) (bool, error) {
 		case "n", "no":
 			return false, nil
 		default:
-			fmt.Fprintln(p.out, "Please enter y or n.")
+			terminal.Println(p.out, "Please enter y or n.")
 		}
 	}
 }
@@ -152,7 +150,8 @@ func (p *prompter) yesNo(label string, def bool) (bool, error) {
 // option is one numbered entry in a menu. Key is what the caller receives;
 // Label is what the user reads.
 type option struct {
-	Key, Label string
+	Key   string
+	Label string
 }
 
 // menu prints a question with numbered options and returns the chosen key.
@@ -160,10 +159,10 @@ type option struct {
 // option's key, or an unambiguous prefix of it such as y for yes, is also
 // accepted, so scripted input keeps working.
 func (p *prompter) menu(question, def string, options ...option) (string, error) {
-	fmt.Fprintln(p.out, question)
+	terminal.Println(p.out, question)
 	defNum := ""
 	for i, o := range options {
-		fmt.Fprintf(p.out, "  %d) %s\n", i+1, o.Label)
+		terminal.Printf(p.out, "  %d) %s\n", i+1, o.Label)
 		if o.Key == def {
 			defNum = strconv.Itoa(i + 1)
 		}
@@ -180,7 +179,7 @@ func (p *prompter) menu(question, def string, options ...option) (string, error)
 		if key, ok := matchOption(answer, options); ok {
 			return key, nil
 		}
-		fmt.Fprintf(p.out, "Enter a number from 1 to %d.\n", len(options))
+		terminal.Printf(p.out, "Enter a number from 1 to %d.\n", len(options))
 	}
 }
 
@@ -218,7 +217,7 @@ func (p *prompter) intWithDefault(label string, def int) (int, error) {
 		if err == nil && value > 0 && value <= 36500 {
 			return value, nil
 		}
-		fmt.Fprintln(p.out, "Enter a number of days between 1 and 36500.")
+		terminal.Println(p.out, "Enter a number of days between 1 and 36500.")
 	}
 }
 
@@ -243,9 +242,9 @@ func (p *prompter) secret(label string) (string, error) {
 			case <-done:
 			}
 		}()
-		fmt.Fprint(p.out, label)
+		terminal.Print(p.out, label)
 		value, err := term.ReadPassword(fd)
-		fmt.Fprintln(p.out)
+		terminal.Println(p.out)
 		if err != nil {
 			return "", fmt.Errorf("cannot hide credential input: %w", err)
 		}
@@ -265,22 +264,6 @@ func (p *prompter) required(label, def string) (string, error) {
 		if value != "" {
 			return value, nil
 		}
-		fmt.Fprintln(p.out, "This value is required.")
-	}
-}
-
-// lines reads one answer per call until a blank line ends the list.
-func (p *prompter) lines(label string) ([]string, error) {
-	fmt.Fprintln(p.out, label)
-	var out []string
-	for {
-		answer, err := p.line("> ")
-		if err != nil {
-			return nil, err
-		}
-		if answer == "" {
-			return out, nil
-		}
-		out = append(out, answer)
+		terminal.Println(p.out, "This value is required.")
 	}
 }
