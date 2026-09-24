@@ -33,7 +33,10 @@ Run `agent-archive` alone for a short command guide, or `agent-archive COMMAND -
 
 The [product and engineering specification](docs/agent-run-archive-spec.md)
 describes the design. The [implementation ledger](docs/agent-archive-implementation.md)
-records what has been built and verified.
+records what has been built and verified. The proposed
+[cloud capture specification](docs/agent-archive-cloud-capture-spec.md)
+covers sessions in Claude Code on the web, Cursor Cloud Agents, Codex cloud,
+and CI runners.
 
 ## Develop
 
