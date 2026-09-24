@@ -159,7 +159,8 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 func cursorSlugFor(path string) string {
 	b := []byte(strings.TrimPrefix(path, "/"))
 	for i, c := range b {
-		if ('a' > c || c > 'z') && ('A' > c || c > 'Z') && ('0' > c || c > '9') {
+		alnum := 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9'
+		if !alnum {
 			b[i] = '-'
 		}
 	}

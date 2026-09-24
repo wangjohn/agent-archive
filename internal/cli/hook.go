@@ -170,7 +170,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	case hookEventStop, hookEventResponse:
 		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
 	case hookEventIgnored:
-		// Returned before the lock was taken.
+		// Handled by the early return above, before the lock was taken.
 	}
 	// Retention can forget a session between this hook's registration lookup
 	// and its request write; the store then refuses the write so no orphan

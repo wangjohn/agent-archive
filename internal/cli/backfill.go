@@ -244,7 +244,6 @@ func countNoun(n int, noun string) string {
 // rather than a setting, so it is left out, as setup leaves it out when it
 // checks for concurrent changes.
 func configFingerprint(cfg config.Config) string {
-	//lint:ignore musttag credentials.Config is persisted by its Go field names; tagging it would change the config file format
 	data, _ := json.Marshal(withoutBucketPrivacy(cfg))
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])

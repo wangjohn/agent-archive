@@ -420,7 +420,15 @@ func TestCursorLifecycleStatusRetainsOnlyDocumentedEnums(t *testing.T) {
 	}{
 		{"stop", "status", "completed", "completed"},
 		{"stop", "status", "incomplete", ""},
+		{"stop", "status", "aborted", "aborted"},
+		{"stop", "status", "error", "error"},
+		// window_close and user_close are sessionEnd reasons, not stop statuses.
+		{"stop", "status", "window_close", ""},
 		{"sessionEnd", "reason", "aborted", "aborted"},
+		{"sessionEnd", "reason", "error", "error"},
+		{"sessionEnd", "reason", "window_close", "window_close"},
+		{"sessionEnd", "reason", "user_close", "user_close"},
+		{"sessionEnd", "reason", "completed", "completed"},
 		{"sessionEnd", "reason", "user supplied arbitrary text", ""},
 	} {
 		evidence, err := filteredHookEvidence(archive.EvidenceKindLifecycleHook, "cursor", tc.event, map[string]any{"hook_event_name": tc.event, tc.field: tc.value}, false, now)
