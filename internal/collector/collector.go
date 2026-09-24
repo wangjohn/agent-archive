@@ -630,9 +630,9 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		// checkpoint restore), so a chat that no longer extends what was
 		// published is the chat as it now is, not a damaged copy of it, and
 		// blocking it would stop capturing the chat for good. The new
-		// snapshot replaces the old one, and each replacement is recorded
-		// as a gap, which names no content.
-		supplemental = mergeSupplementalEvidence(supplemental, []archive.SupplementalEvidence{cursorRewriteGap(now)})
+		// snapshot replaces the old one, and the chat's one rewrite gap,
+		// which names no content, counts the replacement.
+		supplemental = withCursorRewriteGap(supplemental, now)
 		if candidate, err = archive.NewSourceBundle(reg, adapter, filtered, now, supplemental); err != nil {
 			return outcomeSkipped, fmt.Errorf("build rewritten source bundle: %w", err)
 		}

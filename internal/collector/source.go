@@ -262,24 +262,47 @@ func rememberFailedRead(local *LocalStore, reg archive.SessionRegistration, adap
 }
 
 // CaptureGapCursorChatRewritten marks a Cursor database chat whose messages
-// changed after they were published, so a later snapshot replaced one that
-// did not lead to it (see processSession). There is one per replacement.
+// changed after an earlier snapshot of it was taken, so a later snapshot
+// replaced one that did not lead to it (see processSession). A chat has at
+// most one: its detail counts the rewrites, and its observation time is the
+// last one's.
 const CaptureGapCursorChatRewritten = "cursor_chat_rewritten"
 
 // cursorRewriteProvenance is the rewrite gap's provenance: the collector's
 // own, never a hook's, so it is not taken for a resume.
 const cursorRewriteProvenance = "collector:cursor-rewrite"
 
-// cursorRewriteGap is the capture gap one rewrite adds, as supplemental
-// evidence so it is carried into every later snapshot of the chat.
-func cursorRewriteGap(at time.Time) archive.SupplementalEvidence {
-	return archive.SupplementalEvidence{
+// cursorRewriteDetail is the rewrite gap's detail for n rewrites. The
+// earlier snapshot may have been published, or only held back (rate
+// limited or declined), so the wording claims neither.
+const cursorRewriteDetail = "Cursor changed messages of this chat after an earlier snapshot of it %d time(s); the snapshot is the chat as it was last read"
+
+// withCursorRewriteGap returns evidence with the chat's one rewrite gap
+// counting one more rewrite, observed at: an earlier rewrite gap is replaced,
+// not added to, so a chat Cursor rewrites often (late token counts are
+// routine) does not grow a gap per rewrite.
+func withCursorRewriteGap(evidence []archive.SupplementalEvidence, at time.Time) []archive.SupplementalEvidence {
+	rewrites := 0
+	out := make([]archive.SupplementalEvidence, 0, len(evidence)+1)
+	for _, e := range evidence {
+		if e.Kind == archive.EvidenceKindCaptureGap && e.Provenance == cursorRewriteProvenance {
+			n := 0
+			detail, _ := e.Payload["detail"].(string)
+			if _, err := fmt.Sscanf(detail, cursorRewriteDetail, &n); err != nil || n < 1 {
+				n = 1
+			}
+			rewrites += n
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out, archive.SupplementalEvidence{
 		Kind: archive.EvidenceKindCaptureGap, ObservedAt: at.UTC(), Provenance: cursorRewriteProvenance,
 		Payload: map[string]any{
 			"code":   CaptureGapCursorChatRewritten,
-			"detail": "Cursor changed messages that were already archived; this snapshot replaced the earlier one",
+			"detail": fmt.Sprintf(cursorRewriteDetail, rewrites+1),
 		},
-	}
+	})
 }
 
 // errUnchangedSinceFailure reports a remembered failure again on a pass that

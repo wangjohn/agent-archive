@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -13,22 +14,25 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-// rewriteGaps counts the cursor_chat_rewritten gaps in a bundle.
-func rewriteGaps(bundle archive.SourceBundle) int {
-	n := 0
-	for _, gap := range bundle.Capture.Gaps {
+// rewriteGaps counts the cursor_chat_rewritten gaps in gaps and returns the
+// last one's detail.
+func rewriteGaps(gaps []archive.CaptureGap) (int, string) {
+	n, detail := 0, ""
+	for _, gap := range gaps {
 		if gap.Code == CaptureGapCursorChatRewritten {
 			n++
+			detail = gap.Detail
 		}
 	}
-	return n
+	return n, detail
 }
 
 // TestCursorSQLiteRewrittenChatRepublishes: Cursor rewriting a finished
 // message is not a permanent block, as it is for a transcript file (see
 // TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite): the new snapshot is
-// published in place of the old, with one cursor_chat_rewritten gap per
-// rewrite, and later appends publish as usual.
+// published in place of the old, with one cursor_chat_rewritten gap that
+// counts the rewrites (so the source and metadata don't grow with them), and
+// later appends publish as usual.
 func TestCursorSQLiteRewrittenChatRepublishes(t *testing.T) {
 	passes := countSnapshots(t)
 	local := newTestStore(t)
@@ -44,7 +48,7 @@ func TestCursorSQLiteRewrittenChatRepublishes(t *testing.T) {
 		t.Fatalf("first capture: %+v", result)
 	}
 
-	for rewrite := 1; rewrite <= 2; rewrite++ {
+	for rewrite := 1; rewrite <= 4; rewrite++ {
 		text := strings.Repeat("edited ", rewrite)
 		db.chatSaying("chat", int64(1000+rewrite), text, "b1", "b2")
 		result, _ := run(t, local, remote, opts, passes)
@@ -54,19 +58,23 @@ func TestCursorSQLiteRewrittenChatRepublishes(t *testing.T) {
 		if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {
 			t.Fatalf("rewrite %d blocked the chat", rewrite)
 		}
+		counted := fmt.Sprintf(" %d time(s)", rewrite)
 		bundle, _, _, _ := local.LoadLastPublished(reg.ArchiveSessionID)
-		if got := rewriteGaps(bundle); got != rewrite {
-			t.Fatalf("rewrite %d: %d rewrite gaps", rewrite, got)
+		if n, detail := rewriteGaps(bundle.Capture.Gaps); n != 1 || !strings.Contains(detail, counted) {
+			t.Fatalf("rewrite %d: %d rewrite gaps, %q", rewrite, n, detail)
 		}
-		metadata := fetchMetadata(t, remote, "cursor", reg.ArchiveSessionID)
-		gaps := 0
-		for _, gap := range metadata.CaptureGaps {
-			if gap.Code == CaptureGapCursorChatRewritten {
-				gaps++
+		rewriteEvidence := 0
+		for _, e := range bundle.SupplementalEvidence {
+			if e.Provenance == cursorRewriteProvenance {
+				rewriteEvidence++
 			}
 		}
-		if gaps != rewrite {
-			t.Fatalf("rewrite %d: metadata has %d rewrite gaps", rewrite, gaps)
+		if rewriteEvidence != 1 {
+			t.Fatalf("rewrite %d: %d rewrite evidence items", rewrite, rewriteEvidence)
+		}
+		metadata := fetchMetadata(t, remote, "cursor", reg.ArchiveSessionID)
+		if n, detail := rewriteGaps(metadata.CaptureGaps); n != 1 || !strings.Contains(detail, counted) {
+			t.Fatalf("rewrite %d: metadata has %d rewrite gaps, %q", rewrite, n, detail)
 		}
 		if records := fetchBundle(t, remote, metadata); !strings.Contains(recordsText(records), text) || strings.Contains(recordsText(records), "first draft") {
 			t.Fatal("the published snapshot is not the rewritten chat")
@@ -75,7 +83,7 @@ func TestCursorSQLiteRewrittenChatRepublishes(t *testing.T) {
 
 	// An append after a rewrite is ordinary: published, no new gap. An
 	// unchanged chat then costs nothing and keeps its gaps.
-	db.chatSaying("chat", 2000, strings.Repeat("edited ", 2), "b1", "b2", "b3")
+	db.chatSaying("chat", 2000, strings.Repeat("edited ", 4), "b1", "b2", "b3")
 	if result, _ := run(t, local, remote, opts, passes); !contains(result.Published, reg.ArchiveSessionID) {
 		t.Fatalf("append: %+v", result)
 	}
@@ -83,8 +91,9 @@ func TestCursorSQLiteRewrittenChatRepublishes(t *testing.T) {
 	if !contains(result.Skipped, reg.ArchiveSessionID) || copies != 0 {
 		t.Fatalf("unchanged: %+v, %d copies", result, copies)
 	}
-	if bundle, _, _, _ := local.LoadLastPublished(reg.ArchiveSessionID); rewriteGaps(bundle) != 2 {
-		t.Fatalf("%d rewrite gaps after an append", rewriteGaps(bundle))
+	bundle, _, _, _ := local.LoadLastPublished(reg.ArchiveSessionID)
+	if n, detail := rewriteGaps(bundle.Capture.Gaps); n != 1 || !strings.Contains(detail, " 4 time(s)") {
+		t.Fatalf("after an append: %d rewrite gaps, %q", n, detail)
 	}
 }
 
