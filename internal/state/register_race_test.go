@@ -1,4 +1,4 @@
-package collector
+package state
 
 import (
 	"errors"
@@ -155,7 +155,7 @@ func TestStaleLockInodeAfterForgetCannotWriteForTheSession(t *testing.T) {
 	if _, exists, _ := store.LoadRegistration(old.ArchiveSessionID); exists {
 		t.Fatal("something wrote a registration for the forgotten ID")
 	}
-	if _, exists, _ := store.loadRequest(old.ArchiveSessionID); exists {
+	if _, exists, _ := store.LoadRequest(old.ArchiveSessionID); exists {
 		t.Fatal("something wrote a request for the forgotten ID")
 	}
 }

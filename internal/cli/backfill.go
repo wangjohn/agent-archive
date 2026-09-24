@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -265,12 +265,12 @@ func (e Env) backfillEnvironment(userHome string) backfill.Environment {
 // archiveState answers backfill.ArchiveState from this machine's local store
 // and configuration.
 type archiveState struct {
-	store *collector.LocalStore
+	store *state.Store
 	cfg   config.Config
 }
 
 func newArchiveState(home string, cfg config.Config) archiveState {
-	return archiveState{store: collector.OpenLocalStoreReadOnly(home), cfg: cfg}
+	return archiveState{store: state.OpenReadOnly(home), cfg: cfg}
 }
 
 // Classify reports already_archived when the native session has a
@@ -300,7 +300,7 @@ func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipRe
 	if err != nil || !found {
 		return "", err
 	}
-	if record.Reason == collector.RemovalReasonUndo {
+	if record.Reason == state.RemovalReasonUndo {
 		return backfill.SkipRemovedByUndo, nil
 	}
 	return backfill.SkipRemovedByRetention, nil

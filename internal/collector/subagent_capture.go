@@ -8,14 +8,15 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // materializeSubagentCandidates registers each candidate a hook left, or
 // rejects it, and returns the per-candidate failures keyed by the
 // candidate's archive session ID. One unreadable candidate fails only
 // itself.
-func materializeSubagentCandidates(local *LocalStore, opts Options) map[string]error {
-	candidates, issues, err := local.scanSubagentCandidates()
+func materializeSubagentCandidates(local *state.Store, opts Options) map[string]error {
+	candidates, issues, err := local.ScanSubagentCandidates()
 	if err != nil {
 		return map[string]error{"subagent-candidates": err}
 	}
@@ -27,7 +28,7 @@ func materializeSubagentCandidates(local *LocalStore, opts Options) map[string]e
 	return issues
 }
 
-func materializeSubagentCandidate(local *LocalStore, candidate SubagentCandidate, opts Options) error {
+func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, opts Options) error {
 	parent, found, err := local.LoadRegistration(candidate.ParentArchiveSessionID)
 	if err != nil {
 		return err
@@ -85,7 +86,7 @@ func materializeSubagentCandidate(local *LocalStore, candidate SubagentCandidate
 	}
 	if candidate.Origin == archive.SessionOriginImport {
 		// No SubagentStop fired for a subagent backfill found.
-		return local.acknowledgeSubagentCandidate(candidate)
+		return local.AcknowledgeSubagentCandidate(candidate)
 	}
 	lifecycle, _, err := archive.FilterSupplementalEvidence([]archive.SupplementalEvidence{{
 		Kind: archive.EvidenceKindLifecycleHook, ObservedAt: candidate.ObservedAt,
@@ -100,7 +101,7 @@ func materializeSubagentCandidate(local *LocalStore, candidate SubagentCandidate
 			return err
 		}
 	}
-	return local.acknowledgeSubagentCandidate(candidate)
+	return local.AcknowledgeSubagentCandidate(candidate)
 }
 
 // subagentTranscriptEmpty reports a subagent transcript with no native
@@ -177,7 +178,7 @@ func checkSubagentProvenance(filtered archive.FilteredTranscript, parentNativeSe
 	return nil
 }
 
-func rejectSubagentCandidate(local *LocalStore, candidate SubagentCandidate, code string) error {
+func rejectSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, code string) error {
 	evidence, err := archive.NewLinkedSessionEvidence(candidate.ArchiveSessionID, archive.LinkedSessionUnavailable, candidate.ObservedAt)
 	if err != nil {
 		return err
@@ -185,10 +186,10 @@ func rejectSubagentCandidate(local *LocalStore, candidate SubagentCandidate, cod
 	// A parent retention has forgotten has nobody left to notify. The
 	// candidate is still acknowledged: retrying it would report the same
 	// permanent condition on every pass.
-	if err := local.SaveRequest(candidate.ParentArchiveSessionID, code, candidate.ObservedAt, evidence); err != nil && !errors.Is(err, ErrSessionNotRegistered) {
+	if err := local.SaveRequest(candidate.ParentArchiveSessionID, code, candidate.ObservedAt, evidence); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
 		return err
 	}
-	if err := local.acknowledgeSubagentCandidate(candidate); err != nil {
+	if err := local.AcknowledgeSubagentCandidate(candidate); err != nil {
 		return err
 	}
 	return fmt.Errorf("%s", code)
@@ -200,13 +201,26 @@ func rejectSubagentCandidate(local *LocalStore, candidate SubagentCandidate, cod
 // than waiting out the upload debounce; SaveRequest drops evidence the pending
 // request already carries, so retrying a parent that never publishes is a
 // no-op instead of an unbounded append.
-func markPublishedSubagent(local *LocalStore, reg archive.SessionRegistration) error {
+func markPublishedSubagent(local *state.Store, reg archive.SessionRegistration) error {
 	if reg.ParentSessionID == "" {
 		return nil
 	}
-	_, publishedAt, published, err := local.LoadLastPublished(reg.ArchiveSessionID)
-	if err != nil || !published {
+	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
 		return err
+	}
+	return announceSubagent(local, reg, published)
+}
+
+// announceSubagent is markPublishedSubagent for a subagent whose published
+// state the caller has already loaded.
+func announceSubagent(local *state.Store, reg archive.SessionRegistration, child *state.Published) error {
+	if reg.ParentSessionID == "" {
+		return nil
+	}
+	_, publishedAt, published := child.LastPublished()
+	if !published {
+		return nil
 	}
 	if _, found, err := local.LoadRegistration(reg.ParentSessionID); err != nil || !found {
 		return err
@@ -215,7 +229,7 @@ func markPublishedSubagent(local *LocalStore, reg archive.SessionRegistration) e
 	if err != nil {
 		return err
 	}
-	if found && parentStatus == CacheStatusBlocked {
+	if found && parentStatus == state.CacheStatusBlocked {
 		// A blocked parent cannot republish, and blocking acknowledges its
 		// request, so a notification written now would be written and
 		// discarded again on every pass for as long as the gap lasts. The link

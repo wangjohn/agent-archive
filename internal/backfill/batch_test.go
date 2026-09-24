@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // Batches are numbered per local day. An interrupted batch is continued by
@@ -116,7 +116,7 @@ func TestRegistrationRecordsTheConfirmedDestination(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 	parent.Subagents = []Subagent{{Path: subPath, AgentID: "s1"}, {Path: subPath, AgentID: "s2"}}
 	parentID, _, _ := store.EnsureArchiveSessionID("parent")
 	childID, _, _ := store.EnsureArchiveSessionID("parent:subagent:s1")
-	if err := store.SaveSubagentCandidate(collector.SubagentCandidate{
+	if err := store.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: childID, NativeSessionID: "parent:subagent:s1", ParentArchiveSessionID: parentID, ParentNativeSessionID: "parent",
 		ProjectID: archive.ProjectID(project), ProjectRoot: project, Harness: archive.Harness{Name: "claude"},
 		AgentID: "s1", TranscriptPath: "/elsewhere/agent-s1.jsonl", ObservedAt: admitted,
@@ -247,7 +247,7 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 // ID, and its subagents from their imported candidates.
 func TestBatchReconcile(t *testing.T) {
 	home := t.TempDir()
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestBatchReconcile(t *testing.T) {
 	save("b", "b1", "")
 	save("c", "b2", "")
 	save("a-child", "b1", "a")
-	if err := store.SaveSubagentCandidate(collector.SubagentCandidate{
+	if err := store.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: "b-child", NativeSessionID: "n-b:subagent:x", ParentArchiveSessionID: "b", ParentNativeSessionID: "n-b",
 		ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"}, AgentID: "x", TranscriptPath: "/p/x.jsonl",
 		ObservedAt: fixedNow, Origin: archive.SessionOriginImport,

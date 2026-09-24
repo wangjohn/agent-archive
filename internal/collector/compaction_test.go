@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -27,7 +28,7 @@ func compactionFixtureLines(t *testing.T) []string {
 	return lines
 }
 
-func claudeSession(t *testing.T, local *LocalStore, content string) string {
+func claudeSession(t *testing.T, local *state.Store, content string) string {
 	t.Helper()
 	path := writeTranscript(t, t.TempDir(), "claude.jsonl", content)
 	reg := registration(t, path)
@@ -96,7 +97,7 @@ func TestCompactionThatRewroteTheTranscriptIsRecordedAsAGap(t *testing.T) {
 	if result := runAt(t, local, remote, t0.Add(time.Hour)); len(result.Published) != 0 || len(result.Errors) != 0 {
 		t.Fatalf("result=%#v", result)
 	}
-	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != BlockedReasonTranscriptRewritten {
+	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != state.BlockedReasonTranscriptRewritten {
 		t.Fatalf("a rewriting compaction was not recorded as a gap: blocked=%t reason=%q", blocked, reason)
 	}
 }

@@ -17,10 +17,10 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -114,7 +114,7 @@ func (f *backfillFixture) checkPrivate(t *testing.T, name, text string) {
 
 func importRegistrations(t *testing.T, home, batch string) (parents, children []archive.SessionRegistration) {
 	t.Helper()
-	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +577,7 @@ func TestBackfillSubagentsInheritImport(t *testing.T) {
 	if !strings.Contains(out, "Registered 2 sessions and 2 subagent transcripts as import "+firstImport) || !strings.Contains(out, "The background collector uploads them.") {
 		t.Fatalf("output:\n%s", out)
 	}
-	store := collector.OpenLocalStoreReadOnly(f.data)
+	store := state.OpenReadOnly(f.data)
 	candidates, err := store.LoadSubagentCandidates()
 	if err != nil || len(candidates) != 2 {
 		t.Fatalf("candidates %+v, %v", candidates, err)
@@ -636,14 +636,14 @@ func TestBackfillSubagentsInheritImport(t *testing.T) {
 	}
 }
 
-func requestFor(store *collector.LocalStore, id string) (collector.Request, bool, error) {
+func requestFor(store *state.Store, id string) (state.Request, bool, error) {
 	requests, err := store.LoadRequests()
 	for _, req := range requests {
 		if req.ArchiveSessionID == id {
 			return req, true, err
 		}
 	}
-	return collector.Request{}, false, err
+	return state.Request{}, false, err
 }
 
 // Ctrl-C during the upload stops after the session in flight; the rest stay
@@ -689,7 +689,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
 	parents, _ := importRegistrations(t, f.data, firstImport)
-	store := collector.OpenLocalStoreReadOnly(f.data)
+	store := state.OpenReadOnly(f.data)
 	for _, reg := range parents {
 		if _, found, _ := requestFor(store, reg.ArchiveSessionID); !found {
 			t.Errorf("%s has no pending request", reg.ArchiveSessionID)
@@ -724,7 +724,7 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, activated)
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -299,7 +299,7 @@ func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T)
 	env.Now = func() time.Time { return now.Add(2 * time.Minute) }
 	setupRun(t, env, "continue\ny\n", 0)
 	cfg, _, _ := config.Load(home)
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if cfg.AcceptSession(regs[0]) || len(cfg.PreviousDestinations) != 1 {
 		t.Fatal("old sessions followed destination switch")

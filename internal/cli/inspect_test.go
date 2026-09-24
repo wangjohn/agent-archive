@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -36,7 +36,7 @@ func publishedFixture(t *testing.T) (Env, *storage.MemoryStore, string) {
 	if code := runSyncCommand(nil, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("sync code=%d stderr=%s", code, stderr.String())
 	}
-	local, err := collector.NewLocalStore(home)
+	local, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

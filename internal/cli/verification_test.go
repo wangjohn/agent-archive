@@ -12,24 +12,26 @@ import (
 	"time"
 
 	"github.com/aws/smithy-go"
+
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 // publishSyntheticSessions registers n codex sessions for project and
 // publishes each to remote one at a time, so publication times ascend with
 // the session index. It returns the configuration and the store.
-func publishSyntheticSessions(t *testing.T, home, project string, remote storage.ObjectStore, at time.Time, n int) (config.Config, *collector.LocalStore) {
+func publishSyntheticSessions(t *testing.T, home, project string, remote storage.ObjectStore, at time.Time, n int) (config.Config, *state.Store) {
 	t.Helper()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +295,7 @@ func TestStatusRequiresRecordedReadbackAndInvalidatesConfiguration(t *testing.T)
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

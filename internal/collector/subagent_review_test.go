@@ -2,12 +2,14 @@ package collector
 
 import (
 	"context"
-	"github.com/wangjohn/agent-archive/internal/storage"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -31,7 +33,7 @@ func TestChildProvenanceRequiresAgentIdentityAndStableStart(t *testing.T) {
 
 func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
 	home := t.TempDir()
-	store, err := NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +42,7 @@ func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
 	if err := store.SaveRegistration(parent); err != nil {
 		t.Fatal(err)
 	}
-	candidate := SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "native-child", ParentArchiveSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID, ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness, AgentID: "agent", TranscriptPath: filepath.Join(home, "not-created-yet.jsonl"), ObservedAt: at}
+	candidate := state.SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "native-child", ParentArchiveSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID, ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness, AgentID: "agent", TranscriptPath: filepath.Join(home, "not-created-yet.jsonl"), ObservedAt: at}
 	if err := store.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
@@ -77,10 +79,10 @@ func TestCollectorRepairsParentLinkAfterNotificationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := local.SavePublished("child", bundle, at, CacheStatusPublished); err != nil {
+	if err := local.SavePublished("child", bundle, at, state.CacheStatusPublished); err != nil {
 		t.Fatal(err)
 	}
-	blocked := local.requestPath("parent")
+	blocked := requestPath(local, "parent")
 	if err := os.MkdirAll(blocked, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +98,7 @@ func TestCollectorRepairsParentLinkAfterNotificationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, found, err := local.loadRequest("parent")
+	request, found, err := local.LoadRequest("parent")
 	if err != nil || !found || len(request.HookEvidence) == 0 {
 		t.Fatalf("parent notification lost: %+v %v", request, err)
 	}
@@ -118,7 +120,7 @@ func TestHiddenOldRecordCannotMakeResumedChildLookFresh(t *testing.T) {
 func TestLaterChildStopSurvivesEarlierCaptureAcknowledgement(t *testing.T) {
 	local := newTestStore(t)
 	at := time.Now().UTC()
-	first := SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "native-child", ParentArchiveSessionID: "parent", ParentNativeSessionID: "native-parent", ProjectID: "project", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: "claude"}, AgentID: "agent", TranscriptPath: "/synthetic/child.jsonl", ObservedAt: at}
+	first := state.SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "native-child", ParentArchiveSessionID: "parent", ParentNativeSessionID: "native-parent", ProjectID: "project", ProjectRoot: "/synthetic", Harness: archive.Harness{Name: "claude"}, AgentID: "agent", TranscriptPath: "/synthetic/child.jsonl", ObservedAt: at}
 	if err := local.SaveSubagentCandidate(first); err != nil {
 		t.Fatal(err)
 	}
@@ -127,14 +129,14 @@ func TestLaterChildStopSurvivesEarlierCaptureAcknowledgement(t *testing.T) {
 	if err := local.SaveSubagentCandidate(newer); err != nil {
 		t.Fatal(err)
 	}
-	if err := local.acknowledgeSubagentCandidate(first); err != nil {
+	if err := local.AcknowledgeSubagentCandidate(first); err != nil {
 		t.Fatal(err)
 	}
 	remaining, err := local.LoadSubagentCandidates()
 	if err != nil || len(remaining) != 1 || !remaining[0].ObservedAt.Equal(newer.ObservedAt) {
 		t.Fatalf("new stop lost: %+v %v", remaining, err)
 	}
-	if err := local.acknowledgeSubagentCandidate(newer); err != nil {
+	if err := local.AcknowledgeSubagentCandidate(newer); err != nil {
 		t.Fatal(err)
 	}
 	remaining, err = local.LoadSubagentCandidates()

@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -60,7 +61,7 @@ type UndoSession struct {
 
 // PlanUndo decides what undoing b does. project limits it to one project
 // directory, resolved as BuildPlan resolves --project. It writes nothing.
-func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b Batch, project string) (UndoPlan, error) {
+func PlanUndo(env Environment, store *state.Store, cfg config.Config, b Batch, project string) (UndoPlan, error) {
 	p := UndoPlan{Batch: b, view: Plan{GeneratedAt: env.now(),
 		Home: env.Home, resolvedHome: env.resolved(env.Home),
 		Destination: Destination{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix},
@@ -83,7 +84,7 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 	if err != nil {
 		return UndoPlan{}, err
 	}
-	requested := map[string]collector.Request{}
+	requested := map[string]state.Request{}
 	for _, req := range requests {
 		requested[req.ArchiveSessionID] = req
 	}
@@ -179,7 +180,7 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 // The superseded-source ledger is not a signal: a parent is republished
 // when its subagents publish (a link-only change), and a parser upgrade
 // republishes everything, neither of which is a resume.
-func resumedSinceImport(env Environment, store *collector.LocalStore, reg archive.SessionRegistration, req collector.Request) (resumed, unknown bool, err error) {
+func resumedSinceImport(env Environment, store *state.Store, reg archive.SessionRegistration, req state.Request) (resumed, unknown bool, err error) {
 	if reg.SourceKind == archive.SourceKindCursorSQLite && !reg.AdmittedAt.IsZero() {
 		sig, err := cursorstore.ReadSignature(context.Background(), CursorStateDatabase(env.Home), reg.SourceKey)
 		if err == nil && sig.LastUpdatedAt > reg.AdmittedAt.UnixMilli() {
@@ -195,7 +196,7 @@ func resumedSinceImport(env Environment, store *collector.LocalStore, reg archiv
 
 // resumedByEvidence is resumedSinceImport's transcript time and hook
 // evidence signals.
-func resumedByEvidence(env Environment, store *collector.LocalStore, reg archive.SessionRegistration, req collector.Request) (bool, error) {
+func resumedByEvidence(env Environment, store *state.Store, reg archive.SessionRegistration, req state.Request) (bool, error) {
 	if reg.TranscriptPath != "" && !reg.AdmittedAt.IsZero() {
 		if info, err := env.stat(reg.TranscriptPath); err == nil && info.ModTime().After(reg.AdmittedAt) {
 			return true, nil
@@ -337,7 +338,7 @@ type UndoResult struct {
 // registered and moves on to the next. The caller holds collector.lock, so
 // no pass publishes a session between its deletion and being forgotten.
 // bucket may be nil when no session is in the current destination.
-func (p UndoPlan) Remove(ctx context.Context, store *collector.LocalStore, bucket storage.ObjectStore, now time.Time) UndoResult {
+func (p UndoPlan) Remove(ctx context.Context, store *state.Store, bucket storage.ObjectStore, now time.Time) UndoResult {
 	result := UndoResult{Failed: map[string]error{}}
 	for _, s := range p.Sessions {
 		reg := s.Registration
@@ -354,8 +355,8 @@ func (p UndoPlan) Remove(ctx context.Context, store *collector.LocalStore, bucke
 		// deferForWork is off: undo removes the session whatever a hook
 		// queued for it meanwhile. ForgetSession also drops the parent's
 		// subagent candidates that were never registered.
-		if _, err := store.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, false, &collector.RemovalRecord{
-			Harness: app, Reason: collector.RemovalReasonUndo, At: now,
+		if _, err := store.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, false, &state.RemovalRecord{
+			Harness: app, Reason: state.RemovalReasonUndo, At: now,
 		}); err != nil {
 			result.Failed[reg.ArchiveSessionID] = fmt.Errorf("forget locally: %w", err)
 			continue

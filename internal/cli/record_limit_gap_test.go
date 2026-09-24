@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // A session blocked by one oversize record shows as a capture gap with its
@@ -18,7 +18,7 @@ func TestStatusReportsTheRecordSizeLimitAsAGap(t *testing.T) {
 	now := time.Now().UTC()
 	env, home, _, _ := publishedThroughSync(t, now)
 	reg, _ := onlyRegistration(t, home)
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestStatusReportsTheRecordSizeLimitAsAGap(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("setup: %v", err)
 	}
-	if err := store.SaveBlocked(reg.ArchiveSessionID, bundle, publishedAt, collector.BlockedReasonRecordTooLarge); err != nil {
+	if err := store.SaveBlocked(reg.ArchiveSessionID, bundle, publishedAt, state.BlockedReasonRecordTooLarge); err != nil {
 		t.Fatal(err)
 	}
 	view, err := readStatus(env)

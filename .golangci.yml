@@ -92,9 +92,6 @@ linters:
 
       # TODO(W3-B, collector state refactor): existing functions over the
       # funlen/gocyclo ceilings. Remove each entry as the function is split.
-      - path: internal/collector/collector\.go
-        text: "(processSession|`Run`|'Run')"
-        linters: [funlen, gocyclo]
       - path: internal/collector/subagent_capture\.go
         text: materializeSubagentCandidate
         linters: [gocyclo]

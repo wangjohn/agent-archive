@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // A chat found only in Cursor's database registers with its source (the
@@ -23,7 +23,7 @@ func TestRegistrationOfCursorDatabaseChats(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

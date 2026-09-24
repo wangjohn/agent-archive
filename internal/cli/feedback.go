@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 const maxFeedbackBytes = 64 << 10
@@ -69,7 +69,7 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintln(stderr, "agent-archive: feedback: not set up yet; run `agent-archive setup` first")
 		return 1
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		fmt.Fprintf(stderr, "agent-archive: feedback: open local store: %v\n", err)
 		return 1
