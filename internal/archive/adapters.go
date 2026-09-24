@@ -115,33 +115,6 @@ func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	})
 }
 
-// FilterText retains a hook-provided Cursor text transcript only when the hook
-// has established that this is a fresh eligible session. It labels the source
-// as text rather than fabricating message events from unstructured content.
-//
-// The transcript as a whole is bounded by the record size limit (a text
-// transcript is one unit, like one JSONL record); a longer one fails with
-// ErrRecordTooLarge, which the collector records as a capture gap. Filter 6
-// and earlier stopped at 2 MB.
-//
-// Each visible role section — a `user:`, `assistant:`, or `tool:` line and the
-// continuation lines under it — is sanitized on its own, so redaction and the
-// 64 KB string cap apply per message, as they do to JSONL records. Filter 6
-// sanitized the whole joined text as one string, which truncated any text
-// transcript over 64 KB to its first 64 KB. The sanitized sections are joined
-// again in their original order, one line per original line, so the result is
-// read back by the same section prefixes (see textSectionPrefixes). Hidden
-// sections (`system:`, `developer:`, `thinking:`, `analysis:`) and their
-// continuation lines are omitted. Each gap is recorded once.
-//
-// The collector's rewrite guard compares the retained text by prefix across
-// passes. Per-section sanitizing keeps every completed section's bytes
-// stable, but the last section, if it is still being written, can change
-// bytes it already produced once more of it lands (a credential that only
-// matches when complete, or an injected block whose stripping trims the
-// section's edges). That is a property of sanitizing a growing string, not
-// of this function, and a text transcript offers no record boundary to stop
-// short of.
 // visibleTextRoles and hiddenTextRoles are the role headers of a Cursor
 // text transcript: a visible section is retained, a hidden one omitted.
 var (
@@ -171,6 +144,33 @@ func textRoleHeader(line string) (role, rest string, ok bool) {
 	return role, strings.TrimPrefix(rest, " "), true
 }
 
+// FilterText retains a hook-provided Cursor text transcript only when the hook
+// has established that this is a fresh eligible session. It labels the source
+// as text rather than fabricating message events from unstructured content.
+//
+// The transcript as a whole is bounded by the record size limit (a text
+// transcript is one unit, like one JSONL record); a longer one fails with
+// ErrRecordTooLarge, which the collector records as a capture gap. Filter 6
+// and earlier stopped at 2 MB.
+//
+// Each visible role section — a `user:`, `assistant:`, or `tool:` line and the
+// continuation lines under it — is sanitized on its own, so redaction and the
+// 64 KB string cap apply per message, as they do to JSONL records. Filter 6
+// sanitized the whole joined text as one string, which truncated any text
+// transcript over 64 KB to its first 64 KB. The sanitized sections are joined
+// again in their original order, one line per original line, so the result is
+// read back by the same section prefixes (see textSectionPrefixes). Hidden
+// sections (`system:`, `developer:`, `thinking:`, `analysis:`) and their
+// continuation lines are omitted. Each gap is recorded once.
+//
+// The collector's rewrite guard compares the retained text by prefix across
+// passes. Per-section sanitizing keeps every completed section's bytes
+// stable, but the last section, if it is still being written, can change
+// bytes it already produced once more of it lands (a credential that only
+// matches when complete, or an injected block whose stripping trims the
+// section's edges). That is a property of sanitizing a growing string, not
+// of this function, and a text transcript offers no record boundary to stop
+// short of.
 func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (FilteredTranscript, error) {
 	if freshStartedAt.IsZero() {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no reliable fresh-session start"}

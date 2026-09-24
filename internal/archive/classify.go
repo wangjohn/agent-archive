@@ -27,6 +27,23 @@ var harnessTextKinds = []struct {
 	{"command-args", TurnKindLocalCommand},
 }
 
+// isPlaceholderModel reports a model name a harness writes on a message no
+// model produced: Claude Code labels the messages it synthesizes itself
+// (an interruption notice, "No response requested.") "<synthetic>". Such a
+// name is not a model, and its usage is no model's usage.
+func isPlaceholderModel(name string) bool {
+	return strings.HasPrefix(name, "<") && strings.HasSuffix(name, ">")
+}
+
+// recordModel is the model a native record names, or "" for none or a
+// placeholder.
+func recordModel(record map[string]any) string {
+	if model := firstStringDeep(record, "model", "model_id"); !isPlaceholderModel(model) {
+		return model
+	}
+	return ""
+}
+
 // interruptionMarker is the user record Claude Code writes when the person
 // stops a turn ("[Request interrupted by user]", "[Request interrupted by
 // user for tool use]"). The harness writes it, not the person, so it is not

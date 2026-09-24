@@ -1736,6 +1736,10 @@ D-7, and the schema rows of D-5.
   output, and walks keys in sorted order, so a record's calls always come out
   in the same order. Cursor database chats already pair results by
   `toolCallId`; a test pins it.
+- **Synthetic messages (parser 0.10.0).** Claude Code labels messages it
+  synthesizes itself with the model `<synthetic>`. That is no model: it is
+  left out of metadata models and the handoff, and those messages' usage is
+  not counted.
 - **Interruption marker (A-4, parser 0.10.0).** `[Request interrupted by
   user…]` is a harness notification, not a prompt.
 - **Validation (A-5).** Token counts must be whole numbers from 0 to 2^53; a

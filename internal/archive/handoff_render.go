@@ -155,7 +155,7 @@ func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
 					b.WriteString("\n")
 					inTools = true
 				}
-				fmt.Fprintf(&b, "- %s\n", step.Text)
+				fmt.Fprintf(&b, "- %s\n", oneLine(step.Text))
 			}
 		}
 	}

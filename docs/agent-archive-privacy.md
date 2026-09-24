@@ -412,6 +412,17 @@ Known misses.
 
 - An unquoted value stops at a quote, so a quote inside an unquoted
   password leaves the rest of the password.
+- Text glued after a closing quote is taken with the value (filter 10) only
+  up to a closing `]`, `}`, or `)`, which usually closes the structure
+  around the value (`{"password":"abc"}`, `f(PASSWORD="abc")`) and must stay.
+  So in the rare `PASSWORD="abc")realsecret`, `realsecret` is kept.
+- A Cursor plain-text transcript has no structure beyond its role headers,
+  so a line in tool output that itself starts at column 0 with `user:`,
+  `assistant:`, `tool:`, or a hidden role (`system:`, `thinking:`, …) reads
+  as a header, exactly as Cursor's own format would: it starts a section
+  (a Person turn in the handoff) or hides what follows. Filter 10 stopped
+  treating indented role words this way; a column-0 one cannot be told
+  apart. Cursor's JSONL transcripts and database chats are not affected.
 - In JSON escaped more than once inside a string (`\\\"password\\\":…`),
   the value ends at the first escaped quote of any depth, so the tail of a
   value after an escaped quote inside it (`\\\"ab\\\\\\\"cd\\\"`: `cd`) is

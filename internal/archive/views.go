@@ -201,7 +201,9 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 			view.CompactBoundaries++
 			continue
 		}
-		accumulateTokens(record, &tokens)
+		if !isPlaceholderModel(firstStringDeep(record, "model", "model_id")) {
+			accumulateTokens(record, &tokens)
+		}
 		calls, results, skillUses := toolActivity(record, i, codexModel, codexReasoning)
 		candidates = append(candidates, calls...)
 		view.ToolResults = append(view.ToolResults, results...)
@@ -222,9 +224,9 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 		case "codex":
 			turn.Model, turn.Reasoning, turn.ModelSource = codexModel, codexReasoning, TurnModelSourceTurnContext
 		case "claude":
-			turn.ResponseModel, turn.ModelSource = firstStringDeep(record, "model", "model_id"), TurnModelSourceNativeResponse
+			turn.ResponseModel, turn.ModelSource = recordModel(record), TurnModelSourceNativeResponse
 		default:
-			turn.Model, turn.Reasoning, turn.ModelSource = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort"), TurnModelSourceNativeTranscript
+			turn.Model, turn.Reasoning, turn.ModelSource = recordModel(record), firstStringDeep(record, "reasoning_effort"), TurnModelSourceNativeTranscript
 		}
 		view.Turns = append(view.Turns, turn)
 	}

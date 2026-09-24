@@ -328,6 +328,11 @@ Markdown syntax (`#`, `>`, list markers, fences) escaped; file names, tool
 names, and commands are single-line code spans; and tool output is fenced.
 None of it can add a heading of its own to the handoff.
 
+One case remains, inherent to Cursor's plain-text transcripts: a line of
+tool output that starts at column 0 with `user:` reads as a role header
+there, so it starts a Person turn. Only an indented one is known to be
+content (see the privacy doc's known misses).
+
 ### Workspace section
 
 From the bundle only: the last retained `cwd` (basename only in the
@@ -350,7 +355,7 @@ whole exchanges would leave a session of one prompt and hundreds of tool
 calls untrimmable.)
 
 1. Drop tool result text, oldest first.
-2. Collapse tool-call lines to a count (`- 14 tool calls: Bash ×9, Read ×5`)
+2. Collapse tool-call lines to a count (``- 14 tool calls: `Bash` ×9, `Read` ×5``)
    at the position of the first collapsed call, oldest first.
 3. Replace assistant text with its first 300 chars, oldest first. "Where it
    left off" is never shortened.

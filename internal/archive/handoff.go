@@ -187,8 +187,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 
 	seenModel := map[string]bool{}
 	addModel := func(model string) {
-		// Claude Code labels messages it writes itself "<synthetic>".
-		if model != "" && !strings.HasPrefix(model, "<") && !seenModel[model] {
+		if model != "" && !isPlaceholderModel(model) && !seenModel[model] {
 			seenModel[model] = true
 			h.Session.Models = append(h.Session.Models, model)
 		}
@@ -929,7 +928,8 @@ func collapseToolCalls(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
 	parts := make([]string, 0, len(order))
 	for _, name := range order {
-		parts = append(parts, fmt.Sprintf("%s ×%d", name, counts[name]))
+		// A tool name is recorded data: a code span keeps it one inert line.
+		parts = append(parts, fmt.Sprintf("%s ×%d", codeSpan(name), counts[name]))
 	}
 	noun := "tool calls"
 	if total == 1 {
