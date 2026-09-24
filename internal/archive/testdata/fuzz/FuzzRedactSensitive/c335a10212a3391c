@@ -1,0 +1,2 @@
+go test fuzz v1
+string("curl -H \"Authorization: Bearer abc.def\" https://x.test")

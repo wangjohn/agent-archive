@@ -1,0 +1,2 @@
+go test fuzz v1
+string("HOST=db.internal\nDB_PASSWORD=hunter2\nPORT=5432")

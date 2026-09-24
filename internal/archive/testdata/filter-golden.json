@@ -27,7 +27,7 @@
     "sha256": "88bdd7fc1c42f171f4cf4f22920e7fd7e00bebe909a1efa5085649cc218ae8ad"
   },
   "claude-tool-evidence.jsonl": {
-    "sha256": "48ba300f8aebed8d570f6b68377465d82f66ae5c695bcbcac97d4aeec2fa2d2d"
+    "sha256": "bf98619bf022d7107f52d42ac7157cfe8c236af957b7c047589ad88140745d84"
   },
   "claude-tool-only-assistant.jsonl": {
     "sha256": "df7004c5ff572b35658b003ee4a70f0a6d6082ee2adccb1fbf3b484b43e9a02e"
@@ -48,7 +48,7 @@
     "sha256": "290ed0599d14b7c05975f0ee9d037cf16a1b544e2c67a3785d00fa5b6e7980e1"
   },
   "codex-safe-and-sensitive.jsonl": {
-    "sha256": "5dcf1f9a08e0177a3cfef947ea4e34954fd6cb746142b6bb30758a8f5c28f1c7"
+    "sha256": "4b9c2c4490ff96c4699b72eba181623610d053d7a0a2d59c3f0b28a4bc3305c5"
   },
   "codex-startup-shell.jsonl": {
     "sha256": "a28d836faa2e323b98b4ad94a7188e55f0fdf705bf34a30ee74745d70d0bb482"

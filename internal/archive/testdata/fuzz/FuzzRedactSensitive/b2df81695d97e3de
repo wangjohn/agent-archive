@@ -1,0 +1,2 @@
+go test fuzz v1
+string("aws configure set --aws-secret-access-key wJalr -p x")

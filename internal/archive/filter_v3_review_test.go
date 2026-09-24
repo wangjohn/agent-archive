@@ -213,8 +213,9 @@ func TestFilterV3DoesNotRedactOrdinaryCode(t *testing.T) {
 			t.Errorf("ordinary text was redacted: %q -> %q", in, out)
 		}
 	}
-	// Known false positive: the assignment pattern does not know the value is code.
-	if out, hit := redactSensitive("token = parse(x)"); !hit || out != "[REDACTED]" {
+	// Known false positive: the assignment pattern does not know the value is
+	// code. Since filter 9 only the value is replaced.
+	if out, hit := redactSensitive("token = parse(x)"); !hit || out != "token = [REDACTED]" {
 		t.Errorf("assignment pattern behavior changed: %q (hit=%v)", out, hit)
 	}
 }

@@ -1,0 +1,2 @@
+go test fuzz v1
+string("npm_config__auth=dXNlcjpwYXNz")

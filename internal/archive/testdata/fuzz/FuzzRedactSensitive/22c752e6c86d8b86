@@ -1,0 +1,2 @@
+go test fuzz v1
+string("SLACK_BOT_TOKEN=T0-synthetic-value")
