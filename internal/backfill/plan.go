@@ -30,16 +30,15 @@ type Plan struct {
 	// Harnesses are the apps with hooks installed (config.Config.Harnesses).
 	Harnesses  []string
 	Candidates []Candidate
-	// CursorDatabaseOnly counts Cursor chats found only in Cursor's database,
-	// when CursorDatabaseChecked says the count was available;
-	// CursorDatabaseUnchecked says why it was not. CursorDatabaseFiltered
-	// counts those --since, --until, or --project leave out, and
-	// CursorDatabaseSkipped those the archive already knows, by reason.
-	CursorDatabaseOnly      int
-	CursorDatabaseFiltered  int
-	CursorDatabaseSkipped   map[SkipReason]int
+	// CursorDatabaseChecked says whether Cursor's database was read, so the
+	// chats found only there are among Candidates; CursorDatabaseUnchecked
+	// says why it was not.
 	CursorDatabaseChecked   bool
 	CursorDatabaseUnchecked CursorUncheckedReason
+	// CursorSubagentsNotImported counts the subagent chats, in Cursor's
+	// database, of the Cursor chats the plan imports. They are not imported
+	// yet.
+	CursorSubagentsNotImported int
 	// CursorDatabaseNewerFormat counts the database rows read with a newer
 	// format version than this release knows.
 	CursorDatabaseNewerFormat int
@@ -62,8 +61,8 @@ type Plan struct {
 	// could not be listed.
 	codexArchivedOnly bool
 	// cursorIncomplete is set when Cursor's transcript store could not be
-	// fully listed; the database count then can't tell which chats have
-	// transcripts, so it is not made.
+	// fully listed; the plan then can't tell which of the database's chats
+	// have transcripts, so it does not read the database.
 	cursorIncomplete bool
 }
 
@@ -92,6 +91,10 @@ type work struct {
 	res resolution
 	// state is the archive's reason, from ArchiveState.
 	state SkipReason
+	// chat is a chat found only in Cursor's database, and messageFolders
+	// the folders its messages name (see planCursorDatabase).
+	chat           CursorDatabaseChat
+	messageFolders []string
 	// vanished is set when the file disappeared while planning; the session
 	// is then not counted at all.
 	vanished bool
@@ -360,7 +363,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 	}
 
-	if err := countCursorDatabase(ctx, env, state, r, projectFilter, since, until, &plan); err != nil {
+	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
 		return Plan{}, err
 	}
 	sort.SliceStable(plan.Candidates, func(i, j int) bool {
@@ -368,7 +371,10 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		if a.Harness != b.Harness {
 			return a.Harness < b.Harness
 		}
-		return a.TranscriptPath < b.TranscriptPath
+		if a.TranscriptPath != b.TranscriptPath {
+			return a.TranscriptPath < b.TranscriptPath
+		}
+		return a.SourceKey < b.SourceKey
 	})
 	return plan, nil
 }

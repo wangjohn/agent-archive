@@ -73,7 +73,10 @@ sanitizer as a JSONL record.
   grows, but Cursor can still rewrite a message it has finished (late token
   counts, an edited prompt, a checkpoint restore). The filter then produces
   different records; the collector, not the filter, handles a rewritten
-  Cursor database chat.
+  Cursor database chat: it publishes the chat as it now is in place of the
+  earlier snapshot (which retention then removes as superseded) and keeps
+  one `cursor_chat_rewritten` gap, which names no content, counting the
+  rewrites.
 
 Every filter-7 rule below still applies.
 

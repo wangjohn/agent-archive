@@ -45,8 +45,9 @@ type Signature struct {
 	HeaderCount int
 	// LastBubbleID is the last listed message's ID.
 	LastBubbleID string
-	// MessageRows is how many listed messages have a row, so a row that
-	// arrives after its header changes the signature.
+	// MessageRows is how many listed messages have a row (a key, whatever
+	// its value), so a row that arrives after its header changes the
+	// signature. Counting keys reads only the key index.
 	MessageRows int
 	// LastMessageHash is a hash of the last listed message's row, "" when it
 	// has none, so an edit to the message being written changes it.
@@ -67,7 +68,12 @@ type Reader struct {
 	// snapDir is the private directory holding the copy, "" until one is
 	// taken; copyPath is the copy, "" until it is complete.
 	snapDir, copyPath string
-	// snapErr is why the one snapshot attempt failed; it is not retried.
+	// lock holds the snapshot directory's lock while the copy is in use,
+	// so no sweep removes it (see snapshotLockName).
+	lock *os.File
+	// snapErr is why the one snapshot attempt failed. It is not retried:
+	// every later chat read through this Reader, for the rest of the pass,
+	// fails with it without trying to copy the database again.
 	snapErr   error
 	snapshots int
 	swept     bool
@@ -83,12 +89,17 @@ func (r *Reader) Snapshots() int { return r.snapshots }
 // Close removes the Reader's snapshot, if it took one. It is safe to call
 // more than once, and the Reader may be used again afterwards.
 func (r *Reader) Close() error {
-	dir := r.snapDir
-	r.snapDir, r.copyPath, r.snapErr = "", "", nil
+	dir, lock := r.snapDir, r.lock
+	r.snapDir, r.copyPath, r.snapErr, r.lock = "", "", nil, nil
 	if dir == "" {
 		return nil
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	err := os.RemoveAll(dir)
+	if lock != nil {
+		// Released only after the copy is gone.
+		lock.Close()
+	}
+	if err != nil {
 		return errors.New("remove the Cursor database snapshot")
 	}
 	return nil
@@ -253,6 +264,9 @@ func (r *Reader) snapshot(ctx context.Context, src source) error {
 		return errors.New("create a Cursor database snapshot directory")
 	}
 	r.snapDir = dir
+	if r.lock, err = lockSnapshot(dir); err != nil {
+		return errors.New("lock a Cursor database snapshot directory")
+	}
 	copyPath := filepath.Join(dir, "state.vscdb")
 	// Created here, empty and 0600, so SQLite opens it rather than creating
 	// it with the default mode.
@@ -267,8 +281,7 @@ func (r *Reader) snapshot(ctx context.Context, src source) error {
 	defer cancel()
 	r.snapshots++
 	if err := backup(ctx, dsn(src.path, true), copyPath); err != nil {
-		os.RemoveAll(dir)
-		r.snapDir = ""
+		r.Close()
 		return notChecked(err)
 	}
 	r.copyPath = copyPath
@@ -374,10 +387,11 @@ func composerRow(ctx context.Context, db querier, composerID string) ([]byte, er
 // bubbleQuery reads one chat's message rows through the key index, between
 // the prefix bubbleId:<composerID>: and bubbleUpper of it, which bracket
 // exactly the keys with the prefix. bubbleKeyQuery reads only their keys,
-// for the rows that have a value.
+// from the key index alone (a covering index), so a signature costs no read
+// of the rows themselves however long the chat.
 const (
 	bubbleQuery    = `SELECT key, value FROM cursorDiskKV WHERE key >= ? AND key < ?`
-	bubbleKeyQuery = `SELECT key FROM cursorDiskKV WHERE key >= ? AND key < ? AND value IS NOT NULL`
+	bubbleKeyQuery = `SELECT key FROM cursorDiskKV WHERE key >= ? AND key < ?`
 )
 
 func bubblePrefix(composerID string) string { return "bubbleId:" + composerID + ":" }
@@ -417,14 +431,17 @@ func queryComposer(ctx context.Context, db *sql.DB, composerID string) (Composer
 	}
 	defer rows.Close()
 	found := map[string]json.RawMessage{}
+	keys := map[string]bool{}
 	for rows.Next() {
 		var key string
 		var v []byte
 		if err := rows.Scan(&key, &v); err != nil {
 			return Composer{}, Signature{}, err
 		}
+		id := strings.TrimPrefix(key, prefix)
+		keys[id] = true
 		if v != nil {
-			found[strings.TrimPrefix(key, prefix)] = v
+			found[id] = v
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -432,7 +449,7 @@ func queryComposer(ctx context.Context, db *sql.DB, composerID string) (Composer
 	}
 	for i, id := range ids {
 		c.Bubbles[i] = Bubble{ID: id, Value: found[id]}
-		if c.Bubbles[i].Value != nil {
+		if keys[id] {
 			sig.MessageRows++
 		}
 	}

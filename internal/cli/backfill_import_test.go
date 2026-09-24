@@ -178,7 +178,7 @@ func TestBackfillImportGolden(t *testing.T) {
 	}
 
 	parents, children := importRegistrations(t, f.data, firstImport)
-	if len(parents) != 11 || len(children) != 2 {
+	if len(parents) != 12 || len(children) != 2 {
 		t.Fatalf("%d sessions and %d subagents registered", len(parents), len(children))
 	}
 	for _, reg := range append(parents, children...) {
@@ -206,7 +206,7 @@ func TestBackfillImportGolden(t *testing.T) {
 			t.Errorf("batch file has no %q", key)
 		}
 	}
-	if b.ID != firstImport || b.CompletedAt == nil || len(b.Sessions) != 11 || len(b.Subagents) != 2 || len(b.ProjectsAdded) != 4 ||
+	if b.ID != firstImport || b.CompletedAt == nil || len(b.Sessions) != 12 || len(b.Subagents) != 2 || len(b.ProjectsAdded) != 4 ||
 		strings.Join(b.AppsAdded, ",") != "codex,cursor" || b.DestinationID != cfg.DestinationID() {
 		t.Fatalf("batch %+v", b)
 	}
@@ -248,7 +248,7 @@ func TestBackfillImportGolden(t *testing.T) {
 	if err := json.Unmarshal([]byte(status), &view); err != nil {
 		t.Fatal(err)
 	}
-	if view.LastImport != firstImport || view.ImportedSessions != 11 || view.ImportedPending != 0 {
+	if view.LastImport != firstImport || view.ImportedSessions != 12 || view.ImportedPending != 0 {
 		t.Fatalf("status: last %q, imported %d, pending %d", view.LastImport, view.ImportedSessions, view.ImportedPending)
 	}
 
@@ -347,7 +347,7 @@ func TestBackfillEditRetention(t *testing.T) {
 		t.Fatalf("code %d, %s", code, errOut)
 	}
 	checkGolden(t, "edit.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
-	if strings.Count(out, "Import 11 sessions from 5 projects? [y/N/edit]") != 2 || !strings.Contains(out, "Retention is 365 days, so these sessions are deleted on 2027-09-23.") {
+	if strings.Count(out, "Import 12 sessions from 5 projects? [y/N/edit]") != 2 || !strings.Contains(out, "Retention is 365 days, so these sessions are deleted on 2027-09-23.") {
 		t.Fatalf("plan not shown again with the new date:\n%s", out)
 	}
 	cfg, _, _ := config.Load(f.data)
@@ -521,7 +521,7 @@ func TestBackfillCrashConverges(t *testing.T) {
 			if b.CompletedAt != nil || len(b.Sessions) != len(partial) || len(b.ProjectsAdded) != 4 {
 				t.Fatalf("interrupted batch %+v, %d registered", b, len(partial))
 			}
-			if crash.at != "registered" && len(partial) != 0 || crash.at == "registered" && (len(partial) == 0 || len(partial) == 11) {
+			if crash.at != "registered" && len(partial) != 0 || crash.at == "registered" && (len(partial) == 0 || len(partial) == 12) {
 				t.Fatalf("%d registered at the crash", len(partial))
 			}
 			if history, _, _ := f.command(t, "backfill", "history"); !strings.Contains(history, "interrupted") {
@@ -533,12 +533,12 @@ func TestBackfillCrashConverges(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("rerun: code %d, %s\n%s", code, errOut, out)
 			}
-			if want := fmt.Sprintf("Registered %d sessions", 11-len(partial)); !strings.Contains(out, want) || !strings.Contains(out, "as import "+firstImport) {
+			if want := fmt.Sprintf("Registered %d sessions", 12-len(partial)); !strings.Contains(out, want) || !strings.Contains(out, "as import "+firstImport) {
 				t.Fatalf("rerun did not continue the import (%s):\n%s", want, out)
 			}
 			parents, children := importRegistrations(t, f.data, firstImport)
 			b, _ = loadBatch(t, f.data, firstImport)
-			if len(parents) != 11 || len(children) != 2 || len(b.Sessions) != 11 || len(b.Subagents) != 2 || len(b.ProjectsAdded) != 4 || b.CompletedAt == nil {
+			if len(parents) != 12 || len(children) != 2 || len(b.Sessions) != 12 || len(b.Subagents) != 2 || len(b.ProjectsAdded) != 4 || b.CompletedAt == nil {
 				t.Fatalf("after rerun: %d sessions, %d subagents, batch %+v", len(parents), len(children), b)
 			}
 			batches, _ := backfill.LoadBatches(f.data)
@@ -557,8 +557,8 @@ func TestBackfillCrashConverges(t *testing.T) {
 			for _, reg := range parents {
 				natives[reg.NativeSessionID] = true
 			}
-			if len(natives) != 11 {
-				t.Fatalf("%d distinct sessions registered, want 11", len(natives))
+			if len(natives) != 12 {
+				t.Fatalf("%d distinct sessions registered, want 12", len(natives))
 			}
 		})
 	}
@@ -685,7 +685,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	if !strings.Contains(out, "Stopping after the current session; press Ctrl-C again to quit.") {
 		t.Errorf("no notice of the stop:\n%s", out)
 	}
-	if code != 0 || !strings.Contains(out, "Stopped. The remaining 11 sessions will be uploaded by the background collector.") || !strings.Contains(out, "list --imported") {
+	if code != 0 || !strings.Contains(out, "Stopped. The remaining 12 sessions will be uploaded by the background collector.") || !strings.Contains(out, "list --imported") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
 	parents, _ := importRegistrations(t, f.data, firstImport)
@@ -695,7 +695,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 			t.Errorf("%s has no pending request", reg.ArchiveSessionID)
 		}
 	}
-	if len(parents) != 11 {
+	if len(parents) != 12 {
 		t.Fatalf("%d registered", len(parents))
 	}
 }

@@ -877,6 +877,10 @@ type scanSignature struct {
 	// "" for a recorded gap.
 	Failed      bool   `json:"failed,omitempty"`
 	FailedError string `json:"failed_error,omitempty"`
+	// FailedMaxBytes and FailedRecordLimit are the size limits the failed
+	// read ran under; the failure stands only while they do.
+	FailedMaxBytes    int64 `json:"failed_max_bytes,omitempty"`
+	FailedRecordLimit int64 `json:"failed_record_limit,omitempty"`
 }
 
 func (s scanSignature) cursorSignature() cursorstore.Signature {

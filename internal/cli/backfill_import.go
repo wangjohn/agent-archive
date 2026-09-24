@@ -93,7 +93,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 	registration := backfill.Registration{
 		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
-		MaxHoldSteps: backfillHoldSteps,
+		MaxHoldSteps: backfillHoldSteps, CursorDatabase: env.cursorDatabase(),
 		AfterHold: func(sessions, subagents []string) error {
 			batch.AddSessions(sessions, subagents)
 			if err := backfill.SaveBatch(home, batch); err != nil {
@@ -471,6 +471,16 @@ func (u *upload) refresh() error {
 func (u *upload) size(reg archive.SessionRegistration) int64 {
 	if size, ok := u.sizes[reg.Harness.Name+"\x00"+reg.NativeSessionID]; ok {
 		return size
+	}
+	if !reg.ReadsTranscriptFile() {
+		// A Cursor database chat has no file to measure. Its last capture's
+		// retained bytes stand in, when it has one; measuring the chat
+		// itself would mean copying Cursor's database.
+		bundle, _, found, err := collector.OpenLocalStoreReadOnly(u.home).LoadLastPublished(reg.ArchiveSessionID)
+		if err == nil && found {
+			return int64(bundle.Capture.Boundary.RetainedBytes)
+		}
+		return 0
 	}
 	if info, err := os.Stat(reg.TranscriptPath); err == nil {
 		return info.Size()

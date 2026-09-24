@@ -116,7 +116,7 @@ type Result struct {
 // metadata, subject to MinUploadInterval. One session's failure does not
 // stop the pass; it is recorded in Result.Errors and left retryable on the
 // next call.
-func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts Options) (Result, error) {
+func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts Options) (_ Result, runErr error) {
 	if local == nil || store == nil {
 		return Result{}, errors.New("local store and object store are required")
 	}
@@ -153,7 +153,11 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 
 	orderOldestRequestsFirst(registrations, requestsByID)
 	closeCursorPass := openCursorPass(registrations, &opts)
-	defer closeCursorPass()
+	defer func() {
+		if err := closeCursorPass(); err != nil {
+			runErr = errors.Join(runErr, err)
+		}
+	}()
 
 	result := Result{Errors: materializationIssues}
 	pending := 0
@@ -173,21 +177,42 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		result.Scanned++
 		req := requestsByID[reg.ArchiveSessionID]
 
-		if req.Token == "" {
+		// A hook request always means a read, except on a Cursor database
+		// chat whose last read failed at the state it is still in: reading
+		// it again would copy the database only to fail the same way.
+		if req.Token == "" || reg.SourceKind == archive.SourceKindCursorSQLite {
 			unchanged, err := unchangedSinceLastScan(ctx, local, reg, opts)
 			if err != nil {
 				return result, fmt.Errorf("check transcript for changes: %w", err)
 			}
+			failed, failure := false, ""
 			if unchanged {
-				if failure, err := rememberedFailure(local, reg); err != nil {
+				if failed, failure, err = rememberedFailure(local, reg); err != nil {
 					return result, fmt.Errorf("check transcript for changes: %w", err)
-				} else if failure != "" {
-					// Not read again, but still a failure: reported as one on
-					// every pass, as if the read had been repeated.
-					result.Errors[reg.ArchiveSessionID] = errUnchangedSinceFailure{message: failure}
-					pending++
-					opts.progress(reg.ArchiveSessionID, false)
-					continue
+				}
+			}
+			switch {
+			case !unchanged, req.Token != "" && !failed:
+				// Read below.
+			case failure != "":
+				// Not read again, but still a failure: reported as one on
+				// every pass, as if the read had been repeated. A hook
+				// request stays queued, as it does for a transcript file
+				// the filter refuses: its evidence is the only copy, and
+				// the chat's next change reads the chat again with it.
+				result.Errors[reg.ArchiveSessionID] = errUnchangedSinceFailure{message: failure}
+				pending++
+				opts.progress(reg.ArchiveSessionID, false)
+				continue
+			default:
+				// Settled, or a recorded gap (a size limit) at the same
+				// state. A request on the gap is completed without a read,
+				// as blockSession completes it: the chat is still over the
+				// limit, and the gap stands until the chat changes.
+				if req.Token != "" {
+					if _, err := local.CompleteRequest(reg.ArchiveSessionID, req.Token); err != nil {
+						return result, fmt.Errorf("complete a request on an unchanged gap: %w", err)
+					}
 				}
 				// Nothing to read, nothing to compare, nothing to journal.
 				result.Skipped = append(result.Skipped, reg.ArchiveSessionID)
@@ -337,6 +362,9 @@ func unchangedSinceLastScan(ctx context.Context, local *LocalStore, reg archive.
 	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapter.Version() {
 		return false, nil
 	}
+	if signature.Failed && (signature.FailedMaxBytes != opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
+		return false, nil
+	}
 	state, ok := reader.Signature(ctx)
 	if !ok || !state.matches(signature) {
 		return false, nil
@@ -353,17 +381,18 @@ func unchangedSinceLastScan(ctx context.Context, local *LocalStore, reg archive.
 	return true, nil
 }
 
-// rememberedFailure is the text of the failure unchangedSinceLastScan
-// skipped a session on, "" when it skipped a settled one or a recorded gap.
-func rememberedFailure(local *LocalStore, reg archive.SessionRegistration) (string, error) {
+// rememberedFailure reports whether unchangedSinceLastScan skipped a session
+// on a remembered failure (see rememberFailedRead), and that failure's text:
+// "" for a recorded gap.
+func rememberedFailure(local *LocalStore, reg archive.SessionRegistration) (failed bool, message string, err error) {
 	if reg.SourceKind != archive.SourceKindCursorSQLite {
-		return "", nil
+		return false, "", nil
 	}
 	signature, found, err := local.loadScanSignature(reg.ArchiveSessionID)
 	if err != nil || !found || !signature.Failed {
-		return "", err
+		return false, "", err
 	}
-	return signature.FailedError, nil
+	return true, signature.FailedError, nil
 }
 
 // recordScanSignature marks a session settled at the transcript bytes this
@@ -588,11 +617,25 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		guardBundle, haveGuard = prevBundle, true
 	}
 	if haveGuard && !nativeEvidenceExtends(guardBundle, candidate) {
-		// Truncated, compacted, or rewritten: the retained snapshot is richer
-		// than what the file now holds, and nothing the collector can do will
-		// change that. Record the gap so later passes are no-ops until the
-		// transcript changes again, rather than an error on every pass.
-		return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonTranscriptRewritten, &candidate)
+		if reg.SourceKind != archive.SourceKindCursorSQLite {
+			// Truncated, compacted, or rewritten: the retained snapshot is
+			// richer than what the file now holds, and nothing the collector
+			// can do will change that. Record the gap so later passes are
+			// no-ops until the transcript changes again, rather than an
+			// error on every pass.
+			return blockSession(local, reg.ArchiveSessionID, req, BlockedReasonTranscriptRewritten, &candidate)
+		}
+		// Cursor rewrites finished messages in its database as a matter of
+		// course (token counts filled in late, an edited prompt, a
+		// checkpoint restore), so a chat that no longer extends what was
+		// published is the chat as it now is, not a damaged copy of it, and
+		// blocking it would stop capturing the chat for good. The new
+		// snapshot replaces the old one, and the chat's one rewrite gap,
+		// which names no content, counts the replacement.
+		supplemental = withCursorRewriteGap(supplemental, now)
+		if candidate, err = archive.NewSourceBundle(reg, adapter, filtered, now, supplemental); err != nil {
+			return outcomeSkipped, fmt.Errorf("build rewritten source bundle: %w", err)
+		}
 	}
 
 	compressed, err := archive.BuildCompressedSource(candidate)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -156,6 +157,17 @@ func (e Env) userHomeDir() (string, error) {
 		return e.UserHomeDir()
 	}
 	return os.UserHomeDir()
+}
+
+// cursorDatabase is Cursor's state.vscdb under the user's home, which
+// cursor-sqlite sessions are read from; "" (the process's own home) only
+// when the home can't be resolved.
+func (e Env) cursorDatabase() string {
+	home, err := e.userHomeDir()
+	if err != nil {
+		return ""
+	}
+	return cursorstore.StateDatabase(home)
 }
 
 func (e Env) detectHarnesses(userHome string) []string {

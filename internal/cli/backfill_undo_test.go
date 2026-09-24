@@ -161,7 +161,7 @@ func historyLine(t *testing.T, f *backfillFixture, id string) string {
 func TestBackfillUndoGolden(t *testing.T) {
 	f, bucket := newUndoFixture(t)
 	parents, children := importRegistrations(t, f.data, firstImport)
-	if len(parents) != 11 || len(children) != 2 {
+	if len(parents) != 12 || len(children) != 2 {
 		t.Fatalf("%d sessions, %d subagents imported", len(parents), len(children))
 	}
 	for _, reg := range append(parents, children...) {
@@ -268,7 +268,7 @@ func TestBackfillUndoGolden(t *testing.T) {
 
 	// Backfill now skips them as removed by undo, unless --include-removed.
 	skipped := planJSONFor(t, f)["skipped"].(map[string]any)
-	if skipped["removed_by_undo"] != float64(11) {
+	if skipped["removed_by_undo"] != float64(12) {
 		t.Fatalf("skipped %v", skipped)
 	}
 	again := planJSONFor(t, f, "--include-removed")
@@ -280,7 +280,7 @@ func TestBackfillUndoGolden(t *testing.T) {
 		t.Fatalf("importable again: %v", projects)
 	}
 	sessions := projects[0].(map[string]any)["sessions"].(map[string]any)
-	if sessions["claude"] != float64(2) || sessions["codex"] != float64(1) || sessions["cursor"] != float64(1) {
+	if sessions["claude"] != float64(2) || sessions["codex"] != float64(1) || sessions["cursor"] != float64(2) {
 		t.Fatalf("importable again: %v", projects[0])
 	}
 }
@@ -325,7 +325,7 @@ func TestBackfillUndoProject(t *testing.T) {
 		t.Fatal("the hook-captured session was removed")
 	}
 	parents, children := importRegistrations(t, f.data, firstImport)
-	if len(parents) != 8 || len(children) != 2 {
+	if len(parents) != 9 || len(children) != 2 {
 		t.Fatalf("left: %d sessions, %d subagents", len(parents), len(children))
 	}
 	for _, reg := range parents {
@@ -348,7 +348,7 @@ func TestBackfillUndoProject(t *testing.T) {
 	if strings.Join(cfg.ImportedHarnesses, ",") != "codex,cursor" {
 		t.Fatalf("imported apps %v", cfg.ImportedHarnesses)
 	}
-	if line := historyLine(t, f, firstImport); !strings.Contains(line, "partly undone; 8 sessions left") {
+	if line := historyLine(t, f, firstImport); !strings.Contains(line, "partly undone; 9 sessions left") {
 		t.Fatalf("history: %q", line)
 	}
 
@@ -358,7 +358,7 @@ func TestBackfillUndoProject(t *testing.T) {
 	if code != 0 || strings.Contains(out, "excluded from capture") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
-	if !strings.Contains(out, "4 sessions and 2 subagent transcripts are deleted") {
+	if !strings.Contains(out, "5 sessions and 2 subagent transcripts are deleted") {
 		t.Fatalf("output:\n%s", out)
 	}
 	cfg, _, _ = config.Load(f.data)
@@ -550,7 +550,14 @@ func TestBackfillUndoResumedWithoutHooks(t *testing.T) {
 func TestBackfillUndoResumedDuringPrompt(t *testing.T) {
 	f, _ := newUndoFixture(t)
 	parents, _ := importRegistrations(t, f.data, firstImport)
-	stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() { touchAfterImport(t, parents[0].TranscriptPath) }}
+	var withFile archive.SessionRegistration
+	for _, reg := range parents {
+		if reg.TranscriptPath != "" {
+			withFile = reg
+			break
+		}
+	}
+	stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() { touchAfterImport(t, withFile.TranscriptPath) }}
 	out, errOut, code := f.undoRun(t, stdin, true)
 	if code != 0 || strings.Contains(out, "resumed since") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
@@ -630,7 +637,7 @@ func TestBackfillUndoPreviousDestination(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("code %d, %s\n%s", code, errOut, out)
 			}
-			for _, want := range []string{"11 sessions and 2 subagent transcripts from a previous storage destination are forgotten", "Forget 11 sessions? This cannot be undone. [y/N]", "Forgot 11 sessions and 2 subagent transcripts from a previous storage destination"} {
+			for _, want := range []string{"12 sessions and 2 subagent transcripts from a previous storage destination are forgotten", "Forget 12 sessions? This cannot be undone. [y/N]", "Forgot 12 sessions and 2 subagent transcripts from a previous storage destination"} {
 				if !strings.Contains(out, want) {
 					t.Fatalf("output lacks %q:\n%s", want, out)
 				}
@@ -670,7 +677,7 @@ func TestBackfillUndoSwitchedBackDeletesFromTheBucket(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, code := f.undoRun(t, strings.NewReader("y\n"), true)
-	if code != 0 || !strings.Contains(out, "11 sessions and 2 subagent transcripts are deleted from") || strings.Contains(out, "previous storage destination") {
+	if code != 0 || !strings.Contains(out, "12 sessions and 2 subagent transcripts are deleted from") || strings.Contains(out, "previous storage destination") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
 	if len(bucket.deletes) == 0 {
@@ -719,7 +726,7 @@ func TestBackfillUndoChangesNothingUnlessConfirmed(t *testing.T) {
 	}
 	for _, answer := range []string{"\n", "n\n", "maybe\nno\n"} {
 		out, errOut, code := f.undoRun(t, strings.NewReader(answer), true)
-		if code != 0 || !strings.Contains(out, "Delete 11 sessions from the archive? This cannot be undone. [y/N]") || !strings.Contains(out, "Cancelled. Nothing was changed.") {
+		if code != 0 || !strings.Contains(out, "Delete 12 sessions from the archive? This cannot be undone. [y/N]") || !strings.Contains(out, "Cancelled. Nothing was changed.") {
 			t.Fatalf("%q: code %d, %s\n%s", answer, code, errOut, out)
 		}
 		check(answer)
@@ -828,7 +835,7 @@ func TestBackfillUndoSelectionGrew(t *testing.T) {
 	if bucketSnapshot(t, bucket.MemoryStore) != before || !bytes.Equal(mustRead(t, filepath.Join(f.data, "config.json")), config0) {
 		t.Fatal("changed")
 	}
-	if p, _ := importRegistrations(t, f.data, firstImport); len(p) != 11 {
+	if p, _ := importRegistrations(t, f.data, firstImport); len(p) != 12 {
 		t.Fatalf("%d left", len(p))
 	}
 	if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt != nil {
@@ -847,7 +854,7 @@ func TestBackfillUndoLatestByDefault(t *testing.T) {
 	}
 	first, _ := importRegistrations(t, f.data, firstImport)
 	second, _ := importRegistrations(t, f.data, secondImport)
-	if len(first) != 1 || len(second) != 10 {
+	if len(first) != 1 || len(second) != 11 {
 		t.Fatalf("imported %d then %d", len(first), len(second))
 	}
 	cfg, _, _ := config.Load(f.data)
@@ -907,7 +914,7 @@ func TestBackfillUndoIgnoresUnregisteredBatchEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, code := f.undoRun(t, nil, false, "--yes")
-	if code != 0 || !strings.Contains(out, "11 sessions and 2 subagent transcripts are deleted") {
+	if code != 0 || !strings.Contains(out, "12 sessions and 2 subagent transcripts are deleted") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
 	if line := historyLine(t, f, firstImport); !strings.HasSuffix(line, "  undone") {
@@ -991,7 +998,7 @@ func TestBackfillUndoConfigChanged(t *testing.T) {
 			if bucketSnapshot(t, bucket.MemoryStore) != before {
 				t.Fatal("the bucket changed")
 			}
-			if p, c := importRegistrations(t, f.data, firstImport); len(p) != 11 || len(c) != 2 {
+			if p, c := importRegistrations(t, f.data, firstImport); len(p) != 12 || len(c) != 2 {
 				t.Fatalf("%d sessions and %d subagents left", len(p), len(c))
 			}
 			cfg, _, _ := config.Load(f.data)
@@ -1018,10 +1025,10 @@ func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
 	f, bucket := newUndoFixture(t)
 	bucket.reset("sessions/")
 	_, errOut, code := f.undoRun(t, nil, false, "--yes")
-	if code != 1 || !strings.Contains(errOut, "13 sessions could not be removed") {
+	if code != 1 || !strings.Contains(errOut, "14 sessions could not be removed") {
 		t.Fatalf("code %d, %s", code, errOut)
 	}
-	if p, c := importRegistrations(t, f.data, firstImport); len(p) != 11 || len(c) != 2 {
+	if p, c := importRegistrations(t, f.data, firstImport); len(p) != 12 || len(c) != 2 {
 		t.Fatalf("%d sessions and %d subagents left", len(p), len(c))
 	}
 	cfg, _, _ := config.Load(f.data)
@@ -1037,7 +1044,7 @@ func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
 	if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt == nil || len(b.ProjectsExcluded) != 4 {
 		t.Fatalf("batch %+v", b)
 	}
-	if line := historyLine(t, f, firstImport); !strings.Contains(line, "partly undone; 11 sessions left") {
+	if line := historyLine(t, f, firstImport); !strings.Contains(line, "partly undone; 12 sessions left") {
 		t.Fatalf("history: %q", line)
 	}
 }

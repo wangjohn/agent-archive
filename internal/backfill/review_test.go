@@ -314,13 +314,10 @@ func TestSkipReasonsGolden(t *testing.T) {
 				Subagents: []Subagent{{AgentID: "a1", Bytes: 1000}}, SubagentsSkipped: 1},
 			{Harness: "claude", ProjectRoot: "/Users/p", ProjectKind: ProjectKindHome, ProjectIncluded: true, ProjectExists: true, StartedAt: start, Bytes: 500},
 		},
-		CursorDatabaseOnly: 1, CursorDatabaseChecked: true, UnreadableFolders: 2, UnreadableStores: []string{"claude", "codex"},
+		CursorSubagentsNotImported: 2, CursorDatabaseChecked: true, UnreadableFolders: 2, UnreadableStores: []string{"claude", "codex"},
 	}
 	for _, reason := range skipOrder {
 		harness := "claude"
-		if reason == SkipCursorDatabaseOnly {
-			continue // counted by CursorDatabaseOnly
-		}
 		if reason == SkipProjectUnknown {
 			harness = "cursor"
 		}
@@ -329,7 +326,7 @@ func TestSkipReasonsGolden(t *testing.T) {
 	var out bytes.Buffer
 	RenderText(&out, p)
 	out.WriteString("\n--- cursor database not checked, --include-home set ---\n")
-	p.CursorDatabaseOnly, p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, p.Filters.IncludeHome, p.UnreadableFolders, p.UnreadableStores = 0, false, CursorUncheckedLocked, true, 1, nil
+	p.CursorSubagentsNotImported, p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, p.Filters.IncludeHome, p.UnreadableFolders, p.UnreadableStores = 0, false, CursorUncheckedLocked, true, 1, nil
 	p.Candidates = p.Candidates[:2]
 	RenderText(&out, p)
 	golden := filepath.Join("testdata", "skip-reasons.txt")

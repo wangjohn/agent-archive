@@ -398,10 +398,15 @@ func newCursorMatcher(env Environment, candidates []string) *cursorMatcher {
 	return m
 }
 
+// cursorWorkspaceStorage is Cursor's folder of per-workspace state.
+func cursorWorkspaceStorage(env Environment) string {
+	return filepath.Join(env.Home, "Library", "Application Support", "Cursor", "User", "workspaceStorage")
+}
+
 // cursorWorkspaceFolders reads the folder of each
 // ~/Library/Application Support/Cursor/User/workspaceStorage/*/workspace.json.
 func cursorWorkspaceFolders(env Environment) []string {
-	storage := filepath.Join(env.Home, "Library", "Application Support", "Cursor", "User", "workspaceStorage")
+	storage := cursorWorkspaceStorage(env)
 	entries, err := readDirIfExists(env, storage)
 	if err != nil {
 		return nil
@@ -415,19 +420,27 @@ func cursorWorkspaceFolders(env Environment) []string {
 		if err != nil {
 			continue
 		}
-		var ws struct {
-			Folder string `json:"folder"`
+		if folder := workspaceJSONFolder(data); folder != "" {
+			folders = append(folders, folder)
 		}
-		if json.Unmarshal(data, &ws) != nil || ws.Folder == "" {
-			continue
-		}
-		u, err := url.Parse(ws.Folder)
-		if err != nil || u.Scheme != "file" || !filepath.IsAbs(u.Path) {
-			continue
-		}
-		folders = append(folders, filepath.Clean(u.Path))
 	}
 	return folders
+}
+
+// workspaceJSONFolder is the local folder a workspace.json names, "" when it
+// names none (a multi-root or remote workspace).
+func workspaceJSONFolder(data []byte) string {
+	var ws struct {
+		Folder string `json:"folder"`
+	}
+	if json.Unmarshal(data, &ws) != nil || ws.Folder == "" {
+		return ""
+	}
+	u, err := url.Parse(ws.Folder)
+	if err != nil || u.Scheme != "file" || !filepath.IsAbs(u.Path) {
+		return ""
+	}
+	return filepath.Clean(u.Path)
 }
 
 // match returns the one folder slug names, or false when none or several do.

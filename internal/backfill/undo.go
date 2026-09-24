@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -51,6 +52,10 @@ type UndoSession struct {
 	// Resumed is set when the app ran the session again after the import
 	// (see resumedSinceImport), so it has content newer than the import.
 	Resumed bool
+	// ResumeUnknown is set for a Cursor database chat whose database could
+	// not be read (Cursor held it locked), so whether it was resumed is not
+	// known; nothing else showed that it was.
+	ResumeUnknown bool
 }
 
 // PlanUndo decides what undoing b does. project limits it to one project
@@ -109,11 +114,11 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 		if reg.ParentSessionID == "" && !selected[reg.ArchiveSessionID] {
 			continue
 		}
-		resumed, err := resumedSinceImport(env, store, reg, requested[reg.ArchiveSessionID])
+		resumed, unknown, err := resumedSinceImport(env, store, reg, requested[reg.ArchiveSessionID])
 		if err != nil {
 			return UndoPlan{}, err
 		}
-		s := UndoSession{Registration: reg, InCurrentDestination: (reg.DestinationID != "" || sameDestination) && cfg.InCurrentDestination(reg), Resumed: resumed}
+		s := UndoSession{Registration: reg, InCurrentDestination: (reg.DestinationID != "" || sameDestination) && cfg.InCurrentDestination(reg), Resumed: resumed, ResumeUnknown: unknown}
 		if reg.ParentSessionID != "" {
 			children = append(children, s)
 		} else {
@@ -163,7 +168,9 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 //     later than AdmittedAt. Discovery read every transcript before the
 //     import was stamped, and nothing in the archive writes to one, so only
 //     the app did. This covers apps without hooks, hooks whose payload left
-//     no evidence, and content not yet uploaded.
+//     no evidence, and content not yet uploaded. For a chat read from
+//     Cursor's database, which has no file of its own, it is the chat's
+//     lastUpdatedAt, read in place from the database under env.Home.
 //   - Hook evidence other than subagent links, waiting in a request, built
 //     into a pending publication, or already published. Backfill records
 //     none (its links are archive-generated, provenance hook:subagent-link),
@@ -172,7 +179,23 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 // The superseded-source ledger is not a signal: a parent is republished
 // when its subagents publish (a link-only change), and a parser upgrade
 // republishes everything, neither of which is a resume.
-func resumedSinceImport(env Environment, store *collector.LocalStore, reg archive.SessionRegistration, req collector.Request) (bool, error) {
+func resumedSinceImport(env Environment, store *collector.LocalStore, reg archive.SessionRegistration, req collector.Request) (resumed, unknown bool, err error) {
+	if reg.SourceKind == archive.SourceKindCursorSQLite && !reg.AdmittedAt.IsZero() {
+		sig, err := cursorstore.ReadSignature(context.Background(), CursorStateDatabase(env.Home), reg.SourceKey)
+		if err == nil && sig.LastUpdatedAt > reg.AdmittedAt.UnixMilli() {
+			return true, false, nil
+		}
+		// A chat or database that is gone was not resumed; one that could
+		// not be read may have been.
+		unknown = err != nil && !isNotExist(err)
+	}
+	resumed, err = resumedByEvidence(env, store, reg, req)
+	return resumed, unknown && !resumed, err
+}
+
+// resumedByEvidence is resumedSinceImport's transcript time and hook
+// evidence signals.
+func resumedByEvidence(env Environment, store *collector.LocalStore, reg archive.SessionRegistration, req collector.Request) (bool, error) {
 	if reg.TranscriptPath != "" && !reg.AdmittedAt.IsZero() {
 		if info, err := env.stat(reg.TranscriptPath); err == nil && info.ModTime().After(reg.AdmittedAt) {
 			return true, nil
@@ -212,7 +235,10 @@ func (p UndoPlan) Empty() bool {
 // bucket is called, and DeletedSessions and ForgottenSessions split the
 // sessions alone.
 type UndoCounts struct {
-	Sessions, Subagents, Resumed       int
+	Sessions, Subagents, Resumed int
+	// ResumeUnknown counts the Cursor database chats whether resumed could
+	// not be checked.
+	ResumeUnknown                      int
 	Deleted, Forgotten                 int
 	DeletedSessions, ForgottenSessions int
 }
@@ -225,6 +251,9 @@ func (p UndoPlan) Counts() UndoCounts {
 			c.Sessions++
 			if s.Resumed {
 				c.Resumed++
+			}
+			if s.ResumeUnknown {
+				c.ResumeUnknown++
 			}
 		} else {
 			c.Subagents++
@@ -365,6 +394,9 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 	if c.Resumed > 0 {
 		fmt.Fprintf(w, "    This includes %s resumed since the import, with %s newer content.\n", count(c.Resumed, "session"), theirIts(c.Resumed))
 	}
+	if n := c.ResumeUnknown; n > 0 {
+		fmt.Fprintf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", count(n, "Cursor chat")+" "+wasWere(n))
+	}
 	if n := len(p.ExcludeProjects); n > 0 {
 		if c.Sessions+c.Subagents == 0 {
 			fmt.Fprintln(w, "If you continue:")
@@ -442,6 +474,13 @@ func isAre(n int) string {
 		return "is"
 	}
 	return "are"
+}
+
+func wasWere(n int) string {
+	if n == 1 {
+		return "was"
+	}
+	return "were"
 }
 
 func theirIts(n int) string {

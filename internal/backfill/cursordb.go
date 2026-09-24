@@ -9,23 +9,33 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
-// CursorDatabaseChat is what the plan needs from one Cursor chat in Cursor's
+// CursorDatabaseChat is what the plan lists of one Cursor chat in Cursor's
 // database: its ID, to leave out chats with a transcript on disk and to ask
-// the archive about it, and enough to apply --since, --until, and --project.
-// Nothing else is read, and nothing here is ever printed.
+// the archive about it, its start, and where its project may be named. The
+// plan reads the chat whole (CursorDatabaseResult.ReadChat) only when it may
+// be imported. Nothing here is ever printed.
 type CursorDatabaseChat struct {
 	// ID is composerData.composerId, or the key's suffix without one.
 	ID string
+	// KeyID is the composerData:<id> key's suffix, which the chat is read
+	// by. A chat whose composerId differs from it is identity_mismatch.
+	KeyID string
 	// CreatedAt is composerData.createdAt, zero when absent.
 	CreatedAt time.Time
 	// Folder is the workspace folder from workspaceIdentifier.uri, "" when
 	// the chat names none.
 	Folder string
+	// WorkspaceID is workspaceIdentifier.id, the workspaceStorage folder of
+	// the chat's workspace, "" when absent.
+	WorkspaceID string
 }
 
 // CursorUncheckedReason says why Cursor's database was not checked.
@@ -53,8 +63,9 @@ const (
 )
 
 // CursorDatabaseResult is one read of Cursor's database. Chats are every
-// counted chat, including those with a transcript on disk; the plan leaves
-// those out. Reason is set when Checked is false.
+// chat with messages that is not a draft and not a subagent, including those
+// with a transcript on disk; the plan leaves those out. Reason is set when
+// Checked is false.
 type CursorDatabaseResult struct {
 	Chats   []CursorDatabaseChat
 	Checked bool
@@ -62,6 +73,17 @@ type CursorDatabaseResult struct {
 	// NewerFormat counts the composerData rows with a _v newer than this
 	// release knows, read anyway.
 	NewerFormat int
+	// Subagents maps a chat's ID to the IDs of its subagent chats
+	// (subagentComposerIds) that have messages and are not drafts.
+	Subagents map[string][]string
+	// ReadChat reads one listed chat whole, by its KeyID, as the collector
+	// will: through one cursorstore.Reader for the whole plan, so at most
+	// one snapshot of the database. It is not safe for concurrent use. A
+	// chat Cursor deleted since the listing wraps fs.ErrNotExist. Set when
+	// Checked.
+	ReadChat func(ctx context.Context, id string) (cursorstore.Composer, error)
+	// Close removes the snapshot ReadChat took, if any. Set when Checked.
+	Close func() error
 }
 
 // CursorStateDatabase is where Cursor keeps its chats under home.
@@ -87,12 +109,24 @@ var cursorAfterRead func(path string)
 // state.vscdb under home. A missing database is checked with no chats (Cursor
 // is not installed). One that can't be read safely is not checked, with a
 // reason; that never fails the plan. Only a cancelled context is an error.
+// The chats are listed in place; each one the plan reads whole goes through
+// one cursorstore.Reader, whose snapshot, when Cursor is running, lives in
+// the per-user temporary directory until Close. Nothing is written beside
+// the database.
 func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResult, error) {
 	path := CursorStateDatabase(home)
 	return func(ctx context.Context) (CursorDatabaseResult, error) {
 		res := readCursorDatabase(ctx, path)
 		if err := ctx.Err(); err != nil {
 			return CursorDatabaseResult{}, err
+		}
+		if res.Checked {
+			reader := cursorstore.NewReader(path)
+			res.ReadChat = func(ctx context.Context, id string) (cursorstore.Composer, error) {
+				c, _, err := reader.ReadComposer(ctx, id)
+				return c, err
+			}
+			res.Close = reader.Close
 		}
 		return res, nil
 	}
@@ -131,6 +165,7 @@ func queryCursorDatabase(ctx context.Context, db *sql.DB) (CursorDatabaseResult,
 	var chats []CursorDatabaseChat
 	newer := 0
 	subagents := map[string]bool{}
+	parents := map[string][]string{}
 	for rows.Next() {
 		var key string
 		var value []byte
@@ -150,6 +185,9 @@ func queryCursorDatabase(ctx context.Context, db *sql.DB) (CursorDatabaseResult,
 		for _, id := range d.subagents {
 			subagents[id] = true
 		}
+		if len(d.subagents) > 0 {
+			parents[d.chat.ID] = append(parents[d.chat.ID], d.subagents...)
+		}
 		if d.counted {
 			chats = append(chats, d.chat)
 		}
@@ -159,13 +197,26 @@ func queryCursorDatabase(ctx context.Context, db *sql.DB) (CursorDatabaseResult,
 	}
 	// A subagent's composer is part of its parent chat, not a chat of its
 	// own.
+	counted := map[string]bool{}
 	kept := chats[:0]
 	for _, c := range chats {
+		counted[c.ID] = true
 		if !subagents[c.ID] {
 			kept = append(kept, c)
 		}
 	}
-	return CursorDatabaseResult{Chats: kept, Checked: true, NewerFormat: newer}, nil
+	res := CursorDatabaseResult{Chats: kept, Checked: true, NewerFormat: newer}
+	for parent, ids := range parents {
+		for _, id := range ids {
+			if counted[id] {
+				if res.Subagents == nil {
+					res.Subagents = map[string][]string{}
+				}
+				res.Subagents[parent] = append(res.Subagents[parent], id)
+			}
+		}
+	}
+	return res, nil
 }
 
 // composer is what one composerData value contributes.
@@ -225,8 +276,9 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 	if raw, ok := present("composerId"); ok {
 		json.Unmarshal(raw, &c.chat.ID)
 	}
+	c.chat.KeyID = strings.TrimPrefix(key, "composerData:")
 	if c.chat.ID == "" {
-		c.chat.ID = strings.TrimPrefix(key, "composerData:")
+		c.chat.ID = c.chat.KeyID
 	}
 	if raw, ok := present("subagentComposerIds"); ok {
 		var ids []json.RawMessage
@@ -253,6 +305,9 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		var ws map[string]json.RawMessage
 		if json.Unmarshal(raw, &ws) == nil {
 			c.chat.Folder = composerWorkspaceFolder(ws["uri"])
+			if rawID, ok := ws["id"]; ok {
+				json.Unmarshal(rawID, &c.chat.WorkspaceID)
+			}
 		}
 	}
 	return c, true
@@ -303,15 +358,26 @@ func composerWorkspaceFolder(raw json.RawMessage) string {
 	return ""
 }
 
-// countCursorDatabase reads the chats found only in Cursor's database and
-// gives each exactly one outcome, as file sessions get. The database is not
-// opened when --harness leaves Cursor out. A chat with a transcript on disk
-// is left out (the file wins). The archive's own reasons (already_archived,
-// removed_*) come first, then the filters: --since and --until use
-// createdAt, and --project the workspace folder's project; as for a file
-// session, a chat without the field does not match. The rest are
-// cursor_database_only.
-func countCursorDatabase(ctx context.Context, env Environment, state ArchiveState, r *resolver, projectFilter []string, since, until time.Time, plan *Plan) error {
+// planCursorDatabase adds the chats found only in Cursor's database to the
+// plan as candidates, each with exactly one outcome, as file sessions get.
+// The database is not opened when --harness leaves Cursor out, or when
+// Cursor's transcript store could not be fully listed. A chat with a
+// transcript on disk is left out (the file wins); so are drafts and
+// subagent chats, which the listing already leaves out.
+//
+// The archive's own reasons (already_archived, removed_*) and --since and
+// --until (on createdAt) are decided from the listing. Every chat that may
+// still be imported is then read whole and filtered with the collector's own
+// code, through one Reader, so the plan's empty, unsafe_format, and
+// too_large are what the collector would decide. Its project is the folder
+// workspaceIdentifier.uri names, then the folder of the workspace
+// workspaceIdentifier.id names (workspaceStorage/<id>/workspace.json), then
+// the one folder its messages' workspaceUris agree on; the folder then goes
+// through the same project rules as any working directory, and a chat with
+// none is project_unknown. If a chat can't be read safely after all (Cursor
+// held a lock, the copy failed), the database counts as not checked and none
+// of its chats is included, as when it can't be listed.
+func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState, r *resolver, projectFilter []string, since, until time.Time, workers int, plan *Plan) (err error) {
 	if env.CursorDatabase == nil || !harnessMatches(plan.Filters.Harnesses, "cursor") {
 		return nil
 	}
@@ -321,7 +387,17 @@ func countCursorDatabase(ctx context.Context, env Environment, state ArchiveStat
 	}
 	res, err := env.CursorDatabase(ctx)
 	if err != nil {
-		return fmt.Errorf("count Cursor database chats: %w", err)
+		return fmt.Errorf("read Cursor's database: %w", err)
+	}
+	if res.Close != nil {
+		// The plan's copy of the database holds every chat; one that can't
+		// be removed is reported, not left silently in the temporary folder
+		// (the next sweep removes it once it is stale).
+		defer func() {
+			if closeErr := res.Close(); closeErr != nil {
+				err = errors.Join(err, closeErr)
+			}
+		}()
 	}
 	plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = res.Checked, res.Reason
 	plan.CursorDatabaseNewerFormat = res.NewerFormat
@@ -335,23 +411,37 @@ func countCursorDatabase(ctx context.Context, env Environment, state ArchiveStat
 		}
 	}
 	dated := !since.IsZero() || !until.IsZero()
-	skip := func(reason SkipReason) {
-		if plan.CursorDatabaseSkipped == nil {
-			plan.CursorDatabaseSkipped = map[SkipReason]int{}
+	var items, toRead []*work
+	// Two rows with one composerId are one chat found twice. The row kept is
+	// one whose key is its ID, which the chat can be read back by, so a
+	// stray row naming another chat's ID never displaces the real one.
+	kept := map[string]int{}
+	for i, chat := range res.Chats {
+		if k, ok := kept[chat.ID]; !ok || (res.Chats[k].KeyID != chat.ID && chat.KeyID == chat.ID) {
+			kept[chat.ID] = i
 		}
-		plan.CursorDatabaseSkipped[reason]++
 	}
-	seen := map[string]bool{}
-	for _, chat := range res.Chats {
+	for i, chat := range res.Chats {
 		if fileChats[chat.ID] {
 			continue
 		}
-		// Two rows with one composerId are one chat found twice.
-		if seen[chat.ID] {
-			skip(SkipDuplicateSession)
+		w := &work{
+			t:    &transcript{harness: "cursor", nativeID: chat.ID},
+			chat: chat,
+			c: Candidate{
+				Harness: "cursor", NativeSessionID: chat.ID,
+				SourceKind: archive.SourceKindCursorSQLite, SourceKey: chat.ID,
+				StartedAt: chat.CreatedAt, StartedAtSource: archive.StartedAtSourceCursorComposer,
+			},
+		}
+		items = append(items, w)
+		if kept[chat.ID] != i {
+			w.duplicate = true
 			continue
 		}
-		seen[chat.ID] = true
+		// The collector reads the chat by its ID; a row whose composerId is
+		// not its key's can't be read back under the ID it would register.
+		w.t.identityMismatch = chat.ID != chat.KeyID
 		if strings.TrimSpace(chat.ID) != "" {
 			reason, err := state.Classify("cursor", chat.ID)
 			if err != nil {
@@ -360,24 +450,130 @@ func countCursorDatabase(ctx context.Context, env Environment, state ArchiveStat
 			if plan.Filters.IncludeRemoved && (reason == SkipRemovedByUndo || reason == SkipRemovedByRetention) {
 				reason = ""
 			}
-			if reason != "" {
-				skip(reason)
-				continue
+			w.state = reason
+		}
+		w.filtered = dated && !inRange(chat.CreatedAt, since, until)
+		if w.state == "" && !w.filtered && !w.t.identityMismatch {
+			toRead = append(toRead, w)
+		}
+	}
+
+	if res.ReadChat == nil {
+		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, CursorUncheckedUnreadable
+		return nil
+	}
+	// Reads go one at a time through the plan's one Reader; filtering, the
+	// costly part, runs on the workers.
+	var mu sync.Mutex
+	var readErr error
+	if err := forEach(ctx, workers, toRead, func(w *work) {
+		mu.Lock()
+		c, err := res.ReadChat(ctx, w.chat.KeyID)
+		// A value of this chat's that does not decode is the chat's
+		// problem, unsafe_format; only a failure of the database itself
+		// (a lock, a failed copy, a changed file) leaves it unchecked.
+		chatOnly := err != nil && (isNotExist(err) || cursorstore.ReasonOf(err) == cursorstore.UnknownFormat)
+		if err != nil && !chatOnly && readErr == nil {
+			readErr = err
+		}
+		mu.Unlock()
+		if err != nil {
+			// A chat Cursor deleted since the listing is not counted at all.
+			w.vanished = isNotExist(err)
+			w.unsafe = !w.vanished
+			return
+		}
+		w.c.Bytes = collector.CursorChatSize(c)
+		w.messageFolders = messageWorkspaceFolders(c)
+		filtered, err := collector.FilterCursorChat(c)
+		switch {
+		case errors.Is(err, archive.ErrRecordTooLarge):
+			w.tooLarge = true
+		case err != nil:
+			w.unsafe = true
+		default:
+			w.empty = !carriesConversation(filtered)
+		}
+	}); err != nil {
+		return err
+	}
+	if readErr != nil {
+		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, cursorstore.ReasonOf(readErr)
+		return nil
+	}
+
+	for _, w := range items {
+		if w.vanished {
+			continue
+		}
+		if !w.duplicate {
+			if folder := cursorChatFolder(env, w.chat, w.messageFolders); folder != "" {
+				w.res = r.resolve(folder)
+			} else {
+				w.res = resolution{skip: SkipProjectUnknown}
+			}
+			if !projectMatches(env, projectFilter, w.res.root) {
+				w.filtered = true
 			}
 		}
-		filtered := dated && !inRange(chat.CreatedAt, since, until)
-		if !filtered && len(projectFilter) > 0 {
-			root := ""
-			if chat.Folder != "" {
-				root = r.resolve(chat.Folder).root
-			}
-			filtered = !projectMatches(env, projectFilter, root)
+		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
+		if w.res.root != "" {
+			w.c.ProjectExists = env.exists(w.res.root)
 		}
-		if filtered {
-			plan.CursorDatabaseFiltered++
-		} else {
-			plan.CursorDatabaseOnly++
+		w.c.Skip = w.reason(plan.GeneratedAt)
+		plan.Candidates = append(plan.Candidates, w.c)
+	}
+
+	// Subagent chats are not imported yet: count those of every Cursor chat
+	// this plan imports, file or database, so the plan can say so.
+	for _, c := range plan.Candidates {
+		if c.Harness == "cursor" && c.Skip == "" {
+			plan.CursorSubagentsNotImported += len(res.Subagents[c.NativeSessionID])
 		}
 	}
 	return nil
+}
+
+// cursorChatFolder is the folder a database chat's project is resolved
+// from: workspaceIdentifier.uri, then the workspace.json of the workspace
+// workspaceIdentifier.id names, then the one folder the chat's messages name
+// in workspaceUris. "" when none is known.
+func cursorChatFolder(env Environment, chat CursorDatabaseChat, messageFolders []string) string {
+	if chat.Folder != "" {
+		return chat.Folder
+	}
+	if id := chat.WorkspaceID; id != "" && id == filepath.Base(id) && id != "." && id != ".." {
+		data, err := env.readFile(filepath.Join(cursorWorkspaceStorage(env), id, "workspace.json"))
+		if err == nil {
+			if folder := workspaceJSONFolder(data); folder != "" {
+				return folder
+			}
+		}
+	}
+	if len(messageFolders) == 1 {
+		return messageFolders[0]
+	}
+	return ""
+}
+
+// messageWorkspaceFolders are the distinct local folders a chat's messages
+// name in workspaceUris, in order. Only that field of each message is kept.
+func messageWorkspaceFolders(c cursorstore.Composer) []string {
+	var folders []string
+	seen := map[string]bool{}
+	for _, b := range c.Bubbles {
+		var m struct {
+			WorkspaceURIs []json.RawMessage `json:"workspaceUris"`
+		}
+		if len(b.Value) == 0 || json.Unmarshal(b.Value, &m) != nil {
+			continue
+		}
+		for _, raw := range m.WorkspaceURIs {
+			if folder := composerWorkspaceFolder(raw); folder != "" && !seen[folder] {
+				seen[folder] = true
+				folders = append(folders, folder)
+			}
+		}
+	}
+	return folders
 }

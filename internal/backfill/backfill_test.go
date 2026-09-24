@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
 // fixedNow is the planning clock in every test.
@@ -447,33 +449,155 @@ func TestFilterValidation(t *testing.T) {
 	}
 }
 
-func TestCursorDatabaseCount(t *testing.T) {
+// TestCursorDatabaseCandidates: chats found only in Cursor's database are
+// candidates like file sessions: a chat with a transcript on disk is the
+// file's session, the archive's own reasons come first, a second row for a
+// chat is a duplicate, and what is left is imported under its chat ID with
+// its createdAt as its start.
+func TestCursorDatabaseCandidates(t *testing.T) {
 	tr := newTree(t)
 	repo := tr.repo("home/site")
 	tr.write(filepath.Join("home", ".cursor", "projects", cursorSlug(repo), "agent-transcripts", "k1", "k1.jsonl"), cursorTranscript)
 	env := tr.env()
 	calls := 0
-	env.CursorDatabase = func(context.Context) (CursorDatabaseResult, error) {
-		calls++
-		return CursorDatabaseResult{Checked: true, Chats: []CursorDatabaseChat{{ID: "k1"}, {ID: "d1"}, {ID: "d2"}, {ID: "d3"}, {ID: "d1"}}}, nil
+	composers := map[string]cursorstore.Composer{}
+	for _, id := range []string{"k1", "d1", "d2", "d3"} {
+		composers[id] = syntheticChat(id, nil, "fix the widget", "Fixed.")
 	}
-	// k1 has a file, so the file is the session; the archive's own reasons
-	// win over cursor_database_only; a second row for d1 is a duplicate.
+	created := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	chats := func() []CursorDatabaseChat {
+		var out []CursorDatabaseChat
+		for _, id := range []string{"k1", "d1", "d2", "d3", "d1"} {
+			out = append(out, CursorDatabaseChat{ID: id, CreatedAt: created, Folder: repo})
+		}
+		return out
+	}
+	env.CursorDatabase = func(ctx context.Context) (CursorDatabaseResult, error) {
+		return fakeCursorDatabase(chats(), composers, map[string][]string{"d1": {"s1", "s2"}, "d3": {"s3"}}, &calls)(ctx)
+	}
 	st := states{"d2": SkipRemovedByUndo, "d3": SkipAlreadyArchived}
 	p := plan(t, env, st, config.Config{}, Filters{})
 	skipped := p.Skipped()
-	if skipped[SkipCursorDatabaseOnly] != 1 || skipped[SkipRemovedByUndo] != 1 || skipped[SkipAlreadyArchived] != 1 ||
-		skipped[SkipDuplicateSession] != 1 || p.Found() != 5 {
+	if skipped[SkipRemovedByUndo] != 1 || skipped[SkipAlreadyArchived] != 1 || skipped[SkipDuplicateSession] != 1 || p.Found() != 5 {
 		t.Fatalf("skipped %v, found %d", skipped, p.Found())
 	}
-	if p := plan(t, env, st, config.Config{}, Filters{IncludeRemoved: true}); p.Skipped()[SkipCursorDatabaseOnly] != 2 {
-		t.Fatalf("--include-removed: %v", p.Skipped())
+	var imported []Candidate
+	for _, c := range databaseCandidates(p) {
+		if c.Skip == "" {
+			imported = append(imported, c)
+		}
+	}
+	if len(imported) != 1 {
+		t.Fatalf("imported %+v", imported)
+	}
+	if c := imported[0]; c.NativeSessionID != "d1" || c.SourceKey != "d1" || c.TranscriptPath != "" || c.Harness != "cursor" ||
+		!c.StartedAt.Equal(created) || c.StartedAtSource != archive.StartedAtSourceCursorComposer || c.ProjectRoot != repo || c.Bytes == 0 {
+		t.Fatalf("candidate %+v", c)
+	}
+	// Only d1's subagents: d3 is not imported.
+	if p.CursorSubagentsNotImported != 2 {
+		t.Fatalf("%d subagent chats", p.CursorSubagentsNotImported)
+	}
+	var out strings.Builder
+	RenderText(&out, p)
+	if !strings.Contains(out.String(), "   2  Cursor subagent chats are not imported yet\n") {
+		t.Fatalf("no subagent line:\n%s", out.String())
+	}
+	if p := plan(t, env, st, config.Config{}, Filters{IncludeRemoved: true}); databaseOutcomes(p)[""] != 2 {
+		t.Fatalf("--include-removed: %v", databaseOutcomes(p))
 	}
 	// --harness without cursor never opens the database.
 	calls = 0
 	p = plan(t, env, st, config.Config{}, Filters{Harnesses: []string{"claude"}})
 	if calls != 0 || p.Skipped()[SkipFilteredOut] != 1 || p.Found() != 1 || p.CursorDatabaseChecked {
 		t.Fatalf("calls %d, skipped %v, found %d", calls, p.Skipped(), p.Found())
+	}
+}
+
+// TestCursorDatabaseChatOutcomes: each database chat that may be imported
+// is read and filtered as the collector will, and its project comes from
+// workspaceIdentifier.uri, then workspace.json, then its messages'
+// workspaceUris, through the usual project rules.
+func TestCursorDatabaseChatOutcomes(t *testing.T) {
+	tr := newTree(t)
+	site := tr.repo("home/site")
+	ws := tr.repo("home/ws")
+	msgs := tr.repo("home/msgs")
+	tr.write(filepath.Join("home", "Library", "Application Support", "Cursor", "User", "workspaceStorage", "abc123", "workspace.json"), `{"folder":"file://`+ws+`"}`)
+	withURIs := func(id string, uris ...string) cursorstore.Composer {
+		c := syntheticChat(id, nil, "look at this", "Looked.")
+		var list []any
+		for _, u := range uris {
+			list = append(list, u)
+		}
+		row, _ := json.Marshal(map[string]any{"_v": 3, "bubbleId": c.Bubbles[0].ID, "type": 1, "text": "look at this", "workspaceUris": list})
+		c.Bubbles[0].Value = row
+		return c
+	}
+	created := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	chats := []CursorDatabaseChat{
+		{ID: "uri", Folder: site},
+		{ID: "wsjson", WorkspaceID: "abc123"},
+		{ID: "badid", WorkspaceID: "../abc123"},
+		{ID: "messages"},
+		{ID: "two-folders"},
+		{ID: "home", Folder: tr.home},
+		{ID: "empty", Folder: site},
+		{ID: "unsafe", Folder: site},
+		{ID: "big", Folder: site},
+		{ID: "nostart", Folder: site},
+		{ID: "future", Folder: site},
+		{ID: "gone", Folder: site},
+		{ID: "renamed", KeyID: "other-key", Folder: site},
+	}
+	for i := range chats {
+		if chats[i].ID != "nostart" {
+			chats[i].CreatedAt = created
+		}
+		if chats[i].ID == "future" {
+			chats[i].CreatedAt = fixedNow.Add(time.Hour)
+		}
+	}
+	unsafe := syntheticChat("unsafe", nil, "x")
+	unsafe.Bubbles[0].Value = json.RawMessage(`{"_v":99,"bubbleId":"unsafe-m0","type":1,"text":"x"}`)
+	big := syntheticChat("big", nil, strings.Repeat("x", archive.MaxRecordBytes+1))
+	composers := map[string]cursorstore.Composer{
+		"uri":         syntheticChat("uri", nil, "a"),
+		"wsjson":      syntheticChat("wsjson", nil, "a"),
+		"badid":       syntheticChat("badid", nil, "a"),
+		"messages":    withURIs("messages", "file://"+msgs, "file://"+msgs),
+		"two-folders": withURIs("two-folders", "file://"+msgs, "file://"+site),
+		"home":        syntheticChat("home", nil, "a"),
+		"empty":       syntheticChat("empty", nil),
+		"unsafe":      unsafe,
+		"big":         big,
+		"nostart":     syntheticChat("nostart", nil, "a"),
+		"future":      syntheticChat("future", nil, "a"),
+		"other-key":   syntheticChat("renamed", nil, "a"),
+	}
+	env := tr.env()
+	env.CursorDatabase = fakeCursorDatabase(chats, composers, nil, nil)
+	p := plan(t, env, states{}, config.Config{}, Filters{})
+	got := map[string]Candidate{}
+	for _, c := range databaseCandidates(p) {
+		got[c.NativeSessionID] = c
+	}
+	for id, want := range map[string]struct {
+		skip SkipReason
+		root string
+	}{
+		"uri": {"", site}, "wsjson": {"", ws}, "badid": {SkipProjectUnknown, ""}, "messages": {"", msgs},
+		"two-folders": {SkipProjectUnknown, ""}, "home": {SkipHomeDirectory, tr.home},
+		"empty": {SkipEmpty, site}, "unsafe": {SkipUnsafeFormat, site}, "big": {SkipTooLarge, site},
+		"nostart": {SkipStartUnknown, site}, "future": {SkipStartInFuture, site}, "renamed": {SkipIdentityMismatch, site},
+	} {
+		c, ok := got[id]
+		if !ok || c.Skip != want.skip || c.ProjectRoot != want.root {
+			t.Errorf("%s: %+v, want %q in %q", id, c, want.skip, want.root)
+		}
+	}
+	if _, ok := got["gone"]; ok || len(got) != 12 {
+		t.Fatalf("a chat deleted since the listing was counted: %d candidates", len(got))
 	}
 }
 

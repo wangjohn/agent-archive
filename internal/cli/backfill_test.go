@@ -117,13 +117,19 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 	cursor("k-site", website)
 	cursor("k-lost", filepath.Join(f.userHome, "no-such-folder"))
 
-	// Cursor's database: one chat only it holds, one that also has a
-	// transcript, and a draft. Only the first is counted.
+	// Cursor's database: one chat only it holds, whose workspace (named by
+	// its workspace.json, so its size does not depend on the test's paths)
+	// is agent-archive; one that also has a transcript; and a draft. Only the
+	// first is imported from the database.
 	f.nativeIDs = append(f.nativeIDs, "k-db-only", "k-db-draft")
+	f.write(t, filepath.Join("Library", "Application Support", "Cursor", "User", "workspaceStorage", "ws1", "workspace.json"), `{"folder":"file://`+agentArchive+`"}`)
 	f.cursorDatabase(t, map[string]string{
-		"composerData:k-db-only":  `{"_v":3,"composerId":"k-db-only","createdAt":1789923600000,"fullConversationHeadersOnly":[{"bubbleId":"m1","type":1},{"bubbleId":"m2","type":2}]}`,
-		"composerData:k-aa":       `{"_v":3,"composerId":"k-aa","fullConversationHeadersOnly":[{"bubbleId":"m1","type":1}]}`,
-		"composerData:k-db-draft": `{"_v":3,"composerId":"k-db-draft","isDraft":true,"fullConversationHeadersOnly":[{"bubbleId":"m1","type":1}]}`,
+		"composerData:k-db-only": `{"_v":18,"composerId":"k-db-only","createdAt":1789923600000,"lastUpdatedAt":1789923660000,"status":"completed",` +
+			`"workspaceIdentifier":{"id":"ws1"},"fullConversationHeadersOnly":[{"bubbleId":"m1","type":1},{"bubbleId":"m2","type":2}]}`,
+		"bubbleId:k-db-only:m1":   `{"_v":3,"bubbleId":"m1","type":1,"text":"Why does the upload retry twice?","createdAt":1789923600000}`,
+		"bubbleId:k-db-only:m2":   `{"_v":3,"bubbleId":"m2","type":2,"text":"The first attempt times out.","createdAt":1789923630000}`,
+		"composerData:k-aa":       `{"_v":18,"composerId":"k-aa","fullConversationHeadersOnly":[{"bubbleId":"m1","type":1}]}`,
+		"composerData:k-db-draft": `{"_v":18,"composerId":"k-db-draft","isDraft":true,"fullConversationHeadersOnly":[{"bubbleId":"m1","type":1}]}`,
 	})
 
 	// c-archived is already registered by a hook.
@@ -304,7 +310,7 @@ func TestBackfillUnreadableFolder(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d: %s", code, errOut)
 	}
-	if !strings.Contains(out, "   1  folder in the app stores could not be read\n") || !strings.Contains(out, "Total: 10 sessions") {
+	if !strings.Contains(out, "   1  folder in the app stores could not be read\n") || !strings.Contains(out, "Total: 11 sessions") {
 		t.Fatalf("output:\n%s", out)
 	}
 	jsonOut, _, code := f.run(t, "--dry-run", "--json")
@@ -325,7 +331,7 @@ func TestBackfillUnreadableFolder(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(store, 0o755) })
 	out, errOut, code = f.run(t, "--dry-run")
-	if code != 0 || !strings.Contains(out, "      Claude Code's session folder could not be read (check permissions);\n      none of its sessions are included.\n") || !strings.Contains(out, "Total: 3 sessions") {
+	if code != 0 || !strings.Contains(out, "      Claude Code's session folder could not be read (check permissions);\n      none of its sessions are included.\n") || !strings.Contains(out, "Total: 4 sessions") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
 	jsonOut, _, _ = f.run(t, "--dry-run", "--json")

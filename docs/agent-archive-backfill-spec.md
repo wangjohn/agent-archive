@@ -98,7 +98,7 @@ Backfill imports every session found on this Mac into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
 
 PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL
-~/agent-archive                            9      1       1     11  already included
+~/agent-archive                            9      1       2     12  already included
 ~/levenshtein                              5      –       –      5  will be added
 ~/agent-skills                             4      –       –      4  will be added
 ~/GoodProse                                2      –       –      2  will be added
@@ -108,14 +108,14 @@ Not a repository:
 Claude desktop scratch chats               5      –       –      5  will be added
   Chats started without a folder. New ones will be captured too.
 
-Total: 28 sessions (plus 101 subagent transcripts), 25 MB,
+Total: 29 sessions (plus 101 subagent transcripts), 25 MB,
        started 2026-09-17 to 2026-09-23.
 
 Not imported:
    3  already in the archive
    2  run from temporary directories            add --include-temp
-   1  Cursor chat stored only in Cursor's database (a later release)
    1  Cursor chat whose project could not be determined
+   2  Cursor subagent chats are not imported yet
 
 If you continue:
   • 5 projects are added, and new Claude Code sessions in them are captured.
@@ -124,7 +124,7 @@ If you continue:
     Choose `edit` to keep them longer.
   • Undo any time with `agent-archive backfill undo`.
 
-Import 28 sessions from 6 projects? [y/N/edit]
+Import 29 sessions from 6 projects? [y/N/edit]
 ```
 
 - **Scope sentence.** It names the bucket and says "every session found on
@@ -140,7 +140,7 @@ Import 28 sessions from 6 projects? [y/N/edit]
   with the flag that overrides it, if there is one.
 - **Privacy.** No transcript path, native ID, or content is ever printed.
 
-After confirming, the command prints `Added 5 projects. Registered 28 sessions
+After confirming, the command prints `Added 5 projects. Registered 29 sessions
 and 101 subagent transcripts as import 2026-09-23-1.` It then shows an upload
 progress bar and ends with a summary and `list --imported`. Ctrl-C is safe:
 registered sessions persist locally, and the next collector pass uploads them.
@@ -150,7 +150,10 @@ registered sessions persist locally, and the next collector pass uploads them.
 `destination`, `filters`, `projects` (each has `root`, `kind`, `status`,
 `exists`, per-app `sessions`, `subagents`, `bytes`, and first and last start),
 `skipped` (a count for each reason), `apps_without_hooks`, `retention_days`,
-`expires_on`, and `storage_checked`.
+`expires_on`, and `storage_checked`, then `cursor_database_checked`,
+`cursor_database_unchecked_reason` (when not checked),
+`cursor_database_newer_format`, `cursor_subagents_not_imported`,
+`subagents_skipped`, `unreadable_folders`, and `unreadable_stores`.
 
 ### `history` and `undo`
 
@@ -459,7 +462,9 @@ adapter refuses, those over `archive.MaxRecordBytes`, and those with no
 conversation (no retained user, assistant, message, response, or tool record,
 and no text). A Claude Code or Codex transcript with no record timestamp is
 `start_unknown`: only Cursor, whose files have no timestamps at all, falls
-back to the file's birth time. Only counts, times, and sizes are kept.
+back to the file's birth time; a chat read from Cursor's database starts at
+its `createdAt`, and without one is `start_unknown`. Only counts, times, and
+sizes are kept.
 Symlinked transcript files are skipped. A folder in an app's store that can't
 be listed is skipped and counted on one "Not imported" line
 (`unreadable_folders` in JSON), without printing its path. If an app's whole
@@ -528,22 +533,46 @@ being read at the same time, so a file that doesn't fit waits for room.
   of the file system that tries each `-` as `/`, bounded to 4,096
   directories. Exactly one match is required; otherwise the session is
   `project_unknown`.
-- **Cursor database count.** Phase 1 reads `state.vscdb` only to count
-  database-only chats, through `modernc.org/sqlite`, and never writes to it or
-  next to it. The path is resolved through symlinks first, because SQLite keeps
-  its side files next to the real file.
-  - **What counts:** `composerData:*` rows (read through the key index, not a
-    table scan) that have messages in `fullConversationHeadersOnly` or, in
-    older chats, an inline `conversation`; are not drafts; are not listed in
-    any row's `subagentComposerIds`; and have no transcript on disk. Each goes
-    through the archive-state check, so `already_archived` and `removed_*`
-    win, and the filters apply as they do to file sessions (`createdAt` for
-    dates, `workspaceIdentifier` for `--project`; a chat without the field
-    fails that filter). The rest are `cursor_database_only`. A second row for
-    the same chat is a `duplicate_session`. Rows with a newer `_v` than tested
-    are still counted when the fields that decide the count decode; their
-    number is reported in JSON (`cursor_database_newer_format`).
-  - **How it reads.** With Cursor running (`-wal` and `-shm` present), in
+- **Cursor database chats.** The plan reads `state.vscdb` through
+  `modernc.org/sqlite` (package `internal/cursorstore`), and never writes to
+  it or next to it. The path is resolved through symlinks first, because
+  SQLite keeps its side files next to the real file. Chats only the database
+  holds are candidates like file sessions ([phase 2](#phase-2-cursor-database-chats)).
+  - **What is listed:** `composerData:*` rows (read through the key index,
+    not a table scan) that have messages in `fullConversationHeadersOnly` or,
+    in older chats, an inline `conversation`; are not drafts; are not listed
+    in any row's `subagentComposerIds`; and have no transcript on disk (the
+    file wins). Each goes through the archive-state check, so
+    `already_archived` and `removed_*` win, and `--since` and `--until` use
+    `createdAt` (a chat without it fails them). A second row for the same
+    chat is a `duplicate_session` (the row kept is one whose key is the
+    chat's ID), and a row whose `composerId` differs from its key is
+    `identity_mismatch`, since the collector reads a chat by its ID. Rows with a newer `_v` than tested are still listed when the fields
+    that decide the listing decode; their number is reported in JSON
+    (`cursor_database_newer_format`), and the filter then refuses them as
+    `unsafe_format`.
+  - **What is read.** Every chat still importable is read whole (its
+    composerData row and its message rows) through one `cursorstore.Reader`
+    for the whole plan, so at most one snapshot of the database (below), and
+    filtered with the collector's own code
+    (`collector.FilterCursorChat`), so `empty`, `unsafe_format`, and
+    `too_large` (its rows together over 64 MiB, or one row over the record
+    limit) are what capture would decide. Its size is its rows' bytes. Its
+    project is the folder `workspaceIdentifier.uri` names, then the
+    `folder` of `workspaceStorage/<workspaceIdentifier.id>/workspace.json`,
+    then the one folder its messages' `workspaceUris` agree on; that folder
+    goes through the [project rules](#project-resolution) like a working
+    directory (so `--project` and the home, temporary, and excluded rules
+    apply), and a chat with none is `project_unknown`. A chat Cursor
+    deleted between the listing and the read is not counted, and one whose
+    own values don't decode is `unsafe_format`. If a read fails because of
+    the database itself (Cursor held a lock past the timeout, the copy
+    failed, the file changed), the database counts as not checked, with
+    that reason, and none of its chats is included.
+  - **Subagent chats** of the Cursor chats the plan imports are not imported
+    yet; the plan says how many ("N Cursor subagent chats are not imported
+    yet", `cursor_subagents_not_imported` in JSON).
+  - **How it lists.** With Cursor running (`-wal` and `-shm` present), in
     place with `mode=ro`, `readonly_shm`, and `query_only`: a read-only shared
     memory file still lets the reader take shared locks, so Cursor never
     overwrites a page mid-read. With Cursor closed (no side files), in place
@@ -585,9 +614,12 @@ several reasons apply, the first in this list wins.
 | `temporary_directory` | `--include-temp` |
 | `project_unknown`, `worktree_unresolved`, `identity_mismatch` | — |
 | `empty`, `unsafe_format`, `too_large` (over 64 MiB) | — |
-| `start_unknown` (no record timestamp; Claude Code and Codex) | — |
+| `start_unknown` (no record timestamp for Claude Code and Codex; no `createdAt` for a Cursor database chat) | — |
 | `start_in_future` | — |
-| `cursor_database_only` | phase 2 |
+
+`cursor_database_only`, phase 1's placeholder for chats only Cursor's
+database holds, is retired: those chats are now imported (phase 2). When the
+database is not checked they are simply not found, and the plan says why.
 
 ## Evidence imports lack
 
@@ -683,6 +715,9 @@ Other properties:
 
 ## Phase 2: Cursor database chats
 
+Status: implemented (P1 composer adapter, P2 source readers, P3 import
+integration). Support stays `unverified` until the live check in decision 10.
+
 Cursor's `globalStorage/state.vscdb` (table `cursorDiskKV`) holds:
 
 - **`composerData:<id>`, one per chat.** Fields include `createdAt`,
@@ -698,22 +733,40 @@ Cursor's `globalStorage/state.vscdb` (table `cursorDiskKV`) holds:
 For chats that also have a file on disk, the database holds timestamps and tool
 results the file lacks. Phase 2 still imports only chats that have no file:
 
-1. **One source per session.** New registration fields `SourceKind` (a typed
-   string: `SourceKindFile` or `SourceKindCursorSQLite`) and `SourceKey` (the
-   chat ID) are fixed at registration. A `SourceKindCursorSQLite` session never
+1. **One source per session.** Registration fields `SourceKind` (a typed
+   string: `SourceKindFile`, the empty value, or `SourceKindCursorSQLite`,
+   `cursor-sqlite`) and `SourceKey` (the chat ID, which must equal the native
+   ID) are fixed at registration. A `SourceKindCursorSQLite` session never
    adopts a hook's `transcript_path`. Otherwise a resumed chat would switch
    formats and fail `nativeEvidenceExtends`.
 2. **The file wins when both exist.** It is what hooks capture live.
    Upgrading file sessions to the richer database source is a separate
    decision.
-3. **Snapshot reads.** With Cursor running, copy the database with SQLite's
-   online backup API to a `0600` file under the archive home, read the copy,
-   and delete it. Retry `SQLITE_BUSY`, and fail the pass rather than read
-   partially. With Cursor closed, the backup API would create `-wal` next to
-   the source, so read it as the phase-1 count does: `immutable=1`, then
-   confirm size, modification time, inode, header, and side files are
-   unchanged, and discard the read otherwise. `immutable=1` without that check
-   can read torn pages while Cursor writes.
+3. **Snapshot reads** (`internal/cursorstore`). With Cursor running, the
+   database is copied with SQLite's online backup API, from a read-only
+   connection, in one uninterruptible step (a busy source is retried until
+   the read's 30-second deadline, then the read fails rather than reading
+   partially), into a `0600` file in a new `0700` directory under
+   `filepath.Join(<temp>, "agent-archive-cursor-<uid>")`, where `<temp>` is
+   on macOS the per-user `DARWIN_USER_TEMP_DIR` whatever `$TMPDIR` says (the
+   folder Time Machine excludes, and the one launchd's collector, which gets
+   only `AGENT_ARCHIVE_HOME`, and hook runs agree on), falling back to
+   `$TMPDIR` and then `os.TempDir()` only if it can't be read; never the
+   archive home, which may be backed up or synced. That root must be a real
+   directory of this user's with mode `0700`, or no copy is made. A
+   `cursorstore.Reader` takes at most one snapshot however many chats it
+   reads: a collector pass holds one Reader, and so does a backfill plan,
+   and each removes its copy when it ends; a copy that can't be removed
+   fails the pass or the plan. Each snapshot directory holds an `flock`
+   while its Reader uses it; directories older than an hour whose lock is
+   free (a killed process's) are swept at the start of a pass and on a
+   Reader's first read. With
+   Cursor closed, the backup API would create `-wal` next to the source, so
+   a chat is read in place as the listing is: `immutable=1`, then size,
+   modification time, inode, header, and side files must be unchanged, and
+   otherwise the read is discarded (`changed_during_read`). A missing
+   database or chat is a missing source; anything else unsafe is "not
+   checked" with a reason, and is retried on the next pass.
 4. **`modernc.org/sqlite`, a pure-Go driver,** already added for the phase-1
    count (v1.46.1, the newest release that supports the `go 1.24.0` floor;
    builds use `toolchain go1.27.1`). It keeps CI and tests free of
@@ -727,27 +780,65 @@ results the file lacks. Phase 2 still imports only chats that have no file:
    `diffHistories`, `images`, `consoleLogs`, and `recentlyViewedFiles`.
    Source format `cursor-composer`, a filter version bump, and golden tests
    from synthetic chats. Implemented as `CursorAdapter.FilterComposer` in
-   `internal/archive/cursor_composer.go`, with filter version 8.
+   `internal/archive/cursor_composer.go`, with filter version 8. The
+   collector applies the transcript size limits first: the chat's rows
+   together are its size, and each row is one record.
 6. **Fail closed.** An unknown `_v` is `unsafe_format`. Missing message rows
    add a `cursor_bubble_missing` gap with a count; the probe had 432 headers
    and only 415 message rows, all in chats that also have a file. Blobs are not read, and add
    `cursor_blob_content_unavailable`.
-7. **Change detection.** The scan signature is `(lastUpdatedAt, header count,
-   last message ID)`. The database file itself changes constantly, so its
-   stat is useless here.
+7. **Change detection.** The scan signature is `(lastUpdatedAt, header
+   count, last message ID, listed messages with a row, a hash of the last
+   message's row)`, read in place in one transaction from a few indexed rows
+   (the row count from the key index alone), never a copy. The database file
+   itself changes constantly, so its stat is useless here. A read that
+   failed for a reason reading again can't fix (a filter refusal, a size
+   limit) is remembered at that signature, the versions, and the size limits:
+   later passes report it, or keep its gap, without reading, even when a
+   hook request arrives. A refusal leaves the request queued (its evidence is
+   the only copy); a size-limit gap completes it, as blocking does. A chat
+   in the database but not yet in the pass's older snapshot is a transient
+   `changed_during_read`, not a deleted chat.
 8. **Project and start.** The project comes from `workspaceIdentifier.uri`,
-   then `workspace.json`, then message `workspaceUris`, and otherwise the chat
-   is `project_unknown`. The start is `createdAt`
-   (`started_at_source = cursor_composer`).
-9. **Subagents.** `subagentComposerIds` become linked sessions. This comes
-   last and can be deferred.
+   then the `folder` of `workspaceStorage/<workspaceIdentifier.id>/workspace.json`,
+   then the one folder the messages' `workspaceUris` agree on, and then the
+   usual [project rules](#project-resolution); otherwise the chat is
+   `project_unknown`. The start is `createdAt`
+   (`started_at_source = cursor_composer`). See
+   [Discovery](#discovery) for how the plan lists, reads, and classifies the
+   chats.
+9. **Subagents.** Not imported yet. Linking `subagentComposerIds` as linked
+   sessions is not a small change: the collector's child registration and
+   its checks on every scan (`CheckImportedSubagent`,
+   `validateSubagentTranscript`) are built on transcript files whose records
+   name the parent session and the agent, and a composer chat carries
+   neither. The plan counts the subagent chats of the Cursor chats it
+   imports and says they are not imported yet.
 10. **Unverified until checked live.** Support stays `unverified` until one
     database-only chat is published and read back on a live Cursor, with its
     version recorded.
 
-The collector reads each registration through a small `sourceReader`
-interface (`Signature()`, `Open()`), and today's file code becomes its first
-implementation.
+**Rewritten chats.** Cursor rewrites finished messages in its database (a
+token count filled in late, an edited prompt, a checkpoint restore), so a
+cursor-sqlite chat whose new records no longer extend what was published is
+not blocked as `transcript_rewritten`, as a transcript file is. The new
+snapshot is published as a replacement, and the chat carries one
+`cursor_chat_rewritten` capture gap (collector evidence, provenance
+`collector:cursor-rewrite`, no content) whose detail counts the rewrites and
+whose observation time is the last one's, so a chat Cursor rewrites often
+(late token counts are routine) does not grow a gap per rewrite.
+
+**Everywhere else a transcript file was assumed.** The collector reads each
+registration through a small `sourceReader` interface (`Signature`,
+`Filter`), with the file code as its first implementation and the
+cursor-sqlite reader as its second. Metadata regeneration's change check and
+`handoff --source local` (including its last-activity time, the chat's
+`lastUpdatedAt`) go through it. Registration checks in place that the chat
+still exists and counts it gone otherwise. Undo counts a database chat as
+resumed when its `lastUpdatedAt` is after `AdmittedAt`, and says how many
+chats it could not check when the database can't be read. A storage change
+counts an un-uploaded database chat as pending, not as waiting for a
+transcript.
 
 ## Code layout
 
@@ -756,7 +847,8 @@ implementation.
 | `internal/archive/types.go` | New fields and `Admitted()`. B1b adds `DestinationID`; phase 2 adds `SourceKind` and `SourceKey`. |
 | `internal/config`, `internal/cli/hook.go` | `ImportedHarnesses` and `AcceptSession` via `Admitted()`. Hooks set `AdmittedAt` and `Origin`. |
 | `internal/retention` | `Admitted()`, removal records, and a shared `deleteWholeSession` |
-| `internal/collector` | Origin-aware skill observer and subagent lifecycle, `Progress`, oldest-first ordering |
+| `internal/collector` | Origin-aware skill observer and subagent lifecycle, `Progress`, oldest-first ordering. Phase 2: `sourceReader` (file and cursor-sqlite), remembered read failures, rewritten Cursor chats republished with a gap, `FilterCursorChat` for the plan |
+| `internal/cursorstore` (phase 2) | Read-only access to Cursor's `state.vscdb`: the in-place listing, one-snapshot `Reader`, `ReadSignature`, and the snapshot directory |
 | `internal/archive/views.go`, `schemas/` | Metadata fields and the capture gap |
 | `internal/backfill` (new) | Discovery, resolution, plan, commit, batches, and undo. Discovery and resolution run over an injected file system and clock; the adapter pass, registration re-checks, and batch files use the real file system. |
 | `internal/cli` | `backfill.go` (new), plus origin-aware status, verification, list, show, and setup |

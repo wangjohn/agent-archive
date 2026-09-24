@@ -50,13 +50,10 @@ func (p Plan) Imported() []Candidate {
 	return out
 }
 
-// Found is how many sessions discovery found, imported or not.
+// Found is how many sessions discovery found, imported or not, Cursor
+// database chats included.
 func (p Plan) Found() int {
-	n := len(p.Candidates) + p.CursorDatabaseOnly + p.CursorDatabaseFiltered
-	for _, c := range p.CursorDatabaseSkipped {
-		n += c
-	}
-	return n
+	return len(p.Candidates)
 }
 
 // Projects groups the imported sessions by project, sorted by total and then
@@ -106,21 +103,6 @@ func (p Plan) Skipped() map[SkipReason]int {
 	for _, c := range p.Candidates {
 		if c.Skip != "" {
 			counts[c.Skip]++
-		}
-	}
-	if p.CursorDatabaseOnly > 0 {
-		if harnessMatches(p.Filters.Harnesses, "cursor") {
-			counts[SkipCursorDatabaseOnly] += p.CursorDatabaseOnly
-		} else {
-			counts[SkipFilteredOut] += p.CursorDatabaseOnly
-		}
-	}
-	if p.CursorDatabaseFiltered > 0 {
-		counts[SkipFilteredOut] += p.CursorDatabaseFiltered
-	}
-	for reason, n := range p.CursorDatabaseSkipped {
-		if n > 0 {
-			counts[reason] += n
 		}
 	}
 	return counts
@@ -377,7 +359,6 @@ var skipLabels = map[SkipReason]string{
 	SkipTooLarge:              "larger than 64 MiB",
 	SkipStartUnknown:          "%s whose start time could not be determined",
 	SkipStartInFuture:         "starting in the future (check the clock)",
-	SkipCursorDatabaseOnly:    "%s stored only in Cursor's database (a later release)",
 }
 
 // skipOverrides are the flags or steps that import a skipped session anyway.
@@ -393,7 +374,7 @@ func renderSkipped(w io.Writer, p Plan) {
 	counts := p.Skipped()
 	subagentsSkipped := p.SubagentsSkipped()
 	databaseUnchecked := !p.CursorDatabaseChecked && harnessMatches(p.Filters.Harnesses, "cursor")
-	if len(counts) == 0 && subagentsSkipped == 0 && p.UnreadableFolders == 0 && len(p.UnreadableStores) == 0 && !databaseUnchecked {
+	if len(counts) == 0 && subagentsSkipped == 0 && p.CursorSubagentsNotImported == 0 && p.UnreadableFolders == 0 && len(p.UnreadableStores) == 0 && !databaseUnchecked {
 		return
 	}
 	nouns := map[SkipReason]map[string]bool{}
@@ -418,11 +399,7 @@ func renderSkipped(w io.Writer, p Plan) {
 		}
 		label := skipLabels[reason]
 		if strings.Contains(label, "%s") {
-			apps := nouns[reason]
-			if reason == SkipCursorDatabaseOnly {
-				apps = map[string]bool{"cursor": true}
-			}
-			label = fmt.Sprintf(label, sessionNoun(apps, n))
+			label = fmt.Sprintf(label, sessionNoun(nouns[reason], n))
 		}
 		lines = append(lines, line{n, label, skipOverrides[reason]})
 		if skipOverrides[reason] != "" {
@@ -435,6 +412,13 @@ func renderSkipped(w io.Writer, p Plan) {
 			label = "subagent transcript that can't be imported"
 		}
 		lines = append(lines, line{subagentsSkipped, label, ""})
+	}
+	if n := p.CursorSubagentsNotImported; n > 0 {
+		label := "Cursor subagent chats are not imported yet"
+		if n == 1 {
+			label = "Cursor subagent chat is not imported yet"
+		}
+		lines = append(lines, line{n, label, ""})
 	}
 	if n := p.UnreadableFolders; n > 0 {
 		label := "folders in the app stores could not be read"
@@ -605,8 +589,11 @@ type planJSON struct {
 	// CursorDatabaseNewerFormat counts the database rows read although
 	// their format version is newer than this release knows.
 	CursorDatabaseNewerFormat int `json:"cursor_database_newer_format"`
-	SubagentsSkipped          int `json:"subagents_skipped"`
-	UnreadableFolders         int `json:"unreadable_folders"`
+	// CursorSubagentsNotImported counts the subagent chats of the Cursor
+	// chats imported; they are not imported yet.
+	CursorSubagentsNotImported int `json:"cursor_subagents_not_imported"`
+	SubagentsSkipped           int `json:"subagents_skipped"`
+	UnreadableFolders          int `json:"unreadable_folders"`
 	// UnreadableStores are the apps whose whole session store could not
 	// be read.
 	UnreadableStores []string `json:"unreadable_stores"`
@@ -654,6 +641,7 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 		CursorDatabaseChecked:         p.CursorDatabaseChecked,
 		CursorDatabaseUncheckedReason: p.CursorDatabaseUnchecked,
 		CursorDatabaseNewerFormat:     p.CursorDatabaseNewerFormat,
+		CursorSubagentsNotImported:    p.CursorSubagentsNotImported,
 		SubagentsSkipped:              p.SubagentsSkipped(),
 		UnreadableFolders:             p.UnreadableFolders,
 		UnreadableStores:              append([]string{}, p.UnreadableStores...),
