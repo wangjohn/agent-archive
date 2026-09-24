@@ -21,11 +21,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// backfillCheckpoint, when set, is called after the configuration commit
-// ("committed"), after each registration hold ("registered"), before the
-// upload ("uploading"), and when undo holds its locks and has rechecked its
-// plan ("undoing"). A test
-// returns an error from it to stop the import there, as a crash would.
+// backfillCheckpoint, when set, is called inside the configuration commit
+// between writing the batch file and saving the configuration ("batch
+// saved"), after the commit ("committed"), after each registration hold
+// ("registered"), before the upload ("uploading"), and when undo holds its
+// locks and has rechecked its plan ("undoing"). A test returns an error from
+// it to stop the import there, as a crash would.
 var backfillCheckpoint func(step string) error
 
 // backfillHoldSteps, when positive, caps the steps registration takes per
@@ -281,6 +282,9 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	}
 	batch.AddChanges(projects, apps)
 	if err := backfill.SaveBatch(home, batch); err != nil {
+		return batch, admittedAt, 0, err
+	}
+	if err := checkpoint("batch saved"); err != nil {
 		return batch, admittedAt, 0, err
 	}
 	if err := config.Save(home, cfg); err != nil {
