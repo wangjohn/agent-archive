@@ -44,7 +44,7 @@ var ErrRecordTooLarge = &FilterError{Reason: "record exceeds the record size lim
 //
 // Reading one record costs memory in proportion to its size: the scanner's
 // buffer and the decoded JSON value both hold it, several times over at the
-// limit. See docs/agent-archive-implementation.md for the measured ceiling.
+// limit. See docs/history/implementation-ledger.md for the measured ceiling.
 const MaxRecordBytes = 64 * 1024 * 1024
 
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.

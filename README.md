@@ -20,7 +20,7 @@ agent-archive setup
 The script downloads the signed build for your Mac from the
 [latest release](https://github.com/wangjohn/agent-archive/releases/latest),
 verifies its checksum, and installs it without `sudo`. Manual download,
-building from source, and uninstalling are in [docs/install.md](docs/install.md).
+building from source, and uninstalling are in [docs/getting-started/install.md](docs/getting-started/install.md).
 
 ## Commands
 
@@ -37,10 +37,10 @@ Run `agent-archive` alone (or `agent-archive help`) for a short command guide, `
 
 ## Design
 
-The [product and engineering specification](docs/agent-run-archive-spec.md)
-describes the design. The [implementation ledger](docs/agent-archive-implementation.md)
+The [product and engineering specification](docs/design/archive-spec.md)
+describes the design. The [implementation ledger](docs/history/implementation-ledger.md)
 records what has been built and verified. The proposed
-[cloud capture specification](docs/agent-archive-cloud-capture-spec.md)
+[cloud capture specification](docs/design/proposed/cloud-capture.md)
 covers sessions in Claude Code on the web, Cursor Cloud Agents, Codex cloud,
 and CI runners.
 
@@ -55,7 +55,7 @@ VERSION=dev ./scripts/build-release.sh
 CI runs the tests on Ubuntu and macOS. Pushing a `vX.Y.Z` tag builds, signs,
 notarizes, and publishes a release. The release job fails before building unless
 the Apple signing secrets and the `APPLE_SIGNING_ENABLED` repository variable
-described in [docs/install.md](docs/install.md#signing-and-notarization) are set.
+described in [docs/getting-started/install.md](docs/getting-started/install.md#signing-and-notarization) are set.
 
 ## History
 

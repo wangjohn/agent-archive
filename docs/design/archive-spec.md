@@ -37,7 +37,7 @@ Support `--help` and `--version`. Keep background-worker and hook entry points i
 
 The onboarding sequence is download → select applications/projects → connect storage → review and enable → verify real capture.
 
-The implemented CLI refinement is described in [the setup and CLI plan](agent-archive-cli-plan.md). Setup saves non-secret drafts between completed steps, offers focused edits on rerun, and finishes configuration while app verification is pending. Command help is side-effect-free. Status supports human-readable and versioned JSON output. Uninstall keeps local evidence and credentials unless `--delete-local-data` is explicitly confirmed.
+The implemented CLI refinement is described in [the setup and CLI plan](../history/cli-plan.md). Setup saves non-secret drafts between completed steps, offers focused edits on rerun, and finishes configuration while app verification is pending. Command help is side-effect-free. Status supports human-readable and versioned JSON output. Uninstall keeps local evidence and credentials unless `--delete-local-data` is explicitly confirmed.
 
 The three user-facing steps are choose apps and projects, connect storage, and
 review. Detected apps are offered together; declining opens individual choices.
@@ -70,7 +70,7 @@ Import existing conversation history?        No
 Retention:                                  90 days
 ```
 
-No-skill capture remains the default to preserve comparison evidence. The initial release captures only sessions started after the per-project activation time. Resuming an older conversation must not silently upload its previous contents. If the start time cannot be established, leave the session uncollected and explain why. Setup never imports history. `agent-archive backfill` is the separate, explicit import flow; see the [backfill spec](agent-archive-backfill-spec.md). Re-running setup must preserve activation times for existing included projects.
+No-skill capture remains the default to preserve comparison evidence. The initial release captures only sessions started after the per-project activation time. Resuming an older conversation must not silently upload its previous contents. If the start time cannot be established, leave the session uncollected and explain why. Setup never imports history. `agent-archive backfill` is the separate, explicit import flow; see the [backfill spec](backfill.md). Re-running setup must preserve activation times for existing included projects.
 
 Retention is configurable and explicitly accepted during setup before any cleanup begins. Show what content is retained, that filtering is best effort, and that sensitive content can remain.
 

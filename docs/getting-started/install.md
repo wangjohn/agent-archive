@@ -10,7 +10,7 @@ Macs are supported.
 curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
 ```
 
-[`install.sh`](../install.sh) is short; read it first if you prefer. It
+[`install.sh`](../../install.sh) is short; read it first if you prefer. It
 downloads the release binary for your Mac's architecture, checks it against
 the release's `SHA256SUMS`, and installs it as `agent-archive`, without
 `sudo`. If `agent-archive` is already on your `PATH`, it replaces that copy,

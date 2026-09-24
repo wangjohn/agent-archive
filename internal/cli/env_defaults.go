@@ -42,7 +42,7 @@ const jobAnotherInstallation = "another_installation"
 // loadLaunchAgent loads a just-installed LaunchAgent so scheduled
 // collection starts immediately rather than waiting for the next login.
 // This shells out to launchctl and has not been verified against a real
-// launchd (see docs/agent-archive-implementation.md); a failure here is
+// launchd (see docs/history/implementation-ledger.md); a failure here is
 // reported as an incomplete setup, with rollback and a retry path.
 func loadLaunchAgent(plistPath string) error {
 	output, err := runLaunchctl(context.Background(), "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)

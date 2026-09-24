@@ -1,6 +1,6 @@
 // Package backfill finds the Claude Code, Codex, and Cursor sessions already
 // on this Mac and plans importing them into the archive (see
-// docs/agent-archive-backfill-spec.md). Planning is read-only: it lists the
+// docs/design/backfill.md). Planning is read-only: it lists the
 // apps' native stores, runs each app's adapter over every transcript it may
 // import, and keeps only counts, times, and sizes. File system access, the
 // home directory, and the clock come from an injected Environment, so tests

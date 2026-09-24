@@ -41,7 +41,7 @@ func backfillDay(value string, now time.Time) (string, error) {
 
 // runBackfillCommand implements `agent-archive backfill`: it finds the
 // sessions already on this Mac, shows the plan, and after confirmation
-// imports them (see docs/agent-archive-backfill-spec.md). `--dry-run
+// imports them (see docs/design/backfill.md). `--dry-run
 // [--json]` prints the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	if len(args) > 0 && args[0] == "history" {
