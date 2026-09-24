@@ -62,7 +62,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	defer releaseSetup()
 
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
 	if err != nil {
 		return fail("a collector pass is still running; run backfill again. Nothing was changed.")
 	}
@@ -163,7 +163,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	}
 	defer release()
 	// No collector pass or retention may remove what is being listed.
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
 	if err != nil {
 		return errors.New("a collector pass is still running; run backfill again")
 	}

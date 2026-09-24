@@ -122,7 +122,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 	}
 
-	releaseCollector, err := local.NamedLockWait(home, "collector.lock", backfillCollectorWait)
+	releaseCollector, err := lockCollectorWait(home, "backfill undo", env.now(), backfillCollectorWait)
 	if err != nil {
 		return fail("a collector pass is still running; run undo again. Nothing was changed.")
 	}

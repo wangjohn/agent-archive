@@ -100,7 +100,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 			return err
 		}
 	}
-	unlock, err := local.Lock(home)
+	unlock, err := lockCollector(home, "uninstall", env.now())
 	if err != nil {
 		return fmt.Errorf("another operation is finishing; retry uninstall: %w", err)
 	}
@@ -371,7 +371,7 @@ var localStateEntries = []string{
 	"config.json", "setup-draft.json", "setup-transaction.json",
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
 	"status.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
-	"collector.lock", "collector.log", "collector-error.log",
+	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir,
 }
 

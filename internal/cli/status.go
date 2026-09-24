@@ -205,6 +205,12 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if view.Collector.LastError != "" {
 		fmt.Fprintf(stdout, "Last error:    %s\n", view.Collector.LastError)
 	}
+	if n := len(view.Collector.QuarantinedFiles); n > 0 {
+		fmt.Fprintf(stdout, "Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)
+	}
+	if n := view.Collector.UnrefreshableSummaries; n > 0 {
+		fmt.Fprintf(stdout, "Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
+	}
 	for _, warning := range view.Warnings {
 		fmt.Fprintf(stdout, "Warning:       %s\n", warning)
 	}
@@ -640,11 +646,13 @@ func readStatus(env Env) (view statusView, err error) {
 	if !view.Collector.LastScanAt.IsZero() && env.now().Sub(view.Collector.LastScanAt) > 5*time.Minute {
 		view.State = "Needs attention"
 		view.Next = "The last scan is over 5 minutes old. Run agent-archive sync to check collection."
-		// sync cannot help while another process holds the collector lock,
-		// and a pass gives up after collectLockStuckAfter/2.
-		if age := env.now().Sub(view.Collector.LastScanAt); age > collectLockStuckAfter && collectorLockHeld(home) {
-			view.Next = fmt.Sprintf("The collector lock has been held since at least the last scan %s ago, well past a pass's time limit, so collection is stuck. If no agent-archive sync or backfill is still running, find the stuck agent-archive process in Activity Monitor and quit it; the next pass then resumes.", age.Round(time.Minute))
-		}
+	}
+	// sync cannot help while another process holds the collector lock. The
+	// holder records when it took the lock, so a pass that started a moment
+	// ago is never mistaken for a hung one.
+	if record, ok := readCollectorLockRecord(home); ok && env.now().Sub(record.Since) > collectLockStuckAfter && collectorLockHeld(home) {
+		view.State = "Needs attention"
+		view.Next = fmt.Sprintf("Collection is stuck: %s (process %d) has held the collector lock since %s, %s, well past a pass's time limit. If that command is no longer doing anything, quit process %d (in Activity Monitor or with kill %d); the next pass then resumes.", record.Holder, record.PID, record.Since.UTC().Format("2006-01-02 15:04 UTC"), durationAgo(env.now().Sub(record.Since)), record.PID, record.PID)
 	}
 	if view.Collector.LastError != "" {
 		view.State = "Needs attention"
@@ -680,11 +688,6 @@ func readStatus(env Env) (view statusView, err error) {
 	}
 	return view, nil
 }
-
-// collectLockStuckAfter is how long the collector lock can be held, with no
-// scan finishing, before status calls collection stuck: twice the 10-minute
-// limit a collection pass runs under.
-const collectLockStuckAfter = 20 * time.Minute
 
 // collectorLockHeld reports whether another process holds collector.lock
 // right now. flock has no query, so it tries the lock and releases it at

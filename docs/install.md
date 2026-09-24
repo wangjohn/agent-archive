@@ -172,10 +172,13 @@ To install by hand instead:
    alone: set `AGENT_ARCHIVE_HOME` to a data directory of this
    installation's own, or uninstall the other one. Before setup, status
    shows only that setup is needed (`status --json` reports background
-   `missing` and authentication `not_configured`). When the collector lock
-   has been held for over 20 minutes, twice a pass's time limit, with no
-   scan finishing, status says collection is stuck rather than suggesting
-   `sync`.
+   `missing` and authentication `not_configured`). Every command that takes
+   the collector lock records which command it is and when it took it. When
+   one has held it for over two hours, twice a collection pass's hard time
+   limit, status says collection is stuck and names the command and its
+   process ID, rather than suggesting `sync`. Status also counts local state
+   files a pass could not read and moved aside (quarantined), and session
+   summaries this version cannot refresh.
    Hooks or background `broken` means the configuration is in place but runs
    an agent-archive executable that has since been moved, deleted, or made
    non-executable; rerun `agent-archive setup` from the binary's new location.

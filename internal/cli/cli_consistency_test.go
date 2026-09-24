@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -138,35 +139,65 @@ func TestFeedbackWhilePausedSaysWhen(t *testing.T) {
 	}
 }
 
-// A collector lock held long past a pass's time limit, with no scan
-// finishing, is reported as stuck rather than as "run sync", which could
-// not get the lock either.
+// Collection is called stuck only when the lock's holder took it long ago:
+// a pass that started a moment ago (after the Mac woke, with the last scan
+// hours old) is not, and neither is a record whose holder died, since
+// nothing holds the lock then.
 func TestStatusReportsAStuckCollectorLock(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Now()
 	env := pairStatusEnv(t, home, userHome, now)
 	setUpTestConfig(t, home, t.TempDir(), now.Add(-48*time.Hour))
 	store, _ := collector.NewLocalStore(home)
-	if err := store.SaveStatus(collector.Status{LastScanAt: now.Add(-45 * time.Minute)}); err != nil {
-		t.Fatal(err)
+	must(t, store.SaveStatus(collector.Status{LastScanAt: now.Add(-3 * time.Hour)}))
+	stuck := func() (statusView, bool) {
+		t.Helper()
+		view, err := readStatus(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return view, strings.Contains(view.Next, "Collection is stuck")
 	}
-	view, err := readStatus(env)
-	if err != nil {
-		t.Fatal(err)
+
+	unlock, err := lockCollector(home, "scheduled collection", now.Add(-5*time.Second))
+	must(t, err)
+	if view, isStuck := stuck(); isStuck {
+		t.Fatalf("a pass that just started is stuck: %s", view.Next)
 	}
-	if strings.Contains(view.Next, "collector lock") {
-		t.Fatalf("stuck with the lock free: %s", view.Next)
+	unlock()
+	if _, err := os.Stat(filepath.Join(home, collectorLockRecordName)); !os.IsNotExist(err) {
+		t.Fatal("releasing the lock left its record")
 	}
-	unlock, err := local.Lock(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer unlock()
-	view, err = readStatus(env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if view.State != "Needs attention" || !strings.Contains(view.Next, "collector lock") || !strings.Contains(view.Next, "45m") {
+
+	unlock, err = lockCollector(home, "backfill undo", now.Add(-3*time.Hour))
+	must(t, err)
+	view, isStuck := stuck()
+	if !isStuck || view.State != "Needs attention" || !strings.Contains(view.Next, "backfill undo") || !strings.Contains(view.Next, "3h 0m ago") || !strings.Contains(view.Next, strconv.Itoa(os.Getpid())) {
 		t.Fatalf("state %q next %q", view.State, view.Next)
+	}
+	unlock()
+
+	// A holder that died leaves its record, but nothing holds the lock.
+	must(t, local.Write(filepath.Join(home, collectorLockRecordName), collectorLockRecord{Holder: "sync", PID: 1, Since: now.Add(-3 * time.Hour)}))
+	if view, isStuck := stuck(); isStuck {
+		t.Fatalf("a dead holder's record reads as stuck: %s", view.Next)
+	}
+}
+
+// The collector's quarantined files and unrefreshable summaries, already in
+// status --json, show in the text status too.
+func TestStatusShowsQuarantinedFilesAndUnrefreshableSummaries(t *testing.T) {
+	home, userHome := t.TempDir(), t.TempDir()
+	now := time.Now()
+	env := pairStatusEnv(t, home, userHome, now)
+	setUpTestConfig(t, home, t.TempDir(), now.Add(-48*time.Hour))
+	store, _ := collector.NewLocalStore(home)
+	must(t, store.SaveStatus(collector.Status{LastScanAt: now, QuarantinedFiles: []string{"registrations/x.json.corrupt"}, UnrefreshableSummaries: 2}))
+	var out bytes.Buffer
+	if code := Run([]string{"status"}, nil, &out, nil, env); code != 0 {
+		t.Fatal(code)
+	}
+	if !strings.Contains(out.String(), "Quarantined:   1 local state file(s)") || !strings.Contains(out.String(), "Summaries:     2 session summary(ies)") {
+		t.Fatalf("status:\n%s", &out)
 	}
 }
