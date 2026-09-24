@@ -202,8 +202,8 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 // skip reports whether a session is no longer imported, counting why: the
 // configuration no longer accepts it, its transcript is gone, a hook or
 // another run registered it since the plan was made, or it starts after the
-// admission, which the plan could not judge: a clock set back since the plan
-// moves the admission before the start.
+// admission. CheckClock already refuses an admission before the plan, so the
+// last is a backstop: no registration ever starts after its admission.
 func (r Registration) skip(cfg config.Config, c Candidate, result *RegistrationResult) (bool, error) {
 	if !cfg.AcceptSession(r.registration(c, "")) {
 		result.NotAdmitted++
