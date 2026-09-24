@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // UndoPlan is what `backfill undo` does to one import. Its sessions are the
@@ -61,16 +62,16 @@ type UndoSession struct {
 // PlanUndo decides what undoing b does. project limits it to one project
 // directory, resolved as BuildPlan resolves --project. It writes nothing.
 func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b Batch, project string) (UndoPlan, error) {
-	p := UndoPlan{Batch: b, view: Plan{GeneratedAt: env.now(),
-		Home: env.Home, resolvedHome: env.resolved(env.Home),
-		Destination: Destination{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix},
-	}}
 	if project != "" {
 		if abs, err := filepath.Abs(project); err == nil {
 			project = abs
 		}
-		p.Project = env.resolved(project)
+		project = env.resolved(project)
 	}
+	p := UndoPlan{Batch: b, Project: project, view: Plan{GeneratedAt: env.now(),
+		Home: env.Home, resolvedHome: env.resolved(env.Home),
+		Destination: Destination{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix},
+	}}
 	inProject := func(root string) bool {
 		return p.Project == "" || root == p.Project || env.resolved(root) == p.Project
 	}
@@ -125,7 +126,7 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 			parents = append(parents, s)
 		}
 	}
-	p.Sessions = append(children, parents...)
+	p.Sessions = slices.Concat(children, parents)
 
 	excludedRoots := map[string]bool{}
 	for _, project := range cfg.Archive.Projects {
@@ -235,12 +236,16 @@ func (p UndoPlan) Empty() bool {
 // bucket is called, and DeletedSessions and ForgottenSessions split the
 // sessions alone.
 type UndoCounts struct {
-	Sessions, Subagents, Resumed int
+	Sessions  int
+	Subagents int
+	Resumed   int
 	// ResumeUnknown counts the Cursor database chats whether resumed could
 	// not be checked.
-	ResumeUnknown                      int
-	Deleted, Forgotten                 int
-	DeletedSessions, ForgottenSessions int
+	ResumeUnknown     int
+	Deleted           int
+	Forgotten         int
+	DeletedSessions   int
+	ForgottenSessions int
 }
 
 func (p UndoPlan) Counts() UndoCounts {
@@ -325,7 +330,8 @@ func (p UndoPlan) ApplyToConfig(cfg *config.Config) []string {
 type UndoResult struct {
 	// Deleted were removed from the bucket and forgotten; Forgotten, from a
 	// previous destination, were only forgotten locally.
-	Deleted, Forgotten []string
+	Deleted   []string
+	Forgotten []string
 	// Failed maps each session left registered to why; running undo again
 	// retries it.
 	Failed map[string]error
@@ -377,38 +383,38 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 	if p.Project != "" {
 		scope += " in " + p.view.display(p.Project)
 	}
-	fmt.Fprintf(w, "Undo %s, started %s.\n\n", scope, p.Batch.StartedAt.In(p.view.GeneratedAt.Location()).Format("2006-01-02 15:04"))
+	terminal.Printf(w, "Undo %s, started %s.\n\n", scope, p.Batch.StartedAt.In(p.view.GeneratedAt.Location()).Format("2006-01-02 15:04"))
 	if c.Sessions+c.Subagents > 0 {
-		fmt.Fprintln(w, "If you continue:")
+		terminal.Println(w, "If you continue:")
 	}
 	sessions := undoNoun(c.Sessions, c.Subagents)
 	switch {
 	case c.Deleted > 0 && c.Forgotten == 0:
-		fmt.Fprintf(w, "  • %s %s deleted from\n    %s.\n", sessions, isAre(c.Sessions+c.Subagents), p.view.destination())
+		terminal.Printf(w, "  • %s %s deleted from\n    %s.\n", sessions, isAre(c.Sessions+c.Subagents), p.view.destination())
 	case c.Deleted > 0:
-		fmt.Fprintf(w, "  • %s %s deleted from\n    %s.\n", count(c.Deleted, "session"), isAre(c.Deleted), p.view.destination())
-		fmt.Fprintf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", count(c.Forgotten, "session"), isAre(c.Forgotten))
+		terminal.Printf(w, "  • %s %s deleted from\n    %s.\n", count(c.Deleted, "session"), isAre(c.Deleted), p.view.destination())
+		terminal.Printf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", count(c.Forgotten, "session"), isAre(c.Forgotten))
 	case c.Forgotten > 0:
-		fmt.Fprintf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, isAre(c.Sessions+c.Subagents))
+		terminal.Printf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, isAre(c.Sessions+c.Subagents))
 	}
 	if c.Resumed > 0 {
-		fmt.Fprintf(w, "    This includes %s resumed since the import, with %s newer content.\n", count(c.Resumed, "session"), theirIts(c.Resumed))
+		terminal.Printf(w, "    This includes %s resumed since the import, with %s newer content.\n", count(c.Resumed, "session"), theirIts(c.Resumed))
 	}
 	if n := c.ResumeUnknown; n > 0 {
-		fmt.Fprintf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", count(n, "Cursor chat")+" "+wasWere(n))
+		terminal.Printf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", count(n, "Cursor chat")+" "+wasWere(n))
 	}
 	if n := len(p.ExcludeProjects); n > 0 {
 		if c.Sessions+c.Subagents == 0 {
-			fmt.Fprintln(w, "If you continue:")
+			terminal.Println(w, "If you continue:")
 		}
-		fmt.Fprintf(w, "  • %s the import added %s excluded from capture; setup can\n    include %s again:\n", count(n, "project"), isAre(n), themIt(n))
+		terminal.Printf(w, "  • %s the import added %s excluded from capture; setup can\n    include %s again:\n", count(n, "project"), isAre(n), themIt(n))
 		roots := make([]string, 0, n)
 		for _, project := range p.ExcludeProjects {
 			roots = append(roots, p.view.display(project.Root))
 		}
 		sort.Strings(roots)
 		for _, root := range roots {
-			fmt.Fprintf(w, "      %s\n", root)
+			terminal.Printf(w, "      %s\n", root)
 		}
 		if h := p.HookCapturedStopping; h > 0 {
 			where, verb, what := "these projects", "stop", "they are"
@@ -418,7 +424,7 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 			if h == 1 {
 				verb, what = "stops", "it is"
 			}
-			fmt.Fprintf(w, "    %s in %s %s uploading; %s not deleted.\n", count(h, "hook-captured session"), where, verb, what)
+			terminal.Printf(w, "    %s in %s %s uploading; %s not deleted.\n", count(h, "hook-captured session"), where, verb, what)
 		}
 	}
 	if len(p.RemoveApps) > 0 {
@@ -430,11 +436,11 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 			}
 			names = append(names, name)
 		}
-		fmt.Fprintf(w, "  • %s imports without hooks are no longer published.\n", joinAnd(names))
+		terminal.Printf(w, "  • %s imports without hooks are no longer published.\n", joinAnd(names))
 	}
-	fmt.Fprintln(w, "  • Hook-captured sessions and the apps' own files are not touched.")
+	terminal.Println(w, "  • Hook-captured sessions and the apps' own files are not touched.")
 	if c.Sessions+c.Subagents > 0 {
-		fmt.Fprintln(w, "  • These sessions are not imported again unless you run\n    agent-archive backfill --include-removed.")
+		terminal.Println(w, "  • These sessions are not imported again unless you run\n    agent-archive backfill --include-removed.")
 	}
 }
 
