@@ -128,9 +128,11 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 
 	// A session ages from its cached capture when it has one. A registration
 	// that never produced a capture (the transcript vanished before the first
-	// scan, or was never readable) ages from the session's own start instead;
-	// otherwise it would be the one kind of local state that never expires.
-	ageFrom := reg.SessionStartedAt
+	// scan, or was never readable) ages from its admission instead; otherwise
+	// it would be the one kind of local state that never expires. Admission,
+	// not the start: an imported session can have started years ago, and a
+	// failed first upload must not expire it at once.
+	ageFrom := reg.Admitted()
 	if found && !bundle.Capture.CapturedAt.IsZero() {
 		ageFrom = bundle.Capture.CapturedAt
 	}
@@ -146,7 +148,7 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 	// otherwise the registration and that text would stay on this machine
 	// forever. It never published, so forgetting it needs no bucket call.
 	deferForWork := opts.Publishable == nil || opts.Publishable(reg)
-	if reg.TranscriptPath == "" && opts.SessionMaxAge > 0 && !reg.SessionStartedAt.IsZero() && now.Sub(reg.SessionStartedAt) >= opts.SessionMaxAge {
+	if admitted := reg.Admitted(); reg.TranscriptPath == "" && opts.SessionMaxAge > 0 && !admitted.IsZero() && now.Sub(admitted) >= opts.SessionMaxAge {
 		deferForWork = false
 	}
 	if locallyExpired && deferForWork {
@@ -174,12 +176,12 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		if !locallyExpired {
 			return nil
 		}
-		forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork)
-		if err != nil {
-			return fmt.Errorf("forget session from a previous destination: %w", err)
-		}
+		forgotten, err := forgetExpired(local, reg, deferForWork, now)
 		if forgotten {
 			result.PrunedSessions = append(result.PrunedSessions, reg.ArchiveSessionID)
+		}
+		if err != nil {
+			return fmt.Errorf("forget session from a previous destination: %w", err)
 		}
 		return nil
 	}
@@ -198,12 +200,12 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 			return fmt.Errorf("check pending publication: %w", err)
 		}
 		if !everPublished && !pending {
-			forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork)
-			if err != nil {
-				return fmt.Errorf("forget never-published session: %w", err)
-			}
+			forgotten, err := forgetExpired(local, reg, deferForWork, now)
 			if forgotten {
 				result.PrunedSessions = append(result.PrunedSessions, reg.ArchiveSessionID)
+			}
+			if err != nil {
+				return fmt.Errorf("forget never-published session: %w", err)
 			}
 			return nil
 		}
@@ -260,12 +262,12 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		// publication is the whole session, not a delta), or, if the request
 		// added nothing, acknowledges it and the next sweep finishes the
 		// expiry.
-		forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork)
-		if err != nil {
-			return fmt.Errorf("forget session: %w", err)
-		}
+		forgotten, err := forgetExpired(local, reg, deferForWork, now)
 		if forgotten {
 			result.DeletedSessions = append(result.DeletedSessions, reg.ArchiveSessionID)
+		}
+		if err != nil {
+			return fmt.Errorf("forget session: %w", err)
 		}
 		return nil
 	}
@@ -309,6 +311,19 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 		result.DeletedSnapshots++
 	}
 	return nil
+}
+
+// forgetExpired forgets an expired session and leaves a removal record so
+// backfill does not import it again. Every path that calls it is
+// whole-session expiry past the retention window: after deleting the session
+// from the current bucket, for a session that never published, and for one
+// published to a previous destination. ForgetIdleSession writes the record
+// under the request lock, so a session a hook kept alive gets none, and a
+// failed write keeps the session registered for the next sweep to retry.
+func forgetExpired(local *collector.LocalStore, reg archive.SessionRegistration, deferForWork bool, now time.Time) (bool, error) {
+	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &collector.RemovalRecord{
+		Harness: reg.Harness.Name, Reason: collector.RemovalReasonRetention, At: now,
+	})
 }
 
 // hasUnfinishedWork reports whether the collector still owes this session a

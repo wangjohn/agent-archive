@@ -41,7 +41,7 @@ func changeBucket(t *testing.T, env Env, home, userHome string) (config.Config, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := applySetup(home, userHome, exe, old, &next, env); err != nil {
+	if err := applySetup(home, userHome, exe, old, &next, nil, env); err != nil {
 		return config.Config{}, err, out.String()
 	}
 	committed, _, err := config.Load(home)

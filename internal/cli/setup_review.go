@@ -29,6 +29,9 @@ func showSetupReview(p *prompter, cfg config.Config, reconfiguring bool, discove
 		}
 		fmt.Fprintf(p.out, "  %s: installed version %s (capture unverified); fresh-start evidence %s; transcript %s\n", appName(app), version, profile.FreshStart.State, profile.Transcript.State)
 	}
+	if len(cfg.ImportedHarnesses) > 0 {
+		fmt.Fprintf(p.out, "Imported only: %s (sessions imported by backfill are published; new sessions are not captured)\n", friendlyApps(cfg.ImportedHarnesses))
+	}
 	for _, project := range cfg.Archive.Projects {
 		if project.Included {
 			fmt.Fprintf(p.out, "Project    %s\n", project.Root)
@@ -80,6 +83,35 @@ func reviewAction(p *prompter, label string) (string, error) {
 	}
 }
 
+// promptStopImported offers to stop publishing each app that has only
+// imported sessions: one backfill imported without its hooks installed, and
+// which setup is not installing hooks for now. Stopping removes it from
+// ImportedHarnesses when setup commits, so its imports are no longer
+// published; sessions already in the bucket stay until retention removes
+// them.
+func promptStopImported(p *prompter, draft *setupDraft) error {
+	for _, app := range draft.Config.ImportedHarnesses {
+		if containsString(draft.Config.Harnesses, app) || containsString(draft.StopImported, app) {
+			continue
+		}
+		keep, err := p.yesNo(fmt.Sprintf("Keep publishing %s sessions imported by backfill?", appName(app)), true)
+		if err != nil {
+			return err
+		}
+		if !keep {
+			draft.StopImported = append(draft.StopImported, app)
+		}
+	}
+	return nil
+}
+
+// offerStopImported refreshes the draft's list from the committed
+// configuration, which is where backfill writes it, then prompts.
+func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) error {
+	draft.Config.ImportedHarnesses = carriedImportedHarnesses(committed.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
+	return promptStopImported(p, draft)
+}
+
 func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
 	fmt.Fprintln(p.out, "\nWhat would you like to change?")
 	fmt.Fprintln(p.out, "  apps       Which apps to include\n  projects   Which projects to include\n  sessions   All sessions or only sessions using skills\n  retention  How long sessions are kept\n  storage    Bucket or credentials\n  prefix     Folder inside the bucket")
@@ -96,6 +128,10 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
 	switch choice {
 	case "apps":
 		draft.Config.Harnesses, err = promptHarnesses(p, nil, draft.Config.Harnesses)
+		if err != nil {
+			return err
+		}
+		err = promptStopImported(p, draft)
 	case "projects":
 		projects, e := promptProjects(p, draft.Config.Archive.Projects, time.Time{}, userHome)
 		if e != nil {
