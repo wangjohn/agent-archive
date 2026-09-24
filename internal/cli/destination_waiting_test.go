@@ -137,17 +137,23 @@ func TestSwitchingBackToADestinationAcceptsItsSessionsAgain(t *testing.T) {
 	}
 	reg := onlyCursorRegistration(t, home)
 	env.Now = func() time.Time { return now.Add(time.Hour) }
-	atB, err, _ := changeBucketTo(t, env, home, userHome, "bucket-b")
+	atB, err, out := changeBucketTo(t, env, home, userHome, "bucket-b")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(out, "resume uploading") {
+		t.Fatalf("a new destination was said to resume sessions: %s", out)
 	}
 	if atB.AcceptSession(reg) || atB.InCurrentDestination(reg) {
 		t.Fatal("a session admitted into A was accepted at B")
 	}
 	env.Now = func() time.Time { return now.Add(2 * time.Hour) }
-	backAtA, err, _ := changeBucketTo(t, env, home, userHome, "test-bucket")
+	backAtA, err, out := changeBucketTo(t, env, home, userHome, "test-bucket")
 	if err != nil {
 		t.Fatalf("a session of A blocked switching back to A: %v", err)
+	}
+	if !strings.Contains(out, "1 session(s) from when this destination was used before resume uploading there") {
+		t.Fatalf("setup did not say A's session resumes: %s", out)
 	}
 	if !backAtA.DestinationSince.After(reg.Admitted()) {
 		t.Fatalf("test precondition: the switch back moved DestinationSince past the admission: %v", backAtA.DestinationSince)

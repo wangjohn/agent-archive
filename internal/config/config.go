@@ -113,12 +113,21 @@ func SetPaused(home string, paused bool) (Config, error) {
 // lives here rather than in package archive, which imports no other internal
 // package: taking a credentials.Config would pull the AWS SDK and cgo into
 // archive.
+//
+// Registrations and batch files store this value, and it decides which bucket
+// owns a session. It must never change, not the provider or endpoint
+// normalisation, the join, nor the prefix trimming, without a migration of
+// every stored ID: otherwise every registration silently belongs to no
+// destination. TestDestinationIDIsPinned holds it fixed.
 func DestinationID(c credentials.Config) string {
+	// The provider is compared as storage compares it, case- and
+	// space-insensitively; setup always writes it lowercase.
+	provider := strings.ToLower(strings.TrimSpace(c.Provider))
 	endpoint := ""
-	if c.Provider == credentials.ProviderR2 {
+	if provider == credentials.ProviderR2 {
 		endpoint, _ = credentials.R2Endpoint(c.R2Endpoint, c.R2AccountID)
 	}
-	sum := sha256.Sum256([]byte(strings.Join([]string{c.Provider, endpoint, c.Bucket, strings.Trim(c.Prefix, "/")}, "\x00")))
+	sum := sha256.Sum256([]byte(strings.Join([]string{provider, endpoint, c.Bucket, strings.Trim(c.Prefix, "/")}, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 

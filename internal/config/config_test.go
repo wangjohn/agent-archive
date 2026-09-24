@@ -195,6 +195,28 @@ func TestDestinationID(t *testing.T) {
 	if (Config{Storage: r2}).DestinationID() != DestinationID(r2) {
 		t.Fatal("Config.DestinationID is not the configured storage's")
 	}
+	if DestinationID(credentials.Config{Provider: " S3 ", Bucket: "b", Prefix: "agent-archive"}) != DestinationID(s3) {
+		t.Fatal("the provider's case or spacing changed the destination")
+	}
+}
+
+// Stored registrations and batch files hold these values. Changing one
+// orphans every stored ID; it needs a migration, not a new expected value.
+func TestDestinationIDIsPinned(t *testing.T) {
+	byAccount := credentials.Config{Provider: "r2", Bucket: "archive", R2AccountID: "acct", Prefix: "agent-archive"}
+	byEndpoint := credentials.Config{Provider: "r2", Bucket: "archive", R2Endpoint: "https://acct.r2.cloudflarestorage.com/", Prefix: "/agent-archive/"}
+	for name, tc := range map[string]struct {
+		cfg  credentials.Config
+		want string
+	}{
+		"s3":             {credentials.Config{Provider: "s3", Bucket: "archive", Prefix: "agent-archive/", Region: "us-east-1", AWSProfile: "p"}, "2d80d2bf233cf2e71fb338eaf0948793f72efcc866fa099bd5ebb9d0ed501452"},
+		"r2 by account":  {byAccount, "930af4da44d5812d1f867ebd62059c2951229d67b9e993a551a82ab7ee5f0d21"},
+		"r2 by endpoint": {byEndpoint, "930af4da44d5812d1f867ebd62059c2951229d67b9e993a551a82ab7ee5f0d21"},
+	} {
+		if got := DestinationID(tc.cfg); got != tc.want {
+			t.Errorf("%s: DestinationID=%s, want %s", name, got, tc.want)
+		}
+	}
 }
 
 // A registration that records its destination is judged by it, not by time:

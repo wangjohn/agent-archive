@@ -294,15 +294,19 @@ Deciding which bucket a session belongs to by comparing times is a guess, and a
 clock change can make it wrong. B1b, now implemented, records the bucket
 directly: `config.DestinationID` is a hash of provider, endpoint, bucket, and
 prefix, never of credentials. (It lives in `config`, not `archive`, which
-imports no other internal package.) Hooks set the registration's
+imports no other internal package.) A test pins its value: changing the hash
+needs a migration of every stored ID. Hooks set the registration's
 `DestinationID` on a new session, backfill on an import, and a subagent copies
 its parent's; a continuation never changes it. `InCurrentDestination`, which
 `AcceptSession` and retention use, compares it when it is set, and falls back
 to comparing times when it is empty. No migration is needed. A session
-admitted into bucket A is not accepted while the destination is B, and is
-accepted again, with retention deleting in A, after switching back to A,
-where its objects are. Project activation stays a time comparison, because it
-really is a question of time.
+admitted into bucket A is not accepted while the destination is B. Switching
+back to A resumes A's sessions that are still registered: they publish and
+expire in A again, where their objects are. What happened while B was
+configured is not recovered: retention forgot A sessions that expired then
+without deleting their objects, A's pending subagent candidates were
+rejected, and hooks dropped A sessions' lifecycle evidence. Project
+activation stays a time comparison, because it really is a question of time.
 
 ### Alternatives considered
 

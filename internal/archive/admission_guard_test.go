@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -65,7 +66,8 @@ func comparisons(fset *token.FileSet, file *ast.File, left, right []string) []to
 		default:
 			return true
 		}
-		start, boundary := false, false
+		// An empty left matches any other operand.
+		start, boundary := len(left) == 0, false
 		for _, side := range sides {
 			start = start || mentions(side, left...)
 			boundary = boundary || mentions(side, right...)
@@ -92,19 +94,49 @@ func TestNoBoundaryComparesSessionStartedAtOutsideAdmitted(t *testing.T) {
 
 // A registration's destination is decided by config.InCurrentDestination,
 // which compares its DestinationID and falls back to Admitted() against
-// DestinationSince only when the ID is empty. Comparing Admitted() with
-// DestinationSince anywhere else skips the ID: a session admitted into a
-// bucket the configuration switched away from and back to would look foreign.
+// DestinationSince only when the ID is empty. Comparing anything with
+// DestinationSince elsewhere, directly or through a variable holding an
+// admission, skips the ID: a session admitted into a bucket the
+// configuration switched away from and back to would look foreign.
 func TestNoDestinationTimeComparisonOutsideInCurrentDestination(t *testing.T) {
-	allowed := filepath.Join("internal", "config", "config.go")
 	walkSources(t, func(path string, fset *token.FileSet, file *ast.File) {
-		if strings.HasSuffix(path, allowed) {
-			return
-		}
-		for _, position := range comparisons(fset, file, []string{"Admitted", "AdmittedAt"}, []string{"DestinationSince"}) {
-			t.Errorf("%s: compares an admission with DestinationSince; use config.InCurrentDestination", position)
+		for _, position := range destinationComparisons(fset, file) {
+			t.Errorf("%s: compares with DestinationSince; use config.InCurrentDestination", position)
 		}
 	})
+}
+
+// destinationComparisonAllowed names the functions that may compare with
+// DestinationSince, as package.function: the rule itself, and backfill's
+// clock check, which compares the import's admission time (not a
+// registration) with the destination's start.
+var destinationComparisonAllowed = map[string]bool{
+	"config.InCurrentDestination": true,
+	"backfill.CheckClock":         true,
+}
+
+// destinationComparisons returns every comparison in file that mentions
+// DestinationSince, whatever the other operand, outside the allowed
+// functions.
+func destinationComparisons(fset *token.FileSet, file *ast.File) []token.Position {
+	var allowed []ast.Node
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && destinationComparisonAllowed[file.Name.Name+"."+fn.Name.Name] {
+			allowed = append(allowed, fn)
+		}
+	}
+	var out []token.Position
+	for _, position := range comparisons(fset, file, nil, []string{"DestinationSince"}) {
+		inside := false
+		for _, fn := range allowed {
+			start, end := fset.Position(fn.Pos()), fset.Position(fn.End())
+			inside = inside || (position.Offset >= start.Offset && position.Offset < end.Offset)
+		}
+		if !inside {
+			out = append(out, position)
+		}
+	}
+	return out
 }
 
 // walkSources parses every non-test Go file in the module and calls fn.
@@ -161,15 +193,25 @@ func a() {
 	}
 }
 
-// The destination guard must recognise an admission compared with
-// DestinationSince, and leave other comparisons alone.
-func TestDestinationGuardDetectsAdmissionComparisons(t *testing.T) {
-	src := `package p
+// The destination guard must recognise any comparison with DestinationSince,
+// through a local variable too, outside the allowed functions, and leave
+// other uses of the field and other comparisons alone.
+func TestDestinationGuardDetectsComparisons(t *testing.T) {
+	src := `package config
 func a() {
 	_ = r.Admitted().Before(c.DestinationSince)
 	_ = !reg.AdmittedAt.IsZero() && reg.AdmittedAt.After(cfg.DestinationSince)
-	_ = admittedAt.Before(cfg.DestinationSince)
+	admitted := r.Admitted()
+	_ = admitted.Before(c.DestinationSince)
+	_ = c.DestinationSince.IsZero() || !c.DestinationSince.After(admitted)
 	_ = r.Admitted().Before(p.ActivatedAt)
+	next.DestinationSince = now
+}
+func (c Config) InCurrentDestination(r archive.SessionRegistration) bool {
+	return c.DestinationSince.IsZero() || !r.Admitted().Before(c.DestinationSince)
+}
+func CheckClock() {
+	_ = admittedAt.Before(cfg.DestinationSince)
 }`
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "guard.go", src, 0)
@@ -177,10 +219,11 @@ func a() {
 		t.Fatal(err)
 	}
 	var lines []int
-	for _, position := range comparisons(fset, file, []string{"Admitted", "AdmittedAt"}, []string{"DestinationSince"}) {
+	for _, position := range destinationComparisons(fset, file) {
 		lines = append(lines, position.Line)
 	}
-	if len(lines) != 2 || lines[0] != 3 || lines[1] != 4 {
-		t.Fatalf("flagged lines %v, want [3 4]", lines)
+	// CheckClock is allowed only in package backfill.
+	if want := []int{3, 4, 6, 7, 15}; !slices.Equal(lines, want) {
+		t.Fatalf("flagged lines %v, want %v", lines, want)
 	}
 }
