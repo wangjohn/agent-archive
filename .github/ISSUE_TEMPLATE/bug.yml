@@ -1,0 +1,48 @@
+name: Bug report
+description: agent-archive did something wrong, crashed, or printed an error.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please don't paste transcript content, bucket names you'd rather keep private, access keys, or anything from your Keychain. For a security problem (for example, a secret that got past redaction), don't open an issue: follow SECURITY.md instead.
+        If a session wasn't archived or its counts look wrong, use the **Capture gap** template.
+  - type: input
+    id: version
+    attributes:
+      label: agent-archive version
+      description: Output of `agent-archive --version`.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "e.g. 15.5 (Apple silicon)"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command you ran and what it printed. Redact paths or names you'd rather not share.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: As far as you can tell.
+  - type: textarea
+    id: status
+    attributes:
+      label: "`agent-archive status` output (optional)"
+      description: Redact bucket names, paths, and anything else you'd rather keep private.
+      render: text

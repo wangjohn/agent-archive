@@ -1,0 +1,20 @@
+# Weekly dependency updates, one grouped pull request per ecosystem, so
+# updates arrive as a reviewable batch rather than a stream. GitHub Actions
+# stay pinned by commit SHA; Dependabot updates the SHA and its version
+# comment together.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

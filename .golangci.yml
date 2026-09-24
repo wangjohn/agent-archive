@@ -1,0 +1,204 @@
+# golangci-lint v2 configuration. CI pins the golangci-lint version in
+# .github/workflows/test.yml; run the same version locally:
+#
+#   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+#   golangci-lint run                     # what CI blocks on
+#   golangci-lint run --enable-only=revive # doc-comment debt (see below)
+#
+# Doc comments on exported identifiers (revive's `exported` rule) are required
+# of new and changed code only: CI runs revive with --new-from-merge-base, and
+# the blocking run disables it. Existing gaps are tracked as their own work.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - funlen
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unused
+  settings:
+    revive:
+      rules:
+        - name: exported
+    # Size and complexity ceilings for new functions. The existing functions
+    # above them are listed under exclusions until they are split up.
+    funlen:
+      lines: 150
+      statements: 80
+    gocyclo:
+      min-complexity: 30
+    staticcheck:
+      # The defaults, minus the quickfix (QF) suggestions: they are
+      # refactoring hints, not defects, and would only add noise here.
+      checks: ["all", "-ST1000", "-ST1003", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-QF*"]
+    gosec:
+      excludes:
+        # G104 (unhandled errors) duplicates errcheck, which is the one
+        # authority on ignored errors here, with the std-error-handling preset.
+        - G104
+        # G204 (subprocess with variable arguments): every exec in this tool
+        # runs a fixed binary (launchctl, security, sqlite helpers in tests)
+        # with an argv slice and no shell, which is the safe form G204 cannot
+        # distinguish from the unsafe one.
+        - G204
+  exclusions:
+    presets:
+      # fmt.Fprint* to a terminal, Close on read-only files, and similar
+      # calls whose errors are conventionally ignored.
+      - std-error-handling
+      - common-false-positives
+    rules:
+      # Tests build fixtures in t.TempDir() with literal paths and modes and
+      # check results by assertion; gosec's file, permission, and path
+      # checks describe production hazards that do not apply there. Long
+      # scenario tests are long by design.
+      - path: _test\.go
+        linters: [gosec, funlen, gocyclo]
+
+      # G304 (file inclusion via variable) is inherent to this tool: it reads
+      # transcripts, configs, and state at paths the user's own apps and
+      # hooks name, as the user. It is excluded only where it is by design,
+      # not globally, so a new file-reading package gets looked at.
+      # G703 (path traversal via taint) is the same finding from the taint
+      # analyzer: the "tainted" paths are the user's own HOME, environment,
+      # and config, and there is no privilege boundary to cross.
+      - path: internal/(archive|backfill|cli|collector|cursorstore|evidence|hooks|local|reader)/
+        text: G304|G703
+        linters: [gosec]
+      # G302 on a directory: 0700 is the private mode for a directory, which
+      # needs its execute bit; G302 only knows file modes.
+      - path: internal/(local/files|reader/cache)\.go
+        text: G302
+        linters: [gosec]
+      # A skip-reason enum value, not a credential.
+      - path: internal/backfill/backfill\.go
+        text: G101
+        linters: [gosec]
+      # md5 here is the S3 ETag of an object, used to compare content with
+      # what the bucket reports, never as a security primitive.
+      - path: internal/(storage/hash|reader/cache)\.go
+        text: G501
+        linters: [gosec]
+
+      # TODO(W3-B, collector state refactor): existing functions over the
+      # funlen/gocyclo ceilings. Remove each entry as the function is split.
+      - path: internal/collector/collector\.go
+        text: "(processSession|`Run`|'Run')"
+        linters: [funlen, gocyclo]
+      - path: internal/collector/subagent_capture\.go
+        text: materializeSubagentCandidate
+        linters: [gocyclo]
+      - path: internal/retention/retention\.go
+        text: sweepSession
+        linters: [funlen, gocyclo]
+      - path: internal/cli/status\.go
+        text: readStatus
+        linters: [funlen, gocyclo]
+      - path: internal/cli/setup\.go
+        text: "`setup`|'setup'"
+        linters: [funlen, gocyclo]
+      - path: internal/cli/setup_transaction\.go
+        text: applySetup
+        linters: [funlen, gocyclo]
+      - path: internal/cli/uninstall\.go
+        text: "`uninstall`|'uninstall'"
+        linters: [funlen, gocyclo]
+      - path: internal/cli/collect\.go
+        text: runPass
+        linters: [funlen, gocyclo]
+      - path: internal/cli/handoff\.go
+        text: runHandoffCommand
+        linters: [funlen, gocyclo]
+      - path: internal/cli/backfill\.go
+        text: runBackfillCommand
+        linters: [funlen, gocyclo]
+      - path: internal/cli/backfill_undo\.go
+        text: runBackfillUndo
+        linters: [funlen, gocyclo]
+      - path: internal/backfill/plan\.go
+        text: BuildPlan
+        linters: [funlen, gocyclo]
+      - path: internal/backfill/cursordb\.go
+        text: planCursorDatabase
+        linters: [gocyclo]
+      - path: internal/backfill/undo\.go
+        text: PlanUndo
+        linters: [gocyclo]
+      - path: internal/backfill/render\.go
+        text: RenderText
+        linters: [gocyclo]
+      - path: internal/archive/handoff\.go
+        text: (BuildHandoff|RenderHandoffMarkdown)
+        linters: [funlen, gocyclo]
+      - path: internal/archive/source_jsonl\.go
+        text: DecodeSource
+        linters: [funlen, gocyclo]
+      - path: internal/archive/views\.go
+        text: BuildMetadata
+        linters: [funlen, gocyclo]
+      - path: internal/reader/reader\.go
+        text: "`matches`"
+        linters: [gocyclo]
+
+      # Baseline: findings in packages with fix PRs in flight, excluded here
+      # only to avoid conflicting with those PRs. Each block is removed, and
+      # its findings fixed, once the named PR has merged.
+      #
+      # TODO(W2-B, fix/backfill-undo-safety): backfill, cursorstore, reader.
+      - path: internal/backfill/cursordb\.go
+        text: json.Unmarshal
+        linters: [errcheck]
+      - path: internal/cursorstore/composer\.go
+        text: tx.Rollback
+        linters: [errcheck]
+      - path: internal/cursorstore/snapshots\.go
+        text: syscall.Flock
+        linters: [errcheck]
+      - path: internal/(backfill/cursordb|cursorstore/composer|cursorstore/helpers)_test\.go
+        linters: [errcheck]
+      - path: internal/reader/reader_test\.go
+        linters: [errorlint]
+      #
+      # TODO(W1-C, fix/hook-config-safety): hooks and cli.
+      - path: internal/hooks/install\.go
+        text: xml.EscapeText
+        linters: [errcheck]
+      - path: internal/(hooks/hooks|hooks/install|cli/experience|cli/setup|cli/uninstall)_test\.go
+        linters: [errcheck]
+      - path: internal/cli/(handoff|legacy_migration)\.go
+        linters: [errorlint]
+      - path: internal/cli/privacy_test\.go
+        linters: [errorlint]
+      - path: internal/cli/uninstall\.go
+        text: found
+        linters: [ineffassign]
+      - path: internal/cli/(status|uninstall)\.go
+        text: SA4006
+        linters: [staticcheck]
+      - path: internal/cli/(destination_waiting|subagent_review)_test\.go
+        text: ST1008|S1038
+        linters: [staticcheck]
+      - path: internal/cli/prompt\.go
+        text: (help|lines) is unused
+        linters: [unused]
+      #
+      # TODO(W1-B, fix/collector-durability): collector, storage, local.
+      - path: internal/local/files\.go
+        text: syscall.Flock
+        linters: [errcheck]
+      - path: internal/(local/files|collector/register_race)_test\.go
+        linters: [errcheck]
+      - path: internal/(local/files|collector/collector|storage/storage)_test\.go
+        linters: [errorlint]
+      - path: internal/storage/storage\.go
+        text: non-wrapping format verb
+        linters: [errorlint]
