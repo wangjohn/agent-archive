@@ -200,6 +200,72 @@ func TestUnreadableFolderIsCounted(t *testing.T) {
 	}
 }
 
+// An app's whole store that cannot be listed is named, not hidden in the
+// folder count: none of that app's sessions were found. The other apps'
+// sessions are still planned, and no path is shown. A store the harness
+// filter leaves out is not reported.
+func TestUnreadableStoreIsNamed(t *testing.T) {
+	tr := newTree(t)
+	repo := tr.repo("home/repo")
+	start := fixedNow.Add(-time.Hour)
+	const codexID, archivedID = "0a9b3c4d-0000-4000-8000-0000000000d1", "0a9b3c4d-0000-4000-8000-0000000000d2"
+	tr.write(filepath.Join("home", claudeFile("s", "claude-1")), claudeTranscript("claude-1", repo, start))
+	tr.write(filepath.Join("home", codexFile(codexID)), codexTranscript(codexID, codexID, repo, start))
+	tr.write(filepath.Join("home", ".codex", "archived_sessions", filepath.Base(codexFile(archivedID))), codexTranscript(archivedID, archivedID, repo, start))
+	tr.write(filepath.Join("home", ".cursor", "projects", "slug", "agent-transcripts", "k-1", "k-1.jsonl"), cursorTranscript)
+	home := tr.home
+	for _, tc := range []struct {
+		name, root, app, line string
+		missing               []string
+	}{
+		{"claude", filepath.Join(home, ".claude", "projects"), "claude", "Claude Code's session folder could not be read (check permissions);\n      none of its sessions are included.", []string{"claude-1"}},
+		{"codex", filepath.Join(home, ".codex", "sessions"), "codex", "Codex's session folder could not be read (check permissions);\n      none of its sessions are included.", []string{codexID}},
+		{"codex archived", filepath.Join(home, ".codex", "archived_sessions"), "codex", "Codex's archived session folder could not be read (check permissions);\n      none of its archived sessions are included.", []string{archivedID}},
+		{"cursor", filepath.Join(home, ".cursor", "projects"), "cursor", "Cursor's session folder could not be read (check permissions);\n      none of its sessions are included.", []string{"k-1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := tr.env()
+			env.ReadDir = func(dir string) ([]fs.DirEntry, error) {
+				if dir == tc.root {
+					return nil, &fs.PathError{Op: "open", Path: dir, Err: fs.ErrPermission}
+				}
+				return os.ReadDir(dir)
+			}
+			p := plan(t, env, nil, config.Config{}, Filters{})
+			if strings.Join(p.UnreadableStores, ",") != tc.app || p.UnreadableFolders != 0 {
+				t.Fatalf("stores %v, folders %d", p.UnreadableStores, p.UnreadableFolders)
+			}
+			found := map[string]bool{}
+			for _, c := range p.Candidates {
+				found[c.NativeSessionID] = true
+			}
+			if len(p.Candidates) != 4-len(tc.missing) || found[tc.missing[0]] {
+				t.Fatalf("candidates %+v", p.Candidates)
+			}
+			var text, js bytes.Buffer
+			RenderText(&text, p)
+			if err := RenderJSON(&js, p, false); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(text.String(), "\n      "+tc.line+"\n") || !strings.Contains(js.String(), `"unreadable_stores": [`+"\n"+`    "`+tc.app+`"`) {
+				t.Fatalf("text:\n%s\njson:\n%s", text.String(), js.String())
+			}
+			for _, out := range []string{text.String(), js.String()} {
+				if strings.Contains(out, ".claude") || strings.Contains(out, ".codex") || strings.Contains(out, ".cursor") {
+					t.Fatalf("a store path is shown:\n%s", out)
+				}
+			}
+			other := "claude"
+			if tc.app == "claude" {
+				other = "codex"
+			}
+			if p := plan(t, env, nil, config.Config{}, Filters{Harnesses: []string{other}}); len(p.UnreadableStores) != 0 {
+				t.Fatalf("a filtered-out store is reported: %v", p.UnreadableStores)
+			}
+		})
+	}
+}
+
 // The header scan reads at most headScanLimit bytes: a working directory
 // first recorded beyond it is not found, and the session has no project.
 func TestHeaderScanCap(t *testing.T) {

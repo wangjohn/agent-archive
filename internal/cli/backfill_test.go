@@ -273,6 +273,27 @@ func TestBackfillUnreadableFolder(t *testing.T) {
 			t.Fatalf("the unreadable folder is named:\n%s", text)
 		}
 	}
+
+	// Claude Code's whole store unreadable: the app is named, and the other
+	// apps' sessions can still be imported.
+	store := filepath.Join(f.userHome, ".claude", "projects")
+	if err := os.Chmod(store, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(store, 0o755) })
+	out, errOut, code = f.run(t, "--dry-run")
+	if code != 0 || !strings.Contains(out, "      Claude Code's session folder could not be read (check permissions);\n      none of its sessions are included.\n") || !strings.Contains(out, "Total: 3 sessions") {
+		t.Fatalf("code %d, %s\n%s", code, errOut, out)
+	}
+	jsonOut, _, _ = f.run(t, "--dry-run", "--json")
+	if !strings.Contains(jsonOut, "\"unreadable_stores\": [\n    \"claude\"\n  ]") || !strings.Contains(jsonOut, `"unreadable_folders": 0`) {
+		t.Fatalf("json:\n%s", jsonOut)
+	}
+	for _, text := range []string{out, errOut, jsonOut} {
+		if strings.Contains(text, ".claude") {
+			t.Fatalf("the unreadable store is named:\n%s", text)
+		}
+	}
 }
 
 func snapshotTree(t *testing.T, dir string) string {

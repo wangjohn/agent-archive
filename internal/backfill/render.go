@@ -381,7 +381,7 @@ func renderSkipped(w io.Writer, p Plan) {
 	counts := p.Skipped()
 	subagentsSkipped := p.SubagentsSkipped()
 	databaseUnchecked := !p.CursorDatabaseChecked && harnessMatches(p.Filters.Harnesses, "cursor")
-	if len(counts) == 0 && subagentsSkipped == 0 && p.UnreadableFolders == 0 && !databaseUnchecked {
+	if len(counts) == 0 && subagentsSkipped == 0 && p.UnreadableFolders == 0 && len(p.UnreadableStores) == 0 && !databaseUnchecked {
 		return
 	}
 	nouns := map[SkipReason]map[string]bool{}
@@ -418,9 +418,9 @@ func renderSkipped(w io.Writer, p Plan) {
 		}
 	}
 	if subagentsSkipped > 0 {
-		label := "subagent transcripts that can't be read"
+		label := "subagent transcripts that can't be imported"
 		if subagentsSkipped == 1 {
-			label = "subagent transcript that can't be read"
+			label = "subagent transcript that can't be imported"
 		}
 		lines = append(lines, line{subagentsSkipped, label, ""})
 	}
@@ -440,6 +440,15 @@ func renderSkipped(w io.Writer, p Plan) {
 		} else {
 			fmt.Fprintf(w, "%4d  %-*s%s\n", l.n, width, l.label, l.override)
 		}
+	}
+	for _, h := range p.UnreadableStores {
+		if h == "codex" && p.codexArchivedOnly {
+			fmt.Fprintln(w, "      Codex's archived session folder could not be read (check permissions);")
+			fmt.Fprintln(w, "      none of its archived sessions are included.")
+			continue
+		}
+		fmt.Fprintf(w, "      %s's session folder could not be read (check permissions);\n", harnessNames[h])
+		fmt.Fprintln(w, "      none of its sessions are included.")
 	}
 	if databaseUnchecked {
 		fmt.Fprintln(w, "      Cursor chats stored only in Cursor's database were not checked")
@@ -569,6 +578,9 @@ type planJSON struct {
 	CursorDatabaseChecked bool   `json:"cursor_database_checked"`
 	SubagentsSkipped      int    `json:"subagents_skipped"`
 	UnreadableFolders     int    `json:"unreadable_folders"`
+	// UnreadableStores are the apps whose whole session store could not
+	// be read.
+	UnreadableStores []string `json:"unreadable_stores"`
 }
 
 type filtersJSON struct {
@@ -613,6 +625,7 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 		CursorDatabaseChecked: p.CursorDatabaseChecked,
 		SubagentsSkipped:      p.SubagentsSkipped(),
 		UnreadableFolders:     p.UnreadableFolders,
+		UnreadableStores:      append([]string{}, p.UnreadableStores...),
 	}
 	for _, h := range p.Filters.Harnesses {
 		out.Filters.Harnesses = append(out.Filters.Harnesses, canonicalHarness(h))

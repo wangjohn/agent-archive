@@ -37,12 +37,21 @@ type Plan struct {
 	// UnreadableFolders counts the folders in the apps' stores that could not
 	// be listed; the sessions in them were not found.
 	UnreadableFolders int
+	// UnreadableStores are the apps, matching the filters, whose session
+	// store could not be listed at all: none of their sessions were found
+	// (for Codex, when codexArchivedOnly is set, only its archived ones).
+	// Importing the rest is still allowed; a run after the permissions are
+	// fixed imports what was missed.
+	UnreadableStores []string
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string
 	// projectFilter holds the --project directories, resolved as the plan
 	// compared them.
 	projectFilter []string
+	// codexArchivedOnly is set when only Codex's archived_sessions folder
+	// could not be listed.
+	codexArchivedOnly bool
 }
 
 // Destination names the bucket imports go to.
@@ -147,8 +156,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		Harnesses:     append([]string(nil), cfg.Harnesses...),
 		resolvedHome:  env.resolved(env.Home),
 	}
-	found, unreadable := discover(env)
-	plan.UnreadableFolders = unreadable
+	found, unread := discover(env)
 	workers := env.Workers
 	if workers <= 0 {
 		workers = defaultWorkers()
@@ -292,10 +300,18 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	// parents; one that fails is left out and counted.
 	var subagents []*subagentWork
 	for _, w := range parents {
-		for _, sub := range claudeSubagents(env, w.t, &plan.UnreadableFolders) {
+		for _, sub := range claudeSubagents(env, w.t, &unread) {
 			subagents = append(subagents, &subagentWork{parent: w, sub: sub})
 		}
 	}
+	plan.UnreadableFolders = unread.folders
+	for _, h := range harnessOrder {
+		// A store the filters leave out is not reported.
+		if unread.stores[h] && harnessMatches(filters.Harnesses, h) {
+			plan.UnreadableStores = append(plan.UnreadableStores, h)
+		}
+	}
+	plan.codexArchivedOnly = unread.codexArchivedOnly
 	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
 		if s.sub.Bytes > archive.MaxRecordBytes {
 			s.skipped = true
@@ -476,10 +492,10 @@ func carriesConversation(filtered archive.FilteredTranscript) bool {
 
 // claudeSubagents lists <slug>/<session>/subagents/agent-<id>.jsonl for an
 // imported Claude Code parent.
-func claudeSubagents(env Environment, t *transcript, unreadable *int) []Subagent {
+func claudeSubagents(env Environment, t *transcript, u *unreadable) []Subagent {
 	dir := filepath.Join(filepath.Dir(t.path), t.nativeID, "subagents")
 	var subagents []Subagent
-	for _, e := range listDir(env, dir, unreadable) {
+	for _, e := range listDir(env, dir, u) {
 		if !e.regular || !strings.HasPrefix(e.name, "agent-") || !strings.HasSuffix(e.name, ".jsonl") {
 			continue
 		}

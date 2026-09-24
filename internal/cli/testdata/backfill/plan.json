@@ -104,5 +104,6 @@
   "storage_checked": false,
   "cursor_database_checked": false,
   "subagents_skipped": 0,
-  "unreadable_folders": 0
+  "unreadable_folders": 0,
+  "unreadable_stores": []
 }
