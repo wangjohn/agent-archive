@@ -421,7 +421,7 @@ without listing anything.
 
 ## Build from source
 
-Requires Go 1.24+ and, for real macOS Keychain access, Xcode's command
+Requires Go 1.26 or later (go.mod pins toolchain go1.27.1, which Go downloads automatically) and, for real macOS Keychain access, Xcode's command
 line tools (`xcode-select --install`).
 
 ```sh
