@@ -51,8 +51,9 @@ context budget.
   [Workspace section](#workspace-section)).
 - Summarizing with an LLM. The output is deterministic rendering; the
   receiving agent does its own summarizing.
-- Historical import. Sessions the archive never captured are only reachable
-  through `--file` on the machine that has them.
+- Historical import. `agent-archive backfill` imports sessions the archive
+  never captured; until then they are only reachable through `--file` on the
+  machine that has them.
 
 ## Command
 

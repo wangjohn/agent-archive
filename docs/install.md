@@ -58,8 +58,10 @@ Macs are supported.
 
    Setup has three steps: choose apps and projects, connect storage, then
    review and start. You need an existing private R2 or S3 bucket. Type `help`
-   at the storage prompt for provider instructions. Include each project explicitly. Only new sessions
-   are captured; historical conversations are not imported.
+   at the storage prompt for provider instructions. Include each project explicitly. Setup captures only
+   new sessions. To import conversations already on this Mac, run
+   `agent-archive backfill` afterwards (see
+   [Import existing sessions](#import-existing-sessions)).
 
    Setup offers the apps it finds together: “Include Codex and Claude Code?”
    Accept to continue, or decline to choose apps individually. If no apps are
@@ -133,6 +135,39 @@ Macs are supported.
    its label and command match the prototype. It keeps the prototype's private
    records. Failed setup restores that job; an unrecognized job at the old path
    is preserved and reported for manual resolution.
+
+## Import existing sessions
+
+`agent-archive backfill` imports the Claude Code, Codex, and Cursor sessions
+already on this Mac. Run it after setup. With no options it imports every
+session it finds, but first it shows each project with its session count per
+app, what it will skip and why, and the date retention will delete the
+imported sessions. Nothing changes until you answer `y`.
+
+```sh
+agent-archive backfill --dry-run     # see the plan; changes nothing
+agent-archive backfill               # import, after confirming
+agent-archive backfill history       # past imports
+agent-archive backfill undo          # remove the latest import from the bucket
+```
+
+- Projects it adds are captured from then on, like projects you include in
+  setup. Setup asks once whether to keep them.
+- Codex and Cursor sessions import even without their hooks installed. New
+  sessions from those apps are captured only after you add them in setup.
+- Sessions run from your home directory or a temporary directory are skipped
+  unless you pass `--include-home` or `--include-temp`.
+- Retention applies to imports from the day they are imported, so a whole
+  import expires on one day. Choose `edit` at the prompt to keep them longer.
+- Claude Code deletes its own transcripts after 30 days by default. To keep
+  more history for backfill, set `"cleanupPeriodDays"` in
+  `~/.claude/settings.json`.
+- `undo` deletes the import's sessions from the bucket, excludes the projects
+  it added, and keeps later backfills from importing them again unless you
+  pass `--include-removed`.
+- An imported session whose transcript disappears before its first upload
+  blocks a storage destination change until retention removes it, as a
+  hook-captured session does.
 
 ## Routine use and recovery
 

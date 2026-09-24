@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -21,8 +22,9 @@ import (
 )
 
 // backfillCheckpoint, when set, is called after the configuration commit
-// ("committed"), after each registration hold ("registered"), and before
-// the upload ("uploading"). A test
+// ("committed"), after each registration hold ("registered"), before the
+// upload ("uploading"), and when undo holds its locks and has rechecked its
+// plan ("undoing"). A test
 // returns an error from it to stop the import there, as a crash would.
 var backfillCheckpoint func(step string) error
 
@@ -150,7 +152,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return err
 	}
 	last := batches[len(batches)-1]
-	if last.CompletedAt != nil || !last.Matches(plan.BatchFilters(), backfill.DestinationID(cfg.Storage)) {
+	if !last.Continues(plan.BatchFilters(), backfill.DestinationID(cfg.Storage)) {
 		return nil
 	}
 	release, err := local.NamedLock(home, "setup.lock")
@@ -164,6 +166,16 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return errors.New("a collector pass is still running; run backfill again")
 	}
 	defer releaseCollector()
+	// Read the batch again under the locks: an undo or another run may have
+	// changed it since it was checked.
+	if batches, err = backfill.LoadBatches(home); err != nil || len(batches) == 0 {
+		return err
+	}
+	latest := batches[len(batches)-1]
+	if latest.ID != last.ID || !latest.Continues(plan.BatchFilters(), backfill.DestinationID(cfg.Storage)) {
+		return nil
+	}
+	last = latest
 	if err := completeBatch(env, home, collector.OpenLocalStoreReadOnly(home), &last); err != nil {
 		return err
 	}
@@ -545,14 +557,18 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 	return 0
 }
 
-// batchUploadState is history's UPLOAD column: interrupted, nothing
-// registered, removed (none of its sessions is registered any more), how
-// many are waiting, or uploaded. Only the latest import can still be
-// finished by running backfill again.
+// batchUploadState is history's UPLOAD column: undone, or partly undone
+// with what is left; interrupted, nothing registered, removed (none of its
+// sessions is registered any more), how many are waiting, or uploaded. Only
+// the latest import can still be finished by running backfill again.
 func batchUploadState(store *collector.LocalStore, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
-	registered, waiting := 0, 0
+	registered, subagents, waiting := 0, 0, 0
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID || reg.ParentSessionID != "" {
+		if reg.ImportBatch != b.ID {
+			continue
+		}
+		if reg.ParentSessionID != "" {
+			subagents++
 			continue
 		}
 		registered++
@@ -563,6 +579,23 @@ func batchUploadState(store *collector.LocalStore, cfg config.Config, regs []arc
 		if pending {
 			waiting++
 		}
+	}
+	if b.UndoneAt != nil {
+		projects := 0
+		for _, p := range cfg.Archive.Projects {
+			if p.Included && slices.Contains(b.ProjectsAdded, p.ProjectID) && !slices.Contains(b.ProjectsExcluded, p.ProjectID) {
+				projects++
+			}
+		}
+		switch {
+		case registered > 0:
+			return fmt.Sprintf("partly undone; %s left", countNoun(registered, "session")), nil
+		case subagents > 0:
+			return fmt.Sprintf("partly undone; %s left", countNoun(subagents, "subagent transcript")), nil
+		case projects > 0:
+			return fmt.Sprintf("partly undone; %s left", countNoun(projects, "project")), nil
+		}
+		return "undone", nil
 	}
 	switch {
 	case b.CompletedAt == nil && latest:

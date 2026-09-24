@@ -251,7 +251,7 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 	// and the unfinished-work deferral; remote metadata can only make
 	// capturedAt later, so it can only withdraw expiry, never grant it.
 	if locallyExpired && !capturedAt.IsZero() && now.Sub(capturedAt) >= opts.SessionMaxAge {
-		if err := deleteWholeSession(ctx, store, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
+		if err := collector.DeleteWholeSession(ctx, store, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
 			return fmt.Errorf("delete session: %w", err)
 		}
 		// The remote deletion takes network time and is not done under the
@@ -357,27 +357,4 @@ func anySupersededExpirable(superseded []collector.SupersededSource, now time.Ti
 		}
 	}
 	return false
-}
-
-// Remove discovery first. If source deletion is interrupted, unreferenced
-// objects remain for the next sweep, but no live metadata points at missing data.
-func deleteWholeSession(ctx context.Context, store storage.ObjectStore, harness, archiveSessionID string) error {
-	metadataKey, err := archive.MetadataObjectKey(harness, archiveSessionID)
-	if err != nil {
-		return err
-	}
-	if err := store.Delete(ctx, metadataKey); err != nil {
-		return fmt.Errorf("delete metadata: %w", err)
-	}
-	prefix := fmt.Sprintf("sessions/%s/%s/", harness, archiveSessionID)
-	objects, err := store.List(ctx, prefix)
-	if err != nil {
-		return fmt.Errorf("list %q: %w", prefix, err)
-	}
-	for _, obj := range objects {
-		if err := store.Delete(ctx, obj.Key); err != nil {
-			return fmt.Errorf("delete %q: %w", obj.Key, err)
-		}
-	}
-	return nil
 }
