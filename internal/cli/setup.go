@@ -438,38 +438,43 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 	// Preserve an existing selection on reconfiguration. Detection supplies
 	// defaults only for first-time setup; it never proves capture is working.
 	defaults := detected
-	verb := "Include "
 	if len(existing) > 0 {
 		defaults = existing
-		verb = "Keep "
 	}
-	var suggested []string
+	var suggested, others []string
 	for _, app := range allHarnesses {
 		if containsString(defaults, app) {
 			suggested = append(suggested, app)
+		} else {
+			others = append(others, app)
 		}
 	}
-	if len(suggested) > 0 {
-		names := make([]string, len(suggested))
-		for i, app := range suggested {
-			names[i] = appName(app)
+	switch {
+	case len(suggested) == 0:
+		fmt.Fprintln(p.out, "No apps found automatically.")
+	case len(existing) > 0 && len(others) > 0:
+		// Name the apps left out so it is clear how to add them; "Keep X?"
+		// reads as if declining would remove X.
+		fmt.Fprintf(p.out, "Included: %s. Not included: %s.\n", appList(suggested), appList(others))
+		change, err := p.yesNo("Change which apps are included?", false)
+		if err != nil {
+			return nil, err
 		}
-		label := names[0]
-		if len(names) == 2 {
-			label = names[0] + " and " + names[1]
+		if !change {
+			return suggested, nil
 		}
-		if len(names) > 2 {
-			label = strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
+	default:
+		verb := "Include "
+		if len(existing) > 0 {
+			verb = "Keep "
 		}
-		yes, err := p.yesNo(verb+label+"?", true)
+		yes, err := p.yesNo(verb+appList(suggested)+"?", true)
 		if err != nil {
 			return nil, err
 		}
 		if yes {
 			return suggested, nil
 		}
-	} else {
-		fmt.Fprintln(p.out, "No apps found automatically.")
 	}
 	fmt.Fprintln(p.out, "Choose which apps to include:")
 	for {
@@ -489,6 +494,23 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 		fmt.Fprintln(p.out, "Choose at least one app to continue.")
 	}
 }
+
+// appList names apps in prose: "Codex", "Codex and Cursor", or
+// "Codex, Claude Code, and Cursor".
+func appList(apps []string) string {
+	names := make([]string, len(apps))
+	for i, app := range apps {
+		names[i] = appName(app)
+	}
+	switch len(names) {
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
+}
+
 func promptProjects(p *prompter, existing []archive.ProjectActivation, now time.Time, userHomes ...string) ([]archive.ProjectActivation, error) {
 	result := []archive.ProjectActivation{}
 	seen := map[string]bool{}

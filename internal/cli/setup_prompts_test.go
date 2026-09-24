@@ -21,7 +21,10 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 		{"single app", []string{"cursor"}, nil, "y\n", []string{"cursor"}, "Include Cursor? [Y/n]", false},
 		{"choose another app", []string{"codex", "claude"}, nil, "n\nn\nn\ny\n", []string{"cursor"}, "Include Codex and Claude Code?", true},
 		{"nothing detected", nil, nil, "n\ny\nn\n", []string{"claude"}, "No apps found automatically.", true},
-		{"keep prior selection", []string{"codex", "cursor"}, []string{"claude"}, "\n", []string{"claude"}, "Keep Claude Code?", false},
+		{"keep prior selection", []string{"codex", "cursor"}, []string{"claude"}, "\n", []string{"claude"}, "Included: Claude Code. Not included: Codex and Cursor.\nChange which apps are included? [y/N]", false},
+		{"add to prior selection", nil, []string{"cursor"}, "y\ny\ny\n\n", []string{"codex", "claude", "cursor"}, "Change which apps are included?", true},
+		{"keep full prior selection", nil, []string{"cursor", "claude", "codex"}, "\n", []string{"codex", "claude", "cursor"}, "Keep Codex, Claude Code, and Cursor? [Y/n]", false},
+		{"trim full prior selection", nil, []string{"cursor", "claude", "codex"}, "n\nn\n\n\n", []string{"claude", "cursor"}, "Choose which apps to include:", true},
 		{"retry empty selection", nil, nil, "n\nn\nn\ny\nn\nn\n", []string{"codex"}, "Choose at least one app to continue.", true},
 	}
 	for _, tt := range tests {
