@@ -77,8 +77,8 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 	}
 	claude("c-aa-1", agentArchive, day(19, 9))
 	claude("c-aa-2", filepath.Join(agentArchive, ".claude", "worktrees", "gone"), day(21, 9))
-	for _, agent := range []string{"agent-a1", "agent-a2"} {
-		f.write(t, filepath.Join(".claude", "projects", "slug-c-aa-2", "c-aa-2", "subagents", agent+".jsonl"), `{"type":"user","sessionId":"c-aa-2","timestamp":"2026-09-21T09:05:00Z","message":{"role":"user","content":"look"}}`+"\n")
+	for _, agent := range []string{"a1", "a2"} {
+		f.write(t, filepath.Join(".claude", "projects", "slug-c-aa-2", "c-aa-2", "subagents", "agent-"+agent+".jsonl"), `{"type":"user","sessionId":"c-aa-2","agentId":"`+agent+`","timestamp":"2026-09-21T09:05:00Z","message":{"role":"user","content":"look"}}`+"\n")
 	}
 	claude("c-lev-1", levenshtein, day(17, 20))
 	claude("c-lev-2", filepath.Join(levenshtein, "src"), day(18, 9))
@@ -241,6 +241,58 @@ func TestBackfillDryRunWritesNothing(t *testing.T) {
 	}
 	if after := snapshotTree(t, f.data); after != before {
 		t.Fatalf("data directory changed:\n%s\n---\n%s", before, after)
+	}
+}
+
+// A folder in an app's store that cannot be read no longer stops the plan
+// and prints its path: it is counted on one "Not imported" line, and the
+// rest of the plan is shown.
+func TestBackfillUnreadableFolder(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any folder")
+	}
+	f := newBackfillFixture(t)
+	locked := filepath.Join(f.userHome, ".claude", "projects", "slug-c-old")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	out, errOut, code := f.run(t, "--dry-run")
+	if code != 0 {
+		t.Fatalf("code %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "   1  folder in the app stores could not be read\n") || !strings.Contains(out, "Total: 10 sessions") {
+		t.Fatalf("output:\n%s", out)
+	}
+	jsonOut, _, code := f.run(t, "--dry-run", "--json")
+	if code != 0 || !strings.Contains(jsonOut, `"unreadable_folders": 1`) {
+		t.Fatalf("json (code %d):\n%s", code, jsonOut)
+	}
+	for _, text := range []string{out, errOut, jsonOut} {
+		if strings.Contains(text, "slug-c-old") || strings.Contains(text, ".claude") {
+			t.Fatalf("the unreadable folder is named:\n%s", text)
+		}
+	}
+
+	// Claude Code's whole store unreadable: the app is named, and the other
+	// apps' sessions can still be imported.
+	store := filepath.Join(f.userHome, ".claude", "projects")
+	if err := os.Chmod(store, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(store, 0o755) })
+	out, errOut, code = f.run(t, "--dry-run")
+	if code != 0 || !strings.Contains(out, "      Claude Code's session folder could not be read (check permissions);\n      none of its sessions are included.\n") || !strings.Contains(out, "Total: 3 sessions") {
+		t.Fatalf("code %d, %s\n%s", code, errOut, out)
+	}
+	jsonOut, _, _ = f.run(t, "--dry-run", "--json")
+	if !strings.Contains(jsonOut, "\"unreadable_stores\": [\n    \"claude\"\n  ]") || !strings.Contains(jsonOut, `"unreadable_folders": 0`) {
+		t.Fatalf("json:\n%s", jsonOut)
+	}
+	for _, text := range []string{out, errOut, jsonOut} {
+		if strings.Contains(text, ".claude") {
+			t.Fatalf("the unreadable store is named:\n%s", text)
+		}
 	}
 }
 

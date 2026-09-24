@@ -32,7 +32,7 @@
     "linked_sessions": {"type": "array", "items": {"$ref": "#/$defs/linked_session"}},
     "origin": {"const": "import", "description": "Present only for a session `agent-archive backfill` imported; absent for a hook-captured session. An imported session also carries the capture gap 'imported_without_hook_evidence': it has no lifecycle events, final-response text, or skill inventory."},
     "imported_at": {"type": "string", "format": "date-time", "description": "When this machine imported the session. Present only with origin 'import'."},
-    "started_at_source": {"enum": ["hook", "transcript", "file_created", "cursor_composer"], "description": "Where started_at came from: 'transcript' is the earliest native record, 'file_created' the transcript file's birth time (the format has no timestamps), 'cursor_composer' Cursor's chat creation time. Present only with origin 'import'."}
+    "started_at_source": {"enum": ["hook", "transcript", "file_created", "cursor_composer"], "description": "Where started_at came from: 'transcript' is the earliest native record, 'file_created' the transcript file's birth time (Cursor transcripts, whose records have no timestamps). 'cursor_composer' is reserved for phase 2, Cursor's chat creation time from its database, and is not produced yet. Present only with origin 'import'."}
   },
   "$defs": {
     "harness": {"type": "object", "additionalProperties": false, "required": ["name"], "properties": {"name": {"type": "string"}, "version": {"type": "string"}, "mode": {"type": "string"}}},

@@ -115,7 +115,8 @@ func (p Plan) Skipped() map[SkipReason]int {
 }
 
 // SubagentsSkipped counts the subagent transcripts of imported sessions that
-// are left out because they are too large or the filter refuses them.
+// are left out because they are too large, the filter refuses them, or the
+// collector would not register them.
 func (p Plan) SubagentsSkipped() int {
 	n := 0
 	for _, c := range p.Candidates {
@@ -362,6 +363,7 @@ var skipLabels = map[SkipReason]string{
 	SkipEmpty:                 "with no conversation",
 	SkipUnsafeFormat:          "in a format the archive cannot read safely",
 	SkipTooLarge:              "larger than 64 MiB",
+	SkipStartUnknown:          "%s whose start time could not be determined",
 	SkipStartInFuture:         "starting in the future (check the clock)",
 	SkipCursorDatabaseOnly:    "%s stored only in Cursor's database (a later release)",
 }
@@ -379,7 +381,7 @@ func renderSkipped(w io.Writer, p Plan) {
 	counts := p.Skipped()
 	subagentsSkipped := p.SubagentsSkipped()
 	databaseUnchecked := !p.CursorDatabaseChecked && harnessMatches(p.Filters.Harnesses, "cursor")
-	if len(counts) == 0 && subagentsSkipped == 0 && !databaseUnchecked {
+	if len(counts) == 0 && subagentsSkipped == 0 && p.UnreadableFolders == 0 && len(p.UnreadableStores) == 0 && !databaseUnchecked {
 		return
 	}
 	nouns := map[SkipReason]map[string]bool{}
@@ -416,11 +418,18 @@ func renderSkipped(w io.Writer, p Plan) {
 		}
 	}
 	if subagentsSkipped > 0 {
-		label := "subagent transcripts that can't be read"
+		label := "subagent transcripts that can't be imported"
 		if subagentsSkipped == 1 {
-			label = "subagent transcript that can't be read"
+			label = "subagent transcript that can't be imported"
 		}
 		lines = append(lines, line{subagentsSkipped, label, ""})
+	}
+	if n := p.UnreadableFolders; n > 0 {
+		label := "folders in the app stores could not be read"
+		if n == 1 {
+			label = "folder in the app stores could not be read"
+		}
+		lines = append(lines, line{n, label, ""})
 	}
 	width = max(width+2, 42)
 	fmt.Fprintln(w)
@@ -431,6 +440,15 @@ func renderSkipped(w io.Writer, p Plan) {
 		} else {
 			fmt.Fprintf(w, "%4d  %-*s%s\n", l.n, width, l.label, l.override)
 		}
+	}
+	for _, h := range p.UnreadableStores {
+		if h == "codex" && p.codexArchivedOnly {
+			fmt.Fprintln(w, "      Codex's archived session folder could not be read (check permissions);")
+			fmt.Fprintln(w, "      none of its archived sessions are included.")
+			continue
+		}
+		fmt.Fprintf(w, "      %s's session folder could not be read (check permissions);\n", harnessNames[h])
+		fmt.Fprintln(w, "      none of its sessions are included.")
 	}
 	if databaseUnchecked {
 		fmt.Fprintln(w, "      Cursor chats stored only in Cursor's database were not checked")
@@ -559,6 +577,10 @@ type planJSON struct {
 	StorageChecked        bool   `json:"storage_checked"`
 	CursorDatabaseChecked bool   `json:"cursor_database_checked"`
 	SubagentsSkipped      int    `json:"subagents_skipped"`
+	UnreadableFolders     int    `json:"unreadable_folders"`
+	// UnreadableStores are the apps whose whole session store could not
+	// be read.
+	UnreadableStores []string `json:"unreadable_stores"`
 }
 
 type filtersJSON struct {
@@ -602,6 +624,8 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 		// Environment.CursorDatabaseOnly.
 		CursorDatabaseChecked: p.CursorDatabaseChecked,
 		SubagentsSkipped:      p.SubagentsSkipped(),
+		UnreadableFolders:     p.UnreadableFolders,
+		UnreadableStores:      append([]string{}, p.UnreadableStores...),
 	}
 	for _, h := range p.Filters.Harnesses {
 		out.Filters.Harnesses = append(out.Filters.Harnesses, canonicalHarness(h))

@@ -44,3 +44,37 @@ func TestBackfillArchiveStateReportsRemovalRecords(t *testing.T) {
 		}
 	}
 }
+
+// Removal records only keep backfill from importing a transcript again.
+// Hooks ignore them: a fresh start of a native session undo or retention
+// removed registers as any other start.
+func TestHookFreshStartIgnoresRemovalRecord(t *testing.T) {
+	for _, reason := range []collector.RemovalReason{collector.RemovalReasonUndo, collector.RemovalReasonRetention} {
+		t.Run(string(reason), func(t *testing.T) {
+			home := t.TempDir()
+			setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+			store, err := collector.NewLocalStore(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.RecordRemoval("codex", "native-1", reason, time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+			payload := map[string]any{
+				"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
+				"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
+			}
+			if err := handleHookEvent(home, "codex", payload, now); err != nil {
+				t.Fatal(err)
+			}
+			regs, err := store.LoadRegistrations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(regs) != 1 || regs[0].NativeSessionID != "native-1" || regs[0].Imported() || !regs[0].SessionStartedAt.Equal(now) {
+				t.Fatalf("regs=%#v", regs)
+			}
+		})
+	}
+}
