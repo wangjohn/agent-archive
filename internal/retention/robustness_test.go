@@ -3,7 +3,9 @@ package retention
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -362,5 +364,45 @@ func TestNeverPublishedRegistrationWaitsForPublishableWork(t *testing.T) {
 	}
 	if calls := store.count(); calls != 0 {
 		t.Fatalf("the bucket was touched %d time(s)", calls)
+	}
+}
+
+// One unreadable registration or request fails only its own session: the
+// sweep goes on for the rest, and a request it could not read still defers
+// its session's expiry, since it may hold evidence not yet archived.
+func TestSweepIsolatesUnreadableStateFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads unreadable files")
+	}
+	dir := t.TempDir()
+	local := newTestStore(t)
+	store := storage.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	for _, id := range []string{"s1", "s2"} {
+		if err := local.SaveRegistration(registration(id, writeTranscript(t, dir, id+".jsonl", codexTranscript))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	collect(t, local, store, t0)
+
+	past := t0.Add(91 * 24 * time.Hour)
+	if err := local.SaveRequest("s1", "stop", past); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Dir(filepath.Dir(local.SessionDir("s1")))
+	requestPath := filepath.Join(home, "requests", "s1.json")
+	if err := os.Chmod(requestPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(home, "registrations", "broken.json")
+	if err := os.WriteFile(broken, []byte(`{"archive_session_id":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := sweep(t, local, store, past, Options{})
+	if strings.Join(result.DeletedSessions, ",") != "s2" {
+		t.Fatalf("deleted = %v, want only s2", result.DeletedSessions)
+	}
+	if result.Errors["s1"] == nil || !errors.Is(result.Errors["broken"], collector.ErrQuarantined) {
+		t.Fatalf("errors = %v", result.Errors)
 	}
 }
