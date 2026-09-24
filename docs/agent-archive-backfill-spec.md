@@ -179,9 +179,11 @@ asks `[y/N]`. On a yes:
   is forgotten with a removal record with reason `undo`
   ([Removal records](#removal-records)). A failure leaves that session
   registered and undo continues with the rest.
-- **Resumed sessions** are counted in the plan: those with hook evidence
-  since the import, or republished since (a superseded source), which covers
-  apps without hooks.
+- **Resumed sessions** are counted in the plan: those whose transcript was
+  modified after the import (nothing in the archive writes to a transcript, so
+  only the app can have), or that carry hook evidence since the import. The
+  first covers apps without hooks. A republish alone is not a resume: parser
+  upgrades and subagent links republish too.
 - `--project` limits the undo to one project.
 
 ## Admission model
