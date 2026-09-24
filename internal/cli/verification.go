@@ -82,7 +82,7 @@ type verificationSummary struct {
 type storageHealth struct {
 	ConfigurationID string    `json:"configuration_id"`
 	State           string    `json:"state"`
-	CheckedAt       time.Time `json:"checked_at"`
+	CheckedAt       time.Time `json:"checked_at,omitzero"`
 	Context         string    `json:"context"`
 }
 

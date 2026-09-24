@@ -97,11 +97,11 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	case *maxBytes < 0:
 		return usageError("--max-bytes must be 0 or more")
 	}
-	if *harness != "" {
-		if _, err := archive.NewAdapter(*harness); err != nil {
-			return usageError(fmt.Sprintf("--harness must be claude, codex, or cursor, not %q", *harness))
-		}
+	canonical, ok := harnessFlag(*harness)
+	if !ok {
+		return usageError(harnessFlagError(*harness))
 	}
+	*harness = canonical
 	switch *source {
 	case "auto", "local", "archive":
 	default:

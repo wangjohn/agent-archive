@@ -113,8 +113,14 @@ func (o Options) minUploadInterval() time.Duration {
 type Result struct {
 	Scanned   int
 	Published []string
-	Skipped   []string
-	Errors    map[string]error
+	// Skipped lists sessions with nothing new to publish.
+	Skipped []string
+	// Waiting lists sessions whose new evidence is saved and held for the
+	// upload interval (Options.MinUploadInterval); NextReadyAt is when the
+	// earliest of them becomes due.
+	Waiting     []string
+	NextReadyAt time.Time
+	Errors      map[string]error
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -272,7 +278,8 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		addError(p.result.Errors, id, err)
 		p.pending++
 	}
-	outcome, err := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts).run()
+	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
+	outcome, err := scan.run()
 	if err != nil && p.ctx.Err() != nil {
 		// The pass ran out of time (or was cancelled) with this session in
 		// flight. That is not the session failing: its pending publication
@@ -293,7 +300,12 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 			addError(p.result.Errors, id, err)
 			p.pending++
 		}
-	case outcomeRateLimited, outcomeSkipped:
+	case outcomeRateLimited:
+		p.result.Waiting = append(p.result.Waiting, id)
+		if !scan.readyAt.IsZero() && (p.result.NextReadyAt.IsZero() || scan.readyAt.Before(p.result.NextReadyAt)) {
+			p.result.NextReadyAt = scan.readyAt
+		}
+	case outcomeSkipped:
 		p.result.Skipped = append(p.result.Skipped, id)
 	}
 	p.opts.progress(id, outcome == outcomePublished)

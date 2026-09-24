@@ -63,6 +63,9 @@ type sessionScan struct {
 	reg       archive.SessionRegistration
 	req       state.Request
 	published *state.Published
+	// readyAt is when a publication the scan left waiting for the upload
+	// interval (outcomeRateLimited) becomes due.
+	readyAt time.Time
 }
 
 // processSession scans one session: see sessionScan for its steps.
@@ -140,6 +143,7 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		}
 	}
 	if !pending.ReadyAt.IsZero() && s.now.Before(pending.ReadyAt) {
+		s.readyAt = pending.ReadyAt
 		return outcomeRateLimited, true, nil
 	}
 	outcome, err = s.publishPending(pending)
@@ -411,6 +415,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		if err := s.published.Save(candidate, lastPublishedAt, state.CacheStatusRateLimited); err != nil {
 			return outcomeSkipped, fmt.Errorf("cache rate-limited candidate: %w", err)
 		}
+		s.readyAt = readyAt
 		return outcomeRateLimited, nil
 	}
 	outcome, err := s.publishPending(pending)
