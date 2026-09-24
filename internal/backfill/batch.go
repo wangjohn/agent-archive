@@ -49,6 +49,11 @@ type Batch struct {
 	// excludes one of them again, so a project setup included again stays
 	// included.
 	ProjectsExcluded []string `json:"projects_excluded,omitempty"`
+	// ProjectsKept are projects undo left included although this import
+	// added them (or took them over from an earlier undo that kept them),
+	// because another import's sessions were still there. The undo of the
+	// last import with sessions there excludes them (see PlanUndo).
+	ProjectsKept []string `json:"projects_kept,omitempty"`
 }
 
 // BatchFilters are the filters and --include-* flags a batch was run with.
@@ -189,7 +194,14 @@ func SaveBatch(home string, b Batch) error {
 // destination, or a new one named for now's local date. An interrupted
 // import is continued so that its sessions and the projects it added stay
 // one import, which undo can reverse as a whole.
-func OpenBatch(home string, filters BatchFilters, destinationID string, now time.Time) (Batch, error) {
+//
+// A new ID is numbered past every ID already in use: each batch file's, and
+// each ID a registration in store carries. Undo selects sessions by the ID
+// they carry, so an ID reused while an earlier import's sessions still carry
+// it would make undoing the new import remove the earlier one too. That
+// happens once a batch file is gone (moved aside, deleted) while its
+// sessions are still registered.
+func OpenBatch(home string, store *collector.LocalStore, filters BatchFilters, destinationID string, now time.Time) (Batch, error) {
 	batches, err := LoadBatches(home)
 	if err != nil {
 		return Batch{}, err
@@ -200,10 +212,23 @@ func OpenBatch(home string, filters BatchFilters, destinationID string, now time
 			return last, nil
 		}
 	}
+	regs, err := store.LoadRegistrations()
+	if err != nil {
+		return Batch{}, err
+	}
+	used := make([]string, 0, len(batches)+len(regs))
+	for _, b := range batches {
+		used = append(used, b.ID)
+	}
+	for _, reg := range regs {
+		if reg.ImportBatch != "" {
+			used = append(used, reg.ImportBatch)
+		}
+	}
 	day := now.Format(dateLayout)
 	next := 1
-	for _, b := range batches {
-		if rest, ok := strings.CutPrefix(b.ID, day+"-"); ok {
+	for _, id := range used {
+		if rest, ok := strings.CutPrefix(id, day+"-"); ok {
 			if n, err := strconv.Atoi(rest); err == nil && n >= next {
 				next = n + 1
 			}

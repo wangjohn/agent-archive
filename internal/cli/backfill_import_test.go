@@ -658,7 +658,15 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 		defer mu.Unlock()
 		events = append(events, event)
 	}
-	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() { record("watch stopped") } }
+	// Planning has a watch of its own, stopped before anything is confirmed.
+	watches := 0
+	f.env.Interrupts = func() (<-chan os.Signal, func()) {
+		watches++
+		if watches == 1 {
+			return signals, func() { record("planning watch stopped") }
+		}
+		return signals, func() { record("watch stopped") }
+	}
 	backfillCheckpoint = func(step string) error {
 		if step != "uploading" {
 			return nil
@@ -670,7 +678,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 			mu.Lock()
 			n := len(events)
 			mu.Unlock()
-			if n > 0 {
+			if n > 1 {
 				break
 			}
 		}
@@ -679,7 +687,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	}
 	t.Cleanup(func() { backfillCheckpoint = nil })
 	out, errOut, code := f.importRun(t, nil, false, "--yes")
-	if strings.Join(events, ", ") != "watch stopped, upload starts" {
+	if strings.Join(events, ", ") != "planning watch stopped, watch stopped, upload starts" {
 		t.Errorf("events %v: the first Ctrl-C must hand the next one back at once, and only once", events)
 	}
 	if !strings.Contains(out, "Stopping after the current session; press Ctrl-C again to quit.") {
