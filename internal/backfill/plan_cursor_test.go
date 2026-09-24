@@ -81,6 +81,36 @@ func TestCursorDatabaseDuplicatePrefersTheMatchingKey(t *testing.T) {
 	}
 }
 
+// Ctrl-C while the plan reads chats cancels its context: planning stops with
+// the cancellation, and the plan's copy of the database is still removed.
+func TestCursorDatabaseSnapshotClosedWhenPlanningIsCancelled(t *testing.T) {
+	tr := newTree(t)
+	site := tr.repo("home/site")
+	at := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	chats := []CursorDatabaseChat{{ID: "a", Folder: site, CreatedAt: at}, {ID: "b", Folder: site, CreatedAt: at}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	closed := false
+	env := tr.env()
+	env.CursorDatabase = func(ctx context.Context) (CursorDatabaseResult, error) {
+		res, _ := fakeCursorDatabase(chats, map[string]cursorstore.Composer{"a": syntheticChat("a", nil, "x"), "b": syntheticChat("b", nil, "y")}, nil, nil)(ctx)
+		read := res.ReadChat
+		res.ReadChat = func(ctx context.Context, id string) (cursorstore.Composer, error) {
+			cancel() // Ctrl-C arrives mid-read.
+			if err := ctx.Err(); err != nil {
+				return cursorstore.Composer{}, err
+			}
+			return read(ctx, id)
+		}
+		res.Close = func() error { closed = true; return nil }
+		return res, nil
+	}
+	_, err := BuildPlan(ctx, env, states{}, config.Config{}, Filters{})
+	if !errors.Is(err, context.Canceled) || !closed {
+		t.Fatalf("err %v, snapshot closed %v", err, closed)
+	}
+}
+
 // The plan's copy of the database that can't be removed fails the plan,
 // rather than being left silently in the temporary folder.
 func TestCursorDatabaseCloseErrorIsReported(t *testing.T) {

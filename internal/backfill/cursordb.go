@@ -121,6 +121,9 @@ func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResu
 			return CursorDatabaseResult{}, err
 		}
 		if res.Checked {
+			// A copy an earlier plan left when it was killed goes before this
+			// plan can take another.
+			cursorstore.RemoveStaleSnapshots()
 			reader := cursorstore.NewReader(path)
 			res.ReadChat = func(ctx context.Context, id string) (cursorstore.Composer, error) {
 				c, _, err := reader.ReadComposer(ctx, id)
@@ -261,7 +264,13 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		return composer{}, false
 	}
 	// fullConversationHeadersOnly lists the messages; older chats keep them
-	// inline in conversation instead.
+	// inline in conversation instead. Messages are counted as cursorstore
+	// reads a chat (decodeHeaders): from the headers when the chat has them,
+	// even an empty list, and from conversation only when it has none, so a
+	// chat is planned only when the collector would find messages in it.
+	// Each header's own shape is not checked here: a header the reader can't
+	// use makes that one chat unsafe_format when it is read, whereas a
+	// listing error leaves the whole database unchecked.
 	messages := 0
 	for _, name := range []string{"fullConversationHeadersOnly", "conversation"} {
 		if raw, ok := present(name); ok {
@@ -269,7 +278,8 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 			if json.Unmarshal(raw, &list) != nil {
 				return composer{}, false
 			}
-			messages += len(list)
+			messages = len(list)
+			break
 		}
 	}
 
