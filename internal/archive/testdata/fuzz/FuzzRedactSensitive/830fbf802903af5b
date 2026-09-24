@@ -1,0 +1,2 @@
+go test fuzz v1
+string("{\"max_tokens\": 4096, \"input_tokens\": 12}")

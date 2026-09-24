@@ -1,0 +1,2 @@
+go test fuzz v1
+string("aws_access_key_id = ASIAIOSFODNN7EXAMPLE")

@@ -1,0 +1,2 @@
+go test fuzz v1
+string("API_KEY_2=abcd1234")

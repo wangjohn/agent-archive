@@ -1,0 +1,2 @@
+go test fuzz v1
+string("GITHUB_TOKEN=abc123def456")

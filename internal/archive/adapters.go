@@ -297,23 +297,33 @@ func injectedInstructionEnd(value string, from int, tag string) int {
 // separator are kept so a reader can see which credential was there.
 const (
 	// credentialWords are the words that mark a name as holding a
-	// credential. `pwd` is deliberately absent: PWD is the shell's working
-	// directory.
-	credentialWords = `api[_.-]?key|access[_.-]?key|private[_.-]?key|secret|password|passwd|passphrase|token|authorization|bearer`
-	// credentialName is a name ending in a credential word, optionally followed
-	// by `key` or `access_key` (SECRET_KEY, AWS_SECRET_ACCESS_KEY). Anything
-	// may be glued on before the word (DB_PASSWORD, accessToken, PGPASSWORD,
-	// spring.datasource.password, --password), but nothing after it except
-	// that suffix, so `tokens`, `max_tokens`, `secretary`, `password_policy`,
-	// and `TOKEN_URL` are not credential names.
-	credentialName = `[a-z0-9_.-]*?(?:` + credentialWords + `)(?:[_.-]?(?:access[_.-]?)?key)?`
+	// credential, whatever is glued on before them.
+	credentialWords = `api[_.-]?key|access[_.-]?key|private[_.-]?key|encryption[_.-]?key|signing[_.-]?key|master[_.-]?key|` +
+		`secret|password|passwd|passphrase|token|authorization|bearer|credentials?`
+	// credentialSeparatedWords are words that mark a credential only after a
+	// separator: `pwd` (MYSQL_PWD, DB_PWD), because a bare PWD or OLDPWD is
+	// the shell's working directory, and npm's `_auth` (`:_auth=`,
+	// `npm_config__auth=`), because `auth` alone is far too common.
+	credentialSeparatedWords = `[a-z0-9_.-]*[_.-]pwd|(?:[a-z0-9_.-]*_)?_auth`
+	// credentialSuffix may follow the word: `key` or `access_key`, then
+	// `base` (SECRET_KEY, AWS_SECRET_ACCESS_KEY, SECRET_KEY_BASE), then a
+	// number (DB_PASSWORD_1, PASSWORD2, API_KEY_2).
+	credentialSuffix = `(?:[_.-]?(?:access[_.-]?)?key(?:[_.-]?base)?)?(?:[_.-]?[0-9]+)?`
+	// credentialName is a name ending in a credential word and optionally the
+	// suffix. Anything may be glued on before the word (DB_PASSWORD,
+	// accessToken, PGPASSWORD, spring.datasource.password, --password), but
+	// nothing after it except the suffix, so `tokens`, `max_tokens`,
+	// `secretary`, `password_policy`, and `TOKEN_URL` are not credential
+	// names.
+	credentialName = `(?:[a-z0-9_.-]*?(?:` + credentialWords + `)|` + credentialSeparatedWords + `)` + credentialSuffix
 	// credentialLead is what may precede a name: the start of the string or a
 	// character that cannot be part of one. It keeps a match from starting in
 	// the middle of an identifier.
 	credentialLead = `(?:^|[^a-z0-9_.-])`
 	// credentialQuote is an optional quote around a name, as in JSON, Python,
-	// or JSON escaped inside a string (`\"password\"`).
-	credentialQuote = `(?:\\?["'])?`
+	// or JSON escaped inside a string once or more (`\"password\"`,
+	// `\\\"password\\\"`).
+	credentialQuote = `(?:\\*["'])?`
 	// credentialSeparator is `=`, `:`, `:=`, or `=>`, with spaces or tabs
 	// around it but not newlines, so a YAML key with its value on the next
 	// line does not swallow the line after it.
@@ -322,15 +332,21 @@ const (
 	// (`Authorization: Bearer [REDACTED]`).
 	credentialScheme = `(?:(?:bearer|basic|digest|token)[ \t]+)?`
 	// credentialQuotedValue is a value in quotes, up to its closing quote, or
-	// to the end of the line when it has none: JSON escaped inside a string
-	// (`\"…\"`), double quotes (with backslash escapes), or single quotes.
-	credentialQuotedValue = `\\"(?:[^"\\\n]|\\[^"\n])*(?:\\")?|"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`
+	// to the end of the line when it has none. In order: JSON escaped once
+	// inside a string (`\"…\"`, where an escaped quote inside is `\\\"`);
+	// JSON escaped more than once (`\\\"…\\\"`, up to the first escaped
+	// quote of any depth); double quotes, with backslash escapes; single
+	// quotes.
+	credentialQuotedValue = `\\"(?:\\\\\\"|[^"\\\n]|\\[^"\n])*(?:\\")?|` +
+		`\\{2,}"(?:[^"\\\n]|\\+[^"\\\n])*(?:\\+")?|` +
+		`"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`
 	// credentialValue is a quoted value or an unquoted one, which runs up to
 	// whitespace, `,`, `;`, or a quote, so a value inside a quoted string
 	// (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`) leaves the closing quote. An
-	// unquoted value cannot begin with `=`, so `token == nil` is a
-	// comparison, not an assignment.
-	credentialValue = credentialQuotedValue + `|[^\s,;"'=][^\s,;"']*`
+	// unquoted value may begin with `=` (`PASSWORD==abc`, `token: =abc`) only
+	// when something other than `=` or whitespace follows, so `token == nil`
+	// is a comparison, not an assignment.
+	credentialValue = credentialQuotedValue + `|=*[^\s,;"'=][^\s,;"']*`
 	// credentialFlagValue is the value after a space-separated command-line
 	// flag (`--token abc`); one beginning with `-` is the next flag.
 	credentialFlagValue = credentialQuotedValue + `|[^\s,;"'=-][^\s,;"']*`
@@ -352,8 +368,9 @@ var (
 // the END line is missing), a JWT (three base64url segments, the first
 // beginning with `eyJ`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`,
 // `ghr_`, `github_pat_`), Slack tokens (`xox[baprs]-`), AWS access key IDs
-// (`AKIA…`), and Anthropic and OpenAI style `sk-` keys.
-var credentialShape = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*-----|.*)|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{12,}\b`)
+// (`AKIA…`, and `ASIA…` for temporary STS keys), and Anthropic and OpenAI
+// style `sk-` keys.
+var credentialShape = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*-----|.*)|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{12,}\b`)
 
 // redactCredentialValues replaces the "value" group of every match of pattern
 // with [REDACTED], keeping a quoted value's quotes, and reports whether
@@ -369,12 +386,10 @@ func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool)
 	for _, match := range matches {
 		start, end := match[2*group], match[2*group+1]
 		out.WriteString(value[last:start])
+		// A quoted value keeps its quotes, with any backslashes escaping them.
 		secret, quote := value[start:end], ""
-		for _, candidate := range []string{`\"`, `"`, "'"} {
-			if strings.HasPrefix(secret, candidate) {
-				quote = candidate
-				break
-			}
+		if escapes := len(secret) - len(strings.TrimLeft(secret, `\`)); escapes < len(secret) && (secret[escapes] == '"' || secret[escapes] == '\'') {
+			quote = secret[:escapes+1]
 		}
 		out.WriteString(quote + "[REDACTED]")
 		if quote != "" && len(secret) > len(quote) && strings.HasSuffix(secret, quote) {
@@ -1173,7 +1188,7 @@ func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 			// Cut on a character boundary, so a retained string stays valid
 			// UTF-8 (filter 8 could split a multi-byte character).
 			state.addGap("content_truncated", state.record, "content truncated")
-			v = truncateUTF8(v, maxTextBytes)
+			v = TruncateUTF8(v, maxTextBytes)
 		}
 		return v, true
 	case map[string]any:

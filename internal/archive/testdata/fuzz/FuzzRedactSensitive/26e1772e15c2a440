@@ -1,0 +1,2 @@
+go test fuzz v1
+string("GET /cb?access_token=abc123 HTTP/1.1")

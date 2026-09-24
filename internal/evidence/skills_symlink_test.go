@@ -98,6 +98,53 @@ func TestObserveSkillsIgnoresProjectSkillLinkedOutsideProject(t *testing.T) {
 	}
 }
 
+// A project skill must not archive a file of the project's own that is not
+// a skill, such as its .env.
+func TestObserveSkillsIgnoresProjectSkillLinkedToNonSkillFileInProject(t *testing.T) {
+	l := newSkillLayout(t)
+	writeSkillFile(t, filepath.Join(l.project, ".env"), "DB_PASSWORD=hunter2\nsentinel-dotenv\n")
+	symlink(t, filepath.Join("..", "..", "..", ".env"), filepath.Join(l.project, ".claude", "skills", "env", "SKILL.md"))
+
+	inventory, snapshots, all := observeClaudeSkills(t, l, "project_claude")
+	if strings.Contains(all, "sentinel-dotenv") || len(snapshots) != 0 || inventory["omitted_count"] != float64(1) {
+		t.Fatalf("inventory=%#v snapshots=%#v", inventory, snapshots)
+	}
+}
+
+// Run from the home directory, the project's .claude/skills is the user's
+// ~/.claude/skills. It is observed once, under the user scope and its rules,
+// so the project rule (anything inside the project, here all of $HOME) never
+// admits a link to ~/.aws/credentials.
+func TestObserveSkillsProjectRootAtHomeUsesUserRules(t *testing.T) {
+	l := newSkillLayout(t)
+	credentials := filepath.Join(l.home, ".aws", "credentials")
+	writeSkillFile(t, credentials, "[default]\naws_secret_access_key = wJalrSYNTHETIC\nsentinel-home-credentials\n")
+	symlink(t, credentials, filepath.Join(l.home, ".claude", "skills", "creds", "SKILL.md"))
+	writeSkillFile(t, filepath.Join(l.home, ".claude", "skills", "real", "SKILL.md"), "---\nname: real\n---\nbody\n")
+	l.project = l.home
+
+	got, err := ObserveSkills(SkillOptions{Harness: "claude", ProjectRoot: l.project, UserHome: l.home, ObservedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got)
+	if strings.Contains(string(encoded), "sentinel-home-credentials") || strings.Contains(string(encoded), "wJalrSYNTHETIC") {
+		t.Fatalf("home credentials archived: %s", encoded)
+	}
+	snapshots := 0
+	for _, e := range got {
+		if e.Payload["scope"] == "project_claude" {
+			t.Fatalf("the home skills directory was observed twice: %#v", e)
+		}
+		if e.Kind == archive.EvidenceKindSkillSnapshot {
+			snapshots++
+		}
+	}
+	if snapshots != 1 {
+		t.Fatalf("snapshots = %d, want only the real skill", snapshots)
+	}
+}
+
 // Links that stay inside the repository keep working, such as one skills
 // directory shared by several harnesses' skill roots.
 func TestObserveSkillsFollowsProjectSkillLinkWithinProject(t *testing.T) {

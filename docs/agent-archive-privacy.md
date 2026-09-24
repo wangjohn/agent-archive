@@ -18,8 +18,9 @@ to stop. Adapter version 0.9.0 goes with it.
   `AWS_SECRET_ACCESS_KEY=`, `OPENAI_API_KEY=`, `GITHUB_TOKEN=`); a quote
   between the name and the separator missed every JSON key
   (`"password": "…"`). A credential name is now any name ending in a trigger
-  word, optionally followed by `key` or `access_key`, in any case and with
-  anything glued on before it (`db_password`, `accessToken`, `PGPASSWORD`,
+  word, optionally followed by `key` or `access_key`, `base`, and a number,
+  in any case and with anything glued on before it (`db_password`,
+  `accessToken`, `PGPASSWORD`, `SECRET_KEY_BASE`, `DB_PASSWORD_1`,
   `spring.datasource.password`), quoted or not; the separator is `=`, `:`,
   `:=`, or `=>`, and `--name value` command-line flags are covered too. Only
   the value is replaced now, and a quoted value keeps its quotes:
@@ -45,17 +46,22 @@ to stop. Adapter version 0.9.0 goes with it.
   `blockedKeys` and the credential-named deny list applied, every string
   redacted, binary blocks dropped), then encoded. Keys dropped by the deny
   list are named in `sensitive_or_hidden_field_omitted` as
-  `omitted tool result keys: …`.
+  `omitted tool result keys: …`. An empty result stays `{}`; one the
+  sanitizer leaves nothing of is dropped and named as `tool.result` (or
+  `tool.error`, `toolResult.result`) in `unknown_field_omitted`.
 - **Skill snapshots stay inside their skill root.** A skill's `SKILL.md` is
   now resolved through symlinks before it is read, and the resolved file is
-  what is read. A project-level skill must resolve to a regular file inside
-  the project, so a cloned repository cannot ship
-  `.claude/skills/x/SKILL.md -> ~/.aws/credentials` and have that file
-  archived; links inside the repository (one skills directory shared by
-  several harnesses) keep working. A user-level skill may resolve inside its
-  skill root, or anywhere if the resolved file is itself a `SKILL.md`, so a
-  skill directory linked into a skills checkout elsewhere keeps working. Any
-  other entry counts as uninspected in the root's inventory.
+  what is read. It must be a regular file that lies inside the skill root or
+  is itself named `SKILL.md`: a linked skill, not an arbitrary file under a
+  skill's name. A skill directory linked into a skills checkout elsewhere
+  (`~/.claude/skills/x -> ~/src/skills/x`), or into a skills directory the
+  repository shares between harnesses, keeps working. A project-level
+  skill's file must also lie inside the project, so a cloned repository can
+  ship neither `.claude/skills/x/SKILL.md -> ~/.aws/credentials` nor
+  `-> ../../../.env` to have that file archived. When a session runs from
+  the home directory, its project skill directory is the user's own; it is
+  observed once, under the user scope. Any other entry counts as
+  uninspected in the root's inventory.
 - **Truncation keeps characters whole.** The 64 KB string cap and the 16 KB
   skill-snapshot cap cut on a UTF-8 character boundary; filter 8 could split
   a multi-byte character and leave invalid UTF-8.
@@ -324,20 +330,25 @@ Every retained string, at every depth, passes these patterns. A match is
 replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
 
 - Credential assignments (filter 9). The name ends in `api_key`,
-  `access_key`, `private_key`, `secret`, `password`, `passwd`, `passphrase`,
-  `token`, `authorization`, or `bearer` (`_`, `-`, `.`, or nothing between
-  the parts of a two-word trigger), optionally followed by `key` or
-  `access_key`, in any case, with anything glued on before it: `DB_PASSWORD`,
-  `AWS_SECRET_ACCESS_KEY`, `OPENAI_API_KEY`, `accessToken`, `PGPASSWORD`,
-  `spring.datasource.password`, `x-api-key`. The name may be quoted (`"…"`,
-  `'…'`, or `\"…\"` inside a string); the separator is `=`, `:`, `:=`, or
-  `=>`; a `--name value` command-line flag counts too. The value, quoted up to
-  its closing quote or unquoted up to whitespace, `,`, `;`, or a quote, is
-  replaced and the rest is kept: `DB_PASSWORD=[REDACTED]`,
-  `"password": "[REDACTED]"`. An HTTP scheme before the value stays:
-  `Authorization: Bearer [REDACTED]`. `pwd` is not a trigger (it is the
-  shell's working directory).
-- AWS access key IDs (`AKIA…`) and Anthropic/OpenAI style `sk-` keys.
+  `access_key`, `private_key`, `encryption_key`, `signing_key`,
+  `master_key`, `secret`, `password`, `passwd`, `passphrase`, `token`,
+  `authorization`, `bearer`, or `credential(s)` (`_`, `-`, `.`, or nothing
+  between the parts of a two-word trigger), in any case, with anything glued
+  on before it; or in `pwd` or npm's `_auth` after a separator (`MYSQL_PWD`,
+  `DB_PWD`, `:_auth`), since a bare `PWD` or `OLDPWD` is the shell's working
+  directory. The trigger may be followed by `key` or `access_key`, then
+  `base`, then a number. So `DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY`,
+  `OPENAI_API_KEY`, `SECRET_KEY_BASE`, `DB_PASSWORD_1`, `accessToken`,
+  `PGPASSWORD`, `spring.datasource.password`, and `x-api-key` all match. The
+  name may be quoted (`"…"`, `'…'`, or escaped inside a string, `\"…\"`);
+  the separator is `=`, `:`, `:=`, or `=>`; a `--name value` command-line
+  flag counts too. The value, quoted up to its closing quote or unquoted up
+  to whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
+  `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`. An HTTP scheme
+  before the value stays: `Authorization: Bearer [REDACTED]`. An unquoted
+  value may begin with `=` (`PASSWORD==abc`) unless whitespace follows it.
+- AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials)
+  and Anthropic/OpenAI style `sk-` keys.
 - PEM private key blocks: `-----BEGIN … PRIVATE KEY-----` through the next
   `-----END … -----`, or to the end of the string when the END line is missing.
   Certificates and public keys are not redacted.
@@ -354,16 +365,26 @@ word after a flag in prose (`pass --token flag`). This is accepted rather
 than narrowed, because the cost of a missed credential is higher than the
 cost of a redacted identifier in an archived transcript; a reader sees the
 `sensitive_content_redacted` gap and can consult the original source if it
-still exists. Names with anything after the trigger word other than `key`
-or `access_key` (`tokens`, `max_tokens`, `token_count`, `secretary`,
+still exists. Names with anything after the trigger word other than the
+suffix above (`tokens`, `max_tokens`, `token_count`, `secretary`,
 `password_policy`, `TOKEN_URL`, `SECRET_NAME`, `--password-stdin`) do not
-match, nor do comparisons (`token == nil`) or a name with no value.
+match, nor do `PWD`, `OLDPWD`, `auth`, comparisons (`token == nil`), or a
+name with no value.
 
-Known misses. An unquoted value stops at a quote, so a quote inside an
-unquoted password leaves the rest of the password. A name that does not end
-in a trigger word (`AWS_ACCESS_KEY_ID`, `DATABASE_URL`) is not redacted by
-this pattern; its value is redacted only if it has a recognizable shape
-(`AKIA…`, URL userinfo).
+Known misses.
+
+- An unquoted value stops at a quote, so a quote inside an unquoted
+  password leaves the rest of the password.
+- In JSON escaped more than once inside a string (`\\\"password\\\":…`),
+  the value ends at the first escaped quote of any depth, so an escaped
+  quote inside such a value leaves the rest of it. JSON escaped once
+  (`\"password\":\"ab\\\"cd\"`) is handled.
+- A name that does not end in a trigger word (`AWS_ACCESS_KEY_ID`,
+  `DATABASE_URL`, `DSN`, `CONNECTION_STRING`) is not redacted by this
+  pattern; its value is redacted only if it has a recognizable shape
+  (`AKIA…`/`ASIA…`, URL userinfo).
+- A credential in prose (`the password is hunter2`) or on the line after
+  its YAML key is not recognized.
 
 Redaction is best effort in both directions: a legitimate value that looks like
 a credential is redacted, and a tool argument that happens to contain one of

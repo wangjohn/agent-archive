@@ -56,6 +56,24 @@ func TestFilterV9RedactsCredentialAssignments(t *testing.T) {
 		{"flag equals", "mysql --password=hunter2 -u root", "mysql --password=[REDACTED] -u root"},
 		{"flag space", "gh auth login --token abc123", "gh auth login --token [REDACTED]"},
 		{"flag kebab space", "aws configure set --aws-secret-access-key wJalr -p x", "aws configure set --aws-secret-access-key [REDACTED] -p x"},
+		// Names added after review
+		{"rails secret key base", "SECRET_KEY_BASE=abc123def", "SECRET_KEY_BASE=[REDACTED]"},
+		{"mysql pwd", "MYSQL_PWD=hunter2", "MYSQL_PWD=[REDACTED]"},
+		{"db pwd", "export DB_PWD='hunter2'", "export DB_PWD='[REDACTED]'"},
+		{"numbered password", "DB_PASSWORD_1=hunter2", "DB_PASSWORD_1=[REDACTED]"},
+		{"glued number", "PASSWORD2=hunter2", "PASSWORD2=[REDACTED]"},
+		{"numbered api key", "API_KEY_2=abcd1234", "API_KEY_2=[REDACTED]"},
+		{"npmrc auth", "//registry.npmjs.org/:_auth=dXNlcjpwYXNz", "//registry.npmjs.org/:_auth=[REDACTED]"},
+		{"npm config auth", "npm_config__auth=dXNlcjpwYXNz", "npm_config__auth=[REDACTED]"},
+		{"credentials", "credentials=user:hunter2", "credentials=[REDACTED]"},
+		{"encryption key", "ENCRYPTION_KEY=0123456789abcdef", "ENCRYPTION_KEY=[REDACTED]"},
+		{"signing key", "JWT_SIGNING_KEY=0123456789abcdef", "JWT_SIGNING_KEY=[REDACTED]"},
+		{"master key", "RAILS_MASTER_KEY=0123456789abcdef", "RAILS_MASTER_KEY=[REDACTED]"},
+		{"sts key id", "aws_access_key_id = ASIAIOSFODNN7EXAMPLE", "aws_access_key_id = [REDACTED]"},
+		{"value starting with equals", "PASSWORD==abc", "PASSWORD=[REDACTED]"},
+		{"yaml value starting with equals", "token: =abc", "token: [REDACTED]"},
+		{"escaped quote inside escaped json", `{\"password\":\"ab\\\"cd\"}`, `{\"password\":\"[REDACTED]\"}`},
+		{"doubly escaped json", `{\\\"password\\\":\\\"hunter2\\\"}`, `{\\\"password\\\":\\\"[REDACTED]\\\"}`},
 		// Earlier shapes still redacted
 		{"plain assignment", "password=hunter2", "password=[REDACTED]"},
 		{"structural key under an assignment", "OPENAI_API_KEY=sk-proj-abcdefghijklmnop", "OPENAI_API_KEY=[REDACTED]"},
@@ -91,6 +109,13 @@ func TestFilterV9LeavesNonCredentialNamesUnchanged(t *testing.T) {
 		"func parseToken(t Token) error { return nil }",
 		"echo $DB_PASSWORD",
 		"PWD=/Users/someone/project",
+		"OLDPWD=/Users/someone",
+		"cd $PWD && ls",
+		"auth: required",
+		"oauth_callback=https://example.test/cb",
+		"credential_helper=osxkeychain",
+		"keyboard: us",
+		"primary_key = id",
 		"docker login --password-stdin < token.txt",
 		"git config credential.helper osxkeychain",
 		"gh auth login --with-token --hostname github.com",
@@ -194,6 +219,33 @@ func TestCursorComposerSanitizesStructuredToolResults(t *testing.T) {
 		if !hasGap(filtered.Gaps, code) {
 			t.Errorf("no %s gap: %#v", code, filtered.Gaps)
 		}
+	}
+}
+
+// An empty structured result is kept as `{}`. One the sanitizer leaves
+// nothing of is named among the omitted keys, not reported as a record
+// without allowed fields (it is no record).
+func TestCursorComposerStructuredResultEmptyAndFullyDropped(t *testing.T) {
+	composer := json.RawMessage(`{"_v":18,"composerId":"c1","createdAt":1758700000000,"status":"completed","fullConversationHeadersOnly":[{"bubbleId":"b1","type":2},{"bubbleId":"b2","type":2}]}`)
+	empty := json.RawMessage(`{"_v":3,"bubbleId":"b1","type":2,"toolFormerData":{"status":"completed","toolCallId":"t1","name":"noop","rawArgs":"{}","result":{}}}`)
+	dropped := json.RawMessage(`{"_v":3,"bubbleId":"b2","type":2,"toolFormerData":{"status":"completed","toolCallId":"t2","name":"login","rawArgs":"{}","result":{"password":"hunter2hunter2","token":"tok-synthetic"}}}`)
+	filtered, err := (CursorAdapter{}).FilterComposer(CursorComposer{Composer: composer, Bubbles: []CursorBubble{{ID: "b1", Value: empty}, {ID: "b2", Value: dropped}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := string(bytes.Join(filtered.Records, []byte("\n")))
+	if !strings.Contains(joined, `"content":"{}"`) || strings.Contains(joined, "hunter2") || strings.Contains(joined, "tok-synthetic") {
+		t.Fatalf("records: %s", joined)
+	}
+	if hasGap(filtered.Gaps, "record_without_allowed_fields_omitted") {
+		t.Errorf("structured result reported as a record: %#v", filtered.Gaps)
+	}
+	found := false
+	for _, gap := range filtered.Gaps {
+		found = found || gap.Code == "unknown_field_omitted" && strings.Contains(gap.Detail, "tool.result")
+	}
+	if !found {
+		t.Errorf("fully dropped result not named: %#v", filtered.Gaps)
 	}
 }
 

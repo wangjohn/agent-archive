@@ -1,0 +1,2 @@
+go test fuzz v1
+string("STRIPE_SECRET=rk_live_abcdefghijklmnop")

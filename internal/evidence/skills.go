@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -95,10 +94,19 @@ func skillRoots(options SkillOptions) []skillRoot {
 			roots = append(roots, skillRoot{path: filepath.Join(user, suffix), scope: scope})
 		}
 	}
+	// A project root that is a user-level root (the session ran from the
+	// home directory) is observed once, under the user scope and its rules.
 	addProject := func(suffix, scope string) {
-		if project != "" {
-			roots = append(roots, skillRoot{path: filepath.Join(project, suffix), scope: scope, project: project})
+		if project == "" {
+			return
 		}
+		path := filepath.Join(project, suffix)
+		for _, root := range roots {
+			if sameDirectory(root.path, path) {
+				return
+			}
+		}
+		roots = append(roots, skillRoot{path: path, scope: scope, project: project})
 	}
 	switch strings.ToLower(strings.TrimSpace(options.Harness)) {
 	case "codex":
@@ -194,7 +202,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		payload["sha256"] = hash // hash of original bytes, before filtering
 		body := string(original)
 		if len(body) > maxSnapshotBodyBytes {
-			body = truncateUTF8(body, maxSnapshotBodyBytes)
+			body = archive.TruncateUTF8(body, maxSnapshotBodyBytes)
 			payload["truncated"] = true
 		}
 		payload["snapshot"] = body
@@ -241,65 +249,74 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 // skillBounds decides which resolved SKILL.md paths one skill root may read.
 // Without it a SKILL.md, or the skill directory holding it, could be a
 // symlink to any file the collector can read, and a repository a person
-// merely cloned could ship .claude/skills/x/SKILL.md -> ~/.aws/credentials
-// to have that file archived with every session as a skill snapshot.
+// merely cloned could ship .claude/skills/x/SKILL.md -> ~/.aws/credentials,
+// or -> ../../../.env, to have that file archived with every session as a
+// skill snapshot.
 //
-//   - A project-level root belongs to a repository, which is not trusted to
-//     name files outside itself. Its SKILL.md must resolve to a file inside
-//     the project root (symlinks resolved on both sides). Links within the
-//     repository keep working, such as .claude/skills/x -> ../../skills/x,
-//     which lets one skills directory serve several harnesses.
-//   - A user-level root is the person's own configuration, where linking a
-//     skill directory into a skills checkout elsewhere (~/.claude/skills/x ->
-//     ~/src/skills/x) is a supported way to install one. Its SKILL.md may
-//     resolve anywhere inside the root itself, or anywhere at all as long as
-//     the resolved file is itself named SKILL.md: a linked skill, not an
-//     arbitrary file under a skill's name.
+// Symlinks are resolved on both sides. For every root, the resolved file
+// must lie inside the resolved skill root, or be itself named SKILL.md: a
+// linked skill, not an arbitrary file under a skill's name. Linking a skill
+// directory into a skills checkout elsewhere (~/.claude/skills/x ->
+// ~/src/skills/x) keeps working, and so does a link inside a repository
+// that shares one skills directory between harnesses
+// (.claude/skills/x -> ../../skills/x).
+//
+// A project-level root belongs to a repository, which is not trusted to
+// name files outside itself, so its SKILL.md must also lie inside the
+// project root. A project root that is a user-level root (the session ran
+// from the home directory, so the project's .claude/skills is
+// ~/.claude/skills) is not observed a second time: see skillRoots.
 //
 // An entry that resolves outside its bounds counts as uninspected. The
 // bounds are checked on the resolved path, and the resolved path is what is
 // read; a symlink swapped in between the two is a race this does not close.
 type skillBounds struct {
-	// within is the resolved directory a SKILL.md may resolve inside, or ""
-	// when it could not be resolved.
-	within string
-	// linkedSkill allows a SKILL.md resolving anywhere if it is named SKILL.md.
-	linkedSkill bool
+	// root and project are the resolved skill root and project root, or ""
+	// when the directory could not be resolved.
+	root, project string
+	// projectScoped is set for a project-level root.
+	projectScoped bool
 }
 
 func newSkillBounds(root skillRoot) skillBounds {
-	base := root.path
-	if root.project != "" {
-		base = root.project
+	bounds := skillBounds{projectScoped: root.project != ""}
+	if resolved, err := filepath.EvalSymlinks(root.path); err == nil {
+		bounds.root = resolved
 	}
-	bounds := skillBounds{linkedSkill: root.project == ""}
-	if resolved, err := filepath.EvalSymlinks(base); err == nil {
-		bounds.within = resolved
+	if bounds.projectScoped {
+		if resolved, err := filepath.EvalSymlinks(root.project); err == nil {
+			bounds.project = resolved
+		}
 	}
 	return bounds
 }
 
 // allow reports whether a resolved SKILL.md path is inside the bounds.
 func (b skillBounds) allow(resolved string) bool {
-	if b.linkedSkill && strings.EqualFold(filepath.Base(resolved), "SKILL.md") {
-		return true
-	}
-	if b.within == "" {
+	if b.projectScoped && !within(b.project, resolved) {
 		return false
 	}
-	rel, err := filepath.Rel(b.within, resolved)
+	return strings.EqualFold(filepath.Base(resolved), "SKILL.md") || within(b.root, resolved)
+}
+
+// within reports whether path lies inside dir; nothing lies inside "".
+func within(dir, path string) bool {
+	if dir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(dir, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
-// truncateUTF8 returns at most n bytes of s without splitting a character.
-func truncateUTF8(s string, n int) string {
-	if len(s) <= n {
-		return s
+// sameDirectory reports whether a and b are the same directory, compared
+// with symlinks resolved when both resolve and as written otherwise.
+func sameDirectory(a, b string) bool {
+	if ra, err := filepath.EvalSymlinks(a); err == nil {
+		if rb, err := filepath.EvalSymlinks(b); err == nil {
+			return ra == rb
+		}
 	}
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func inventoryObservation(harness, scope, rootStatus string, skills []any, complete bool, observedAt time.Time) archive.SupplementalEvidence {

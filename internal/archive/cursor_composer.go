@@ -476,10 +476,10 @@ func (f *cursorComposerFilter) toolFormerBlocks(raw any) []any {
 		blocks = append(blocks, call)
 	}
 	status, _ := tool["status"].(string)
-	output, hasOutput := f.toolOutput(tool["result"])
+	output, hasOutput := f.toolOutput(tool["result"], "tool", "result")
 	isError := strings.EqualFold(status, "error")
 	// An error of any shape (Cursor writes a string) is kept as text.
-	if errorText, hasError := f.toolOutput(tool["error"]); hasError && nonEmptyValue(tool["error"]) {
+	if errorText, hasError := f.toolOutput(tool["error"], "tool", "error"); hasError && nonEmptyValue(tool["error"]) {
 		if hasOutput {
 			f.omit("tool", "result")
 		}
@@ -612,7 +612,7 @@ func (f *cursorComposerFilter) toolResultBlocks(raw any) []any {
 					block["name"] = name
 				}
 			case "result":
-				if output, ok := f.toolOutput(entry[key]); ok {
+				if output, ok := f.toolOutput(entry[key], "toolResult", key); ok {
 					block["content"] = output
 				}
 			default:
@@ -747,29 +747,43 @@ func cursorArgumentObject(raw any) (map[string]any, bool) {
 // encoded to one string, so the sanitizer treats it as the text it is rather
 // than applying the key allowlist to it. Filter 8 encoded it before
 // sanitizing, so a result such as {"password": …} was kept whole: value
-// redaction sees `"password":"…"` as text, and the key rules never ran. A
-// structured result the sanitizer leaves nothing of is no output.
-func (f *cursorComposerFilter) toolOutput(raw any) (string, bool) {
+// redaction sees `"password":"…"` as text, and the key rules never ran.
+//
+// An empty object or array is kept as it was (`{}`, `[]`). A structured
+// result the sanitizer leaves nothing of is no output, and is named, as
+// level.key, among the omitted keys; the sanitizer's own "record without
+// allowed fields" gap would misdescribe it, since it is no record.
+func (f *cursorComposerFilter) toolOutput(raw any, level, key string) (string, bool) {
 	switch value := raw.(type) {
 	case nil:
 		return "", false
 	case string:
 		return value, value != ""
-	default:
-		state := sanitizeState{
-			addGap: f.addGap, retainAllKeys: true,
-			omittedKey: func(key string) { f.omit("toolResult", key) }, deniedKey: f.resultDenied.add,
+	case map[string]any, []any:
+		if !nonEmptyValue(value) {
+			encoded, _ := json.Marshal(value)
+			return string(encoded), true
 		}
-		safe, keep := sanitizeValue(value, &state)
-		if !keep {
-			return "", false
-		}
-		encoded, err := json.Marshal(safe)
-		if err != nil {
-			return "", false
-		}
-		return string(encoded), true
 	}
+	state := sanitizeState{
+		addGap: func(code string, record int, detail string) {
+			if code != "record_without_allowed_fields_omitted" {
+				f.addGap(code, record, detail)
+			}
+		},
+		retainAllKeys: true,
+		omittedKey:    func(key string) { f.omit("toolResult", key) }, deniedKey: f.resultDenied.add,
+	}
+	safe, keep := sanitizeValue(raw, &state)
+	if !keep {
+		f.omit(level, key)
+		return "", false
+	}
+	encoded, err := json.Marshal(safe)
+	if err != nil {
+		return "", false
+	}
+	return string(encoded), true
 }
 
 // isCursorBlobKey reports whether a key refers to agentKv blob content.
