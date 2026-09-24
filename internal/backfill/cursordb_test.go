@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
 // composerJSON builds a composerData value with headers message headers;
@@ -868,7 +869,8 @@ func TestCursorDatabaseSkippedWhenTranscriptsUnreadable(t *testing.T) {
 // the plan is made, and nothing next to the database changes.
 func TestCursorDatabasePlanLive(t *testing.T) {
 	temp := t.TempDir()
-	t.Setenv("TMPDIR", temp)
+	cursorstore.SnapshotTempDirForTesting = temp
+	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = "" })
 	tr := newTree(t)
 	path := CursorStateDatabase(tr.home)
 	w := startCursorWriter(t, path, true)

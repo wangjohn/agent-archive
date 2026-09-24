@@ -30,7 +30,8 @@ type cursorDB struct {
 func newCursorDB(t *testing.T, running bool) *cursorDB {
 	t.Helper()
 	// Snapshots go to the system temporary directory; give the test its own.
-	t.Setenv("TMPDIR", t.TempDir())
+	cursorstore.SnapshotTempDirForTesting = t.TempDir()
+	t.Cleanup(func() { cursorstore.SnapshotTempDirForTesting = "" })
 	d := &cursorDB{t: t, path: filepath.Join(t.TempDir(), "state.vscdb")}
 	if running {
 		d.held = d.open()

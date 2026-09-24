@@ -35,23 +35,34 @@ const staleSnapshotAge = time.Hour
 // is under /var/folders, which Time Machine excludes; the user ID in the
 // name keeps users apart where the temporary directory is shared.
 func snapshotRootPath() string {
-	return filepath.Join(userTempDir(os.Getenv, runtime.GOOS, darwinUserTempDir), fmt.Sprintf("agent-archive-cursor-%d", os.Getuid()))
+	base := SnapshotTempDirForTesting
+	if base == "" {
+		base = userTempDir(os.Getenv, runtime.GOOS, darwinUserTempDir)
+	}
+	return filepath.Join(base, fmt.Sprintf("agent-archive-cursor-%d", os.Getuid()))
 }
 
-// userTempDir is $TMPDIR when it is set. Without it, on macOS it asks the
-// system for the per-user temporary directory rather than falling back to
-// the shared /tmp: the LaunchAgent that runs the collector sets only
-// AGENT_ARCHIVE_HOME, so launchd may leave TMPDIR unset while hook runs,
-// started from the apps, have it, and both must use one snapshot root for
-// the sweep of one to see the other's leftovers. Elsewhere, os.TempDir.
+// SnapshotTempDirForTesting, when set, replaces the per-user temporary
+// directory snapshots go under. Only tests set it, so their copies stay in
+// folders of their own.
+var SnapshotTempDirForTesting string
+
+// userTempDir is, on macOS, the per-user temporary directory the system
+// reports (DARWIN_USER_TEMP_DIR), whatever $TMPDIR says: it is the folder
+// Time Machine excludes, and every process of the user's agrees on it,
+// whereas the LaunchAgent that runs the collector sets only
+// AGENT_ARCHIVE_HOME (so launchd may leave TMPDIR unset) and a custom TMPDIR
+// in a shell would put a copy of every chat elsewhere and split the sweep's
+// root. Only if the system can't say is $TMPDIR used, then os.TempDir; the
+// same order, from $TMPDIR, elsewhere.
 func userTempDir(getenv func(string) string, goos string, darwinTemp func() string) string {
-	if dir := getenv("TMPDIR"); dir != "" {
-		return dir
-	}
 	if goos == "darwin" {
 		if dir := darwinTemp(); filepath.IsAbs(dir) {
 			return dir
 		}
+	}
+	if dir := getenv("TMPDIR"); dir != "" {
+		return dir
 	}
 	return os.TempDir()
 }

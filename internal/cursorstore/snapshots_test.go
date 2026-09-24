@@ -69,10 +69,10 @@ func TestSweepSkipsASnapshotInUse(t *testing.T) {
 	assertEmpty(t, root)
 }
 
-// TestUserTempDir: $TMPDIR wins; without it macOS uses the per-user
-// temporary directory the system reports, not the shared /tmp, so a
-// collector started by launchd without TMPDIR and a hook run with it share
-// one snapshot root.
+// TestUserTempDir: macOS uses the per-user temporary directory the system
+// reports, whatever $TMPDIR says, so a collector started by launchd without
+// TMPDIR, a hook run with it, and a shell with a custom one share one
+// snapshot root; $TMPDIR only when the system can't say, and elsewhere.
 func TestUserTempDir(t *testing.T) {
 	env := func(tmp string) func(string) string {
 		return func(key string) string {
@@ -88,10 +88,11 @@ func TestUserTempDir(t *testing.T) {
 		darwin             func() string
 		want               string
 	}{
-		{"TMPDIR set", "/private/tmp/mine", "darwin", perUser, "/private/tmp/mine"},
+		{"custom TMPDIR", "/private/tmp/mine", "darwin", perUser, "/var/folders/xy/abc/T"},
 		{"launchd without TMPDIR", "", "darwin", perUser, "/var/folders/xy/abc/T"},
-		{"getconf failed", "", "darwin", func() string { return "" }, os.TempDir()},
-		{"not macOS", "", "linux", perUser, os.TempDir()},
+		{"getconf failed", "/private/tmp/mine", "darwin", func() string { return "" }, "/private/tmp/mine"},
+		{"getconf failed, no TMPDIR", "", "darwin", func() string { return "" }, os.TempDir()},
+		{"not macOS", "/tmp/linux", "linux", perUser, "/tmp/linux"},
 	} {
 		if got := userTempDir(env(tc.tmpdir), tc.goos, tc.darwin); got != tc.want {
 			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)

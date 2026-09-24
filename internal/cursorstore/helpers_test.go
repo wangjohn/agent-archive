@@ -139,13 +139,14 @@ func assertUnchanged(t testing.TB, dir string, before map[string]fileState) {
 	}
 }
 
-// useTempSnapshots points the system temporary directory, and so
+// useTempSnapshots points the snapshots' temporary directory, and so
 // SnapshotRoot, at a directory of the test's own, and returns the snapshot
 // root there.
 func useTempSnapshots(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	t.Setenv("TMPDIR", dir)
+	SnapshotTempDirForTesting = dir
+	t.Cleanup(func() { SnapshotTempDirForTesting = "" })
 	root := snapshotRootPath()
 	if filepath.Dir(root) != filepath.Clean(dir) {
 		t.Fatalf("snapshot root %s is not under %s", root, dir)
