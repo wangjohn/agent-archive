@@ -157,7 +157,7 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			fmt.Fprintln(stderr, notSetUpMessage)
 			return 1
 		}
-		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source, skip: currentSessions(env)}
+		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source, skip: currentSessions(env), stderr: stderr}
 		if *latest {
 			dir := *project
 			if dir == "" {
@@ -330,6 +330,8 @@ type handoffResolver struct {
 	// skip holds native session IDs `--latest` must pass over: the agent
 	// session running the command.
 	skip map[string]bool
+	// stderr receives warnings, such as a skipped metadata sidecar.
+	stderr io.Writer
 }
 
 // byID resolves an explicit archive session ID: the local registration first
@@ -449,7 +451,7 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	if err != nil {
 		return handoffTarget{}, fmt.Errorf("no local session for %s, and the archive could not be opened: %w", dir, err)
 	}
-	sessions, err := reader.ListMetadataWithOptions(r.ctx, store, archiveSessionsPrefix, reader.Filter{Harness: r.harness}, reader.ListOptions{Cache: listCache(r.env, false)})
+	sessions, err := reader.ListMetadataWithOptions(r.ctx, store, archiveSessionsPrefix, reader.Filter{Harness: r.harness}, reader.ListOptions{Cache: listCache(r.env, false), Skipped: warnSkippedSidecar(r.stderr, "handoff")})
 	if err != nil {
 		return handoffTarget{}, err
 	}

@@ -217,13 +217,6 @@ func TestListReportsTheFirstFailingSidecarInKeyOrder(t *testing.T) {
 			t.Fatalf("error = %v, want the failure for %s", err, keys[3])
 		}
 	}
-	// A sidecar which does not validate fails the listing too.
-	if err := store.Put(context.Background(), keys[0], []byte(`{"schema_version":1}`)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ListMetadata(context.Background(), store, "sessions", Filter{}); err == nil || !strings.Contains(err.Error(), keys[0]) {
-		t.Fatalf("invalid sidecar error = %v", err)
-	}
 }
 
 // Cancelling the caller's context stops the listing: reads still in flight
