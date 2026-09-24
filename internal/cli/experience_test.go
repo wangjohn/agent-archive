@@ -221,6 +221,7 @@ func TestPurgeConfirmationDoesNotBlockCapture(t *testing.T) {
 		}
 		unlock()
 	}}
+	env.IsTerminal = func(stream any) bool { return stream == any(input) }
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"uninstall", "--delete-local-data"}, input, &out, &errOut, env); code != 0 {
 		t.Fatal(errOut.String())

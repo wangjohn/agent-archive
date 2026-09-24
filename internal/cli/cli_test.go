@@ -11,6 +11,9 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
+// noEnv is an empty process environment.
+func noEnv(string) (string, bool) { return "", false }
+
 func testEnv(t *testing.T, home string, now time.Time) Env {
 	t.Helper()
 	userHome := t.TempDir()

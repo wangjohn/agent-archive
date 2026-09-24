@@ -56,6 +56,13 @@ type Config struct {
 	// symlink, a Homebrew shim, a copied binary); a configuration written
 	// before this field existed falls back to the running executable.
 	InstalledExecutable string `json:"installed_executable,omitempty"`
+	// HookFiles records, per app in Harnesses, the hook configuration file
+	// setup installed into, as resolved from the environment setup ran in
+	// (CLAUDE_CONFIG_DIR, CODEX_HOME). Status and uninstall read it so they
+	// find the files from a shell without those variables. A configuration
+	// written before this field existed falls back to the current
+	// environment's paths.
+	HookFiles map[string]string `json:"hook_files,omitempty"`
 	// RequireSkillUse opts out of the spec's default (capture sessions with
 	// no detected skill use too, to preserve comparison evidence). The zero
 	// value (false) matches that default, so a config that predates this

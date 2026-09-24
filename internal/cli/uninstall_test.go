@@ -41,7 +41,7 @@ func TestUninstallKeepsLocalDataByDefault(t *testing.T) {
 	if !found || cfg.Archive.Enabled {
 		t.Fatal("must retain disabled config")
 	}
-	if _, err := os.Stat(filepath.Join(userHome, "Library/LaunchAgents", hooks.LaunchLabel+".plist")); !os.IsNotExist(err) {
+	if _, err := os.Stat(collectorPlist(home, userHome)); !os.IsNotExist(err) {
 		t.Fatal("plist remains")
 	}
 	for _, rel := range []string{".codex/hooks.json", ".claude/settings.json"} {
@@ -78,7 +78,7 @@ func TestUninstallDeclineChangesNothing(t *testing.T) {
 	if string(after) != string(before) {
 		t.Fatal("declining must not touch hook configuration")
 	}
-	if _, err := os.Stat(filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")); err != nil {
+	if _, err := os.Stat(collectorPlist(home, userHome)); err != nil {
 		t.Fatalf("declining must keep the plist: %v", err)
 	}
 }
@@ -185,18 +185,18 @@ func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
 	// The state a setup that failed at config.Save, and whose rollback also
 	// failed, would leave: a plist and hooks but no config.
 	executable := "/opt/agent-archive/bin/agent-archive"
-	changes, err := hooks.Plan(userHome, executable, []string{"cursor"})
+	changes, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv), installedHook(home, userHome, executable), []string{"cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := hooks.Apply(changes); err != nil {
 		t.Fatal(err)
 	}
-	plist, err := hooks.LaunchAgent(executable, home)
+	plist, err := hooks.LaunchAgent(executable, home, launchLabel(collectorPlist(home, userHome)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plistPath := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
+	plistPath := collectorPlist(home, userHome)
 	if err := local.WriteBytes(plistPath, plist); err != nil {
 		t.Fatal(err)
 	}

@@ -112,7 +112,7 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	legacyPath := filepath.Join(userHome, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
-	plistPath := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
+	plistPath := collectorPlist(home, userHome)
 	states := map[string]string{}
 	var loaded []string
 	env.JobState = func(p string) string {

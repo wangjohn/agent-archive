@@ -241,7 +241,7 @@ func publishPairSession(t *testing.T, home string, store *collector.LocalStore, 
 func pairStatusEnv(t *testing.T, home, userHome string, now time.Time, apps ...string) Env {
 	t.Helper()
 	executable := "/opt/agent-archive/bin/agent-archive"
-	plan, err := hooks.Plan(userHome, executable, apps)
+	plan, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv), installedHook(home, userHome, executable), apps)
 	if err != nil {
 		t.Fatal(err)
 	}

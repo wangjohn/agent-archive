@@ -19,15 +19,26 @@ import (
 )
 
 // Uninstall leaves data and credentials available for reinstall unless the
-// explicit destructive option and its separate confirmation are supplied.
+// explicit destructive option and its separate confirmation (or --yes) are
+// supplied.
 func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	if err := uninstall(args, stdin, stdout, env); err != nil {
+	fs := newCommandFlags("uninstall")
+	purge := fs.Bool("delete-local-data", false, "also delete owned local files and stored credentials")
+	yes := fs.Bool("yes", false, "skip the confirmations")
+	if !parseCommandFlags(fs, args, stderr) {
+		return 2
+	}
+	if !*yes && !env.isTerminal(stdin) {
+		fmt.Fprintln(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking.")
+		return 1
+	}
+	if err := uninstall(*purge, *yes, stdin, stdout, env); err != nil {
 		fmt.Fprintf(stderr, "Uninstall incomplete: %v\n", err)
 		return 1
 	}
 	return 0
 }
-func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
+func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -51,13 +62,12 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	release = releaseOnce(release)
 	defer release()
 	if transactionPending(home) {
-		return fmt.Errorf("run agent-archive setup to recover the interrupted installation first")
+		return errors.New(recoveryPending(home))
 	}
-	cfg, found, err := config.Load(home)
-	if err != nil {
+	// An unreadable configuration fails before anything is asked.
+	if _, _, err = config.Load(home); err != nil {
 		return err
 	}
-	purge := containsString(args, "--delete-local-data")
 	fmt.Fprintln(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
 	if purge {
 		fmt.Fprintf(out, "Also delete owned local state and credentials under %s.\n", home)
@@ -65,13 +75,18 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 		fmt.Fprintln(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
 	}
 	p := newPrompter(stdin, out)
-	yes, err := p.yesNo("Remove integrations?", false)
-	if err != nil {
-		return err
+	confirm := func(question string) (bool, error) {
+		if yes {
+			return true, nil
+		}
+		confirmed, err := p.yesNo(question, false)
+		if err == nil && !confirmed {
+			fmt.Fprintln(out, "Cancelled. No changes were made.")
+		}
+		return confirmed, err
 	}
-	if !yes {
-		fmt.Fprintln(out, "Cancelled. No changes were made.")
-		return nil
+	if confirmed, err := confirm("Remove integrations?"); err != nil || !confirmed {
+		return err
 	}
 	previewPending := 0
 	if purge {
@@ -81,13 +96,8 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 		}
 		previewPending = pending
 		fmt.Fprintf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
-		yes, err = p.yesNo("Delete local data and stored credentials too?", false)
-		if err != nil {
+		if confirmed, err := confirm("Delete local data and stored credentials too?"); err != nil || !confirmed {
 			return err
-		}
-		if !yes {
-			fmt.Fprintln(out, "Cancelled. No changes were made.")
-			return nil
 		}
 	}
 	unlock, err := local.Lock(home)
@@ -102,8 +112,8 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	releaseHooks = releaseOnce(releaseHooks)
 	defer releaseHooks()
-	// Reload after acquiring the lock; pause/resume may have completed meanwhile.
-	cfg, found, err = config.Load(home)
+	// Load under the lock; pause/resume may have completed meanwhile.
+	cfg, found, err := config.Load(home)
 	if err != nil {
 		return err
 	}
@@ -116,18 +126,25 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 			return fmt.Errorf("new pending evidence appeared while confirming; rerun uninstall to review it")
 		}
 	}
-	changes, err := hooks.PlanRemoval(userHome, allHarnesses)
+	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), installedApps(cfg, found))
 	if err != nil {
 		return err
 	}
-	plist := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-	state := env.jobState(plist)
-	if state == "unknown" {
-		return fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
+	// The collector for this data directory, and one an earlier release
+	// installed for it under the default label. Never another directory's.
+	plists := []string{collectorPlist(home, userHome)}
+	if previous := previousCollectorPlist(home, userHome); previous != "" {
+		plists = append(plists, previous)
 	}
-	if state == "running" || state == "loaded" {
-		if err = env.unloadLaunchAgent(plist); err != nil {
-			return fmt.Errorf("stop collector: %w", err)
+	for _, plist := range plists {
+		state := env.jobState(plist)
+		if state == "unknown" {
+			return fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
+		}
+		if state == "running" || state == "loaded" {
+			if err = env.unloadLaunchAgent(plist); err != nil {
+				return fmt.Errorf("stop collector: %w", err)
+			}
 		}
 	}
 	// Disable capture before removing hooks. A partial uninstall remains safely disabled.
@@ -138,10 +155,18 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 		}
 	}
 	if err = hooks.Apply(changes); err != nil {
+		if errors.Is(err, hooks.ErrChanged) {
+			return fmt.Errorf("%w; capture is already disabled, so rerun agent-archive uninstall to finish", err)
+		}
 		return err
 	}
-	if err = os.Remove(plist); err != nil && !os.IsNotExist(err) {
-		return err
+	for _, plist := range plists {
+		if err = os.Remove(plist); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	for _, problem := range skipped {
+		fmt.Fprintln(out, problem)
 	}
 	if purge {
 		refs := map[string]bool{}
@@ -216,6 +241,39 @@ func uninstall(args []string, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	fmt.Fprintln(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
 	return nil
+}
+
+// installedApps is the apps whose hooks setup installed, per the committed
+// configuration. An empty list in a configuration means every app (see
+// config.Config.Harnesses); with no configuration at all, none is known.
+func installedApps(cfg config.Config, found bool) []string {
+	if found && len(cfg.Harnesses) == 0 {
+		return allHarnesses
+	}
+	return cfg.Harnesses
+}
+
+// planUninstallHooks plans removing our handlers from every app's hook file.
+// An installed app's file must be readable, or its hooks would stay behind.
+// Any other app's file is only checked for leftovers from an earlier
+// installation, so one that cannot be parsed (the user's own, half-edited
+// ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
+// than blocking the collector's removal.
+func planUninstallHooks(files hooks.Files, installed []string) (changes []hooks.Change, skipped []string, err error) {
+	for _, app := range allHarnesses {
+		change, found, err := hooks.PlanRemovalOf(files, app)
+		if err != nil {
+			if containsString(installed, app) {
+				return nil, nil, err
+			}
+			skipped = append(skipped, fmt.Sprintf("Skipped %v. Setup did not install %s hooks, so the file was left as it is.", err, appName(app)))
+			continue
+		}
+		if found {
+			changes = append(changes, change)
+		}
+	}
+	return changes, skipped, nil
 }
 
 // deleteCredentialRefs deletes every referenced Keychain item it can. It

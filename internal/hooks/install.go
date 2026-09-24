@@ -2,14 +2,14 @@ package hooks
 
 import (
 	"bytes"
-	"encoding/json"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 )
 
@@ -22,22 +22,60 @@ type Change struct {
 	Mode    os.FileMode
 }
 
-func Plan(home, executable string, harnesses []string) ([]Change, error) {
+// Files maps each harness to the absolute path of its hook configuration
+// file. See ResolveFiles.
+type Files map[string]string
+
+// ResolveFiles finds each application's hook configuration file the way the
+// application itself does: Claude Code reads $CLAUDE_CONFIG_DIR/settings.json
+// in place of ~/.claude/settings.json, and Codex reads $CODEX_HOME/hooks.json
+// in place of ~/.codex/hooks.json. Cursor has no such variable. lookupEnv
+// reads the environment setup runs in, which is the one the user starts the
+// applications from; a relative directory is taken relative to the current
+// directory, as the application would.
+func ResolveFiles(userHome string, lookupEnv func(string) (string, bool)) Files {
+	dir := func(variable, fallback string) string {
+		if value, ok := lookupEnv(variable); ok && value != "" {
+			if abs, err := filepath.Abs(value); err == nil {
+				return abs
+			}
+		}
+		return filepath.Join(userHome, fallback)
+	}
+	return Files{
+		"claude": filepath.Join(dir("CLAUDE_CONFIG_DIR", ".claude"), "settings.json"),
+		"codex":  filepath.Join(dir("CODEX_HOME", ".codex"), "hooks.json"),
+		"cursor": filepath.Join(userHome, ".cursor", "hooks.json"),
+	}
+}
+
+func (f Files) path(harness string) (string, error) {
+	if _, err := events(harness); err != nil {
+		return "", err
+	}
+	path := f[harness]
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("no hook configuration file for %s", harness)
+	}
+	return path, nil
+}
+
+// Plan prepares installing hook for each harness into its file in files.
+func Plan(files Files, hook Hook, harnesses []string) ([]Change, error) {
 	changes := []Change{}
 	for _, h := range harnesses {
-		relative, err := hookFile(h)
+		path, err := files.path(h)
 		if err != nil {
 			return nil, err
 		}
-		path := filepath.Join(home, relative)
 		before, err := os.ReadFile(path)
 		exists := err == nil
 		if err != nil && !os.IsNotExist(err) {
-			return nil, errors.New("cannot read existing hook configuration")
+			return nil, fmt.Errorf("cannot read %s", path)
 		}
-		after, err := Merge(before, h, executable)
+		after, err := Merge(before, h, hook)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		mode := os.FileMode(0600)
 		if exists {
@@ -52,6 +90,10 @@ func Plan(home, executable string, harnesses []string) ([]Change, error) {
 	return changes, nil
 }
 
+// ErrChanged reports that a file changed after its Change was planned.
+// Apply wraps it with the file's path; the caller says how to retry.
+var ErrChanged = errors.New("changed while it was being updated")
+
 // Apply rolls back already written files on failure. It refuses a configuration
 // changed since the plan was prepared, rather than overwriting concurrent edits.
 func Apply(changes []Change) error {
@@ -60,10 +102,10 @@ func Apply(changes []Change) error {
 		current, err := os.ReadFile(c.Path)
 		exists := err == nil
 		if (err != nil && !os.IsNotExist(err)) || exists != c.Existed || string(current) != string(c.Before) {
-			return errors.Join(errors.New("hook configuration changed during setup; retry setup"), rollback(applied))
+			return errors.Join(fmt.Errorf("%s %w", c.Path, ErrChanged), rollback(applied))
 		}
 		if err = atomicWrite(c.Path, c.After, c.Mode); err != nil {
-			return errors.Join(errors.New("cannot install hooks"), rollback(applied))
+			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
 		applied = append(applied, c)
 	}
@@ -76,50 +118,46 @@ func Apply(changes []Change) error {
 // never contained our entries, yields no Change at all, so an unrelated
 // configuration is never rewritten or reformatted. Apply the result with
 // Apply, which keeps its refuse-on-concurrent-edit and rollback behavior.
-func PlanRemoval(home string, harnesses []string) ([]Change, error) {
+func PlanRemoval(files Files, harnesses []string) ([]Change, error) {
 	changes := []Change{}
 	for _, h := range harnesses {
-		relative, err := hookFile(h)
+		c, found, err := PlanRemovalOf(files, h)
 		if err != nil {
 			return nil, err
 		}
-		path := filepath.Join(home, relative)
-		before, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			continue
+		if found {
+			changes = append(changes, c)
 		}
-		if err != nil {
-			return nil, errors.New("cannot read existing hook configuration")
-		}
-		after, removed, err := Remove(before, h)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", relative, err)
-		}
-		if !removed {
-			continue
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return nil, err
-		}
-		changes = append(changes, Change{path, before, after, true, info.Mode().Perm()})
 	}
 	return changes, nil
 }
 
-// hookFile is the per-harness hook configuration file, relative to the
-// user's home directory.
-func hookFile(harness string) (string, error) {
-	switch harness {
-	case "codex":
-		return ".codex/hooks.json", nil
-	case "claude":
-		return ".claude/settings.json", nil
-	case "cursor":
-		return ".cursor/hooks.json", nil
-	default:
-		return "", errors.New("unsupported harness")
+// PlanRemovalOf is PlanRemoval for one harness; found is false when its file
+// holds nothing of ours.
+func PlanRemovalOf(files Files, harness string) (change Change, found bool, err error) {
+	path, err := files.path(harness)
+	if err != nil {
+		return Change{}, false, err
 	}
+	before, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return Change{}, false, nil
+	}
+	if err != nil {
+		return Change{}, false, fmt.Errorf("cannot read %s", path)
+	}
+	after, removed, err := Remove(before, harness)
+	if err != nil {
+		return Change{}, false, fmt.Errorf("%s: %w", path, err)
+	}
+	if !removed {
+		return Change{}, false, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return Change{}, false, err
+	}
+	return Change{path, before, after, true, info.Mode().Perm()}, true, nil
 }
 
 func Rollback(changes []Change) error { return rollback(changes) }
@@ -129,13 +167,17 @@ func rollback(changes []Change) error {
 		c := changes[i]
 		current, e := os.ReadFile(c.Path)
 		if e != nil || string(current) != string(c.After) {
-			failures = append(failures, errors.New("hook configuration changed; manual recovery required"))
+			failures = append(failures, fmt.Errorf("%s changed; manual recovery required", c.Path))
 			continue
 		}
 		if c.Existed {
 			e = atomicWrite(c.Path, c.Before, c.Mode)
 		} else {
-			e = os.Remove(c.Path)
+			// Remove what was created: through a symlink, its target.
+			var target string
+			if target, e = resolveTarget(c.Path); e == nil {
+				e = os.Remove(target)
+			}
 		}
 		if e != nil {
 			failures = append(failures, e)
@@ -143,7 +185,45 @@ func rollback(changes []Change) error {
 	}
 	return errors.Join(failures...)
 }
+
+// resolveTarget follows path through any symlinks to the file they name,
+// which need not exist yet.
+func resolveTarget(path string) (string, error) {
+	for range 40 {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			// A missing file may still sit in a symlinked directory; that is
+			// resolved by the rename itself.
+			return path, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+		link, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(filepath.Dir(path), link)
+		}
+		path = link
+	}
+	return "", fmt.Errorf("%s: too many levels of symbolic links", path)
+}
+
+// atomicWrite replaces the file at path with data by renaming a temporary
+// file into place. When path is a symlink (a dotfile manager's link into a
+// repository, say) it writes the file the link names, in that file's own
+// directory, so the link survives and the repository copy is the one
+// updated.
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
+	path, err := resolveTarget(path)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -169,9 +249,26 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	return os.Rename(name, path)
 }
 
+// LaunchLabel is the background collector's launchd label for the default
+// data directory.
 const LaunchLabel = "com.agent-archive.collector"
 
-func LaunchAgent(executable, dataHome string) ([]byte, error) {
+// CollectorLabel is the launchd label of the collector for dataHome. The
+// default data directory keeps LaunchLabel, so existing installations keep
+// their job. Any other directory (AGENT_ARCHIVE_HOME) gets a label of its
+// own, derived from the directory: launchd labels are global to the login
+// session, unlike HOME, so without this a test or secondary installation
+// would load, inspect, and unload the default one.
+func CollectorLabel(dataHome, defaultDataHome string) string {
+	if filepath.Clean(dataHome) == filepath.Clean(defaultDataHome) {
+		return LaunchLabel
+	}
+	sum := sha256.Sum256([]byte(filepath.Clean(dataHome)))
+	return LaunchLabel + "." + hex.EncodeToString(sum[:])[:12]
+}
+
+// LaunchAgent is the collector's plist; label is its CollectorLabel.
+func LaunchAgent(executable, dataHome, label string) ([]byte, error) {
 	if !filepath.IsAbs(executable) || !filepath.IsAbs(dataHome) {
 		return nil, errors.New("LaunchAgent paths must be absolute")
 	}
@@ -187,7 +284,62 @@ func LaunchAgent(executable, dataHome string) ([]byte, error) {
 <key>StandardOutPath</key><string>%s</string>
 <key>StandardErrorPath</key><string>%s</string>
 </dict></plist>
-`, LaunchLabel, escape(executable), escape(dataHome), escape(filepath.Join(dataHome, "collector.log")), escape(filepath.Join(dataHome, "collector-error.log")))), nil
+`, escape(label), escape(executable), escape(dataHome), escape(filepath.Join(dataHome, "collector.log")), escape(filepath.Join(dataHome, "collector-error.log")))), nil
+}
+
+// LaunchAgentDataHome returns the AGENT_ARCHIVE_HOME a LaunchAgent plist
+// sets, or "" when it sets none.
+func LaunchAgentDataHome(plist []byte) (string, error) {
+	decoder := xml.NewDecoder(bytes.NewReader(plist))
+	decoder.Strict = false
+	var (
+		lastKey  string
+		depth    int
+		envDepth = -1
+		reading  bool
+		text     strings.Builder
+	)
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return "", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("read LaunchAgent: %w", err)
+		}
+		switch t := token.(type) {
+		case xml.StartElement:
+			depth++
+			switch t.Name.Local {
+			case "key", "string":
+				reading = true
+				text.Reset()
+			case "dict":
+				if lastKey == "EnvironmentVariables" && envDepth < 0 {
+					envDepth = depth
+				}
+			}
+		case xml.CharData:
+			if reading {
+				text.Write(t)
+			}
+		case xml.EndElement:
+			reading = false
+			switch t.Name.Local {
+			case "key":
+				lastKey = strings.TrimSpace(text.String())
+			case "string":
+				if envDepth >= 0 && depth == envDepth+1 && lastKey == "AGENT_ARCHIVE_HOME" {
+					return strings.TrimSpace(text.String()), nil
+				}
+			case "dict":
+				if depth == envDepth {
+					envDepth = -1
+				}
+			}
+			depth--
+		}
+	}
 }
 
 // LaunchAgentProgram returns the executable a LaunchAgent plist runs: the
@@ -248,25 +400,85 @@ func LaunchAgentProgram(plist []byte) (string, error) {
 	}
 }
 
-// Installed checks the complete expected configuration without changing it.
-// JSON formatting and object key order do not affect the result.
-func Installed(home, executable, harness string) (bool, error) {
-	changes, err := Plan(home, executable, []string{harness})
+// Installed reports whether harness's hook file holds exactly what setup
+// installs: in every lifecycle event, exactly one handler of ours running
+// hook's command, wherever it sits among the user's own handlers, and no
+// handler of ours anywhere else. Formatting, key order, and the user's own
+// handlers do not affect the result.
+func Installed(files Files, hook Hook, harness string) (bool, error) {
+	path, err := files.path(harness)
 	if err != nil {
 		return false, err
 	}
-	for _, c := range changes {
-		if !c.Existed {
+	command, err := hook.Command(harness)
+	if err != nil {
+		return false, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	doc, err := parseDocument(data)
+	if err != nil {
+		return false, err
+	}
+	if harness == "cursor" {
+		if v, _ := doc.root.get("version"); !isOne(v) {
 			return false, nil
 		}
-		var before, after any
-		if err := json.Unmarshal(c.Before, &before); err != nil {
-			return false, err
+	}
+	hs, err := hooksObject(doc.root)
+	if err != nil || hs == nil {
+		return false, err
+	}
+	names, _ := events(harness)
+	for _, event := range names {
+		if _, ok := hs.get(event); !ok {
+			return false, nil
 		}
-		if err := json.Unmarshal(c.After, &after); err != nil {
-			return false, err
+	}
+	for _, m := range hs.members {
+		groups, ok := m.value.([]any)
+		if !ok {
+			return false, fmt.Errorf("invalid hook list for %s", m.key)
 		}
-		if !reflect.DeepEqual(before, after) {
+		ours := 0
+		for _, item := range groups {
+			g, ok := item.(*object)
+			if !ok {
+				return false, errors.New("invalid hook entry")
+			}
+			handlers := []any{g}
+			if harness != "cursor" {
+				raw, _ := g.get("hooks")
+				if handlers, ok = raw.([]any); !ok {
+					return false, errors.New("invalid hook handlers")
+				}
+			}
+			for _, h := range handlers {
+				handler, ok := h.(*object)
+				if !ok {
+					return false, errors.New("invalid hook handler")
+				}
+				if !owned(handler, harness) {
+					continue
+				}
+				got, _ := handler.get("command")
+				kind, _ := handler.get("type")
+				if got != command || (harness != "cursor" && kind != "command") {
+					return false, nil
+				}
+				ours++
+			}
+		}
+		want := 0
+		if contains(names, m.key) {
+			want = 1
+		}
+		if ours != want {
 			return false, nil
 		}
 	}

@@ -83,6 +83,9 @@ func setupTestEnv(t *testing.T, home, userHome string, keychain *fakeKeychain, n
 	env.LoadLaunchAgent = func(string) error { state = "loaded"; return nil }
 	env.UnloadLaunchAgent = func(string) error { state = "missing"; return nil }
 	env.Keychain = func() (credentials.CredentialStore, error) { return keychain, nil }
+	// setup and uninstall need a terminal; the scripted answers stand in
+	// for one. Output buffers are still not terminals.
+	env.IsTerminal = func(stream any) bool { _, ok := stream.(*strings.Reader); return ok }
 	return env
 }
 
@@ -217,7 +220,7 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
-	paths := []string{filepath.Join(home, "config.json"), filepath.Join(userHome, ".codex/hooks.json"), filepath.Join(userHome, "Library/LaunchAgents", hooks.LaunchLabel+".plist")}
+	paths := []string{filepath.Join(home, "config.json"), filepath.Join(userHome, ".codex/hooks.json"), collectorPlist(home, userHome)}
 	before := map[string]string{}
 	for _, p := range paths {
 		b, _ := os.ReadFile(p)

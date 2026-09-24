@@ -174,7 +174,7 @@ func (e Env) detectHarnesses(userHome string) []string {
 	if e.DetectHarnesses != nil {
 		return e.DetectHarnesses(userHome)
 	}
-	return detectHarnesses(userHome)
+	return detectHarnesses(e.hookFiles(userHome))
 }
 
 func (e Env) discoverApplications(userHome string) map[string]applicationDiscovery {
@@ -271,10 +271,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runStatusCommand(args[1:], stdout, stderr, env)
 	case "sync":
 		return runSyncCommand(args[1:], stdout, stderr, env)
-	case "pause":
-		return runPauseCommand(stdout, stderr, env, true)
-	case "resume":
-		return runPauseCommand(stdout, stderr, env, false)
+	case "pause", "resume":
+		if !parseCommandFlags(newCommandFlags(args[0]), args[1:], stderr) {
+			return 2
+		}
+		return runPauseCommand(stdout, stderr, env, args[0] == "pause")
 	case "setup":
 		return runSetupCommand(args[1:], stdin, stdout, stderr, env)
 	case "uninstall":

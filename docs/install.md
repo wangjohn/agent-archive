@@ -101,6 +101,27 @@ Macs are supported.
    Setup preserves the machine identity, existing project activation times,
    paused state, and unrelated hooks.
 
+   Setup writes hooks where each app reads them: Claude Code's
+   `$CLAUDE_CONFIG_DIR/settings.json` and Codex's `$CODEX_HOME/hooks.json`
+   when those variables are set in the shell you run setup from, otherwise
+   `~/.claude/settings.json` and `~/.codex/hooks.json`; Cursor's is always
+   `~/.cursor/hooks.json`. The paths are recorded, so `status` and `uninstall`
+   find them from any shell. Only the `hooks` entry of each file is rewritten
+   (and Cursor's `version`, when missing): every other setting keeps its
+   exact text, key order, and numbers, and uninstall restores a file setup
+   only added hooks to byte for byte. A file that is a symlink, as dotfile
+   managers such as stow or chezmoi create, is updated at its target and the
+   link is kept.
+
+   With `AGENT_ARCHIVE_HOME` set to a directory other than the default
+   `~/.local/share/agent-archive`, the hooks carry it in their command, since
+   apps run hooks without your shell's environment, and the background
+   collector gets a launchd label of its own
+   (`com.agent-archive.collector.<hash>`). A second or test installation
+   therefore never loads, stops, or removes the default one. Rerunning setup
+   moves a collector an earlier release installed for such a directory under
+   the default label to its own label.
+
    After installation, approve the hooks in each selected app (Codex CLI:
    `/hooks`), then start a harmless new session in an included project.
    Setup finishes without waiting for that session. Check progress with:
@@ -189,8 +210,16 @@ Invalid flags fail before a command starts. Exit codes are 0 for success/help,
 - Already registered sessions can catch up after resume, including activity
   written during the pause. New sessions begun while paused are not imported.
 - A failed setup restores the previous config, hooks, and scheduler. If
-  recovery is incomplete, status says so; rerun setup to recover. It refuses
-  to overwrite a file edited outside setup during recovery.
+  setup is interrupted before it can (a crash, a closed terminal), it leaves
+  a record in `setup-transaction.json` in the data directory; `status` says
+  recovery is needed, hooks record nothing, and `sync`, `pause`, `uninstall`,
+  and `backfill` refuse to start. Run `agent-archive setup` to recover: it
+  restores the previous files and continues. Recovery never overwrites a
+  file edited since the interrupted setup (an app may rewrite its own
+  settings file, for example); setup then names the file and the record. To
+  keep every file as it is now and discard the record, run
+  `agent-archive setup --abandon-recovery`, then `agent-archive setup` to
+  review your settings and reinstall anything missing.
 - A storage change is blocked while known work is pending. Sync the current
   destination first. A session that never received a transcript (a Cursor
   chat with transcripts turned off) has nothing a sync could publish, so it
@@ -204,12 +233,19 @@ Invalid flags fail before a command starts. Exit codes are 0 for success/help,
 - Reducing retention shows the affected locally owned session count and
   cutoff before confirmation. The collector applies the resulting policy.
 
-The wizard accepts redirected input for controlled use, but its prompt sequence
-is not a scripting API. Supply secrets only through a private input stream;
-never use secret command arguments or commit input files. For a terminal,
-secret input fails rather than falling back to visible keystrokes.
+Setup asks questions, so it needs a terminal: without one it stops before
+asking anything and changes nothing. Its prompt sequence is not a scripting
+API. Never pass secrets as command arguments; secret input fails rather than
+falling back to visible keystrokes.
 
 ## Upgrade notes
+
+- With `AGENT_ARCHIVE_HOME` set to a non-default directory, hooks now carry
+  it in their command and the collector gets its own launchd label. Until
+  you rerun `agent-archive setup`, `status` reports those hooks as
+  `missing or incomplete`; rerunning setup rewrites them and moves the
+  collector to its label. Installations in the default directory are
+  unaffected.
 
 - `agent-archive backfill` keeps a local record of every session retention or
   undo removes, so a later backfill doesn't import it again. Sessions that
@@ -428,6 +464,14 @@ After confirmation, uninstall stops the background collector, removes its
 LaunchAgent and owned hooks, and disables capture. It keeps local evidence,
 settings, and credentials so `agent-archive setup` can reinstall it. Unrelated
 hook handlers, remote archives, and the CLI executable are always kept.
+Confirming needs a terminal; `--yes` skips the confirmations and is required
+without one.
+
+Only the collector of the current data directory (see `AGENT_ARCHIVE_HOME`
+above) is stopped. The hook files of the apps setup installed must be
+readable; another app's file is only checked for leftover handlers, so one
+that is not valid JSON is reported and left as it is rather than blocking
+uninstall.
 
 To also delete owned local files and stored R2 credentials:
 
@@ -436,14 +480,18 @@ To also delete owned local files and stored R2 credentials:
 agent-archive uninstall --delete-local-data
 ```
 
-This shows a pending-session count and requires a second confirmation.
+This shows a pending-session count and requires a second confirmation, which
+`--yes` also gives.
 Unpublished evidence will be lost. Only known archive files are removed;
 unknown files are kept and reported. Small lock files remain to preserve process
 coordination. Neither mode reads or deletes remote archives.
 
 If another operation is finishing, wait and retry. If launchd is unavailable,
 or a hook file was edited concurrently, resolve the reported problem and rerun
-uninstall. Do not remove the data directory by hand while a collector is running.
+uninstall. After an interrupted setup, uninstall refuses until setup recovers
+or `setup --abandon-recovery` discards it (see
+[Routine use and recovery](#routine-use-and-recovery)). Do not remove the data
+directory by hand while a collector is running.
 
 ### Downgrading after changing storage
 

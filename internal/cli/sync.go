@@ -12,7 +12,10 @@ import (
 // runSyncCommand implements `agent-archive sync`: one explicit collection
 // pass, preserving queued work on failure. It respects paused state and
 // does not implicitly resume, per the spec.
-func runSyncCommand(_ []string, stdout, stderr io.Writer, env Env) int {
+func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
+	if !parseCommandFlags(newCommandFlags("sync"), args, stderr) {
+		return 2
+	}
 	result, err := runOnePass(env, false)
 	if err != nil {
 		switch {
