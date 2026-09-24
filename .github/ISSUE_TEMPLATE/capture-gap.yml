@@ -1,0 +1,67 @@
+name: Capture gap
+description: A session wasn't archived, only part of it was, or its counts (prompts, turns, tool calls) look wrong.
+labels: [capture-gap]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please don't paste transcript content. The structural details below are usually enough to find where capture went wrong; if we need a sample, we'll ask for a synthetic one.
+        For a secret that got past redaction, don't open an issue: follow SECURITY.md instead.
+  - type: input
+    id: version
+    attributes:
+      label: agent-archive version
+      description: Output of `agent-archive --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: harness
+    attributes:
+      label: App
+      options:
+        - Claude Code
+        - Codex
+        - Cursor
+    validations:
+      required: true
+  - type: input
+    id: harness-version
+    attributes:
+      label: App version
+      description: "For example `claude --version`, `codex --version`, or Cursor's About window."
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - The session was never archived
+        - The session was archived, but it's missing part of the conversation
+        - The session's counts (prompts, turns, tool calls) look wrong
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: origin
+    attributes:
+      label: How the session was captured
+      options:
+        - Live, through the hooks
+        - Imported with `agent-archive backfill`
+        - Not sure
+  - type: textarea
+    id: details
+    attributes:
+      label: What you expected and what you saw
+      description: For wrong counts, the numbers you expected and the ones shown by `agent-archive list` or `show`. Describe the session's shape (for example "3 prompts, a subagent, one compaction") rather than its content.
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: "`agent-archive status --json` (redacted)"
+      description: Replace bucket names, project paths, and session IDs you'd rather keep private with placeholders. Keep the `capture_gaps`, `session_issues`, and version fields as they are.
+      render: json
+    validations:
+      required: true

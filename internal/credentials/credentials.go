@@ -16,9 +16,16 @@ import (
 )
 
 var (
-	ErrUnavailable       = errors.New("credential store unavailable")
-	ErrInvalidReference  = errors.New("invalid credential reference")
-	ErrInvalidProfile    = errors.New("invalid AWS profile")
+	// ErrUnavailable means no credential store can be used here: the
+	// Keychain is missing (a non-macOS or cgo-disabled build) or refused
+	// access, or a stored secret could not be decoded.
+	ErrUnavailable = errors.New("credential store unavailable")
+	// ErrInvalidReference means a credential reference is empty.
+	ErrInvalidReference = errors.New("invalid credential reference")
+	// ErrInvalidProfile means no AWS profile was named.
+	ErrInvalidProfile = errors.New("invalid AWS profile")
+	// ErrMissingCredential means a stored credential lacks its access key ID
+	// or secret access key.
 	ErrMissingCredential = errors.New("credential is missing")
 )
 
@@ -65,8 +72,11 @@ type Config struct {
 	R2Endpoint      string
 }
 
+// Config.Provider values.
 const (
+	// ProviderS3 is Amazon S3, authenticated through a shared AWS profile.
 	ProviderS3 = "s3"
+	// ProviderR2 is Cloudflare R2, authenticated through a Keychain item.
 	ProviderR2 = "r2"
 )
 
@@ -141,9 +151,13 @@ func EncodeSecret(value R2Credentials) ([]byte, error) {
 	if err := value.validate(); err != nil {
 		return nil, err
 	}
-	return json.Marshal(value)
+	// The secret is serialized on purpose: this is the value stored in the
+	// Keychain item, and it goes nowhere else.
+	return json.Marshal(value) //nolint:gosec // G117: see above.
 }
 
+// DecodeSecret parses a value EncodeSecret produced. Any decoding failure is
+// ErrUnavailable, so the stored bytes never appear in an error.
 func DecodeSecret(data []byte) (R2Credentials, error) {
 	var value R2Credentials
 	if err := json.Unmarshal(data, &value); err != nil {

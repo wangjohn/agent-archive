@@ -13,11 +13,45 @@ static CFStringRef aa_string(const char *value) {
 	return CFStringCreateWithCString(NULL, value, kCFStringEncodingUTF8);
 }
 
-static int aa_keychain_get(const char *service, const char *account, void **out, size_t *out_len) {
-	CFStringRef svc = aa_string(service), acct = aa_string(account);
+// aa_lookup_query builds the lookup for one item, which must never show UI:
+// the collector runs in the background, where a prompt would hang it or
+// surprise the user, so a Keychain that needs the user is reported instead
+// (errSecInteractionNotAllowed).
+//
+// That takes kSecUseAuthenticationUIFail, deprecated since macOS 11 in favor
+// of kSecUseAuthenticationContext with LAContext.interactionNotAllowed. The
+// replacement does not cover these items: Security.framework's SecItem.h says
+// it "has the same effect as passing kSecUseNoAuthenticationUI", which "on
+// macOS ... only applies to items stored in the Data Protection keychain.
+// Legacy keychain items will still activate UI if needed." These items live in
+// the legacy (login) keychain, since the Data Protection keychain requires a
+// signed binary with a keychain-access-group entitlement and a build from
+// source has none. So the deprecated value stays, the one deprecation warning
+// is silenced here and nowhere else, and TestKeychainLookupForbidsUI pins it.
+static CFDictionaryRef aa_lookup_query(CFStringRef svc, CFStringRef acct) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	const void *keys[] = { kSecClass, kSecAttrService, kSecAttrAccount, kSecReturnData, kSecUseAuthenticationUI };
 	const void *values[] = { kSecClassGenericPassword, svc, acct, kCFBooleanTrue, kSecUseAuthenticationUIFail };
-	CFDictionaryRef query = CFDictionaryCreate(NULL, keys, values, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+#pragma clang diagnostic pop
+	return CFDictionaryCreate(NULL, keys, values, 5, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+}
+
+// aa_lookup_forbids_ui reports whether the lookup query refuses UI, for a test.
+static int aa_lookup_forbids_ui(void) {
+	CFStringRef svc = aa_string("service"), acct = aa_string("account");
+	CFDictionaryRef query = aa_lookup_query(svc, acct);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+	int forbids = CFEqual(CFDictionaryGetValue(query, kSecUseAuthenticationUI), kSecUseAuthenticationUIFail);
+#pragma clang diagnostic pop
+	CFRelease(query); CFRelease(svc); CFRelease(acct);
+	return forbids;
+}
+
+static int aa_keychain_get(const char *service, const char *account, void **out, size_t *out_len) {
+	CFStringRef svc = aa_string(service), acct = aa_string(account);
+	CFDictionaryRef query = aa_lookup_query(svc, acct);
 	CFTypeRef result = NULL;
 	OSStatus status = SecItemCopyMatching(query, &result);
 	CFRelease(query); CFRelease(svc); CFRelease(acct);
@@ -89,6 +123,11 @@ var (
 // `security` command, which would expose a secret through argv or shell logs.
 type KeychainStore struct{ service string }
 
+// lookupForbidsUI reports whether Load's Keychain query refuses to show UI.
+func lookupForbidsUI() bool { return C.aa_lookup_forbids_ui() != 0 }
+
+// NewKeychainStore returns a store for generic-password items under service,
+// ordinarily KeychainService.
 func NewKeychainStore(service string) (*KeychainStore, error) {
 	if service == "" {
 		return nil, errors.New("keychain service is required")
@@ -96,6 +135,7 @@ func NewKeychainStore(service string) (*KeychainStore, error) {
 	return &KeychainStore{service: service}, nil
 }
 
+// Save stores value under reference, replacing any existing item.
 func (s *KeychainStore) Save(ctx context.Context, reference string, value R2Credentials) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -115,6 +155,8 @@ func (s *KeychainStore) Save(ctx context.Context, reference string, value R2Cred
 	return errorForOSStatus(int(status))
 }
 
+// Load returns the credentials stored under reference without ever showing
+// UI: a Keychain that would need the user fails with ErrKeychainLocked.
 func (s *KeychainStore) Load(ctx context.Context, reference string) (R2Credentials, error) {
 	if err := ctx.Err(); err != nil {
 		return R2Credentials{}, err
@@ -127,7 +169,7 @@ func (s *KeychainStore) Load(ctx context.Context, reference string) (R2Credentia
 	defer C.free(unsafe.Pointer(cReference))
 	var data unsafe.Pointer
 	var length C.size_t
-	// kSecUseAuthenticationUIFail (see aa_keychain_get) keeps a background
+	// kSecUseAuthenticationUIFail (see aa_lookup_query) keeps a background
 	// process from ever prompting; a locked Keychain is reported instead.
 	status := C.aa_keychain_get(cService, cReference, &data, &length)
 	if err := errorForOSStatus(int(status)); err != nil {
@@ -137,6 +179,7 @@ func (s *KeychainStore) Load(ctx context.Context, reference string) (R2Credentia
 	return DecodeSecret(C.GoBytes(data, C.int(length)))
 }
 
+// Delete removes the item under reference; an absent item is not an error.
 func (s *KeychainStore) Delete(ctx context.Context, reference string) error {
 	if err := ctx.Err(); err != nil {
 		return err
