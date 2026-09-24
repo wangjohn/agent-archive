@@ -15,11 +15,11 @@ import (
 func TestRelativeLinkInsideALinkedDirectory(t *testing.T) {
 	home := t.TempDir()
 	dotfiles := filepath.Join(home, "dotfiles")
-	os.MkdirAll(filepath.Join(dotfiles, "claude"), 0700)
-	os.MkdirAll(filepath.Join(dotfiles, "shared"), 0700)
+	must(t, os.MkdirAll(filepath.Join(dotfiles, "claude"), 0700))
+	must(t, os.MkdirAll(filepath.Join(dotfiles, "shared"), 0700))
 	target := filepath.Join(dotfiles, "shared", "settings.json")
 	original := []byte("{\n  \"model\": \"opus\"\n}\n")
-	os.WriteFile(target, original, 0600)
+	must(t, os.WriteFile(target, original, 0600))
 	if err := os.Symlink("../shared/settings.json", filepath.Join(dotfiles, "claude", "settings.json")); err != nil {
 		t.Fatal(err)
 	}

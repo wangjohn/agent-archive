@@ -40,9 +40,9 @@ func testFiles(home string) Files {
 func TestPlanApplyAndRollback(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".claude/settings.json")
-	os.MkdirAll(filepath.Dir(path), 0700)
+	must(t, os.MkdirAll(filepath.Dir(path), 0700))
 	original := []byte(`{"permissions":{"allow":["Read"]}}`)
-	os.WriteFile(path, original, 0600)
+	must(t, os.WriteFile(path, original, 0600))
 	plan, e := Plan(testFiles(home), testHook("/Applications/agent-archive"), []string{"claude", "codex", "cursor"})
 	if e != nil {
 		t.Fatal(e)
@@ -65,8 +65,8 @@ func TestConcurrentEditPreserved(t *testing.T) {
 	home := t.TempDir()
 	plan, _ := Plan(testFiles(home), testHook("/bin/agent-archive"), []string{"codex"})
 	path := plan[0].Path
-	os.MkdirAll(filepath.Dir(path), 0700)
-	os.WriteFile(path, []byte(`{"changed":true}`), 0600)
+	must(t, os.MkdirAll(filepath.Dir(path), 0700))
+	must(t, os.WriteFile(path, []byte(`{"changed":true}`), 0600))
 	if Apply(plan) == nil {
 		t.Fatal("overwrote concurrent edit")
 	}
@@ -87,13 +87,13 @@ func TestLaunchAgentEscapesPaths(t *testing.T) {
 func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 	home := t.TempDir()
 	claudePath := filepath.Join(home, ".claude/settings.json")
-	os.MkdirAll(filepath.Dir(claudePath), 0700)
+	must(t, os.MkdirAll(filepath.Dir(claudePath), 0700))
 	// An unrelated hook on an event we also use, plus unrelated settings.
 	original := []byte(`{"permissions":{"allow":["Read"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
-	os.WriteFile(claudePath, original, 0600)
+	must(t, os.WriteFile(claudePath, original, 0600))
 	cursorPath := filepath.Join(home, ".cursor/hooks.json")
-	os.MkdirAll(filepath.Dir(cursorPath), 0700)
-	os.WriteFile(cursorPath, []byte(`{"version":1,"hooks":{"stop":[{"command":"echo unrelated"}]}}`), 0600)
+	must(t, os.MkdirAll(filepath.Dir(cursorPath), 0700))
+	must(t, os.WriteFile(cursorPath, []byte(`{"version":1,"hooks":{"stop":[{"command":"echo unrelated"}]}}`), 0600))
 
 	plan, err := Plan(testFiles(home), testHook("/Applications/agent-archive"), []string{"claude", "codex", "cursor"})
 	if err != nil {
@@ -148,9 +148,9 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 func TestPlanRemovalSkipsMissingAndUnrelatedFiles(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".codex/hooks.json")
-	os.MkdirAll(filepath.Dir(path), 0700)
+	must(t, os.MkdirAll(filepath.Dir(path), 0700))
 	unrelated := []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
-	os.WriteFile(path, unrelated, 0600)
+	must(t, os.WriteFile(path, unrelated, 0600))
 	plan, err := PlanRemoval(testFiles(home), []string{"codex", "claude", "cursor"})
 	if err != nil {
 		t.Fatal(err)
@@ -198,8 +198,8 @@ func TestInstalledChecksCommandsForEveryHarness(t *testing.T) {
 func TestHookFilesAreWrittenThroughSymlinks(t *testing.T) {
 	home := t.TempDir()
 	dotfiles := filepath.Join(home, "dotfiles")
-	os.MkdirAll(dotfiles, 0700)
-	os.MkdirAll(filepath.Join(home, ".claude"), 0700)
+	must(t, os.MkdirAll(dotfiles, 0700))
+	must(t, os.MkdirAll(filepath.Join(home, ".claude"), 0700))
 	target := filepath.Join(dotfiles, "settings.json")
 	original := []byte("{\n  \"model\": \"opus\"\n}\n")
 	if err := os.WriteFile(target, original, 0644); err != nil {
@@ -261,11 +261,11 @@ func TestHookFilesAreWrittenThroughSymlinks(t *testing.T) {
 // created at the link's target, and rollback removes it there.
 func TestNewHookFileThroughDanglingSymlink(t *testing.T) {
 	home := t.TempDir()
-	os.MkdirAll(filepath.Join(home, ".codex"), 0700)
+	must(t, os.MkdirAll(filepath.Join(home, ".codex"), 0700))
 	target := filepath.Join(home, "dotfiles", "codex-hooks.json")
-	os.MkdirAll(filepath.Dir(target), 0700)
+	must(t, os.MkdirAll(filepath.Dir(target), 0700))
 	link := filepath.Join(home, ".codex", "hooks.json")
-	os.Symlink(target, link)
+	must(t, os.Symlink(target, link))
 	plan, err := Plan(testFiles(home), testHook("/usr/local/bin/agent-archive"), []string{"codex"})
 	if err != nil {
 		t.Fatal(err)
@@ -312,13 +312,13 @@ func TestInstalledIgnoresWhereOurHandlerSits(t *testing.T) {
 				t.Helper()
 				var root map[string]any
 				b, _ := os.ReadFile(files[app])
-				json.Unmarshal(b, &root)
+				must(t, json.Unmarshal(b, &root))
 				mutate(root, root["hooks"].(map[string]any))
 				b, _ = json.MarshalIndent(root, "", "\t")
-				os.WriteFile(files[app], b, 0600)
+				must(t, os.WriteFile(files[app], b, 0600))
 			}
 			var entry any
-			json.Unmarshal([]byte(user), &entry)
+			must(t, json.Unmarshal([]byte(user), &entry))
 			edit(func(_, hs map[string]any) { hs[stop] = append(hs[stop].([]any), entry) })
 			if ok, err := Installed(files, testHook(exe), app); !ok || err != nil {
 				t.Fatalf("user handler after ours: installed=%v err=%v", ok, err)
@@ -396,10 +396,18 @@ func TestCollectorLabelKeepsTheDefaultAndSeparatesOthers(t *testing.T) {
 func TestConcurrentEditIsReportedWithItsPath(t *testing.T) {
 	home := t.TempDir()
 	plan, _ := Plan(testFiles(home), testHook("/bin/agent-archive"), []string{"codex"})
-	os.MkdirAll(filepath.Dir(plan[0].Path), 0700)
-	os.WriteFile(plan[0].Path, []byte(`{"changed":true}`), 0600)
+	must(t, os.MkdirAll(filepath.Dir(plan[0].Path), 0700))
+	must(t, os.WriteFile(plan[0].Path, []byte(`{"changed":true}`), 0600))
 	err := Apply(plan)
 	if !errors.Is(err, ErrChanged) || !strings.Contains(err.Error(), plan[0].Path) || strings.Contains(err.Error(), "setup") {
 		t.Fatalf("error %v", err)
+	}
+}
+
+// must fails the test on a fixture setup error.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }

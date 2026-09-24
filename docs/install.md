@@ -143,12 +143,15 @@ Macs are supported.
    Status distinguishes waiting for a session, observed hooks, local capture,
    and published sources with verified checksums. Background `loaded` means
    launchd knows the scheduled job; `running` means a pass is executing;
-   `another_installation` means launchd runs this label from a different
-   plist, which is left alone. Before setup, status shows only that setup is
-   needed (`status --json` reports background `not_installed` and
-   authentication `not_configured`). When the collector lock has been held
-   for over 20 minutes, twice a pass's time limit, with no scan finishing,
-   status says collection is stuck rather than suggesting `sync`.
+   `another_installation` means launchd runs this installation's label from
+   a different plist. That job belongs to another installation and is left
+   alone: set `AGENT_ARCHIVE_HOME` to a data directory of this
+   installation's own, or uninstall the other one. Before setup, status
+   shows only that setup is needed (`status --json` reports background
+   `missing` and authentication `not_configured`). When the collector lock
+   has been held for over 20 minutes, twice a pass's time limit, with no
+   scan finishing, status says collection is stuck rather than suggesting
+   `sync`.
    Hooks or background `broken` means the configuration is in place but runs
    an agent-archive executable that has since been moved, deleted, or made
    non-executable; rerun `agent-archive setup` from the binary's new location.
@@ -433,7 +436,7 @@ without listing anything.
 
 ## Build from source
 
-Requires Go 1.24+ and, for real macOS Keychain access, Xcode's command
+Requires Go 1.26 or later (go.mod pins toolchain go1.27.1, which Go downloads automatically) and, for real macOS Keychain access, Xcode's command
 line tools (`xcode-select --install`).
 
 ```sh

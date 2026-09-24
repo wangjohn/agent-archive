@@ -24,7 +24,7 @@ func TestConfigWithoutRecordedHookFilesUsesTheLegacyPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	elsewhere := filepath.Join(userHome, "elsewhere")
-	os.MkdirAll(elsewhere, 0700)
+	must(t, os.MkdirAll(elsewhere, 0700))
 	env.LookupEnv = func(k string) (string, bool) {
 		if k == "CLAUDE_CONFIG_DIR" {
 			return elsewhere, true
@@ -52,7 +52,7 @@ func TestConfigWithoutRecordedHookFilesUsesTheLegacyPaths(t *testing.T) {
 func TestUninstallCleansTheLegacyPathToo(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
 	claudeDir := filepath.Join(userHome, "cfg")
-	os.MkdirAll(claudeDir, 0700)
+	must(t, os.MkdirAll(claudeDir, 0700))
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	env.LookupEnv = func(k string) (string, bool) { return claudeDir, k == "CLAUDE_CONFIG_DIR" }
 	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()), 0)
@@ -79,7 +79,7 @@ func TestUninstallCleansTheLegacyPathToo(t *testing.T) {
 func TestSetupReviewWarnsWhenHookFilesMove(t *testing.T) {
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	elsewhere := filepath.Join(userHome, "elsewhere")
-	os.MkdirAll(elsewhere, 0700)
+	must(t, os.MkdirAll(elsewhere, 0700))
 	env.LookupEnv = func(k string) (string, bool) { return elsewhere, k == "CLAUDE_CONFIG_DIR" }
 	// Change retention (menu choice 3), keep 90 days, then cancel at review.
 	var out, errOut bytes.Buffer

@@ -380,8 +380,10 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	}
 	changes = append(changes, change)
 	job := env.jobState(plistPath)
-	if job == "unknown" && old.MachineID != "" {
-		return fmt.Errorf("cannot determine previous background job state; restore access to launchctl and retry")
+	// Unknown refuses even a first setup: loading over a job launchd may
+	// already run under this label is the one thing setup must not do.
+	if job == "unknown" {
+		return fmt.Errorf("cannot determine the background job's state; restore access to launchctl and retry")
 	}
 	if job == jobAnotherInstallation {
 		return fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)

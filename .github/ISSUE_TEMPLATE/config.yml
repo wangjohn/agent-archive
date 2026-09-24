@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/wangjohn/agent-archive/security/policy
+    about: Redaction bypasses, credential leaks, hook injection, and other security problems are reported privately, as SECURITY.md describes. Please don't open a public issue for them.
