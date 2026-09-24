@@ -156,7 +156,7 @@ func TestExpiryWaitsForPendingPublicationThenProceeds(t *testing.T) {
 	if result := collect(t, local, store, resumed.Add(time.Minute)); len(result.Published) != 1 {
 		t.Fatalf("recovery did not publish: %#v", result)
 	}
-	if meta := fetchMetadata(t, store, "codex", "s1"); !meta.CapturedAt.Equal(resumed) {
+	if meta := fetchMetadata(t, store, "s1"); !meta.CapturedAt.Equal(resumed) {
 		t.Fatalf("the resumed evidence was not the published snapshot: %s", meta.CapturedAt)
 	}
 	if result := sweep(t, local, store, resumed.Add(time.Hour), Options{}); len(result.DeletedSessions) != 0 {
@@ -288,7 +288,7 @@ func TestPreviousDestinationSessionIsPrunedLocallyWithoutTouchingTheBucket(t *te
 		t.Fatalf("the current bucket was touched %d time(s) for a session it never held", calls)
 	}
 	// The previous bucket is not this machine's to clean any more.
-	if meta := fetchMetadata(t, previous, "codex", "old"); meta.SessionID != "old" {
+	if meta := fetchMetadata(t, previous, "old"); meta.SessionID != "old" {
 		t.Fatalf("previous destination was modified: %#v", meta)
 	}
 }

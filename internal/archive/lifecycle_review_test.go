@@ -8,8 +8,11 @@ import (
 func TestSessionClosurePreservesLastObservedTurnOutcome(t *testing.T) {
 	at := time.Now().UTC()
 	for _, tc := range []struct {
-		event, provenance, status string
-		want                      TurnOutcome
+		event      string
+		provenance string
+		//lint:ignore LV1001 raw hook payload text under test, not a closed set
+		status string
+		want   TurnOutcome
 	}{
 		{"StopFailure", "hook:claude:stopfailure", "", TurnOutcomeError},
 		{"Interrupt", "hook:codex:interrupt", "", TurnOutcomeInterrupted},

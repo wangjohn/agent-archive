@@ -96,7 +96,7 @@ func TestImportAfterDestinationChangeIsDeletedFromCurrentBucket(t *testing.T) {
 		t.Fatal(err)
 	}
 	collect(t, local, current, importedAt.Add(time.Minute))
-	if meta := fetchMetadata(t, current, "codex", "imported"); meta.SessionID != "imported" {
+	if meta := fetchMetadata(t, current, "imported"); meta.SessionID != "imported" {
 		t.Fatal("import was not published to the current bucket")
 	}
 
@@ -108,7 +108,7 @@ func TestImportAfterDestinationChangeIsDeletedFromCurrentBucket(t *testing.T) {
 	if _, err := current.Get(context.Background(), metaKey); err == nil {
 		t.Fatal("the import's objects were left in the current bucket")
 	}
-	if meta := fetchMetadata(t, previous, "codex", "earlier"); meta.SessionID != "earlier" {
+	if meta := fetchMetadata(t, previous, "earlier"); meta.SessionID != "earlier" {
 		t.Fatal("the previous bucket was modified")
 	}
 }

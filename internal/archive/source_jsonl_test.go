@@ -128,7 +128,7 @@ func TestSourceBundleJSONLBuildsAreByteIdentical(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			next, err := BuildCompressedSource(bundle)
 			if err != nil {
 				t.Fatal(err)
@@ -201,11 +201,12 @@ func gzipBytes(t *testing.T, data []byte) []byte {
 	return out.Bytes()
 }
 
-func headerLine(records, texts, evidence int) string {
-	return fmt.Sprintf(`{"kind":"header","schema_version":2,"archive_session_id":"a","native_session_id":"n","project_id":"p","capture":{"harness":{"name":"codex"},"adapter_name":"codex","adapter_version":"0.4.0","source_format":"codex-jsonl","boundary":{"retained_records":1,"retained_bytes":1},"filter_version":"4","captured_at":"2026-09-23T10:00:00Z"},"counts":{"native_records":%d,"native_text":%d,"supplemental_evidence":%d}}`, records, texts, evidence)
+func headerLine(records, evidence int) string {
+	return fmt.Sprintf(`{"kind":"header","schema_version":2,"archive_session_id":"a","native_session_id":"n","project_id":"p","capture":{"harness":{"name":"codex"},"adapter_name":"codex","adapter_version":"0.4.0","source_format":"codex-jsonl","boundary":{"retained_records":1,"retained_bytes":1},"filter_version":"4","captured_at":"2026-09-23T10:00:00Z"},"counts":{"native_records":%d,"native_text":0,"supplemental_evidence":%d}}`, records, evidence)
 }
 
 const recordLine = `{"kind":"native_record","record":{"type":"response_item"}}`
+
 const evidenceLineJSON = `{"kind":"supplemental_evidence","evidence":{"kind":"explicit_feedback","observed_at":"2026-09-23T10:00:00Z","provenance":"user","payload":{"text":"ok"}}}`
 
 func TestSourceBundleJSONLRejectsMalformedStreams(t *testing.T) {
@@ -213,28 +214,28 @@ func TestSourceBundleJSONLRejectsMalformedStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	valid := gzipLines(t, headerLine(1, 0, 0), recordLine)
+	valid := gzipLines(t, headerLine(1, 0), recordLine)
 	cases := []struct {
 		name    string
 		input   []byte
 		options DecodeOptions
 		want    string
 	}{
-		{"header not first", gzipLines(t, recordLine, headerLine(1, 0, 0)), DecodeOptions{}, "header must come first"},
-		{"second header", gzipLines(t, headerLine(1, 0, 0), headerLine(1, 0, 0), recordLine), DecodeOptions{}, "second header"},
-		{"fewer lines than counted", gzipLines(t, headerLine(2, 0, 0), recordLine), DecodeOptions{}, "do not match"},
-		{"more lines than counted", gzipLines(t, headerLine(1, 0, 0), recordLine, recordLine), DecodeOptions{}, "more native records"},
-		{"kinds out of order", gzipLines(t, headerLine(1, 0, 1), evidenceLineJSON, recordLine), DecodeOptions{}, "out of order"},
-		{"unknown kind", gzipLines(t, headerLine(0, 0, 0), `{"kind":"mystery"}`), DecodeOptions{}, "unknown kind"},
-		{"invalid JSON line", gzipLines(t, headerLine(1, 0, 0), `{"kind":"native_record",`), DecodeOptions{}, "not valid JSON"},
+		{"header not first", gzipLines(t, recordLine, headerLine(1, 0)), DecodeOptions{}, "header must come first"},
+		{"second header", gzipLines(t, headerLine(1, 0), headerLine(1, 0), recordLine), DecodeOptions{}, "second header"},
+		{"fewer lines than counted", gzipLines(t, headerLine(2, 0), recordLine), DecodeOptions{}, "do not match"},
+		{"more lines than counted", gzipLines(t, headerLine(1, 0), recordLine, recordLine), DecodeOptions{}, "more native records"},
+		{"kinds out of order", gzipLines(t, headerLine(1, 1), evidenceLineJSON, recordLine), DecodeOptions{}, "out of order"},
+		{"unknown kind", gzipLines(t, headerLine(0, 0), `{"kind":"mystery"}`), DecodeOptions{}, "unknown kind"},
+		{"invalid JSON line", gzipLines(t, headerLine(1, 0), `{"kind":"native_record",`), DecodeOptions{}, "not valid JSON"},
 		{"truncated gzip", valid[:len(valid)-12], DecodeOptions{}, "truncated"},
 		{"not gzip", []byte("plain text"), DecodeOptions{}, "open source gzip"},
 		{"empty stream", gzipLines(t), DecodeOptions{}, "no header"},
-		{"over-long line", gzipLines(t, headerLine(1, 0, 0), `{"kind":"native_record","record":{"text":"`+strings.Repeat("x", 4096)+`"}}`), DecodeOptions{MaxLineBytes: 2048}, "exceeds the 2048 byte line limit"},
+		{"over-long line", gzipLines(t, headerLine(1, 0), `{"kind":"native_record","record":{"text":"`+strings.Repeat("x", 4096)+`"}}`), DecodeOptions{MaxLineBytes: 2048}, "exceeds the 2048 byte line limit"},
 		{"schema 1 document", gzipLines(t, string(v1)), DecodeOptions{}, "unsupported source schema version 1"},
 		{"schema 1 document as written (no newline)", gzipBytes(t, v1), DecodeOptions{}, "unsupported source schema version 1"},
-		{"final line without newline", gzipBytes(t, []byte(headerLine(1, 0, 0)+"\n"+recordLine)), DecodeOptions{}, "truncated"},
-		{"future schema", gzipLines(t, strings.Replace(headerLine(0, 0, 0), `"schema_version":2`, `"schema_version":3`, 1)), DecodeOptions{}, "unsupported source schema version 3"},
+		{"final line without newline", gzipBytes(t, []byte(headerLine(1, 0)+"\n"+recordLine)), DecodeOptions{}, "truncated"},
+		{"future schema", gzipLines(t, strings.Replace(headerLine(0, 0), `"schema_version":2`, `"schema_version":3`, 1)), DecodeOptions{}, "unsupported source schema version 3"},
 		{"uncompressed limit", valid, DecodeOptions{MaxUncompressedBytes: 64}, ErrSourceTooLarge.Error()},
 		{"trailing bytes after the gzip stream", append(append([]byte{}, valid...), "trailing garbage bytes"...), DecodeOptions{}, "trailing bytes after its gzip stream"},
 		// Fewer trailing bytes than a gzip header is indistinguishable from a
@@ -242,9 +243,9 @@ func TestSourceBundleJSONLRejectsMalformedStreams(t *testing.T) {
 		{"trailing bytes shorter than a gzip header", append(append([]byte{}, valid...), "tail"...), DecodeOptions{}, "source is truncated"},
 		{"line 1 is a JSON number", gzipLines(t, `42`), DecodeOptions{}, "line 1 is not a JSON object"},
 		{"line 1 is a JSON array", gzipLines(t, `[]`, recordLine), DecodeOptions{}, "line 1 is not a JSON object"},
-		{"line 2 is a JSON string", gzipLines(t, headerLine(1, 0, 0), `"native_record"`), DecodeOptions{}, "line 2 is not a JSON object"},
-		{"line 2 is null", gzipLines(t, headerLine(1, 0, 0), `null`), DecodeOptions{}, "line 2 is not a JSON object"},
-		{"blank line", gzipLines(t, headerLine(1, 0, 0), ``, recordLine), DecodeOptions{}, "line 2 is not a JSON object"},
+		{"line 2 is a JSON string", gzipLines(t, headerLine(1, 0), `"native_record"`), DecodeOptions{}, "line 2 is not a JSON object"},
+		{"line 2 is null", gzipLines(t, headerLine(1, 0), `null`), DecodeOptions{}, "line 2 is not a JSON object"},
+		{"blank line", gzipLines(t, headerLine(1, 0), ``, recordLine), DecodeOptions{}, "line 2 is not a JSON object"},
 	}
 	for _, c := range cases {
 		_, err := ReadSourceBundle(bytes.NewReader(c.input), c.options)
@@ -269,10 +270,10 @@ func TestDecodeSourceLineCapIsExact(t *testing.T) {
 		t.Fatalf("test line is %d bytes, want %d", got, limit)
 	}
 	options := DecodeOptions{MaxLineBytes: limit}
-	if _, err := ReadSourceBundle(bytes.NewReader(gzipLines(t, headerLine(1, 0, 0), lineOf(limit))), options); err != nil {
+	if _, err := ReadSourceBundle(bytes.NewReader(gzipLines(t, headerLine(1, 0), lineOf(limit))), options); err != nil {
 		t.Fatalf("a line of exactly %d bytes was refused: %v", limit, err)
 	}
-	_, err := ReadSourceBundle(bytes.NewReader(gzipLines(t, headerLine(1, 0, 0), lineOf(limit+1))), options)
+	_, err := ReadSourceBundle(bytes.NewReader(gzipLines(t, headerLine(1, 0), lineOf(limit+1))), options)
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("line 2 exceeds the %d byte line limit", limit)) {
 		t.Fatalf("a line of %d bytes: err = %v", limit+1, err)
 	}
@@ -280,8 +281,8 @@ func TestDecodeSourceLineCapIsExact(t *testing.T) {
 	// as well: as over-long once it overflows the buffer, or as truncated
 	// when EOF arrives first (one byte over the cap fits the buffer).
 	for _, n := range []int{limit + 1, 2 * limit} {
-		_, err = ReadSourceBundle(bytes.NewReader(gzipBytes(t, []byte(headerLine(1, 0, 0)+"\n"+lineOf(n)))), options)
-		if err == nil || !(strings.Contains(err.Error(), "line limit") || strings.Contains(err.Error(), "truncated")) {
+		_, err = ReadSourceBundle(bytes.NewReader(gzipBytes(t, []byte(headerLine(1, 0)+"\n"+lineOf(n)))), options)
+		if err == nil || (!strings.Contains(err.Error(), "line limit") && !strings.Contains(err.Error(), "truncated")) {
 			t.Fatalf("unterminated %d byte line: err = %v", n, err)
 		}
 	}
@@ -290,7 +291,7 @@ func TestDecodeSourceLineCapIsExact(t *testing.T) {
 // Hitting the total cap in the middle of a line reports the cap, not a
 // truncated stream.
 func TestDecodeSourceReportsTotalCapHitMidLine(t *testing.T) {
-	stream := gzipBytes(t, []byte(headerLine(1, 0, 0)+"\n"+recordLine))
+	stream := gzipBytes(t, []byte(headerLine(1, 0)+"\n"+recordLine))
 	_, err := ReadSourceBundle(bytes.NewReader(stream), DecodeOptions{MaxUncompressedBytes: 64})
 	if !errors.Is(err, ErrSourceTooLarge) || err.Error() != ErrSourceTooLarge.Error() {
 		t.Fatalf("err = %v, want exactly %v", err, ErrSourceTooLarge)
@@ -346,7 +347,7 @@ func TestSourceBundleJSONLPreservesNormalizedAndHandoffViews(t *testing.T) {
 func TestDecodeSourceStopsOnCallbackError(t *testing.T) {
 	stop := errors.New("stop here")
 	lines := 0
-	err := DecodeSource(bytes.NewReader(gzipLines(t, headerLine(2, 0, 0), recordLine, recordLine)), DecodeOptions{}, func(SourceLine) error {
+	err := DecodeSource(bytes.NewReader(gzipLines(t, headerLine(2, 0), recordLine, recordLine)), DecodeOptions{}, func(SourceLine) error {
 		lines++
 		if lines == 2 {
 			return stop
@@ -367,30 +368,16 @@ func TestDecodeSourceStreamsWithBoundedMemory(t *testing.T) {
 		t.Skip("allocates a large synthetic bundle")
 	}
 	const records = 12000
-	filler := strings.Repeat("synthetic retained tool output line. ", 80) // ~3 KB per record
-	bundle := SourceBundle{
-		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "archive-mem", NativeSessionID: "native-mem", ProjectID: "project-mem",
-		Capture: SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", AdapterVersion: adapterVersion, SourceFormat: "codex-jsonl", FilterVersion: FilterVersion, CapturedAt: time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)},
-	}
-	for i := 0; i < records; i++ {
-		bundle.NativeRecords = append(bundle.NativeRecords, map[string]any{"type": "response_item", "id": fmt.Sprintf("item-%05d", i), "payload": map[string]any{"type": "function_call_output", "output": filler}})
-	}
-	var plain countingWriter
-	if err := EncodeSource(&plain, bundle); err != nil {
-		t.Fatal(err)
-	}
-	compressed, err := BuildCompressedSource(bundle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bundle = SourceBundle{} // drop the source so only the compressed bytes stay live
+	// The bundle is built in largeCompressedSource and dropped when it
+	// returns, so only the compressed bytes stay live.
+	compressed, plain := largeCompressedSource(t, records)
 	runtime.GC()
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	baseline := stats.HeapAlloc
 	peak := baseline
 	decoded := 0
-	err = DecodeSource(bytes.NewReader(compressed.Bytes), DecodeOptions{}, func(line SourceLine) error {
+	err := DecodeSource(bytes.NewReader(compressed.Bytes), DecodeOptions{}, func(line SourceLine) error {
 		if line.Kind == SourceLineNativeRecord {
 			decoded++
 			if decoded%250 == 0 {
@@ -414,6 +401,31 @@ func TestDecodeSourceStreamsWithBoundedMemory(t *testing.T) {
 	if growth > plain.n/4 {
 		t.Fatalf("decode heap grew by %d bytes for a %d byte bundle: not streaming", growth, plain.n)
 	}
+}
+
+// largeCompressedSource builds a bundle of that many ~3 KB native records
+// and returns it compressed, with the size of its uncompressed encoding.
+func largeCompressedSource(t *testing.T, records int) (CompressedSource, countingWriter) {
+	t.Helper()
+	filler := strings.Repeat("synthetic retained tool output line. ", 80) // ~3 KB per record
+	nativeRecords := make([]map[string]any, 0, records)
+	for i := range records {
+		nativeRecords = append(nativeRecords, map[string]any{"type": "response_item", "id": fmt.Sprintf("item-%05d", i), "payload": map[string]any{"type": "function_call_output", "output": filler}})
+	}
+	bundle := SourceBundle{
+		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "archive-mem", NativeSessionID: "native-mem", ProjectID: "project-mem",
+		Capture:       SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", AdapterVersion: adapterVersion, SourceFormat: "codex-jsonl", FilterVersion: FilterVersion, CapturedAt: time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)},
+		NativeRecords: nativeRecords,
+	}
+	var plain countingWriter
+	if err := EncodeSource(&plain, bundle); err != nil {
+		t.Fatal(err)
+	}
+	compressed, err := BuildCompressedSource(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compressed, plain
 }
 
 type countingWriter struct{ n int64 }

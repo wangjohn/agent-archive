@@ -13,7 +13,10 @@ import (
 // Multiple blocks of different kinds in one string are all removed and the
 // text between them is kept.
 func TestFilterV3StripsNestedAndMultipleInstructionBlocks(t *testing.T) {
-	cases := map[string]struct{ in, want string }{
+	cases := map[string]struct {
+		in   string
+		want string
+	}{
 		"nested same kind": {
 			in:   "before <system-reminder>outer <system-reminder>inner</system-reminder> tail-of-outer</system-reminder> after",
 			want: "before  after",
@@ -135,6 +138,7 @@ func TestFilterV3DeniesTypedInputForCursorToolCalls(t *testing.T) {
 // argument there falls back to the content-free gap and is still dropped.
 func TestFilterV3DeniedArgumentsInSupplementalEvidenceFallBackToPlainGap(t *testing.T) {
 	filtered, gaps, err := FilterSupplementalEvidence([]SupplementalEvidence{{
+		//lint:ignore LV1001 deliberately a kind with no declared constant
 		Kind: "hook_event", ObservedAt: time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), Provenance: "test",
 		Payload: map[string]any{"tool_name": "form_input", "tool_input": map[string]any{"ref": "r", "value": "typed-secret"}},
 	}})

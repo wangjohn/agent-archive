@@ -141,6 +141,8 @@ func linkedStatusRank(status LinkedSessionStatus) int {
 		return 3
 	case LinkedSessionUnavailable:
 		return 2
+	case LinkedSessionPending:
+		return 1
 	default:
 		return 1
 	}
@@ -181,11 +183,15 @@ func FilterSupplementalEvidence(in []SupplementalEvidence) ([]SupplementalEviden
 		if strings.TrimSpace(string(evidence.Kind)) == "" || strings.TrimSpace(evidence.Provenance) == "" || evidence.ObservedAt.IsZero() {
 			return nil, nil, errors.New("supplemental evidence requires kind, provenance, and observation time")
 		}
-		state := sanitizeState{addGap: func(code string, _ int, detail string) {
-			gaps = append(gaps, CaptureGap{Code: code, Detail: "supplemental " + detail})
-		}}
+		var extraAllowed map[string]bool
 		if evidence.Kind == EvidenceKindCaptureGap {
-			state.extraAllowed = captureGapKeys
+			extraAllowed = captureGapKeys
+		}
+		state := sanitizeState{
+			addGap: func(code string, _ int, detail string) {
+				gaps = append(gaps, CaptureGap{Code: code, Detail: "supplemental " + detail})
+			},
+			extraAllowed: extraAllowed,
 		}
 		payload, keep := sanitizeObject(evidence.Payload, &state)
 		if !keep {
@@ -217,6 +223,7 @@ func AnnotateSupplementalGaps(payload map[string]any, gaps []CaptureGap) {
 		}
 		seen[gap.Code] = true
 		codes = append(codes, gap.Code)
+		//lint:ignore LV1001 gap codes are an open set produced across packages
 		switch gap.Code {
 		case "sensitive_content_redacted":
 			payload["redacted"] = true
@@ -266,6 +273,10 @@ func MergeSupplementalEvidence(previous, fresh []SupplementalEvidence) []Supplem
 			if !duplicate {
 				out = append(out, candidate)
 			}
+		case EvidenceKindSkillDiscovered, EvidenceKindSkillInvocation, EvidenceKindSkillRead,
+			EvidenceKindLifecycleHook, EvidenceKindFinalResponse, EvidenceKindExplicitFeedback,
+			EvidenceKindLinkedSession, EvidenceKindCaptureGap:
+			fallthrough
 		default:
 			duplicate := false
 			for _, existing := range out {
@@ -326,8 +337,8 @@ func BuildCompressedSource(bundle SourceBundle) (CompressedSource, error) {
 	}
 	// A non-zero epoch avoids gzip's special "unknown time" representation
 	// while remaining independent of capture and wall-clock time.
-	writer.Header.ModTime = time.Unix(1, 0).UTC()
-	writer.Header.OS = 255
+	writer.ModTime = time.Unix(1, 0).UTC()
+	writer.OS = 255
 	if err = EncodeSource(writer, bundle); err != nil {
 		return CompressedSource{}, err
 	}
@@ -392,7 +403,7 @@ func isLowerHexSHA256(value string) bool {
 		return false
 	}
 	for _, character := range value {
-		if !(character >= '0' && character <= '9') && !(character >= 'a' && character <= 'f') {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			return false
 		}
 	}
@@ -400,6 +411,7 @@ func isLowerHexSHA256(value string) bool {
 }
 
 func safeObjectComponent(value string) bool {
+	//lint:ignore LV1001 rejects the special path names; object-key components are an open domain
 	if value == "" || value == "." || value == ".." {
 		return false
 	}

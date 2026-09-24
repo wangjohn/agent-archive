@@ -200,7 +200,8 @@ func (c Config) Eligible(projectRoot string, sessionStartedAt time.Time) bool {
 type Harness struct {
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
-	Mode    string `json:"mode,omitempty"`
+	//lint:ignore LV1001 an external harness-reported value, set from plain strings in other packages
+	Mode string `json:"mode,omitempty"`
 }
 
 // SessionOrigin is how a session entered the archive. The empty value means

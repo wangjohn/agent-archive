@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -17,12 +18,19 @@ func TestAcceptSessionAdmissionMatrix(t *testing.T) {
 	admitted := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 	yearsAgo := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	project := "/work/widget"
-	type lists struct{ harnesses, imported []string }
+	// admitsHooks and admitsImports say whether the lists admit a claude
+	// session of each origin; a registration without one counts as a hook's.
+	type lists struct {
+		harnesses     []string
+		imported      []string
+		admitsHooks   bool
+		admitsImports bool
+	}
 	appLists := map[string]lists{
-		"hooks":           {harnesses: []string{"claude"}},
-		"imported only":   {harnesses: []string{"codex"}, imported: []string{"claude"}},
+		"hooks":           {harnesses: []string{"claude"}, admitsHooks: true, admitsImports: true},
+		"imported only":   {harnesses: []string{"codex"}, imported: []string{"claude"}, admitsImports: true},
 		"neither":         {harnesses: []string{"codex"}, imported: []string{"cursor"}},
-		"legacy (no app)": {},
+		"legacy (no app)": {admitsHooks: true, admitsImports: true},
 	}
 	boundary := func(after bool) time.Time {
 		if after {
@@ -57,7 +65,10 @@ func TestAcceptSessionAdmissionMatrix(t *testing.T) {
 						// A registration from before AdmittedAt existed.
 						reg.SessionStartedAt = admitted
 					}
-					appOK := listName == "hooks" || listName == "legacy (no app)" || (listName == "imported only" && origin == archive.SessionOriginImport)
+					appOK := list.admitsHooks
+					if origin == archive.SessionOriginImport {
+						appOK = list.admitsImports
+					}
 					want := afterActivation && afterDestination && appOK
 					name := fmt.Sprintf("origin=%q afterActivation=%v afterDestination=%v apps=%s", origin, afterActivation, afterDestination, listName)
 					if got := cfg.AcceptSession(reg); got != want {
@@ -122,7 +133,10 @@ func TestLegacyRegistrationDecodesAsHookAndKeepsItsBoundary(t *testing.T) {
 
 func TestImportedHarnessesRoundTripAndOmitWhenEmpty(t *testing.T) {
 	home := t.TempDir()
-	data, err := json.Marshal(Config{})
+	if err := Save(home, Config{}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path(home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,11 +249,12 @@ func TestDestinationIDDecidesDestinationAcrossSwitchBack(t *testing.T) {
 		}
 	}
 	for _, origin := range []archive.SessionOrigin{archive.SessionOriginHook, archive.SessionOriginImport} {
-		reg := archive.SessionRegistration{ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"}, Origin: origin,
-			SessionStartedAt: admitted, AdmittedAt: admitted, DestinationID: DestinationID(bucketA)}
+		startedAt := admitted
 		if origin == archive.SessionOriginImport {
-			reg.SessionStartedAt = admitted.AddDate(-1, 0, 0)
+			startedAt = admitted.AddDate(-1, 0, 0)
 		}
+		reg := archive.SessionRegistration{ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"}, Origin: origin,
+			SessionStartedAt: startedAt, AdmittedAt: admitted, DestinationID: DestinationID(bucketA)}
 		steps := []struct {
 			name string
 			cfg  Config
