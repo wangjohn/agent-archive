@@ -72,7 +72,8 @@ const (
 	// ProjectKindRepository is a git repository, including one a worktree
 	// folded into.
 	ProjectKindRepository ProjectKind = "repository"
-	// ProjectKindScratch is Claude desktop's scratch-workspaces folder.
+	// ProjectKindScratch is a desktop app's workspace folder: Claude
+	// desktop's scratch-workspaces or Codex desktop's ~/Documents/Codex.
 	ProjectKindScratch ProjectKind = "scratch"
 	// ProjectKindTemporary is a temporary directory, only with IncludeTemp.
 	ProjectKindTemporary ProjectKind = "temporary"

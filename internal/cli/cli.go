@@ -12,8 +12,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -80,6 +83,30 @@ type Env struct {
 	// means the macOS defaults plus $TMPDIR; tests set it because their
 	// files live in one.
 	BackfillTempDirs []string
+	// IsTerminal reports whether stdin or stdout is an interactive
+	// terminal. backfill asks for confirmation only on one, and redraws its
+	// progress line only on one. Defaults to checking the file descriptor.
+	IsTerminal func(any) bool
+	// Interrupts delivers Ctrl-C while backfill uploads, and stop ends the
+	// delivery. Defaults to os/signal for os.Interrupt.
+	Interrupts func() (signals <-chan os.Signal, stop func())
+}
+
+func (e Env) isTerminal(stream any) bool {
+	if e.IsTerminal != nil {
+		return e.IsTerminal(stream)
+	}
+	file, ok := stream.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func (e Env) interrupts() (<-chan os.Signal, func()) {
+	if e.Interrupts != nil {
+		return e.Interrupts()
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
+	return signals, func() { signal.Stop(signals) }
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {
@@ -182,6 +209,9 @@ Inspect history
   agent-archive show ID     Read a session's metadata
   agent-archive feedback ID Add explicit feedback from a local file
 
+Import history
+  agent-archive backfill    Import sessions already on this Mac
+
 Switch agents
   agent-archive handoff     Continue a session in another coding agent
 
@@ -246,7 +276,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "handoff":
 		return runHandoffCommand(args[1:], stdout, stderr, env)
 	case "backfill":
-		return runBackfillCommand(args[1:], stdout, stderr, env)
+		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
 	default:
 		fmt.Fprintf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2

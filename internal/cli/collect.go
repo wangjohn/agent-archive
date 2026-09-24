@@ -51,6 +51,17 @@ func runCollectCommand(_ []string, _ io.Writer, stderr io.Writer, env Env) int {
 // scan's LastError (typically empty), leaving a misconfigured install
 // looking healthy.
 func runOnePass(env Env, quietOnBusy bool) (collector.Result, error) {
+	return runPass(env, quietOnBusy, passOptions{})
+}
+
+// passOptions are what a caller watching one pass passes through to
+// collector.Run: backfill's upload progress and Ctrl-C.
+type passOptions struct {
+	progress func(collector.Progress)
+	stop     func() bool
+}
+
+func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
 	home, err := env.home()
 	if err != nil {
 		return collector.Result{}, fmt.Errorf("resolve home: %w", err)
@@ -144,6 +155,8 @@ func runOnePass(env Env, quietOnBusy bool) (collector.Result, error) {
 		AcceptSession:        cfg.AcceptSession,
 		Now:                  env.Now,
 		RequireSkillUse:      cfg.RequireSkillUse,
+		Progress:             pass.progress,
+		Stop:                 pass.stop,
 	})
 	if err != nil {
 		return result, err

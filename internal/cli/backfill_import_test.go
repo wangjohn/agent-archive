@@ -1,0 +1,787 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/storage"
+)
+
+// The import the fixture produces: the date of backfillNow, first of the day.
+const firstImport = "2026-09-23-1"
+
+// newImportFixture is newBackfillFixture with an in-memory bucket, and
+// subagent transcripts carrying their agent identity, as real ones do, so the
+// collector registers them.
+func newImportFixture(t *testing.T) (*backfillFixture, *storage.MemoryStore) {
+	t.Helper()
+	f := newBackfillFixture(t)
+	bucket := storage.NewMemoryStore()
+	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
+	for _, agent := range []string{"a1", "a2"} {
+		f.write(t, filepath.Join(".claude", "projects", "slug-c-aa-2", "c-aa-2", "subagents", "agent-"+agent+".jsonl"),
+			fmt.Sprintf(`{"type":"assistant","sessionId":"c-aa-2","agentId":%q,"timestamp":"2026-09-21T09:05:00Z","message":{"role":"assistant","content":"looked"}}`+"\n", agent))
+	}
+	return f, bucket
+}
+
+// importRun runs backfill with stdin, which is a terminal when terminal is
+// set.
+func (f *backfillFixture) importRun(t *testing.T, stdin io.Reader, terminal bool, args ...string) (string, string, int) {
+	t.Helper()
+	env := f.env
+	env.IsTerminal = func(stream any) bool { return terminal && stream == any(stdin) }
+	var out, errOut bytes.Buffer
+	code := Run(append([]string{"backfill"}, args...), stdin, &out, &errOut, env)
+	return out.String(), errOut.String(), code
+}
+
+func (f *backfillFixture) command(t *testing.T, args ...string) (string, string, int) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	code := Run(args, nil, &out, &errOut, f.env)
+	return out.String(), errOut.String(), code
+}
+
+// bucketSnapshot lists every object and its bytes.
+func bucketSnapshot(t *testing.T, bucket *storage.MemoryStore) string {
+	t.Helper()
+	objects, err := bucket.List(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, o := range objects {
+		data, err := bucket.Get(context.Background(), o.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines = append(lines, o.Key+" "+storage.SHA256Hex(data))
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+// unchanged fails the test if the data directory or the bucket differ from
+// the snapshots taken before.
+type unchanged struct {
+	data, bucket string
+}
+
+func snapshotAll(t *testing.T, f *backfillFixture, bucket *storage.MemoryStore) unchanged {
+	t.Helper()
+	return unchanged{snapshotTree(t, f.data), bucketSnapshot(t, bucket)}
+}
+
+func (u unchanged) check(t *testing.T, f *backfillFixture, bucket *storage.MemoryStore) {
+	t.Helper()
+	if after := snapshotTree(t, f.data); after != u.data {
+		t.Fatalf("data directory changed:\n%s\n---\n%s", u.data, after)
+	}
+	if after := bucketSnapshot(t, bucket); after != u.bucket {
+		t.Fatalf("bucket changed:\n%s\n---\n%s", u.bucket, after)
+	}
+}
+
+func (f *backfillFixture) checkPrivate(t *testing.T, name, text string) {
+	t.Helper()
+	for _, id := range f.nativeIDs {
+		if strings.Contains(text, id) {
+			t.Errorf("%s names native session %q", name, id)
+		}
+	}
+	if strings.Contains(text, ".jsonl") || strings.Contains(text, "please check it") {
+		t.Errorf("%s names a transcript or its content", name)
+	}
+}
+
+func importRegistrations(t *testing.T, home, batch string) (parents, children []archive.SessionRegistration) {
+	t.Helper()
+	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reg := range regs {
+		if reg.ImportBatch != batch {
+			continue
+		}
+		if reg.ParentSessionID != "" {
+			children = append(children, reg)
+		} else {
+			parents = append(parents, reg)
+		}
+	}
+	return parents, children
+}
+
+func loadBatch(t *testing.T, home, id string) (backfill.Batch, []byte) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, "imports", id+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b backfill.Batch
+	if err := json.Unmarshal(data, &b); err != nil {
+		t.Fatal(err)
+	}
+	return b, data
+}
+
+// The default run: the plan, the prompt, the summary after confirmation, and
+// everything the import leaves behind. A second run then imports and writes
+// nothing.
+func TestBackfillImportGolden(t *testing.T) {
+	f, bucket := newImportFixture(t)
+	out, errOut, code := f.importRun(t, strings.NewReader("y\n"), true)
+	if code != 0 {
+		t.Fatalf("code %d, stderr %s\n%s", code, errOut, out)
+	}
+	f.checkPrivate(t, "output", out)
+	checkGolden(t, "import.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+
+	cfg, _, err := config.Load(f.data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admittedAt := backfillNow.UTC()
+	added := 0
+	for _, p := range cfg.Archive.Projects {
+		if p.ActivatedAt.Equal(admittedAt) {
+			added++
+			if !p.Included || p.ProjectID != archive.ProjectID(p.Root) {
+				t.Errorf("added project %+v", p)
+			}
+		}
+	}
+	if added != 4 || len(cfg.Archive.Projects) != 5 {
+		t.Fatalf("projects %+v", cfg.Archive.Projects)
+	}
+	if strings.Join(cfg.ImportedHarnesses, ",") != "codex,cursor" || strings.Join(cfg.Harnesses, ",") != "claude" {
+		t.Fatalf("apps: hooks %v, imported %v", cfg.Harnesses, cfg.ImportedHarnesses)
+	}
+
+	parents, children := importRegistrations(t, f.data, firstImport)
+	if len(parents) != 11 || len(children) != 2 {
+		t.Fatalf("%d sessions and %d subagents registered", len(parents), len(children))
+	}
+	for _, reg := range append(parents, children...) {
+		if reg.Origin != archive.SessionOriginImport || !reg.AdmittedAt.Equal(admittedAt) || reg.StartedAtSource == "" || reg.SessionStartedAt.After(admittedAt) {
+			t.Errorf("registration %+v", reg)
+		}
+	}
+	for _, reg := range parents {
+		if !reg.RegisteredAt.Equal(admittedAt) {
+			t.Errorf("registered at %s", reg.RegisteredAt)
+		}
+	}
+
+	b, raw := loadBatch(t, f.data, firstImport)
+	f.checkPrivate(t, "batch file", string(raw))
+	if strings.Contains(string(raw), f.root) {
+		t.Errorf("batch file names a path:\n%s", raw)
+	}
+	var keys map[string]any
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"id", "started_at", "completed_at", "filters", "destination_id", "projects_added", "apps_added", "sessions", "subagents"} {
+		if _, ok := keys[key]; !ok {
+			t.Errorf("batch file has no %q", key)
+		}
+	}
+	if b.ID != firstImport || b.CompletedAt == nil || len(b.Sessions) != 11 || len(b.Subagents) != 2 || len(b.ProjectsAdded) != 4 ||
+		strings.Join(b.AppsAdded, ",") != "codex,cursor" || b.DestinationID != backfill.DestinationID(cfg.Storage) {
+		t.Fatalf("batch %+v", b)
+	}
+	registered := map[string]bool{}
+	for _, reg := range parents {
+		registered[reg.ArchiveSessionID] = true
+	}
+	for _, id := range b.Sessions {
+		if !registered[id] {
+			t.Errorf("batch session %s is not a registered import", id)
+		}
+	}
+
+	// Every imported session is in the bucket, marked as an import.
+	for _, reg := range append(parents, children...) {
+		key, _ := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
+		m, err := reader.ReadMetadata(context.Background(), bucket, key)
+		if err != nil {
+			t.Fatalf("%s: %v", reg.ArchiveSessionID, err)
+		}
+		if m.Origin != archive.SessionOriginImport || m.ImportedAt == nil || !m.ImportedAt.Equal(admittedAt) || m.StartedAtSource == "" {
+			t.Errorf("metadata of %s: origin %q, imported_at %v, started_at_source %q", reg.ArchiveSessionID, m.Origin, m.ImportedAt, m.StartedAtSource)
+		}
+	}
+	for _, child := range children {
+		if len(child.SubagentID) == 0 || child.ParentNativeSessionID != "c-aa-2" {
+			t.Errorf("child %+v", child)
+		}
+	}
+
+	history, errOut, code := f.command(t, "backfill", "history")
+	if code != 0 {
+		t.Fatalf("history: %d %s", code, errOut)
+	}
+	checkGolden(t, "history.txt", []byte(history))
+
+	status, _, _ := f.command(t, "status", "--json")
+	var view statusView
+	if err := json.Unmarshal([]byte(status), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.LastImport != firstImport || view.ImportedSessions != 11 || view.ImportedPending != 0 {
+		t.Fatalf("status: last %q, imported %d, pending %d", view.LastImport, view.ImportedSessions, view.ImportedPending)
+	}
+
+	// A second run finds nothing new, and writes nothing, locally or in the
+	// bucket.
+	before := snapshotAll(t, f, bucket)
+	out, errOut, code = f.importRun(t, strings.NewReader(""), false, "--yes")
+	if code != 0 {
+		t.Fatalf("second run: code %d, %s", code, errOut)
+	}
+	checkGolden(t, "second-run.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+	before.check(t, f, bucket)
+}
+
+// list marks imports and filters on them; show prints their provenance.
+func TestBackfillListAndShow(t *testing.T) {
+	f, _ := newImportFixture(t)
+	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--harness", "claude", "--project", filepath.Join(f.userHome, "levenshtein")); code != 0 {
+		t.Fatalf("import: %s", errOut)
+	}
+	parents, _ := importRegistrations(t, f.data, firstImport)
+	if len(parents) != 3 {
+		t.Fatalf("%d imported", len(parents))
+	}
+	out, errOut, code := f.command(t, "list", "--imported")
+	if code != 0 || !strings.Contains(out, "3 session(s).") || strings.Count(out, " imported ") != 3 || !strings.Contains(out, "ORIGIN") {
+		t.Fatalf("list --imported: %d %s\n%s", code, errOut, out)
+	}
+	for _, reg := range parents {
+		if !strings.Contains(out, reg.ArchiveSessionID) {
+			t.Errorf("list --imported misses %s", reg.ArchiveSessionID)
+		}
+	}
+	if out, _, code := f.command(t, "list", "--hook-captured"); code != 0 || !strings.Contains(out, "No archived sessions match.") {
+		t.Fatalf("list --hook-captured: %s", out)
+	}
+	if _, _, code := f.command(t, "list", "--imported", "--hook-captured"); code != 2 {
+		t.Fatalf("both filters: code %d", code)
+	}
+	out, errOut, code = f.command(t, "show", parents[0].ArchiveSessionID)
+	if code != 0 {
+		t.Fatalf("show: %s", errOut)
+	}
+	for _, field := range []string{`"origin": "import"`, `"imported_at": "2026-09-23T19:00:00Z"`, `"started_at_source": "transcript"`, archive.CaptureGapImportedWithoutHookEvidence} {
+		if !strings.Contains(out, field) {
+			t.Errorf("show lacks %s:\n%s", field, out)
+		}
+	}
+}
+
+// Declining, in any of its forms, changes nothing, locally or in the bucket.
+// So does running out of input at the prompt.
+func TestBackfillDeclineChangesNothing(t *testing.T) {
+	f, bucket := newImportFixture(t)
+	before := snapshotAll(t, f, bucket)
+	config0, err := os.ReadFile(filepath.Join(f.data, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, answer := range []string{"\n", "n\n", "No\n", "maybe\nn\n"} {
+		out, errOut, code := f.importRun(t, strings.NewReader(answer), true)
+		if code != 0 || !strings.Contains(out, "Cancelled. Nothing was changed.") {
+			t.Fatalf("%q: code %d, %s\n%s", answer, code, errOut, out)
+		}
+		if strings.HasPrefix(answer, "maybe") && !strings.Contains(out, "Please enter y, n, or edit.") {
+			t.Fatalf("%q: no hint", answer)
+		}
+		before.check(t, f, bucket)
+	}
+	if _, errOut, code := f.importRun(t, strings.NewReader(""), true); code != 1 || !strings.Contains(errOut, "Nothing was changed.") {
+		t.Fatalf("no input: code %d, %s", code, errOut)
+	}
+	before.check(t, f, bucket)
+	if after, _ := os.ReadFile(filepath.Join(f.data, "config.json")); !bytes.Equal(after, config0) {
+		t.Fatal("config.json changed")
+	}
+}
+
+// Without a terminal, only --yes imports; otherwise nothing is even read.
+func TestBackfillNoTerminalRefuses(t *testing.T) {
+	f, bucket := newImportFixture(t)
+	before := snapshotAll(t, f, bucket)
+	out, errOut, code := f.importRun(t, strings.NewReader("y\n"), false)
+	if code != 1 || out != "" || !strings.Contains(errOut, "--yes") {
+		t.Fatalf("code %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	before.check(t, f, bucket)
+}
+
+// edit asks for a retention period, shows the plan again with the new
+// deletion date, and commits the retention with the import.
+func TestBackfillEditRetention(t *testing.T) {
+	f, _ := newImportFixture(t)
+	out, errOut, code := f.importRun(t, strings.NewReader("edit\n365\ny\n"), true, "--background")
+	if code != 0 {
+		t.Fatalf("code %d, %s", code, errOut)
+	}
+	checkGolden(t, "edit.txt", []byte(strings.ReplaceAll(out, f.root, "$ROOT")))
+	if strings.Count(out, "Import 11 sessions from 5 projects? [y/N/edit]") != 2 || !strings.Contains(out, "Retention is 365 days, so these sessions are deleted on 2027-09-23.") {
+		t.Fatalf("plan not shown again with the new date:\n%s", out)
+	}
+	cfg, _, _ := config.Load(f.data)
+	if cfg.RetentionDays != 365 {
+		t.Fatalf("retention %d", cfg.RetentionDays)
+	}
+}
+
+// A failed storage check stops before the prompt and changes nothing; a
+// Keychain failure says how to fix it.
+func TestBackfillStorageCheckFails(t *testing.T) {
+	f, bucket := newImportFixture(t)
+	before := snapshotAll(t, f, bucket)
+	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return failingPutStore{bucket}, nil }
+	out, errOut, code := f.importRun(t, strings.NewReader("y\n"), true)
+	if code != 1 || !strings.Contains(out, "Checking storage… failed.") || strings.Contains(out, "[y/N/edit]") || !strings.Contains(errOut, "nothing was imported") {
+		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+	}
+	before.check(t, f, bucket)
+
+	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return nil, fmt.Errorf("read credential: %w", credentials.ErrKeychainLocked)
+	}
+	_, errOut, code = f.importRun(t, strings.NewReader("y\n"), true)
+	if code != 1 || !strings.Contains(errOut, credentials.RecoveryAction(credentials.ErrKeychainLocked)) {
+		t.Fatalf("code %d, %s", code, errOut)
+	}
+	before.check(t, f, bucket)
+}
+
+type failingPutStore struct{ storage.ObjectStore }
+
+func (failingPutStore) Put(context.Context, string, []byte) error { return errors.New("access denied") }
+
+// onFirstRead runs before when the prompt first reads its answer: the
+// moment between showing the plan and confirming it.
+type onFirstRead struct {
+	r      io.Reader
+	before func()
+	once   sync.Once
+}
+
+func (o *onFirstRead) Read(p []byte) (int, error) {
+	o.once.Do(o.before)
+	return o.r.Read(p)
+}
+
+// A configuration change while the prompt is open aborts the import; so does
+// a pause, and an import refuses to start while paused or while setup needs
+// recovery. A bucket privacy refresh by the collector is not a change.
+func TestBackfillConcurrentChanges(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(t *testing.T, home string)
+		want   string
+	}{
+		{"setting changed", func(t *testing.T, home string) {
+			cfg, _, _ := config.Load(home)
+			cfg.RequireSkillUse = true
+			if err := config.Save(home, cfg); err != nil {
+				t.Fatal(err)
+			}
+		}, "the configuration changed while this was open; run backfill again"},
+		{"paused", func(t *testing.T, home string) {
+			if _, err := config.SetPaused(home, true); err != nil {
+				t.Fatal(err)
+			}
+		}, "collection is paused"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, bucket := newImportFixture(t)
+			stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() { tc.change(t, f.data) }}
+			var out, errOut bytes.Buffer
+			env := f.env
+			env.IsTerminal = func(stream any) bool { return stream == any(stdin) }
+			before := bucketSnapshot(t, bucket)
+			if code := Run([]string{"backfill"}, stdin, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), tc.want) {
+				t.Fatalf("code %d, %s", code, errOut.String())
+			}
+			if parents, _ := importRegistrations(t, f.data, firstImport); len(parents) != 0 {
+				t.Fatal("sessions were registered")
+			}
+			if _, err := os.Stat(filepath.Join(f.data, "imports")); !os.IsNotExist(err) {
+				t.Fatalf("an import was recorded: %v", err)
+			}
+			cfg, _, _ := config.Load(f.data)
+			if len(cfg.Archive.Projects) != 1 || len(cfg.ImportedHarnesses) != 0 {
+				t.Fatalf("configuration changed: %+v", cfg.Archive.Projects)
+			}
+			if bucketSnapshot(t, bucket) != before {
+				t.Fatal("bucket changed")
+			}
+		})
+	}
+
+	t.Run("privacy refresh", func(t *testing.T) {
+		f, _ := newImportFixture(t)
+		checked := backfillNow.UTC()
+		stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() {
+			cfg, _, _ := config.Load(f.data)
+			cfg.BucketPrivacy = &storage.PrivacyReport{State: "unknown", CheckedAt: &checked}
+			if err := config.Save(f.data, cfg); err != nil {
+				t.Fatal(err)
+			}
+		}}
+		if _, errOut, code := f.importRun(t, stdin, true, "--background"); code != 0 {
+			t.Fatalf("code %d, %s", code, errOut)
+		}
+	})
+
+	t.Run("refused before planning", func(t *testing.T) {
+		f, bucket := newImportFixture(t)
+		if _, err := config.SetPaused(f.data, true); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshotAll(t, f, bucket)
+		if out, errOut, code := f.importRun(t, nil, false, "--yes"); code != 1 || out != "" || !strings.Contains(errOut, "paused") {
+			t.Fatalf("paused: code %d, %q, %q", code, out, errOut)
+		}
+		before.check(t, f, bucket)
+		if _, err := config.SetPaused(f.data, false); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(journalPath(f.data), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before = snapshotAll(t, f, bucket)
+		if out, errOut, code := f.importRun(t, nil, false, "--yes"); code != 1 || out != "" || !strings.Contains(errOut, "setup needs recovery") {
+			t.Fatalf("setup pending: code %d, %q, %q", code, out, errOut)
+		}
+		before.check(t, f, bucket)
+	})
+}
+
+// A crash after the configuration commit leaves projects added and nothing
+// registered; a crash between registration holds leaves some sessions
+// registered. Either way, running backfill again finishes the same import.
+func TestBackfillCrashConverges(t *testing.T) {
+	for _, crash := range []struct {
+		name string
+		at   string
+		n    int
+	}{{"after commit", "committed", 1}, {"between holds", "registered", 2}} {
+		t.Run(crash.name, func(t *testing.T) {
+			f, _ := newImportFixture(t)
+			calls := 0
+			backfillHoldSteps = 3
+			backfillCheckpoint = func(step string) error {
+				if step == crash.at {
+					if calls++; calls == crash.n {
+						return errors.New("simulated crash")
+					}
+				}
+				return nil
+			}
+			t.Cleanup(func() { backfillCheckpoint, backfillHoldSteps = nil, 0 })
+			if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 1 || !strings.Contains(errOut, "simulated crash") {
+				t.Fatalf("crash: code %d, %s", code, errOut)
+			}
+			cfg, _, _ := config.Load(f.data)
+			if len(cfg.Archive.Projects) != 5 {
+				t.Fatalf("projects after the commit: %d", len(cfg.Archive.Projects))
+			}
+			partial, _ := importRegistrations(t, f.data, firstImport)
+			b, _ := loadBatch(t, f.data, firstImport)
+			if b.CompletedAt != nil || len(b.Sessions) != len(partial) {
+				t.Fatalf("interrupted batch %+v, %d registered", b, len(partial))
+			}
+			if crash.at == "committed" && len(partial) != 0 || crash.at == "registered" && (len(partial) == 0 || len(partial) == 11) {
+				t.Fatalf("%d registered at the crash", len(partial))
+			}
+			if history, _, _ := f.command(t, "backfill", "history"); !strings.Contains(history, "interrupted") {
+				t.Fatalf("history:\n%s", history)
+			}
+
+			backfillCheckpoint = nil
+			out, errOut, code := f.importRun(t, nil, false, "--yes")
+			if code != 0 {
+				t.Fatalf("rerun: code %d, %s\n%s", code, errOut, out)
+			}
+			if want := fmt.Sprintf("Registered %d sessions", 11-len(partial)); !strings.Contains(out, want) || !strings.Contains(out, "as import "+firstImport) {
+				t.Fatalf("rerun did not continue the import (%s):\n%s", want, out)
+			}
+			parents, children := importRegistrations(t, f.data, firstImport)
+			b, _ = loadBatch(t, f.data, firstImport)
+			if len(parents) != 11 || len(children) != 2 || len(b.Sessions) != 11 || len(b.Subagents) != 2 || len(b.ProjectsAdded) != 4 || b.CompletedAt == nil {
+				t.Fatalf("after rerun: %d sessions, %d subagents, batch %+v", len(parents), len(children), b)
+			}
+			batches, _ := backfill.LoadBatches(f.data)
+			if len(batches) != 1 {
+				t.Fatalf("%d batches", len(batches))
+			}
+		})
+	}
+}
+
+// With --background, registration writes subagent candidates marked as
+// imports, observed at the import, and the parent's request carries the
+// pending links. The collector then registers each child with the parent's
+// import fields and no SubagentStop lifecycle evidence.
+func TestBackfillSubagentsInheritImport(t *testing.T) {
+	f, bucket := newImportFixture(t)
+	out, errOut, code := f.importRun(t, nil, false, "--yes", "--background", "--project", filepath.Join(f.userHome, "agent-archive"), "--harness", "claude")
+	if code != 0 {
+		t.Fatalf("code %d, %s", code, errOut)
+	}
+	if !strings.Contains(out, "Registered 2 sessions and 2 subagent transcripts as import "+firstImport) || !strings.Contains(out, "The background collector uploads them.") {
+		t.Fatalf("output:\n%s", out)
+	}
+	store := collector.OpenLocalStoreReadOnly(f.data)
+	candidates, err := store.LoadSubagentCandidates()
+	if err != nil || len(candidates) != 2 {
+		t.Fatalf("candidates %+v, %v", candidates, err)
+	}
+	parentID, _, _ := store.ArchiveSessionID("c-aa-2")
+	for _, c := range candidates {
+		if c.Origin != archive.SessionOriginImport || !c.ObservedAt.Equal(backfillNow.UTC()) || c.ParentArchiveSessionID != parentID || c.NativeSessionID != "c-aa-2:subagent:"+c.AgentID {
+			t.Errorf("candidate %+v", c)
+		}
+	}
+	requests, _ := store.LoadRequests()
+	links := 0
+	for _, req := range requests {
+		if req.ArchiveSessionID != parentID {
+			continue
+		}
+		for _, e := range req.HookEvidence {
+			if e.Kind == archive.EvidenceKindLinkedSession {
+				links++
+			}
+		}
+	}
+	if links != 2 {
+		t.Fatalf("parent request carries %d links", links)
+	}
+
+	if _, errOut, code := f.command(t, "sync"); code != 0 {
+		t.Fatalf("sync: %s", errOut)
+	}
+	parents, children := importRegistrations(t, f.data, firstImport)
+	if len(children) != 2 {
+		t.Fatalf("children %+v", children)
+	}
+	var parent archive.SessionRegistration
+	for _, p := range parents {
+		if p.ArchiveSessionID == parentID {
+			parent = p
+		}
+	}
+	for _, child := range children {
+		if child.ParentSessionID != parentID || child.Origin != archive.SessionOriginImport || child.ImportBatch != firstImport || !child.AdmittedAt.Equal(parent.AdmittedAt) {
+			t.Errorf("child %+v", child)
+		}
+		key, _ := archive.MetadataObjectKey("claude", child.ArchiveSessionID)
+		m, err := reader.ReadMetadata(context.Background(), bucket, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.ParentSessionID != parentID || m.Origin != archive.SessionOriginImport {
+			t.Errorf("child metadata: parent %q, origin %q", m.ParentSessionID, m.Origin)
+		}
+		if req, found, _ := requestFor(store, child.ArchiveSessionID); found && strings.Contains(fmt.Sprint(req.Reasons), "subagentstop") {
+			t.Errorf("child has SubagentStop lifecycle evidence: %+v", req)
+		}
+	}
+}
+
+func requestFor(store *collector.LocalStore, id string) (collector.Request, bool, error) {
+	requests, err := store.LoadRequests()
+	for _, req := range requests {
+		if req.ArchiveSessionID == id {
+			return req, true, err
+		}
+	}
+	return collector.Request{}, false, err
+}
+
+// Ctrl-C during the upload stops after the session in flight; the rest stay
+// registered, with their requests, for the background collector.
+func TestBackfillInterruptedUpload(t *testing.T) {
+	f, _ := newImportFixture(t)
+	signals := make(chan os.Signal, 1)
+	var mu sync.Mutex
+	var events []string
+	record := func(event string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	}
+	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() { record("watch stopped") } }
+	backfillCheckpoint = func(step string) error {
+		if step != "uploading" {
+			return nil
+		}
+		signals <- os.Interrupt
+		// The watch stops on the first Ctrl-C itself, not when the command
+		// next looks, which can be a whole upload later.
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+			mu.Lock()
+			n := len(events)
+			mu.Unlock()
+			if n > 0 {
+				break
+			}
+		}
+		record("upload starts")
+		return nil
+	}
+	t.Cleanup(func() { backfillCheckpoint = nil })
+	out, errOut, code := f.importRun(t, nil, false, "--yes")
+	if strings.Join(events, ", ") != "watch stopped, upload starts" {
+		t.Errorf("events %v: the first Ctrl-C must hand the next one back at once, and only once", events)
+	}
+	if !strings.Contains(out, "Stopping after the current session; press Ctrl-C again to quit.") {
+		t.Errorf("no notice of the stop:\n%s", out)
+	}
+	if code != 0 || !strings.Contains(out, "Stopped. The remaining 11 sessions will be uploaded by the background collector.") || !strings.Contains(out, "list --imported") {
+		t.Fatalf("code %d, %s\n%s", code, errOut, out)
+	}
+	parents, _ := importRegistrations(t, f.data, firstImport)
+	store := collector.OpenLocalStoreReadOnly(f.data)
+	for _, reg := range parents {
+		if _, found, _ := requestFor(store, reg.ArchiveSessionID); !found {
+			t.Errorf("%s has no pending request", reg.ArchiveSessionID)
+		}
+	}
+	if len(parents) != 11 {
+		t.Fatalf("%d registered", len(parents))
+	}
+}
+
+// uninstall --delete-local-data removes the import batches too.
+func TestUninstallDeleteLocalDataRemovesImports(t *testing.T) {
+	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
+	if err := backfill.SaveBatch(home, backfill.Batch{ID: firstImport, StartedAt: backfillNow}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "imports")); !os.IsNotExist(err) {
+		t.Fatalf("imports survived uninstall: %v", err)
+	}
+	if strings.Contains(stderr.String(), "imports") {
+		t.Fatalf("imports reported as a leftover:\n%s", stderr.String())
+	}
+}
+
+// A hook that fires while backfill registers sessions gets hooks.lock within
+// its one-second wait: registration holds the real flock only briefly.
+func TestBackfillHookDuringRegistration(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, activated)
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var candidates []backfill.Candidate
+	for i := range 80 {
+		id := fmt.Sprintf("import-%02d", i)
+		path := filepath.Join(project, id+".jsonl")
+		if err := os.WriteFile(path, []byte(`{"type":"user"}`+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		candidates = append(candidates, backfill.Candidate{
+			Harness: "claude", NativeSessionID: id, TranscriptPath: path, ProjectRoot: project, ProjectKind: backfill.ProjectKindDirectory,
+			ProjectIncluded: true, StartedAt: activated.Add(-time.Duration(i+1) * time.Hour), StartedAtSource: archive.StartedAtSourceTranscript,
+		})
+	}
+
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		during    int
+		slowest   time.Duration
+		hookErrs  []error
+		finished  = make(chan struct{})
+		startOnce sync.Once
+	)
+	// Hooks arrive every 25 ms, faster than a person works, for as long as
+	// registration runs.
+	fire := func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-finished:
+				return
+			case <-time.After(25 * time.Millisecond):
+			}
+			at := time.Now()
+			err := handleHookEvent(home, "claude", map[string]any{
+				"hook_event_name": "SessionStart", "source": "startup", "session_id": fmt.Sprintf("hook-%d", i), "cwd": project,
+				"transcript_path": filepath.Join(project, fmt.Sprintf("hook-%d.jsonl", i)),
+			}, time.Now())
+			took := time.Since(at)
+			mu.Lock()
+			if err != nil {
+				hookErrs = append(hookErrs, err)
+			}
+			slowest = max(slowest, took)
+			select {
+			case <-finished:
+			default:
+				during++
+			}
+			mu.Unlock()
+		}
+	}
+	registration := backfill.Registration{
+		Home: home, Store: store, Batch: firstImport, AdmittedAt: time.Now().UTC(),
+		AfterHold: func(_, _ []string) error {
+			startOnce.Do(func() { wg.Add(1); go fire() })
+			return nil
+		},
+	}
+	result, err := registration.Run(candidates)
+	close(finished)
+	wg.Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Sessions) != len(candidates) {
+		t.Fatalf("registered %d of %d", len(result.Sessions), len(candidates))
+	}
+	if len(hookErrs) > 0 {
+		t.Fatalf("hooks failed during registration: %v", hookErrs)
+	}
+	if during == 0 {
+		t.Fatal("no hook ran while registration was in progress")
+	}
+	if slowest >= time.Second {
+		t.Fatalf("a hook waited %s", slowest)
+	}
+}

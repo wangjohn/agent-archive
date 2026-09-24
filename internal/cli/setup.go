@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -100,6 +101,9 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		if choice != "restart" {
 			draft = saved
+			// Projects an import added after this draft was saved are kept:
+			// the draft never saw them, so it cannot have meant to drop them.
+			draft.Config.Archive.Projects = withBackfilledProjects(draft.Config.Archive.Projects, existing.Archive.Projects, backfilledProjects(env))
 			if choice == "storage" {
 				draft.Step = 1
 			}
@@ -243,7 +247,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 					return failure
 				}
 				if choice == "edit" {
-					if err = editSetupReview(p, &draft, userHome); err != nil {
+					if err = editSetupReview(p, &draft, userHome, backfilledProjects(env)); err != nil {
 						return err
 					}
 					if err = save(); err != nil {
@@ -279,7 +283,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			return nil
 		}
 		if action == "edit" {
-			if err = editSetupReview(p, &draft, userHome); err != nil {
+			if err = editSetupReview(p, &draft, userHome, backfilledProjects(env)); err != nil {
 				return err
 			}
 			if err = save(); err != nil {
@@ -355,13 +359,13 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 		}
 	}
 	if !acceptedProject {
-		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, time.Time{}, userHome)
+		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), time.Time{}, userHome)
 		if err != nil {
 			return err
 		}
 	}
 
-	if len(cfg.Archive.Projects) == 0 {
+	if includedProjects(cfg.Archive.Projects) == 0 {
 		return fmt.Errorf("choose at least one project")
 	}
 	if cfg.RetentionDays <= 0 {
@@ -501,20 +505,50 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 		fmt.Fprintln(p.out, "Choose at least one app to continue.")
 	}
 }
-func promptProjects(p *prompter, existing []archive.ProjectActivation, now time.Time, userHomes ...string) ([]archive.ProjectActivation, error) {
+
+// promptProjects asks which included projects to keep, then for new ones.
+// Projects backfill added (backfilled holds their project IDs) are kept or
+// excluded together with one question, since an import can add hundreds.
+// An excluded project stays in the list as excluded, so its exclusion keeps
+// holding: its imported sessions stop uploading and later backfills skip it.
+// A project that was not imported and is not kept is dropped, as before.
+func promptProjects(p *prompter, existing []archive.ProjectActivation, backfilled map[string]bool, now time.Time, userHomes ...string) ([]archive.ProjectActivation, error) {
 	result := []archive.ProjectActivation{}
 	seen := map[string]bool{}
+	imported := 0
 	for _, project := range existing {
-		if !project.Included {
-			continue
+		if project.Included && backfilled[project.ProjectID] {
+			imported++
 		}
-		keep, err := p.yesNo("Keep project "+project.Root+"?", true)
+	}
+	keepImported := true
+	if imported > 1 {
+		var err error
+		keepImported, err = p.yesNo(fmt.Sprintf("Keep the %d projects added by backfill? If not, their imported sessions stop uploading and later backfills skip them.", imported), true)
 		if err != nil {
 			return nil, err
 		}
-		if keep {
+	}
+	for _, project := range existing {
+		if !project.Included {
+			// Exclusions, including those undo leaves, carry through.
+			result = append(result, project)
+			continue
+		}
+		keep := keepImported
+		if imported <= 1 || !backfilled[project.ProjectID] {
+			var err error
+			if keep, err = p.yesNo("Keep project "+project.Root+"?", true); err != nil {
+				return nil, err
+			}
+		}
+		switch {
+		case keep:
 			result = append(result, project)
 			seen[project.Root] = true
+		case backfilled[project.ProjectID]:
+			project.Included = false
+			result = append(result, project)
 		}
 	}
 	fmt.Fprintln(p.out, "Add project directories, one per line. Enter a blank line when finished.")
@@ -555,6 +589,15 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, now time.
 			continue
 		}
 		seen[root] = true
+		reincluded := false
+		for i := range result {
+			if result[i].Root == root {
+				result[i].Included, reincluded = true, true
+			}
+		}
+		if reincluded {
+			continue
+		}
 		project := archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true, ActivatedAt: now}
 		for _, old := range existing {
 			if old.Root == root {
@@ -564,6 +607,17 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, now time.
 		result = append(result, project)
 	}
 	return result, nil
+}
+
+// includedProjects counts the projects capture is on for.
+func includedProjects(projects []archive.ProjectActivation) int {
+	n := 0
+	for _, project := range projects {
+		if project.Included {
+			n++
+		}
+	}
+	return n
 }
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
@@ -616,4 +670,37 @@ func suggestedProject(dir string) string {
 			return ""
 		}
 	}
+}
+
+// withBackfilledProjects adds to a resumed draft's projects the committed
+// projects an import added that the draft does not mention.
+func withBackfilledProjects(draft, committed []archive.ProjectActivation, backfilled map[string]bool) []archive.ProjectActivation {
+	mentioned := map[string]bool{}
+	for _, project := range draft {
+		mentioned[project.Root] = true
+	}
+	for _, project := range committed {
+		if backfilled[project.ProjectID] && !mentioned[project.Root] {
+			draft = append(draft, project)
+		}
+	}
+	return draft
+}
+
+// backfilledProjects is the set of project IDs any backfill import added.
+// An unreadable batch file leaves its projects out, so they are asked about
+// one by one, as before imports existed.
+func backfilledProjects(env Env) map[string]bool {
+	out := map[string]bool{}
+	home, err := env.home()
+	if err != nil {
+		return out
+	}
+	batches, _ := backfill.LoadBatches(home)
+	for _, b := range batches {
+		for _, id := range b.ProjectsAdded {
+			out[id] = true
+		}
+	}
+	return out
 }

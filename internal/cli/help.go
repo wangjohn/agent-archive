@@ -66,6 +66,8 @@ Find sessions using metadata; does not download conversation content.
                                  value stays accepted for forward compatibility.
   --since DATE|AGE               For example 2026-01-31 or 7d
   --complete                     Require complete parser coverage
+  --imported                     Only sessions agent-archive backfill imported
+  --hook-captured                Only sessions hooks captured as they ran
   --no-cache                     Download every metadata sidecar instead of
                                  reusing unchanged ones from the local
                                  metadata cache (metadata only; never
@@ -74,8 +76,9 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
 	"show": `Usage: agent-archive show ID [--harness NAME] [--normalized]
 
-Print session metadata as JSON. --normalized explicitly downloads and verifies
-its source bundle and prints conversation content as well.
+Print session metadata as JSON. An imported session also shows origin,
+imported_at, and started_at_source. --normalized explicitly downloads and
+verifies its source bundle and prints conversation content as well.
 Example: agent-archive show SESSION_ID --normalized
 `,
 	"handoff": `Usage: agent-archive handoff ID|--latest|--file PATH [options]
@@ -101,12 +104,14 @@ waiting for a sync; otherwise it is downloaded from the archive.
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 `,
-	"backfill": `Usage: agent-archive backfill --dry-run [options]
+	"backfill": `Usage: agent-archive backfill [options]
+       agent-archive backfill history
 
-Plan importing the Claude Code, Codex, and Cursor sessions already on this Mac
-that the archive has not captured. Shows each project with its session count
-per app, and why any session would not be imported. Prints project folders
-and counts only, never conversation content. Nothing is written or uploaded.
+Import the Claude Code, Codex, and Cursor sessions already on this Mac that
+the archive has not captured. First shows each project with its session count
+per app, and why any session is not imported; nothing is written until you
+confirm. Projects the import needs are added to capture. Prints project
+folders and counts only, never conversation content.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
   --since DATE          Sessions started on or after DATE (YYYY-MM-DD, local)
@@ -114,9 +119,12 @@ and counts only, never conversation content. Nothing is written or uploaded.
   --include-home        Include sessions run from the home folder
   --include-temp        Include sessions run from temporary directories
   --include-removed     Include sessions retention or undo removed
-  --dry-run             Print the plan and exit
+  --dry-run             Print the plan and exit; nothing is written
   --json                With --dry-run, print the plan as JSON
-Importing is not available yet; this version prints the plan only.
+  --yes                 Skip the confirmation (required without a terminal)
+  --background          Register the sessions and exit; the background
+                        collector uploads them
+history lists past imports with their upload state.
 Example: agent-archive backfill --dry-run --since 2026-09-01
 `,
 	"feedback": `Usage: agent-archive feedback ID --file PATH

@@ -79,11 +79,17 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	since := fs.String("since", "", "only sessions captured at or after this date (2026-01-31), RFC 3339 time, or age (7d, 12h)")
 	complete := fs.Bool("complete", false, "only sessions with complete parser coverage and no capture gaps")
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
+	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
+	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 0 {
 		fmt.Fprintf(stderr, "agent-archive: list: unexpected argument %q\n", fs.Arg(0))
+		return 2
+	}
+	if *imported && *hookCaptured {
+		fmt.Fprintln(stderr, "agent-archive: list: choose one of --imported and --hook-captured")
 		return 2
 	}
 	if *skillSHA256 != "" && !validLowerSHA256(*skillSHA256) {
@@ -138,14 +144,23 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		fmt.Fprintf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
+	if *imported || *hookCaptured {
+		kept := sessions[:0]
+		for _, m := range sessions {
+			if (m.Origin == archive.SessionOriginImport) == *imported {
+				kept = append(kept, m)
+			}
+		}
+		sessions = kept
+	}
 	if len(sessions) == 0 {
 		fmt.Fprintln(stdout, "No archived sessions match.")
 		return 0
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SESSION\tHARNESS\tCAPTURED\tPARSER\tMODELS\tSKILLS USED")
+	fmt.Fprintln(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
 	for _, m := range sessions {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", m.SessionID, m.Harness.Name, formatTimeOrNever(m.CapturedAt), m.Parser.Status, listOrDash(modelNames(m)), listOrDash(skillNames(m)))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.SessionID, m.Harness.Name, formatTimeOrNever(m.CapturedAt), sessionOrigin(m), m.Parser.Status, listOrDash(modelNames(m)), listOrDash(skillNames(m)))
 	}
 	if err := tw.Flush(); err != nil {
 		fmt.Fprintf(stderr, "agent-archive: list: %v\n", err)
@@ -172,6 +187,15 @@ func listCache(env Env, disabled bool) *reader.MetadataCache {
 		return nil
 	}
 	return cache
+}
+
+// sessionOrigin is list's ORIGIN column: imported for a session backfill
+// imported, hook for one captured as it ran.
+func sessionOrigin(m archive.Metadata) string {
+	if m.Origin == archive.SessionOriginImport {
+		return "imported"
+	}
+	return "hook"
 }
 
 func validLowerSHA256(value string) bool {

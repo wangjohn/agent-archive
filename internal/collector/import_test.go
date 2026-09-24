@@ -267,6 +267,21 @@ func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 	}
 }
 
+// A registration written under the "claude-code" spelling (a hand-edited
+// hook) leaves a record backfill finds under "claude".
+func TestRemovalRecordCanonicalApp(t *testing.T) {
+	local, err := NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.RecordRemoval("claude-code", "native-secret", RemovalReasonRetention, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := local.Removal("claude", "native-secret"); err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+}
+
 // The removal record is written under the request lock, after the recheck for
 // new work and before the session is forgotten. A session a hook kept alive
 // gets no record; a record that cannot be written leaves the session

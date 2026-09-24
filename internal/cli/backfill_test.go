@@ -263,16 +263,21 @@ func snapshotTree(t *testing.T, dir string) string {
 func TestBackfillRefusals(t *testing.T) {
 	f := newBackfillFixture(t)
 
-	if _, errOut, code := f.run(t); code != 1 || !strings.Contains(errOut, "not available yet") {
+	if _, errOut, code := f.run(t); code != 1 || !strings.Contains(errOut, "needs a terminal") {
 		t.Fatalf("import: code %d, %q", code, errOut)
 	}
-	for _, args := range [][]string{{"--json"}, {"--dry-run", "--harness", "vim"}, {"--dry-run", "--since", "yesterday"}, {"--dry-run", "extra"}} {
+	for _, args := range [][]string{{"--json"}, {"--dry-run", "--harness", "vim"}, {"--dry-run", "--since", "yesterday"}, {"--dry-run", "extra"}, {"--dry-run", "--background"}, {"history", "extra"}} {
 		if _, _, code := f.run(t, args...); code != 2 {
 			t.Errorf("%v: code %d, want 2", args, code)
 		}
 	}
 	if _, errOut, code := f.run(t, "undo"); code != 1 || !strings.Contains(errOut, "not available yet") {
 		t.Fatalf("undo: code %d, %q", code, errOut)
+	}
+
+	// --yes is harmless with --dry-run.
+	if out, errOut, code := f.run(t, "--dry-run", "--yes"); code != 0 || !strings.Contains(out, "Dry run: nothing was changed.") {
+		t.Fatalf("--dry-run --yes: code %d, stderr %q", code, errOut)
 	}
 
 	// A dry run works while paused and while a setup transaction is pending.
