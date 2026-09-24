@@ -313,23 +313,17 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 	return nil
 }
 
-// forgetExpired forgets an expired session and, once it is gone, leaves a
-// removal record so backfill does not import it again. Every path that calls
-// it is whole-session expiry past the retention window: after deleting the
-// session from the current bucket, for a session that never published, and
-// for one published to a previous destination. The record is written only
-// after the forget succeeds, so a session a hook kept alive gets none. If the
-// write fails, the session is already forgotten and the error is reported;
-// the next backfill could then import it once more.
+// forgetExpired forgets an expired session and leaves a removal record so
+// backfill does not import it again. Every path that calls it is
+// whole-session expiry past the retention window: after deleting the session
+// from the current bucket, for a session that never published, and for one
+// published to a previous destination. ForgetIdleSession writes the record
+// under the request lock, so a session a hook kept alive gets none, and a
+// failed write keeps the session registered for the next sweep to retry.
 func forgetExpired(local *collector.LocalStore, reg archive.SessionRegistration, deferForWork bool, now time.Time) (bool, error) {
-	forgotten, err := local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork)
-	if err != nil || !forgotten {
-		return forgotten, err
-	}
-	if err := local.RecordRemoval(reg.Harness.Name, reg.NativeSessionID, collector.RemovalReasonRetention, now); err != nil {
-		return true, err
-	}
-	return true, nil
+	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &collector.RemovalRecord{
+		Harness: reg.Harness.Name, Reason: collector.RemovalReasonRetention, At: now,
+	})
 }
 
 // hasUnfinishedWork reports whether the collector still owes this session a

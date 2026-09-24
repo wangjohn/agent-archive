@@ -498,5 +498,9 @@ func (m *Metadata) ApplyRegistrationProvenance(r SessionRegistration) {
 			return
 		}
 	}
-	m.CaptureGaps = append(m.CaptureGaps, CaptureGap{Code: CaptureGapImportedWithoutHookEvidence})
+	m.CaptureGaps = append(m.CaptureGaps, CaptureGap{Code: CaptureGapImportedWithoutHookEvidence, Detail: importedGapDetail})
 }
+
+// importedGapDetail is about the time before the import only: a hook that
+// resumes an imported session records its lifecycle from then on.
+const importedGapDetail = "No hook observed this session before it was imported (imported_at): activity before then has no hook lifecycle events, final-response text, or skill inventory."

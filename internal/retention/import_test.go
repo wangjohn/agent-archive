@@ -2,6 +2,7 @@ package retention
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -151,5 +152,39 @@ func TestRetentionExpiryLeavesRemovalRecords(t *testing.T) {
 	}
 	if _, found, err := local.Removal("codex", "native-kept"); err != nil || found {
 		t.Fatalf("a session retention kept has a removal record: found=%v err=%v", found, err)
+	}
+}
+
+// A removal record that cannot be written keeps the session registered and
+// reports the failure; the next sweep records and forgets it.
+func TestRetentionRetriesExpiryWhenTheRemovalRecordFails(t *testing.T) {
+	home := t.TempDir()
+	local, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := local.SaveRegistration(registration("s1", filepath.Join(home, "missing.jsonl"))); err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(home, "forgotten")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.NewMemoryStore()
+	past := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC).Add(retentionWindow + time.Hour)
+	if result := sweep(t, local, store, past, Options{}); len(result.Errors) != 1 || len(result.PrunedSessions) != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if registered(t, local) != 1 {
+		t.Fatal("the session was forgotten without its removal record")
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if result := sweep(t, local, store, past, Options{}); len(result.Errors) != 0 || len(result.PrunedSessions) != 1 {
+		t.Fatalf("retry result=%#v", result)
+	}
+	if _, found, err := local.Removal("codex", "native-s1"); err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
 	}
 }

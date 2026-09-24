@@ -342,11 +342,10 @@ func handleSessionStart(home string, store *collector.LocalStore, cfg config.Con
 		// A continuation of a session we already registered: keep its
 		// original start time, admission, and origin (an imported session a
 		// hook resumes stays an import), and just refresh what may have
-		// changed. The
-		// load, the checks, and the save all happen under the lock retention
-		// forgets a session with, so a resume at the moment of expiry cannot
-		// write the registration back after retention removed it together
-		// with its index entry.
+		// changed. The load, the checks, and the save all happen under the
+		// lock retention forgets a session with, so a resume at the moment of
+		// expiry cannot write the registration back after retention removed
+		// it together with its index entry.
 		updated, err := store.UpdateRegistration(existingID, func(existing *archive.SessionRegistration) error {
 			if !cfg.AcceptSession(*existing) {
 				return errContinuationDeclined

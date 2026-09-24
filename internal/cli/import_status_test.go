@@ -94,6 +94,60 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 	}
 }
 
+// Imports are left out of each app's gaps and scan issues, so status counts
+// the ones that have either on the Imported line instead.
+func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
+	home, userHome := t.TempDir(), t.TempDir()
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	project := t.TempDir()
+	cfg := pairTestConfig(now, []string{"codex"}, project)
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	store, err := collector.NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveImportedSession(t, store, now, "fine", "codex", project)
+	gone := saveImportedSession(t, store, now, "gone", "codex", project)
+	if err := os.Remove(gone.TranscriptPath); err != nil {
+		t.Fatal(err)
+	}
+	saveImportedSession(t, store, now, "failing", "codex", project)
+	if _, err := collector.Run(context.Background(), store, storage.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil {
+		t.Fatal(err)
+	}
+	if _, blocked, err := store.LoadBlocked("gone"); err != nil || !blocked {
+		t.Fatalf("test precondition: the missing transcript is a recorded gap: %v %v", blocked, err)
+	}
+	// What runOnePass records for a session whose scan failed.
+	state, err := store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.SessionIssues = map[string]string{"failing": "capture_or_publication_failed"}
+	if err := store.SaveStatus(state); err != nil {
+		t.Fatal(err)
+	}
+
+	env := pairStatusEnv(t, home, userHome, now, "codex")
+	view, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.ImportedSessions != 3 || view.ImportedWithIssues != 2 || len(view.Apps[0].CaptureGaps) != 0 {
+		t.Fatalf("imported=%d with issues=%d app gaps=%#v", view.ImportedSessions, view.ImportedWithIssues, view.Apps[0].CaptureGaps)
+	}
+	var out strings.Builder
+	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "Imported:      3 session(s), 0 waiting to upload, 2 with a capture gap or failed scan\n") {
+		t.Fatalf("status text (exit %d):\n%s", code, out.String())
+	}
+	out.Reset()
+	if code := runStatusCommand([]string{"--json"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), `"imported_with_issues": 2`) {
+		t.Fatalf("status --json (exit %d):\n%s", code, out.String())
+	}
+}
+
 // Without imports, the text status has no Imported line.
 func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()

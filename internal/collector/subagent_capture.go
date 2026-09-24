@@ -42,6 +42,10 @@ func materializeSubagentCandidate(local *LocalStore, candidate SubagentCandidate
 		// and by the same import when the parent was imported.
 		AdmittedAt: parent.AdmittedAt, Origin: parent.Origin, ImportBatch: parent.ImportBatch,
 	}
+	if parent.Imported() {
+		// Its start is set below from the earliest native record.
+		reg.StartedAtSource = archive.StartedAtSourceTranscript
+	}
 	adapter, err := archive.NewAdapter(reg.Harness.Name)
 	if err != nil {
 		return rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")

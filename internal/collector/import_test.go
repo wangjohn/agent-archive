@@ -112,19 +112,23 @@ func TestImportedSessionMetadataRecordsProvenanceAndGap(t *testing.T) {
 
 // A subagent is admitted with its parent: it copies the parent's AdmittedAt,
 // Origin, and ImportBatch. Only a subagent a SubagentStop hook reported gets
-// that hook's lifecycle event; one backfill found gets none.
+// that hook's lifecycle event; one backfill found gets none. A hook that
+// reports a subagent of a resumed import gives an import child the event.
 func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *testing.T) {
 	parentStart := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	importedAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
-		name       string
-		origin     archive.SessionOrigin
-		admittedAt time.Time
-		batch      string
-		observedAt time.Time
+		name            string
+		origin          archive.SessionOrigin
+		admittedAt      time.Time
+		batch           string
+		observedAt      time.Time
+		candidateOrigin archive.SessionOrigin
+		wantLifecycle   int
 	}{
-		{"hook", archive.SessionOriginHook, parentStart, "", parentStart.Add(3 * time.Minute)},
-		{"import", archive.SessionOriginImport, importedAt, "2026-09-23-1", importedAt},
+		{"hook", archive.SessionOriginHook, parentStart, "", parentStart.Add(3 * time.Minute), archive.SessionOriginHook, 1},
+		{"import", archive.SessionOriginImport, importedAt, "2026-09-23-1", importedAt, archive.SessionOriginImport, 0},
+		{"hook-reported child of an import", archive.SessionOriginImport, importedAt, "2026-09-23-1", importedAt.Add(time.Hour), archive.SessionOriginHook, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -154,7 +158,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			if err := local.SaveSubagentCandidate(SubagentCandidate{
 				ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native",
 				ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: childPath,
-				ObservedAt: tc.observedAt, Origin: tc.origin,
+				ObservedAt: tc.observedAt, Origin: tc.candidateOrigin,
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -190,12 +194,26 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 					lifecycle++
 				}
 			}
-			if want := map[archive.SessionOrigin]int{archive.SessionOriginHook: 1, archive.SessionOriginImport: 0}[tc.origin]; lifecycle != want {
-				t.Fatalf("lifecycle evidence=%d, want %d", lifecycle, want)
+			if lifecycle != tc.wantLifecycle {
+				t.Fatalf("lifecycle evidence=%d, want %d", lifecycle, tc.wantLifecycle)
 			}
 			metadata := fetchMetadata(t, remote, "claude", "child")
-			if (metadata.Origin == archive.SessionOriginImport) != (tc.origin == archive.SessionOriginImport) {
+			imported := tc.origin == archive.SessionOriginImport
+			if (metadata.Origin == archive.SessionOriginImport) != imported {
 				t.Fatalf("child metadata origin=%q", metadata.Origin)
+			}
+			// The child's start is its earliest native record.
+			if wantSource := map[bool]archive.StartedAtSource{true: archive.StartedAtSourceTranscript}[imported]; metadata.StartedAtSource != wantSource || child.StartedAtSource != wantSource {
+				t.Fatalf("started_at_source metadata=%q registration=%q, want %q", metadata.StartedAtSource, child.StartedAtSource, wantSource)
+			}
+			gap := false
+			for _, g := range metadata.CaptureGaps {
+				if g.Code == archive.CaptureGapImportedWithoutHookEvidence {
+					gap = strings.Contains(g.Detail, "before it was imported")
+				}
+			}
+			if gap != imported {
+				t.Fatalf("capture gaps=%#v", metadata.CaptureGaps)
 			}
 		})
 	}
@@ -246,5 +264,64 @@ func TestRemovalRecordRoundTripWithoutNativeID(t *testing.T) {
 	var fields map[string]any
 	if err := json.Unmarshal(data, &fields); err != nil || len(fields) != 3 || fields["app"] != "codex" || fields["reason"] != "undo" || fields["at"] == nil {
 		t.Fatalf("record=%s err=%v", data, err)
+	}
+}
+
+// The removal record is written under the request lock, after the recheck for
+// new work and before the session is forgotten. A session a hook kept alive
+// gets no record; a record that cannot be written leaves the session
+// registered, and a retry then records and forgets it.
+func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
+	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	removal := &RemovalRecord{Harness: "codex", Reason: RemovalReasonUndo, At: at}
+
+	kept := newTestStore(t)
+	reg := registration(t, "/unused")
+	if err := kept.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := kept.SaveRequest(reg.ArchiveSessionID, "stop", at); err != nil {
+		t.Fatal(err)
+	}
+	if forgotten, err := kept.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || forgotten {
+		t.Fatalf("forgotten=%t err=%v", forgotten, err)
+	}
+	if _, found, err := kept.Removal("codex", reg.NativeSessionID); err != nil || found {
+		t.Fatalf("a kept session has a removal record: found=%t err=%v", found, err)
+	}
+
+	home := t.TempDir()
+	failing, err := NewLocalStore(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := failing.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := failing.EnsureArchiveSessionID(reg.NativeSessionID); err != nil {
+		t.Fatal(err)
+	}
+	// A file where the records directory belongs makes every write fail.
+	blocker := filepath.Join(home, "forgotten")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err == nil || forgotten {
+		t.Fatalf("forgotten=%t err=%v, want a failure", forgotten, err)
+	}
+	if _, registered, _ := failing.LoadRegistration(reg.ArchiveSessionID); !registered {
+		t.Fatal("the session was forgotten without its removal record")
+	}
+	if _, indexed, _ := failing.ArchiveSessionID(reg.NativeSessionID); !indexed {
+		t.Fatal("the native index entry was removed without a removal record")
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	if forgotten, err := failing.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, true, removal); err != nil || !forgotten {
+		t.Fatalf("retry: forgotten=%t err=%v", forgotten, err)
+	}
+	if record, found, err := failing.Removal("codex", reg.NativeSessionID); err != nil || !found || record.Reason != RemovalReasonUndo || !record.At.Equal(at) {
+		t.Fatalf("record=%#v found=%t err=%v", record, found, err)
 	}
 }
