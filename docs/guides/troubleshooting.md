@@ -10,6 +10,16 @@ failure, 2 for a usage error.
 ## Everyday commands
 
 - `sync` collects and uploads once now, reporting results. It respects pause.
+  A session is republished at most once per upload interval (3 minutes), so
+  new activity soon after an upload waits; `sync` says so and when the first
+  one is due:
+
+  ```text
+  Scanned 5 session(s): 0 published, 5 waiting for the upload interval (next at 14:27), 0 unchanged, 0 failed.
+  ```
+
+  Waiting work is saved locally and uploaded by the next pass after that
+  time; `status` counts it under Pending.
 - `pause` persists until `resume`. If work is still running, the command
   reports that no settings changed and asks you to retry after it finishes.
 - Sessions registered before a pause catch up after `resume`, including

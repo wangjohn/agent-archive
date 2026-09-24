@@ -43,6 +43,9 @@ is no tagged release yet: build from source (see the
 - `status --json` adds `storage_access_confirmed_at`/`_by` (when setup or
   the collector last reached the bucket) and `sessions_with_capture_gaps`
   per app (#48).
+- `sync` reports new activity held for the upload interval: `5 waiting for
+  the upload interval (next at 14:27)`, instead of counting it as unchanged
+  (#49).
 - The JSON schemas are typed throughout, list every capture gap code, and
   are validated against real output in the tests (#44). See
   [JSON schemas](docs/reference/schemas.md).
@@ -69,6 +72,12 @@ is no tagged release yet: build from source (see the
   age everywhere (#39).
 - `list`, `show`, `handoff`, and `backfill history` print "Not set up" to
   stderr and exit 1 before setup (#37).
+- `status --json` leaves out a time that is not known yet instead of printing
+  `0001-01-01T00:00:00Z`; a missing time field means "never" (#49). See
+  [JSON output](docs/reference/json-output.md#status---json).
+- `list` and `show` reject an unknown `--harness` with a one-line error and
+  exit 2, as `handoff` and `backfill` do; `list`, `show`, and `handoff`
+  accept `claude-code` for Claude (#49).
 - Backfill: undoing an import keeps a project that another import still has
   sessions in, and says so; the undo of the last such import excludes it.
   Ctrl-C while the plan is being made stops cleanly (#42).

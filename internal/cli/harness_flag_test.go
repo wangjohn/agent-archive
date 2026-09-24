@@ -84,8 +84,16 @@ func TestStatusJSONOmitsUnsetTimes(t *testing.T) {
 	}
 	// The collector's own status file: a pass that never published has no
 	// last_published_at.
-	encoded, err := json.Marshal(state.Status{LastScanAt: now})
-	if err != nil || strings.Contains(string(encoded), "last_published_at") {
-		t.Fatalf("state.Status encodes an unset last_published_at: %s %v", encoded, err)
+	for _, value := range []any{state.Status{}, storageHealth{}} {
+		encoded, err := json.Marshal(value)
+		if err != nil || strings.Contains(string(encoded), "_at") {
+			t.Fatalf("%T encodes an unset time: %s %v", value, encoded, err)
+		}
+	}
+	// Files written before this change spell the zero time out; they still
+	// read as "never", as a missing key does.
+	var old state.Status
+	if err := json.Unmarshal([]byte(`{"last_scan_at":"0001-01-01T00:00:00Z","last_published_at":"0001-01-01T00:00:00Z","pending_count":0}`), &old); err != nil || !old.LastScanAt.IsZero() || !old.LastPublishedAt.IsZero() {
+		t.Fatalf("old status file: %+v %v", old, err)
 	}
 }

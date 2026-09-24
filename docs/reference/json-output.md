@@ -44,6 +44,14 @@ verified conversation as `turns`, `tool_calls`, `tool_results`, and
 
 Top-level fields (versioned by `schema_version`, currently `3`):
 
+A time that is not known yet is left out rather than printed as a zero
+time: a missing time field means "never". This applies to
+`storage_verified_at`, `storage_access_confirmed_at`,
+`authentication.checked_at`, `collector.last_scan_at`,
+`collector.last_published_at`, and, per application and project,
+`verified_at`, `last_published_at`, and `installed_version_observed_at`.
+Treat an absent field and `null` the same way.
+
 | Field | Meaning |
 | --- | --- |
 | `state`, `code`, `next_action` | Overall state as shown in the text output (`Ready`, `Needs attention`, …), a stable code for it (`ready`, `needs_attention`, `awaiting_capture`, `paused`, `not_configured`, `recovery_required`, …; codes never change with wording), and the suggested next step. |
