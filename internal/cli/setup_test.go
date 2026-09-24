@@ -83,6 +83,9 @@ func setupTestEnv(t *testing.T, home, userHome string, keychain *fakeKeychain, n
 	env.LoadLaunchAgent = func(string) error { state = "loaded"; return nil }
 	env.UnloadLaunchAgent = func(string) error { state = "missing"; return nil }
 	env.Keychain = func() (credentials.CredentialStore, error) { return keychain, nil }
+	// setup and uninstall need a terminal; the scripted answers stand in
+	// for one. Output buffers are still not terminals.
+	env.IsTerminal = func(stream any) bool { _, ok := stream.(*strings.Reader); return ok }
 	return env
 }
 
@@ -201,7 +204,9 @@ func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *test
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 	old, _, _ := config.Load(home)
 	old.Paused = true
-	config.Save(home, old)
+	if err := config.Save(home, old); err != nil {
+		t.Fatal(err)
+	}
 	env.Now = func() time.Time { return time.Now().Add(time.Hour) }
 	setupRun(t, env, "capture\ny\ny\nn\nn\ny\n\ny\n", 0)
 	next, _, _ := config.Load(home)
@@ -217,7 +222,7 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
-	paths := []string{filepath.Join(home, "config.json"), filepath.Join(userHome, ".codex/hooks.json"), filepath.Join(userHome, "Library/LaunchAgents", hooks.LaunchLabel+".plist")}
+	paths := []string{filepath.Join(home, "config.json"), filepath.Join(userHome, ".codex/hooks.json"), env.installation(home, userHome).collectorPlist()}
 	before := map[string]string{}
 	for _, p := range paths {
 		b, _ := os.ReadFile(p)
@@ -252,8 +257,10 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	path := filepath.Join(home, "config.json")
 	c := hooks.Change{Path: path, Before: []byte("before"), After: []byte("after"), Existed: true, Mode: 0600}
 	journal := setupJournal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
-	local.Write(journalPath(home), journal)
-	os.WriteFile(path, []byte("user edit"), 0600)
+	if err := local.Write(journalPath(home), journal); err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.WriteFile(path, []byte("user edit"), 0600))
 	if err := recoverSetup(home, env); err == nil {
 		t.Fatal("must refuse concurrent edit")
 	}
@@ -261,7 +268,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	if string(b) != "user edit" {
 		t.Fatal("overwrote user edit")
 	}
-	os.WriteFile(path, []byte("after"), 0600)
+	must(t, os.WriteFile(path, []byte("after"), 0600))
 	if err := recoverSetup(home, env); err != nil {
 		t.Fatal(err)
 	}

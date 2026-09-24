@@ -27,12 +27,12 @@ func cursorSetup(t *testing.T, now time.Time) (Env, string, string, string) {
 	return env, home, userHome, cfg.Archive.Projects[0].Root
 }
 
-func changeBucket(t *testing.T, env Env, home, userHome string) (config.Config, error, string) {
+func changeBucket(t *testing.T, env Env, home, userHome string) (config.Config, string, error) {
 	t.Helper()
 	return changeBucketTo(t, env, home, userHome, "another-bucket")
 }
 
-func changeBucketTo(t *testing.T, env Env, home, userHome, bucket string) (config.Config, error, string) {
+func changeBucketTo(t *testing.T, env Env, home, userHome, bucket string) (config.Config, string, error) {
 	t.Helper()
 	old, _, err := config.Load(home)
 	if err != nil {
@@ -42,20 +42,20 @@ func changeBucketTo(t *testing.T, env Env, home, userHome, bucket string) (confi
 	next.Storage.Bucket = bucket
 	var out strings.Builder
 	if err := reviewChanges(home, old, next, newPrompter(strings.NewReader(""), &out), env); err != nil {
-		return config.Config{}, err, out.String()
+		return config.Config{}, out.String(), err
 	}
 	exe, err := env.executable()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := applySetup(home, userHome, exe, old, &next, nil, env); err != nil {
-		return config.Config{}, err, out.String()
+		return config.Config{}, out.String(), err
 	}
 	committed, _, err := config.Load(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return committed, nil, out.String()
+	return committed, out.String(), nil
 }
 
 // A Cursor chat whose transcript never arrives (transcripts turned off) keeps
@@ -83,7 +83,7 @@ func TestWaitingCursorChatDoesNotBlockADestinationChange(t *testing.T) {
 
 	// The user changes storage an hour after the chat started.
 	env.Now = func() time.Time { return now.Add(time.Hour) }
-	committed, err, out := changeBucket(t, env, home, userHome)
+	committed, out, err := changeBucket(t, env, home, userHome)
 	if err != nil {
 		t.Fatalf("a waiting chat blocked the destination change: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestCursorChatWithATranscriptStillBlocksADestinationChange(t *testing.T) {
 	if reg := onlyCursorRegistration(t, home); reg.TranscriptPath != transcript {
 		t.Fatalf("test precondition: the chat should have its transcript: %#v", reg)
 	}
-	if _, err, _ := changeBucket(t, env, home, userHome); err == nil || !strings.Contains(err.Error(), "still pending") {
+	if _, _, err := changeBucket(t, env, home, userHome); err == nil || !strings.Contains(err.Error(), "still pending") {
 		t.Fatalf("pending work did not block the change: %v", err)
 	}
 }
@@ -139,7 +139,7 @@ func TestSwitchingBackToADestinationAcceptsItsSessionsAgain(t *testing.T) {
 	}
 	reg := onlyCursorRegistration(t, home)
 	env.Now = func() time.Time { return now.Add(time.Hour) }
-	atB, err, out := changeBucketTo(t, env, home, userHome, "bucket-b")
+	atB, out, err := changeBucketTo(t, env, home, userHome, "bucket-b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestSwitchingBackToADestinationAcceptsItsSessionsAgain(t *testing.T) {
 		t.Fatal("a session admitted into A was accepted at B")
 	}
 	env.Now = func() time.Time { return now.Add(2 * time.Hour) }
-	backAtA, err, out := changeBucketTo(t, env, home, userHome, "test-bucket")
+	backAtA, out, err := changeBucketTo(t, env, home, userHome, "test-bucket")
 	if err != nil {
 		t.Fatalf("a session of A blocked switching back to A: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestImportedCursorDatabaseChatBlocksADestinationChange(t *testing.T) {
 		t.Fatalf("blocking %d, waiting %d, err %v", blocking, waiting, err)
 	}
 	env.Now = func() time.Time { return now.Add(time.Hour) }
-	if _, err, out := changeBucket(t, env, home, userHome); err == nil || !strings.Contains(err.Error(), "still pending") || strings.Contains(out, "never received a transcript") {
+	if _, out, err := changeBucket(t, env, home, userHome); err == nil || !strings.Contains(err.Error(), "still pending") || strings.Contains(out, "never received a transcript") {
 		t.Fatalf("the destination changed under an un-uploaded import: %v\n%s", err, out)
 	}
 }

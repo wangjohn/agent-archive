@@ -10,6 +10,8 @@
 package collector
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -33,21 +35,41 @@ type LocalStore struct {
 	home string
 }
 
+// OpenLocalStoreReadOnly returns a handle to an existing local store under
+// home without creating any of its directories, for commands that only read
+// it (status, handoff, backfill planning). A missing directory reads as
+// nothing recorded.
+func OpenLocalStoreReadOnly(home string) *LocalStore { return &LocalStore{home: home} }
+
 // NewLocalStore creates (if needed) the local store's directory layout under
 // home — ordinarily the result of local.Home() — and returns a handle to it.
 // home is caller-owned; this package never deletes it.
-func OpenLocalStoreReadOnly(home string) *LocalStore { return &LocalStore{home: home} }
-
 func NewLocalStore(home string) (*LocalStore, error) {
 	if strings.TrimSpace(home) == "" {
 		return nil, errors.New("local store home is required")
 	}
-	for _, dir := range []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "scan-signatures", "subagent-candidates"} {
+	for _, dir := range storeDirs {
 		if err := os.MkdirAll(filepath.Join(home, dir), 0o700); err != nil {
 			return nil, fmt.Errorf("create local store directory %q: %w", dir, err)
 		}
 	}
 	return &LocalStore{home: home}, nil
+}
+
+// storeDirs are the directories NewLocalStore creates under home.
+var storeDirs = []string{"registrations", "requests", "request-locks", "published", "pending", "sessions", "pending-scans", "scan-signatures", "subagent-candidates"}
+
+// lazyStoreDirs are the directories the store creates under home on first
+// use rather than up front.
+var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
+
+// OwnedEntries lists every top-level entry a LocalStore can create under its
+// home: its directories and its status file. Uninstall deletes a data
+// directory entry by entry and must know all of them; a test there checks
+// its list against this one, so a new directory cannot be left behind.
+func OwnedEntries() []string {
+	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
+	return append(entries, "status.json")
 }
 
 func safeFileComponent(value string) bool {
@@ -520,6 +542,14 @@ type publishedState struct {
 type publishedSnapshot struct {
 	Bundle      archive.SourceBundle `json:"bundle"`
 	PublishedAt time.Time            `json:"published_at"`
+	// Source is the source object this publication's metadata points at:
+	// exactly the key, digest, and size that were uploaded. The next
+	// publication names the object it supersedes from it. Rebuilding that
+	// reference from Bundle is not reliable: a later build may serialize or
+	// compress an old bundle differently, or refuse it outright after a
+	// source schema bump. State written before this field existed is read
+	// through its cached metadata instead (see lastPublishedSource).
+	Source *archive.SourceReference `json:"source,omitempty"`
 	// SameAsBundle means the last published bundle is the one in Bundle, so
 	// this snapshot carries only its time. While a session sits in its normal
 	// published state the two are always identical, and a source bundle is by
@@ -554,7 +584,44 @@ func (p publishedState) detachedLastPublished() *publishedSnapshot {
 	if p.LastPublished == nil || !p.LastPublished.SameAsBundle {
 		return p.LastPublished
 	}
-	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt}
+	return &publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.LastPublished.PublishedAt, Source: p.LastPublished.Source}
+}
+
+// lastPublishedSource returns the source reference of the last publication,
+// as it was uploaded. found is false when nothing was published, or when
+// state written before publishedSnapshot.Source existed has no readable
+// cached metadata either: the reference is then unknown. It is never rebuilt.
+func (p publishedState) lastPublishedSource() (archive.SourceReference, bool) {
+	if _, _, published := p.resolveLastPublished(); !published {
+		return archive.SourceReference{}, false
+	}
+	if p.LastPublished != nil && p.LastPublished.Source != nil {
+		return *p.LastPublished.Source, true
+	}
+	// Older state: MetadataBytes is only ever replaced by a publication, so it
+	// is the metadata document that went out with the last published source.
+	if len(p.MetadataBytes) == 0 {
+		return archive.SourceReference{}, false
+	}
+	// Only the reference is read, so metadata written under an older (or
+	// newer) metadata schema still yields it.
+	var metadata struct {
+		SourceBundle archive.SourceReference `json:"source_bundle"`
+	}
+	if err := json.Unmarshal(p.MetadataBytes, &metadata); err != nil || !validSourceReference(metadata.SourceBundle) {
+		return archive.SourceReference{}, false
+	}
+	return metadata.SourceBundle, true
+}
+
+// validSourceReference reports whether ref names an object and carries a
+// SHA-256 digest in hex.
+func validSourceReference(ref archive.SourceReference) bool {
+	if ref.Key == "" || len(ref.SHA256) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(ref.SHA256)
+	return err == nil
 }
 
 func (s *LocalStore) publishedPath(archiveSessionID string) string {
@@ -565,7 +632,32 @@ func (s *LocalStore) publishedPath(archiveSessionID string) string {
 // session, so the next scan can compare against it instead of rebuilding
 // from scratch. See CacheStatus for what each status means for retry.
 func (s *LocalStore) SavePublished(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, metadata ...[]byte) error {
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, status, "", metadata, nil)
+	return s.savePublishedState(archiveSessionID, bundle, publishedAt, status, "", metadata, nil, nil)
+}
+
+// savePublication records a completed publication: bundle becomes both the
+// comparison baseline and the last published snapshot, source is the object
+// its metadata points at, and metadata is the document that was uploaded.
+func (s *LocalStore) savePublication(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, source archive.SourceReference, metadata []byte) error {
+	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusPublished, "", [][]byte{metadata}, nil, &source)
+}
+
+// LoadLastPublishedSource returns the source reference of a session's last
+// publication, exactly as uploaded: the object its live metadata points at.
+// found is false when nothing was published, or when state from an old
+// version records no reference (see publishedState.lastPublishedSource);
+// callers must then not assume one, least of all by rebuilding it.
+func (s *LocalStore) LoadLastPublishedSource(archiveSessionID string) (archive.SourceReference, bool, error) {
+	var state publishedState
+	err := local.Read(s.publishedPath(archiveSessionID), &state)
+	if errors.Is(err, os.ErrNotExist) {
+		return archive.SourceReference{}, false, nil
+	}
+	if err != nil {
+		return archive.SourceReference{}, false, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
+	}
+	source, found := state.lastPublishedSource()
+	return source, found, nil
 }
 
 // SaveBlocked records a terminal capture gap for a session (see
@@ -579,10 +671,13 @@ func (s *LocalStore) SaveBlocked(archiveSessionID string, bundle archive.SourceB
 	if reason == "" {
 		return errors.New("blocked reason is required")
 	}
-	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusBlocked, reason, nil, deferred)
+	return s.savePublishedState(archiveSessionID, bundle, publishedAt, CacheStatusBlocked, reason, nil, deferred, nil)
 }
 
-func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata [][]byte, deferred []archive.SupplementalEvidence) error {
+// savePublishedState writes a session's published state. source, when
+// status is CacheStatusPublished, is the uploaded source reference if the
+// caller knows it (see savePublication); it is ignored for any other status.
+func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata [][]byte, deferred []archive.SupplementalEvidence, source *archive.SourceReference) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -600,7 +695,7 @@ func (s *LocalStore) savePublishedState(archiveSessionID string, bundle archive.
 	if status == CacheStatusPublished {
 		// The candidate becoming the current bundle is exactly what was just
 		// published, so the snapshot records only when, not a second copy.
-		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true}
+		last = &publishedSnapshot{PublishedAt: publishedAt, SameAsBundle: true, Source: source}
 	}
 	preBlock := existing.PreBlockStatus
 	switch {
@@ -716,32 +811,58 @@ func (s *LocalStore) LoadLastPublished(archiveSessionID string) (bundle archive.
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
-	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
-	Bundle        archive.SourceBundle `json:"bundle"`
-	SourceKey     string               `json:"source_key"`
-	MetadataKey   string               `json:"metadata_key"`
-	SourceSHA256  string               `json:"source_sha256"`
-	SourceBytes   []byte               `json:"source_bytes"`
-	MetadataBytes []byte               `json:"metadata_bytes"`
-	RequestToken  string               `json:"request_token,omitempty"`
-	ReadyAt       time.Time            `json:"ready_at"`
-	Attempted     bool                 `json:"attempted,omitempty"`
+	MetadataOnly bool                 `json:"metadata_only,omitempty"`
+	Bundle       archive.SourceBundle `json:"bundle"`
+	SourceKey    string               `json:"source_key"`
+	MetadataKey  string               `json:"metadata_key"`
+	SourceSHA256 string               `json:"source_sha256"`
+	SourceBytes  []byte               `json:"source_bytes"`
+	// SourceSize is the source's compressed size when SourceBytes is empty:
+	// a metadata-only publication over a source this build cannot reproduce
+	// byte for byte, which is checked in storage instead of re-uploaded.
+	SourceSize    int       `json:"source_size,omitempty"`
+	MetadataBytes []byte    `json:"metadata_bytes"`
+	RequestToken  string    `json:"request_token,omitempty"`
+	ReadyAt       time.Time `json:"ready_at"`
+	Attempted     bool      `json:"attempted,omitempty"`
+}
+
+// sourceReference is the reference the publication's metadata carries for
+// its source object.
+func (p PendingPublication) sourceReference() archive.SourceReference {
+	size := len(p.SourceBytes)
+	if p.carriesNoSource() {
+		size = p.SourceSize
+	}
+	return archive.SourceReference{Key: p.SourceKey, SHA256: p.SourceSHA256, CompressedBytes: size}
+}
+
+// carriesNoSource reports a metadata-only publication that points at an
+// existing source without carrying its bytes (see SourceSize).
+func (p PendingPublication) carriesNoSource() bool {
+	return p.MetadataOnly && len(p.SourceBytes) == 0
 }
 
 func (s *LocalStore) pendingPath(id string) string {
 	return filepath.Join(s.home, "pending", id+".json")
 }
 
+// SavePending durably records a session's publication transaction before its
+// first remote write. It refuses an incomplete one: every retry must upload
+// exactly the same bytes under exactly the same keys.
 func (s *LocalStore) SavePending(id string, pending PendingPublication) error {
 	if !safeFileComponent(id) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
-	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.SourceBytes) == 0 || len(pending.MetadataBytes) == 0 {
+	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
 		return errors.New("pending publication is incomplete")
 	}
 	return local.Write(s.pendingPath(id), pending)
 }
 
+// LoadPending returns a session's outstanding publication transaction, if
+// any. Decoding it reads the whole compressed source; HasPending answers
+// whether one exists without that cost.
 func (s *LocalStore) LoadPending(id string) (PendingPublication, bool, error) {
 	var pending PendingPublication
 	err := local.Read(s.pendingPath(id), &pending)
@@ -772,6 +893,8 @@ func (s *LocalStore) HasPending(id string) (bool, error) {
 	return true, nil
 }
 
+// RemovePending discards a session's publication transaction once it has
+// been published and acknowledged locally. A missing one is not an error.
 func (s *LocalStore) RemovePending(id string) error {
 	err := os.Remove(s.pendingPath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -788,6 +911,17 @@ type Status struct {
 	LastPublishedAt time.Time         `json:"last_published_at,omitempty"`
 	PendingCount    int               `json:"pending_count"`
 	LastError       string            `json:"last_error,omitempty"`
+	// QuarantinedFiles lists, relative to the archive directory, the local
+	// state files a pass found undecodable and moved aside (see
+	// ErrQuarantined). They stay listed until someone inspects and deletes
+	// them.
+	QuarantinedFiles []string `json:"quarantined_files,omitempty"`
+	// UnrefreshableSummaries counts the sessions whose published metadata
+	// the current parser cannot refresh: the retained bundle cannot be
+	// read by this build, or its recorded source is gone from storage and
+	// cannot be rebuilt. Their metadata stays as published until the
+	// session changes. It names no session and no content.
+	UnrefreshableSummaries int `json:"unrefreshable_summaries,omitempty"`
 }
 
 func (s *LocalStore) statusPath() string { return filepath.Join(s.home, "status.json") }
@@ -828,6 +962,8 @@ func (s *LocalStore) SetScanPending(id string, pending bool) error {
 	return err
 }
 
+// ScanPending reports whether a scan of the session was journaled by
+// SetScanPending and never completed, so its outcome is still owed.
 func (s *LocalStore) ScanPending(id string) (bool, error) {
 	if !safeFileComponent(id) {
 		return false, errors.New("invalid session ID")

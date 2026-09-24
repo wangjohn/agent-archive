@@ -3,15 +3,20 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -35,21 +40,18 @@ type S3Store struct {
 type S3StoreOptions struct {
 	// Provider is s3 or r2 (compared case- and space-insensitively); empty is
 	// unknown for custom endpoints.
-	Provider     string
-	Client       *s3.Client
-	Bucket       string
-	Prefix       string
-	MaxAttempts  int
-	Endpoint     string
-	UsePathStyle bool
+	Provider string
+	// Client is used as-is; endpoint, addressing style, retries, and
+	// timeouts are its configuration (see NewClient).
+	Client *s3.Client
+	Bucket string
+	Prefix string
 	// MaxGetBytes bounds memory used while reading an object. Zero selects
 	// the 64 MiB default appropriate for archive metadata and source bundles.
 	MaxGetBytes int64
 }
 
-// NewS3Store creates a store from an AWS SDK client. Endpoint and
-// UsePathStyle are accepted here as convenience for callers constructing a
-// client through NewClient; an already-created client is always used as-is.
+// NewS3Store creates a store from an AWS SDK client.
 func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 	if options.Client == nil {
 		return nil, errors.New("storage: S3 client is required")
@@ -74,6 +76,14 @@ func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 // Cloudflare, and a static credentials provider from internal/credentials.
 // Path style addressing is used for compatibility with both R2 and local
 // fake servers.
+//
+// The SDK's default HTTP client waits forever for a server that accepts a
+// connection and never answers (a captive portal, a stalled proxy), and a
+// collector pass stuck there holds the collector lock, so every later pass
+// quietly finds it busy. The client is therefore given connect, TLS, and
+// response-header timeouts (see withTimeouts). A body that stalls after its
+// headers arrived is bounded by the caller's context deadline instead,
+// since no fixed limit suits both a small metadata read and a large upload.
 func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int) *s3.Client {
 	if maxAttempts <= 0 {
 		maxAttempts = 3
@@ -82,11 +92,43 @@ func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int)
 		if endpoint != "" {
 			options.BaseEndpoint = aws.String(strings.TrimRight(endpoint, "/"))
 		}
+		options.HTTPClient = withTimeouts(options.HTTPClient)
 		options.UsePathStyle = pathStyle
 		options.Retryer = awsretry.NewStandard(func(retryOptions *awsretry.StandardOptions) {
 			retryOptions.MaxAttempts = maxAttempts
 		})
 	})
+}
+
+// Network timeouts for the SDK's HTTP client. Variables only so a test can
+// shorten them.
+var (
+	dialTimeout           = 15 * time.Second
+	tlsHandshakeTimeout   = 15 * time.Second
+	responseHeaderTimeout = 60 * time.Second
+)
+
+// withTimeouts gives the SDK's own HTTP client (which is what
+// config.LoadDefaultConfig, or no client at all, yields) connect, TLS, and
+// response-header timeouts. The response-header timer starts only once the
+// request body has been sent, so it does not limit upload size. A client the
+// caller supplied itself is left alone.
+func withTimeouts(client aws.HTTPClient) aws.HTTPClient {
+	var buildable *awshttp.BuildableClient
+	switch c := client.(type) {
+	case nil:
+		buildable = awshttp.NewBuildableClient()
+	case *awshttp.BuildableClient:
+		buildable = c
+	default:
+		return client
+	}
+	return buildable.
+		WithDialerOptions(func(dialer *net.Dialer) { dialer.Timeout = dialTimeout }).
+		WithTransportOptions(func(transport *http.Transport) {
+			transport.TLSHandshakeTimeout = tlsHandshakeTimeout
+			transport.ResponseHeaderTimeout = responseHeaderTimeout
+		})
 }
 
 func (s *S3Store) key(relative string) (string, error) {
@@ -141,6 +183,43 @@ func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %q exceeds %d bytes", ErrObjectTooLarge, relative, s.maxGetBytes)
 	}
 	return data, nil
+}
+
+// Stat describes an object with a HEAD request in checksum mode. Put stores
+// every object with a SHA-256 checksum, and S3 reports it back as base64;
+// a store that keeps none (or a multipart upload's composite checksum,
+// "<digest>-<parts>") yields an empty SHA256, so callers read the object
+// instead.
+func (s *S3Store) Stat(ctx context.Context, relative string) (ObjectInfo, error) {
+	key, err := s.key(relative)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	output, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled})
+	if err != nil {
+		// A HEAD response has no body, so it carries no error code: a 404
+		// for a missing bucket looks exactly like one for a missing object,
+		// and both read as ErrNotFound here (Get, whose body names
+		// NoSuchBucket, can tell them apart). For the collector the cost is
+		// bounded: a metadata refresh over a bucket that is gone is recorded
+		// as impossible (a refresh-skip) and not retried until the session
+		// publishes again or the parser changes, and a missing bucket fails
+		// every other storage call loudly anyway.
+		if isNotFound(err) {
+			return ObjectInfo{}, ErrNotFound
+		}
+		return ObjectInfo{}, err
+	}
+	var info ObjectInfo
+	if output.ContentLength != nil {
+		info.Size = *output.ContentLength
+	}
+	if output.ChecksumSHA256 != nil && output.ChecksumType != types.ChecksumTypeComposite {
+		if digest, err := base64.StdEncoding.DecodeString(*output.ChecksumSHA256); err == nil && len(digest) == sha256.Size {
+			info.SHA256 = hex.EncodeToString(digest)
+		}
+	}
+	return info, nil
 }
 
 func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, error) {
@@ -236,7 +315,10 @@ func sha256Bytes(data []byte) [32]byte {
 	return sha256Sum(data)
 }
 
-var _ ObjectStore = (*S3Store)(nil)
+var (
+	_ ObjectStore   = (*S3Store)(nil)
+	_ ObjectStatter = (*S3Store)(nil)
+)
 
 // NewConfiguredStore resolves the selected profile or Keychain reference and
 // builds the common S3 client used for both providers. It is deliberately
@@ -262,5 +344,5 @@ func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain cr
 		return nil, err
 	}
 	client := NewClient(awsCfg, endpoint, true, 3)
-	return NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix, Endpoint: endpoint, UsePathStyle: true})
+	return NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
 }

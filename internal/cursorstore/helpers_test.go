@@ -209,7 +209,7 @@ func startWriter(t testing.TB, path string) *writer {
 	w := &writer{t: t, cmd: cmd, stdin: stdin, replies: bufio.NewScanner(stdout)}
 	t.Cleanup(func() {
 		stdin.Close()
-		cmd.Wait()
+		_ = cmd.Wait() // the writer exits once stdin closes; its status is not under test
 	})
 	return w
 }
@@ -289,5 +289,13 @@ func TestWriterProcess(t *testing.T) {
 			t.Fatal(err)
 		}
 		fmt.Println("ok")
+	}
+}
+
+// mustWrite writes a test file, reporting a failure to the test.
+func mustWrite(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Error(err)
 	}
 }

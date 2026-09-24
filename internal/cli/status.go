@@ -112,12 +112,17 @@ type statusView struct {
 }
 
 func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
+	fs := newCommandFlags("status")
+	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
+	if !parseCommandFlags(fs, args, stderr) {
+		return 2
+	}
 	view, err := readStatus(env)
 	if err != nil {
 		fmt.Fprintf(stderr, "Cannot read archive status: %v\n", err)
 		return 1
 	}
-	if containsString(args, "--json") {
+	if *jsonOut {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(view); err != nil {
@@ -270,7 +275,7 @@ func readStatus(env Env) (view statusView, err error) {
 	}
 	if transactionPending(home) {
 		view.State = "Setup needs recovery"
-		view.Next = "Run agent-archive setup to recover the interrupted installation."
+		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}
 	if !found {
 		return view, nil
@@ -381,7 +386,7 @@ func readStatus(env Env) (view statusView, err error) {
 			if app.State == "waiting for first session" {
 				app.State = "hook observed; waiting for capture"
 			}
-			bundle, at, state, found, err := store.LoadPublished(reg.ArchiveSessionID)
+			bundle, _, state, found, err := store.LoadPublished(reg.ArchiveSessionID)
 			if err != nil {
 				return view, err
 			}
@@ -414,7 +419,7 @@ func readStatus(env Env) (view statusView, err error) {
 				return view, e
 			}
 			if published {
-				at = actualAt
+				at := actualAt
 
 				app.Published = true
 				app.PublishedSessions++
@@ -510,6 +515,7 @@ func readStatus(env Env) (view statusView, err error) {
 	// was moved or deleted, the hook configuration still matches exactly, so
 	// comparing it alone would report healthy hooks that fail on every event.
 	// An uninstalled archive has no hooks left to break.
+	hookFiles := env.installedHookFiles(userHome, cfg)
 	binaryProblem := ""
 	if cfg.InstalledExecutable != "" && cfg.Archive.Enabled {
 		binaryProblem = executableProblem(cfg.InstalledExecutable)
@@ -540,7 +546,7 @@ func readStatus(env Env) (view statusView, err error) {
 		view.Apps[i].VersionState = appDiscovery.VersionState
 		view.Apps[i].Capabilities = captureCapabilityProfile(view.Apps[i].Name)
 		view.Apps[i].VersionSupport, view.Apps[i].VersionSupportReason = installedVersionSupportDetail(appDiscovery, view.Apps[i].verifiedHarnessVersions)
-		installed, e := hooks.Installed(userHome, executable, view.Apps[i].Name)
+		installed, e := hooks.Installed(hookFiles, env.installation(home, userHome).hook(executable), view.Apps[i].Name)
 		switch {
 		case binaryProblem != "":
 			view.Apps[i].Hooks = hooksBroken
@@ -552,7 +558,7 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Apps[i].Hooks = "installed"
 		}
 	}
-	plist := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
+	plist := env.installation(home, userHome).installedCollectorPlist()
 	view.Background = env.jobState(plist)
 	// launchd reports a job whose program is gone as loaded (it only fails
 	// when it fires), so read the program the LaunchAgent actually runs.
@@ -609,6 +615,10 @@ func readStatus(env Env) (view statusView, err error) {
 	if view.Background != "running" && view.Background != "loaded" {
 		view.State = "Needs attention"
 		view.Next = "Run agent-archive setup to restore the background collector."
+		if view.Background == jobAnotherInstallation {
+			// setup refuses to replace that job, so it is not the way out.
+			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchLabel(plist))
+		}
 	}
 	if !view.Collector.LastScanAt.IsZero() && env.now().Sub(view.Collector.LastScanAt) > 5*time.Minute {
 		view.State = "Needs attention"
@@ -644,7 +654,7 @@ func readStatus(env Env) (view statusView, err error) {
 	}
 	if transactionPending(home) {
 		view.State = "Setup needs recovery"
-		view.Next = "Run agent-archive setup to recover the interrupted installation."
+		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}
 	return view, nil
 }

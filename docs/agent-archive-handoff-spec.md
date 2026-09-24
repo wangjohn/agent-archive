@@ -76,8 +76,8 @@ agent-archive handoff [SESSION_ID | --latest] [flags]
 | `--no-preamble` | off | Omit the instructions addressed to the receiving agent. |
 
 Exit codes follow `show`: 0 success, 1 runtime failure, 2 usage error. When
-setup has never run, the command prints the shared `notSetUpMessage` and
-exits 0, except with `--file`, which needs no setup.
+setup has never run, the command prints the shared `notSetUpMessage` to
+stderr and exits 1, except with `--file`, which needs no setup.
 
 Documented recipes (help text and `docs/install.md`):
 
