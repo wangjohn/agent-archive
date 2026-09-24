@@ -453,11 +453,13 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 }
 
 // chooseHarnesses asks which apps to include and keeps cfg.DeclinedHarnesses
-// in step. Detected apps a reconfiguration offers and the user leaves out are
-// remembered, so later runs do not offer them again (detection only sees a
-// config directory, which stays after an app is excluded on purpose). An app
-// that ends up included is no longer declined.
+// in step. On reconfiguration, an app the user leaves out after it was
+// offered as found, or removes from the saved selection, is remembered so
+// later runs do not offer it again (detection only sees a config directory,
+// which stays after an app is excluded on purpose). An app that ends up
+// included is no longer declined.
 func chooseHarnesses(p *prompter, detected []string, cfg *config.Config) error {
+	previous := cfg.Harnesses
 	var offered, found []string
 	for _, app := range detected {
 		if containsString(cfg.DeclinedHarnesses, app) {
@@ -474,7 +476,7 @@ func chooseHarnesses(p *prompter, detected []string, cfg *config.Config) error {
 	}
 	var declined []string
 	for _, app := range allHarnesses {
-		if !containsString(harnesses, app) && (containsString(cfg.DeclinedHarnesses, app) || containsString(found, app)) {
+		if !containsString(harnesses, app) && (containsString(cfg.DeclinedHarnesses, app) || containsString(found, app) || containsString(previous, app)) {
 			declined = append(declined, app)
 		}
 	}

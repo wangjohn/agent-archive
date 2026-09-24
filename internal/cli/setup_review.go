@@ -36,6 +36,11 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery) 
 	rows := []reviewRow{
 		{"Apps", []string{strings.Join(apps, ", ")}},
 	}
+	if len(cfg.DeclinedHarnesses) > 0 {
+		// An app leaves this list only by being included, which changes the
+		// Apps row, so the row need not appear when the list is empty.
+		rows = append(rows, reviewRow{"Skipped", []string{appList(cfg.DeclinedHarnesses) + " (setup will not offer again)"}})
+	}
 	if len(cfg.ImportedHarnesses) > 0 {
 		rows = append(rows, reviewRow{"Imported", []string{friendlyApps(cfg.ImportedHarnesses) + " (sessions imported by backfill stay published; new sessions are not captured)"}})
 	}

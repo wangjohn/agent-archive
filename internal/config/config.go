@@ -50,9 +50,10 @@ type Config struct {
 	// Backfill adds to it and setup carries it over from the committed
 	// configuration, dropping an app once its hooks are installed.
 	ImportedHarnesses []string `json:"imported_harnesses,omitempty"`
-	// DeclinedHarnesses lists apps setup found on this computer and offered
-	// to add, which the user declined. Setup does not offer them again; an
-	// app leaves this list once it is included.
+	// DeclinedHarnesses lists apps the user chose to leave out when
+	// reconfiguring: declined when setup offered them as found on this
+	// computer, or removed from the selection. Setup does not offer them
+	// again; an app leaves this list once it is included.
 	DeclinedHarnesses []string `json:"declined_harnesses,omitempty"`
 	// InstalledExecutable is the executable path setup wrote into the hooks
 	// and the LaunchAgent. Status checks the installed hooks against this

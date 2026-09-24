@@ -227,3 +227,57 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 		t.Fatalf("harnesses %v declined %v", draft.Config.Harnesses, draft.Config.DeclinedHarnesses)
 	}
 }
+
+// An app removed by hand in the capture step is declined too, so the next
+// reconfigure does not offer it back as found.
+func TestSetupRemembersAppRemovedByHand(t *testing.T) {
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
+	setupRun(t, env, strings.Join([]string{"y", project, "", "s3", "test-bucket", "profile", "us-east-1", "y"}, "\n")+"\n", 0)
+
+	// Apps and projects; change apps: Codex no, Claude Code yes, Cursor no;
+	// keep the project; add none; start archiving.
+	setupRun(t, env, "capture\ny\nn\ny\nn\ny\n\ny\n", 0)
+	cfg, _, _ := config.Load(home)
+	if !reflect.DeepEqual(cfg.Harnesses, []string{"claude"}) || !reflect.DeepEqual(cfg.DeclinedHarnesses, []string{"codex"}) {
+		t.Fatalf("harnesses %v declined %v", cfg.Harnesses, cfg.DeclinedHarnesses)
+	}
+
+	output := setupRun(t, env, "capture\n\ny\n\nn\n", 0)
+	if strings.Contains(output, "Also found") || !strings.Contains(output, "Included: Claude Code. Not included: Codex and Cursor.") {
+		t.Fatalf("removed app offered again:\n%s", output)
+	}
+}
+
+// An app removed in the review screen's app edit is declined, and a later
+// capture step with it detected does not offer it back.
+func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
+	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}}
+	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\n"), &bytes.Buffer{})
+	if err := editSetupReview(p, &draft, t.TempDir(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) || !reflect.DeepEqual(draft.Config.DeclinedHarnesses, []string{"codex"}) {
+		t.Fatalf("harnesses %v declined %v", draft.Config.Harnesses, draft.Config.DeclinedHarnesses)
+	}
+	var out bytes.Buffer
+	if err := chooseHarnesses(newPrompter(strings.NewReader("\n"), &out), []string{"codex", "claude"}, &draft.Config); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Also found") || !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) {
+		t.Fatalf("removed app offered again: %v\n%s", draft.Config.Harnesses, &out)
+	}
+}
+
+func TestSetupReviewShowsDeclinedApps(t *testing.T) {
+	old := config.Config{Harnesses: []string{"cursor"}, RetentionDays: 90, Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2AccountID: "a", Prefix: defaultPrefix}}
+	next := old
+	next.DeclinedHarnesses = []string{"codex", "claude"}
+	var out bytes.Buffer
+	showSetupReview(newPrompter(strings.NewReader(""), &out), next, old, true, nil)
+	got := out.String()
+	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again)") || strings.Contains(got, "Nothing above differs") {
+		t.Fatalf("declining found apps not shown as a change:\n%s", got)
+	}
+}
