@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -114,6 +117,15 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 	cursor("k-site", website)
 	cursor("k-lost", filepath.Join(f.userHome, "no-such-folder"))
 
+	// Cursor's database: one chat only it holds, one that also has a
+	// transcript, and a draft. Only the first is counted.
+	f.nativeIDs = append(f.nativeIDs, "k-db-only", "k-db-draft")
+	f.cursorDatabase(t, map[string]string{
+		"composerData:k-db-only":  `{"_v":3,"composerId":"k-db-only","createdAt":1789923600000,"fullConversationHeadersOnly":[{"bubbleId":"m1","type":1},{"bubbleId":"m2","type":2}]}`,
+		"composerData:k-aa":       `{"_v":3,"composerId":"k-aa","fullConversationHeadersOnly":[{"bubbleId":"m1","type":1}]}`,
+		"composerData:k-db-draft": `{"_v":3,"composerId":"k-db-draft","isDraft":true,"fullConversationHeadersOnly":[{"bubbleId":"m1","type":1}]}`,
+	})
+
 	// c-archived is already registered by a hook.
 	store, err := collector.NewLocalStore(f.data)
 	if err != nil {
@@ -145,6 +157,29 @@ func cursorSlugFor(path string) string {
 		}
 	}
 	return string(b)
+}
+
+// cursorDatabase writes a synthetic Cursor state.vscdb, in rollback-journal
+// mode so it can be read with Cursor closed.
+func (f *backfillFixture) cursorDatabase(t *testing.T, rows map[string]string) {
+	t.Helper()
+	path := backfill.CursorStateDatabase(f.userHome)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)`); err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range rows {
+		if _, err := db.Exec(`INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, []byte(v)); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // rootPad is the length every occurrence of the fixture's root is padded to,
@@ -232,15 +267,23 @@ func TestBackfillGolden(t *testing.T) {
 	}
 }
 
-// A dry run writes nothing: the data directory is byte-for-byte unchanged.
+// A dry run writes nothing: the data directory, and the folder holding
+// Cursor's database, are byte-for-byte unchanged, with no -journal, -wal, or
+// -shm file created beside the database.
 func TestBackfillDryRunWritesNothing(t *testing.T) {
 	f := newBackfillFixture(t)
-	before := snapshotTree(t, f.data)
-	if _, errOut, code := f.run(t, "--dry-run"); code != 0 {
-		t.Fatalf("code %d: %s", code, errOut)
+	cursorDir := filepath.Dir(backfill.CursorStateDatabase(f.userHome))
+	before, cursorBefore := snapshotTree(t, f.data), snapshotTree(t, cursorDir)
+	for _, args := range [][]string{{"--dry-run"}, {"--dry-run", "--json"}} {
+		if _, errOut, code := f.run(t, args...); code != 0 {
+			t.Fatalf("%v: code %d: %s", args, code, errOut)
+		}
 	}
 	if after := snapshotTree(t, f.data); after != before {
 		t.Fatalf("data directory changed:\n%s\n---\n%s", before, after)
+	}
+	if after := snapshotTree(t, cursorDir); after != cursorBefore {
+		t.Fatalf("Cursor's database folder changed:\n%s\n---\n%s", cursorBefore, after)
 	}
 }
 
@@ -303,7 +346,15 @@ func snapshotTree(t *testing.T, dir string) string {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(&b, "%s %d %s\n", strings.TrimPrefix(path, dir), info.Size(), info.ModTime().Format(time.RFC3339Nano))
+		fmt.Fprintf(&b, "%s %d %s %s", strings.TrimPrefix(path, dir), info.Size(), info.Mode(), info.ModTime().Format(time.RFC3339Nano))
+		if info.Mode().IsRegular() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(&b, " %x", sha256.Sum256(data))
+		}
+		b.WriteString("\n")
 		return nil
 	})
 	if err != nil {

@@ -1,4 +1,4 @@
-Looking for Claude Code, Codex, and Cursor sessions on this Mac… 17 found.
+Looking for Claude Code, Codex, and Cursor sessions on this Mac… 18 found.
 Checking storage… ready.
 
 Backfill imports every session found on this Mac into
@@ -23,8 +23,7 @@ Not imported:
    2  run from temporary directories            add --include-temp
    1  Cursor chat whose project could not be determined
    1  with no conversation
-      Cursor chats stored only in Cursor's database were not checked
-      (a later release).
+   1  Cursor chat stored only in Cursor's database (a later release)
 
 If you continue:
   • 4 projects are added, and new Claude Code sessions in them are captured.

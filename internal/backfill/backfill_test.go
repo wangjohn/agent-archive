@@ -452,17 +452,28 @@ func TestCursorDatabaseCount(t *testing.T) {
 	repo := tr.repo("home/site")
 	tr.write(filepath.Join("home", ".cursor", "projects", cursorSlug(repo), "agent-transcripts", "k1", "k1.jsonl"), cursorTranscript)
 	env := tr.env()
-	var got map[string]bool
-	env.CursorDatabaseOnly = func(_ context.Context, chats map[string]bool) (int, bool, error) {
-		got = chats
-		return 2, true, nil
+	calls := 0
+	env.CursorDatabase = func(context.Context) (CursorDatabaseResult, error) {
+		calls++
+		return CursorDatabaseResult{Checked: true, Chats: []CursorDatabaseChat{{ID: "k1"}, {ID: "d1"}, {ID: "d2"}, {ID: "d3"}, {ID: "d1"}}}, nil
 	}
-	p := plan(t, env, nil, config.Config{}, Filters{})
-	if !got["k1"] || p.Skipped()[SkipCursorDatabaseOnly] != 2 || p.Found() != 3 {
-		t.Fatalf("chats %v, skipped %v, found %d", got, p.Skipped(), p.Found())
+	// k1 has a file, so the file is the session; the archive's own reasons
+	// win over cursor_database_only; a second row for d1 is a duplicate.
+	st := states{"d2": SkipRemovedByUndo, "d3": SkipAlreadyArchived}
+	p := plan(t, env, st, config.Config{}, Filters{})
+	skipped := p.Skipped()
+	if skipped[SkipCursorDatabaseOnly] != 1 || skipped[SkipRemovedByUndo] != 1 || skipped[SkipAlreadyArchived] != 1 ||
+		skipped[SkipDuplicateSession] != 1 || p.Found() != 5 {
+		t.Fatalf("skipped %v, found %d", skipped, p.Found())
 	}
-	if p := plan(t, env, nil, config.Config{}, Filters{Harnesses: []string{"claude"}}); p.Skipped()[SkipFilteredOut] != 3 {
-		t.Fatalf("filtered: %v", p.Skipped())
+	if p := plan(t, env, st, config.Config{}, Filters{IncludeRemoved: true}); p.Skipped()[SkipCursorDatabaseOnly] != 2 {
+		t.Fatalf("--include-removed: %v", p.Skipped())
+	}
+	// --harness without cursor never opens the database.
+	calls = 0
+	p = plan(t, env, st, config.Config{}, Filters{Harnesses: []string{"claude"}})
+	if calls != 0 || p.Skipped()[SkipFilteredOut] != 1 || p.Found() != 1 || p.CursorDatabaseChecked {
+		t.Fatalf("calls %d, skipped %v, found %d", calls, p.Skipped(), p.Found())
 	}
 }
 

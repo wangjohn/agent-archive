@@ -249,7 +249,8 @@ func configFingerprint(cfg config.Config) string {
 
 // backfillEnvironment is what planning reads: the user's home, the
 // temporary directories, and the clock. Files are read from the real file
-// system.
+// system, and Cursor's database is opened read-only to count the chats only
+// it holds.
 func (e Env) backfillEnvironment(userHome string) backfill.Environment {
 	temps := e.BackfillTempDirs
 	if temps == nil {
@@ -258,7 +259,7 @@ func (e Env) backfillEnvironment(userHome string) backfill.Environment {
 			temps = append(temps, strings.TrimSpace(tmp))
 		}
 	}
-	return backfill.Environment{Home: userHome, TempDirs: temps, Now: e.now}
+	return backfill.Environment{Home: userHome, TempDirs: temps, Now: e.now, CursorDatabase: backfill.CursorDatabaseReader(userHome)}
 }
 
 // archiveState answers backfill.ArchiveState from this machine's local store

@@ -1684,3 +1684,27 @@ Same setup as the B1–B4 live check (MinIO bucket `backfill-e2e`, sandboxed
   each) verified all 168 publications (42 sessions and 126 subagents); none
   mismatched. `status` showed 42 imported, 0 pending, 0 with issues.
 - Undo then emptied the bucket.
+
+## Backfill follow-up B — Cursor database count (2026-09-23)
+
+The phase-1 count of Cursor chats that exist only in `state.vscdb`, as the
+spec's Discovery section describes. Adds `modernc.org/sqlite` v1.46.1 (pure
+Go; the stripped darwin/arm64 binary grows from 11.2 MB to 14.8 MB). go.mod
+keeps the `go 1.24.0` floor and adds `toolchain go1.27.1`; CI and release
+workflows install Go 1.27.1 explicitly and fail if `go version` differs,
+because `actions/setup-go@v5` reads only go.mod's `go` line.
+
+Two independent reviews ran experiments on synthetic databases with a
+separate writer process: a closed WAL database opened read-only any way other
+than `immutable=1` creates `-wal`/`-shm`; with the checked immutable read, 180
+runs of a writer starting mid-read each reported `changed_during_read`, no
+count mixed old and new rows, and `integrity_check` passed. The second review
+found a symlinked database would be undercounted with Cursor running; the
+reader now resolves symlinks first.
+
+Live check on this Mac, Cursor running: `backfill --dry-run --json` with the
+real `HOME` and a sandboxed archive home reported the database checked with
+0 database-only chats and 0 newer-format rows (every chat with content also
+has a transcript file), and `ls -laT` of Cursor's `globalStorage` was
+identical before and after. The closed-Cursor path is covered by tests, not by
+a live run.

@@ -518,9 +518,44 @@ being read at the same time, so a file that doesn't fit waits for room.
   of the file system that tries each `-` as `/`, bounded to 4,096
   directories. Exactly one match is required; otherwise the session is
   `project_unknown`.
-- **Cursor database count.** Phase 1 opens `state.vscdb` read-only only to
-  count database-only chats: `composerData:*` entries with headers, not
-  drafts, and no file on disk. They are reported as `cursor_database_only`.
+- **Cursor database count.** Phase 1 reads `state.vscdb` only to count
+  database-only chats, through `modernc.org/sqlite`, and never writes to it or
+  next to it. The path is resolved through symlinks first, because SQLite keeps
+  its side files next to the real file.
+  - **What counts:** `composerData:*` rows (read through the key index, not a
+    table scan) that have messages in `fullConversationHeadersOnly` or, in
+    older chats, an inline `conversation`; are not drafts; are not listed in
+    any row's `subagentComposerIds`; and have no transcript on disk. Each goes
+    through the archive-state check, so `already_archived` and `removed_*`
+    win, and the filters apply as they do to file sessions (`createdAt` for
+    dates, `workspaceIdentifier` for `--project`; a chat without the field
+    fails that filter). The rest are `cursor_database_only`. A second row for
+    the same chat is a `duplicate_session`. Rows with a newer `_v` than tested
+    are still counted when the fields that decide the count decode; their
+    number is reported in JSON (`cursor_database_newer_format`).
+  - **How it reads.** With Cursor running (`-wal` and `-shm` present), in
+    place with `mode=ro`, `readonly_shm`, and `query_only`: a read-only shared
+    memory file still lets the reader take shared locks, so Cursor never
+    overwrites a page mid-read. With Cursor closed (no side files), in place
+    with `immutable=1`, which opens no side file and takes no lock; it is safe
+    only because the reader confirms afterwards that the file's size,
+    modification time, inode, and 100-byte header are unchanged and that no
+    side file appeared, and otherwise reports "not checked". Opening a closed
+    WAL database any other way would create `-wal` or `-shm` next to it.
+  - **Not checked,** with a reason in JSON
+    (`cursor_database_unchecked_reason`): `locked` (a `-journal` exists: an
+    unfinished write that only Cursor may roll back), `unreadable` (one side
+    file without the other, or an open failure), `unknown_format` (missing
+    table or fields that don't decode), `changed_during_read`, and
+    `transcripts_unreadable` (part of Cursor's transcript store couldn't be
+    listed, so chats with transcripts can't be told apart; the database isn't
+    opened). A missing
+    database counts as checked with none. `--harness` without Cursor skips the
+    read entirely.
+  - If Cursor quits in the instant between the side-file check and the open,
+    SQLite can leave an empty `-wal` behind. That is harmless (an empty WAL
+    has nothing to replay), and the reader never deletes files next to
+    Cursor's database.
 
 ## Skip reasons
 
@@ -661,11 +696,17 @@ results the file lacks. Phase 2 still imports only chats that have no file:
 2. **The file wins when both exist.** It is what hooks capture live.
    Upgrading file sessions to the richer database source is a separate
    decision.
-3. **Snapshot reads.** Copy the database with SQLite's online backup API to a
-   `0600` file under the archive home, read the copy, and delete it. Retry
-   `SQLITE_BUSY`, and fail the pass rather than read partially. Never use
-   `immutable=1`, which can read torn pages while Cursor writes.
-4. **`modernc.org/sqlite`, a pure-Go driver.** It keeps CI and tests free of
+3. **Snapshot reads.** With Cursor running, copy the database with SQLite's
+   online backup API to a `0600` file under the archive home, read the copy,
+   and delete it. Retry `SQLITE_BUSY`, and fail the pass rather than read
+   partially. With Cursor closed, the backup API would create `-wal` next to
+   the source, so read it as the phase-1 count does: `immutable=1`, then
+   confirm size, modification time, inode, header, and side files are
+   unchanged, and discard the read otherwise. `immutable=1` without that check
+   can read torn pages while Cursor writes.
+4. **`modernc.org/sqlite`, a pure-Go driver,** already added for the phase-1
+   count (v1.46.1, the newest release that supports the `go 1.24.0` floor;
+   builds use `toolchain go1.27.1`). It keeps CI and tests free of
    cgo. `mattn/go-sqlite3` would also work, because release builds already
    use cgo. Shelling out to `/usr/bin/sqlite3` is rejected because its output
    and version are uncontrolled.
