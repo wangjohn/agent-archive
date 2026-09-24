@@ -272,7 +272,7 @@ func TestRetentionReductionShowsImpactBeforeConfirmation(t *testing.T) {
 	}
 	env.Now = func() time.Time { return now.Add(45 * 24 * time.Hour) }
 	output := setupRun(t, env, "retention\n30\nn\n", 0)
-	if !strings.Contains(output, "1 currently captured session(s)") {
+	if !strings.Contains(output, "1 session(s) captured before") {
 		t.Fatal(output)
 	}
 	cfg, _, _ := config.Load(home)

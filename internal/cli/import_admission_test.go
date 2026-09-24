@@ -180,12 +180,12 @@ func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Keep the retention, then edit apps: leave Codex as the only app, stop publishing the
-	// Claude Code imports, keep the Cursor ones, and save.
+	// Keep the retention, then edit apps: leave Codex as the only app, stop
+	// publishing the Claude Code imports, keep the Cursor ones, and save.
 	out := setupRun(t, env, "retention\n\nedit\napps\nn\nn\ny\ny\n", 0)
-	first := strings.Index(out, "Imported only: Claude Code, Cursor")
+	first := strings.Index(out, "Imported  Claude Code, Cursor")
 	stop := strings.Index(out, "Keep publishing Claude Code sessions imported by backfill?")
-	after := strings.LastIndex(out, "Imported only: Cursor (")
+	after := strings.LastIndex(out, "Imported  Cursor (")
 	if first < 0 || stop < first || after < stop {
 		t.Fatalf("review and prompts out of order:\n%s", out)
 	}
@@ -210,7 +210,7 @@ func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
 	if err := config.Save(home, saved); err != nil {
 		t.Fatal(err)
 	}
-	if out := setupRun(t, env, "retention\n\ny\n", 0); strings.Contains(out, "Imported only") {
+	if out := setupRun(t, env, "retention\n\ny\n", 0); strings.Contains(out, "Imported  ") {
 		t.Fatalf("empty imported list shown:\n%s", out)
 	}
 }

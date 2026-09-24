@@ -6,6 +6,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
 )
 
 func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
@@ -55,10 +59,34 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 			t.Fatalf("unexpected %q in %s", unwanted, output)
 		}
 	}
-	for _, want := range []string{"Include Codex and Claude Code?", "Save new sessions, with or without skills.", "Automatically delete archived sessions after 90 days.", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
+	for _, want := range []string{"Include Codex and Claude Code?", "All new sessions, with or without skills", "90 days, then deleted automatically", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q in %s", want, output)
 		}
+	}
+}
+
+func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
+	project := t.TempDir()
+	old := config.Config{
+		Harnesses:     []string{"cursor"},
+		RetentionDays: 90,
+		Archive:       archive.Config{Projects: []archive.ProjectActivation{{Root: project, Included: true}}},
+		Storage:       credentials.Config{Provider: credentials.ProviderR2, Bucket: "agent-archive", R2AccountID: "oldaccount", Prefix: defaultPrefix},
+	}
+	next := old
+	next.Storage.R2AccountID = "newaccount"
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader(""), &out)
+	showSetupReview(p, next, old, true, map[string]applicationDiscovery{"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"}})
+	got := out.String()
+	for _, want := range []string{"Apps      Cursor 3.21.13", "* Account   newaccount", "was oldaccount", "* changed from your current settings"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "* ") != 2 || strings.Contains(got, "\x1b[") {
+		t.Fatalf("only the account should be marked, with no color in a buffer:\n%s", got)
 	}
 }
 

@@ -340,3 +340,80 @@ func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {
 		t.Fatalf("record=%#v found=%t err=%v", record, found, err)
 	}
 }
+
+// An empty subagent transcript a hook reported may still be written, so its
+// candidate waits. One backfill found is history and will not grow: it is
+// rejected once, and the parent is told, instead of being retried forever.
+func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
+	parentStart := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	importedAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name       string
+		origin     archive.SessionOrigin
+		wantWaits  bool
+		wantReason string
+	}{
+		{"hook", archive.SessionOriginHook, true, ""},
+		{"import", archive.SessionOriginImport, false, "subagent_transcript_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			local, err := NewLocalStore(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parentPath := filepath.Join(home, "parent.jsonl")
+			childPath := filepath.Join(home, "child.jsonl")
+			if err := os.WriteFile(parentPath, []byte(`{"type":"assistant","sessionId":"parent-native","timestamp":"2026-09-21T10:01:00Z","message":{"role":"assistant","content":"parent"}}`+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(childPath, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			parent := archive.SessionRegistration{
+				ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project",
+				Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: parentStart, RegisteredAt: importedAt,
+				AdmittedAt: importedAt, Origin: tc.origin,
+			}
+			if tc.origin == archive.SessionOriginImport {
+				parent.StartedAtSource, parent.ImportBatch = archive.StartedAtSourceTranscript, "2026-09-23-1"
+			}
+			if err := local.SaveRegistration(parent); err != nil {
+				t.Fatal(err)
+			}
+			if err := local.SaveSubagentCandidate(SubagentCandidate{
+				ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native",
+				ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: childPath,
+				ObservedAt: importedAt, Origin: tc.origin,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			for pass := 0; pass < 2; pass++ {
+				materializeSubagentCandidates(local, Options{})
+			}
+			candidates, err := local.LoadSubagentCandidates()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if waits := len(candidates) == 1; waits != tc.wantWaits {
+				t.Fatalf("candidate still waiting=%t, want %t", waits, tc.wantWaits)
+			}
+			if _, found, _ := local.LoadRegistration("child"); found {
+				t.Fatal("an empty subagent transcript was registered")
+			}
+			requests, err := local.LoadRequests()
+			if err != nil {
+				t.Fatal(err)
+			}
+			reason := ""
+			for _, req := range requests {
+				if req.ArchiveSessionID == "parent" {
+					reason = strings.Join(req.Reasons, ",")
+				}
+			}
+			if reason != tc.wantReason {
+				t.Fatalf("parent request reasons=%q, want %q", reason, tc.wantReason)
+			}
+		})
+	}
+}

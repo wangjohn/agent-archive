@@ -35,8 +35,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return runBackfillHistory(args[1:], stdout, stderr, env)
 	}
 	if len(args) > 0 && args[0] == "undo" {
-		fmt.Fprintf(stderr, "agent-archive: backfill %s is not available yet\n", args[0])
-		return 1
+		return runBackfillUndo(args[1:], stdin, stdout, stderr, env)
 	}
 	fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
 	fs.SetOutput(stderr)

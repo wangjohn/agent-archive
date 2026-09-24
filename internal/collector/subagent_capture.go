@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -57,14 +58,18 @@ func materializeSubagentCandidate(local *LocalStore, candidate SubagentCandidate
 		}
 		return rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
 	}
-	if filtered.NativeStartAt.IsZero() && len(filtered.Records) == 0 {
+	if subagentTranscriptEmpty(filtered) {
+		if candidate.Origin == archive.SessionOriginImport {
+			// A transcript backfill found is history: it will not grow.
+			return rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
+		}
 		return errors.New("subagent transcript is empty; waiting for native records")
 	}
 	reg.SessionStartedAt = filtered.NativeStartAt
-	if err := validateSubagentTranscript(reg, filtered); err != nil {
-		return rejectSubagentCandidate(local, candidate, "subagent_provenance_unavailable")
+	if code := checkNewSubagent(filtered, reg.ParentNativeSessionID, reg.SubagentID, parent.SessionStartedAt, candidate.ObservedAt); code != "" {
+		return rejectSubagentCandidate(local, candidate, code)
 	}
-	if reg.SessionStartedAt.Before(parent.SessionStartedAt) || reg.SessionStartedAt.After(candidate.ObservedAt) || (opts.AcceptSession != nil && !opts.AcceptSession(reg)) {
+	if opts.AcceptSession != nil && !opts.AcceptSession(reg) {
 		return rejectSubagentCandidate(local, candidate, "subagent_start_ineligible")
 	}
 	if existing, found, err := local.LoadRegistration(reg.ArchiveSessionID); err != nil {
@@ -95,16 +100,59 @@ func materializeSubagentCandidate(local *LocalStore, candidate SubagentCandidate
 	return local.acknowledgeSubagentCandidate(candidate)
 }
 
+// subagentTranscriptEmpty reports a subagent transcript with no native
+// records yet.
+func subagentTranscriptEmpty(filtered archive.FilteredTranscript) bool {
+	return filtered.NativeStartAt.IsZero() && len(filtered.Records) == 0
+}
+
+// checkNewSubagent applies the checks a subagent transcript with records must
+// pass before it is first registered, and returns the code it is rejected
+// with, or "".
+func checkNewSubagent(filtered archive.FilteredTranscript, parentNativeSessionID, agentID string, parentStartedAt, observedAt time.Time) string {
+	if checkSubagentProvenance(filtered, parentNativeSessionID, agentID, filtered.NativeStartAt, observedAt) != nil {
+		return "subagent_provenance_unavailable"
+	}
+	if filtered.NativeStartAt.Before(parentStartedAt) || filtered.NativeStartAt.After(observedAt) {
+		return "subagent_start_ineligible"
+	}
+	return ""
+}
+
+// CheckImportedSubagent reports why the collector would refuse to register a
+// subagent transcript backfill found, observed at observedAt, or nil when it
+// would register it: the transcript is empty, its native timestamps are
+// incomplete or end after observedAt, it names another parent session or
+// agent, or it starts before its parent. Backfill's plan runs it so the
+// subagents it counts are the ones the collector registers.
+func CheckImportedSubagent(filtered archive.FilteredTranscript, parentNativeSessionID, agentID string, parentStartedAt, observedAt time.Time) error {
+	if subagentTranscriptEmpty(filtered) {
+		return errors.New("subagent transcript is empty")
+	}
+	if code := checkNewSubagent(filtered, parentNativeSessionID, agentID, parentStartedAt, observedAt); code != "" {
+		return errors.New(code)
+	}
+	return nil
+}
+
 // validateSubagentTranscript is called before registration and on every later
 // scan because the hook-provided path is mutable local state.
 func validateSubagentTranscript(reg archive.SessionRegistration, filtered archive.FilteredTranscript) error {
 	if reg.ParentSessionID == "" {
 		return nil
 	}
-	if !filtered.NativeStartComplete || filtered.NativeStartAt.IsZero() || filtered.NativeEndAt.IsZero() || reg.SubagentObservedAt.IsZero() || filtered.NativeEndAt.After(reg.SubagentObservedAt) {
+	return checkSubagentProvenance(filtered, reg.ParentNativeSessionID, reg.SubagentID, reg.SessionStartedAt, reg.SubagentObservedAt)
+}
+
+// checkSubagentProvenance checks that a subagent transcript's native
+// timestamps are complete, start at startedAt, and end no later than
+// observedAt, and that its records name only the parent session and the
+// agent.
+func checkSubagentProvenance(filtered archive.FilteredTranscript, parentNativeSessionID, agentID string, startedAt, observedAt time.Time) error {
+	if !filtered.NativeStartComplete || filtered.NativeStartAt.IsZero() || filtered.NativeEndAt.IsZero() || observedAt.IsZero() || filtered.NativeEndAt.After(observedAt) {
 		return errors.New("subagent transcript has incomplete native timestamp provenance")
 	}
-	if !filtered.NativeStartAt.Equal(reg.SessionStartedAt) {
+	if !filtered.NativeStartAt.Equal(startedAt) {
 		return errors.New("subagent native start changed after registration")
 	}
 	if len(filtered.AgentIDs) == 0 {
@@ -114,12 +162,12 @@ func validateSubagentTranscript(reg archive.SessionRegistration, filtered archiv
 		return errors.New("subagent transcript has no parent session identity")
 	}
 	for _, id := range filtered.SessionIDs {
-		if id != reg.ParentNativeSessionID {
+		if id != parentNativeSessionID {
 			return errors.New("subagent transcript parent session identity mismatch")
 		}
 	}
 	for _, id := range filtered.AgentIDs {
-		if id != reg.SubagentID {
+		if id != agentID {
 			return errors.New("subagent transcript agent identity mismatch")
 		}
 	}

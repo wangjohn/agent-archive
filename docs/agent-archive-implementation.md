@@ -1553,3 +1553,134 @@ Tests:
 
 The `status` detail for `record_size_limit` now also names a plain-text
 transcript as a whole, which is the unit the limit bounds on the text path.
+
+## PRs B1–B4 — `agent-archive backfill`
+
+Implements phase 1 of the [backfill spec](agent-archive-backfill-spec.md),
+following the [implementation plan](agent-archive-backfill-implementation-plan.md).
+Filter, adapter, and parser versions are unchanged; hook-captured metadata is
+byte-identical to before. Each package was built by one agent and reviewed by
+another; B2, B3, and B4 each had a second, focused review of their fix round.
+
+- **B1, admission model.** `SessionRegistration` gains `AdmittedAt`,
+  `Origin`, `StartedAtSource`, and `ImportBatch`, and every boundary check
+  uses `Admitted()`: project activation and destination in `AcceptSession`,
+  retention's current-bucket check (`Config.InCurrentDestination`), and
+  retention's ages. A guard test fails on a direct comparison of the start
+  with `ActivatedAt` or `DestinationSince`. `Config.ImportedHarnesses` admits
+  imports from apps without hooks; setup shows it and can stop them. Retention
+  writes a removal record (`forgotten/<sha256>.json`) under the request lock
+  before forgetting, so backfill never re-imports an expired session. Imports
+  skip the skill observer and hook lifecycle evidence, carry
+  `origin`/`imported_at`/`started_at_source` and an
+  `imported_without_hook_evidence` gap in metadata, never promote an app's
+  hook verification, and appear in `status` as imported, pending, and with
+  issues.
+- **B2, discovery and dry-run.** `internal/backfill` discovers Claude Code,
+  Codex, and Cursor transcripts, resolves projects (worktrees to their
+  repository with rule 2 re-applied, desktop workspace containers, home and
+  temporary directories), runs the collector's own filter over each file with
+  `min(8, max(2, NumCPU/2))` workers and a 128 MiB read budget, and assigns one
+  skip reason per session. `backfill --dry-run [--json]` renders the plan.
+- **B3, import.** Storage check, `[y/N/edit]` prompt with a retention edit,
+  configuration commit under `setup.lock` → `collector.lock` → `hooks.lock`
+  with a fingerprint guard and clock assertions, import batches in
+  `imports/`, registration in holds of at most 50 sessions or 100 ms, subagent
+  candidates, and an oldest-first upload with progress and safe Ctrl-C.
+  Registrations are the source of truth for a batch; interrupted batches are
+  reconciled. `backfill history`, `list --imported`/`--hook-captured`, and
+  `status` `last_import`. Setup now checks folder existence only for newly
+  included projects, keeps exclusions through edits, groups projects backfill
+  added into one question, and keeps them when a draft saved earlier is
+  resumed.
+- **B4, undo.** `backfill undo [ID] [--project DIR]` checks storage, shows
+  what it will delete and exclude, and after confirmation holds
+  `collector.lock` through removal. It records `undone_at`, excludes the
+  projects the batch added, then deletes each session as retention does
+  (`collector.DeleteWholeSession`, shared) and forgets it with an undo removal
+  record. Sessions in a previous destination are only forgotten locally.
+
+Automated checks on `backfill/integration`: `go vet ./...` and
+`go test -race ./...` pass; the backfill and undo tests also pass repeated
+with `-race -count=5` to `-count=30`.
+
+### Live check (2026-09-23)
+
+Local MinIO (`quay.io/minio/minio`), a dedicated `backfill-e2e` bucket, a
+sandboxed `HOME` holding copies of this Mac's Claude Code, Codex, and Cursor
+stores, and a hand-written configuration with one included project and only
+Claude Code hooks.
+
+- The plan found 43 sessions; 42 were importable (35 Claude Code, 1 Codex,
+  6 Cursor) plus 126 subagent transcripts, 169 MB. One ran from a temporary
+  directory.
+- Import took 32 s. All 168 registrations carried the batch; every start was
+  at or before admission. The bucket held 336 objects (a metadata sidecar and
+  a source bundle each), 14 MiB compressed. `status` showed 42 imported, 0
+  pending, 0 with issues, and Claude Code still "waiting for first session".
+- `list --imported` returned all 168 from the bucket; `show` carried the
+  import fields and gap with no skill inventory; `handoff --source archive`
+  rendered an imported Codex session.
+- A second run imported nothing. `undo --project` removed one project's 10
+  sessions and 36 subagents; `history` showed "partly undone; 32 sessions
+  left". A full undo emptied the bucket and left 168 undo removal records; a
+  later dry run reported them as removed by undo.
+  `backfill --include-removed` re-imported only the 5 sessions in the project
+  that stayed included, since undo's exclusions still apply; undoing that
+  left the bucket empty and no registrations.
+
+Not covered: the grouping of Claude desktop scratch chats and Codex desktop
+workspaces was checked on the real home (dry run) rather than in the
+sandbox, where those folders are outside `HOME`. Phase 2 (Cursor's database)
+is not started.
+
+## Backfill follow-up A — spec gaps (2026-09-23)
+
+A spec audit (208 requirements, two independent reviewers) found gaps that
+this follow-up closes, each with a test that fails without the fix:
+
+- The plan applies the collector's own subagent acceptance checks
+  (`collector.CheckImportedSubagent`), and the collector rejects an imported
+  subagent whose transcript is empty instead of waiting for it forever.
+- Claude Code and Codex transcripts with no record timestamp are
+  `start_unknown`; only Cursor falls back to the file's birth time. A Claude
+  conversation with no `sessionId` is `identity_mismatch`.
+- An unreadable folder is skipped and counted without printing its path; an
+  unreadable app store is named ("Claude Code's session folder could not be
+  read"), and the other apps still import.
+- Import refuses an admission earlier than the plan (clock set back), and
+  registration skips a session starting after admission as a backstop.
+- Tests added for a crash between the batch file and the configuration save,
+  `collector.DeleteWholeSession` ordering and rerun, and hooks ignoring
+  removal records.
+- The spec now records the code's deliberate differences (exit code 2 for
+  usage errors, the storage test object, Cursor slug rule, duplicate order,
+  configuration fingerprint, lock timing, subagent candidate order), and
+  install.md has the upgrade note about sessions retention removed before
+  removal records existed.
+
+### Codex hook identity check (2026-09-23)
+
+Codex CLI 0.155.0-alpha.9.2 (the ChatGPT app's bundled binary), run with a
+sandboxed `CODEX_HOME` whose only hook recorded its stdin, and
+`--dangerously-bypass-hook-trust` for that invocation. `SessionStart`,
+`UserPromptSubmit`, and `SessionEnd` all carried a `session_id` equal to the
+rollout's `session_meta.payload.id` and to the UUID in its file name, and a
+`transcript_path` naming that rollout. So a Codex session registered by hooks
+and the same session found by backfill share one native ID, and backfill's
+`already_archived` deduplication holds. The real `~/.codex` was not used.
+
+### Live check on the follow-up code (2026-09-23)
+
+Same setup as the B1–B4 live check (MinIO bucket `backfill-e2e`, sandboxed
+`HOME` with copies of this Mac's stores).
+
+- Ground truth, counted independently of backfill by listing files: 36 Claude
+  Code transcripts (1 run from a temporary directory), 1 Codex, 6 Cursor, 127
+  subagent transcripts. The plan found 43, imported 35 + 1 + 6 = 42, skipped 1
+  as `temporary_directory`, and imported 126 subagents; the one other
+  subagent belongs to the skipped temporary-directory session.
+- Read-back verification: after the import, 33 `sync` passes (5 verifications
+  each) verified all 168 publications (42 sessions and 126 subagents); none
+  mismatched. `status` showed 42 imported, 0 pending, 0 with issues.
+- Undo then emptied the bucket.

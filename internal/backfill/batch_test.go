@@ -105,6 +105,14 @@ func TestApplyToConfigAndClock(t *testing.T) {
 		t.Fatal("clock before the destination accepted")
 	}
 	cfg.DestinationSince = time.Time{}
+	// A clock set back between the plan and the commit.
+	p.GeneratedAt = admitted
+	if err := CheckClock(cfg, p, admitted.Add(-time.Minute)); err == nil || !strings.Contains(err.Error(), "earlier than when this plan was made") {
+		t.Fatalf("clock before the plan: %v", err)
+	}
+	if err := CheckClock(cfg, p, admitted); err != nil {
+		t.Fatalf("admission at the plan's time: %v", err)
+	}
 
 	projects, apps := ApplyToConfig(&cfg, p, admitted)
 	if len(projects) != 1 || projects[0] != archive.ProjectID("/work/new") || strings.Join(apps, ",") != "codex" {
@@ -147,18 +155,30 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 	if err := os.Remove(gone.TranscriptPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.RegisterNewSession("taken", func(id string) archive.SessionRegistration {
-		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "taken", ProjectID: "p", ProjectRoot: project, Harness: archive.Harness{Name: "claude"}, SessionStartedAt: admitted}
-	}); err != nil {
-		t.Fatal(err)
+	for _, native := range []string{"taken", "taken-future"} {
+		if _, err := store.RegisterNewSession(native, func(id string) archive.SessionRegistration {
+			return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: native, ProjectID: "p", ProjectRoot: project, Harness: archive.Harness{Name: "claude"}, SessionStartedAt: admitted}
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
+	// A start after the admission is skipped at registration too, as a
+	// backstop to CheckClock. A session a hook registered meanwhile is
+	// already archived whatever its planned start: that reason comes first.
+	future := candidate("future", project)
+	future.StartedAt = admitted.Add(time.Second)
+	takenFuture := candidate("taken-future", project)
+	takenFuture.StartedAt = admitted.Add(time.Second)
 	r := Registration{Home: home, Store: store, Batch: "2026-09-23-1", AdmittedAt: admitted}
-	result, err := r.Run([]Candidate{ok, gone, taken, excluded})
+	result, err := r.Run([]Candidate{ok, gone, taken, excluded, future, takenFuture})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Sessions) != 1 || result.Gone != 1 || result.AlreadyArchived != 1 || result.NotAdmitted != 1 {
+	if len(result.Sessions) != 1 || result.Gone != 1 || result.AlreadyArchived != 2 || result.NotAdmitted != 1 || result.StartInFuture != 1 {
 		t.Fatalf("%+v", result)
+	}
+	if _, found, _ := store.ArchiveSessionID("future"); found {
+		t.Fatal("a session starting after its admission was given an archive ID")
 	}
 	reg, _, _ := store.LoadRegistration(result.Sessions[0])
 	if reg.Origin != archive.SessionOriginImport || reg.ImportBatch != "2026-09-23-1" || !reg.AdmittedAt.Equal(admitted) || reg.NativeSessionID != "ok" {
