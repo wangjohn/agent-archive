@@ -34,3 +34,32 @@ Project identity is matched by configured project, not by exact directory, for n
 Already accepted registrations retain their original start time on resume. An absent transcript path does not erase the saved path. A different harness or project cannot replace the registration identity: a resume or compact from a subdirectory of the registered project is the same session, while a directory that belongs to a different configured project is a conflict.
 
 For included projects, skipped starts (including a declined Cursor first prompt) produce a bounded local diagnostic with application, project, reason, and time. Three reasons exist: the project is not yet active, the start could not be established, and setup was still in progress. The last one covers the window in which `setup` holds an open transaction: hooks register nothing then, so a start that lands in that window says so instead of disappearing. Writing it does not wait for setup's lock, so it is best effort. Diagnostic records contain no transcript, native session ID, or transcript path. Excluded project paths are not recorded, and a recorded diagnostic is dropped once its project is excluded: `status` reports only currently included projects, and saving a setup that excludes a project prunes its stored entries. When a start is declined for more than one reason, the diagnostic names the most specific one: a project that is not yet active is reported as such even if the start was also a resume. `status` and `status --json` show these reasons; hooks remain local and return successfully to the agent.
+
+## Imported sessions
+
+`agent-archive backfill` registers sessions the hooks never saw, after the
+person confirms a plan ([backfill spec](agent-archive-backfill-spec.md)). An
+imported registration has `origin: import` and two times:
+
+- `session_started_at` is the true start, from the transcript
+  (`started_at_source: transcript`) or, for a Cursor file with no timestamps,
+  the file's birth time (`file_created`).
+- `admitted_at` is when backfill took ownership. A hook registration sets it
+  to its own start.
+
+Every boundary check uses `Admitted()`, which is `admitted_at`, or
+`session_started_at` for a registration older than that field:
+
+| Check | Uses |
+|---|---|
+| Project activation and storage destination in `AcceptSession` | `Admitted()` |
+| Retention's current-bucket check, and retention age before a first capture | `Admitted()` |
+| App selection | `Harnesses`, plus `ImportedHarnesses` for imports |
+| Fresh-start eligibility for hooks, metadata `started_at`, subagent ordering, handoff | `session_started_at` |
+| App hook verification, `HookObserved`, skill inventory | hook-registered sessions only |
+
+A guard test fails if code compares `session_started_at` with `ActivatedAt`
+or `DestinationSince` outside `Admitted()`. A hook that later resumes an
+imported session continues it: the registration keeps its start, admission,
+and origin. Retention and undo leave a removal record when they forget a
+session, so backfill does not import it again.
