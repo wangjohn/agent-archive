@@ -304,11 +304,11 @@ const (
 	// separator: `pwd` (MYSQL_PWD, DB_PWD), because a bare PWD or OLDPWD is
 	// the shell's working directory, and npm's `_auth` (`:_auth=`,
 	// `npm_config__auth=`), because `auth` alone is far too common.
-	credentialSeparatedWords = `[a-z0-9_.-]*[_.-]pwd|(?:[a-z0-9_.-]*_)?_auth`
+	credentialSeparatedWords = `[a-z0-9_.-]*[_.-]pwd|(?:[a-z0-9_.-]*_)?_auth` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialSuffix may follow the word: `key` or `access_key`, then
 	// `base` (SECRET_KEY, AWS_SECRET_ACCESS_KEY, SECRET_KEY_BASE), then a
 	// number (DB_PASSWORD_1, PASSWORD2, API_KEY_2).
-	credentialSuffix = `(?:[_.-]?(?:access[_.-]?)?key(?:[_.-]?base)?)?(?:[_.-]?[0-9]+)?`
+	credentialSuffix = `(?:[_.-]?(?:access[_.-]?)?key(?:[_.-]?base)?)?(?:[_.-]?[0-9]+)?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialName is a name ending in a credential word and optionally the
 	// suffix. Anything may be glued on before the word (DB_PASSWORD,
 	// accessToken, PGPASSWORD, spring.datasource.password, --password), but
@@ -319,18 +319,18 @@ const (
 	// credentialLead is what may precede a name: the start of the string or a
 	// character that cannot be part of one. It keeps a match from starting in
 	// the middle of an identifier.
-	credentialLead = `(?:^|[^a-z0-9_.-])`
+	credentialLead = `(?:^|[^a-z0-9_.-])` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialQuote is an optional quote around a name, as in JSON, Python,
 	// or JSON escaped inside a string once or more (`\"password\"`,
 	// `\\\"password\\\"`).
-	credentialQuote = `(?:\\*["'])?`
+	credentialQuote = `(?:\\*["'])?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialSeparator is `=`, `:`, `:=`, or `=>`, with spaces or tabs
 	// around it but not newlines, so a YAML key with its value on the next
 	// line does not swallow the line after it.
-	credentialSeparator = `[ \t]*(?::=|=>|=|:)[ \t]*`
+	credentialSeparator = `[ \t]*(?::=|=>|=|:)[ \t]*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialScheme is an HTTP authorization scheme kept before the value
 	// (`Authorization: Bearer [REDACTED]`).
-	credentialScheme = `(?:(?:bearer|basic|digest|token)[ \t]+)?`
+	credentialScheme = `(?:(?:bearer|basic|digest|token)[ \t]+)?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialQuotedValue is a value in quotes, up to its closing quote, or
 	// to the end of the line when it has none. In order: JSON escaped once
 	// inside a string (`\"…\"`, where an escaped quote inside is `\\\"`);
@@ -340,21 +340,26 @@ const (
 	credentialQuotedValue = `\\"(?:\\\\\\"|[^"\\\n]|\\[^"\n])*(?:\\")?|` +
 		`\\{2,}"(?:[^"\\\n]|\\+[^"\\\n])*(?:\\+")?|` +
 		`"(?:[^"\\\n]|\\.)+"?|'[^'\n]+'?`
-	// credentialValue is a quoted value or an unquoted one, which runs up to
-	// whitespace, `,`, `;`, or a quote, so a value inside a quoted string
-	// (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`) leaves the closing quote.
-	// Either may follow extra `=` signs (`PASSWORD==abc`, `PASSWORD=="abc"`,
-	// `token: =abc`), but an unquoted value cannot begin with whitespace, so
-	// `token == nil` is a comparison, not an assignment. Nor can it begin
-	// with `{` or `[`: that is a structure (`"credentials": {"type": …}`),
-	// whose members are checked on their own, and replacing its opening
-	// bracket would break the line around it. An earlier [REDACTED] is a
-	// value, so redacting twice changes nothing (`Bearer [REDACTED]` must not
-	// be read as the value `Bearer`).
-	credentialValue = `=*(?:` + credentialQuotedValue + `)|\[REDACTED\]|=*[^\s,;"'={\[][^\s,;"']*`
+	// credentialBracketedValue is a single token in brackets or braces
+	// (`[hunter2]`, `{abc123}`, an earlier `[REDACTED]`), with whatever is
+	// glued on after it (`[REDACTED]realsecret`). A bracket holding
+	// whitespace, a comma, a colon, or a quote is a structure
+	// (`"credentials": {"type": …}`, `password: [required, min 8]`), whose
+	// members are checked on their own, and is not a value: replacing its
+	// opening bracket would break the line around it. Taking an earlier
+	// [REDACTED] as a value also keeps redacting twice a no-op
+	// (`Bearer [REDACTED]` is not read as the value `Bearer`).
+	credentialBracketedValue = `(?:\[[^\s,:;"'\[\]{}]+\]|\{[^\s,:;"'\[\]{}]+\})[^\s,;"']*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
+	// credentialValue is a quoted value, a bracketed one, or an unquoted one,
+	// which runs up to whitespace, `,`, `;`, or a quote, so a value inside a
+	// quoted string (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`) leaves the
+	// closing quote. Each may follow extra `=` signs (`PASSWORD==abc`,
+	// `PASSWORD=="abc"`, `token: =abc`), but no value begins with
+	// whitespace, so `token == nil` is a comparison, not an assignment.
+	credentialValue = `=*(?:` + credentialQuotedValue + `|` + credentialBracketedValue + `)|=*[^\s,;"'={\[][^\s,;"']*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialFlagValue is the value after a space-separated command-line
 	// flag (`--token abc`); one beginning with `-` is the next flag.
-	credentialFlagValue = credentialQuotedValue + `|[^\s,;"'=-][^\s,;"']*`
+	credentialFlagValue = credentialQuotedValue + `|[^\s,;"'=-][^\s,;"']*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 )
 
 // credentialAssignment matches `name<sep>value` for a credential name, and

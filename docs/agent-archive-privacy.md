@@ -349,8 +349,11 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   flag counts too. The value, quoted up to its closing quote or unquoted up
   to whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
   `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`. An HTTP scheme
-  before the value stays: `Authorization: Bearer [REDACTED]`. An unquoted
-  value may begin with `=` (`PASSWORD==abc`) unless whitespace follows it.
+  before the value stays: `Authorization: Bearer [REDACTED]`. A single token
+  in brackets or braces is a value too (`password=[hunter2]`,
+  `token={abc123}`), with anything glued on after it
+  (`password=[REDACTED]realsecret` loses `realsecret`). A value may begin
+  with `=` (`PASSWORD==abc`) unless whitespace follows it.
 - AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials)
   and Anthropic/OpenAI style `sk-` keys.
 - PEM private key blocks: `-----BEGIN … PRIVATE KEY-----` through the next
@@ -386,10 +389,14 @@ Known misses.
   the value ends at the first escaped quote of any depth, so the tail of a
   value after an escaped quote inside it (`\\\"ab\\\\\\\"cd\\\"`: `cd`) is
   kept. JSON escaped once (`\"password\":\"ab\\\"cd\"`) is handled.
-- A value that is an object or array (`"credentials": {…}`, `password: […]`)
-  is not replaced as text: in parsed records its members are checked by
-  name, but in free text a secret inside it is caught only by its own name
-  or shape.
+- A value that is an object or array holding whitespace, a comma, a colon,
+  or a quote (`"credentials": {"type": …}`, `password: [required, min 8]`)
+  is a structure and is not replaced as text: in parsed records its members
+  are checked by name, but in free text a secret inside it is caught only by
+  its own name or shape.
+- A project skill's `SKILL.md` that is a hard link to another file cannot be
+  told apart from a real file. A cloned repository cannot create one (git
+  does not store hard links); it needs local write access to the project.
 - A name that does not end in a trigger word (`AWS_ACCESS_KEY_ID`,
   `DATABASE_URL`, `DSN`, `CONNECTION_STRING`) is not redacted by this
   pattern; its value is redacted only if it has a recognizable shape

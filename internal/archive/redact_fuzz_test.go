@@ -52,6 +52,9 @@ var credentialTemplates = []string{
 	"SECRET_KEY_BASE=%s",
 	"//registry.npmjs.org/:_auth=%s",
 	"ENCRYPTION_KEY=%s",
+	"password=[%s]",
+	"token={%s}",
+	"password=[REDACTED]%s",
 }
 
 // plainSecret is the shape of a secret the templates are fuzzed with: long

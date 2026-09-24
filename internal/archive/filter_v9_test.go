@@ -73,6 +73,14 @@ func TestFilterV9RedactsCredentialAssignments(t *testing.T) {
 		{"value starting with equals", "PASSWORD==abc", "PASSWORD=[REDACTED]"},
 		{"yaml value starting with equals", "token: =abc", "token: [REDACTED]"},
 		{"quoted value after equals", `PASSWORD=="abc"`, `PASSWORD=[REDACTED]`},
+		// A marker-looking prefix does not shield what is glued to it.
+		{"glued after marker", "password=[REDACTED]realsecret", "password=[REDACTED]"},
+		{"glued after lowercase marker", "password=[redacted]realsecret", "password=[REDACTED]"},
+		{"glued after bearer marker", "Authorization: Bearer [REDACTED]realsecret", "Authorization: Bearer [REDACTED]"},
+		{"glued after two markers", "api_key=[REDACTED][REDACTED]realsecret", "api_key=[REDACTED]"},
+		// A single bracketed token is a value.
+		{"bracketed value", "password=[hunter2]", "password=[REDACTED]"},
+		{"braced value", "token={abc123def}", "token=[REDACTED]"},
 		{"escaped quote inside escaped json", `{\"password\":\"ab\\\"cd\"}`, `{\"password\":\"[REDACTED]\"}`},
 		{"doubly escaped json", `{\\\"password\\\":\\\"hunter2\\\"}`, `{\\\"password\\\":\\\"[REDACTED]\\\"}`},
 		// Earlier shapes still redacted
