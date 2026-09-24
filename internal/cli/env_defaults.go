@@ -19,7 +19,10 @@ import (
 // override either way.
 func detectHarnesses(userHome string) []string {
 	var found []string
-	for _, h := range []struct{ name, dir string }{
+	for _, h := range []struct {
+		name string
+		dir  string
+	}{
 		{"codex", ".codex"}, {"claude", ".claude"}, {"cursor", ".cursor"},
 	} {
 		if info, err := os.Stat(filepath.Join(userHome, h.dir)); err == nil && info.IsDir() {
@@ -35,7 +38,7 @@ func detectHarnesses(userHome string) []string {
 // launchd (see docs/agent-archive-implementation.md); a failure here is
 // reported as an incomplete setup, with rollback and a retry path.
 func loadLaunchAgent(plistPath string) error {
-	cmd := exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
+	cmd := exec.CommandContext(context.Background(), "launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("launchctl bootstrap: %w: %s", err, output)
@@ -47,7 +50,7 @@ func loadLaunchAgent(plistPath string) error {
 // setup back if a later step fails after the LaunchAgent was already
 // loaded. Like loadLaunchAgent, unverified against a real launchd.
 func unloadLaunchAgent(plistPath string) error {
-	cmd := exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
+	cmd := exec.CommandContext(context.Background(), "launchctl", "bootout", fmt.Sprintf("gui/%d", os.Getuid()), plistPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("launchctl bootout: %w: %s", err, output)

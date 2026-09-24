@@ -10,7 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
-func handleSubagentStop(store *collector.LocalStore, cfg config.Config, harness, parentNativeID, eventName string, payload map[string]any, now time.Time) error {
+func handleSubagentStop(store *collector.LocalStore, cfg config.Config, harness, parentNativeID string, payload map[string]any, now time.Time) error {
 	parentID, found, err := store.ArchiveSessionID(parentNativeID)
 	if err != nil {
 		return fmt.Errorf("look up parent archive session ID: %w", err)

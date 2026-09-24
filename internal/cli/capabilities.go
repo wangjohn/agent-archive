@@ -17,10 +17,20 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+// capabilityState is how well a capture capability is established.
+type capabilityState string
+
+const (
+	capabilityDocumented       capabilityState = "documented"
+	capabilityFixtureValidated capabilityState = "fixture_validated"
+	capabilityUnavailable      capabilityState = "unavailable"
+	capabilityUnknown          capabilityState = "unknown"
+)
+
 type capabilityEvidence struct {
-	State      string `json:"state"`
-	Evidence   string `json:"evidence"`
-	NextAction string `json:"next_action,omitempty"`
+	State      capabilityState `json:"state"`
+	Evidence   string          `json:"evidence"`
+	NextAction string          `json:"next_action,omitempty"`
 }
 
 type captureCapabilities struct {
@@ -87,10 +97,10 @@ func readApplicationDiscoveries(home string) (map[string]applicationDiscovery, e
 
 func captureCapabilityProfile(name string) captureCapabilities {
 	documented := func(evidence string) capabilityEvidence {
-		return capabilityEvidence{State: "documented", Evidence: evidence}
+		return capabilityEvidence{State: capabilityDocumented, Evidence: evidence}
 	}
 	unavailable := func(evidence, next string) capabilityEvidence {
-		return capabilityEvidence{State: "unavailable", Evidence: evidence, NextAction: next}
+		return capabilityEvidence{State: capabilityUnavailable, Evidence: evidence, NextAction: next}
 	}
 	profile := captureCapabilities{
 		SkillEvidence:   unavailable("No supported native eligibility/use contract has been verified.", "Treat eligibility comparisons as unavailable."),
@@ -103,7 +113,7 @@ func captureCapabilityProfile(name string) captureCapabilities {
 		profile.Transcript = documented("Hooks provide transcript_path; official documentation says its format is not stable.")
 		profile.Lifecycle = documented("SessionStart, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop are documented.")
 	case "claude":
-		profile.SubagentLinkage = capabilityEvidence{State: "fixture_validated", Evidence: "Documented SubagentStop identity/path plus synthetic JSONL ownership and native timestamp fixtures. Actual installed-version capture is unverified.", NextAction: "Run a synthetic parent/child capture and read-back for the installed version."}
+		profile.SubagentLinkage = capabilityEvidence{State: capabilityFixtureValidated, Evidence: "Documented SubagentStop identity/path plus synthetic JSONL ownership and native timestamp fixtures. Actual installed-version capture is unverified.", NextAction: "Run a synthetic parent/child capture and read-back for the installed version."}
 		profile.FreshStart = documented("SessionStart.source distinguishes startup/clear from resume/compact.")
 		profile.Transcript = documented("Hooks provide transcript_path to the native JSONL transcript.")
 		profile.Lifecycle = documented("SessionStart, Stop, SessionEnd, and SubagentStop are documented.")
@@ -117,7 +127,7 @@ func captureCapabilityProfile(name string) captureCapabilities {
 		profile.Transcript = documented("A new chat's first prompt carries transcript_path null; afterAgentResponse and stop name ~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl, which is recorded only when it matches the conversation id. Observed on Cursor 3.21.13.")
 		profile.Lifecycle = documented("beforeSubmitPrompt, afterAgentResponse, stop, and sessionEnd fire for a desktop chat (sessionEnd can fire mid-turn); sessionStart, subagentStart, and subagentStop are documented.")
 	default:
-		unknown := capabilityEvidence{State: "unknown", Evidence: "No capability contract is registered."}
+		unknown := capabilityEvidence{State: capabilityUnknown, Evidence: "No capability contract is registered."}
 		return captureCapabilities{unknown, unknown, unknown, unknown, unknown, unknown}
 	}
 	return profile
@@ -138,10 +148,10 @@ func codexVersionCandidates(userHome string) [][]string {
 	var candidates [][]string
 	for _, path := range []string{
 		"/Applications/Codex.app/Contents/Resources/codex",
-		filepath.Join(userHome, "Applications/Codex.app/Contents/Resources/codex"),
+		filepath.Join(userHome, "Applications", "Codex.app", "Contents", "Resources", "codex"),
 		"codex",
 		"/Applications/ChatGPT.app/Contents/Resources/codex",
-		filepath.Join(userHome, "Applications/ChatGPT.app/Contents/Resources/codex"),
+		filepath.Join(userHome, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
 	} {
 		candidates = append(candidates, []string{path, "--version"})
 	}
@@ -160,8 +170,8 @@ func codexVersionCandidates(userHome string) [][]string {
 func claudeVersionCandidates(userHome string) [][]string {
 	paths := []string{
 		"claude",
-		filepath.Join(userHome, ".local/bin/claude"),
-		filepath.Join(userHome, ".claude/local/claude"),
+		filepath.Join(userHome, ".local", "bin", "claude"),
+		filepath.Join(userHome, ".claude", "local", "claude"),
 	}
 	paths = append(paths, claudeDesktopBundledCLIs(userHome)...)
 	candidates := make([][]string, len(paths))
@@ -180,7 +190,7 @@ var versionDirPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-
 // desktop app keeps under one directory per version, newest version first.
 // Versions compare numerically, so 2.1.100 sorts above 2.1.99.
 func claudeDesktopBundledCLIs(userHome string) []string {
-	root := filepath.Join(userHome, "Library/Application Support/Claude/claude-code")
+	root := filepath.Join(userHome, "Library", "Application Support", "Claude", "claude-code")
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil
@@ -194,7 +204,7 @@ func claudeDesktopBundledCLIs(userHome string) []string {
 	sort.SliceStable(versions, func(i, j int) bool { return compareDottedVersions(versions[i], versions[j]) > 0 })
 	paths := make([]string, len(versions))
 	for i, version := range versions {
-		paths[i] = filepath.Join(root, version, "claude.app/Contents/MacOS/claude")
+		paths[i] = filepath.Join(root, version, "claude.app", "Contents", "MacOS", "claude")
 	}
 	return paths
 }
@@ -259,7 +269,7 @@ func discoverCommandVersion(name string, candidates [][]string) applicationDisco
 }
 
 func discoverCursorVersion(userHome string) applicationDiscovery {
-	for _, bundle := range []string{"/Applications/Cursor.app", filepath.Join(userHome, "Applications/Cursor.app")} {
+	for _, bundle := range []string{"/Applications/Cursor.app", filepath.Join(userHome, "Applications", "Cursor.app")} {
 		if info, err := os.Stat(bundle); err != nil || !info.IsDir() {
 			continue
 		}
@@ -316,17 +326,17 @@ func installedVersionSupportDetail(discovery applicationDiscovery, verifiedVersi
 	if len(verifiedVersions) == 0 {
 		return "unverified", supportReasonNoVerifiedCapture
 	}
-	comparable := false
+	shapesMatch := false
 	for _, version := range verifiedVersions {
 		verified := normalizedVersion(version)
 		if installed != "" && installed == verified {
 			return "verified_by_capture", ""
 		}
 		if versionShape(installed) == versionShape(verified) {
-			comparable = true
+			shapesMatch = true
 		}
 	}
-	if !comparable {
+	if !shapesMatch {
 		return "unverified", supportReasonVersionSourceMismatch
 	}
 	return "unverified", supportReasonNoMatchingVersion

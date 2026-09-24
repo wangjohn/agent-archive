@@ -23,9 +23,13 @@ func (f *backfillFixture) putCursorRows(t *testing.T, rows map[string]string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
 	for k, v := range rows {
-		if _, err := db.Exec(`INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, v); err != nil {
+		if _, err := db.ExecContext(t.Context(), `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, v); err != nil {
 			t.Fatal(err)
 		}
 	}

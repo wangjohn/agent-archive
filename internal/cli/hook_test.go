@@ -68,8 +68,9 @@ func setUpTestConfig(t *testing.T, home, projectRoot string, activatedAt time.Ti
 
 func TestClassifyHookEvent(t *testing.T) {
 	cases := []struct {
-		harness, event string
-		want           hookEventKind
+		harness string
+		event   string
+		want    hookEventKind
 	}{
 		{"codex", "SessionStart", hookEventStart},
 		{"codex", "Interrupt", hookEventStop},
@@ -412,7 +413,10 @@ func TestHandleHookEventStopForUnregisteredSessionIsNoop(t *testing.T) {
 func TestCursorLifecycleStatusRetainsOnlyDocumentedEnums(t *testing.T) {
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
-		event, field, value, want string
+		event string
+		field string
+		value string
+		want  string
 	}{
 		{"stop", "status", "completed", "completed"},
 		{"stop", "status", "incomplete", ""},
@@ -511,7 +515,10 @@ func writeTestTranscript(t *testing.T, name, contents string) string {
 // project: they must register under its root, and their later Stop must
 // produce a publication request rather than silently finding no registration.
 func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.T) {
-	for _, tc := range []struct{ name, relative string }{
+	for _, tc := range []struct {
+		name     string
+		relative string
+	}{
 		{"worktree", filepath.Join(".claude", "worktrees", "feature-a")},
 		{"subdirectory", filepath.Join("internal", "cli")},
 	} {
@@ -634,18 +641,21 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 		registered bool
 	}{
 		{"empty transcript is a fresh conversation", func(t *testing.T) string {
+			t.Helper()
 			return writeTestTranscript(t, "cursor.jsonl", "")
 		}, true},
 		{"transcript not created yet is a fresh conversation", func(t *testing.T) string {
+			t.Helper()
 			return filepath.Join(t.TempDir(), "not-created-yet.jsonl")
 		}, true},
 		{"transcript with bytes is a resume", func(t *testing.T) string {
+			t.Helper()
 			return writeTestTranscript(t, "cursor.jsonl", "{\"role\":\"user\"}\n")
 		}, false},
 		// Cursor's desktop app sends a new chat's first hook with
 		// transcript_path null (observed on 3.21.13): that is a fresh chat,
 		// registered now and given its path by a later hook.
-		{"no transcript path is a new desktop chat", func(t *testing.T) string { return "" }, true},
+		{"no transcript path is a new desktop chat", func(*testing.T) string { return "" }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, project := t.TempDir(), t.TempDir()
@@ -687,8 +697,10 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 // a documented source still decides when it is present.
 func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 	for _, tc := range []struct {
-		name, source, contents string
-		registered             bool
+		name       string
+		source     string
+		contents   string
+		registered bool
 	}{
 		{"resume with an empty transcript stays declined", "resume", "", false},
 		{"compact with an empty transcript stays declined", "compact", "", false},
@@ -753,7 +765,7 @@ func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
 	if code := runStatusCommand([]string{"--json"}, &out, os.Stderr, testEnv(t, home, now)); code != 0 {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
-	if !strings.Contains(out.String(), diagnosticSetupInProgress) {
+	if !strings.Contains(out.String(), string(diagnosticSetupInProgress)) {
 		t.Fatalf("status --json omitted the diagnostic: %s", out.String())
 	}
 }
@@ -784,13 +796,13 @@ func TestSetupInProgressLeavesNoDiagnosticForUnconfiguredPaths(t *testing.T) {
 // under a symlinked spelling while the hook reports the resolved one, so the
 // match has to go through resolved paths on both sides.
 func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
-	home, real := t.TempDir(), t.TempDir()
+	home, resolved := t.TempDir(), t.TempDir()
 	alias := filepath.Join(t.TempDir(), "alias")
-	if err := os.Symlink(real, alias); err != nil {
+	if err := os.Symlink(resolved, alias); err != nil {
 		t.Fatal(err)
 	}
 	setUpTestConfig(t, home, alias, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	worktree := filepath.Join(real, ".claude", "worktrees", "feature-a")
+	worktree := filepath.Join(resolved, ".claude", "worktrees", "feature-a")
 	if err := os.MkdirAll(worktree, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -13,22 +13,25 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+// captureDiagnosticCode names the boundary that prevented a capture.
+type captureDiagnosticCode string
+
 const (
-	diagnosticUnknownSessionStart = "session_start_unknown"
-	diagnosticPreActivationStart  = "session_started_before_activation"
+	diagnosticUnknownSessionStart captureDiagnosticCode = "session_start_unknown"
+	diagnosticPreActivationStart  captureDiagnosticCode = "session_started_before_activation"
 	// diagnosticSetupInProgress records a start that arrived while setup's own
 	// transaction was open. Hooks do not register anything in that window.
-	diagnosticSetupInProgress = "setup_in_progress"
+	diagnosticSetupInProgress captureDiagnosticCode = "setup_in_progress"
 )
 
 // captureDiagnostic is deliberately content-free. It records only the
 // integration boundary that prevented capture; native session identifiers,
 // transcript paths, hook payloads, and conversation content never belong here.
 type captureDiagnostic struct {
-	Code        string    `json:"code"`
-	Harness     string    `json:"harness"`
-	ProjectRoot string    `json:"project_root,omitempty"`
-	ObservedAt  time.Time `json:"observed_at"`
+	Code        captureDiagnosticCode `json:"code"`
+	Harness     string                `json:"harness"`
+	ProjectRoot string                `json:"project_root,omitempty"`
+	ObservedAt  time.Time             `json:"observed_at"`
 }
 
 func captureDiagnosticsPath(home string) string {
@@ -144,7 +147,7 @@ func pruneCaptureDiagnostics(home string, projects []archive.ProjectActivation) 
 	return local.Write(captureDiagnosticsPath(home), kept)
 }
 
-func captureDiagnosticMessage(code string) string {
+func captureDiagnosticMessage(code captureDiagnosticCode) string {
 	switch code {
 	case diagnosticUnknownSessionStart:
 		return "the session start could not be established"

@@ -15,12 +15,14 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // stringList is a repeatable string flag.
 type stringList []string
 
 func (l *stringList) String() string { return strings.Join(*l, ",") }
+
 func (l *stringList) Set(value string) error {
 	*l = append(*l, value)
 	return nil
@@ -55,7 +57,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return 2
 	}
 	usageError := func(message string) int {
-		fmt.Fprintf(stderr, "agent-archive: backfill: %s\n", message)
+		terminal.Printf(stderr, "agent-archive: backfill: %s\n", message)
 		return 2
 	}
 	if fs.NArg() != 0 {
@@ -77,67 +79,67 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 
 	home, err := env.readHome()
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill: resolve home: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill: resolve home: %v\n", err)
 		return 1
 	}
 	cfg, found, err := config.Load(home)
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill: load config: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill: load config: %v\n", err)
 		return 1
 	}
 	if !found {
-		fmt.Fprintln(stderr, "agent-archive: backfill: "+errNotSetUp.Error())
+		terminal.Println(stderr, "agent-archive: backfill: "+errNotSetUp.Error())
 		return 1
 	}
 	// A dry run works while paused or while a setup transaction is pending:
 	// it writes nothing. An import refuses both before it looks at anything.
 	if !*dryRun {
 		if refusal := importRefusal(home, cfg); refusal != "" {
-			fmt.Fprintln(stderr, "agent-archive: backfill: "+refusal)
+			terminal.Println(stderr, "agent-archive: backfill: "+refusal)
 			return 1
 		}
 		if !*yes && !env.isTerminal(stdin) {
-			fmt.Fprintln(stderr, "agent-archive: backfill: confirming an import needs a terminal. Nothing was changed. Run again with --yes to import without asking, or with --dry-run to see the plan.")
+			terminal.Println(stderr, "agent-archive: backfill: confirming an import needs a terminal. Nothing was changed. Run again with --yes to import without asking, or with --dry-run to see the plan.")
 			return 1
 		}
 	}
 	userHome, err := env.userHomeDir()
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: backfill: resolve user home: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill: resolve user home: %v\n", err)
 		return 1
 	}
 
 	if !*jsonOut {
-		fmt.Fprint(stdout, backfill.SearchLine(filters)+" ")
+		terminal.Print(stdout, backfill.SearchLine(filters)+" ")
 	}
 	plan, err := backfill.BuildPlan(context.Background(), env.backfillEnvironment(userHome), newArchiveState(home, cfg), cfg, filters)
 	if err != nil {
 		if !*jsonOut {
-			fmt.Fprintln(stdout)
+			terminal.Println(stdout)
 		}
-		fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 		return 1
 	}
 	if *jsonOut {
 		if err := backfill.RenderJSON(stdout, plan, false); err != nil {
-			fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 			return 1
 		}
 		return 0
 	}
-	fmt.Fprintf(stdout, "%d found.\n", plan.Found())
+	terminal.Printf(stdout, "%d found.\n", plan.Found())
 	if *dryRun {
-		fmt.Fprintln(stdout)
+		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Dry run: nothing was changed.")
+		terminal.Println(stdout)
+		terminal.Println(stdout, "Dry run: nothing was changed.")
 		return 0
 	}
 	if len(plan.Imported()) == 0 {
-		fmt.Fprintln(stdout)
+		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
 		if err := finishInterruptedBatch(env, stdout, home, plan, cfg); err != nil {
-			fmt.Fprintf(stderr, "agent-archive: backfill: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 			return 1
 		}
 		return 0
@@ -145,31 +147,31 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 
 	// Step 2: storage must work before anything is confirmed. The check
 	// writes one test object and deletes it again.
-	fmt.Fprint(stdout, "Checking storage… ")
+	terminal.Print(stdout, "Checking storage… ")
 	if err := checkStorage(env, cfg); err != nil {
-		fmt.Fprintln(stdout, "failed.")
-		fmt.Fprintf(stderr, "agent-archive: backfill: storage check failed: %v\n", err)
+		terminal.Println(stdout, "failed.")
+		terminal.Printf(stderr, "agent-archive: backfill: storage check failed: %v\n", err)
 		if action := credentials.RecoveryAction(err); action != "" {
-			fmt.Fprintln(stderr, "agent-archive: backfill: "+action)
+			terminal.Println(stderr, "agent-archive: backfill: "+action)
 		}
-		fmt.Fprintln(stderr, "agent-archive: backfill: nothing was imported.")
+		terminal.Println(stderr, "agent-archive: backfill: nothing was imported.")
 		return 1
 	}
-	fmt.Fprintln(stdout, "ready.")
-	fmt.Fprintln(stdout)
+	terminal.Println(stdout, "ready.")
+	terminal.Println(stdout)
 	backfill.RenderText(stdout, plan)
-	fmt.Fprintln(stdout)
+	terminal.Println(stdout)
 
 	// Step 3: confirm. edit changes the retention of the whole archive and
 	// shows the plan again with the new deletion date.
 	if !*yes {
 		confirmed, err := confirmImport(newPrompter(stdin, stdout), stdout, &plan)
 		if err != nil {
-			fmt.Fprintf(stderr, "agent-archive: backfill: %v. Nothing was changed.\n", err)
+			terminal.Printf(stderr, "agent-archive: backfill: %v. Nothing was changed.\n", err)
 			return 1
 		}
 		if !confirmed {
-			fmt.Fprintln(stdout, "Cancelled. Nothing was changed.")
+			terminal.Println(stdout, "Cancelled. Nothing was changed.")
 			return 0
 		}
 	}
@@ -217,15 +219,15 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan) (bool, error
 			if days <= 0 {
 				days = defaultRetentionDays
 			}
-			fmt.Fprintln(out, "Retention applies to every session in the archive, not only these.")
+			terminal.Println(out, "Retention applies to every session in the archive, not only these.")
 			if plan.RetentionDays, err = p.intWithDefault("Keep sessions for how many days?", days); err != nil {
 				return false, err
 			}
-			fmt.Fprintln(out)
+			terminal.Println(out)
 			backfill.RenderText(out, *plan)
-			fmt.Fprintln(out)
+			terminal.Println(out)
 		default:
-			fmt.Fprintln(out, "Please enter y, n, or edit.")
+			terminal.Println(out, "Please enter y, n, or edit.")
 		}
 	}
 }
@@ -242,6 +244,7 @@ func countNoun(n int, noun string) string {
 // rather than a setting, so it is left out, as setup leaves it out when it
 // checks for concurrent changes.
 func configFingerprint(cfg config.Config) string {
+	//lint:ignore musttag credentials.Config is persisted by its Go field names; tagging it would change the config file format
 	data, _ := json.Marshal(withoutBucketPrivacy(cfg))
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])

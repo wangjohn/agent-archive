@@ -82,7 +82,8 @@ func bucketSnapshot(t *testing.T, bucket *storage.MemoryStore) string {
 // unchanged fails the test if the data directory or the bucket differ from
 // the snapshots taken before.
 type unchanged struct {
-	data, bucket string
+	data   string
+	bucket string
 }
 
 func snapshotAll(t *testing.T, f *backfillFixture, bucket *storage.MemoryStore) unchanged {
@@ -131,9 +132,11 @@ func importRegistrations(t *testing.T, home, batch string) (parents, children []
 	return parents, children
 }
 
-func loadBatch(t *testing.T, home, id string) (backfill.Batch, []byte) {
+// loadBatch reads the record of the fixture's import, firstImport, and its
+// raw bytes.
+func loadBatch(t *testing.T, home string) (backfill.Batch, []byte) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(home, "imports", id+".json"))
+	data, err := os.ReadFile(filepath.Join(home, "imports", firstImport+".json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +195,7 @@ func TestBackfillImportGolden(t *testing.T) {
 		}
 	}
 
-	b, raw := loadBatch(t, f.data, firstImport)
+	b, raw := loadBatch(t, f.data)
 	f.checkPrivate(t, "batch file", string(raw))
 	if strings.Contains(string(raw), f.root) {
 		t.Errorf("batch file names a path:\n%s", raw)
@@ -405,6 +408,7 @@ func TestBackfillConcurrentChanges(t *testing.T) {
 		want   string
 	}{
 		{"setting changed", func(t *testing.T, home string) {
+			t.Helper()
 			cfg, _, _ := config.Load(home)
 			cfg.RequireSkillUse = true
 			if err := config.Save(home, cfg); err != nil {
@@ -412,6 +416,7 @@ func TestBackfillConcurrentChanges(t *testing.T) {
 			}
 		}, "the configuration changed while this was open; run backfill again"},
 		{"paused", func(t *testing.T, home string) {
+			t.Helper()
 			if _, err := config.SetPaused(home, true); err != nil {
 				t.Fatal(err)
 			}
@@ -517,7 +522,7 @@ func TestBackfillCrashConverges(t *testing.T) {
 				t.Fatalf("projects after the crash: %d, want %d", len(cfg.Archive.Projects), crash.projects)
 			}
 			partial, _ := importRegistrations(t, f.data, firstImport)
-			b, _ := loadBatch(t, f.data, firstImport)
+			b, _ := loadBatch(t, f.data)
 			if b.CompletedAt != nil || len(b.Sessions) != len(partial) || len(b.ProjectsAdded) != 4 {
 				t.Fatalf("interrupted batch %+v, %d registered", b, len(partial))
 			}
@@ -537,7 +542,7 @@ func TestBackfillCrashConverges(t *testing.T) {
 				t.Fatalf("rerun did not continue the import (%s):\n%s", want, out)
 			}
 			parents, children := importRegistrations(t, f.data, firstImport)
-			b, _ = loadBatch(t, f.data, firstImport)
+			b, _ = loadBatch(t, f.data)
 			if len(parents) != 12 || len(children) != 2 || len(b.Sessions) != 12 || len(b.Subagents) != 2 || len(b.ProjectsAdded) != 4 || b.CompletedAt == nil {
 				t.Fatalf("after rerun: %d sessions, %d subagents, batch %+v", len(parents), len(children), b)
 			}
