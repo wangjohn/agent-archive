@@ -998,6 +998,7 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 			// harness-written record is not a message any author sent.
 			continue
 		default:
+			// A kind added later is not counted either.
 			continue
 		}
 		//lint:ignore LV1001 roles are copied from native records, an external and open vocabulary
@@ -1156,9 +1157,9 @@ func deriveLifecycle(evidence []SupplementalEvidence) (MetadataState, TurnOutcom
 				outcome = observed
 			}
 		case lifecycleSubagentStop:
+			// A subagent finishing says nothing about the parent session, which
+			// is still running: its state and outcome are left as observed.
 		}
-		// A subagent finishing says nothing about the parent session, which
-		// is still running: its state and outcome are left as observed.
 	}
 	return state, outcome
 }

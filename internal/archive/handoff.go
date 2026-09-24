@@ -298,6 +298,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 					current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepSummary, Text: text})
 				}
 			case TurnKindToolResult, TurnKindHarnessMeta, TurnKindCommandOutput, TurnKindLocalCommand, TurnKindHarnessNotification:
+				// Not part of the exchange the receiving agent reads.
 			}
 			continue
 		}

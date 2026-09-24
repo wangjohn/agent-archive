@@ -223,7 +223,7 @@ func AnnotateSupplementalGaps(payload map[string]any, gaps []CaptureGap) {
 		}
 		seen[gap.Code] = true
 		codes = append(codes, gap.Code)
-		//lint:ignore LV1001 gap codes are an open set produced across packages
+		//lint:ignore LV1001 CaptureGap.Code is also set from evidence payloads and by internal/cli, so it stays a plain string
 		switch gap.Code {
 		case "sensitive_content_redacted":
 			payload["redacted"] = true
@@ -276,6 +276,7 @@ func MergeSupplementalEvidence(previous, fresh []SupplementalEvidence) []Supplem
 		case EvidenceKindSkillDiscovered, EvidenceKindSkillInvocation, EvidenceKindSkillRead,
 			EvidenceKindLifecycleHook, EvidenceKindFinalResponse, EvidenceKindExplicitFeedback,
 			EvidenceKindLinkedSession, EvidenceKindCaptureGap:
+			// Every other kind, and any added later, dedupes on its full value.
 			fallthrough
 		default:
 			duplicate := false
