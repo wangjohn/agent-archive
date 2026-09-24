@@ -183,7 +183,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 		Source:           opts.Source,
 	}
 	h.Workspace = recordedWorkspace(bundle)
-	h.ToolResultsUnavailable = bundle.Capture.Harness.Name == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0
+	h.ToolResultsUnavailable = bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0
 
 	seenModel := map[string]bool{}
 	addModel := func(model string) {
@@ -319,8 +319,6 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 }
 
 // textSectionPrefixes are the role prefixes CursorAdapter.FilterText keeps.
-var textSectionPrefixes = []string{"user:", "assistant:", "tool:"}
-
 // textTranscriptExchanges reads the role sections of a filtered text
 // transcript: a "user:" section starts an exchange, an "assistant:" section is
 // agent text, and a "tool:" section is tool output. Continuation lines belong
@@ -333,17 +331,17 @@ func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]Han
 	flushSection := func() {
 		text := strings.TrimSpace(strings.Join(body, "\n"))
 		switch role {
-		case "user:":
+		case "user":
 			if current.Prompt != "" || len(current.Steps) > 0 {
 				exchanges = append(exchanges, *current)
 			}
 			current = &HandoffExchange{Prompt: cleanPrompt(text)}
-		case "assistant:":
+		case "assistant":
 			if text != "" {
 				current.Steps = append(current.Steps, HandoffStep{Kind: "text", Text: text})
 				leftOff = text
 			}
-		case "tool:":
+		case "tool":
 			if text != "" {
 				current.Steps = append(current.Steps, HandoffStep{Kind: "tool", Tool: &HandoffToolCall{
 					Name: "tool", Summary: firstLine(text, handoffSummaryCap),
@@ -355,17 +353,13 @@ func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]Han
 	}
 	for _, transcript := range texts {
 		for _, line := range strings.Split(transcript.Content, "\n") {
-			lower := strings.ToLower(strings.TrimSpace(line))
-			started := false
-			for _, prefix := range textSectionPrefixes {
-				if strings.HasPrefix(lower, prefix) {
-					flushSection()
-					role, started = prefix, true
-					body = append(body, strings.TrimSpace(strings.TrimSpace(line)[len(prefix):]))
-					break
-				}
+			if header, rest, ok := textRoleHeader(line); ok && visibleTextRoles[header] {
+				flushSection()
+				role = header
+				body = append(body, strings.TrimSpace(rest))
+				continue
 			}
-			if !started && role != "" {
+			if role != "" {
 				body = append(body, line)
 			}
 		}

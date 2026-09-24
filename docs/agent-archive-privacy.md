@@ -7,6 +7,22 @@ native record, then text transcripts and supplemental evidence (source schema
 2). The line format changes how retained evidence is packaged, not what is
 retained: every line holds only what the source filter below kept.
 
+## Source filter version 10
+
+Filter 10 changes how a Cursor plain-text transcript is split into role
+sections. Adapter version 0.10.0 goes with it; JSONL and composer output is
+unchanged.
+
+- **Role headers only at column 0.** Filter 9 treated any line whose trimmed
+  text began with `user:`, `system:`, or another role name as a role header.
+  An indented YAML key in tool output (`    user: …` in a docker-compose
+  file) therefore started a new section, and `  system: linux` hid
+  everything after it as if it were a system prompt. A header is now only a
+  role name and a colon at the start of the line (in any case), followed by
+  a space or the end of the line. An indented role word is content: it is
+  retained, sanitized like the rest of its section, and never hides or
+  reveals anything.
+
 ## Source filter version 9
 
 Filter 9 closes four ways content left the machine that the filter was meant

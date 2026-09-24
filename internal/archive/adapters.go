@@ -49,7 +49,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.9.0"
+const adapterVersion = "0.10.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -58,7 +58,7 @@ const maxOmittedKeyNames = 64
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
-const DefaultParserVersion = "0.9.0"
+const DefaultParserVersion = "0.10.0"
 
 // NewAdapter returns a privacy-first adapter by canonical harness name.
 func NewAdapter(name string) (Adapter, error) {
@@ -142,6 +142,35 @@ func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // section's edges). That is a property of sanitizing a growing string, not
 // of this function, and a text transcript offers no record boundary to stop
 // short of.
+// visibleTextRoles and hiddenTextRoles are the role headers of a Cursor
+// text transcript: a visible section is retained, a hidden one omitted.
+var (
+	visibleTextRoles = map[string]bool{"user": true, "assistant": true, "tool": true}
+	hiddenTextRoles  = map[string]bool{"system": true, "developer": true, "thinking": true, "analysis": true}
+)
+
+// textRoleHeader reports whether line starts a role section of a Cursor text
+// transcript, and returns the role and the text after the header. A header
+// is how Cursor writes one: the role name (in any case) and a colon at
+// column 0, then a space or the end of the line; the role is returned in
+// lower case. An indented "user:" is content, such as a YAML key in tool
+// output, and must never start a turn or hide what follows it.
+func textRoleHeader(line string) (role, rest string, ok bool) {
+	line = strings.TrimSuffix(line, "\r")
+	colon := strings.IndexByte(line, ':')
+	if colon <= 0 {
+		return "", "", false
+	}
+	role, rest = strings.ToLower(line[:colon]), line[colon+1:]
+	if !visibleTextRoles[role] && !hiddenTextRoles[role] {
+		return "", "", false
+	}
+	if rest != "" && rest[0] != ' ' {
+		return "", "", false
+	}
+	return role, strings.TrimPrefix(rest, " "), true
+}
+
 func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (FilteredTranscript, error) {
 	if freshStartedAt.IsZero() {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no reliable fresh-session start"}
@@ -168,16 +197,15 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	var sections [][]string
 	hidden := false
 	for _, line := range strings.Split(string(content), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		lower := strings.ToLower(trimmed)
+		role, _, header := textRoleHeader(line)
 		switch {
-		case strings.HasPrefix(lower, "system:") || strings.HasPrefix(lower, "developer:") || strings.HasPrefix(lower, "thinking:") || strings.HasPrefix(lower, "analysis:"):
+		case header && hiddenTextRoles[role]:
 			hidden = true
 			addGap("hidden_instruction_omitted", "text section omitted")
-		case strings.HasPrefix(lower, "user:") || strings.HasPrefix(lower, "assistant:") || strings.HasPrefix(lower, "tool:"):
+		case header:
 			hidden = false
 			sections = append(sections, []string{line})
 		case hidden:

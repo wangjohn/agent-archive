@@ -2,6 +2,7 @@ package archive
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -166,8 +167,8 @@ func toolActivity(record map[string]any, index int, model, reasoning string) ([]
 					}
 				}
 			}
-			for _, child := range item {
-				walk(child)
+			for _, key := range walkKeys(item, toolResultTypes[kind]) {
+				walk(item[key])
 			}
 		case []any:
 			for _, child := range item {
@@ -177,6 +178,23 @@ func toolActivity(record map[string]any, index int, model, reasoning string) ([]
 	}
 	walk(record)
 	return calls, results, skillUses
+}
+
+// walkKeys are the keys of item toolActivity descends into, in sorted order
+// so the calls of one record always come out in the same order. It never
+// descends into a call's arguments (toolArgumentKeys: a tool's input may
+// itself contain {"type":"tool_use"} shapes, which are data, not calls) or,
+// for a result, into its output.
+func walkKeys(item map[string]any, isResult bool) []string {
+	keys := make([]string, 0, len(item))
+	for key := range item {
+		if toolArgumentKeys[key] || (isResult && (key == "content" || key == "output")) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // toolArguments returns a tool call's retained arguments as an object. Claude

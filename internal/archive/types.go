@@ -31,9 +31,12 @@ const (
 	// by snake_case, SCREAMING_CASE, camelCase, and quoted names (value only),
 	// drops base64 image, document, and file blocks, sanitizes structured
 	// Cursor tool results before encoding them, keeps skill snapshots inside
-	// their skill root, and truncates on a UTF-8 boundary. See
-	// docs/agent-archive-privacy.md.
-	FilterVersion = "9"
+	// their skill root, and truncates on a UTF-8 boundary. Filter 10 reads
+	// a Cursor text transcript's role headers only at column 0, so an
+	// indented "user:" or "system:" in tool output is content: it no longer
+	// starts a section, hides the rest of the transcript, or un-hides a
+	// hidden one. JSONL output is unchanged. See docs/agent-archive-privacy.md.
+	FilterVersion = "10"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

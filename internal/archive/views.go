@@ -192,7 +192,7 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 			// a second time.
 			continue
 		}
-		if bundle.Capture.Harness.Name == "codex" && firstString(record, "type") == "turn_context" {
+		if bundle.harness() == "codex" && firstString(record, "type") == "turn_context" {
 			codexModel, codexReasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
 			continue
 		}
@@ -218,11 +218,12 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 			view.CompactSummaries++
 		}
 		turn := NormalizedTurn{RecordIndex: i, Role: role, Kind: kind, MessageID: nestedMessageID(record), Text: text, Provider: firstStringDeep(record, "model_provider"), ID: firstStringDeep(record, "id", "uuid"), ParentID: firstStringDeep(record, "parent_id", "parent_uuid", "parentUuid"), TurnID: firstStringDeep(record, "turn_id"), Timestamp: firstStringDeep(record, "timestamp", "created_at")}
-		if bundle.Capture.Harness.Name == "codex" {
+		switch bundle.harness() {
+		case "codex":
 			turn.Model, turn.Reasoning, turn.ModelSource = codexModel, codexReasoning, TurnModelSourceTurnContext
-		} else if bundle.Capture.Harness.Name == "claude" {
+		case "claude":
 			turn.ResponseModel, turn.ModelSource = firstStringDeep(record, "model", "model_id"), TurnModelSourceNativeResponse
-		} else {
+		default:
 			turn.Model, turn.Reasoning, turn.ModelSource = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort"), TurnModelSourceNativeTranscript
 		}
 		view.Turns = append(view.Turns, turn)
@@ -240,12 +241,17 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 // compact_boundary record and the isCompactSummary flag. For anything else the
 // count is unknown, not zero.
 func compactionsObservable(bundle SourceBundle) bool {
-	if canonicalHarnessName(bundle.Capture.Harness.Name) != "claude" {
+	if bundle.harness() != "claude" {
 		return false
 	}
 	version, err := strconv.Atoi(strings.TrimSpace(bundle.Capture.FilterVersion))
 	return err == nil && version >= 5
 }
+
+// harness is the bundle's harness name in its one canonical spelling
+// ("claude-code" is "claude"). Every harness-specific rule compares this,
+// never the raw recorded name.
+func (b SourceBundle) harness() string { return canonicalHarnessName(b.Capture.Harness.Name) }
 
 func canonicalHarnessName(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))

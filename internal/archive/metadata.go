@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -34,15 +35,30 @@ func (t *tokenTotals) observe(usage map[string]any, messageID string) {
 
 // usage sums the collected accounting. A field stays nil until some record
 // reports it, so "no accounting" is never published as zero tokens.
+// maxTokenCount is the largest count JSON carries exactly (2^53).
+const maxTokenCount = 1 << 53
+
+// tokenCount reads one native token count. Only a whole number from 0 to
+// maxTokenCount is a count; a negative, fractional, or larger value (a
+// corrupt or hostile record) is treated as absent, so it can neither make a
+// total negative nor break the schema's bounds.
+func tokenCount(raw any) (int, bool) {
+	value, ok := raw.(float64)
+	if !ok || value < 0 || value > maxTokenCount || value != math.Trunc(value) {
+		return 0, false
+	}
+	return int(value), true
+}
+
 func (t tokenTotals) usage() TokenUsage {
 	var out TokenUsage
 	add := func(target **int, source map[string]any, keys ...string) {
 		for _, key := range keys {
-			value, ok := source[key].(float64)
+			value, ok := tokenCount(source[key])
 			if !ok {
 				continue
 			}
-			total := int(value)
+			total := value
 			if *target != nil {
 				total += **target
 			}
@@ -85,7 +101,7 @@ func accumulateTokens(record map[string]any, totals *tokenTotals) {
 // hook for this, so without it a Cursor session's outcome stays unknown even
 // though the transcript states it.
 func nativeTurnEnd(bundle SourceBundle) (MetadataState, TurnOutcome, bool) {
-	if bundle.Capture.Harness.Name != "cursor" {
+	if bundle.harness() != "cursor" {
 		return "", "", false
 	}
 	state, outcome, found := MetadataStateUnknown, TurnOutcomeUnknown, false
@@ -475,6 +491,9 @@ func skillNameFromPath(value string) string {
 	return parts[len(parts)-1]
 }
 
+// ValidateSourceReference checks that metadata has the supported schema
+// version and names its source bundle: an object key and a 64-character
+// SHA-256.
 func (m Metadata) ValidateSourceReference() error {
 	if m.SchemaVersion != MetadataSchemaVersion {
 		return fmt.Errorf("unsupported metadata schema version %d", m.SchemaVersion)

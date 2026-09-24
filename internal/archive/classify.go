@@ -1,6 +1,9 @@
 package archive
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // harnessTextKinds classify a user record by the tag its text starts with.
 // These records are written by the harness around something the person did,
@@ -24,6 +27,12 @@ var harnessTextKinds = []struct {
 	{"command-args", TurnKindLocalCommand},
 }
 
+// interruptionMarker is the user record Claude Code writes when the person
+// stops a turn ("[Request interrupted by user]", "[Request interrupted by
+// user for tool use]"). The harness writes it, not the person, so it is not
+// a prompt and does not start an exchange.
+var interruptionMarker = regexp.MustCompile(`^\[Request interrupted by user[^\]\n]*\]$`)
+
 // refineUserKind reclassifies a record that looked like a human prompt but was
 // written by the harness. A slash command is provisionally a local command;
 // resolveSlashCommands promotes it to a prompt if the assistant answered it.
@@ -41,6 +50,9 @@ func refineUserKind(record map[string]any, kind TurnKind, text string) TurnKind 
 		return TurnKindHarnessNotification
 	}
 	trimmed := strings.TrimSpace(text)
+	if interruptionMarker.MatchString(trimmed) {
+		return TurnKindHarnessNotification
+	}
 	for _, candidate := range harnessTextKinds {
 		if strings.HasPrefix(trimmed, "<"+candidate.tag+">") {
 			return candidate.kind

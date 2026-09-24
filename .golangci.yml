@@ -137,13 +137,13 @@ linters:
       - path: internal/backfill/render\.go
         text: RenderText
         linters: [gocyclo]
-      - path: internal/archive/handoff\.go
+      - path: internal/archive/handoff(_render)?\.go
         text: (BuildHandoff|RenderHandoffMarkdown)
         linters: [funlen, gocyclo]
       - path: internal/archive/source_jsonl\.go
         text: DecodeSource
         linters: [funlen, gocyclo]
-      - path: internal/archive/views\.go
+      - path: internal/archive/metadata\.go
         text: BuildMetadata
         linters: [funlen, gocyclo]
       - path: internal/reader/reader\.go
