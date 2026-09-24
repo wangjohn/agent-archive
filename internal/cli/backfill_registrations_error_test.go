@@ -38,7 +38,7 @@ func TestBackfillRegistrationsErrorHasNoImportsAdvice(t *testing.T) {
 		}
 	}}
 	_, errOut, code := f.importRun(t, stdin, true)
-	if code == 0 || !strings.Contains(errOut, "read registrations") || strings.Contains(errOut, "imports") {
+	if code == 0 || !strings.Contains(errOut, "read registrations") || strings.Contains(errOut, "Repair the unreadable file") || strings.Contains(errOut, filepath.Join(f.data, "imports")) {
 		t.Fatalf("code %d: %s", code, errOut)
 	}
 }
