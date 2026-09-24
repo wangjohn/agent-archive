@@ -2,6 +2,8 @@ module github.com/wangjohn/agent-archive
 
 go 1.24.0
 
+toolchain go1.27.1
+
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.5
 	github.com/aws/aws-sdk-go-v2/config v1.29.8
@@ -9,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.82.0
 	github.com/aws/smithy-go v1.22.4
 	golang.org/x/term v0.30.0
+	modernc.org/sqlite v1.46.1
 )
 
 require (
@@ -35,5 +38,4 @@ require (
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.46.1 // indirect
 )
