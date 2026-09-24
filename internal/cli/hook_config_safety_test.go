@@ -151,13 +151,41 @@ func TestSetupAndUninstallNeedATerminal(t *testing.T) {
 	}
 }
 
-// Each command's own flag set decides its arguments.
+// Each command's own flag set decides its arguments, and every command
+// reports a bad one the same way: one line on stderr naming the problem
+// and the command's help, exit 2, and never the flag package's usage dump.
 func TestCommandsRejectUnknownArguments(t *testing.T) {
 	env := testEnv(t, t.TempDir(), time.Now())
-	for _, args := range [][]string{{"status", "--jsn"}, {"status", "extra"}, {"sync", "--json"}, {"pause", "now"}, {"resume", "-x"}, {"setup", "--yes"}, {"uninstall", "--delete-local"}, {"uninstall", "--yes", "extra"}} {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"status", "--jsn"}, "agent-archive: status: unknown flag --jsn; run agent-archive status --help"},
+		{[]string{"status", "extra"}, `agent-archive: status: unexpected argument "extra"; run agent-archive status --help`},
+		{[]string{"sync", "--json"}, "agent-archive: sync: unknown flag --json; run agent-archive sync --help"},
+		{[]string{"pause", "now"}, `agent-archive: pause: unexpected argument "now"; run agent-archive pause --help`},
+		{[]string{"resume", "-x"}, "agent-archive: resume: unknown flag --x; run agent-archive resume --help"},
+		{[]string{"setup", "--yes"}, "agent-archive: setup: unknown flag --yes; run agent-archive setup --help"},
+		{[]string{"uninstall", "--delete-local"}, "agent-archive: uninstall: unknown flag --delete-local; run agent-archive uninstall --help"},
+		{[]string{"uninstall", "--yes", "extra"}, `agent-archive: uninstall: unexpected argument "extra"; run agent-archive uninstall --help`},
+		{[]string{"list", "--bogus"}, "agent-archive: list: unknown flag --bogus; run agent-archive list --help"},
+		{[]string{"list", "--since"}, "agent-archive: list: --since needs a value; run agent-archive list --help"},
+		{[]string{"list", "--complete=maybe"}, `agent-archive: list: invalid value "maybe" for --complete: parse error; run agent-archive list --help`},
+		{[]string{"show", "--bogus"}, "agent-archive: show: unknown flag --bogus; run agent-archive show --help"},
+		{[]string{"show"}, "agent-archive: show: a SESSION_ID is required (see agent-archive list); run agent-archive show --help"},
+		{[]string{"show", "a", "b"}, `agent-archive: show: unexpected argument "b"; run agent-archive show --help`},
+		{[]string{"handoff", "--latest", "--bogus"}, "agent-archive: handoff: unknown flag --bogus; run agent-archive handoff --help"},
+		{[]string{"handoff", "--max-bytes", "x", "--latest"}, `agent-archive: handoff: invalid value "x" for --max-bytes: parse error; run agent-archive handoff --help`},
+		{[]string{"feedback", "SESSION", "--bogus"}, "agent-archive: feedback: unknown flag --bogus; run agent-archive feedback --help"},
+		{[]string{"backfill", "--bogus"}, "agent-archive: backfill: unknown flag --bogus; run agent-archive backfill --help"},
+		{[]string{"backfill", "--since", "yesterday"}, `agent-archive: backfill: --since: "yesterday" is not a date (2026-01-31), an RFC 3339 time, or an age (7d, 12h); run agent-archive backfill --help`},
+		{[]string{"backfill", "undo", "--bogus"}, "agent-archive: backfill undo: unknown flag --bogus; run agent-archive backfill undo --help"},
+		{[]string{"backfill", "history", "extra"}, `agent-archive: backfill history: unexpected argument "extra"; run agent-archive backfill history --help`},
+	} {
 		var out, errOut bytes.Buffer
-		if code := Run(args, nil, &out, &errOut, env); code != 2 || !strings.Contains(errOut.String(), "unexpected arguments") {
-			t.Errorf("%v: exit %d stderr=%q", args, code, &errOut)
+		code := Run(tc.args, nil, &out, &errOut, env)
+		if code != 2 || errOut.String() != tc.want+"\n" || out.Len() != 0 {
+			t.Errorf("%v: exit %d\nstderr=%q\n  want=%q", tc.args, code, errOut.String(), tc.want+"\n")
 		}
 	}
 }

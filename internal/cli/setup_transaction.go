@@ -240,7 +240,7 @@ func carriedImportedHarnesses(committed, harnesses, stopImported []string) []str
 }
 
 func applySetup(home, userHome, executable string, old config.Config, next *config.Config, stopImported []string, env Env) error {
-	unlock, err := local.Lock(home)
+	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
 		return fmt.Errorf("another operation is running; retry setup when it finishes: %w", err)
 	}
@@ -520,7 +520,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 		return err
 	}
 	defer release()
-	unlock, err := local.Lock(home)
+	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
 		return fmt.Errorf("another operation is running; retry when it finishes: %w", err)
 	}
@@ -560,7 +560,7 @@ func recoverSetup(home string, env Env) error {
 	if err != nil {
 		return err
 	}
-	unlock, err := local.Lock(home)
+	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
 		return err
 	}

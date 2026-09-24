@@ -170,7 +170,15 @@ To install by hand instead:
    `another_installation` means launchd runs this installation's label from
    a different plist. That job belongs to another installation and is left
    alone: set `AGENT_ARCHIVE_HOME` to a data directory of this
-   installation's own, or uninstall the other one.
+   installation's own, or uninstall the other one. Before setup, status
+   shows only that setup is needed (`status --json` reports background
+   `missing` and authentication `not_configured`). Every command that takes
+   the collector lock records which command it is and when it took it. When
+   one has held it for over two hours, twice a collection pass's hard time
+   limit, status says collection is stuck and names the command and its
+   process ID, rather than suggesting `sync`. Status also counts local state
+   files a pass could not read and moved aside (quarantined), and session
+   summaries this version cannot refresh.
    Hooks or background `broken` means the configuration is in place but runs
    an agent-archive executable that has since been moved, deleted, or made
    non-executable; rerun `agent-archive setup` from the binary's new location.
@@ -227,6 +235,10 @@ agent-archive backfill undo          # remove the latest import from the bucket
 - Claude Code deletes its own transcripts after 30 days by default. To keep
   more history for backfill, set `"cleanupPeriodDays"` in
   `~/.claude/settings.json`.
+- `--since` and `--until` take the same forms as `list --since`: a date
+  (2026-09-01), an RFC 3339 time, or an age (`30d`, `12h`). Backfill selects
+  whole local days, so a time or an age selects from the start of the day it
+  falls on.
 - `undo` deletes the import's sessions from the bucket, excludes the projects
   it added, and keeps later backfills from importing them again unless you
   pass `--include-removed`.
@@ -238,8 +250,10 @@ agent-archive backfill undo          # remove the latest import from the bucket
 
 Run `agent-archive` for a short command guide, or `agent-archive COMMAND --help`
 for examples. Help never activates hooks, reads credentials, or changes state.
-Invalid flags fail before a command starts. Exit codes are 0 for success/help,
-1 for operational failure, and 2 for usage errors.
+Invalid flags fail before a command starts, with one line naming the problem
+and the command's help. `agent-archive help backfill undo` and `backfill history
+--help` show a subcommand's own help. Exit codes are 0 for success/help, 1
+for operational failure, and 2 for usage errors.
 
 - `sync` collects and uploads once, reporting results. It respects pause.
 - `pause` persists until `resume`. If work is still running, the command
@@ -336,7 +350,7 @@ agent-archive list --skill review --skill-usage eligible_no_use
 agent-archive list --complete   # complete parser coverage, no capture gaps
 
 # One session's metadata sidecar, as JSON.
-agent-archive show <archive-session-id>
+agent-archive show SESSION_ID
 ```
 
 Metadata model keys `gen_ai.provider.name`, `gen_ai.request.model`, and
@@ -382,7 +396,7 @@ claude "$(agent-archive handoff --latest --harness codex)"
 codex "$(agent-archive handoff --latest --harness claude)"
 
 # A specific session, from `list`, written to a file
-agent-archive handoff <archive-session-id> --output /tmp/handoff.md
+agent-archive handoff SESSION_ID --output /tmp/handoff.md
 
 # A transcript the archive never captured, on this Mac; needs no setup
 agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness codex
@@ -422,7 +436,7 @@ Write your assessment to a private UTF-8 text file, then attach it to a session
 owned by this Mac:
 
 ```sh
-agent-archive feedback <archive-session-id> --file /private/path/feedback.txt
+agent-archive feedback SESSION_ID --file /private/path/feedback.txt
 agent-archive sync
 ```
 
