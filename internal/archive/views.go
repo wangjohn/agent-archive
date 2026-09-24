@@ -1327,6 +1327,8 @@ func IsParseError(err error) bool {
 	return errors.As(err, &target)
 }
 
+// ValidateSourceReference reports whether the metadata has a supported schema
+// version and names a source bundle by key and SHA-256.
 func (m *Metadata) ValidateSourceReference() error {
 	if m.SchemaVersion != MetadataSchemaVersion {
 		return fmt.Errorf("unsupported metadata schema version %d", m.SchemaVersion)

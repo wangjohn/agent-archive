@@ -20,6 +20,9 @@ func ID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// Home returns the archive's local state directory, creating it if needed:
+// $AGENT_ARCHIVE_HOME, or ~/.local/share/agent-archive. It refuses a
+// directory inside a Git checkout.
 func Home() (string, error) { return resolveHome(true) }
 
 func ReadHome() (string, error) { return resolveHome(false) }

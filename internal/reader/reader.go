@@ -57,6 +57,9 @@ type Filter struct {
 	SkillUsage              SkillUsage
 }
 
+// Limits caps how much of a source bundle a read downloads and
+// decompresses. A zero field means the default: 32 MiB compressed and
+// 128 MiB uncompressed.
 type Limits struct {
 	MaxCompressedBytes   int
 	MaxUncompressedBytes int

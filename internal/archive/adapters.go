@@ -80,6 +80,7 @@ func NewAdapter(name string) (Adapter, error) {
 // foundation. Unsupported Codex record types are gaps, never pass-through.
 type CodexAdapter struct{}
 
+// Name is the harness name Codex sessions are archived under.
 func (CodexAdapter) Name() string { return "codex" }
 
 func (CodexAdapter) Version() string { return adapterVersion }
@@ -95,6 +96,7 @@ func (CodexAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // types. It does not claim schema coverage for every installed version.
 type ClaudeAdapter struct{}
 
+// Name is the harness name Claude Code sessions are archived under.
 func (ClaudeAdapter) Name() string { return "claude" }
 
 func (ClaudeAdapter) Version() string { return adapterVersion }
@@ -112,6 +114,7 @@ func (ClaudeAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 // unsupported capture gaps upstream.
 type CursorAdapter struct{}
 
+// Name is the harness name Cursor sessions are archived under.
 func (CursorAdapter) Name() string { return "cursor" }
 
 func (CursorAdapter) Version() string { return adapterVersion }

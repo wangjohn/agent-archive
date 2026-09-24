@@ -138,6 +138,7 @@ type HandoffStep struct {
 // HandoffStepKind says which of the HandoffStep shapes a step is.
 type HandoffStepKind string
 
+// HandoffStepKind values, as written in the handoff document.
 const (
 	HandoffStepText      HandoffStepKind = "text"
 	HandoffStepTool      HandoffStepKind = "tool"
@@ -175,6 +176,7 @@ type HandoffElision struct {
 // HandoffElisionKind names one FitHandoff budget step.
 type HandoffElisionKind string
 
+// HandoffElisionKind values, as written in the handoff document.
 const (
 	HandoffElisionToolOutput    HandoffElisionKind = "tool_output"
 	HandoffElisionToolCalls     HandoffElisionKind = "tool_calls"
