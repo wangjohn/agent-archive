@@ -61,6 +61,10 @@ type Plan struct {
 	// codexArchivedOnly is set when only Codex's archived_sessions folder
 	// could not be listed.
 	codexArchivedOnly bool
+	// cursorIncomplete is set when Cursor's transcript store could not be
+	// fully listed; the database count then can't tell which chats have
+	// transcripts, so it is not made.
+	cursorIncomplete bool
 }
 
 // Destination names the bucket imports go to.
@@ -321,6 +325,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 	}
 	plan.codexArchivedOnly = unread.codexArchivedOnly
+	plan.cursorIncomplete = unread.cursorIncomplete
 	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
 		if s.sub.Bytes > archive.MaxRecordBytes {
 			s.skipped = true

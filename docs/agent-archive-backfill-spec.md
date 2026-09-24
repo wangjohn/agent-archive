@@ -546,7 +546,10 @@ being read at the same time, so a file that doesn't fit waits for room.
     (`cursor_database_unchecked_reason`): `locked` (a `-journal` exists: an
     unfinished write that only Cursor may roll back), `unreadable` (one side
     file without the other, or an open failure), `unknown_format` (missing
-    table or fields that don't decode), `changed_during_read`. A missing
+    table or fields that don't decode), `changed_during_read`, and
+    `transcripts_unreadable` (part of Cursor's transcript store couldn't be
+    listed, so chats with transcripts can't be told apart; the database isn't
+    opened). A missing
     database counts as checked with none. `--harness` without Cursor skips the
     read entirely.
   - If Cursor quits in the instant between the side-file check and the open,

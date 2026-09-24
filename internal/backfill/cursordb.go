@@ -52,6 +52,10 @@ const (
 	// CursorUncheckedChangedDuringRead: Cursor wrote the file while it was
 	// read in place with Cursor closed.
 	CursorUncheckedChangedDuringRead CursorUncheckedReason = "changed_during_read"
+	// CursorUncheckedTranscriptsUnreadable: part of Cursor's transcript store
+	// could not be listed, so a chat with a transcript can't be told apart
+	// from one stored only in the database. The database is not opened.
+	CursorUncheckedTranscriptsUnreadable CursorUncheckedReason = "transcripts_unreadable"
 )
 
 // CursorDatabaseResult is one read of Cursor's database. Chats are every
@@ -440,6 +444,10 @@ func composerWorkspaceFolder(raw json.RawMessage) string {
 // cursor_database_only.
 func countCursorDatabase(ctx context.Context, env Environment, state ArchiveState, r *resolver, projectFilter []string, since, until time.Time, plan *Plan) error {
 	if env.CursorDatabase == nil || !harnessMatches(plan.Filters.Harnesses, "cursor") {
+		return nil
+	}
+	if plan.cursorIncomplete {
+		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, CursorUncheckedTranscriptsUnreadable
 		return nil
 	}
 	res, err := env.CursorDatabase(ctx)

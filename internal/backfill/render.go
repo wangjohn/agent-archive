@@ -471,11 +471,12 @@ func renderSkipped(w io.Writer, p Plan) {
 // uncheckedCauses explain why Cursor's database was not checked. "" is a
 // plan made without a database reader.
 var uncheckedCauses = map[CursorUncheckedReason]string{
-	"":                               "the database was not read",
-	CursorUncheckedLocked:            "it has an unfinished write; open and close Cursor, then try again",
-	CursorUncheckedUnreadable:        "the database could not be read safely",
-	CursorUncheckedUnknownFormat:     "it is in a format this version does not know",
-	CursorUncheckedChangedDuringRead: "Cursor changed it while it was read; try again",
+	"":                                   "the database was not read",
+	CursorUncheckedLocked:                "it has an unfinished write; open and close Cursor, then try again",
+	CursorUncheckedUnreadable:            "the database could not be read safely",
+	CursorUncheckedUnknownFormat:         "it is in a format this version does not know",
+	CursorUncheckedChangedDuringRead:     "Cursor changed it while it was read; try again",
+	CursorUncheckedTranscriptsUnreadable: "Cursor's transcript folders could not all be read, so chats with transcripts can't be told apart",
 }
 
 // sessionNoun names n sessions from the given apps: "Cursor chat" when they

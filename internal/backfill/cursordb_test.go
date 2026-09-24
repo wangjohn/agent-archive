@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -444,6 +445,14 @@ func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 				t.Fatal(err)
 			}
 			info, _ := os.Stat(path)
+			// Holding the old file open keeps its inode from being reused
+			// for the new one, as Linux otherwise does at once; a byte-
+			// identical file on the same inode is not a change at all.
+			old, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer old.Close()
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
@@ -761,5 +770,47 @@ func TestCursorDatabasePlan(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"cursor_database_unchecked_reason": "unreadable"`) {
 		t.Fatalf("no reason in the JSON plan:\n%s", out.String())
+	}
+}
+
+// With any part of Cursor's transcript store unreadable, a chat with a
+// transcript can't be told apart from a database-only one, so the database
+// is not counted at all, rather than counting every chat as database-only.
+func TestCursorDatabaseSkippedWhenTranscriptsUnreadable(t *testing.T) {
+	tr := newTree(t)
+	site := tr.repo("home/site")
+	slugDir := filepath.Join(tr.home, ".cursor", "projects", cursorSlug(site))
+	tr.write(filepath.Join("home", ".cursor", "projects", cursorSlug(site), "agent-transcripts", "k1", "k1.jsonl"), cursorTranscript)
+	writeCursorDB(t, CursorStateDatabase(tr.home), true, map[string]any{
+		"composerData:k1": composerJSON("k1", 3, nil),
+		"composerData:k2": composerJSON("k2", 1, nil),
+	})
+	for _, tc := range []struct{ name, unreadable string }{
+		{"store", filepath.Join(tr.home, ".cursor", "projects")},
+		{"one project's transcripts", filepath.Join(slugDir, "agent-transcripts")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := tr.env()
+			env.ReadDir = func(dir string) ([]fs.DirEntry, error) {
+				if dir == tc.unreadable {
+					return nil, &fs.PathError{Op: "open", Path: dir, Err: fs.ErrPermission}
+				}
+				return os.ReadDir(dir)
+			}
+			env.CursorDatabase = func(context.Context) (CursorDatabaseResult, error) {
+				t.Fatal("the database was read although Cursor's transcripts were incomplete")
+				return CursorDatabaseResult{}, nil
+			}
+			p := plan(t, env, states{}, config.Config{}, Filters{})
+			if p.CursorDatabaseChecked || p.CursorDatabaseUnchecked != CursorUncheckedTranscriptsUnreadable || p.CursorDatabaseOnly != 0 {
+				t.Fatalf("checked %v, reason %q, only %d", p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, p.CursorDatabaseOnly)
+			}
+		})
+	}
+	// Unaffected when every folder is readable.
+	env := tr.env()
+	env.CursorDatabase = CursorDatabaseReader(tr.home)
+	if p := plan(t, env, states{}, config.Config{}, Filters{}); !p.CursorDatabaseChecked || p.CursorDatabaseOnly != 1 {
+		t.Fatalf("readable store: checked %v, only %d", p.CursorDatabaseChecked, p.CursorDatabaseOnly)
 	}
 }

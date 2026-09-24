@@ -44,6 +44,9 @@ type unreadable struct {
 	// codexArchivedOnly is set when Codex's archived_sessions could not be
 	// listed but its sessions folder could.
 	codexArchivedOnly bool
+	// cursorIncomplete is set when any part of Cursor's transcript store
+	// could not be listed, so a chat's transcript may exist unseen.
+	cursorIncomplete bool
 }
 
 // discover lists every transcript file in the three apps' default stores. It
@@ -205,6 +208,8 @@ func isRolloutName(name string) bool {
 func discoverCursor(env Environment, u *unreadable) []*transcript {
 	root := filepath.Join(env.Home, ".cursor", "projects")
 	var found []*transcript
+	unreadBefore := u.folders
+	defer func() { u.cursorIncomplete = u.stores["cursor"] || u.folders > unreadBefore }()
 	for _, slug := range listStore(env, root, "cursor", u) {
 		if !slug.dir {
 			continue
