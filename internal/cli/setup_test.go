@@ -309,7 +309,7 @@ func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
 	}
 	root := t.TempDir()
 	p = newPrompter(strings.NewReader("/does/not/exist\n"+root+"\n"+root+"/./\n\n"), &out)
-	projects, err := promptProjects(p, nil, time.Time{})
+	projects, err := promptProjects(p, nil, nil, time.Time{})
 	if err != nil || len(projects) != 1 {
 		t.Fatal(projects, err)
 	}

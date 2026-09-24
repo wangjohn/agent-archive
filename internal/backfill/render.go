@@ -228,7 +228,7 @@ func RenderText(w io.Writer, p Plan) {
 	if subagents > 0 {
 		total += fmt.Sprintf(" (plus %s)", count(subagents, "subagent transcript"))
 	}
-	fmt.Fprintf(w, "%s, %s,\n", total, formatSize(bytes))
+	fmt.Fprintf(w, "%s, %s,\n", total, FormatSize(bytes))
 	loc := p.GeneratedAt.Location()
 	firstDay, lastDay := first.In(loc).Format(dateLayout), last.In(loc).Format(dateLayout)
 	if firstDay == lastDay {
@@ -303,7 +303,11 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 	fmt.Fprintf(w, "%-*s%6s  %5s  %6s  %5d  %s\n", width, p.rowLabel(s), cells[0], cells[1], cells[2], s.Total(), status)
 	switch s.Kind {
 	case ProjectKindScratch:
-		fmt.Fprintln(w, "  Chats started without a folder. New ones will be captured too.")
+		if p.isCodexWorkspaces(s.Root) {
+			fmt.Fprintln(w, "  Chats in the workspaces Codex creates for them. New ones will be captured too.")
+		} else {
+			fmt.Fprintln(w, "  Chats started without a folder. New ones will be captured too.")
+		}
 	case ProjectKindHome:
 		if s.Included {
 			break
@@ -317,11 +321,20 @@ func (p Plan) rowLabel(s ProjectSummary) string {
 	label := p.display(s.Root)
 	if s.Kind == ProjectKindScratch {
 		label = "Claude desktop scratch chats"
+		if p.isCodexWorkspaces(s.Root) {
+			label = "Codex desktop workspaces"
+		}
 	}
 	if !s.Exists {
 		label += " (folder no longer exists)"
 	}
 	return label
+}
+
+// isCodexWorkspaces reports whether root is Codex desktop's workspace
+// folder, ~/Documents/Codex.
+func (p Plan) isCodexWorkspaces(root string) bool {
+	return p.display(root) == filepath.Join("~", "Documents", "Codex")
 }
 
 func countCell(n int) string {
@@ -520,8 +533,8 @@ func joinAnd(items []string) string {
 	return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
 }
 
-// formatSize shows a byte count in decimal units, as Finder does.
-func formatSize(n int64) string {
+// FormatSize shows a byte count in decimal units, as Finder does.
+func FormatSize(n int64) string {
 	switch {
 	case n < 1000:
 		return count(int(n), "byte")

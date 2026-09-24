@@ -37,6 +37,9 @@ type Plan struct {
 
 	// resolvedHome is Home with symlinks resolved; roots are resolved paths.
 	resolvedHome string
+	// projectFilter holds the --project directories, resolved as the plan
+	// compared them.
+	projectFilter []string
 }
 
 // Destination names the bucket imports go to.
@@ -82,10 +85,17 @@ type subagentWork struct {
 	skipped, vanished bool
 }
 
+// importable reports whether nothing about the file itself stops it being
+// imported: the checks a session's copies can differ on.
+func (w *work) importable() bool {
+	return !w.tooLarge && !w.unsafe && !w.empty && !w.t.identityMismatch
+}
+
 // markDuplicates keeps one file of a session found more than once and marks
-// the rest. The kept file is the one whose own IDs agree, then a Codex file in
-// sessions/ over archived_sessions/, then the larger file, then the
-// lexically smallest path.
+// the rest. The kept file is one that can be imported, so a larger copy that
+// is too large, empty, or refused never displaces a good one; then one whose
+// own IDs agree, then a Codex file in sessions/ over archived_sessions/, then
+// the larger file, then the lexically smallest path.
 func markDuplicates(env Environment, group []*work) {
 	var live []*work
 	for _, w := range group {
@@ -99,6 +109,9 @@ func markDuplicates(env Environment, group []*work) {
 	active := filepath.Join(env.Home, ".codex", "sessions") + string(filepath.Separator)
 	sort.SliceStable(live, func(i, j int) bool {
 		a, b := live[i], live[j]
+		if a.importable() != b.importable() {
+			return a.importable()
+		}
 		if a.t.identityMismatch != b.t.identityMismatch {
 			return !a.t.identityMismatch
 		}
@@ -197,6 +210,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 		projectFilter = append(projectFilter, env.resolved(p))
 	}
+	plan.projectFilter = projectFilter
 	since, until := dateRange(filters, now.Location())
 
 	sessions := map[string][]*work{}
@@ -204,7 +218,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		if w.vanished {
 			continue
 		}
-		if w.c.NativeSessionID != "" {
+		if strings.TrimSpace(w.c.NativeSessionID) != "" {
 			reason, err := state.Classify(w.t.harness, w.c.NativeSessionID)
 			if err != nil {
 				return Plan{}, fmt.Errorf("check the archive: %w", err)

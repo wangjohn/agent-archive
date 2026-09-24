@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -231,7 +232,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 					return failure
 				}
 				if choice == "edit" {
-					if err = editSetupReview(p, &draft, userHome); err != nil {
+					if err = editSetupReview(p, &draft, userHome, backfilledProjects(env)); err != nil {
 						return err
 					}
 					if err = save(); err != nil {
@@ -271,7 +272,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			return nil
 		}
 		if action == "edit" {
-			if err = editSetupReview(p, &draft, userHome); err != nil {
+			if err = editSetupReview(p, &draft, userHome, backfilledProjects(env)); err != nil {
 				return err
 			}
 			if err = save(); err != nil {
@@ -347,7 +348,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 		}
 	}
 	if !acceptedProject {
-		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, time.Time{}, userHome)
+		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), time.Time{}, userHome)
 		if err != nil {
 			return err
 		}
@@ -501,11 +502,33 @@ func promptHarnesses(p *prompter, detected, existing []string) ([]string, error)
 		fmt.Fprintln(p.out, "Choose at least one app to continue.")
 	}
 }
-func promptProjects(p *prompter, existing []archive.ProjectActivation, now time.Time, userHomes ...string) ([]archive.ProjectActivation, error) {
+
+// promptProjects asks which included projects to keep, then for new ones.
+// Projects backfill added (backfilled holds their project IDs) are kept or
+// dropped together with one question, since an import can add hundreds.
+func promptProjects(p *prompter, existing []archive.ProjectActivation, backfilled map[string]bool, now time.Time, userHomes ...string) ([]archive.ProjectActivation, error) {
 	result := []archive.ProjectActivation{}
 	seen := map[string]bool{}
+	var imported []archive.ProjectActivation
 	for _, project := range existing {
-		if !project.Included {
+		if project.Included && backfilled[project.ProjectID] {
+			imported = append(imported, project)
+		}
+	}
+	if len(imported) > 1 {
+		keep, err := p.yesNo(fmt.Sprintf("Keep the %d projects added by backfill?", len(imported)), true)
+		if err != nil {
+			return nil, err
+		}
+		if keep {
+			for _, project := range imported {
+				result = append(result, project)
+				seen[project.Root] = true
+			}
+		}
+	}
+	for _, project := range existing {
+		if !project.Included || (len(imported) > 1 && backfilled[project.ProjectID]) {
 			continue
 		}
 		keep, err := p.yesNo("Keep project "+project.Root+"?", true)
@@ -616,4 +639,22 @@ func suggestedProject(dir string) string {
 			return ""
 		}
 	}
+}
+
+// backfilledProjects is the set of project IDs any backfill import added.
+// An unreadable batch file leaves its projects out, so they are asked about
+// one by one, as before imports existed.
+func backfilledProjects(env Env) map[string]bool {
+	out := map[string]bool{}
+	home, err := env.home()
+	if err != nil {
+		return out
+	}
+	batches, _ := backfill.LoadBatches(home)
+	for _, b := range batches {
+		for _, id := range b.ProjectsAdded {
+			out[id] = true
+		}
+	}
+	return out
 }

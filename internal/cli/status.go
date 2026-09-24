@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -322,6 +323,14 @@ func readStatus(env Env) (view statusView, err error) {
 	view.ImportedSessions, view.ImportedPending, view.ImportedWithIssues, err = importedSessionCounts(store, cfg, regs, view.Collector.SessionIssues)
 	if err != nil {
 		return view, err
+	}
+	// One unreadable import file must not hide the rest of status.
+	batches, err := backfill.LoadBatches(home)
+	if err != nil {
+		view.Warnings = append(view.Warnings, err.Error())
+	}
+	if len(batches) > 0 {
+		view.LastImport = batches[len(batches)-1].ID
 	}
 	for _, name := range cfg.Harnesses {
 		app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified"}
@@ -659,22 +668,37 @@ func importedSessionCounts(store *collector.LocalStore, cfg config.Config, regs 
 		if state == collector.CacheStatusBlocked || issues[reg.ArchiveSessionID] != "" {
 			withIssues++
 		}
-		if !cfg.AcceptSession(reg) {
-			continue
-		}
-		_, _, published, err := store.LoadLastPublished(reg.ArchiveSessionID)
+		waiting, err := importPending(store, cfg, reg)
 		if err != nil {
 			return 0, 0, 0, err
 		}
-		inFlight, err := store.HasPending(reg.ArchiveSessionID)
-		if err != nil {
-			return 0, 0, 0, err
-		}
-		if inFlight || (!published && state != collector.CacheStatusBlocked && state != collector.CacheStatusDeclined) {
+		if waiting {
 			pending++
 		}
 	}
 	return imported, pending, withIssues, nil
+}
+
+// importPending reports whether the collector still has to upload an
+// imported session: one it still publishes that has no publication yet (a
+// recorded gap or a declined capture aside), or has one in flight.
+func importPending(store *collector.LocalStore, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
+	if !cfg.AcceptSession(reg) {
+		return false, nil
+	}
+	_, _, state, _, err := store.LoadPublished(reg.ArchiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	_, _, published, err := store.LoadLastPublished(reg.ArchiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	inFlight, err := store.HasPending(reg.ArchiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	return inFlight || (!published && state != collector.CacheStatusBlocked && state != collector.CacheStatusDeclined), nil
 }
 
 const (
