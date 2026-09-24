@@ -112,7 +112,7 @@ func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) 
 	return promptStopImported(p, draft)
 }
 
-func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
+func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool) error {
 	choices := []option{
 		{"apps", "Apps to include"},
 		{"projects", "Projects to include"},
@@ -137,11 +137,11 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string) error {
 		}
 		err = promptStopImported(p, draft)
 	case "projects":
-		projects, e := promptProjects(p, draft.Config.Archive.Projects, time.Time{}, userHome)
+		projects, e := promptProjects(p, draft.Config.Archive.Projects, backfilled, time.Time{}, userHome)
 		if e != nil {
 			return e
 		}
-		if len(projects) == 0 {
+		if includedProjects(projects) == 0 {
 			fmt.Fprintln(p.out, "At least one project is needed. Your previous selection is kept.")
 		} else {
 			draft.Config.Archive.Projects = projects

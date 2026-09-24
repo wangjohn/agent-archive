@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +48,19 @@ type Options struct {
 	// BlockedReasonTranscriptTooLarge) rather than an error. Zero uses
 	// DefaultMaxTranscriptBytes.
 	MaxTranscriptBytes int64
+	// Progress, when set, is called after each session the pass processes,
+	// with whether it published. Backfill draws its upload progress from it.
+	Progress func(Progress)
+	// Stop, when set, is checked before each session; once it reports true
+	// the pass ends early. The session in flight always finishes, and the
+	// rest keep their pending work for the next pass.
+	Stop func() bool
+}
+
+// Progress reports one session a pass has processed.
+type Progress struct {
+	ArchiveSessionID string
+	Published        bool
 }
 
 // DefaultMaxTranscriptBytes is the transcript size ceiling when
@@ -130,9 +144,20 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		}
 	}
 
+	orderOldestRequestsFirst(registrations, requestsByID)
+
 	result := Result{Errors: materializationIssues}
 	pending := 0
-	for _, reg := range registrations {
+	for i, reg := range registrations {
+		if opts.Stop != nil && opts.Stop() {
+			// Ended early: what is left keeps its work for the next pass.
+			for _, rest := range registrations[i:] {
+				if requestsByID[rest.ArchiveSessionID].Token != "" && (opts.AcceptSession == nil || opts.AcceptSession(rest)) {
+					pending++
+				}
+			}
+			break
+		}
 		if opts.AcceptSession != nil && !opts.AcceptSession(reg) {
 			continue
 		}
@@ -147,6 +172,7 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 			if unchanged {
 				// Nothing to read, nothing to compare, nothing to journal.
 				result.Skipped = append(result.Skipped, reg.ArchiveSessionID)
+				opts.progress(reg.ArchiveSessionID, false)
 				continue
 			}
 		}
@@ -162,6 +188,7 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		if err != nil {
 			result.Errors[reg.ArchiveSessionID] = err
 			pending++
+			opts.progress(reg.ArchiveSessionID, false)
 			continue
 		}
 		_, requestPending, requestErr := local.loadRequest(reg.ArchiveSessionID)
@@ -191,6 +218,7 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		case outcomeSkipped:
 			result.Skipped = append(result.Skipped, reg.ArchiveSessionID)
 		}
+		opts.progress(reg.ArchiveSessionID, outcome == outcomePublished)
 	}
 
 	previousStatus, err := local.LoadStatus()
@@ -208,6 +236,27 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		return result, fmt.Errorf("save status: %w", err)
 	}
 	return result, nil
+}
+
+func (o Options) progress(archiveSessionID string, published bool) {
+	if o.Progress != nil {
+		o.Progress(Progress{ArchiveSessionID: archiveSessionID, Published: published})
+	}
+}
+
+// orderOldestRequestsFirst puts the sessions with a pending request first,
+// oldest start first, and leaves the rest in archive session ID order. An
+// import queues its whole history at once; the oldest transcripts are the
+// ones the apps delete next, so they are uploaded first.
+func orderOldestRequestsFirst(registrations []archive.SessionRegistration, requests map[string]Request) {
+	sort.SliceStable(registrations, func(i, j int) bool {
+		a, b := registrations[i], registrations[j]
+		aRequested, bRequested := requests[a.ArchiveSessionID].Token != "", requests[b.ArchiveSessionID].Token != ""
+		if aRequested != bRequested {
+			return aRequested
+		}
+		return aRequested && a.SessionStartedAt.Before(b.SessionStartedAt)
+	})
 }
 
 // cursorTextSourceFormat labels a Cursor transcript captured as plain text.

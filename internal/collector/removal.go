@@ -33,9 +33,21 @@ type RemovalRecord struct {
 // removalPath names a record by the hash of the app and native ID, like the
 // native-session index: a native ID is harness-controlled input and never a
 // file name. The app is part of the key because two apps' IDs can collide.
+// It is canonicalised first, so a registration written under "claude-code"
+// (a hand-edited hook) finds the record backfill looks up under "claude".
 func removalPath(home, harness, nativeSessionID string) string {
-	sum := sha256.Sum256([]byte(harness + "\x00" + nativeSessionID))
+	sum := sha256.Sum256([]byte(removalHarness(harness) + "\x00" + nativeSessionID))
 	return filepath.Join(home, "forgotten", hex.EncodeToString(sum[:])+".json")
+}
+
+// removalHarness is the app name removal records are keyed by, as the CLI
+// canonicalises hook harness names.
+func removalHarness(harness string) string {
+	harness = strings.ToLower(strings.TrimSpace(harness))
+	if harness == "claude-code" {
+		return "claude"
+	}
+	return harness
 }
 
 // RecordRemoval writes forgotten/<sha256(harness + "\x00" + nativeSessionID)>.json.

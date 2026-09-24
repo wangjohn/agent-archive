@@ -331,8 +331,13 @@ confirmed run writes `imports/<date>-<n>.json` under the archive home, with:
 - the projects and apps it added
 - its archive session IDs
 
-The file never holds native IDs or paths. Registrations point back through
-`ImportBatch`. `history`, `undo`, and `status` read these files, and
+The file never holds native IDs or paths; added projects are stored as
+project IDs. Registrations point back through `ImportBatch`, and they are the
+source of truth: a crash can leave registrations the batch file doesn't list
+yet, so a rerun rebuilds the batch's session list from them before marking it
+complete, and undo selects sessions by `ImportBatch`. A rerun with the same
+filters and destination continues an unfinished batch rather than starting a
+new one. `history`, `undo`, and `status` read these files, and
 `uninstall --delete-local-data` removes them.
 
 ## Removal records
@@ -369,10 +374,12 @@ matching rule wins.
    is skipped with `worktree_unresolved`. Backfill never runs `git`.
 4. **Repository.** If walking up finds a `.git` directory, use its parent.
    The walk stops at home.
-5. **Claude desktop scratch chats.** Anything under
-   `~/Library/Application Support/Claude/scratch-workspaces/` becomes that one
-   folder as a project. Because the nearest ancestor wins, future scratch chats
-   are captured too, and the plan says so.
+5. **Desktop app workspaces.** Anything under
+   `~/Library/Application Support/Claude/scratch-workspaces/` (Claude desktop
+   scratch chats) or `~/Documents/Codex/` (Codex desktop's dated workspaces,
+   `<date>/<name>`) becomes that one folder as a project, unless rule 3 or 4
+   already found a repository inside it. Because the nearest ancestor wins,
+   future chats there are captured too, and the plan says so.
 6. **Temporary directories.** `/tmp`, `/private/tmp`, `/var/folders`, and
    `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
    each directory becomes its own project. These sessions are mostly tool
@@ -395,7 +402,11 @@ resolves its longest existing ancestor and keeps the rest, so its spelling
 matches what hooks would record. The project ID is
 `archive.ProjectID(root)`, so imports and later hook sessions share it. A new
 project is added with `Included: true`, and its `ActivatedAt` is the import
-time. From then on it behaves like any project included in setup.
+time. From then on it behaves like any project included in setup. Setup checks
+that a project's folder exists only when the project is newly included, so an
+imported project whose folder is gone doesn't block later setup runs, and it
+asks once whether to keep all projects backfill added rather than once per
+project.
 
 ## Discovery
 
@@ -444,8 +455,7 @@ being read at the same time, so a file that doesn't fit waits for room.
   `payload.id`, because deduplication against hook registrations depends on
   it.
 - **Codex sources.** Every source is imported (`cli`, `vscode`, `exec`, and so
-  on). `source` and `originator` are recorded as `applyHarnessObservation`
-  does.
+  on). Like hooks, backfill records no Codex harness observation.
 - **Claude subagents.** For each imported parent, backfill reads
   `<slug>/<session>/subagents/agent-<id>.jsonl`. It writes a
   `SubagentCandidate` with `ObservedAt` set to the import time and

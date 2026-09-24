@@ -256,8 +256,17 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if old.Storage.R2CredentialRef != "" && old.Storage.R2CredentialRef != next.Storage.R2CredentialRef {
 		next.RetiredCredentialRefs = append(next.RetiredCredentialRefs, old.Storage.R2CredentialRef)
 	}
-	for _, project := range next.Archive.Projects {
+	// Only a project this setup includes is checked: one that was already
+	// included may be a folder backfill imported that no longer exists, and
+	// it must not block every later change to the setup.
+	alreadyIncluded := map[string]bool{}
+	for _, project := range old.Archive.Projects {
 		if project.Included {
+			alreadyIncluded[project.Root] = true
+		}
+	}
+	for _, project := range next.Archive.Projects {
+		if project.Included && !alreadyIncluded[project.Root] {
 			info, e := os.Stat(project.Root)
 			if e != nil || !info.IsDir() {
 				return fmt.Errorf("included project is no longer a directory: %s", project.Root)

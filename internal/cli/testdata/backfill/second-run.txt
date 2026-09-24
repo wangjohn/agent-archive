@@ -1,0 +1,12 @@
+Looking for Claude Code, Codex, and Cursor sessions on this Mac… 17 found.
+
+Nothing to import.
+
+Not imported:
+  12  already in the archive
+   1  run from the home folder                  add --include-home
+   2  run from temporary directories            add --include-temp
+   1  Cursor chat whose project could not be determined
+   1  with no conversation
+      Cursor chats stored only in Cursor's database were not checked
+      (a later release).
