@@ -313,7 +313,7 @@ func TestSkipReasonsGolden(t *testing.T) {
 	var out bytes.Buffer
 	RenderText(&out, p)
 	out.WriteString("\n--- cursor database not checked, --include-home set ---\n")
-	p.CursorDatabaseOnly, p.CursorDatabaseChecked, p.Filters.IncludeHome = 0, false, true
+	p.CursorDatabaseOnly, p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, p.Filters.IncludeHome = 0, false, CursorUncheckedLocked, true
 	p.Candidates = p.Candidates[:2]
 	RenderText(&out, p)
 	golden := filepath.Join("testdata", "skip-reasons.txt")

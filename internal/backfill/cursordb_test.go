@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -20,17 +22,20 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
-// composerJSON builds a composerData value. headers is the header count;
+// composerJSON builds a composerData value with headers message headers;
 // extra fields are merged in.
 func composerJSON(id string, headers int, extra map[string]any) string {
-	v := map[string]any{"_v": 3, "composerId": id, "fullConversationHeadersOnly": make([]map[string]any, 0, headers)}
 	hs := make([]map[string]any, headers)
 	for i := range hs {
 		hs[i] = map[string]any{"bubbleId": "m", "type": 1}
 	}
-	v["fullConversationHeadersOnly"] = hs
+	v := map[string]any{"_v": 18, "composerId": id, "fullConversationHeadersOnly": hs}
 	for k, x := range extra {
-		v[k] = x
+		if x == nil {
+			delete(v, k)
+		} else {
+			v[k] = x
+		}
 	}
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -42,12 +47,10 @@ func composerJSON(id string, headers int, extra map[string]any) string {
 func millis(t time.Time) int64 { return t.UnixMilli() }
 
 // writeCursorDB creates a synthetic state.vscdb at path, in WAL mode when
-// wal is set, and closes it, so SQLite removes its -wal and -shm files.
+// wal is set, and closes it, so SQLite checkpoints and removes its side
+// files.
 func writeCursorDB(t *testing.T, path string, wal bool, rows map[string]any) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	db := openCursorWriter(t, path, wal)
 	insertCursorRows(t, db, rows)
 	if err := db.Close(); err != nil {
@@ -55,8 +58,12 @@ func writeCursorDB(t *testing.T, path string, wal bool, rows map[string]any) {
 	}
 }
 
+// openCursorWriter opens path as Cursor does, with Cursor's table.
 func openCursorWriter(t *testing.T, path string, wal bool) *sql.DB {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +82,11 @@ func openCursorWriter(t *testing.T, path string, wal bool) *sql.DB {
 	return db
 }
 
-func insertCursorRows(t *testing.T, db *sql.DB, rows map[string]any) {
+type execer interface {
+	Exec(string, ...any) (sql.Result, error)
+}
+
+func insertCursorRows(t *testing.T, db execer, rows map[string]any) {
 	t.Helper()
 	for k, v := range rows {
 		if _, err := db.Exec(`INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, v); err != nil {
@@ -145,11 +156,29 @@ func assertUnchanged(t *testing.T, dir string, before map[string]fileState) {
 	}
 }
 
+func readCursor(t *testing.T, home string) CursorDatabaseResult {
+	t.Helper()
+	res, err := CursorDatabaseReader(home)(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func chatIDs(res CursorDatabaseResult) []string {
+	var ids []string
+	for _, c := range res.Chats {
+		ids = append(ids, c.ID)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// TestCursorDatabaseReader reads a database with no side files, as Cursor
+// leaves it when closed, in both journal modes.
 func TestCursorDatabaseReader(t *testing.T) {
-	home := t.TempDir()
-	path := CursorStateDatabase(home)
 	sept10 := time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)
-	writeCursorDB(t, path, false, map[string]any{
+	rows := map[string]any{
 		"composerData:a": composerJSON("a", 2, map[string]any{"createdAt": millis(sept10)}),
 		// Stored as a BLOB, as Cursor does.
 		"composerData:b": []byte(composerJSON("b", 1, map[string]any{
@@ -158,48 +187,96 @@ func TestCursorDatabaseReader(t *testing.T) {
 		})),
 		"composerData:c": composerJSON("c", 3, map[string]any{"workspaceIdentifier": map[string]any{"uri": "file:///work/other%20dir"}}),
 		"composerData:d": composerJSON("d", 3, map[string]any{"workspaceIdentifier": map[string]any{"uri": map[string]any{"scheme": "vscode-remote", "path": "/srv/x"}}}),
-		// Not counted: a draft, a chat without headers, and chats with a
-		// transcript on disk (one found by its key, having no composerId).
-		"composerData:draft": composerJSON("draft", 2, map[string]any{"isDraft": true}),
-		"composerData:empty": composerJSON("empty", 0, nil),
-		"composerData:k1":    composerJSON("k1", 4, nil),
-		"composerData:k2":    `{"fullConversationHeadersOnly":[{}]}`,
-		"composerData:null":  nil,
-		"bubbleId:a:1":       `{"type":1,"text":"never read"}`,
-	})
-	dir := filepath.Dir(path)
-	before := snapshotDir(t, dir)
+		// workspaceIdentifier in shapes the count does not need.
+		"composerData:ws-empty":  composerJSON("ws-empty", 1, map[string]any{"workspaceIdentifier": ""}),
+		"composerData:ws-list":   composerJSON("ws-list", 1, map[string]any{"workspaceIdentifier": []any{}}),
+		"composerData:ws-no-uri": composerJSON("ws-no-uri", 1, map[string]any{"workspaceIdentifier": map[string]any{"id": "x", "uri": 7}}),
+		// An older chat keeps its messages inline, without headers.
+		"composerData:old": composerJSON("old", 0, map[string]any{"_v": 2, "fullConversationHeadersOnly": nil, "conversation": []any{map[string]any{"type": 1}}}),
+		// The parent is counted; its subagents are part of it, whether a
+		// draft or a chat with a file names them.
+		"composerData:parent": composerJSON("parent", 2, map[string]any{"subagentComposerIds": []string{"sub1"}}),
+		"composerData:sub1":   composerJSON("sub1", 2, nil),
+		"composerData:sub2":   composerJSON("sub2", 2, nil),
+		"composerData:draft":  composerJSON("draft", 2, map[string]any{"isDraft": true, "subagentComposerIds": []string{"sub2"}}),
+		// Not counted: no messages at all, and a value that is NULL.
+		"composerData:empty":     composerJSON("empty", 0, nil),
+		"composerData:old-empty": composerJSON("old-empty", 0, map[string]any{"_v": 2, "fullConversationHeadersOnly": nil, "conversation": []any{}}),
+		"composerData:null":      nil,
+		// Counted by the reader; the plan leaves out chats with a file. The
+		// one without a composerId is known by its key.
+		"composerData:k1": composerJSON("k1", 4, nil),
+		"composerData:k2": `{"fullConversationHeadersOnly":[{}]}`,
+		// Other rows are never read.
+		"bubbleId:a:1":  `{"type":1,"text":"never read"}`,
+		"composerDataX": `not json`,
+	}
+	for _, wal := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wal=%v", wal), func(t *testing.T) {
+			home := t.TempDir()
+			path := CursorStateDatabase(home)
+			writeCursorDB(t, path, wal, rows)
+			dir := filepath.Dir(path)
+			before := snapshotDir(t, dir)
+			if len(before) != 2 {
+				t.Fatalf("side files before the read: %v", before)
+			}
 
-	chats, checked, err := CursorDatabaseReader(home)(context.Background(), map[string]bool{"k1": true, "k2": true})
-	if err != nil || !checked {
-		t.Fatalf("checked %v, err %v", checked, err)
+			res := readCursor(t, home)
+			if !res.Checked || res.Reason != "" {
+				t.Fatalf("checked %v, reason %q", res.Checked, res.Reason)
+			}
+			want := []string{"a", "b", "c", "d", "k1", "k2", "old", "parent", "ws-empty", "ws-list", "ws-no-uri"}
+			if got := chatIDs(res); !reflect.DeepEqual(got, want) {
+				t.Fatalf("chats %v, want %v", got, want)
+			}
+			byID := map[string]CursorDatabaseChat{}
+			for _, c := range res.Chats {
+				byID[c.ID] = c
+			}
+			for id, w := range map[string]CursorDatabaseChat{
+				"a":        {ID: "a", CreatedAt: sept10},
+				"b":        {ID: "b", CreatedAt: sept10.AddDate(0, 0, 11), Folder: "/work/site"},
+				"c":        {ID: "c", Folder: "/work/other dir"},
+				"d":        {ID: "d"},
+				"ws-empty": {ID: "ws-empty"},
+			} {
+				if got := byID[id]; !reflect.DeepEqual(got, w) {
+					t.Errorf("%s: %+v, want %+v", id, got, w)
+				}
+			}
+			assertUnchanged(t, dir, before)
+		})
 	}
-	got := map[string]CursorDatabaseChat{}
-	for _, c := range chats {
-		got[c.Folder+"|"+c.CreatedAt.Format(time.RFC3339)] = c
+}
+
+func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.vscdb")
+	db := openCursorWriter(t, path, false)
+	defer db.Close()
+	rows, err := db.Query(`EXPLAIN QUERY PLAN ` + cursorComposerQuery)
+	if err != nil {
+		t.Fatal(err)
 	}
-	want := []string{
-		"|2026-09-10T09:00:00Z",
-		"/work/site|2026-09-21T09:00:00Z",
-		"/work/other dir|0001-01-01T00:00:00Z",
-		"|0001-01-01T00:00:00Z",
-	}
-	if len(chats) != len(want) {
-		t.Fatalf("got %d chats: %v", len(chats), got)
-	}
-	for _, w := range want {
-		if _, ok := got[w]; !ok {
-			t.Errorf("missing %q in %v", w, got)
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
 		}
+		plan = append(plan, detail)
 	}
-	assertUnchanged(t, dir, before)
+	if got := strings.Join(plan, "; "); !strings.Contains(got, "USING INDEX") || !strings.Contains(got, "key>? AND key<?") {
+		t.Fatalf("query plan %q does not search the key index", got)
+	}
 }
 
 func TestCursorDatabaseReaderMissing(t *testing.T) {
 	home := t.TempDir()
-	chats, checked, err := CursorDatabaseReader(home)(context.Background(), nil)
-	if err != nil || !checked || len(chats) != 0 {
-		t.Fatalf("chats %d, checked %v, err %v", len(chats), checked, err)
+	if res := readCursor(t, home); !res.Checked || len(res.Chats) != 0 {
+		t.Fatalf("%+v", res)
 	}
 	if _, err := os.Stat(filepath.Join(home, "Library")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("reading a missing database created something: %v", err)
@@ -208,23 +285,36 @@ func TestCursorDatabaseReaderMissing(t *testing.T) {
 
 func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 	good := map[string]any{"composerData:a": composerJSON("a", 1, nil)}
-	for name, setup := range map[string]func(t *testing.T, path string){
-		"garbage": func(t *testing.T, path string) {
+	value := func(v string) func(t *testing.T, path string) {
+		return func(t *testing.T, path string) {
+			writeCursorDB(t, path, false, map[string]any{"composerData:a": composerJSON("a", 1, nil), "composerData:b": v})
+		}
+	}
+	for name, tc := range map[string]struct {
+		setup  func(t *testing.T, path string)
+		reason CursorUncheckedReason
+	}{
+		"garbage": {func(t *testing.T, path string) {
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(path, bytes.Repeat([]byte("not a database "), 100), 0o644); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"truncated": func(t *testing.T, path string) {
+		}, CursorUncheckedUnreadable},
+		"truncated": {func(t *testing.T, path string) {
 			writeCursorDB(t, path, false, good)
 			data, _ := os.ReadFile(path)
 			if err := os.WriteFile(path, data[:len(data)/2], 0o644); err != nil {
 				t.Fatal(err)
 			}
-		},
-		"no table": func(t *testing.T, path string) {
+		}, CursorUncheckedUnreadable},
+		"directory": {func(t *testing.T, path string) {
+			if err := os.MkdirAll(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, CursorUncheckedUnreadable},
+		"no table": {func(t *testing.T, path string) {
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -236,28 +326,82 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 				t.Fatal(err)
 			}
 			db.Close()
-		},
-		"not json": func(t *testing.T, path string) {
-			writeCursorDB(t, path, false, map[string]any{"composerData:a": composerJSON("a", 1, nil), "composerData:b": "not json"})
-		},
-		"unknown shape": func(t *testing.T, path string) {
-			writeCursorDB(t, path, false, map[string]any{"composerData:a": `{"composerId":"a","isDraft":"no","fullConversationHeadersOnly":[{}]}`})
-		},
-		"headers not a list": func(t *testing.T, path string) {
-			writeCursorDB(t, path, false, map[string]any{"composerData:a": `{"composerId":"a","fullConversationHeadersOnly":{"n":3}}`})
-		},
-		"directory": func(t *testing.T, path string) {
-			if err := os.MkdirAll(path, 0o755); err != nil {
+		}, CursorUncheckedUnknownFormat},
+		"not json":               {value("not json"), CursorUncheckedUnknownFormat},
+		"not an object":          {value(`[1,2]`), CursorUncheckedUnknownFormat},
+		"isDraft not a bool":     {value(`{"composerId":"b","isDraft":"no","fullConversationHeadersOnly":[{}]}`), CursorUncheckedUnknownFormat},
+		"headers not a list":     {value(`{"composerId":"b","fullConversationHeadersOnly":{"n":3}}`), CursorUncheckedUnknownFormat},
+		"conversation not alist": {value(`{"composerId":"b","conversation":"hi"}`), CursorUncheckedUnknownFormat},
+		"newer _v":               {value(composerJSON("b", 1, map[string]any{"_v": maxComposerVersion + 1})), CursorUncheckedUnknownFormat},
+		"_v not a number":        {value(composerJSON("b", 1, map[string]any{"_v": "3"})), CursorUncheckedUnknownFormat},
+		// A WAL database with one side file and not the other can't be
+		// read without SQLite creating the missing one.
+		"wal without shm": {func(t *testing.T, path string) {
+			writeCursorDB(t, path, true, good)
+			if err := os.WriteFile(path+"-wal", nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, CursorUncheckedUnreadable},
+		// A rollback journal is a write in progress, or a hot journal only a
+		// writer may roll back.
+		"journal": {func(t *testing.T, path string) {
+			writeCursorDB(t, path, false, good)
+			if err := os.WriteFile(path+"-journal", []byte("journal"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, CursorUncheckedLocked},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			path := CursorStateDatabase(home)
+			tc.setup(t, path)
+			dir := filepath.Dir(path)
+			before := snapshotDir(t, dir)
+			res := readCursor(t, home)
+			if res.Checked || len(res.Chats) != 0 || res.Reason != tc.reason {
+				t.Fatalf("checked %v, %d chats, reason %q, want %q", res.Checked, len(res.Chats), res.Reason, tc.reason)
+			}
+			assertUnchanged(t, dir, before)
+		})
+	}
+}
+
+// TestCursorDatabaseReaderChangedDuringRead: with Cursor closed the database
+// is read immutable, so a write that lands during the read is caught
+// afterwards and the read is not trusted.
+func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
+	for name, change := range map[string]func(t *testing.T, path string){
+		"modified": func(t *testing.T, path string) {
+			later := time.Now().Add(time.Minute)
+			if err := os.Chtimes(path, later, later); err != nil {
 				t.Fatal(err)
 			}
 		},
-		// Cursor is not running, so its WAL database has no -wal or -shm;
-		// SQLite would create them even for a read-only connection.
-		"wal without sidecars": func(t *testing.T, path string) {
-			writeCursorDB(t, path, true, good)
+		"grown": func(t *testing.T, path string) {
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			if _, err := f.Write(make([]byte, 4096)); err != nil {
+				t.Fatal(err)
+			}
 		},
-		"wal without shm": func(t *testing.T, path string) {
-			writeCursorDB(t, path, true, good)
+		"replaced": func(t *testing.T, path string) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			info, _ := os.Stat(path)
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			os.Chtimes(path, info.ModTime(), info.ModTime())
+		},
+		"cursor started": func(t *testing.T, path string) {
 			if err := os.WriteFile(path+"-wal", nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -266,31 +410,35 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			path := CursorStateDatabase(home)
-			setup(t, path)
-			dir := filepath.Dir(path)
-			before := snapshotDir(t, dir)
-			chats, checked, err := CursorDatabaseReader(home)(context.Background(), nil)
-			if err != nil || checked || len(chats) != 0 {
-				t.Fatalf("chats %d, checked %v, err %v", len(chats), checked, err)
+			writeCursorDB(t, path, true, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
+			cursorAfterRead = func(p string) { change(t, p) }
+			defer func() { cursorAfterRead = nil }()
+			if res := readCursor(t, home); res.Checked || res.Reason != CursorUncheckedChangedDuringRead {
+				t.Fatalf("checked %v, reason %q", res.Checked, res.Reason)
 			}
-			assertUnchanged(t, dir, before)
 		})
 	}
 }
 
-// TestCursorDatabaseReaderLive reads a WAL database while another process,
-// standing in for Cursor, holds it open with uncheckpointed writes. It is a
-// separate process because SQLite shares one shared-memory mapping between
-// connections in a process, so an in-process writer would not show whether
-// the reader leaves Cursor's -shm file alone.
-func TestCursorDatabaseReaderLive(t *testing.T) {
-	home := t.TempDir()
-	path := CursorStateDatabase(home)
+// cursorWriter is another process standing in for Cursor. It is a separate
+// process because SQLite shares one shared-memory mapping between the
+// connections of a process, so an in-process writer would not show whether
+// the reader leaves Cursor's -shm file alone, and because a crashed writer
+// is a killed process.
+type cursorWriter struct {
+	t       *testing.T
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	replies *bufio.Scanner
+}
+
+func startCursorWriter(t *testing.T, path string, wal bool) *cursorWriter {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestCursorWriterProcess$")
-	cmd.Env = append(os.Environ(), "BACKFILL_CURSOR_WRITER_DB="+path)
+	cmd.Env = append(os.Environ(), "BACKFILL_CURSOR_WRITER_DB="+path, fmt.Sprintf("BACKFILL_CURSOR_WRITER_WAL=%v", wal))
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -303,83 +451,135 @@ func TestCursorDatabaseReaderLive(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer cmd.Wait()
-	defer stdin.Close()
-	replies := bufio.NewScanner(stdout)
-	insert := func(ids ...string) {
-		t.Helper()
-		for _, id := range ids {
-			fmt.Fprintln(stdin, id)
-			if !replies.Scan() || replies.Text() != "ok" {
-				t.Fatalf("the writer did not insert %s: %q", id, replies.Text())
-			}
+	w := &cursorWriter{t: t, cmd: cmd, stdin: stdin, replies: bufio.NewScanner(stdout)}
+	t.Cleanup(func() {
+		stdin.Close()
+		cmd.Wait()
+	})
+	return w
+}
+
+// do sends commands: "begin", or a chat ID to insert.
+func (w *cursorWriter) do(commands ...string) {
+	w.t.Helper()
+	for _, c := range commands {
+		fmt.Fprintln(w.stdin, c)
+		if !w.replies.Scan() || w.replies.Text() != "ok" {
+			w.t.Fatalf("the writer did not do %s: %q", c, w.replies.Text())
 		}
 	}
-	insert("a", "b", "k")
+}
+
+// kill ends the writer without closing its database, as a crash does.
+func (w *cursorWriter) kill() {
+	w.t.Helper()
+	if err := w.cmd.Process.Kill(); err != nil {
+		w.t.Fatal(err)
+	}
+	w.cmd.Wait()
+}
+
+// TestCursorWriterProcess is the writer process of cursorWriter: it never
+// checkpoints, and runs one command per line of stdin until stdin closes.
+func TestCursorWriterProcess(t *testing.T) {
+	path := os.Getenv("BACKFILL_CURSOR_WRITER_DB")
+	if path == "" {
+		t.Skip("run by startCursorWriter")
+	}
+	db := openCursorWriter(t, path, os.Getenv("BACKFILL_CURSOR_WRITER_WAL") == "true")
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), `PRAGMA wal_autocheckpoint=0`); err != nil {
+		t.Fatal(err)
+	}
+	in := bufio.NewScanner(os.Stdin)
+	for in.Scan() {
+		switch c := in.Text(); c {
+		case "begin":
+			if _, err := conn.ExecContext(context.Background(), `BEGIN IMMEDIATE`); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			if _, err := conn.ExecContext(context.Background(), `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, "composerData:"+c, composerJSON(c, 1, nil)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fmt.Println("ok")
+	}
+}
+
+// TestCursorDatabaseReaderLive reads a WAL database in place while Cursor
+// holds it open with writes not yet checkpointed.
+func TestCursorDatabaseReaderLive(t *testing.T) {
+	home := t.TempDir()
+	path := CursorStateDatabase(home)
+	w := startCursorWriter(t, path, true)
+	w.do("a", "b")
 
 	dir := filepath.Dir(path)
 	before := snapshotDir(t, dir)
 	if _, ok := before["state.vscdb-wal"]; !ok {
 		t.Fatal("the writer has no -wal file")
 	}
-	chats, checked, err := CursorDatabaseReader(home)(context.Background(), map[string]bool{"k": true})
-	if err != nil || !checked || len(chats) != 2 {
-		t.Fatalf("chats %d, checked %v, err %v", len(chats), checked, err)
+	if res := readCursor(t, home); !res.Checked || !reflect.DeepEqual(chatIDs(res), []string{"a", "b"}) {
+		t.Fatalf("%+v", res)
 	}
 	assertUnchanged(t, dir, before)
 
 	// Cursor keeps writing after the read.
-	insert("c")
-	if chats, checked, _ := CursorDatabaseReader(home)(context.Background(), map[string]bool{"k": true}); !checked || len(chats) != 3 {
-		t.Fatalf("after a write: chats %d, checked %v", len(chats), checked)
+	w.do("c")
+	if res := readCursor(t, home); !res.Checked || len(res.Chats) != 3 {
+		t.Fatalf("after a write: %+v", res)
 	}
 }
 
-// TestCursorWriterProcess is the writer process of
-// TestCursorDatabaseReaderLive: it inserts one chat per line of stdin, never
-// checkpointing, until stdin closes.
-func TestCursorWriterProcess(t *testing.T) {
-	path := os.Getenv("BACKFILL_CURSOR_WRITER_DB")
-	if path == "" {
-		t.Skip("run by TestCursorDatabaseReaderLive")
-	}
-	db := openCursorWriter(t, path, true)
-	defer db.Close()
-	if _, err := db.Exec(`PRAGMA wal_autocheckpoint=0`); err != nil {
-		t.Fatal(err)
-	}
-	in := bufio.NewScanner(os.Stdin)
-	for in.Scan() {
-		id := in.Text()
-		insertCursorRows(t, db, map[string]any{"composerData:" + id: composerJSON(id, 1, nil)})
-		fmt.Println("ok")
-	}
-}
-
-// TestCursorDatabaseReaderLocked reads while Cursor holds an exclusive lock:
-// the read gives up after the busy timeout and is not checked.
-func TestCursorDatabaseReaderLocked(t *testing.T) {
+// TestCursorDatabaseReaderStaleSideFiles reads, in place, the -wal and -shm a
+// killed Cursor left behind, including the writes only the -wal holds.
+func TestCursorDatabaseReaderStaleSideFiles(t *testing.T) {
 	home := t.TempDir()
 	path := CursorStateDatabase(home)
-	writeCursorDB(t, path, false, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
-	cursor := openCursorWriter(t, path, false)
-	defer cursor.Close()
-	conn, err := cursor.Conn(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	w := startCursorWriter(t, path, true)
+	w.do("a", "b")
+	w.kill()
+
+	dir := filepath.Dir(path)
+	before := snapshotDir(t, dir)
+	if _, ok := before["state.vscdb-shm"]; !ok {
+		t.Fatal("the killed writer left no -shm file")
 	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(context.Background(), `BEGIN EXCLUSIVE`); err != nil {
-		t.Fatal(err)
+	if res := readCursor(t, home); !res.Checked || !reflect.DeepEqual(chatIDs(res), []string{"a", "b"}) {
+		t.Fatalf("%+v", res)
 	}
-	defer conn.ExecContext(context.Background(), `ROLLBACK`)
-	start := time.Now()
-	chats, checked, err := CursorDatabaseReader(home)(context.Background(), nil)
-	if err != nil || checked || len(chats) != 0 {
-		t.Fatalf("chats %d, checked %v, err %v", len(chats), checked, err)
-	}
-	if elapsed := time.Since(start); elapsed > 10*time.Second {
-		t.Fatalf("a locked database took %v", elapsed)
+	assertUnchanged(t, dir, before)
+}
+
+// TestCursorDatabaseReaderJournal: a rollback-journal database with a write
+// in progress, and the hot journal a killed writer leaves, are not checked.
+func TestCursorDatabaseReaderJournal(t *testing.T) {
+	for _, killed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("killed=%v", killed), func(t *testing.T) {
+			home := t.TempDir()
+			path := CursorStateDatabase(home)
+			writeCursorDB(t, path, false, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
+			w := startCursorWriter(t, path, false)
+			w.do("begin", "b")
+			if killed {
+				w.kill()
+			}
+			dir := filepath.Dir(path)
+			before := snapshotDir(t, dir)
+			if _, ok := before["state.vscdb-journal"]; !ok {
+				t.Fatal("the writer has no -journal file")
+			}
+			if res := readCursor(t, home); res.Checked || res.Reason != CursorUncheckedLocked {
+				t.Fatalf("checked %v, reason %q", res.Checked, res.Reason)
+			}
+			assertUnchanged(t, dir, before)
+		})
 	}
 }
 
@@ -388,14 +588,15 @@ func TestCursorDatabaseReaderCancelled(t *testing.T) {
 	writeCursorDB(t, CursorStateDatabase(home), false, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := CursorDatabaseReader(home)(ctx, nil); !errors.Is(err, context.Canceled) {
+	if _, err := CursorDatabaseReader(home)(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err %v", err)
 	}
 }
 
-// TestCursorDatabasePlan runs the real reader under BuildPlan: chats with a
-// transcript on disk are not counted, and --since, --until, --project and
-// --harness apply where the database has the field.
+// TestCursorDatabasePlan runs the real reader under BuildPlan. A chat with a
+// transcript on disk is the file's session, the archive's reasons come
+// first, and the filters apply as they do to file sessions: a chat without
+// the field a filter needs does not match it.
 func TestCursorDatabasePlan(t *testing.T) {
 	tr := newTree(t)
 	site := tr.repo("home/site")
@@ -406,18 +607,20 @@ func TestCursorDatabasePlan(t *testing.T) {
 	}
 	sept := func(day int) int64 { return millis(time.Date(2026, 9, day, 18, 0, 0, 0, time.UTC)) }
 	path := CursorStateDatabase(tr.home)
-	writeCursorDB(t, path, false, map[string]any{
-		"composerData:k1":    composerJSON("k1", 3, map[string]any{"createdAt": sept(20), "workspaceIdentifier": uri(site)}),
-		"composerData:early": composerJSON("early", 1, map[string]any{"createdAt": sept(2), "workspaceIdentifier": uri(site)}),
-		"composerData:site":  composerJSON("site", 1, map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(site)}),
-		"composerData:other": composerJSON("other", 1, map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(other)}),
-		"composerData:bare":  composerJSON("bare", 1, nil),
-		"composerData:draft": composerJSON("draft", 1, map[string]any{"isDraft": true, "createdAt": sept(21)}),
+	writeCursorDB(t, path, true, map[string]any{
+		"composerData:k1":       composerJSON("k1", 3, map[string]any{"createdAt": sept(20), "workspaceIdentifier": uri(site)}),
+		"composerData:early":    composerJSON("early", 1, map[string]any{"createdAt": sept(2), "workspaceIdentifier": uri(site)}),
+		"composerData:site":     composerJSON("site", 1, map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(site)}),
+		"composerData:other":    composerJSON("other", 1, map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(other)}),
+		"composerData:bare":     composerJSON("bare", 1, nil),
+		"composerData:archived": composerJSON("archived", 1, map[string]any{"createdAt": sept(21), "workspaceIdentifier": uri(site)}),
+		"composerData:draft":    composerJSON("draft", 1, map[string]any{"isDraft": true, "createdAt": sept(21)}),
 	})
 	dir := filepath.Dir(path)
 	before := snapshotDir(t, dir)
 	env := tr.env()
-	env.CursorDatabaseOnly = CursorDatabaseReader(tr.home)
+	env.CursorDatabase = CursorDatabaseReader(tr.home)
+	st := states{"archived": SkipAlreadyArchived}
 
 	for _, tc := range []struct {
 		name               string
@@ -425,27 +628,24 @@ func TestCursorDatabasePlan(t *testing.T) {
 		dbOnly, filteredDB int
 	}{
 		{"no filters", Filters{}, 4, 0},
-		{"since", Filters{Since: "2026-09-10"}, 3, 1},
-		{"until", Filters{Until: "2026-09-10"}, 2, 2},
-		{"project", Filters{Projects: []string{site}}, 3, 1},
-		{"project and since", Filters{Projects: []string{site}, Since: "2026-09-10"}, 2, 2},
-		{"harness", Filters{Harnesses: []string{"codex"}}, 4, 0},
+		{"since", Filters{Since: "2026-09-10"}, 2, 2},
+		{"until", Filters{Until: "2026-09-10"}, 1, 3},
+		{"project", Filters{Projects: []string{site}}, 2, 2},
+		{"project and since", Filters{Projects: []string{site}, Since: "2026-09-10"}, 1, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := plan(t, env, nil, config.Config{}, tc.filters)
+			p := plan(t, env, st, config.Config{}, tc.filters)
 			if !p.CursorDatabaseChecked || p.CursorDatabaseOnly != tc.dbOnly || p.CursorDatabaseFiltered != tc.filteredDB {
 				t.Fatalf("checked %v, only %d, filtered %d", p.CursorDatabaseChecked, p.CursorDatabaseOnly, p.CursorDatabaseFiltered)
 			}
-			if got := len(p.Candidates) + tc.dbOnly + tc.filteredDB; p.Found() != got {
-				t.Fatalf("found %d, want %d", p.Found(), got)
+			if !reflect.DeepEqual(p.CursorDatabaseSkipped, map[SkipReason]int{SkipAlreadyArchived: 1}) {
+				t.Fatalf("skipped by the archive: %v", p.CursorDatabaseSkipped)
 			}
-			skipped := p.Skipped()
-			if harnessMatches(tc.filters.Harnesses, "cursor") {
-				if skipped[SkipCursorDatabaseOnly] != tc.dbOnly {
-					t.Fatalf("skipped %v", skipped)
-				}
-			} else if skipped[SkipCursorDatabaseOnly] != 0 || skipped[SkipFilteredOut] < tc.dbOnly {
-				t.Fatalf("skipped %v", skipped)
+			if want := len(p.Candidates) + tc.dbOnly + tc.filteredDB + 1; p.Found() != want {
+				t.Fatalf("found %d, want %d", p.Found(), want)
+			}
+			if got := p.Skipped()[SkipCursorDatabaseOnly]; got != tc.dbOnly {
+				t.Fatalf("skipped %v", p.Skipped())
 			}
 			var out strings.Builder
 			RenderText(&out, p)
@@ -454,20 +654,39 @@ func TestCursorDatabasePlan(t *testing.T) {
 			}
 		})
 	}
-	assertUnchanged(t, dir, before)
 
-	// A database that can't be read is not checked, and the plan still
-	// succeeds.
-	if err := os.WriteFile(path, []byte("SQLite format 3\x00 but not really"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	p := plan(t, env, nil, config.Config{}, Filters{})
-	if p.CursorDatabaseChecked || p.CursorDatabaseOnly != 0 {
-		t.Fatalf("checked %v, only %d", p.CursorDatabaseChecked, p.CursorDatabaseOnly)
+	// --harness without cursor does not open the database at all.
+	p := plan(t, env, st, config.Config{}, Filters{Harnesses: []string{"codex"}})
+	if p.CursorDatabaseChecked || p.CursorDatabaseOnly != 0 || p.CursorDatabaseFiltered != 0 || len(p.CursorDatabaseSkipped) != 0 ||
+		p.Skipped()[SkipCursorDatabaseOnly] != 0 || p.Found() != len(p.Candidates) {
+		t.Fatalf("harness codex: %+v, skipped %v", p, p.Skipped())
 	}
 	var out strings.Builder
 	RenderText(&out, p)
-	if !strings.Contains(out.String(), "were not checked") {
+	if strings.Contains(out.String(), "were not checked") {
+		t.Fatalf("an unchecked line for a harness filtered out:\n%s", out.String())
+	}
+	assertUnchanged(t, dir, before)
+
+	// A database that can't be read is not checked, says why, and the plan
+	// still succeeds.
+	if err := os.WriteFile(path, []byte("SQLite format 3\x00 but not really"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p = plan(t, env, st, config.Config{}, Filters{})
+	if p.CursorDatabaseChecked || p.CursorDatabaseOnly != 0 || p.CursorDatabaseUnchecked != CursorUncheckedUnreadable {
+		t.Fatalf("checked %v, only %d, reason %q", p.CursorDatabaseChecked, p.CursorDatabaseOnly, p.CursorDatabaseUnchecked)
+	}
+	out.Reset()
+	RenderText(&out, p)
+	if !strings.Contains(out.String(), "were not checked:\n      the database could not be read safely.") {
 		t.Fatalf("no unchecked line:\n%s", out.String())
+	}
+	out.Reset()
+	if err := RenderJSON(&out, p, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"cursor_database_unchecked_reason": "unreadable"`) {
+		t.Fatalf("no reason in the JSON plan:\n%s", out.String())
 	}
 }

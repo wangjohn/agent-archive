@@ -52,8 +52,8 @@ Total: 2 sessions (plus 1 subagent transcript), 4 KB,
 
 Not imported:
    1  subagent transcript that can't be read
-      Cursor chats stored only in Cursor's database were not checked
-      (a later release).
+      Cursor chats stored only in Cursor's database were not checked:
+      Cursor was writing to it; try again in a moment.
 
 If you continue:
   • 1 project is added, and new Claude Code sessions in it are captured.

@@ -205,11 +205,10 @@ type Environment struct {
 	// default reads it from the file system where it is recorded (macOS);
 	// where it is not, or it fails, the modification time is used.
 	FileCreated func(string) (time.Time, error)
-	// CursorDatabaseOnly reads the Cursor chats that exist only in Cursor's
-	// database: composerData entries with headers, not drafts, and none of
-	// the given chat IDs. checked is false when they could not be read. Nil
-	// means not checked; the CLI uses CursorDatabaseReader.
-	CursorDatabaseOnly func(ctx context.Context, fileChats map[string]bool) (chats []CursorDatabaseChat, checked bool, err error)
+	// CursorDatabase reads the chats in Cursor's database (composerData
+	// entries with messages, not drafts, and not subagents). Nil means not
+	// checked; the CLI uses CursorDatabaseReader.
+	CursorDatabase func(ctx context.Context) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int
 }

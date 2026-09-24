@@ -52,7 +52,11 @@ func (p Plan) Imported() []Candidate {
 
 // Found is how many sessions discovery found, imported or not.
 func (p Plan) Found() int {
-	return len(p.Candidates) + p.CursorDatabaseOnly + p.CursorDatabaseFiltered
+	n := len(p.Candidates) + p.CursorDatabaseOnly + p.CursorDatabaseFiltered
+	for _, c := range p.CursorDatabaseSkipped {
+		n += c
+	}
+	return n
 }
 
 // Projects groups the imported sessions by project, sorted by total and then
@@ -113,6 +117,11 @@ func (p Plan) Skipped() map[SkipReason]int {
 	}
 	if p.CursorDatabaseFiltered > 0 {
 		counts[SkipFilteredOut] += p.CursorDatabaseFiltered
+	}
+	for reason, n := range p.CursorDatabaseSkipped {
+		if n > 0 {
+			counts[reason] += n
+		}
 	}
 	return counts
 }
@@ -436,9 +445,19 @@ func renderSkipped(w io.Writer, p Plan) {
 		}
 	}
 	if databaseUnchecked {
-		fmt.Fprintln(w, "      Cursor chats stored only in Cursor's database were not checked")
-		fmt.Fprintln(w, "      (a later release).")
+		fmt.Fprintln(w, "      Cursor chats stored only in Cursor's database were not checked:")
+		fmt.Fprintf(w, "      %s.\n", uncheckedCauses[p.CursorDatabaseUnchecked])
 	}
+}
+
+// uncheckedCauses explain why Cursor's database was not checked. "" is a
+// plan made without a database reader.
+var uncheckedCauses = map[CursorUncheckedReason]string{
+	"":                               "the database was not read",
+	CursorUncheckedLocked:            "Cursor was writing to it; try again in a moment",
+	CursorUncheckedUnreadable:        "the database could not be read safely",
+	CursorUncheckedUnknownFormat:     "it is in a format this version does not know",
+	CursorUncheckedChangedDuringRead: "Cursor changed it while it was read; try again",
 }
 
 // sessionNoun names n sessions from the given apps: "Cursor chat" when they
@@ -561,7 +580,10 @@ type planJSON struct {
 	ExpiresOn             string `json:"expires_on"`
 	StorageChecked        bool   `json:"storage_checked"`
 	CursorDatabaseChecked bool   `json:"cursor_database_checked"`
-	SubagentsSkipped      int    `json:"subagents_skipped"`
+	// CursorDatabaseUncheckedReason is set when the database was not
+	// checked: locked, unreadable, unknown_format, or changed_during_read.
+	CursorDatabaseUncheckedReason CursorUncheckedReason `json:"cursor_database_unchecked_reason,omitempty"`
+	SubagentsSkipped              int                   `json:"subagents_skipped"`
 }
 
 type filtersJSON struct {
@@ -603,8 +625,9 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 		StorageChecked:   storageChecked,
 		// False when Cursor's database could not be read; see
 		// CursorDatabaseReader.
-		CursorDatabaseChecked: p.CursorDatabaseChecked,
-		SubagentsSkipped:      p.SubagentsSkipped(),
+		CursorDatabaseChecked:         p.CursorDatabaseChecked,
+		CursorDatabaseUncheckedReason: p.CursorDatabaseUnchecked,
+		SubagentsSkipped:              p.SubagentsSkipped(),
 	}
 	for _, h := range p.Filters.Harnesses {
 		out.Filters.Harnesses = append(out.Filters.Harnesses, canonicalHarness(h))

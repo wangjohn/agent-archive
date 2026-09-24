@@ -259,7 +259,7 @@ func (e Env) backfillEnvironment(userHome string) backfill.Environment {
 			temps = append(temps, strings.TrimSpace(tmp))
 		}
 	}
-	return backfill.Environment{Home: userHome, TempDirs: temps, Now: e.now, CursorDatabaseOnly: backfill.CursorDatabaseReader(userHome)}
+	return backfill.Environment{Home: userHome, TempDirs: temps, Now: e.now, CursorDatabase: backfill.CursorDatabaseReader(userHome)}
 }
 
 // archiveState answers backfill.ArchiveState from this machine's local store
