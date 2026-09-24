@@ -1,0 +1,184 @@
+{
+  "format": "cursor-composer",
+  "records": [
+    {
+      "session_id": "c0ffee00-0000-4000-8000-000000000001",
+      "timestamp": "2026-09-21T14:13:20Z",
+      "type": "session"
+    },
+    {
+      "id": "b1",
+      "message": {
+        "content": [
+          {
+            "text": "Fix the widget test. My key is [REDACTED] and [REDACTED]",
+            "type": "text"
+          }
+        ]
+      },
+      "requestId": "req-1",
+      "role": "user",
+      "timestamp": "2026-09-21T14:13:21Z"
+    },
+    {
+      "completed_at_ms": 1790000002500,
+      "id": "b2",
+      "message": {
+        "content": [
+          {
+            "text": "Reading the test first.",
+            "type": "text"
+          },
+          {
+            "id": "call-1",
+            "input": {
+              "limit": 80,
+              "offset": 1,
+              "target_file": "internal/widget/widget_test.go"
+            },
+            "name": "read_file",
+            "type": "tool_use"
+          },
+          {
+            "content": "{\"contents\":\"package widget\\n// [REDACTED]",
+            "status": "completed",
+            "tool_use_id": "call-1",
+            "type": "tool_result"
+          }
+        ]
+      },
+      "model": "synthetic-model-a",
+      "role": "assistant",
+      "started_at_ms": 1790000002000,
+      "timestamp": "2026-09-21T14:13:22Z",
+      "usage": {
+        "input_tokens": 1200,
+        "output_tokens": 45
+      }
+    },
+    {
+      "id": "b4",
+      "message": {
+        "content": [
+          {
+            "content": "{\"exitCode\":0,\"output\":\"ok\"}",
+            "name": "run_terminal_cmd",
+            "tool_use_id": "call-0",
+            "type": "tool_result"
+          }
+        ]
+      },
+      "role": "assistant",
+      "timestamp": "2026-09-21T14:13:24Z"
+    },
+    {
+      "id": "b5",
+      "message": {
+        "content": [
+          {
+            "text": "Thanks, now run it.",
+            "type": "text"
+          }
+        ]
+      },
+      "role": "user",
+      "timestamp": "2026-09-21T14:13:25Z"
+    },
+    {
+      "completed_at_ms": 1790000009000,
+      "id": "b7",
+      "message": {
+        "content": [
+          {
+            "text": "The test run failed; see the error.",
+            "type": "text"
+          },
+          {
+            "id": "call-2",
+            "input": {
+              "command": "go test ./internal/widget/",
+              "commandDescription": "Run the widget tests",
+              "cwd": "",
+              "parsingResult": {
+                "executableCommands": [
+                  {
+                    "name": "go"
+                  }
+                ]
+              }
+            },
+            "name": "run_terminal_command_v2",
+            "type": "tool_use"
+          },
+          {
+            "content": "exit status 1: [REDACTED]",
+            "is_error": true,
+            "status": "error",
+            "tool_use_id": "call-2",
+            "type": "tool_result"
+          }
+        ]
+      },
+      "model": "synthetic-model-a",
+      "role": "assistant",
+      "timestamp": "2026-09-21T14:13:27Z",
+      "usage": {
+        "input_tokens": 1400,
+        "output_tokens": 20
+      }
+    }
+  ],
+  "gaps": [
+    {
+      "code": "cursor_blob_content_unavailable",
+      "detail": "1 of 7 messages reference content blobs, which are not read"
+    },
+    {
+      "code": "cursor_bubble_missing",
+      "detail": "1 of 7 messages have no message row"
+    },
+    {
+      "code": "cursor_context_omitted",
+      "detail": "omitted context fields: attachedCodeChunks, codebaseContextChunks, consoleLogs, diffHistories, images, originalFileStates, recentlyViewedFiles"
+    },
+    {
+      "code": "cursor_incomplete_tail_omitted",
+      "detail": "1 of 7 messages, from the first one without a usable row on, are left for a later pass"
+    },
+    {
+      "code": "cursor_message_type_unknown",
+      "detail": "1 of 7 messages have an unknown or inconsistent type"
+    },
+    {
+      "code": "cursor_tool_argument_omitted",
+      "detail": "omitted tool arguments: requestedSandboxPolicy"
+    },
+    {
+      "code": "hidden_instruction_omitted",
+      "detail": "reasoning omitted"
+    },
+    {
+      "code": "hidden_instruction_omitted",
+      "detail": "injected instruction block omitted"
+    },
+    {
+      "code": "sensitive_content_redacted",
+      "detail": "content redacted"
+    },
+    {
+      "code": "unknown_field_omitted",
+      "detail": "omitted keys: chat.isDraft, chat.lastUpdatedAt, chat.modelConfig, chat.name, chat.subagentComposerIds, chat.unifiedMode, chat.usageData, chat.workspaceIdentifier, message.isAgentic, model.provider, tokens.cacheTokens, tool.additionalData, tool.modelCallId, tool.result, tool.tool, tool.toolCallBinary, tool.toolIndex, tool.userDecision, toolResult.extra"
+    }
+  ],
+  "boundary": {
+    "retained_records": 6,
+    "retained_bytes": 1763
+  },
+  "session_ids": [
+    "c0ffee00-0000-4000-8000-000000000001"
+  ],
+  "first_event_at": "2026-09-21T14:13:20Z",
+  "native_start_at": "2026-09-21T14:13:20Z",
+  "native_end_at": "2026-09-21T14:13:29Z",
+  "native_start_complete": true
+}

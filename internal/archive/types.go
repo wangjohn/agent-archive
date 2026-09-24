@@ -25,8 +25,10 @@ const (
 	// Filter 7 sanitizes a Cursor text transcript per role section, so the
 	// 64 KB cap applies per message instead of truncating the whole
 	// transcript, and bounds it by MaxRecordBytes instead of 2 MB. JSONL
-	// output is unchanged. See docs/agent-archive-privacy.md.
-	FilterVersion = "7"
+	// output is unchanged. Filter 8 adds the cursor-composer format, a chat
+	// read from Cursor's database (CursorAdapter.FilterComposer); every other
+	// format's output is unchanged. See docs/agent-archive-privacy.md.
+	FilterVersion = "8"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
