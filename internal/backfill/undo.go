@@ -68,10 +68,20 @@ func PlanUndo(env Environment, store *collector.LocalStore, cfg config.Config, b
 		}
 		project = env.resolved(project)
 	}
-	p := UndoPlan{Batch: b, Project: project, view: Plan{GeneratedAt: env.now(),
-		Home: env.Home, resolvedHome: env.resolved(env.Home),
-		Destination: Destination{Provider: cfg.Storage.Provider, Bucket: cfg.Storage.Bucket, Prefix: cfg.Storage.Prefix},
-	}}
+	p := UndoPlan{
+		Batch:   b,
+		Project: project,
+		view: Plan{
+			GeneratedAt:  env.now(),
+			Home:         env.Home,
+			resolvedHome: env.resolved(env.Home),
+			Destination: Destination{
+				Provider: cfg.Storage.Provider,
+				Bucket:   cfg.Storage.Bucket,
+				Prefix:   cfg.Storage.Prefix,
+			},
+		},
+	}
 	inProject := func(root string) bool {
 		return p.Project == "" || root == p.Project || env.resolved(root) == p.Project
 	}

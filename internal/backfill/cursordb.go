@@ -447,7 +447,7 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 			t:    &transcript{harness: harnessCursor, nativeID: chat.ID},
 			chat: chat,
 			c: Candidate{
-				Harness: "cursor", NativeSessionID: chat.ID,
+				Harness: string(harnessCursor), NativeSessionID: chat.ID,
 				SourceKind: archive.SourceKindCursorSQLite, SourceKey: chat.ID,
 				StartedAt: chat.CreatedAt, StartedAtSource: archive.StartedAtSourceCursorComposer,
 			},
