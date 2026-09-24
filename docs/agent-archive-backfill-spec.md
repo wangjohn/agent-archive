@@ -369,10 +369,12 @@ matching rule wins.
    is skipped with `worktree_unresolved`. Backfill never runs `git`.
 4. **Repository.** If walking up finds a `.git` directory, use its parent.
    The walk stops at home.
-5. **Claude desktop scratch chats.** Anything under
-   `~/Library/Application Support/Claude/scratch-workspaces/` becomes that one
-   folder as a project. Because the nearest ancestor wins, future scratch chats
-   are captured too, and the plan says so.
+5. **Desktop app workspaces.** Anything under
+   `~/Library/Application Support/Claude/scratch-workspaces/` (Claude desktop
+   scratch chats) or `~/Documents/Codex/` (Codex desktop's dated workspaces,
+   `<date>/<name>`) becomes that one folder as a project, unless rule 3 or 4
+   already found a repository inside it. Because the nearest ancestor wins,
+   future chats there are captured too, and the plan says so.
 6. **Temporary directories.** `/tmp`, `/private/tmp`, `/var/folders`, and
    `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
    each directory becomes its own project. These sessions are mostly tool
