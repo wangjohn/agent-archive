@@ -46,8 +46,9 @@ linters:
         # authority on ignored errors here, with the std-error-handling preset.
         - G104
         # G204 (subprocess with variable arguments): every exec in this tool
-        # runs a fixed binary (launchctl, security, sqlite helpers in tests)
-        # with an argv slice and no shell, which is the safe form G204 cannot
+        # passes an argv slice with no shell: launchctl with fixed verbs, and
+        # `claude`/`codex --version` found on PATH under a 2-second timeout
+        # (internal/cli/capabilities.go). That is the safe form G204 cannot
         # distinguish from the unsafe one.
         - G204
   exclusions:
