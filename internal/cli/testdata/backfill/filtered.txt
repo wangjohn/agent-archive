@@ -3,27 +3,28 @@ Looking for Claude Code sessions on this Mac… 17 found.
 Backfill imports sessions matching --harness claude --since 2026-09-19
 into s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
 
-PROJECT                                                                                                                        CLAUDE  CODEX  CURSOR  TOTAL
-~/agent-archive                                                                                                                     2      –       –      2  already included
-~/levenshtein                                                                                                                       1      –       –      1  will be added
+PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL
+~/agent-archive                            2      –       –      2  already included
+~/levenshtein                              1      –       –      1  will be added
 
 Not a repository:
-Claude desktop scratch chats                                                                                                        2      –       –      2  will be added
+Claude desktop scratch chats               2      –       –      2  will be added
   Chats started without a folder. New ones will be captured too.
-$ROOT/tmp/run-1 (folder no longer exists)       1      –       –      1  will be added
-$ROOT/tmp/run-2 (folder no longer exists)       1      –       –      1  will be added
+~                                          1      –       –      1  will be added
+  Every future session under your home folder that isn't in a nearer project
+  will be captured too.
 
-Total: 7 sessions (plus 2 subagent transcripts), 3 KB,
+Total: 6 sessions (plus 2 subagent transcripts), 5 KB,
        started 2026-09-19 to 2026-09-22.
 
 Not imported:
    1  already in the archive
    7  not matching the filters
-   1  run from the home folder or above it      add --include-home
+   2  run from temporary directories            add --include-temp
    1  with no conversation
 
 If you continue:
-  • 4 projects are added, and new Claude Code sessions in them are captured.
+  • 3 projects are added, and new Claude Code sessions in them are captured.
   • Retention is 90 days, so these sessions are deleted on 2026-12-22.
     Choose `edit` to keep them longer.
   • Undo any time with `agent-archive backfill undo`.

@@ -147,8 +147,20 @@ func cursorSlugFor(path string) string {
 	return string(b)
 }
 
+// rootPad is the length every occurrence of the fixture's root is padded to,
+// so file sizes, and the plan's byte counts, do not depend on where
+// t.TempDir happens to be.
+const rootPad = 400
+
 func (f *backfillFixture) write(t *testing.T, rel, content string) string {
 	t.Helper()
+	if n := strings.Count(content, f.root); n > 0 {
+		if len(f.root) >= rootPad {
+			t.Fatalf("temporary directory path longer than %d bytes", rootPad)
+		}
+		pad := `{"pad":"` + strings.Repeat("x", n*(rootPad-len(f.root))) + `",`
+		content = strings.Replace(content, "{", pad, 1)
+	}
 	path := filepath.Join(f.userHome, rel)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -196,7 +208,9 @@ func TestBackfillGolden(t *testing.T) {
 		args []string
 	}{
 		{"default.txt", []string{"--dry-run"}},
-		{"filtered.txt", []string{"--dry-run", "--harness", "claude", "--since", "2026-09-19", "--include-temp"}},
+		// Temporary folders lie outside home, so their rows would show the
+		// temporary root; --include-home keeps every row under ~.
+		{"filtered.txt", []string{"--dry-run", "--harness", "claude", "--since", "2026-09-19", "--include-home"}},
 		{"plan.json", []string{"--dry-run", "--json"}},
 	}
 	for _, tc := range cases {

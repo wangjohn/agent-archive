@@ -193,8 +193,8 @@ func TestResolveRules(t *testing.T) {
 		{"temporary directory with --include-temp", config.Config{}, Filters{IncludeTemp: true}, tmp, resolution{root: tmp, kind: ProjectKindTemporary}},
 		{"home", config.Config{}, Filters{}, tr.home, resolution{root: tr.home, kind: ProjectKindHome, skip: SkipHomeDirectory}},
 		{"home with --include-home", config.Config{}, Filters{IncludeHome: true}, tr.home, resolution{root: tr.home, kind: ProjectKindHome}},
-		{"above home", config.Config{}, Filters{IncludeHome: true}, tr.root, resolution{root: tr.root, kind: ProjectKindHome, skip: SkipHomeDirectory}},
-		{"root", config.Config{}, Filters{}, "/", resolution{root: "/", kind: ProjectKindHome, skip: SkipHomeDirectory}},
+		{"above home", config.Config{}, Filters{IncludeHome: true}, tr.root, resolution{root: tr.root, kind: ProjectKindHome, skip: SkipAboveHome}},
+		{"root", config.Config{}, Filters{}, "/", resolution{root: "/", kind: ProjectKindHome, skip: SkipAboveHome}},
 		{"plain folder under a dotfiles home", config.Config{}, Filters{}, filepath.Join(tr.home, "notes"), resolution{root: filepath.Join(tr.home, "notes"), kind: ProjectKindDirectory}},
 		{"missing folder", config.Config{}, Filters{}, filepath.Join(tr.home, "gone", "deeper"), resolution{root: filepath.Join(tr.home, "gone", "deeper"), kind: ProjectKindDirectory}},
 		{"no working directory", config.Config{}, Filters{}, "", resolution{skip: SkipProjectUnknown}},
@@ -260,15 +260,18 @@ func TestIdentityAndClassification(t *testing.T) {
 	const good = "0a9b3c4d-0000-4000-8000-000000000001"
 	const other = "0a9b3c4d-0000-4000-8000-000000000002"
 	files := map[string]string{
-		claudeFile("s", "ok"):                             claudeTranscript("ok", repo, start),
-		claudeFile("s", "renamed"):                        claudeTranscript("someone-else", repo, start),
-		claudeFile("s", "forked"):                         claudeTranscript("forked", repo, start) + claudeTranscript("parent", repo, start.Add(-time.Hour)),
-		claudeFile("s", "zero"):                           "",
-		claudeFile("s", "summary"):                        `{"type":"summary","summary":"recap","leafUuid":"a","cwd":"` + repo + `"}` + "\n",
-		claudeFile("s", "unknown"):                        `{"type":"file-history-snapshot","cwd":"` + repo + `","snapshot":{}}` + "\n",
-		claudeFile("s", "future"):                         claudeTranscript("future", repo, fixedNow.Add(time.Hour)),
-		codexFile(good):                                   codexTranscript(good, good, repo, start),
-		codexFile(other):                                  codexTranscript(good, good, repo, start),
+		claudeFile("s", "ok"):      claudeTranscript("ok", repo, start),
+		claudeFile("s", "renamed"): claudeTranscript("someone-else", repo, start),
+		claudeFile("s", "forked"):  claudeTranscript("forked", repo, start) + claudeTranscript("parent", repo, start.Add(-time.Hour)),
+		claudeFile("s", "zero"):    "",
+		claudeFile("s", "summary"): `{"type":"summary","summary":"recap","leafUuid":"a","cwd":"` + repo + `"}` + "\n",
+		claudeFile("s", "unknown"): `{"type":"file-history-snapshot","cwd":"` + repo + `","snapshot":{}}` + "\n",
+		claudeFile("s", "future"):  claudeTranscript("future", repo, fixedNow.Add(time.Hour)),
+		codexFile(good):            codexTranscript(good, good, repo, start),
+		// A second file carrying good's ID: the one whose name agrees is kept.
+		codexFile(other): codexTranscript(good, good, repo, start),
+		// Named for one session, carrying another's ID.
+		codexFile("0a9b3c4d-0000-4000-8000-000000000005"): codexTranscript("0a9b3c4d-0000-4000-8000-000000000006", "", repo, start),
 		codexFile("0a9b3c4d-0000-4000-8000-000000000003"): codexTranscript("0a9b3c4d-0000-4000-8000-000000000003", "0a9b3c4d-0000-4000-8000-000000000004", repo, start),
 	}
 	for rel, content := range files {
@@ -296,7 +299,10 @@ func TestIdentityAndClassification(t *testing.T) {
 			codex[filepath.Base(c.TranscriptPath)] = c.Skip
 		}
 	}
-	if len(codex) != 3 || codex[filepath.Base(codexFile(good))] != "" || codex[filepath.Base(codexFile(other))] != SkipIdentityMismatch || codex[filepath.Base(codexFile("0a9b3c4d-0000-4000-8000-000000000003"))] != SkipIdentityMismatch {
+	if codex[filepath.Base(codexFile("0a9b3c4d-0000-4000-8000-000000000005"))] != SkipIdentityMismatch {
+		t.Errorf("file name mismatch: %v", codex)
+	}
+	if len(codex) != 4 || codex[filepath.Base(codexFile(good))] != "" || codex[filepath.Base(codexFile(other))] != SkipDuplicateSession || codex[filepath.Base(codexFile("0a9b3c4d-0000-4000-8000-000000000003"))] != SkipIdentityMismatch {
 		t.Fatalf("codex skips: %v", codex)
 	}
 	if c := candidate(t, p, "ok"); !c.StartedAt.Equal(start.UTC().Truncate(time.Second)) || c.StartedAtSource != StartedAtSourceTranscript || c.ProjectRoot != repo {

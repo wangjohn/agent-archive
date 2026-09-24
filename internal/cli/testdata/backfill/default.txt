@@ -13,15 +13,17 @@ Claude desktop scratch chats                2      –       –      2  will be
   Chats started without a folder. New ones will be captured too.
 ~/old-notes (folder no longer exists)       1      –       –      1  will be added
 
-Total: 11 sessions (plus 2 subagent transcripts), 4 KB,
+Total: 11 sessions (plus 2 subagent transcripts), 7 KB,
        started 2026-09-17 to 2026-09-22.
 
 Not imported:
    1  already in the archive
-   1  run from the home folder or above it      add --include-home
+   1  run from the home folder                  add --include-home
    2  run from temporary directories            add --include-temp
    1  Cursor chat whose project could not be determined
    1  with no conversation
+      Cursor chats stored only in Cursor's database were not checked
+      (a later release).
 
 If you continue:
   • 4 projects are added, and new Claude Code sessions in them are captured.
