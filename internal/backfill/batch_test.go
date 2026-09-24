@@ -152,13 +152,20 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// The plan judged start_in_future by its own clock; a clock set back
+	// since moves the admission before this start.
+	future := candidate("future", project)
+	future.StartedAt = admitted.Add(time.Second)
 	r := Registration{Home: home, Store: store, Batch: "2026-09-23-1", AdmittedAt: admitted}
-	result, err := r.Run([]Candidate{ok, gone, taken, excluded})
+	result, err := r.Run([]Candidate{ok, gone, taken, excluded, future})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Sessions) != 1 || result.Gone != 1 || result.AlreadyArchived != 1 || result.NotAdmitted != 1 {
+	if len(result.Sessions) != 1 || result.Gone != 1 || result.AlreadyArchived != 1 || result.NotAdmitted != 1 || result.StartInFuture != 1 {
 		t.Fatalf("%+v", result)
+	}
+	if _, found, _ := store.ArchiveSessionID("future"); found {
+		t.Fatal("a session starting after its admission was given an archive ID")
 	}
 	reg, _, _ := store.LoadRegistration(result.Sessions[0])
 	if reg.Origin != archive.SessionOriginImport || reg.ImportBatch != "2026-09-23-1" || !reg.AdmittedAt.Equal(admitted) || reg.NativeSessionID != "ok" {

@@ -309,6 +309,9 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 	if n := result.NotAdmitted; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d no longer accepted by the setup", n))
 	}
+	if n := result.StartInFuture; n > 0 {
+		skipped = append(skipped, fmt.Sprintf("%d starting in the future (check the clock)", n))
+	}
 	if n := result.Invalid; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d that could not be registered", n))
 	}
