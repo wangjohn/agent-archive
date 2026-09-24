@@ -1543,6 +1543,57 @@ workspaces was checked on the real home (dry run) rather than in the
 sandbox, where those folders are outside `HOME`. Phase 2 (Cursor's database)
 is not started.
 
+## Backfill follow-up A — spec gaps (2026-09-23)
+
+A spec audit (208 requirements, two independent reviewers) found gaps that
+this follow-up closes, each with a test that fails without the fix:
+
+- The plan applies the collector's own subagent acceptance checks
+  (`collector.CheckImportedSubagent`), and the collector rejects an imported
+  subagent whose transcript is empty instead of waiting for it forever.
+- Claude Code and Codex transcripts with no record timestamp are
+  `start_unknown`; only Cursor falls back to the file's birth time. A Claude
+  conversation with no `sessionId` is `identity_mismatch`.
+- An unreadable folder is skipped and counted without printing its path; an
+  unreadable app store is named ("Claude Code's session folder could not be
+  read"), and the other apps still import.
+- Import refuses an admission earlier than the plan (clock set back), and
+  registration skips a session starting after admission as a backstop.
+- Tests added for a crash between the batch file and the configuration save,
+  `collector.DeleteWholeSession` ordering and rerun, and hooks ignoring
+  removal records.
+- The spec now records the code's deliberate differences (exit code 2 for
+  usage errors, the storage test object, Cursor slug rule, duplicate order,
+  configuration fingerprint, lock timing, subagent candidate order), and
+  install.md has the upgrade note about sessions retention removed before
+  removal records existed.
+
+### Codex hook identity check (2026-09-23)
+
+Codex CLI 0.155.0-alpha.9.2 (the ChatGPT app's bundled binary), run with a
+sandboxed `CODEX_HOME` whose only hook recorded its stdin, and
+`--dangerously-bypass-hook-trust` for that invocation. `SessionStart`,
+`UserPromptSubmit`, and `SessionEnd` all carried a `session_id` equal to the
+rollout's `session_meta.payload.id` and to the UUID in its file name, and a
+`transcript_path` naming that rollout. So a Codex session registered by hooks
+and the same session found by backfill share one native ID, and backfill's
+`already_archived` deduplication holds. The real `~/.codex` was not used.
+
+### Live check on the follow-up code (2026-09-23)
+
+Same setup as the B1–B4 live check (MinIO bucket `backfill-e2e`, sandboxed
+`HOME` with copies of this Mac's stores).
+
+- Ground truth, counted independently of backfill by listing files: 36 Claude
+  Code transcripts (1 run from a temporary directory), 1 Codex, 6 Cursor, 127
+  subagent transcripts. The plan found 43, imported 35 + 1 + 6 = 42, skipped 1
+  as `temporary_directory`, and imported 126 subagents; the one other
+  subagent belongs to the skipped temporary-directory session.
+- Read-back verification: after the import, 33 `sync` passes (5 verifications
+  each) verified all 168 publications (42 sessions and 126 subagents); none
+  mismatched. `status` showed 42 imported, 0 pending, 0 with issues.
+- Undo then emptied the bucket.
+
 ## Backfill follow-up B — Cursor database count (2026-09-23)
 
 The phase-1 count of Cursor chats that exist only in `state.vscdb`, as the

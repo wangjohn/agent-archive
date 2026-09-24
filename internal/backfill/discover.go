@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -32,26 +33,60 @@ type transcript struct {
 	metaStart time.Time
 }
 
+// unreadable records what discovery could not list. Paths are never kept.
+type unreadable struct {
+	// folders counts folders inside an app's store.
+	folders int
+	// stores are the apps whose store root could not be listed, so none, or
+	// for Codex's archived_sessions only the archived, of their sessions were
+	// found.
+	stores map[string]bool
+	// codexArchivedOnly is set when Codex's archived_sessions could not be
+	// listed but its sessions folder could.
+	codexArchivedOnly bool
+}
+
 // discover lists every transcript file in the three apps' default stores. It
-// only lists directories; nothing is opened here.
-func discover(env Environment) ([]*transcript, error) {
-	var found []*transcript
-	claude, err := discoverClaude(env)
-	if err != nil {
-		return nil, err
+// only lists directories; nothing is opened here. A folder that cannot be
+// listed is passed over and recorded in u, so one bad folder never stops the
+// plan, and its path is never shown.
+func discover(env Environment) (found []*transcript, u unreadable) {
+	u.stores = map[string]bool{}
+	found = append(found, discoverClaude(env, &u)...)
+	found = append(found, discoverCodex(env, &u)...)
+	found = append(found, discoverCursor(env, &u)...)
+	return found, u
+}
+
+// listDir lists a folder inside an app's store. A missing folder, or a path
+// that is not a folder, is empty; one that cannot be read is counted and
+// treated as empty.
+func listDir(env Environment, dir string, u *unreadable) []dirEntry {
+	entries, ok := tryList(env, dir)
+	if !ok {
+		u.folders++
 	}
-	found = append(found, claude...)
-	codex, err := discoverCodex(env)
-	if err != nil {
-		return nil, err
+	return entries
+}
+
+// listStore lists the root of app's store, recording app when it cannot be
+// read: then none of the sessions below it are found.
+func listStore(env Environment, dir, app string, u *unreadable) []dirEntry {
+	entries, ok := tryList(env, dir)
+	if !ok {
+		u.stores[app] = true
 	}
-	found = append(found, codex...)
-	cursor, err := discoverCursor(env)
+	return entries
+}
+
+// tryList lists dir; ok is false only when it exists as a folder and cannot
+// be read.
+func tryList(env Environment, dir string) ([]dirEntry, bool) {
+	entries, err := readDirIfExists(env, dir)
 	if err != nil {
-		return nil, err
+		return nil, errors.Is(err, syscall.ENOTDIR)
 	}
-	found = append(found, cursor...)
-	return found, nil
+	return entries, true
 }
 
 // readDirIfExists lists dir, treating a missing directory as empty.
@@ -89,22 +124,14 @@ func fileSize(env Environment, path string) (int64, bool) {
 
 // discoverClaude finds ~/.claude/projects/*/*.jsonl. The file stem is the
 // native session ID.
-func discoverClaude(env Environment) ([]*transcript, error) {
+func discoverClaude(env Environment, u *unreadable) []*transcript {
 	root := filepath.Join(env.Home, ".claude", "projects")
-	slugs, err := readDirIfExists(env, root)
-	if err != nil {
-		return nil, err
-	}
 	var found []*transcript
-	for _, slug := range slugs {
+	for _, slug := range listStore(env, root, "claude", u) {
 		if !slug.dir {
 			continue
 		}
-		files, err := readDirIfExists(env, filepath.Join(root, slug.name))
-		if err != nil {
-			return nil, err
-		}
-		for _, f := range files {
+		for _, f := range listDir(env, filepath.Join(root, slug.name), u) {
 			if !f.regular || !strings.HasSuffix(f.name, ".jsonl") {
 				continue
 			}
@@ -116,27 +143,21 @@ func discoverClaude(env Environment) ([]*transcript, error) {
 			found = append(found, &transcript{harness: "claude", path: path, size: size, nativeID: strings.TrimSuffix(f.name, ".jsonl")})
 		}
 	}
-	return found, nil
+	return found
 }
 
 // discoverCodex finds ~/.codex/sessions/**/rollout-*.jsonl and
 // ~/.codex/archived_sessions/rollout-*.jsonl. A file in both is taken from
 // sessions/.
-func discoverCodex(env Environment) ([]*transcript, error) {
+func discoverCodex(env Environment, u *unreadable) []*transcript {
 	var found []*transcript
 	seen := map[string]bool{}
-	var walk func(dir string) error
-	walk = func(dir string) error {
-		entries, err := readDirIfExists(env, dir)
-		if err != nil {
-			return err
-		}
+	var walk func(dir string, entries []dirEntry)
+	walk = func(dir string, entries []dirEntry) {
 		for _, e := range entries {
 			path := filepath.Join(dir, e.name)
 			if e.dir {
-				if err := walk(path); err != nil {
-					return err
-				}
+				walk(path, listDir(env, path, u))
 				continue
 			}
 			if !e.regular || !isRolloutName(e.name) || seen[e.name] {
@@ -149,17 +170,14 @@ func discoverCodex(env Environment) ([]*transcript, error) {
 			seen[e.name] = true
 			found = append(found, &transcript{harness: "codex", path: path, size: size})
 		}
-		return nil
 	}
-	if err := walk(filepath.Join(env.Home, ".codex", "sessions")); err != nil {
-		return nil, err
-	}
+	sessions := filepath.Join(env.Home, ".codex", "sessions")
+	walk(sessions, listStore(env, sessions, "codex", u))
+	sessionsRead := !u.stores["codex"]
 	archived := filepath.Join(env.Home, ".codex", "archived_sessions")
-	entries, err := readDirIfExists(env, archived)
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range entries {
+	archivedEntries := listStore(env, archived, "codex", u)
+	u.codexArchivedOnly = sessionsRead && u.stores["codex"]
+	for _, e := range archivedEntries {
 		if !e.regular || !isRolloutName(e.name) || seen[e.name] {
 			continue
 		}
@@ -171,7 +189,7 @@ func discoverCodex(env Environment) ([]*transcript, error) {
 		seen[e.name] = true
 		found = append(found, &transcript{harness: "codex", path: path, size: size})
 	}
-	return found, nil
+	return found
 }
 
 func isRolloutName(name string) bool {
@@ -184,25 +202,17 @@ func isRolloutName(name string) bool {
 // (collector.FilterTranscriptFile falls back to the text filter). The folder
 // name is the chat ID hooks register; the JSONL file wins when a chat has
 // both.
-func discoverCursor(env Environment) ([]*transcript, error) {
+func discoverCursor(env Environment, u *unreadable) []*transcript {
 	root := filepath.Join(env.Home, ".cursor", "projects")
-	slugs, err := readDirIfExists(env, root)
-	if err != nil {
-		return nil, err
-	}
 	var found []*transcript
-	for _, slug := range slugs {
+	for _, slug := range listStore(env, root, "cursor", u) {
 		if !slug.dir {
 			continue
 		}
 		dir := filepath.Join(root, slug.name, "agent-transcripts")
-		entries, err := readDirIfExists(env, dir)
-		if err != nil {
-			return nil, err
-		}
 		chats := map[string]*transcript{}
 		var order []string
-		for _, e := range entries {
+		for _, e := range listDir(env, dir, u) {
 			var id, path string
 			switch {
 			case e.dir:
@@ -232,7 +242,7 @@ func discoverCursor(env Environment) ([]*transcript, error) {
 			found = append(found, chats[id])
 		}
 	}
-	return found, nil
+	return found
 }
 
 // readHead reads the leading records a transcript's identity and working

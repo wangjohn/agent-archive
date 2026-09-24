@@ -483,15 +483,19 @@ func TestBackfillConcurrentChanges(t *testing.T) {
 	})
 }
 
-// A crash after the configuration commit leaves projects added and nothing
-// registered; a crash between registration holds leaves some sessions
-// registered. Either way, running backfill again finishes the same import.
+// A crash inside the configuration commit, after the batch file is written,
+// leaves a batch naming projects the configuration lacks; a crash after the
+// commit leaves projects added and nothing registered; a crash between
+// registration holds leaves some sessions registered. Either way, running
+// backfill again finishes the same import: one batch, each project added
+// once, each session registered once.
 func TestBackfillCrashConverges(t *testing.T) {
 	for _, crash := range []struct {
-		name string
-		at   string
-		n    int
-	}{{"after commit", "committed", 1}, {"between holds", "registered", 2}} {
+		name     string
+		at       string
+		n        int
+		projects int
+	}{{"inside commit", "batch saved", 1, 1}, {"after commit", "committed", 1, 5}, {"between holds", "registered", 2, 5}} {
 		t.Run(crash.name, func(t *testing.T) {
 			f, _ := newImportFixture(t)
 			calls := 0
@@ -509,15 +513,15 @@ func TestBackfillCrashConverges(t *testing.T) {
 				t.Fatalf("crash: code %d, %s", code, errOut)
 			}
 			cfg, _, _ := config.Load(f.data)
-			if len(cfg.Archive.Projects) != 5 {
-				t.Fatalf("projects after the commit: %d", len(cfg.Archive.Projects))
+			if len(cfg.Archive.Projects) != crash.projects {
+				t.Fatalf("projects after the crash: %d, want %d", len(cfg.Archive.Projects), crash.projects)
 			}
 			partial, _ := importRegistrations(t, f.data, firstImport)
 			b, _ := loadBatch(t, f.data, firstImport)
-			if b.CompletedAt != nil || len(b.Sessions) != len(partial) {
+			if b.CompletedAt != nil || len(b.Sessions) != len(partial) || len(b.ProjectsAdded) != 4 {
 				t.Fatalf("interrupted batch %+v, %d registered", b, len(partial))
 			}
-			if crash.at == "committed" && len(partial) != 0 || crash.at == "registered" && (len(partial) == 0 || len(partial) == 11) {
+			if crash.at != "registered" && len(partial) != 0 || crash.at == "registered" && (len(partial) == 0 || len(partial) == 11) {
 				t.Fatalf("%d registered at the crash", len(partial))
 			}
 			if history, _, _ := f.command(t, "backfill", "history"); !strings.Contains(history, "interrupted") {
@@ -540,6 +544,21 @@ func TestBackfillCrashConverges(t *testing.T) {
 			batches, _ := backfill.LoadBatches(f.data)
 			if len(batches) != 1 {
 				t.Fatalf("%d batches", len(batches))
+			}
+			cfg, _, _ = config.Load(f.data)
+			roots := map[string]bool{}
+			for _, p := range cfg.Archive.Projects {
+				roots[p.Root] = true
+			}
+			if len(cfg.Archive.Projects) != 5 || len(roots) != 5 {
+				t.Fatalf("projects after rerun: %+v", cfg.Archive.Projects)
+			}
+			natives := map[string]bool{}
+			for _, reg := range parents {
+				natives[reg.NativeSessionID] = true
+			}
+			if len(natives) != 11 {
+				t.Fatalf("%d distinct sessions registered, want 11", len(natives))
 			}
 		})
 	}

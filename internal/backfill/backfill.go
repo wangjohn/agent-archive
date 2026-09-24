@@ -42,6 +42,7 @@ const (
 	SkipEmpty                 SkipReason = "empty"
 	SkipUnsafeFormat          SkipReason = "unsafe_format"
 	SkipTooLarge              SkipReason = "too_large"
+	SkipStartUnknown          SkipReason = "start_unknown"
 	SkipStartInFuture         SkipReason = "start_in_future"
 	SkipCursorDatabaseOnly    SkipReason = "cursor_database_only"
 )
@@ -51,7 +52,7 @@ var skipOrder = []SkipReason{
 	SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted, SkipRemovedByUndo, SkipRemovedByRetention,
 	SkipFilteredOut, SkipExcludedProject, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
 	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIdentityMismatch,
-	SkipEmpty, SkipUnsafeFormat, SkipTooLarge, SkipStartInFuture,
+	SkipEmpty, SkipUnsafeFormat, SkipTooLarge, SkipStartUnknown, SkipStartInFuture,
 	SkipCursorDatabaseOnly,
 }
 
@@ -108,7 +109,8 @@ type Candidate struct {
 	// imported parent.
 	Subagents []Subagent
 	// SubagentsSkipped counts the parent's subagent transcripts that are too
-	// large or that the filter refuses; they are not imported.
+	// large, that the filter refuses, or that the collector would not
+	// register (collector.CheckImportedSubagent); they are not imported.
 	SubagentsSkipped int
 	Skip             SkipReason
 }

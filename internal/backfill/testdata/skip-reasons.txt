@@ -27,9 +27,15 @@ Not imported:
    1  with no conversation
    1  in a format the archive cannot read safely
    1  larger than 64 MiB
+   1  Claude Code session whose start time could not be determined
    1  starting in the future (check the clock)
    1  Cursor chat stored only in Cursor's database (a later release)
-   1  subagent transcript that can't be read
+   1  subagent transcript that can't be imported
+   2  folders in the app stores could not be read
+      Claude Code's session folder could not be read (check permissions);
+      none of its sessions are included.
+      Codex's session folder could not be read (check permissions);
+      none of its sessions are included.
 
 If you continue:
   • 1 project is added, and new Claude Code sessions in it are captured.
@@ -51,7 +57,8 @@ Total: 2 sessions (plus 1 subagent transcript), 4 KB,
        started 2026-09-20.
 
 Not imported:
-   1  subagent transcript that can't be read
+   1  subagent transcript that can't be imported
+   1  folder in the app stores could not be read
       Cursor chats stored only in Cursor's database were not checked:
       it has an unfinished write; open and close Cursor, then try again.
 

@@ -21,11 +21,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-// backfillCheckpoint, when set, is called after the configuration commit
-// ("committed"), after each registration hold ("registered"), before the
-// upload ("uploading"), and when undo holds its locks and has rechecked its
-// plan ("undoing"). A test
-// returns an error from it to stop the import there, as a crash would.
+// backfillCheckpoint, when set, is called inside the configuration commit
+// between writing the batch file and saving the configuration ("batch
+// saved"), after the commit ("committed"), after each registration hold
+// ("registered"), before the upload ("uploading"), and when undo holds its
+// locks and has rechecked its plan ("undoing"). A test returns an error from
+// it to stop the import there, as a crash would.
 var backfillCheckpoint func(step string) error
 
 // backfillHoldSteps, when positive, caps the steps registration takes per
@@ -283,6 +284,9 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err := backfill.SaveBatch(home, batch); err != nil {
 		return batch, admittedAt, 0, err
 	}
+	if err := checkpoint("batch saved"); err != nil {
+		return batch, admittedAt, 0, err
+	}
 	if err := config.Save(home, cfg); err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("save config: %w", err)
 	}
@@ -308,6 +312,9 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 	}
 	if n := result.NotAdmitted; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d no longer accepted by the setup", n))
+	}
+	if n := result.StartInFuture; n > 0 {
+		skipped = append(skipped, fmt.Sprintf("%d starting in the future (check the clock)", n))
 	}
 	if n := result.Invalid; n > 0 {
 		skipped = append(skipped, fmt.Sprintf("%d that could not be registered", n))

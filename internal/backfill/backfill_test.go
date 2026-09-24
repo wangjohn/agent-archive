@@ -99,6 +99,13 @@ func claudeTranscript(sessionID, cwd string, start time.Time) string {
 `, sessionID, cwd, start.UTC().Format(time.RFC3339), sessionID, cwd, start.Add(time.Minute).UTC().Format(time.RFC3339))
 }
 
+// subagentTranscript is a Claude Code subagent transcript of parent, as the
+// collector registers it: every record names the parent session and the
+// agent, and carries a timestamp.
+func subagentTranscript(parent, agentID string, start time.Time) string {
+	return fmt.Sprintf(`{"type":"assistant","sessionId":%q,"agentId":%q,"timestamp":%q,"message":{"role":"assistant","content":"looked"}}`+"\n", parent, agentID, start.UTC().Format(time.RFC3339))
+}
+
 func codexTranscript(id, sessionID, cwd string, start time.Time) string {
 	return fmt.Sprintf(`{"type":"session_meta","timestamp":%q,"payload":{"id":%q,"session_id":%q,"timestamp":%q,"cwd":%q,"source":"cli","originator":"codex_cli_rs"}}
 {"type":"response_item","timestamp":%q,"payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"inspect the file"}]}}
@@ -343,9 +350,9 @@ func TestClaudeSubagents(t *testing.T) {
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-24 * time.Hour)
 	tr.write(filepath.Join("home", claudeFile("s", "parent")), claudeTranscript("parent", repo, start))
-	tr.write(filepath.Join("home", ".claude", "projects", "s", "parent", "subagents", "agent-a1.jsonl"), claudeTranscript("parent", repo, start))
+	tr.write(filepath.Join("home", ".claude", "projects", "s", "parent", "subagents", "agent-a1.jsonl"), subagentTranscript("parent", "a1", start))
 	tr.write(filepath.Join("home", ".claude", "projects", "s", "parent", "subagents", "agent-a1.meta.json"), `{}`)
-	tr.write(filepath.Join("home", ".claude", "projects", "s", "parent", "subagents", "agent-a2.jsonl"), claudeTranscript("parent", repo, start))
+	tr.write(filepath.Join("home", ".claude", "projects", "s", "parent", "subagents", "agent-a2.jsonl"), subagentTranscript("parent", "a2", start))
 	p := plan(t, tr.env(), nil, config.Config{}, Filters{})
 	if len(p.Candidates) != 1 {
 		t.Fatalf("subagents must not be sessions of their own: %d candidates", len(p.Candidates))
