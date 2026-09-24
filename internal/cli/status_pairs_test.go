@@ -241,14 +241,14 @@ func publishPairSession(t *testing.T, home string, store *collector.LocalStore, 
 func pairStatusEnv(t *testing.T, home, userHome string, now time.Time, apps ...string) Env {
 	t.Helper()
 	executable := "/opt/agent-archive/bin/agent-archive"
-	plan, err := hooks.Plan(userHome, executable, apps)
+	env := testEnv(t, home, now)
+	plan, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv), env.installation(home, userHome).hook(executable), apps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := hooks.Apply(plan); err != nil {
 		t.Fatal(err)
 	}
-	env := testEnv(t, home, now)
 	env.UserHomeDir = func() (string, error) { return userHome, nil }
 	env.Executable = func() (string, error) { return executable, nil }
 	env.JobState = func(string) string { return "running" }

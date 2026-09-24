@@ -141,7 +141,7 @@ func (s *LocalStore) SessionDir(archiveSessionID string) string {
 }
 
 // ForgetSession removes every local record of a session: its registration,
-// request, request lock, published-bundle cache, pending publication and
+// request, request and subagent-candidate locks, published-bundle cache, pending publication and
 // scan markers, superseded-source ledger, per-session evidence directory,
 // and native-session index entry. A caller uses this only after successfully
 // deleting that session's metadata and every source object from storage
@@ -169,16 +169,23 @@ func (s *LocalStore) ForgetSession(archiveSessionID, nativeSessionID string) err
 		filepath.Join(s.home, "pending-scans", archiveSessionID+".json"),
 		s.scanSignaturePath(archiveSessionID),
 		s.supersededPath(archiveSessionID),
+		s.refreshSkipPath(archiveSessionID),
 		filepath.Join(s.SessionDir(archiveSessionID), "verification.json"),
 	}
 	if nativeSessionID != "" {
 		paths = append(paths, nativeSessionIndexPath(s.home, nativeSessionID))
 	}
+	// The session's own candidate is gone (removed above, under this lock),
+	// so its lock file goes too. Unlinking a lock file is safe:
+	// local.NamedLock only reports a lock held once the path still names the
+	// file it locked, so a caller that opened this file just before the
+	// unlink retries on the new one instead of sharing the lock.
+	paths = append(paths, filepath.Join(s.home, subagentLockName(archiveSessionID)))
 	// The request lock goes last. Unlinking it lets a waiting hook lock a
 	// fresh file at once, so everything a hook rechecks under that lock (the
 	// registration, the request, and the native-session index a new
 	// registration would reuse) must already be gone by then.
-	paths = append(paths, filepath.Join(s.home, "request-locks", archiveSessionID+".lock"))
+	paths = append(paths, filepath.Join(s.home, requestLockName(archiveSessionID)))
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove %q: %w", path, err)

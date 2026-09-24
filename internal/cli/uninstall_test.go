@@ -41,7 +41,7 @@ func TestUninstallKeepsLocalDataByDefault(t *testing.T) {
 	if !found || cfg.Archive.Enabled {
 		t.Fatal("must retain disabled config")
 	}
-	if _, err := os.Stat(filepath.Join(userHome, "Library/LaunchAgents", hooks.LaunchLabel+".plist")); !os.IsNotExist(err) {
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !os.IsNotExist(err) {
 		t.Fatal("plist remains")
 	}
 	for _, rel := range []string{".codex/hooks.json", ".claude/settings.json"} {
@@ -78,7 +78,7 @@ func TestUninstallDeclineChangesNothing(t *testing.T) {
 	if string(after) != string(before) {
 		t.Fatal("declining must not touch hook configuration")
 	}
-	if _, err := os.Stat(filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")); err != nil {
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); err != nil {
 		t.Fatalf("declining must keep the plist: %v", err)
 	}
 }
@@ -139,7 +139,9 @@ func TestUninstallDeletesStoredR2CredentialsOnly(t *testing.T) {
 	keychain := newFakeKeychain()
 	// A credential under some other reference stands in for anything else
 	// stored under our Keychain service; uninstall must leave it alone.
-	keychain.Save(context.Background(), "r2-other-bucket", credentials.R2Credentials{AccessKeyID: "OTHER", SecretAccessKey: "othersecret"})
+	if err := keychain.Save(context.Background(), "r2-other-bucket", credentials.R2Credentials{AccessKeyID: "OTHER", SecretAccessKey: "othersecret"}); err != nil {
+		t.Fatal(err)
+	}
 	r2Input := r2SetupInput(t.TempDir(), "supersecret")
 	home, _, env := installedFixture(t, keychain, r2Input)
 	cfg, _, _ := config.Load(home)
@@ -185,18 +187,18 @@ func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
 	// The state a setup that failed at config.Save, and whose rollback also
 	// failed, would leave: a plist and hooks but no config.
 	executable := "/opt/agent-archive/bin/agent-archive"
-	changes, err := hooks.Plan(userHome, executable, []string{"cursor"})
+	changes, err := hooks.Plan(hooks.ResolveFiles(userHome, noEnv), env.installation(home, userHome).hook(executable), []string{"cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := hooks.Apply(changes); err != nil {
 		t.Fatal(err)
 	}
-	plist, err := hooks.LaunchAgent(executable, home)
+	plist, err := hooks.LaunchAgent(executable, home, launchLabel(env.installation(home, userHome).collectorPlist()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plistPath := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
+	plistPath := env.installation(home, userHome).collectorPlist()
 	if err := local.WriteBytes(plistPath, plist); err != nil {
 		t.Fatal(err)
 	}

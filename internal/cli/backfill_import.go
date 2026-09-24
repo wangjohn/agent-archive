@@ -535,8 +535,8 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	if !found {
-		fmt.Fprintln(stdout, notSetUpMessage)
-		return 0
+		fmt.Fprintln(stderr, notSetUpMessage)
+		return 1
 	}
 	batches, err := backfill.LoadBatches(home)
 	if err != nil {

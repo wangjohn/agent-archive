@@ -980,7 +980,7 @@ func TestRunComposesWithLocalLock(t *testing.T) {
 	}
 	defer unlock()
 
-	if _, err := local.Lock(home); err != local.ErrBusy {
+	if _, err := local.Lock(home); !errors.Is(err, local.ErrBusy) {
 		t.Fatalf("expected a second collector run to be excluded, got %v", err)
 	}
 

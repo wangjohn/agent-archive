@@ -22,15 +22,29 @@ import (
 // timeout (2s, per hooks.Merge) and must never block the user's turn, so
 // this always exits 0; a problem is reported to stderr only, matching the
 // spec's failure table ("Hook cannot write a request: task continues,
-// diagnostic is available outside model context").
-func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) int {
+// diagnostic is available outside model context"). That includes a panic:
+// Go exits 2 on one, which Claude Code treats as a blocking error (it
+// erases the prompt on UserPromptSubmit and feeds the stack trace to the
+// model on Stop), so a panic is recovered, recorded, and exits 0 too.
+func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (code int) {
+	var (
+		home    string
+		harness = new(string)
+		payload map[string]any
+	)
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(stderr, "agent-archive: hook: internal error: %v\n", r)
+			recordHookFailure(home, *harness, payload)
+			code = 0
+		}
+	}()
 	fs := flag.NewFlagSet("_hook", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	harness := fs.String("harness", "", "harness name (codex, claude, cursor)")
+	harness = fs.String("harness", "", "harness name (codex, claude, cursor)")
 	if err := fs.Parse(args); err != nil {
 		return 0
 	}
-	var payload map[string]any
 	// A hook that sends no or malformed JSON is treated as a no-op, not an
 	// error: some hook events (per the harness's own docs) carry no useful
 	// fields at all, and we must never fail loudly on the harness's input.
@@ -45,6 +59,30 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) i
 		fmt.Fprintf(stderr, "agent-archive: hook: %v\n", err)
 	}
 	return 0
+}
+
+// recordHookFailure leaves a content-free hook_failed diagnostic for status
+// after a recovered panic, under the same rule as every diagnostic: only for
+// an included project. It is best effort, and a failure of its own
+// (including another panic) is dropped: the hook must still exit 0.
+func recordHookFailure(home, harness string, payload map[string]any) {
+	defer func() { _ = recover() }()
+	if home == "" {
+		return
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || !cfg.Archive.Enabled {
+		return
+	}
+	project, owned := configuredProjectActivationFor(cfg, projectRoot(payload))
+	if !owned || !project.Included {
+		return
+	}
+	// The real clock: the injected one may be what failed.
+	_ = recordCaptureDiagnostic(home, captureDiagnostic{
+		Code: diagnosticHookFailed, Harness: canonicalHarness(harness),
+		ProjectRoot: project.Root, ObservedAt: time.Now(),
+	})
 }
 
 type hookEventKind int

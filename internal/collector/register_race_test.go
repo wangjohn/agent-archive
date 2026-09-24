@@ -132,7 +132,7 @@ func TestStaleLockInodeAfterForgetCannotWriteForTheSession(t *testing.T) {
 	if err := syscall.Flock(int(stale.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatalf("the stale inode should be lockable once retention released it: %v", err)
 	}
-	defer syscall.Flock(int(stale.Fd()), syscall.LOCK_UN)
+	defer func() { _ = syscall.Flock(int(stale.Fd()), syscall.LOCK_UN) }()
 
 	// With the stale inode locked, every locked operation for the forgotten
 	// ID still runs (it locks the fresh file) and every one of them refuses
