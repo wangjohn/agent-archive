@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // Every entry the collector's local store can create under the data
@@ -14,7 +14,7 @@ import (
 // the store itself, so a directory it adds later cannot be left behind.
 func TestDeleteLocalDataRemovesEveryLocalStoreEntry(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "agent-archive")
-	for _, entry := range collector.OwnedEntries() {
+	for _, entry := range state.OwnedEntries() {
 		path := filepath.Join(home, entry)
 		if strings.HasSuffix(entry, ".json") {
 			if err := os.MkdirAll(home, 0o700); err != nil {

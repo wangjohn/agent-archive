@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -84,7 +84,7 @@ func pendingSessions(home string, cfg config.Config) (int, error) {
 // published anywhere until a path arrives, so its queued request is not work
 // a sync could finish. blocking counts everything else.
 func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int, err error) {
-	store := collector.OpenLocalStoreReadOnly(home)
+	store := state.OpenReadOnly(home)
 
 	regs, err := store.LoadRegistrations()
 	if err != nil {
@@ -102,7 +102,7 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 		if !cfg.AcceptSession(r) {
 			continue
 		}
-		_, _, state, found, err := store.LoadPublished(r.ArchiveSessionID)
+		_, _, cacheStatus, found, err := store.LoadPublished(r.ArchiveSessionID)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -110,7 +110,7 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 		if err != nil {
 			return 0, 0, err
 		}
-		if !(scanPending || requested[r.ArchiveSessionID] || !found || state == collector.CacheStatusRateLimited) {
+		if !(scanPending || requested[r.ArchiveSessionID] || !found || cacheStatus == state.CacheStatusRateLimited) {
 			continue
 		}
 		idle, err := waitingForTranscript(store, r)
@@ -132,7 +132,7 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 // parents and are not counted. A registration without a destination ID
 // stays behind.
 func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
-	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil {
 		return 0, err
 	}
@@ -149,7 +149,7 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 // has never published, and has no publication in flight. A Cursor database
 // chat has no transcript path by design and never waits for one: it is
 // read from the database, so a sync can publish it and it is pending.
-func waitingForTranscript(store *collector.LocalStore, r archive.SessionRegistration) (bool, error) {
+func waitingForTranscript(store *state.Store, r archive.SessionRegistration) (bool, error) {
 	if r.TranscriptPath != "" || !r.ReadsTranscriptFile() {
 		return false, nil
 	}
@@ -191,7 +191,7 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 		}
 	}
 	if next.RetentionDays < old.RetentionDays {
-		store := collector.OpenLocalStoreReadOnly(home)
+		store := state.OpenReadOnly(home)
 		regs, err := store.LoadRegistrations()
 		if err != nil {
 			return err

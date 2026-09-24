@@ -6,11 +6,11 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
-func handleSubagentStop(store *collector.LocalStore, cfg config.Config, harness, parentNativeID, eventName string, payload map[string]any, now time.Time) error {
+func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNativeID, eventName string, payload map[string]any, now time.Time) error {
 	parentID, found, err := store.ArchiveSessionID(parentNativeID)
 	if err != nil {
 		return fmt.Errorf("look up parent archive session ID: %w", err)
@@ -58,7 +58,7 @@ func handleSubagentStop(store *collector.LocalStore, cfg config.Config, harness,
 	if !supportsSubagentTranscript(harness) || path == "" {
 		return nil
 	}
-	return store.SaveSubagentCandidate(collector.SubagentCandidate{
+	return store.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: childID, NativeSessionID: childNativeID,
 		ParentArchiveSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness,
@@ -75,7 +75,7 @@ func supportsSubagentTranscript(harness string) bool {
 	}
 }
 
-func saveLinkedSessionEvidence(store *collector.LocalStore, parentID, childID string, status archive.LinkedSessionStatus, observedAt time.Time) error {
+func saveLinkedSessionEvidence(store *state.Store, parentID, childID string, status archive.LinkedSessionStatus, observedAt time.Time) error {
 	evidence, err := archive.NewLinkedSessionEvidence(childID, status, observedAt)
 	if err != nil {
 		return fmt.Errorf("filter subagent link: %w", err)
@@ -83,7 +83,7 @@ func saveLinkedSessionEvidence(store *collector.LocalStore, parentID, childID st
 	return store.SaveRequest(parentID, "subagent-link", observedAt, evidence)
 }
 
-func saveSubagentCaptureGap(store *collector.LocalStore, parentID, code, detail string, observedAt time.Time) error {
+func saveSubagentCaptureGap(store *state.Store, parentID, code, detail string, observedAt time.Time) error {
 	filtered, _, err := archive.FilterSupplementalEvidence([]archive.SupplementalEvidence{{
 		Kind: archive.EvidenceKindCaptureGap, ObservedAt: observedAt, Provenance: "hook:subagent-link",
 		Payload: map[string]any{"code": code, "detail": detail},

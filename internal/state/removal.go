@@ -1,4 +1,4 @@
-package collector
+package state
 
 import (
 	"crypto/sha256"
@@ -17,8 +17,12 @@ import (
 type RemovalReason string
 
 const (
+	// RemovalReasonRetention means the retention sweep removed the session once
+	// it passed the retention period.
 	RemovalReasonRetention RemovalReason = "retention"
-	RemovalReasonUndo      RemovalReason = "undo"
+	// RemovalReasonUndo means `agent-archive backfill undo` removed an imported
+	// session.
+	RemovalReasonUndo RemovalReason = "undo"
 )
 
 // RemovalRecord outlives a forgotten session. ForgetSession removes the
@@ -52,7 +56,7 @@ func removalHarness(harness string) string {
 
 // RecordRemoval writes forgotten/<sha256(harness + "\x00" + nativeSessionID)>.json.
 // A later removal of the same session replaces the earlier record.
-func (s *LocalStore) RecordRemoval(harness, nativeSessionID string, reason RemovalReason, at time.Time) error {
+func (s *Store) RecordRemoval(harness, nativeSessionID string, reason RemovalReason, at time.Time) error {
 	if strings.TrimSpace(harness) == "" || strings.TrimSpace(nativeSessionID) == "" {
 		return errors.New("app and native session ID are required")
 	}
@@ -66,7 +70,7 @@ func (s *LocalStore) RecordRemoval(harness, nativeSessionID string, reason Remov
 }
 
 // Removal reports the record for a native session, if any.
-func (s *LocalStore) Removal(harness, nativeSessionID string) (RemovalRecord, bool, error) {
+func (s *Store) Removal(harness, nativeSessionID string) (RemovalRecord, bool, error) {
 	if strings.TrimSpace(harness) == "" || strings.TrimSpace(nativeSessionID) == "" {
 		return RemovalRecord{}, false, errors.New("app and native session ID are required")
 	}

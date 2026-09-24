@@ -5,23 +5,23 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // A session retention or undo forgot keeps its removal record, so backfill
 // reports it as removed instead of importing its transcript again.
 func TestBackfillArchiveStateReportsRemovalRecords(t *testing.T) {
 	home := t.TempDir()
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	if err := store.RecordRemoval("codex", "expired-session", collector.RemovalReasonRetention, at); err != nil {
+	if err := store.RecordRemoval("codex", "expired-session", state.RemovalReasonRetention, at); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordRemoval("claude", "undone-session", collector.RemovalReasonUndo, at); err != nil {
+	if err := store.RecordRemoval("claude", "undone-session", state.RemovalReasonUndo, at); err != nil {
 		t.Fatal(err)
 	}
 	state := newArchiveState(home, config.Config{})
@@ -49,11 +49,11 @@ func TestBackfillArchiveStateReportsRemovalRecords(t *testing.T) {
 // Hooks ignore them: a fresh start of a native session undo or retention
 // removed registers as any other start.
 func TestHookFreshStartIgnoresRemovalRecord(t *testing.T) {
-	for _, reason := range []collector.RemovalReason{collector.RemovalReasonUndo, collector.RemovalReasonRetention} {
+	for _, reason := range []state.RemovalReason{state.RemovalReasonUndo, state.RemovalReasonRetention} {
 		t.Run(string(reason), func(t *testing.T) {
 			home := t.TempDir()
 			setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-			store, err := collector.NewLocalStore(home)
+			store, err := state.Open(home)
 			if err != nil {
 				t.Fatal(err)
 			}

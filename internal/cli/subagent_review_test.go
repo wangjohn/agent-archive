@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -43,7 +44,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 		}
 	}
 	hook(map[string]any{"hook_event_name": "SubagentStop", "session_id": "native-parent", "agent_id": "child-agent", "agent_transcript_path": childPath}, at.Add(-time.Second))
-	earlyStore, _ := collector.NewLocalStore(home)
+	earlyStore, _ := state.Open(home)
 	early, _ := earlyStore.LoadSubagentCandidates()
 	if len(early) != 0 {
 		t.Fatal("child before accepted parent was staged")
@@ -54,7 +55,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	now := at.Add(2 * time.Minute)
 	hook(stop, now)
 	cfg, _, _ := config.Load(home)
-	local, _ := collector.NewLocalStore(home)
+	local, _ := state.Open(home)
 	remote := storage.NewMemoryStore()
 	collect := func() {
 		t.Helper()

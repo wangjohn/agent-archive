@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -18,14 +18,14 @@ import (
 // behind before a downgrade, is reported but never moved aside.
 func TestWrongShapeStateFileIsReportedNotQuarantined(t *testing.T) {
 	local := newTestStore(t)
-	if err := os.WriteFile(local.registrationPath("newer"), []byte(`{"archive_session_id":["not","a","string"]}`), 0o600); err != nil {
+	if err := os.WriteFile(registrationPath(local, "newer"), []byte(`{"archive_session_id":["not","a","string"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"})
-	if err != nil || result.Errors["newer"] == nil || errors.Is(result.Errors["newer"], ErrQuarantined) {
+	if err != nil || result.Errors["newer"] == nil || errors.Is(result.Errors["newer"], state.ErrQuarantined) {
 		t.Fatalf("%#v %v %v", result, err, result.Errors)
 	}
-	if _, err := os.Stat(local.registrationPath("newer")); err != nil {
+	if _, err := os.Stat(registrationPath(local, "newer")); err != nil {
 		t.Fatalf("the file was moved: %v", err)
 	}
 }
@@ -35,12 +35,12 @@ func TestWrongShapeStateFileIsReportedNotQuarantined(t *testing.T) {
 func TestSecondQuarantineKeepsTheFirst(t *testing.T) {
 	local := newTestStore(t)
 	for pass := 0; pass < 2; pass++ {
-		corruptFile(t, local.requestPath("orphan"))
+		corruptFile(t, requestPath(local, "orphan"))
 		if _, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if files := local.quarantinedFiles(); len(files) != 2 {
+	if files := local.QuarantinedFiles(); len(files) != 2 {
 		t.Fatalf("quarantined = %v, want both copies", files)
 	}
 }
@@ -55,7 +55,7 @@ func TestUnreadableRegistrationCountsAsPending(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(local.registrationPath("session-1"), 0); err != nil {
+	if err := os.Chmod(registrationPath(local, "session-1"), 0); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"})
@@ -67,55 +67,11 @@ func TestUnreadableRegistrationCountsAsPending(t *testing.T) {
 	}
 }
 
-// State written before the source reference was recorded carries it in
-// cached metadata of any metadata schema version.
-func TestOlderStateSourceReferenceIgnoresMetadataSchemaVersion(t *testing.T) {
-	ref := archive.SourceReference{Key: "sessions/codex/s/source.x.jsonl.gz", SHA256: strings.Repeat("ab", 32), CompressedBytes: 10}
-	metadata, err := json.Marshal(map[string]any{"schema_version": 99, "source_bundle": ref})
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := publishedState{Status: CacheStatusPublished, MetadataBytes: metadata}
-	if got, found := state.lastPublishedSource(); !found || got != ref {
-		t.Fatalf("source = %#v %v", got, found)
-	}
-	state.MetadataBytes, _ = json.Marshal(map[string]any{"source_bundle": map[string]any{"key": ref.Key, "sha256": "not-a-digest"}})
-	if _, found := state.lastPublishedSource(); found {
-		t.Fatal("accepted a reference without a SHA-256 digest")
-	}
-}
-
-// ForgetSession must not go ahead while the session's own subagent candidate
-// cannot be read: the candidate would register the session again later.
-func TestForgetSessionRefusesWhileItsCandidateIsUnreadable(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads unreadable files")
-	}
-	store := newTestStore(t)
-	if err := store.SaveRegistration(registration(t, "/unused")); err != nil {
-		t.Fatal(err)
-	}
-	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	candidate := SubagentCandidate{ArchiveSessionID: "session-1", NativeSessionID: "native-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "native-parent", ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"}, AgentID: "agent", TranscriptPath: "/unused", ObservedAt: at}
-	if err := store.SaveSubagentCandidate(candidate); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(store.subagentCandidatePath("session-1"), 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.ForgetSession("session-1", "native-1"); err == nil {
-		t.Fatal("forgot a session whose candidate could not be read")
-	}
-	if _, found, err := store.LoadRegistration("session-1"); err != nil || !found {
-		t.Fatalf("registration = %v %v", found, err)
-	}
-}
-
 // uploadedByAnotherBuild makes session-1's last publication one whose source
 // bytes this build does not reproduce from the cached bundle, as after a
 // compressor change: the recorded reference, and the cached metadata, point
 // at an object with other bytes. It returns that reference.
-func uploadedByAnotherBuild(t *testing.T, local *LocalStore, store storage.ObjectStore) archive.SourceReference {
+func uploadedByAnotherBuild(t *testing.T, local *state.Store, store storage.ObjectStore) archive.SourceReference {
 	t.Helper()
 	data := []byte("the same bundle, compressed by another build")
 	sum := storage.SHA256Hex(data)
@@ -243,7 +199,7 @@ func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
 				t.Fatal(err)
 			}
 			metadataKey, _ := archive.MetadataObjectKey("codex", "session-1")
-			if err := local.SavePending("session-1", PendingPublication{
+			if err := local.SavePending("session-1", state.PendingPublication{
 				MetadataOnly: true, Bundle: bundle, SourceKey: recorded.Key, SourceSHA256: recorded.SHA256, SourceSize: recorded.CompressedBytes,
 				MetadataKey: metadataKey, MetadataBytes: []byte(`{}`), ReadyAt: now,
 			}); err != nil {
@@ -319,7 +275,7 @@ func TestUnderivableMetadataIsRecordedUntilTheNextPublication(t *testing.T) {
 			t.Fatalf("pass %d: status %#v %v", pass, status, err)
 		}
 	}
-	if skip, found, _ := local.loadRefreshSkip("session-1"); !found || skip.Reason != refreshSkipUnderivable || skip.ParserVersion != "two" {
+	if skip, found, _ := local.LoadRefreshSkip("session-1"); !found || skip.Reason != state.RefreshSkipUnderivable || skip.ParserVersion != "two" {
 		t.Fatalf("refresh skip = %#v %v", skip, found)
 	}
 	// The transcript comes back with more: a new publication, which clears it.
@@ -330,20 +286,6 @@ func TestUnderivableMetadataIsRecordedUntilTheNextPublication(t *testing.T) {
 	}
 	if status, err := local.LoadStatus(); err != nil || status.UnrefreshableSummaries != 0 {
 		t.Fatalf("status %#v %v", status, err)
-	}
-}
-
-// Quarantined copies of one file are capped at quarantineKeep, newest kept.
-func TestQuarantineKeepsOnlyTheNewestCopies(t *testing.T) {
-	local := newTestStore(t)
-	for pass := 0; pass < quarantineKeep+2; pass++ {
-		corruptFile(t, local.requestPath("orphan"))
-		if _, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if files := local.quarantinedFiles(); len(files) != quarantineKeep {
-		t.Fatalf("quarantined = %v, want %d copies", files, quarantineKeep)
 	}
 }
 

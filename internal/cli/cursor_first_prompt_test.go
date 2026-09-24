@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -45,7 +45,7 @@ func cursorTranscriptLocation(t *testing.T, conversation string) string {
 
 func onlyCursorRegistration(t *testing.T, home string) archive.SessionRegistration {
 	t.Helper()
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestCursorDesktopChatRegistersAtFirstPromptAndPublishes(t *testing.T) {
 	if code := runSyncCommand(nil, &stdout, &stderr, env); code != 0 || strings.Contains(stdout.String(), "1 failed") {
 		t.Fatalf("waiting registration failed the pass: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	if status, _ := store.LoadStatus(); status.LastError != "" {
 		t.Fatalf("waiting registration recorded an error: %q", status.LastError)
 	}
@@ -151,7 +151,7 @@ func TestCursorResumedChatIsDeclinedAtFirstPrompt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("a resumed chat was registered: %#v", regs)
 	}
@@ -225,7 +225,7 @@ func TestFirstPromptRegistrationIsCursorOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("a non-Cursor session registered without its documented start proof: %#v", regs)
 	}
@@ -265,7 +265,7 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		store, _ := collector.NewLocalStore(home)
+		store, _ := state.Open(home)
 		regs, err := store.LoadRegistrations()
 		if err != nil || len(regs) != 1 {
 			t.Fatalf("iteration %d: registrations = %#v err=%v", i, regs, err)
@@ -378,7 +378,7 @@ func TestCursorFirstPromptHonorsNearestConfiguredProject(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("an excluded workspace registered: %#v", regs)
 	}
@@ -437,7 +437,7 @@ func TestCursorFirstPromptDuringSetupIsExplainedOnlyForNewChats(t *testing.T) {
 
 func onlyCursorRegistrationList(t *testing.T, home string) ([]archive.SessionRegistration, error) {
 	t.Helper()
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestCursorDatabaseSessionNeverAdoptsTranscriptPath(t *testing.T) {
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	conversation := "5f3c2a10-0000-4000-8000-00000000db01"
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

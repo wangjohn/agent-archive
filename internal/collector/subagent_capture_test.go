@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 	home := t.TempDir()
-	local, err := NewLocalStore(home)
+	local, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 		t.Fatal(err)
 	}
 	stopAt := parentStart.Add(3 * time.Minute)
-	if err := local.SaveSubagentCandidate(SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: childPath, ObservedAt: stopAt}); err != nil {
+	if err := local.SaveSubagentCandidate(state.SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: childPath, ObservedAt: stopAt}); err != nil {
 		t.Fatal(err)
 	}
 	link, err := archive.NewLinkedSessionEvidence("child", archive.LinkedSessionPending, stopAt)
@@ -66,7 +67,7 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 
 func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 	home := t.TempDir()
-	local, _ := NewLocalStore(home)
+	local, _ := state.Open(home)
 	start := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	path := filepath.Join(home, "wrong.jsonl")
 	if err := os.WriteFile(path, []byte(`{"type":"assistant","sessionId":"other-parent","agentId":"agent-1","timestamp":"2026-09-21T10:02:00Z","message":{"role":"assistant","content":"wrong"}}`+"\n"), 0o600); err != nil {
@@ -76,7 +77,7 @@ func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 	if err := local.SaveRegistration(parent); err != nil {
 		t.Fatal(err)
 	}
-	candidate := SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "child-native", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: path, ObservedAt: start.Add(3 * time.Minute)}
+	candidate := state.SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "child-native", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: path, ObservedAt: start.Add(3 * time.Minute)}
 	if err := local.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
