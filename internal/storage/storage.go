@@ -10,8 +10,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
 )
 
 var (
@@ -196,10 +200,39 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 
 // RetryPolicy controls bounded retries for transient storage operations.
 // MaxAttempts includes the first attempt. Zero uses the default of three.
+// Only an error isTransient accepts is retried: a denied request, a missing
+// bucket, or a checksum mismatch fails the same way every time.
 type RetryPolicy struct {
 	MaxAttempts int
 	InitialWait time.Duration
 	MaxWait     time.Duration
+}
+
+// sdkRetryables is the AWS SDK's own classification of retryable errors:
+// connection failures, throttling, and 5xx responses.
+var sdkRetryables = awsretry.IsErrorRetryables(awsretry.DefaultRetryables)
+
+// isTransient reports whether a storage error may succeed if the operation is
+// simply tried again. It follows the AWS SDK's classification, with three
+// refinements: an error that already exhausted the SDK's own retries is not
+// retried again on top of them; a cancelled or expired context never is; and
+// a response body cut short (io.ErrUnexpectedEOF), which the SDK does not see
+// because the body is read after it returns, is.
+func isTransient(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrChecksumMismatch) || errors.Is(err, ErrObjectTooLarge) {
+		return false
+	}
+	var exhausted *awsretry.MaxAttemptsError
+	if errors.As(err, &exhausted) {
+		return false
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	return sdkRetryables.IsErrorRetryable(err) == aws.TrueTernary
 }
 
 func (p RetryPolicy) run(ctx context.Context, operation func() error) error {
@@ -220,7 +253,7 @@ func (p RetryPolicy) run(ctx context.Context, operation func() error) error {
 		if err = operation(); err == nil {
 			return nil
 		}
-		if attempt+1 == attempts {
+		if attempt+1 == attempts || !isTransient(err) || ctx.Err() != nil {
 			break
 		}
 		timer := time.NewTimer(wait)

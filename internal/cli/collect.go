@@ -24,11 +24,35 @@ var (
 	errPaused   = errors.New("collection is paused; run `agent-archive resume` first")
 )
 
+// collector-error.log is cut back to its last errorLogKeepBytes once it
+// grows past errorLogMaxBytes.
+const (
+	errorLogMaxBytes  = 1 << 20
+	errorLogKeepBytes = 256 << 10
+)
+
+// Deadlines for one pass. A pass holds the collector lock, and every
+// scheduled tick that finds it held gives up quietly, so a pass that never
+// ended would stop capture without a word. Collection and the retention
+// sweep get separate budgets so a slow upload cannot starve cleanup. A
+// collection that runs out ends like an interrupted one: the sessions it did
+// not reach keep their work for the next pass.
+const (
+	collectTimeout = 10 * time.Minute
+	sweepTimeout   = 5 * time.Minute
+)
+
 // runCollectCommand implements the hidden `_collect` entry point
 // install.LaunchAgent schedules every 60 seconds. Unlike `sync`, it never
 // reports "already running" as a problem: a scheduled tick finding the
 // previous one still working is the lock doing its job, not an error.
 func runCollectCommand(_ []string, _ io.Writer, stderr io.Writer, env Env) int {
+	// launchd appends this process's stderr to collector-error.log and never
+	// rotates it. launchd runs one _collect at a time, so this process is the
+	// file's only writer until it exits.
+	if home, err := env.home(); err == nil {
+		_ = local.TrimLog(filepath.Join(home, "collector-error.log"), errorLogMaxBytes, errorLogKeepBytes)
+	}
 	_, err := runOnePass(env, true)
 	if err != nil {
 		if errors.Is(err, errNotSetUp) || errors.Is(err, errPaused) {
@@ -113,6 +137,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return collector.Result{}, errPaused
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), collectTimeout)
+	defer cancel()
 	objectStore, err := env.openStore(cfg)
 	if err != nil {
 		storeErr := fmt.Errorf("open storage: %w", err)
@@ -124,7 +150,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		var prior storageHealth
 		healthErr := local.Read(filepath.Join(home, "storage-health.json"), &prior)
 		if healthErr != nil || prior.ConfigurationID != configurationID(cfg) || prior.Context != "background_collector" || prior.State != "verified" || env.now().Sub(prior.CheckedAt) > storageHealthRefreshAfter {
-			probeErr := storage.VerifyAccess(context.Background(), objectStore)
+			probeErr := storage.VerifyAccess(ctx, objectStore)
 			state := "verified"
 			if probeErr != nil {
 				state = storageFailureState(probeErr)
@@ -149,7 +175,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		}
 	}
 
-	result, err := collector.Run(context.Background(), localStore, objectStore, collector.Options{
+	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
 		MachineID:            cfg.MachineID,
 		SupplementalEvidence: skillObserver(env),
 		AcceptSession:        cfg.AcceptSession,
@@ -180,6 +206,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		for id, issue := range result.Errors {
 			code := "capture_or_publication_failed"
 			switch {
+			case errors.Is(issue, collector.ErrQuarantined):
+				code = "local_state_unreadable"
 			case strings.Contains(issue.Error(), "truncated, compacted, or rewritten"):
 				code = "transcript_discontinuity"
 			case strings.Contains(issue.Error(), "collection limit"):
@@ -193,7 +221,9 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		recordPreflightError(localStore, fmt.Errorf("%d session(s) need capture or publication", len(result.Errors)))
 	}
 
-	sweepResult, sweepErr := retention.Sweep(context.Background(), localStore, objectStore, retention.Options{
+	sweepCtx, cancelSweep := context.WithTimeout(context.Background(), sweepTimeout)
+	defer cancelSweep()
+	sweepResult, sweepErr := retention.Sweep(sweepCtx, localStore, objectStore, retention.Options{
 		Now: env.Now,
 		// Retention sweeps every session this machine registered, including
 		// ones cfg.AcceptSession no longer admits for publication: an excluded

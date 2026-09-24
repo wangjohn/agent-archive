@@ -7,11 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsretry "github.com/aws/aws-sdk-go-v2/aws/retry"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -35,21 +38,18 @@ type S3Store struct {
 type S3StoreOptions struct {
 	// Provider is s3 or r2 (compared case- and space-insensitively); empty is
 	// unknown for custom endpoints.
-	Provider     string
-	Client       *s3.Client
-	Bucket       string
-	Prefix       string
-	MaxAttempts  int
-	Endpoint     string
-	UsePathStyle bool
+	Provider string
+	// Client is used as-is; endpoint, addressing style, retries, and
+	// timeouts are its configuration (see NewClient).
+	Client *s3.Client
+	Bucket string
+	Prefix string
 	// MaxGetBytes bounds memory used while reading an object. Zero selects
 	// the 64 MiB default appropriate for archive metadata and source bundles.
 	MaxGetBytes int64
 }
 
-// NewS3Store creates a store from an AWS SDK client. Endpoint and
-// UsePathStyle are accepted here as convenience for callers constructing a
-// client through NewClient; an already-created client is always used as-is.
+// NewS3Store creates a store from an AWS SDK client.
 func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 	if options.Client == nil {
 		return nil, errors.New("storage: S3 client is required")
@@ -74,6 +74,14 @@ func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 // Cloudflare, and a static credentials provider from internal/credentials.
 // Path style addressing is used for compatibility with both R2 and local
 // fake servers.
+//
+// The SDK's default HTTP client waits forever for a server that accepts a
+// connection and never answers (a captive portal, a stalled proxy), and a
+// collector pass stuck there holds the collector lock, so every later pass
+// quietly finds it busy. The client is therefore given connect, TLS, and
+// response-header timeouts (see withTimeouts). A body that stalls after its
+// headers arrived is bounded by the caller's context deadline instead,
+// since no fixed limit suits both a small metadata read and a large upload.
 func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int) *s3.Client {
 	if maxAttempts <= 0 {
 		maxAttempts = 3
@@ -82,11 +90,43 @@ func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int)
 		if endpoint != "" {
 			options.BaseEndpoint = aws.String(strings.TrimRight(endpoint, "/"))
 		}
+		options.HTTPClient = withTimeouts(options.HTTPClient)
 		options.UsePathStyle = pathStyle
 		options.Retryer = awsretry.NewStandard(func(retryOptions *awsretry.StandardOptions) {
 			retryOptions.MaxAttempts = maxAttempts
 		})
 	})
+}
+
+// Network timeouts for the SDK's HTTP client. Variables only so a test can
+// shorten them.
+var (
+	dialTimeout           = 15 * time.Second
+	tlsHandshakeTimeout   = 15 * time.Second
+	responseHeaderTimeout = 60 * time.Second
+)
+
+// withTimeouts gives the SDK's own HTTP client (which is what
+// config.LoadDefaultConfig, or no client at all, yields) connect, TLS, and
+// response-header timeouts. The response-header timer starts only once the
+// request body has been sent, so it does not limit upload size. A client the
+// caller supplied itself is left alone.
+func withTimeouts(client aws.HTTPClient) aws.HTTPClient {
+	var buildable *awshttp.BuildableClient
+	switch c := client.(type) {
+	case nil:
+		buildable = awshttp.NewBuildableClient()
+	case *awshttp.BuildableClient:
+		buildable = c
+	default:
+		return client
+	}
+	return buildable.
+		WithDialerOptions(func(dialer *net.Dialer) { dialer.Timeout = dialTimeout }).
+		WithTransportOptions(func(transport *http.Transport) {
+			transport.TLSHandshakeTimeout = tlsHandshakeTimeout
+			transport.ResponseHeaderTimeout = responseHeaderTimeout
+		})
 }
 
 func (s *S3Store) key(relative string) (string, error) {
@@ -262,5 +302,5 @@ func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain cr
 		return nil, err
 	}
 	client := NewClient(awsCfg, endpoint, true, 3)
-	return NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix, Endpoint: endpoint, UsePathStyle: true})
+	return NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
 }

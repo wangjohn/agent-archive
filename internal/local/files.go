@@ -2,12 +2,14 @@
 package local
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -97,7 +99,7 @@ func WriteBytes(path string, b []byte) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return e
 	}
-	f, e := os.CreateTemp(filepath.Dir(path), ".pending-")
+	f, e := os.CreateTemp(filepath.Dir(path), tempPrefix)
 	if e != nil {
 		return e
 	}
@@ -125,6 +127,80 @@ func WriteBytes(path string, b []byte) error {
 	defer d.Close()
 	return d.Sync()
 }
+
+// tempPrefix names WriteBytes' temporary files. A process that dies between
+// creating one and renaming it over its target leaves it behind.
+const tempPrefix = ".pending-"
+
+// RemoveStaleTemps removes the temporary files WriteBytes left in dir, not
+// in its subdirectories, whose modification time is more than olderThan ago.
+// A write in progress is younger than any sensible olderThan, so only a
+// temporary a crashed writer abandoned is removed. A missing dir is not an
+// error.
+func RemoveStaleTemps(dir string, olderThan time.Duration) error {
+	entries, e := os.ReadDir(dir)
+	if errors.Is(e, os.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	cutoff := time.Now().Add(-olderThan)
+	var errs []error
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasPrefix(entry.Name(), tempPrefix) {
+			continue
+		}
+		info, e := entry.Info()
+		if e != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if e := os.Remove(filepath.Join(dir, entry.Name())); e != nil && !errors.Is(e, os.ErrNotExist) {
+			errs = append(errs, e)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// TrimLog keeps an append-only log file from growing without bound: once it
+// is larger than maxBytes it is cut down, in place, to about its last keep
+// bytes, starting at a line boundary. The file is truncated rather than
+// replaced so a writer holding it open with O_APPEND (launchd's redirect of
+// the collector's stderr) keeps writing to the same file. It must not run
+// while another process writes the file. A missing file is not an error.
+func TrimLog(path string, maxBytes, keep int64) error {
+	f, e := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(e, os.ErrNotExist) {
+		return nil
+	}
+	if e != nil {
+		return e
+	}
+	defer f.Close()
+	info, e := f.Stat()
+	if e != nil {
+		return e
+	}
+	if !info.Mode().IsRegular() || info.Size() <= maxBytes {
+		return nil
+	}
+	keep = min(keep, info.Size())
+	tail := make([]byte, keep)
+	if _, e = f.ReadAt(tail, info.Size()-keep); e != nil {
+		return e
+	}
+	if i := bytes.IndexByte(tail, '\n'); i >= 0 {
+		tail = tail[i+1:]
+	}
+	if e = f.Truncate(0); e != nil {
+		return e
+	}
+	if _, e = f.WriteAt(tail, 0); e != nil {
+		return e
+	}
+	return f.Sync()
+}
+
 func Read(path string, value any) error {
 	b, e := os.ReadFile(path)
 	if e != nil {

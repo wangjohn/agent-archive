@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -124,31 +125,51 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		return Result{}, errors.New("machine ID is required")
 	}
 	now := opts.now()
-	materializationIssues := materializeSubagentCandidates(local, opts)
+	local.removeStaleTemps()
+	result := Result{Errors: materializeSubagentCandidates(local, opts)}
 
-	registrations, err := local.LoadRegistrations()
+	// One unreadable state file fails only its own session: the pass, and
+	// the retention sweep after it, go on for every other one.
+	registrations, registrationIssues, err := local.ScanRegistrations()
 	if err != nil {
-		return Result{}, fmt.Errorf("load registrations: %w", err)
+		return Result{}, err
+	}
+	requests, requestIssues, err := local.ScanRequests()
+	if err != nil {
+		return Result{}, err
+	}
+	// unreadable holds the sessions this pass must leave alone: their state
+	// could not be read, so there is nothing safe to act on.
+	unreadable := map[string]bool{}
+	for id, issue := range registrationIssues {
+		addError(result.Errors, id, issue)
+	}
+	for id, issue := range requestIssues {
+		addError(result.Errors, id, issue)
+		// A quarantined request is gone, and the session carries on without
+		// it; one that could not be read may still hold evidence.
+		if !errors.Is(issue, ErrQuarantined) {
+			unreadable[id] = true
+		}
 	}
 	requestsByID := map[string]Request{}
-	if requests, err := local.LoadRequests(); err != nil {
-		return Result{}, fmt.Errorf("load requests: %w", err)
-	} else {
-		for _, req := range requests {
-			if req.Token == "" {
-				var found bool
-				req, found, err = local.ensureRequestToken(req.ArchiveSessionID)
-				if err != nil {
-					return Result{}, fmt.Errorf("upgrade pending request: %w", err)
-				}
-				if !found {
-					// Acknowledged by a concurrent process between listing
-					// and upgrade; nothing is pending for it any more.
-					continue
-				}
+	for _, req := range requests {
+		if req.Token == "" {
+			id := req.ArchiveSessionID
+			var found bool
+			req, found, err = local.ensureRequestToken(id)
+			if err != nil {
+				addError(result.Errors, id, fmt.Errorf("upgrade pending request: %w", err))
+				unreadable[id] = true
+				continue
 			}
-			requestsByID[req.ArchiveSessionID] = req
+			if !found {
+				// Acknowledged by a concurrent process between listing
+				// and upgrade; nothing is pending for it any more.
+				continue
+			}
 		}
+		requestsByID[req.ArchiveSessionID] = req
 	}
 
 	orderOldestRequestsFirst(registrations, requestsByID)
@@ -159,10 +180,12 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		}
 	}()
 
-	result := Result{Errors: materializationIssues}
 	pending := 0
 	for i, reg := range registrations {
-		if opts.Stop != nil && opts.Stop() {
+		// A pass past its deadline ends like a stopped one: nothing more can
+		// reach storage, so the rest keep their work rather than each
+		// failing on the expired context.
+		if (opts.Stop != nil && opts.Stop()) || ctx.Err() != nil {
 			// Ended early: what is left keeps its work for the next pass.
 			for _, rest := range registrations[i:] {
 				if requestsByID[rest.ArchiveSessionID].Token != "" && (opts.AcceptSession == nil || opts.AcceptSession(rest)) {
@@ -176,6 +199,18 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		}
 		result.Scanned++
 		req := requestsByID[reg.ArchiveSessionID]
+		// fail records a local failure that ends this session's turn in the
+		// pass; the session is retried on the next one.
+		fail := func(err error) {
+			addError(result.Errors, reg.ArchiveSessionID, err)
+			pending++
+			opts.progress(reg.ArchiveSessionID, false)
+		}
+		if unreadable[reg.ArchiveSessionID] {
+			pending++
+			opts.progress(reg.ArchiveSessionID, false)
+			continue
+		}
 
 		// A hook request always means a read, except on a Cursor database
 		// chat whose last read failed at the state it is still in: reading
@@ -183,12 +218,14 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		if req.Token == "" || reg.SourceKind == archive.SourceKindCursorSQLite {
 			unchanged, err := unchangedSinceLastScan(ctx, local, reg, opts)
 			if err != nil {
-				return result, fmt.Errorf("check transcript for changes: %w", err)
+				fail(fmt.Errorf("check transcript for changes: %w", err))
+				continue
 			}
 			failed, failure := false, ""
 			if unchanged {
 				if failed, failure, err = rememberedFailure(local, reg); err != nil {
-					return result, fmt.Errorf("check transcript for changes: %w", err)
+					fail(fmt.Errorf("check transcript for changes: %w", err))
+					continue
 				}
 			}
 			switch {
@@ -200,9 +237,7 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 				// request stays queued, as it does for a transcript file
 				// the filter refuses: its evidence is the only copy, and
 				// the chat's next change reads the chat again with it.
-				result.Errors[reg.ArchiveSessionID] = errUnchangedSinceFailure{message: failure}
-				pending++
-				opts.progress(reg.ArchiveSessionID, false)
+				fail(errUnchangedSinceFailure{message: failure})
 				continue
 			default:
 				// Settled, or a recorded gap (a size limit) at the same
@@ -211,7 +246,8 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 				// limit, and the gap stands until the chat changes.
 				if req.Token != "" {
 					if _, err := local.CompleteRequest(reg.ArchiveSessionID, req.Token); err != nil {
-						return result, fmt.Errorf("complete a request on an unchanged gap: %w", err)
+						fail(fmt.Errorf("complete a request on an unchanged gap: %w", err))
+						continue
 					}
 				}
 				// Nothing to read, nothing to compare, nothing to journal.
@@ -222,39 +258,40 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		}
 
 		if err := local.SetScanPending(reg.ArchiveSessionID, true); err != nil {
-			return result, fmt.Errorf("journal pending scan: %w", err)
+			fail(fmt.Errorf("journal pending scan: %w", err))
+			continue
 		}
 		if err := markPublishedSubagent(local, reg); err != nil {
-			result.Errors[reg.ArchiveSessionID] = err
+			addError(result.Errors, reg.ArchiveSessionID, err)
 			pending++
 		}
 		outcome, err := processSession(ctx, local, store, reg, req, now, opts)
 		if err != nil {
-			result.Errors[reg.ArchiveSessionID] = err
-			pending++
-			opts.progress(reg.ArchiveSessionID, false)
+			fail(err)
 			continue
 		}
+		// The session's own outcome stands whatever happens below: a
+		// publication has reached storage even if the bookkeeping after it
+		// fails, and the next pass redoes that bookkeeping.
 		_, requestPending, requestErr := local.loadRequest(reg.ArchiveSessionID)
-		if requestErr != nil {
-			return result, fmt.Errorf("check pending request: %w", requestErr)
-		}
-		_, uploadPending, uploadErr := local.LoadPending(reg.ArchiveSessionID)
-		if uploadErr != nil {
-			return result, fmt.Errorf("check pending publication: %w", uploadErr)
-		}
-		if !requestPending && !uploadPending {
+		uploadPending, uploadErr := local.HasPending(reg.ArchiveSessionID)
+		switch {
+		case requestErr != nil || uploadErr != nil:
+			addError(result.Errors, reg.ArchiveSessionID, fmt.Errorf("check outstanding work: %w", errors.Join(requestErr, uploadErr)))
+			pending++
+		case !requestPending && !uploadPending:
 			if err := local.SetScanPending(reg.ArchiveSessionID, false); err != nil {
-				return result, fmt.Errorf("complete pending scan: %w", err)
+				addError(result.Errors, reg.ArchiveSessionID, fmt.Errorf("complete pending scan: %w", err))
+				pending++
 			}
-		} else {
+		default:
 			pending++
 		}
 		switch outcome {
 		case outcomePublished:
 			result.Published = append(result.Published, reg.ArchiveSessionID)
 			if err := markPublishedSubagent(local, reg); err != nil {
-				result.Errors[reg.ArchiveSessionID] = err
+				addError(result.Errors, reg.ArchiveSessionID, err)
 				pending++
 			}
 		case outcomeRateLimited:
@@ -265,11 +302,13 @@ func Run(ctx context.Context, local *LocalStore, store storage.ObjectStore, opts
 		opts.progress(reg.ArchiveSessionID, outcome == outcomePublished)
 	}
 
+	// A status file that no longer decodes is replaced below; it only ever
+	// carries the previous pass's summary.
 	previousStatus, err := local.LoadStatus()
-	if err != nil {
+	if err != nil && !isCorruptJSON(err) {
 		return result, err
 	}
-	status := Status{LastScanAt: now.UTC(), PendingCount: pending, LastPublishedAt: previousStatus.LastPublishedAt}
+	status := Status{LastScanAt: now.UTC(), PendingCount: pending, LastPublishedAt: previousStatus.LastPublishedAt, QuarantinedFiles: local.quarantinedFiles()}
 	if len(result.Published) > 0 {
 		status.LastPublishedAt = now.UTC()
 	}
@@ -286,6 +325,15 @@ func (o Options) progress(archiveSessionID string, published bool) {
 	if o.Progress != nil {
 		o.Progress(Progress{ArchiveSessionID: archiveSessionID, Published: published})
 	}
+}
+
+// addError records err against a session, keeping any error the pass already
+// recorded for it.
+func addError(errs map[string]error, archiveSessionID string, err error) {
+	if previous := errs[archiveSessionID]; previous != nil {
+		err = errors.Join(previous, err)
+	}
+	errs[archiveSessionID] = err
 }
 
 // orderOldestRequestsFirst puts the sessions with a pending request first,
@@ -427,6 +475,16 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 	if havePending {
 		newRequest := !pending.Attempted && req.Token != "" && req.Token != pending.RequestToken
 		if !newRequest {
+			// No publication ever waits longer than one interval from now. A
+			// later ReadyAt came from a clock that was wrong when it was set
+			// (see readyAt below); it is capped durably, since a cap
+			// recomputed from each pass's now would keep moving away.
+			if latest := now.Add(opts.minUploadInterval()); pending.ReadyAt.After(latest) {
+				pending.ReadyAt = latest
+				if err := local.SavePending(reg.ArchiveSessionID, pending); err != nil {
+					return outcomeSkipped, fmt.Errorf("cap pending publication time: %w", err)
+				}
+			}
 			if !pending.ReadyAt.IsZero() && now.Before(pending.ReadyAt) {
 				return outcomeRateLimited, nil
 			}
@@ -689,9 +747,16 @@ func processSession(ctx context.Context, local *LocalStore, store storage.Object
 		return outcomeSkipped, fmt.Errorf("marshal metadata: %w", err)
 	}
 
+	// A last publication stamped in the future was stamped by a wrong clock
+	// (an NTP step, a VM resuming): it counts as just now, so it defers this
+	// one by at most one interval rather than until that date comes round.
 	readyAt := now
-	if !req.urgent() && !lastPublishedAt.IsZero() && now.Sub(lastPublishedAt) < opts.minUploadInterval() {
-		readyAt = lastPublishedAt.Add(opts.minUploadInterval())
+	intervalFrom := lastPublishedAt
+	if intervalFrom.After(now) {
+		intervalFrom = now
+	}
+	if !req.urgent() && !intervalFrom.IsZero() && now.Sub(intervalFrom) < opts.minUploadInterval() {
+		readyAt = intervalFrom.Add(opts.minUploadInterval())
 	}
 	pending = PendingPublication{
 		Bundle: candidate, SourceKey: sourceKey, MetadataKey: metadataKey,
@@ -792,30 +857,25 @@ func publishPending(ctx context.Context, local *LocalStore, store storage.Object
 	if err := storage.PutSourceThenMetadata(ctx, store, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, opts.Retry); err != nil {
 		return outcomeSkipped, fmt.Errorf("publish: %w", err)
 	}
-	previous, _, hadPrevious, err := local.LoadLastPublished(id)
+	// The object this publication replaced is the one recorded when it was
+	// uploaded, never one rebuilt from its bundle now (see
+	// publishedSnapshot.Source). If it is unknown, only state from an old
+	// version without cached metadata, nothing is recorded: the old object
+	// then stays until the whole session expires, which is safe.
+	previous, hadPrevious, err := local.loadLastPublishedSource(id)
 	if err != nil {
 		return outcomeSkipped, err
 	}
-	if hadPrevious {
-		compressed, err := archive.BuildCompressedSource(previous)
-		if err != nil {
-			return outcomeSkipped, fmt.Errorf("rebuild previous source reference: %w", err)
-		}
-		previousKey, err := archive.SourceObjectKey(previous, compressed.SHA256)
-		if err != nil {
-			return outcomeSkipped, fmt.Errorf("rebuild previous source reference: %w", err)
-		}
-		if previousKey != pending.SourceKey {
-			if err := local.RecordSuperseded(id, previousKey, now); err != nil {
-				return outcomeSkipped, fmt.Errorf("record superseded source: %w", err)
-			}
+	if hadPrevious && previous.Key != pending.SourceKey {
+		if err := local.RecordSuperseded(id, previous.Key, now); err != nil {
+			return outcomeSkipped, fmt.Errorf("record superseded source: %w", err)
 		}
 	}
 	var saveErr error
 	if pending.MetadataOnly {
 		saveErr = local.saveRepublishedMetadata(id, pending, now)
 	} else {
-		saveErr = local.SavePublished(id, pending.Bundle, now, CacheStatusPublished, pending.MetadataBytes)
+		saveErr = local.savePublication(id, pending.Bundle, now, pending.sourceReference(), pending.MetadataBytes)
 	}
 	if err := saveErr; err != nil {
 		return outcomeSkipped, fmt.Errorf("update published cache: %w", err)
@@ -861,7 +921,7 @@ func statTranscript(info os.FileInfo) transcriptFileInfo {
 }
 
 func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, maxBytes int64) (archive.FilteredTranscript, transcriptFileInfo, error) {
-	file, err := os.Open(reg.TranscriptPath)
+	file, err := openRegularFile(reg.TranscriptPath)
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
 	}
@@ -911,6 +971,39 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 		return archive.FilteredTranscript{}, stat, errRecordTooLarge
 	}
 	return filtered, stat, err
+}
+
+// errNotRegularFile means a hook-supplied transcript path names something
+// other than a regular file: a FIFO, a device, a socket, or a directory.
+var errNotRegularFile = errors.New("transcript is not a regular file")
+
+// openRegularFile opens a hook-supplied path for reading only if it is a
+// regular file (following symlinks, as the stat-based change check does).
+// The path is hook input and may name anything; opening a FIFO would block
+// the whole pass until a writer appeared, and reading a device could never
+// end. It is checked before opening, so nothing else is opened, and the open
+// itself is non-blocking and checked again, so a regular file swapped for a
+// FIFO in between fails instead of blocking.
+func openRegularFile(path string) (*os.File, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w (%s)", errNotRegularFile, info.Mode().Type())
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	if info, err = file.Stat(); err != nil || !info.Mode().IsRegular() {
+		file.Close()
+		if err == nil {
+			err = fmt.Errorf("%w (%s)", errNotRegularFile, info.Mode().Type())
+		}
+		return nil, err
+	}
+	return file, nil
 }
 
 // boundaryChunk is how much of the transcript completeJSONLBoundary reads at a

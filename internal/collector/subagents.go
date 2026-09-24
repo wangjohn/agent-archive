@@ -103,7 +103,13 @@ func (s *LocalStore) lockSubagentCandidate(id string) (func(), error) {
 	if !safeFileComponent(id) {
 		return nil, errors.New("invalid subagent candidate ID")
 	}
-	return local.NamedLockWait(s.home, filepath.Join("request-locks", "subagent-"+id+".lock"), time.Second)
+	return local.NamedLockWait(s.home, subagentLockName(id), time.Second)
+}
+
+// subagentLockName is the lock file guarding one subagent candidate, relative
+// to home. ForgetSession removes it with the session.
+func subagentLockName(id string) string {
+	return filepath.Join("request-locks", "subagent-"+id+".lock")
 }
 
 func (s *LocalStore) RemoveSubagentCandidate(id string) error {
@@ -144,8 +150,11 @@ func (s *LocalStore) removeSubagentCandidate(id string) error {
 	return nil
 }
 
+// removeSubagentCandidatesForSession removes the candidates naming id as the
+// subagent or its parent. Another session's unreadable candidate does not
+// stand in the way (the scan quarantines one that does not decode).
 func (s *LocalStore) removeSubagentCandidatesForSession(id string) error {
-	candidates, err := s.LoadSubagentCandidates()
+	candidates, _, err := s.scanSubagentCandidates()
 	if err != nil {
 		return err
 	}

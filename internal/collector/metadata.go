@@ -74,13 +74,28 @@ func regenerateMetadata(ctx context.Context, store *LocalStore, remote storage.O
 	if sameParser && !legacy {
 		return outcomeSkipped, false, nil
 	}
+	// The metadata must describe the source actually uploaded last, as
+	// recorded at upload. (For state older than that record, lastPublishedSource
+	// reads it from the cached metadata itself, so this holds trivially.)
+	if uploaded, known, err := store.loadLastPublishedSource(reg.ArchiveSessionID); err != nil {
+		return outcomeSkipped, false, err
+	} else if known && prior.SourceBundle != uploaded {
+		return outcomeSkipped, false, nil
+	}
+	// A metadata-only publication re-verifies its source in storage, and
+	// re-uploads it if it is missing, so it needs the source's exact bytes.
+	// They exist only if this build reproduces them from the retained bundle:
+	// it cannot after a source schema bump, and may not after a compressor
+	// change. Then the summary waits for the session's next content change,
+	// which publishes a new source with current metadata; it is never a
+	// failure of the session.
 	compressed, err := archive.BuildCompressedSource(bundle)
 	if err != nil {
-		return outcomeSkipped, false, err
+		return outcomeSkipped, false, nil
 	}
 	sourceKey, err := archive.SourceObjectKey(bundle, compressed.SHA256)
 	if err != nil {
-		return outcomeSkipped, false, err
+		return outcomeSkipped, false, nil
 	}
 	if prior.SourceBundle.Key != sourceKey || prior.SourceBundle.SHA256 != compressed.SHA256 || prior.SourceBundle.CompressedBytes != len(compressed.Bytes) {
 		return outcomeSkipped, false, nil
@@ -196,12 +211,13 @@ func (s *LocalStore) saveRepublishedMetadata(id string, pending PendingPublicati
 	}
 	state.MetadataBytes = pending.MetadataBytes
 	state.PublishedAt = at
+	source := pending.sourceReference()
 	if state.Status == CacheStatusPublished {
 		// The current bundle is the republished one, so the snapshot shares it.
 		state.Bundle = pending.Bundle
-		state.LastPublished = &publishedSnapshot{PublishedAt: at, SameAsBundle: true}
+		state.LastPublished = &publishedSnapshot{PublishedAt: at, SameAsBundle: true, Source: &source}
 	} else {
-		state.LastPublished = &publishedSnapshot{Bundle: pending.Bundle, PublishedAt: at}
+		state.LastPublished = &publishedSnapshot{Bundle: pending.Bundle, PublishedAt: at, Source: &source}
 	}
 	return local.Write(s.publishedPath(id), state)
 }
