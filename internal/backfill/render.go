@@ -114,6 +114,18 @@ func (p Plan) Skipped() map[SkipReason]int {
 	return counts
 }
 
+// SubagentsSkipped counts the subagent transcripts of imported sessions that
+// are left out because they are too large or the filter refuses them.
+func (p Plan) SubagentsSkipped() int {
+	n := 0
+	for _, c := range p.Candidates {
+		if c.Skip == "" {
+			n += c.SubagentsSkipped
+		}
+	}
+	return n
+}
+
 // AppsWithoutHooks lists the apps the plan imports sessions for that have no
 // hooks installed, so their new sessions are not captured.
 func (p Plan) AppsWithoutHooks() []string {
@@ -293,6 +305,9 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 	case ProjectKindScratch:
 		fmt.Fprintln(w, "  Chats started without a folder. New ones will be captured too.")
 	case ProjectKindHome:
+		if s.Included {
+			break
+		}
 		fmt.Fprintln(w, "  Every future session under your home folder that isn't in a nearer project")
 		fmt.Fprintln(w, "  will be captured too.")
 	}
@@ -319,12 +334,14 @@ func countCell(n int) string {
 // skipLabels describe each reason, after its count.
 var skipLabels = map[SkipReason]string{
 	SkipAlreadyArchived:       "already in the archive",
+	SkipDuplicateSession:      "same session found more than once",
 	SkipRegisteredNotAdmitted: "registered earlier, not accepted by the current setup",
 	SkipRemovedByUndo:         "removed earlier by undo",
 	SkipRemovedByRetention:    "removed earlier by retention",
 	SkipFilteredOut:           "not matching the filters",
 	SkipExcludedProject:       "in projects excluded in setup",
-	SkipHomeDirectory:         "run from the home folder or above it",
+	SkipHomeDirectory:         "run from the home folder",
+	SkipAboveHome:             "run from / or /Users, above the home folder",
 	SkipTemporaryDirectory:    "run from temporary directories",
 	SkipProjectUnknown:        "%s whose project could not be determined",
 	SkipWorktreeUnresolved:    "from worktrees that no longer exist",
@@ -347,7 +364,9 @@ var skipOverrides = map[SkipReason]string{
 
 func renderSkipped(w io.Writer, p Plan) {
 	counts := p.Skipped()
-	if len(counts) == 0 {
+	subagentsSkipped := p.SubagentsSkipped()
+	databaseUnchecked := !p.CursorDatabaseChecked && harnessMatches(p.Filters.Harnesses, "cursor")
+	if len(counts) == 0 && subagentsSkipped == 0 && !databaseUnchecked {
 		return
 	}
 	nouns := map[SkipReason]map[string]bool{}
@@ -383,6 +402,13 @@ func renderSkipped(w io.Writer, p Plan) {
 			width = max(width, utf8.RuneCountInString(label))
 		}
 	}
+	if subagentsSkipped > 0 {
+		label := "subagent transcripts that can't be read"
+		if subagentsSkipped == 1 {
+			label = "subagent transcript that can't be read"
+		}
+		lines = append(lines, line{subagentsSkipped, label, ""})
+	}
 	width = max(width+2, 42)
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Not imported:")
@@ -392,6 +418,10 @@ func renderSkipped(w io.Writer, p Plan) {
 		} else {
 			fmt.Fprintf(w, "%4d  %-*s%s\n", l.n, width, l.label, l.override)
 		}
+	}
+	if databaseUnchecked {
+		fmt.Fprintln(w, "      Cursor chats stored only in Cursor's database were not checked")
+		fmt.Fprintln(w, "      (a later release).")
 	}
 }
 
@@ -511,8 +541,11 @@ type planJSON struct {
 	Skipped          map[SkipReason]int `json:"skipped"`
 	AppsWithoutHooks []string           `json:"apps_without_hooks"`
 	RetentionDays    int                `json:"retention_days"`
-	ExpiresOn        string             `json:"expires_on,omitempty"`
-	StorageChecked   bool               `json:"storage_checked"`
+	// ExpiresOn is empty when retention is off.
+	ExpiresOn             string `json:"expires_on"`
+	StorageChecked        bool   `json:"storage_checked"`
+	CursorDatabaseChecked bool   `json:"cursor_database_checked"`
+	SubagentsSkipped      int    `json:"subagents_skipped"`
 }
 
 type filtersJSON struct {
@@ -552,6 +585,10 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 		AppsWithoutHooks: p.AppsWithoutHooks(),
 		RetentionDays:    p.RetentionDays,
 		StorageChecked:   storageChecked,
+		// Phase 1 cannot read Cursor's database yet; see
+		// Environment.CursorDatabaseOnly.
+		CursorDatabaseChecked: p.CursorDatabaseChecked,
+		SubagentsSkipped:      p.SubagentsSkipped(),
 	}
 	for _, h := range p.Filters.Harnesses {
 		out.Filters.Harnesses = append(out.Filters.Harnesses, canonicalHarness(h))
