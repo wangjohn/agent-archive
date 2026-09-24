@@ -1,0 +1,17 @@
+Undo import 2026-09-23-1, started 2026-09-23 12:00.
+
+If you continue:
+  • 11 sessions and 2 subagent transcripts are deleted from
+    s3 / personal-agent-archive / agent-archive/.
+  • 4 projects the import added are excluded from capture; setup can
+    include them again:
+      ~/Library/Application Support/Claude/scratch-workspaces
+      ~/levenshtein
+      ~/old-notes
+      ~/personal-website
+  • Codex and Cursor imports without hooks are no longer published.
+  • Hook-captured sessions and the apps' own files are not touched.
+  • These sessions are not imported again unless you run
+    agent-archive backfill --include-removed.
+
+Delete 11 sessions from the archive? This cannot be undone. [y/N] Import 2026-09-23-1: Deleted 11 sessions and 2 subagent transcripts from the archive, excluded 4 projects.

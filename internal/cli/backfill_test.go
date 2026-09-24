@@ -271,8 +271,13 @@ func TestBackfillRefusals(t *testing.T) {
 			t.Errorf("%v: code %d, want 2", args, code)
 		}
 	}
-	if _, errOut, code := f.run(t, "undo"); code != 1 || !strings.Contains(errOut, "not available yet") {
+	if _, errOut, code := f.run(t, "undo"); code != 1 || !strings.Contains(errOut, "needs a terminal") {
 		t.Fatalf("undo: code %d, %q", code, errOut)
+	}
+	for _, args := range [][]string{{"undo", "a", "b"}, {"undo", "--bogus"}} {
+		if _, _, code := f.run(t, args...); code != 2 {
+			t.Errorf("%v: code %d, want 2", args, code)
+		}
 	}
 
 	// --yes is harmless with --dry-run.

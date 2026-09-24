@@ -106,6 +106,7 @@ Example: codex "$(agent-archive handoff --latest --harness claude)"
 `,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history
+       agent-archive backfill undo [ID] [--project DIR] [--yes]
 
 Import the Claude Code, Codex, and Cursor sessions already on this Mac that
 the archive has not captured. First shows each project with its session count
@@ -124,7 +125,11 @@ folders and counts only, never conversation content.
   --yes                 Skip the confirmation (required without a terminal)
   --background          Register the sessions and exit; the background
                         collector uploads them
-history lists past imports with their upload state.
+history lists past imports with their upload state. undo removes the latest
+import, or import ID from history: it deletes the import's sessions from the
+bucket and this Mac, and excludes the projects it added; --project limits it
+to one project. It shows what it will do and asks first. Hook-captured
+sessions and the apps' own files are not touched.
 Example: agent-archive backfill --dry-run --since 2026-09-01
 `,
 	"feedback": `Usage: agent-archive feedback ID --file PATH

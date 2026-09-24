@@ -44,6 +44,14 @@ type Batch struct {
 	// Subagents are the archive session IDs given to the imported sessions'
 	// subagent transcripts. Each registers when the collector validates it.
 	Subagents []string `json:"subagents"`
+	// UndoneAt is when `backfill undo` last started removing the import. It
+	// is written before anything is removed, so an import undone even in
+	// part is never continued; history says whether anything of it is left.
+	UndoneAt *time.Time `json:"undone_at,omitempty"`
+	// ProjectsExcluded are the added projects undo has excluded. Undo never
+	// excludes one of them again, so a project setup included again stays
+	// included.
+	ProjectsExcluded []string `json:"projects_excluded,omitempty"`
 }
 
 // BatchFilters are the filters and --include-* flags a batch was run with.
@@ -118,6 +126,12 @@ func (b Batch) Matches(filters BatchFilters, destinationID string) bool {
 	return b.Filters.equal(filters) && b.DestinationID == destinationID
 }
 
+// Continues reports whether a run with these filters and destination
+// finishes the batch: it was interrupted, not undone since, and matches.
+func (b Batch) Continues(filters BatchFilters, destinationID string) bool {
+	return b.CompletedAt == nil && b.UndoneAt == nil && b.Matches(filters, destinationID)
+}
+
 func (f BatchFilters) equal(o BatchFilters) bool {
 	return slices.Equal(f.Harnesses, o.Harnesses) && slices.Equal(f.ProjectIDs, o.ProjectIDs) &&
 		f.Since == o.Since && f.Until == o.Until &&
@@ -185,10 +199,10 @@ func SaveBatch(home string, b Batch) error {
 }
 
 // OpenBatch returns the batch a confirmed run records into: the latest one,
-// if it was interrupted and ran with the same filters and destination, or a
-// new one named for now's local date. An interrupted import is continued so
-// that its sessions and the projects it added stay one import, which undo
-// can reverse as a whole.
+// if it was interrupted, not undone, and ran with the same filters and
+// destination, or a new one named for now's local date. An interrupted
+// import is continued so that its sessions and the projects it added stay
+// one import, which undo can reverse as a whole.
 func OpenBatch(home string, filters BatchFilters, destinationID string, now time.Time) (Batch, error) {
 	batches, err := LoadBatches(home)
 	if err != nil {
@@ -196,7 +210,7 @@ func OpenBatch(home string, filters BatchFilters, destinationID string, now time
 	}
 	if n := len(batches); n > 0 {
 		last := batches[n-1]
-		if last.CompletedAt == nil && last.Matches(filters, destinationID) {
+		if last.Continues(filters, destinationID) {
 			return last, nil
 		}
 	}
