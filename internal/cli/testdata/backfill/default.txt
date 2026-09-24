@@ -1,0 +1,33 @@
+Looking for Claude Code, Codex, and Cursor sessions on this Mac… 17 found.
+
+Backfill imports every session found on this Mac into
+s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
+
+PROJECT                                CLAUDE  CODEX  CURSOR  TOTAL
+~/agent-archive                             2      1       1      4  already included
+~/levenshtein                               3      –       –      3  will be added
+~/personal-website                          –      –       1      1  will be added
+
+Not a repository:
+Claude desktop scratch chats                2      –       –      2  will be added
+  Chats started without a folder. New ones will be captured too.
+~/old-notes (folder no longer exists)       1      –       –      1  will be added
+
+Total: 11 sessions (plus 2 subagent transcripts), 4 KB,
+       started 2026-09-17 to 2026-09-22.
+
+Not imported:
+   1  already in the archive
+   1  run from the home folder or above it      add --include-home
+   2  run from temporary directories            add --include-temp
+   1  Cursor chat whose project could not be determined
+   1  with no conversation
+
+If you continue:
+  • 4 projects are added, and new Claude Code sessions in them are captured.
+    New Codex and Cursor sessions need those apps added in setup.
+  • Retention is 90 days, so these sessions are deleted on 2026-12-22.
+    Choose `edit` to keep them longer.
+  • Undo any time with `agent-archive backfill undo`.
+
+Dry run: nothing was changed.
