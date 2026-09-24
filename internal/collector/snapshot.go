@@ -9,6 +9,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // ErrNoTranscript means a registration names no transcript file yet, or the
@@ -41,14 +42,14 @@ func ReadLocalBundle(ctx context.Context, home string, reg archive.SessionRegist
 		}
 		return archive.SourceBundle{}, fmt.Errorf("filter transcript: %w", err)
 	}
-	store := OpenLocalStoreReadOnly(home)
+	store := state.OpenReadOnly(home)
 	var evidence []archive.SupplementalEvidence
-	if published, _, _, found, err := store.LoadPublished(reg.ArchiveSessionID); err == nil && found {
-		evidence = published.SupplementalEvidence
-	} else if last, _, found, err := store.LoadLastPublished(reg.ArchiveSessionID); err == nil && found {
-		evidence = last.SupplementalEvidence
+	if published, err := store.LoadPublishedState(reg.ArchiveSessionID); err == nil {
+		if cached, _, _, found := published.Cached(); found {
+			evidence = cached.SupplementalEvidence
+		}
 	}
-	if req, found, err := store.loadRequest(reg.ArchiveSessionID); err == nil && found {
+	if req, found, err := store.LoadRequest(reg.ArchiveSessionID); err == nil && found {
 		evidence = mergeSupplementalEvidence(evidence, req.HookEvidence)
 	}
 	return archive.NewSourceBundle(reg, adapter, filtered, capturedAt, evidence)

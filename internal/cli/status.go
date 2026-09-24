@@ -11,11 +11,11 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -95,7 +95,7 @@ type statusView struct {
 	Paused             bool                `json:"paused"`
 	Projects           []string            `json:"projects"`
 	Apps               []appStatus         `json:"applications"`
-	Collector          collector.Status    `json:"collector"`
+	Collector          state.Status        `json:"collector"`
 	CaptureDiagnostics []captureDiagnostic `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
@@ -222,11 +222,11 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 // the ordinary end of an archived session's local life, not a defect, and it
 // is the one reason that can end on its own, so it does not borrow the
 // permanent wording the other reasons need.
-func blockedReasonDetail(reason collector.BlockedReason) string {
+func blockedReasonDetail(reason state.BlockedReason) string {
 	switch reason {
-	case collector.BlockedReasonTranscriptMissing:
+	case state.BlockedReasonTranscriptMissing:
 		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
-	case collector.BlockedReasonRecordTooLarge:
+	case state.BlockedReasonRecordTooLarge:
 		return fmt.Sprintf("One record in the transcript (or a plain-text transcript as a whole) is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
@@ -332,7 +332,7 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Projects = append(view.Projects, p.Root)
 		}
 	}
-	store := collector.OpenLocalStoreReadOnly(home)
+	store := state.OpenReadOnly(home)
 	view.Collector, err = store.LoadStatus()
 	if err != nil {
 		return view, err
@@ -409,11 +409,11 @@ func readStatus(env Env) (view statusView, err error) {
 			if app.State == "waiting for first session" {
 				app.State = "hook observed; waiting for capture"
 			}
-			bundle, _, state, found, err := store.LoadPublished(reg.ArchiveSessionID)
+			bundle, _, cacheStatus, found, err := store.LoadPublished(reg.ArchiveSessionID)
 			if err != nil {
 				return view, err
 			}
-			if state == collector.CacheStatusBlocked {
+			if cacheStatus == state.CacheStatusBlocked {
 				reason, _, e := store.LoadBlocked(reg.ArchiveSessionID)
 				if e != nil {
 					return view, e
@@ -421,7 +421,7 @@ func readStatus(env Env) (view statusView, err error) {
 				app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: blockedReasonDetail(reason)})
 			}
 			if found {
-				if state != collector.CacheStatusBlocked {
+				if cacheStatus != state.CacheStatusBlocked {
 					app.CapturedLocally = true
 					if pair != nil {
 						pair.CapturedLocally = true
@@ -434,7 +434,7 @@ func readStatus(env Env) (view statusView, err error) {
 			}
 			// A blocked session with no publication has captured nothing;
 			// one that was published earlier still counts as published below.
-			if found && state != collector.CacheStatusBlocked && app.LastPublishedAt.IsZero() {
+			if found && cacheStatus != state.CacheStatusBlocked && app.LastPublishedAt.IsZero() {
 				app.State = "captured locally"
 			}
 			publishedBundle, actualAt, published, e := store.LoadLastPublished(reg.ArchiveSessionID)
@@ -708,17 +708,17 @@ func collectorLockHeld(home string) bool {
 // declined capture aside) or have one in flight. withIssues counts those
 // with a recorded capture gap or a failed last scan: status leaves imports
 // out of each app's own gaps and issues, so they are reported here.
-func importedSessionCounts(store *collector.LocalStore, cfg config.Config, regs []archive.SessionRegistration, issues map[string]string) (imported, pending, withIssues int, err error) {
+func importedSessionCounts(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, issues map[string]string) (imported, pending, withIssues int, err error) {
 	for _, reg := range regs {
 		if !reg.Imported() || reg.ParentSessionID != "" {
 			continue
 		}
 		imported++
-		_, _, state, _, err := store.LoadPublished(reg.ArchiveSessionID)
+		_, _, cacheStatus, _, err := store.LoadPublished(reg.ArchiveSessionID)
 		if err != nil {
 			return 0, 0, 0, err
 		}
-		if state == collector.CacheStatusBlocked || issues[reg.ArchiveSessionID] != "" {
+		if cacheStatus == state.CacheStatusBlocked || issues[reg.ArchiveSessionID] != "" {
 			withIssues++
 		}
 		waiting, err := importPending(store, cfg, reg)
@@ -735,11 +735,11 @@ func importedSessionCounts(store *collector.LocalStore, cfg config.Config, regs 
 // importPending reports whether the collector still has to upload an
 // imported session: one it still publishes that has no publication yet (a
 // recorded gap or a declined capture aside), or has one in flight.
-func importPending(store *collector.LocalStore, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
+func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
 	if !cfg.AcceptSession(reg) {
 		return false, nil
 	}
-	_, _, state, _, err := store.LoadPublished(reg.ArchiveSessionID)
+	_, _, cacheStatus, _, err := store.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
 		return false, err
 	}
@@ -751,7 +751,7 @@ func importPending(store *collector.LocalStore, cfg config.Config, reg archive.S
 	if err != nil {
 		return false, err
 	}
-	return inFlight || (!published && state != collector.CacheStatusBlocked && state != collector.CacheStatusDeclined), nil
+	return inFlight || (!published && cacheStatus != state.CacheStatusBlocked && cacheStatus != state.CacheStatusDeclined), nil
 }
 
 const (

@@ -13,34 +13,35 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-func readPublishedStateFile(t *testing.T, store *LocalStore, id string) publishedState {
+func readPublishedStateFile(t *testing.T, store *state.Store, id string) publishedFile {
 	t.Helper()
-	raw, err := os.ReadFile(store.publishedPath(id))
+	raw, err := os.ReadFile(publishedPath(store, id))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var state publishedState
-	if err := json.Unmarshal(raw, &state); err != nil {
+	var file publishedFile
+	if err := json.Unmarshal(raw, &file); err != nil {
 		t.Fatal(err)
 	}
-	return state
+	return file
 }
 
-func writePublishedStateFile(t *testing.T, store *LocalStore, id string, state publishedState) {
+func writePublishedStateFile(t *testing.T, store *state.Store, id string, file publishedFile) {
 	t.Helper()
-	raw, err := json.Marshal(state)
+	raw, err := json.Marshal(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(store.publishedPath(id), raw, 0o600); err != nil {
+	if err := os.WriteFile(publishedPath(store, id), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func runAt(t *testing.T, store *LocalStore, remote storage.ObjectStore, at time.Time) Result {
+func runAt(t *testing.T, store *state.Store, remote storage.ObjectStore, at time.Time) Result {
 	t.Helper()
 	result, err := Run(context.Background(), store, remote, Options{MachineID: "m", Now: func() time.Time { return at }})
 	if err != nil {
@@ -90,7 +91,7 @@ func TestMissingTranscriptBlocksOnceKeepsSnapshotAndRecovers(t *testing.T) {
 	if len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("a missing transcript must be a gap, not an error: %#v", result)
 	}
-	if reason, blocked, err := local.LoadBlocked(reg.ArchiveSessionID); err != nil || !blocked || reason != BlockedReasonTranscriptMissing {
+	if reason, blocked, err := local.LoadBlocked(reg.ArchiveSessionID); err != nil || !blocked || reason != state.BlockedReasonTranscriptMissing {
 		t.Fatalf("reason=%q blocked=%t err=%v", reason, blocked, err)
 	}
 	if requests, _ := local.LoadRequests(); len(requests) != 0 {
@@ -109,7 +110,7 @@ func TestMissingTranscriptBlocksOnceKeepsSnapshotAndRecovers(t *testing.T) {
 	}
 
 	// Recorded once: later passes neither error nor rewrite the cache.
-	cachePath := local.publishedPath(reg.ArchiveSessionID)
+	cachePath := publishedPath(local, reg.ArchiveSessionID)
 	before := mtime(t, cachePath)
 	for pass := 2; pass <= 3; pass++ {
 		if result := runAt(t, local, remote, t0.Add(time.Duration(pass)*time.Hour)); len(result.Errors) != 0 {
@@ -130,7 +131,7 @@ func TestMissingTranscriptBlocksOnceKeepsSnapshotAndRecovers(t *testing.T) {
 	if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {
 		t.Fatal("the gap outlived the missing file")
 	}
-	if _, _, status, _, _ := local.LoadPublished(reg.ArchiveSessionID); status != CacheStatusPublished {
+	if _, _, status, _, _ := local.LoadPublished(reg.ArchiveSessionID); status != state.CacheStatusPublished {
 		t.Fatalf("status after recovery = %q, want the status the block replaced", status)
 	}
 	if after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); !after.CapturedAt.Equal(metadataBefore.CapturedAt) {
@@ -158,7 +159,7 @@ func TestMissingTranscriptBeforeFirstCaptureRecoversWhenFileAppears(t *testing.T
 	if result := runAt(t, local, remote, t0); len(result.Errors) != 0 {
 		t.Fatalf("result=%#v", result)
 	}
-	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != BlockedReasonTranscriptMissing {
+	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != state.BlockedReasonTranscriptMissing {
 		t.Fatalf("reason=%q blocked=%t", reason, blocked)
 	}
 	writeTranscript(t, dir, "later.jsonl", codexTranscript)
@@ -185,9 +186,9 @@ func TestPublishedCacheStoresTheBundleOnce(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	runAt(t, local, remote, t0)
 
-	state := readPublishedStateFile(t, local, reg.ArchiveSessionID)
-	if state.LastPublished == nil || !state.LastPublished.SameAsBundle || len(state.LastPublished.Bundle.NativeRecords) != 0 {
-		t.Fatalf("the published bundle is stored twice: %#v", state.LastPublished)
+	file := readPublishedStateFile(t, local, reg.ArchiveSessionID)
+	if file.LastPublished == nil || !file.LastPublished.SameAsBundle || len(file.LastPublished.Bundle.NativeRecords) != 0 {
+		t.Fatalf("the published bundle is stored twice: %#v", file.LastPublished)
 	}
 	published, _, found, err := local.LoadLastPublished(reg.ArchiveSessionID)
 	if err != nil || !found || len(published.NativeRecords) == 0 {
@@ -208,7 +209,7 @@ func TestPublishedCacheStoresTheBundleOnce(t *testing.T) {
 		t.Fatal("the published baseline was replaced by an unpublished candidate")
 	}
 	candidate, _, status, _, _ := local.LoadPublished(reg.ArchiveSessionID)
-	if status != CacheStatusRateLimited || len(candidate.NativeRecords) != len(published.NativeRecords)+1 {
+	if status != state.CacheStatusRateLimited || len(candidate.NativeRecords) != len(published.NativeRecords)+1 {
 		t.Fatalf("status=%q records=%d", status, len(candidate.NativeRecords))
 	}
 }
@@ -227,7 +228,7 @@ func TestPublishedCacheReadsTheOlderTwoCopyShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacy := publishedState{Bundle: bundle, PublishedAt: at, Status: CacheStatusPublished, LastPublished: &publishedSnapshot{Bundle: bundle, PublishedAt: at}}
+	legacy := publishedFile{Bundle: bundle, PublishedAt: at, Status: state.CacheStatusPublished, LastPublished: &publishedFileSnapshot{Bundle: bundle, PublishedAt: at}}
 	writePublishedStateFile(t, local, reg.ArchiveSessionID, legacy)
 	got, gotAt, found, err := local.LoadLastPublished(reg.ArchiveSessionID)
 	if err != nil || !found || !gotAt.Equal(at) {
@@ -240,7 +241,7 @@ func TestPublishedCacheReadsTheOlderTwoCopyShape(t *testing.T) {
 
 // settledSession publishes one session and returns its registration and the
 // transcript's path. The pass after a publish leaves a scan signature.
-func settledSession(t *testing.T, local *LocalStore, content string) archive.SessionRegistration {
+func settledSession(t *testing.T, local *state.Store, content string) archive.SessionRegistration {
 	t.Helper()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", content)
 	reg := registration(t, path)
@@ -253,7 +254,7 @@ func settledSession(t *testing.T, local *LocalStore, content string) archive.Ses
 
 func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 	opts := Options{MachineID: "m"}
-	check := func(t *testing.T, local *LocalStore, reg archive.SessionRegistration, o Options) bool {
+	check := func(t *testing.T, local *state.Store, reg archive.SessionRegistration, o Options) bool {
 		t.Helper()
 		unchanged, err := unchangedSinceLastScan(context.Background(), local, reg, o)
 		if err != nil {
@@ -306,7 +307,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 	t.Run("pending publication", func(t *testing.T) {
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
-		if err := local.SavePending(reg.ArchiveSessionID, PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}}); err != nil {
+		if err := local.SavePending(reg.ArchiveSessionID, state.PendingPublication{SourceKey: "k", MetadataKey: "m", SourceSHA256: "s", SourceBytes: []byte{1}, MetadataBytes: []byte{1}}); err != nil {
 			t.Fatal(err)
 		}
 		if check(t, local, reg, opts) {
@@ -326,7 +327,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 	t.Run("blocked", func(t *testing.T) {
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
-		if _, err := blockSession(local, reg.ArchiveSessionID, Request{}, BlockedReasonTranscriptRewritten, nil); err != nil {
+		if _, err := blockSession(local, reg.ArchiveSessionID, state.Request{}, state.BlockedReasonTranscriptRewritten, nil); err != nil {
 			t.Fatal(err)
 		}
 		if check(t, local, reg, opts) {
@@ -344,9 +345,9 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 	t.Run("cursor text is never trusted to a stat", func(t *testing.T) {
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
-		signature, _, _ := local.loadScanSignature(reg.ArchiveSessionID)
+		signature, _, _ := local.LoadScanSignature(reg.ArchiveSessionID)
 		signature.SourceFormat = cursorTextSourceFormat
-		if err := local.saveScanSignature(reg.ArchiveSessionID, signature); err != nil {
+		if err := local.SaveScanSignature(reg.ArchiveSessionID, signature); err != nil {
 			t.Fatal(err)
 		}
 		if check(t, local, reg, opts) {
@@ -395,7 +396,7 @@ func TestSameLengthRewriteIsDetected(t *testing.T) {
 	if len(result.Errors) != 0 {
 		t.Fatalf("result=%#v", result)
 	}
-	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != BlockedReasonTranscriptRewritten {
+	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != state.BlockedReasonTranscriptRewritten {
 		t.Fatalf("an in-place rewrite was not detected: reason=%q blocked=%t", reason, blocked)
 	}
 }
@@ -458,7 +459,7 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 		t.Skip("builds and publishes up to 120 MB of synthetic transcripts")
 	}
 	home := t.TempDir()
-	local, err := NewLocalStore(home)
+	local, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +558,7 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 func TestPublishedCacheSizeIsAboutOneBundle(t *testing.T) {
 	local := newTestStore(t)
 	reg := settledSession(t, local, largeCodexTranscript(64*1024))
-	raw, err := os.ReadFile(local.publishedPath(reg.ArchiveSessionID))
+	raw, err := os.ReadFile(publishedPath(local, reg.ArchiveSessionID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -615,8 +616,8 @@ func TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn(t *testing.T) {
 	if requests, _ := local.LoadRequests(); len(requests) != 0 {
 		t.Fatalf("the request was left pending: %#v", requests)
 	}
-	if state := readPublishedStateFile(t, local, reg.ArchiveSessionID); len(state.DeferredHookEvidence) != 1 {
-		t.Fatalf("the acknowledged evidence was dropped: %#v", state.DeferredHookEvidence)
+	if file := readPublishedStateFile(t, local, reg.ArchiveSessionID); len(file.DeferredHookEvidence) != 1 {
+		t.Fatalf("the acknowledged evidence was dropped: %#v", file.DeferredHookEvidence)
 	}
 
 	// Still missing: a later request accumulates, and passes with nothing new
@@ -630,8 +631,8 @@ func TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn(t *testing.T) {
 			t.Fatalf("pass %d: %#v", pass, result)
 		}
 	}
-	if state := readPublishedStateFile(t, local, reg.ArchiveSessionID); len(state.DeferredHookEvidence) != 2 {
-		t.Fatalf("held evidence = %v, want the final response and the feedback", evidenceKinds(state.DeferredHookEvidence))
+	if file := readPublishedStateFile(t, local, reg.ArchiveSessionID); len(file.DeferredHookEvidence) != 2 {
+		t.Fatalf("held evidence = %v, want the final response and the feedback", evidenceKinds(file.DeferredHookEvidence))
 	}
 
 	// The identical file returns: the held evidence is what gets published.
@@ -651,9 +652,9 @@ func TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn(t *testing.T) {
 	if !strings.Contains(kinds, string(archive.EvidenceKindFinalResponse)) || !strings.Contains(kinds, string(archive.EvidenceKindExplicitFeedback)) {
 		t.Fatalf("published evidence = %s", kinds)
 	}
-	state := readPublishedStateFile(t, local, reg.ArchiveSessionID)
-	if state.Status != CacheStatusPublished || len(state.DeferredHookEvidence) != 0 {
-		t.Fatalf("status=%q held=%d after recovery", state.Status, len(state.DeferredHookEvidence))
+	file := readPublishedStateFile(t, local, reg.ArchiveSessionID)
+	if file.Status != state.CacheStatusPublished || len(file.DeferredHookEvidence) != 0 {
+		t.Fatalf("status=%q held=%d after recovery", file.Status, len(file.DeferredHookEvidence))
 	}
 	if after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); !after.CapturedAt.After(metadataBefore.CapturedAt) {
 		t.Fatal("new evidence did not move the capture time")
@@ -684,8 +685,8 @@ func TestHookEvidenceHeldBeforeFirstCapturePublishesWhenFileAppears(t *testing.T
 	if result := runAt(t, local, remote, t0); len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("result=%#v", result)
 	}
-	if state := readPublishedStateFile(t, local, reg.ArchiveSessionID); state.Status != CacheStatusBlocked || len(state.DeferredHookEvidence) != 1 {
-		t.Fatalf("status=%q held=%d", state.Status, len(state.DeferredHookEvidence))
+	if file := readPublishedStateFile(t, local, reg.ArchiveSessionID); file.Status != state.CacheStatusBlocked || len(file.DeferredHookEvidence) != 1 {
+		t.Fatalf("status=%q held=%d", file.Status, len(file.DeferredHookEvidence))
 	}
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	if result := runAt(t, local, remote, t0.Add(time.Hour)); len(result.Published) != 1 || len(result.Errors) != 0 {
@@ -698,8 +699,8 @@ func TestHookEvidenceHeldBeforeFirstCapturePublishesWhenFileAppears(t *testing.T
 	if requests, _ := local.LoadRequests(); len(requests) != 0 {
 		t.Fatalf("requests left pending: %#v", requests)
 	}
-	if state := readPublishedStateFile(t, local, reg.ArchiveSessionID); state.Status != CacheStatusPublished || len(state.DeferredHookEvidence) != 0 {
-		t.Fatalf("status=%q held=%d", state.Status, len(state.DeferredHookEvidence))
+	if file := readPublishedStateFile(t, local, reg.ArchiveSessionID); file.Status != state.CacheStatusPublished || len(file.DeferredHookEvidence) != 0 {
+		t.Fatalf("status=%q held=%d", file.Status, len(file.DeferredHookEvidence))
 	}
 }
 
@@ -720,14 +721,14 @@ func TestUnchangedRewrittenTranscriptLeavesNoSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	runAt(t, local, remote, time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC))
-	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != BlockedReasonTranscriptRewritten {
+	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != state.BlockedReasonTranscriptRewritten {
 		t.Fatalf("reason=%q blocked=%t", reason, blocked)
 	}
 	// Untouched since the rewrite: the full path runs and ends "unchanged".
 	if result := runAt(t, local, remote, time.Date(2026, 1, 3, 1, 0, 0, 0, time.UTC)); len(result.Errors) != 0 {
 		t.Fatalf("result=%#v", result)
 	}
-	if _, found, _ := local.loadScanSignature(reg.ArchiveSessionID); found {
+	if _, found, _ := local.LoadScanSignature(reg.ArchiveSessionID); found {
 		t.Fatal("a still-blocked session was signed as settled")
 	}
 	if unchanged, _ := unchangedSinceLastScan(context.Background(), local, reg, Options{MachineID: "m"}); unchanged {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -19,9 +19,9 @@ const grownTranscript = codexTranscript + "\n" + `{"type":"response_item","id":"
 
 // editPublishedState rewrites a session's published state as raw JSON, to
 // stand in for state an older build wrote.
-func editPublishedState(t *testing.T, local *LocalStore, id string, edit func(state map[string]any)) {
+func editPublishedState(t *testing.T, local *state.Store, id string, edit func(state map[string]any)) {
 	t.Helper()
-	data, err := os.ReadFile(local.publishedPath(id))
+	data, err := os.ReadFile(publishedPath(local, id))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func editPublishedState(t *testing.T, local *LocalStore, id string, edit func(st
 	if data, err = json.Marshal(state); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(local.publishedPath(id), data, 0o600); err != nil {
+	if err := os.WriteFile(publishedPath(local, id), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -55,7 +55,7 @@ func withoutRecordedSource(state map[string]any) {
 
 // publishThenGrow publishes session-1 at t0, then grows its transcript and
 // queues a stop request, and returns the first publication's source key.
-func publishThenGrow(t *testing.T, local *LocalStore, store storage.ObjectStore, t0 time.Time) (path, firstKey string) {
+func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore, t0 time.Time) (path, firstKey string) {
 	t.Helper()
 	path = writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
@@ -72,7 +72,7 @@ func publishThenGrow(t *testing.T, local *LocalStore, store storage.ObjectStore,
 	return path, firstKey
 }
 
-func assertRepublishedSuperseding(t *testing.T, local *LocalStore, store storage.ObjectStore, now time.Time, wantSuperseded []string) {
+func assertRepublishedSuperseding(t *testing.T, local *state.Store, store storage.ObjectStore, now time.Time, wantSuperseded []string) {
 	t.Helper()
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
@@ -255,10 +255,10 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 	}
 	// session-2's request, an unrelated request, a registration, and a
 	// subagent candidate, each truncated.
-	corruptFile(t, local.requestPath("session-2"))
-	corruptFile(t, local.requestPath("orphan"))
-	corruptFile(t, local.registrationPath("broken"))
-	corruptFile(t, local.subagentCandidatePath("child"))
+	corruptFile(t, requestPath(local, "session-2"))
+	corruptFile(t, requestPath(local, "orphan"))
+	corruptFile(t, registrationPath(local, "broken"))
+	corruptFile(t, subagentCandidatePath(local, "child"))
 
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
@@ -269,8 +269,8 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 		t.Fatalf("published = %v", result.Published)
 	}
 	for _, id := range []string{"session-2", "orphan", "broken", "child"} {
-		if !errors.Is(result.Errors[id], ErrQuarantined) {
-			t.Fatalf("%s: error = %v, want ErrQuarantined", id, result.Errors[id])
+		if !errors.Is(result.Errors[id], state.ErrQuarantined) {
+			t.Fatalf("%s: error = %v, want state.ErrQuarantined", id, result.Errors[id])
 		}
 	}
 	want := []string{"registrations/broken.json", "requests/orphan.json", "requests/session-2.json", "subagent-candidates/child.json"}
@@ -279,13 +279,13 @@ func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 		t.Fatalf("status quarantined = %v %v", status.QuarantinedFiles, err)
 	}
 	for i, rel := range want {
-		if _, err := os.Stat(filepath.Join(local.home, rel)); !errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(filepath.Join(local.Home(), rel)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s is still in place: %v", rel, err)
 		}
-		if got := status.QuarantinedFiles[i]; !strings.HasPrefix(got, rel+".") || !strings.HasSuffix(got, quarantineSuffix) {
-			t.Fatalf("quarantined as %q, want %s.<time>%s", got, rel, quarantineSuffix)
+		if got := status.QuarantinedFiles[i]; !strings.HasPrefix(got, rel+".") || !strings.HasSuffix(got, ".corrupt") {
+			t.Fatalf("quarantined as %q, want %s.<time>%s", got, rel, ".corrupt")
 		}
-		if _, err := os.Stat(filepath.Join(local.home, status.QuarantinedFiles[i])); err != nil {
+		if _, err := os.Stat(filepath.Join(local.Home(), status.QuarantinedFiles[i])); err != nil {
 			t.Fatalf("not quarantined: %v", err)
 		}
 	}
@@ -317,14 +317,14 @@ func TestUnreadableRequestHoldsOnlyItsSession(t *testing.T) {
 	if err := local.SaveRequest("session-1", "stop", now); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(local.requestPath("session-1"), 0); err != nil {
+	if err := os.Chmod(requestPath(local, "session-1"), 0); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
-	if err != nil || result.Errors["session-1"] == nil || errors.Is(result.Errors["session-1"], ErrQuarantined) || len(result.Published) != 0 {
+	if err != nil || result.Errors["session-1"] == nil || errors.Is(result.Errors["session-1"], state.ErrQuarantined) || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
-	if _, err := os.Stat(local.requestPath("session-1")); err != nil {
+	if _, err := os.Stat(requestPath(local, "session-1")); err != nil {
 		t.Fatalf("unreadable request was moved: %v", err)
 	}
 }
@@ -345,7 +345,7 @@ func TestMidPassLocalFailureIsPerSession(t *testing.T) {
 	}
 	// The scan journal cannot be written for session-0: a non-empty
 	// directory occupies its path.
-	if err := os.MkdirAll(filepath.Join(local.home, "pending-scans", "session-0.json", "x"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(local.Home(), "pending-scans", "session-0.json", "x"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
@@ -452,32 +452,13 @@ func TestOpenRegularFileRefusesNonRegularPaths(t *testing.T) {
 	f.Close()
 }
 
-func TestForgetSessionRemovesSubagentCandidateLock(t *testing.T) {
-	store := newTestStore(t)
-	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	candidate := SubagentCandidate{ArchiveSessionID: "session-1", NativeSessionID: "native-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "native-parent", ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"}, AgentID: "agent", TranscriptPath: "/unused", ObservedAt: at}
-	if err := store.SaveSubagentCandidate(candidate); err != nil {
-		t.Fatal(err)
-	}
-	lock := filepath.Join(store.home, subagentLockName("session-1"))
-	if _, err := os.Stat(lock); err != nil {
-		t.Fatalf("candidate lock was not created: %v", err)
-	}
-	if err := store.ForgetSession("session-1", "native-1"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(lock); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("candidate lock leaked after ForgetSession: %v", err)
-	}
-}
-
 // A pass clears the atomic-write temporaries a crashed writer left, and only
 // those: one young enough to belong to a write in progress stays.
 func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 	local := newTestStore(t)
-	stale := filepath.Join(local.home, "requests", ".pending-stale")
-	fresh := filepath.Join(local.home, "published", ".pending-fresh")
-	nested := filepath.Join(local.home, "sessions", "session-1", ".pending-stale")
+	stale := filepath.Join(local.Home(), "requests", ".pending-stale")
+	fresh := filepath.Join(local.Home(), "published", ".pending-fresh")
+	nested := filepath.Join(local.Home(), "sessions", "session-1", ".pending-stale")
 	for _, path := range []string{stale, fresh, nested} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
@@ -486,7 +467,7 @@ func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	old := time.Now().Add(-2 * staleTempAge)
+	old := time.Now().Add(-2 * time.Hour)
 	for _, path := range []string{stale, nested} {
 		if err := os.Chtimes(path, old, old); err != nil {
 			t.Fatal(err)

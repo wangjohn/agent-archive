@@ -9,6 +9,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -42,7 +43,7 @@ func TestCursorSQLiteRememberedFailureWithRequest(t *testing.T) {
 		if !errors.As(result.Errors[bad.ArchiveSessionID], &again) || copies != 0 {
 			t.Fatalf("pass %d: %v, %d copies", pass, result.Errors, copies)
 		}
-		if _, queued, err := local.loadRequest(bad.ArchiveSessionID); err != nil || !queued {
+		if _, queued, err := local.LoadRequest(bad.ArchiveSessionID); err != nil || !queued {
 			t.Fatalf("pass %d: request queued %v, %v", pass, queued, err)
 		}
 	}
@@ -53,7 +54,7 @@ func TestCursorSQLiteRememberedFailureWithRequest(t *testing.T) {
 	if !contains(result.Published, bad.ArchiveSessionID) || copies != 1 {
 		t.Fatalf("%+v, %d copies", result, copies)
 	}
-	if _, queued, _ := local.loadRequest(bad.ArchiveSessionID); queued {
+	if _, queued, _ := local.LoadRequest(bad.ArchiveSessionID); queued {
 		t.Fatal("the request outlived the publication")
 	}
 
@@ -66,7 +67,7 @@ func TestCursorSQLiteRememberedFailureWithRequest(t *testing.T) {
 	}
 	opts.MaxTranscriptBytes = 50
 	run(t, local, remote, opts, passes)
-	if reason, blocked, _ := local.LoadBlocked(big.ArchiveSessionID); !blocked || reason != BlockedReasonTranscriptTooLarge {
+	if reason, blocked, _ := local.LoadBlocked(big.ArchiveSessionID); !blocked || reason != state.BlockedReasonTranscriptTooLarge {
 		t.Fatalf("blocked %v %q", blocked, reason)
 	}
 	if err := local.SaveRequest(big.ArchiveSessionID, "stop", at); err != nil {
@@ -76,7 +77,7 @@ func TestCursorSQLiteRememberedFailureWithRequest(t *testing.T) {
 	if copies != 0 || result.Errors[big.ArchiveSessionID] != nil {
 		t.Fatalf("%+v, %d copies", result, copies)
 	}
-	if _, queued, _ := local.loadRequest(big.ArchiveSessionID); queued {
+	if _, queued, _ := local.LoadRequest(big.ArchiveSessionID); queued {
 		t.Fatal("the request on an unchanged gap stayed queued")
 	}
 
@@ -125,17 +126,17 @@ func TestCursorSQLiteChatNewerThanTheSnapshot(t *testing.T) {
 	if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {
 		t.Fatal("blocked as missing")
 	}
-	if _, queued, _ := local.loadRequest(reg.ArchiveSessionID); !queued {
+	if _, queued, _ := local.LoadRequest(reg.ArchiveSessionID); !queued {
 		t.Fatal("request completed")
 	}
-	if _, found, _ := local.loadScanSignature(reg.ArchiveSessionID); found {
+	if _, found, _ := local.LoadScanSignature(reg.ArchiveSessionID); found {
 		t.Fatal("a transient failure was remembered")
 	}
 }
 
-func mustRequest(t *testing.T, local *LocalStore, id string) Request {
+func mustRequest(t *testing.T, local *state.Store, id string) state.Request {
 	t.Helper()
-	req, found, err := local.loadRequest(id)
+	req, found, err := local.LoadRequest(id)
 	if err != nil || !found {
 		t.Fatalf("request %v %v", found, err)
 	}

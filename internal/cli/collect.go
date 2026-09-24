@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -110,7 +111,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return collector.Result{}, errPaused
 	}
 
-	localStore, err := collector.NewLocalStore(home)
+	localStore, err := state.Open(home)
 	if err != nil {
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
@@ -221,24 +222,24 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		}
 	}
 	if len(result.Errors) > 0 {
-		state, readErr := localStore.LoadStatus()
+		current, readErr := localStore.LoadStatus()
 		if readErr != nil {
 			return result, readErr
 		}
-		state.SessionIssues = map[string]string{}
+		current.SessionIssues = map[string]string{}
 		for id, issue := range result.Errors {
 			code := "capture_or_publication_failed"
 			switch {
-			case errors.Is(issue, collector.ErrQuarantined):
+			case errors.Is(issue, state.ErrQuarantined):
 				code = "local_state_unreadable"
 			case strings.Contains(issue.Error(), "truncated, compacted, or rewritten"):
 				code = "transcript_discontinuity"
 			case strings.Contains(issue.Error(), "collection limit"):
 				code = "transcript_size_limit"
 			}
-			state.SessionIssues[id] = code
+			current.SessionIssues[id] = code
 		}
-		if err := localStore.SaveStatus(state); err != nil {
+		if err := localStore.SaveStatus(current); err != nil {
 			return result, err
 		}
 		recordPreflightError(localStore, fmt.Errorf("%d session(s) need capture or publication", len(result.Errors)))
@@ -309,7 +310,7 @@ func passStorageHealth(result collector.Result) string {
 // does for its own per-session errors — otherwise a retention failure would
 // never reach `status` at all, since, unlike collector.Run, Sweep does not
 // persist a Status of its own.
-func recordRetentionErrors(localStore *collector.LocalStore, result *collector.Result, sweep retention.Result) {
+func recordRetentionErrors(localStore *state.Store, result *collector.Result, sweep retention.Result) {
 	if result.Errors == nil {
 		result.Errors = map[string]error{}
 	}
@@ -328,7 +329,7 @@ func recordRetentionErrors(localStore *collector.LocalStore, result *collector.R
 // could record its own Status, so `status` reflects it. Best-effort: if the
 // status write itself fails, the original error is still what the caller
 // returns and reports.
-func recordPreflightError(localStore *collector.LocalStore, preflightErr error) {
+func recordPreflightError(localStore *state.Store, preflightErr error) {
 	status, err := localStore.LoadStatus()
 	if err != nil {
 		return

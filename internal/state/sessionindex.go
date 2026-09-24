@@ -1,4 +1,4 @@
-package collector
+package state
 
 import (
 	"crypto/sha256"
@@ -26,7 +26,7 @@ type sessionIndexEntry struct {
 
 // ArchiveSessionID returns the persistent archive session ID previously
 // associated with a native session ID, if one has been recorded.
-func (s *LocalStore) ArchiveSessionID(nativeSessionID string) (string, bool, error) {
+func (s *Store) ArchiveSessionID(nativeSessionID string) (string, bool, error) {
 	if strings.TrimSpace(nativeSessionID) == "" {
 		return "", false, errors.New("native session ID is required")
 	}
@@ -45,7 +45,7 @@ func (s *LocalStore) ArchiveSessionID(nativeSessionID string) (string, bool, err
 // with nativeSessionID, or creates and durably records a fresh random one.
 // It is the "creates or finds a persistent random archive session ID" step
 // the spec assigns to a start/resume hook.
-func (s *LocalStore) EnsureArchiveSessionID(nativeSessionID string) (id string, created bool, err error) {
+func (s *Store) EnsureArchiveSessionID(nativeSessionID string) (id string, created bool, err error) {
 	existing, found, err := s.ArchiveSessionID(nativeSessionID)
 	if err != nil {
 		return "", false, err

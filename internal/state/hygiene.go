@@ -1,4 +1,4 @@
-package collector
+package state
 
 import (
 	"encoding/json"
@@ -46,9 +46,9 @@ func isCorruptJSON(err error) bool {
 	return errors.As(err, &syntaxErr)
 }
 
-// isUndecodable reports whether err is any JSON decoding failure, corrupt or
+// IsUndecodable reports whether err is any JSON decoding failure, corrupt or
 // of an unexpected shape.
-func isUndecodable(err error) bool {
+func IsUndecodable(err error) bool {
 	var typeErr *json.UnmarshalTypeError
 	return isCorruptJSON(err) || errors.As(err, &typeErr)
 }
@@ -59,7 +59,7 @@ func isUndecodable(err error) bool {
 // mistaken for corruption; if it still does not decode it is renamed aside
 // and the error wraps ErrQuarantined. Any other read failure is returned as
 // is and leaves the file where it is, to be retried.
-func readOrQuarantine[T any](s *LocalStore, path, lockName string) (value T, found bool, err error) {
+func readOrQuarantine[T any](s *Store, path, lockName string) (value T, found bool, err error) {
 	value, found, err = readJSON[T](path)
 	if err == nil || !isCorruptJSON(err) {
 		return value, found, err
@@ -118,7 +118,7 @@ func readJSON[T any](path string) (T, bool, error) {
 
 // listJSONStems returns the names, without ".json", of the JSON files in one
 // of the store's directories.
-func (s *LocalStore) listJSONStems(dir string) ([]string, error) {
+func (s *Store) listJSONStems(dir string) ([]string, error) {
 	entries, err := os.ReadDir(filepath.Join(s.home, dir))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -146,7 +146,7 @@ func (s *LocalStore) listJSONStems(dir string) ([]string, error) {
 // decode is quarantined (see ErrQuarantined), so a hook for the same native
 // session can register it again. err is reserved for a directory that cannot
 // be listed at all.
-func (s *LocalStore) ScanRegistrations() (regs []archive.SessionRegistration, issues map[string]error, err error) {
+func (s *Store) ScanRegistrations() (regs []archive.SessionRegistration, issues map[string]error, err error) {
 	ids, err := s.listJSONStems("registrations")
 	if err != nil {
 		return nil, nil, fmt.Errorf("list registrations: %w", err)
@@ -172,7 +172,7 @@ func (s *LocalStore) ScanRegistrations() (regs []archive.SessionRegistration, is
 // and one that does not decode is quarantined. Its hook evidence is lost
 // either way, but hooks can queue the session's requests again, which they
 // cannot while it sits there.
-func (s *LocalStore) ScanRequests() (requests []Request, issues map[string]error, err error) {
+func (s *Store) ScanRequests() (requests []Request, issues map[string]error, err error) {
 	ids, err := s.listJSONStems("requests")
 	if err != nil {
 		return nil, nil, fmt.Errorf("list requests: %w", err)
@@ -193,9 +193,9 @@ func (s *LocalStore) ScanRequests() (requests []Request, issues map[string]error
 	return requests, issues, nil
 }
 
-// scanSubagentCandidates is LoadSubagentCandidates with ScanRegistrations'
+// ScanSubagentCandidates is LoadSubagentCandidates with ScanRegistrations'
 // isolation, keyed by the candidate's archive session ID.
-func (s *LocalStore) scanSubagentCandidates() ([]SubagentCandidate, map[string]error, error) {
+func (s *Store) ScanSubagentCandidates() ([]SubagentCandidate, map[string]error, error) {
 	ids, err := s.listJSONStems("subagent-candidates")
 	if err != nil {
 		return nil, nil, fmt.Errorf("list subagent candidates: %w", err)
@@ -216,9 +216,9 @@ func (s *LocalStore) scanSubagentCandidates() ([]SubagentCandidate, map[string]e
 	return out, issues, nil
 }
 
-// quarantinedFiles lists the files ever quarantined that are still present,
+// QuarantinedFiles lists the files ever quarantined that are still present,
 // relative to the archive directory.
-func (s *LocalStore) quarantinedFiles() []string {
+func (s *Store) QuarantinedFiles() []string {
 	var out []string
 	for _, dir := range quarantineDirs {
 		matches, _ := filepath.Glob(filepath.Join(s.home, dir, "*"+quarantineSuffix))
@@ -238,10 +238,10 @@ func (s *LocalStore) quarantinedFiles() []string {
 // died mid-write.
 const staleTempAge = time.Hour
 
-// removeStaleTemps removes atomic-write temporaries that crashed writers
+// RemoveStaleTemps removes atomic-write temporaries that crashed writers
 // left in the directories this store owns. Best effort: a failure only
 // leaves the file for the next pass.
-func (s *LocalStore) removeStaleTemps() {
+func (s *Store) RemoveStaleTemps() {
 	dirs := []string{s.home}
 	for _, dir := range append(append([]string{}, storeDirs...), lazyStoreDirs...) {
 		dirs = append(dirs, filepath.Join(s.home, dir))

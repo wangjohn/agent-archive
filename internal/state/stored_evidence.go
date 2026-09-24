@@ -1,4 +1,4 @@
-package collector
+package state
 
 import (
 	"errors"
@@ -27,7 +27,7 @@ type evidenceOnly struct {
 // pending first, without decoding either bundle's
 // records or the pending publication's source bytes. A session with neither
 // returns nothing. It is read-only.
-func (s *LocalStore) StoredEvidence(archiveSessionID string) ([]archive.SupplementalEvidence, error) {
+func (s *Store) StoredEvidence(archiveSessionID string) ([]archive.SupplementalEvidence, error) {
 	if !safeFileComponent(archiveSessionID) {
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}

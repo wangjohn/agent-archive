@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -36,7 +36,7 @@ func (c *cleanupCountingStore) List(ctx context.Context, prefix string) ([]stora
 
 func onlyRegistration(t *testing.T, home string) (archive.SessionRegistration, bool) {
 	t.Helper()
-	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestSyncPrunesPreviousDestinationSessionsWithoutTouchingTheBucket(t *testin
 			}
 			if tc.legacy {
 				reg.DestinationID = ""
-				store, err := collector.NewLocalStore(home)
+				store, err := state.Open(home)
 				if err != nil {
 					t.Fatal(err)
 				}
