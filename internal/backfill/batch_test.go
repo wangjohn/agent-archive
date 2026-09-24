@@ -186,11 +186,15 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	later := candidate("later", project)
-	result, err = r.Run([]Candidate{noStart, parent, later})
+	// A session registered meanwhile counts as already archived even when
+	// the plan's record of it would not be valid.
+	takenNoStart := taken
+	takenNoStart.StartedAt = time.Time{}
+	result, err = r.Run([]Candidate{noStart, parent, later, takenNoStart})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Sessions) != 2 || result.Invalid != 1 || result.SubagentsInvalid != 1 || len(result.Subagents) != 1 {
+	if len(result.Sessions) != 2 || result.Invalid != 1 || result.AlreadyArchived != 1 || result.SubagentsInvalid != 1 || len(result.Subagents) != 1 {
 		t.Fatalf("%+v", result)
 	}
 

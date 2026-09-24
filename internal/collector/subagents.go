@@ -87,6 +87,10 @@ func (s *LocalStore) LoadSubagentCandidates() ([]SubagentCandidate, error) {
 		}
 		var candidate SubagentCandidate
 		if err := local.Read(filepath.Join(dir, entry.Name()), &candidate); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// Acknowledged between listing and reading.
+				continue
+			}
 			return nil, fmt.Errorf("read subagent candidate %q: %w", entry.Name(), err)
 		}
 		out = append(out, candidate)
