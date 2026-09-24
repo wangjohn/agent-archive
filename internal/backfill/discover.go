@@ -11,8 +11,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // transcript is one native transcript file found on disk, before resolution.
@@ -78,9 +76,11 @@ type dirEntry struct {
 	dir, regular bool
 }
 
-// fileSize stats a regular file; ok is false when it is gone or is not one.
+// fileSize stats a regular file without following symlinks; ok is false when
+// it is gone or is not one. A symlinked transcript is skipped: discovery
+// never follows a link out of an app's store.
 func fileSize(env Environment, path string) (int64, bool) {
-	info, err := env.stat(path)
+	info, err := env.lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return 0, false
 	}
@@ -310,30 +310,43 @@ func rolloutFileID(name string) string {
 	return ""
 }
 
-// scanRecords calls visit with each non-blank line until it returns false.
-// A line longer than archive.MaxRecordBytes ends the scan; the adapter
-// reports such a transcript itself.
+// headLineLimit is the longest line the header scan decodes; a longer one is
+// passed over, since it cannot be a header. headScanLimit bounds how far into
+// a file the scan reads. Both keep header reads small, since they run outside
+// the filter's byte budget.
+const (
+	headLineLimit = 1 << 20
+	headScanLimit = 8 << 20
+)
+
+// scanRecords calls visit with each non-blank line until it returns false,
+// reading at most headScanLimit bytes. Lines over headLineLimit are skipped
+// without being held in memory.
 func scanRecords(env Environment, path string, visit func([]byte) bool) error {
 	f, err := env.open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	reader := bufio.NewReaderSize(f, 64*1024)
+	reader := bufio.NewReaderSize(io.LimitReader(f, headScanLimit), 64*1024)
 	var line []byte
+	tooLong := false
 	for {
 		chunk, err := reader.ReadSlice('\n')
-		if len(line)+len(chunk) > archive.MaxRecordBytes {
-			return nil
+		if !tooLong {
+			if len(line)+len(chunk) > headLineLimit {
+				tooLong, line = true, line[:0]
+			} else {
+				line = append(line, chunk...)
+			}
 		}
-		line = append(line, chunk...)
 		if errors.Is(err, bufio.ErrBufferFull) {
 			continue
 		}
-		if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 && !visit(trimmed) {
+		if trimmed := bytes.TrimSpace(line); !tooLong && len(trimmed) > 0 && !visit(trimmed) {
 			return nil
 		}
-		line = line[:0]
+		line, tooLong = line[:0], false
 		if err == io.EOF {
 			return nil
 		}

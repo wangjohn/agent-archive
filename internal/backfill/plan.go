@@ -3,6 +3,7 @@ package backfill
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"runtime"
@@ -67,8 +68,51 @@ type work struct {
 	// is then not counted at all.
 	vanished bool
 	filtered bool
+	// duplicated is set when another file carries the same harness and
+	// native ID; duplicate when this file is not the one kept.
+	duplicated, duplicate bool
 	// Adapter outcomes.
-	adapterRan, empty, unsafe, tooLarge bool
+	empty, unsafe, tooLarge bool
+}
+
+// subagentWork is one subagent transcript of an imported parent.
+type subagentWork struct {
+	parent            *work
+	sub               Subagent
+	skipped, vanished bool
+}
+
+// markDuplicates keeps one file of a session found more than once and marks
+// the rest. The kept file is the one whose own IDs agree, then a Codex file in
+// sessions/ over archived_sessions/, then the larger file, then the
+// lexically smallest path.
+func markDuplicates(env Environment, group []*work) {
+	var live []*work
+	for _, w := range group {
+		if !w.vanished {
+			live = append(live, w)
+		}
+	}
+	if len(live) < 2 {
+		return
+	}
+	active := filepath.Join(env.Home, ".codex", "sessions") + string(filepath.Separator)
+	sort.SliceStable(live, func(i, j int) bool {
+		a, b := live[i], live[j]
+		if a.t.identityMismatch != b.t.identityMismatch {
+			return !a.t.identityMismatch
+		}
+		if aActive, bActive := strings.HasPrefix(a.t.path, active), strings.HasPrefix(b.t.path, active); aActive != bActive {
+			return aActive
+		}
+		if a.t.size != b.t.size {
+			return a.t.size > b.t.size
+		}
+		return a.t.path < b.t.path
+	})
+	for _, w := range live[1:] {
+		w.duplicate = true
+	}
 }
 
 // BuildPlan finds every session on this Mac and decides, for each, whether it
@@ -155,6 +199,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	}
 	since, until := dateRange(filters, now.Location())
 
+	sessions := map[string][]*work{}
 	for _, w := range items {
 		if w.vanished {
 			continue
@@ -168,22 +213,31 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 				reason = ""
 			}
 			w.state = reason
+			key := w.t.harness + "\x00" + w.c.NativeSessionID
+			sessions[key] = append(sessions[key], w)
 		}
 		w.filtered = !harnessMatches(filters.Harnesses, w.t.harness) || !projectMatches(env, projectFilter, w.res.root)
 		w.tooLarge = w.t.size > archive.MaxRecordBytes
+	}
+	for _, group := range sessions {
+		if len(group) > 1 {
+			for _, w := range group {
+				w.duplicated = true
+			}
+		}
 	}
 
 	// The adapter runs over every transcript that may be imported, as the
 	// collector will, so the plan's counts are what gets imported. A session
 	// already decided by an earlier reason is not read, unless a date filter
-	// needs its start.
+	// needs its start or a duplicate needs its identity checked.
 	dated := !since.IsZero() || !until.IsZero()
 	var toFilter []*work
 	for _, w := range items {
-		if w.vanished || w.state != "" || w.filtered || w.tooLarge || w.unsafe {
+		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe {
 			continue
 		}
-		if dated || (w.res.skip == "" && !w.t.identityMismatch) {
+		if w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
 			toFilter = append(toFilter, w)
 		}
 	}
@@ -195,7 +249,11 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	}); err != nil {
 		return Plan{}, err
 	}
+	for _, group := range sessions {
+		markDuplicates(env, group)
+	}
 
+	var parents []*work
 	for _, w := range items {
 		if w.vanished {
 			continue
@@ -216,9 +274,45 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 		w.c.Skip = w.reason(now)
 		if w.c.Skip == "" && w.t.harness == "claude" {
-			w.c.Subagents = claudeSubagents(env, w.t)
+			parents = append(parents, w)
 		}
-		plan.Candidates = append(plan.Candidates, w.c)
+	}
+
+	// Subagent transcripts of imported parents pass the same checks as their
+	// parents; one that fails is left out and counted.
+	var subagents []*subagentWork
+	for _, w := range parents {
+		for _, sub := range claudeSubagents(env, w.t) {
+			subagents = append(subagents, &subagentWork{parent: w, sub: sub})
+		}
+	}
+	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
+		if s.sub.Bytes > archive.MaxRecordBytes {
+			s.skipped = true
+			return
+		}
+		n := budget.acquire(s.sub.Bytes)
+		defer budget.release(n)
+		if _, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{}); err != nil {
+			s.vanished = isNotExist(err)
+			s.skipped = !s.vanished
+		}
+	}); err != nil {
+		return Plan{}, err
+	}
+	for _, s := range subagents {
+		switch {
+		case s.vanished:
+		case s.skipped:
+			s.parent.c.SubagentsSkipped++
+		default:
+			s.parent.c.Subagents = append(s.parent.c.Subagents, s.sub)
+		}
+	}
+	for _, w := range items {
+		if !w.vanished {
+			plan.Candidates = append(plan.Candidates, w.c)
+		}
 	}
 
 	if env.CursorDatabaseOnly != nil {
@@ -251,12 +345,15 @@ func (w *work) reason(now time.Time) SkipReason {
 		w.res.skip: w.res.skip != "",
 	}
 	for reason, set := range map[SkipReason]bool{
+		SkipDuplicateSession: w.duplicate,
 		SkipFilteredOut:      w.filtered,
 		SkipIdentityMismatch: w.t.identityMismatch,
 		SkipEmpty:            w.empty,
-		SkipUnsafeFormat:     w.unsafe,
-		SkipTooLarge:         w.tooLarge,
-		SkipStartInFuture:    w.c.StartedAt.After(now),
+		// A session that would register without a start time cannot be
+		// imported: the registration requires one.
+		SkipUnsafeFormat:  w.unsafe || (w.state == "" && w.c.StartedAt.IsZero()),
+		SkipTooLarge:      w.tooLarge,
+		SkipStartInFuture: w.c.StartedAt.After(now),
 	} {
 		applies[reason] = applies[reason] || set
 	}
@@ -289,11 +386,16 @@ func runAdapter(env Environment, w *work) {
 		w.c.StartedAt, w.c.StartedAtSource = freshStart, StartedAtSourceFileCreated
 	}
 	filtered, _, err := collector.FilterTranscriptFile(w.t.harness, w.t.path, freshStart)
-	w.adapterRan = true
 	if err != nil {
-		if isNotExist(err) {
+		info, statErr := env.lstat(w.t.path)
+		switch {
+		case isNotExist(err) || isNotExist(statErr):
 			w.vanished = true
-		} else {
+		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > archive.MaxRecordBytes):
+			// One record over the limit, or a file that grew past it since
+			// discovery: the collector blocks it as too large.
+			w.tooLarge = true
+		default:
 			// The collector would refuse it too, and block the registration
 			// for good.
 			w.unsafe = true
@@ -366,7 +468,8 @@ func claudeSubagents(env Environment, t *transcript) []Subagent {
 		}
 		path := filepath.Join(dir, e.name)
 		if size, ok := fileSize(env, path); ok {
-			subagents = append(subagents, Subagent{Path: path, Bytes: size})
+			id := strings.TrimSuffix(strings.TrimPrefix(e.name, "agent-"), ".jsonl")
+			subagents = append(subagents, Subagent{Path: path, AgentID: id, Bytes: size})
 		}
 	}
 	return subagents
@@ -432,8 +535,8 @@ func containsString(values []string, want string) bool {
 }
 
 // forEach runs fn over items with a fixed number of workers.
-func forEach(ctx context.Context, workers int, items []*work, fn func(*work)) error {
-	jobs := make(chan *work)
+func forEach[T any](ctx context.Context, workers int, items []T, fn func(T)) error {
+	jobs := make(chan T)
 	var wg sync.WaitGroup
 	for range min(workers, max(1, len(items))) {
 		wg.Add(1)
