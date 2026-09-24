@@ -111,25 +111,28 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 
 	// Rule 2: the nearest configured ancestor, on resolved paths, as hooks
 	// decide. An exclusion always beats the defaults below.
-	if project, ok := r.configuredOwner(dir); ok {
-		if !project.Included {
-			return resolution{root: project.Root, kind: r.kindOf(project.Root), skip: SkipExcludedProject}
-		}
-		return resolution{root: project.Root, kind: r.kindOf(project.Root), included: true}
+	if res, ok := r.configured(dir); ok {
+		return res
 	}
 
 	// Rules 3 and 4: a worktree folds into its repository; a repository is
-	// its own project.
-	if !r.env.exists(dir) {
-		if repo, ok := claudeWorktreeRepo(dir); ok {
-			return resolution{root: r.env.resolved(repo), kind: ProjectKindRepository}
-		}
-		if withinAny(dir, r.worktreeStores) {
-			return resolution{skip: SkipWorktreeUnresolved}
-		}
+	// its own project. The repository then goes through rule 2 itself, so a
+	// worktree outside its repository lands in the configured project, or is
+	// excluded with it.
+	repo, found, skip := r.repository(dir)
+	if skip != "" {
+		return resolution{skip: skip}
 	}
-	if root, ok := r.repositoryRoot(dir); ok {
-		return resolution{root: root, kind: ProjectKindRepository}
+	if found {
+		if r.homeOrAbove(repo) {
+			// A missing ~/.claude/worktrees/<name> maps to home by its path;
+			// home is never a repository project.
+			return r.homeRule(repo)
+		}
+		if res, ok := r.configured(repo); ok {
+			return res
+		}
+		return resolution{root: repo, kind: ProjectKindRepository}
 	}
 
 	// Rule 5: Claude desktop scratch chats share one project, the
@@ -146,18 +149,43 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 		return resolution{root: dir, kind: ProjectKindTemporary, skip: SkipTemporaryDirectory}
 	}
 
-	// Rule 7: home and everything above it. Only home itself can become a
-	// project; a folder above it (/, /Users) stays skipped even with the
-	// flag, which would otherwise capture every session on the Mac.
-	if pathWithin(r.home, dir) || pathWithin(r.homeRaw, dir) {
-		if dir == r.home && r.filters.IncludeHome {
-			return resolution{root: dir, kind: ProjectKindHome}
-		}
-		return resolution{root: dir, kind: ProjectKindHome, skip: SkipHomeDirectory}
+	// Rule 7: home and everything above it.
+	if r.homeOrAbove(dir) {
+		return r.homeRule(dir)
 	}
 
 	// Rule 8: anything else is its own project, whether or not it exists.
 	return resolution{root: dir, kind: ProjectKindDirectory}
+}
+
+// configured applies rule 2 to dir.
+func (r *resolver) configured(dir string) (resolution, bool) {
+	project, ok := r.configuredOwner(dir)
+	if !ok {
+		return resolution{}, false
+	}
+	if !project.Included {
+		return resolution{root: project.Root, kind: r.kindOf(project.Root), skip: SkipExcludedProject}, true
+	}
+	return resolution{root: project.Root, kind: r.kindOf(project.Root), included: true}, true
+}
+
+// homeOrAbove reports whether dir is home or one of its ancestors.
+func (r *resolver) homeOrAbove(dir string) bool {
+	return pathWithin(r.home, dir) || pathWithin(r.homeRaw, dir)
+}
+
+// homeRule is rule 7 for home or a folder above it. Only home itself can
+// become a project, with --include-home; a folder above it (/, /Users) would
+// capture every session on the Mac, so above_home has no override.
+func (r *resolver) homeRule(dir string) resolution {
+	if dir != r.home && dir != r.homeRaw {
+		return resolution{root: dir, kind: ProjectKindHome, skip: SkipAboveHome}
+	}
+	if r.filters.IncludeHome {
+		return resolution{root: r.home, kind: ProjectKindHome}
+	}
+	return resolution{root: r.home, kind: ProjectKindHome, skip: SkipHomeDirectory}
 }
 
 // configuredOwner is the nearest configured project containing dir, compared
@@ -190,53 +218,85 @@ func claudeWorktreeRepo(dir string) (string, bool) {
 	return dir[:i], true
 }
 
-// repositoryRoot walks up from dir looking for .git. A .git directory makes
-// its parent the root. A .git file is a linked worktree (or a submodule):
-// gitdir: names its git directory, and a commondir there leads to the main
-// repository's .git, whose parent is the root. The walk never reaches home
-// or anything above it, so a home-directory repository (dotfiles) does not
-// claim every folder under home.
-func (r *resolver) repositoryRoot(dir string) (string, bool) {
+// missingWorktree handles a worktree that cannot be followed: its folder or
+// its git directory is gone. A Claude Code worktree maps to its repository by
+// path; a Codex or Cursor one cannot be mapped.
+func (r *resolver) missingWorktree(dir string) (repo string, found bool, skip SkipReason) {
+	if repo, ok := claudeWorktreeRepo(dir); ok {
+		return r.env.resolved(repo), true, ""
+	}
+	if withinAny(dir, r.worktreeStores) {
+		return "", false, SkipWorktreeUnresolved
+	}
+	return "", false, ""
+}
+
+// repository applies rules 3 and 4. It walks up from dir looking for .git. A
+// .git directory makes its parent the root. A .git file is a linked worktree
+// (or a submodule): gitdir: names its git directory, and a commondir there
+// leads to the main repository's .git, whose parent is the root. The walk
+// never reaches home or anything above it, so a home-directory repository
+// (dotfiles) does not claim every folder under home.
+func (r *resolver) repository(dir string) (repo string, found bool, skip SkipReason) {
+	if !r.env.exists(dir) {
+		if repo, found, skip := r.missingWorktree(dir); found || skip != "" {
+			return repo, found, skip
+		}
+	}
 	for d := dir; ; {
-		if pathWithin(r.home, d) || pathWithin(r.homeRaw, d) {
-			return "", false
+		if r.homeOrAbove(d) {
+			return "", false, ""
 		}
 		gitPath := filepath.Join(d, ".git")
 		if info, err := r.env.stat(gitPath); err == nil {
 			if info.IsDir() {
-				return d, true
+				return d, true, ""
 			}
-			return r.env.resolved(r.worktreeMain(d, gitPath)), true
+			main, ok := r.worktreeMain(d, gitPath)
+			if !ok {
+				// The git directory the file names is gone: the worktree's
+				// repository was removed or moved.
+				if repo, found, skip := r.missingWorktree(d); found || skip != "" {
+					return repo, found, skip
+				}
+				return d, true, ""
+			}
+			return r.env.resolved(main), true, ""
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
-			return "", false
+			return "", false, ""
 		}
 		d = parent
 	}
 }
 
-// worktreeMain follows a .git file to the main repository. Anything it
-// cannot follow leaves the checkout holding the file as its own root.
-func (r *resolver) worktreeMain(checkout, gitFile string) string {
+// worktreeMain follows a .git file to the main repository. ok is false when
+// the git directory it names, or the common directory, does not exist.
+// Anything else it cannot follow leaves the checkout holding the file as its
+// own root.
+func (r *resolver) worktreeMain(checkout, gitFile string) (string, bool) {
 	data, err := r.env.readFile(gitFile)
 	if err != nil {
-		return checkout
+		return checkout, true
 	}
 	line := strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
 	gitDir, ok := strings.CutPrefix(line, "gitdir:")
 	if !ok {
-		return checkout
+		return checkout, true
 	}
 	gitDir = strings.TrimSpace(gitDir)
 	if !filepath.IsAbs(gitDir) {
 		gitDir = filepath.Join(checkout, gitDir)
 	}
+	if !r.env.exists(gitDir) {
+		return "", false
+	}
 	common, err := r.env.readFile(filepath.Join(gitDir, "commondir"))
 	if err != nil {
 		// No commondir: a submodule or a separate git directory, not a
 		// linked worktree. The checkout is the repository.
-		return checkout
+		return checkout, true
 	}
 	commonDir := strings.TrimSpace(string(common))
 	if !filepath.IsAbs(commonDir) {
@@ -245,9 +305,12 @@ func (r *resolver) worktreeMain(checkout, gitFile string) string {
 	commonDir = filepath.Clean(commonDir)
 	if filepath.Base(commonDir) != ".git" {
 		// A bare repository has no main checkout to fold into.
-		return checkout
+		return checkout, true
 	}
-	return filepath.Dir(commonDir)
+	if !r.env.exists(commonDir) {
+		return "", false
+	}
+	return filepath.Dir(commonDir), true
 }
 
 // kindOf says what an existing configured root is.

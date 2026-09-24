@@ -25,12 +25,14 @@ type SkipReason string
 
 const (
 	SkipAlreadyArchived       SkipReason = "already_archived"
+	SkipDuplicateSession      SkipReason = "duplicate_session"
 	SkipRegisteredNotAdmitted SkipReason = "registered_not_admitted"
 	SkipRemovedByUndo         SkipReason = "removed_by_undo"
 	SkipRemovedByRetention    SkipReason = "removed_by_retention"
 	SkipFilteredOut           SkipReason = "filtered_out"
 	SkipExcludedProject       SkipReason = "excluded_project"
 	SkipHomeDirectory         SkipReason = "home_directory"
+	SkipAboveHome             SkipReason = "above_home"
 	SkipTemporaryDirectory    SkipReason = "temporary_directory"
 	SkipProjectUnknown        SkipReason = "project_unknown"
 	SkipWorktreeUnresolved    SkipReason = "worktree_unresolved"
@@ -44,8 +46,8 @@ const (
 
 // skipOrder is the spec's precedence: the first applicable reason wins.
 var skipOrder = []SkipReason{
-	SkipAlreadyArchived, SkipRegisteredNotAdmitted, SkipRemovedByUndo, SkipRemovedByRetention,
-	SkipFilteredOut, SkipExcludedProject, SkipHomeDirectory, SkipTemporaryDirectory,
+	SkipAlreadyArchived, SkipDuplicateSession, SkipRegisteredNotAdmitted, SkipRemovedByUndo, SkipRemovedByRetention,
+	SkipFilteredOut, SkipExcludedProject, SkipHomeDirectory, SkipAboveHome, SkipTemporaryDirectory,
 	SkipProjectUnknown, SkipWorktreeUnresolved, SkipIdentityMismatch,
 	SkipEmpty, SkipUnsafeFormat, SkipTooLarge, SkipStartInFuture,
 	SkipCursorDatabaseOnly,
@@ -109,16 +111,21 @@ type Candidate struct {
 	StartedAt       time.Time
 	StartedAtSource StartedAtSource
 	Bytes           int64
-	// Subagents are the Claude Code subagent transcripts of an imported
-	// parent.
+	// Subagents are the readable Claude Code subagent transcripts of an
+	// imported parent.
 	Subagents []Subagent
-	Skip      SkipReason
+	// SubagentsSkipped counts the parent's subagent transcripts that are too
+	// large or that the filter refuses; they are not imported.
+	SubagentsSkipped int
+	Skip             SkipReason
 }
 
 // Subagent is one subagent transcript belonging to an imported parent.
 type Subagent struct {
-	Path  string
-	Bytes int64
+	Path string
+	// AgentID is the <id> of agent-<id>.jsonl.
+	AgentID string
+	Bytes   int64
 }
 
 // Filters narrows a backfill run.
@@ -184,7 +191,9 @@ func canonicalHarness(name string) string {
 }
 
 // Environment is everything BuildPlan reads from the machine. A nil function
-// uses the real file system.
+// uses the real file system. The one exception is the adapter pass: it goes
+// through collector.FilterTranscriptFile, the collector's own filter, which
+// reads transcripts from the real file system whatever is injected here.
 type Environment struct {
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
@@ -194,13 +203,14 @@ type Environment struct {
 	Now      func() time.Time
 
 	Stat         func(string) (fs.FileInfo, error)
+	Lstat        func(string) (fs.FileInfo, error)
 	ReadDir      func(string) ([]fs.DirEntry, error)
 	ReadFile     func(string) ([]byte, error)
 	Open         func(string) (io.ReadCloser, error)
 	EvalSymlinks func(string) (string, error)
 	// FileCreated returns a file's birth time, Cursor's start time. The
-	// default reads it from the file system where it is recorded (macOS),
-	// and falls back to the modification time elsewhere.
+	// default reads it from the file system where it is recorded (macOS);
+	// where it is not, or it fails, the modification time is used.
 	FileCreated func(string) (time.Time, error)
 	// CursorDatabaseOnly counts Cursor chats that exist only in Cursor's
 	// database: composerData entries with headers, not drafts, and none of
@@ -227,6 +237,13 @@ func (e Environment) stat(path string) (fs.FileInfo, error) {
 		return e.Stat(path)
 	}
 	return os.Stat(path)
+}
+
+func (e Environment) lstat(path string) (fs.FileInfo, error) {
+	if e.Lstat != nil {
+		return e.Lstat(path)
+	}
+	return os.Lstat(path)
 }
 
 func (e Environment) readDir(path string) ([]fs.DirEntry, error) {
@@ -257,11 +274,26 @@ func (e Environment) evalSymlinks(path string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 
+// fileCreated is a file's birth time, falling back to its modification time.
 func (e Environment) fileCreated(path string) (time.Time, error) {
+	var created time.Time
+	var err error
 	if e.FileCreated != nil {
-		return e.FileCreated(path)
+		created, err = e.FileCreated(path)
+	} else {
+		created, err = fileBirthTime(path)
 	}
-	return fileBirthTime(path)
+	if err == nil && !created.IsZero() {
+		return created, nil
+	}
+	info, statErr := e.lstat(path)
+	if statErr != nil {
+		if err == nil {
+			err = statErr
+		}
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
 }
 
 func (e Environment) tempDirs() []string {
@@ -277,12 +309,25 @@ func (e Environment) exists(path string) bool {
 	return err == nil
 }
 
-// resolved returns path cleaned, with symlinks resolved when it exists, the
-// same rule hooks use to match configured projects.
+// resolved returns path cleaned with symlinks resolved, as hooks match
+// configured projects. A path that no longer exists has its deepest existing
+// ancestor resolved and the rest appended, so a missing folder under a
+// symlinked parent gets the same spelling as when it existed.
 func (e Environment) resolved(path string) string {
 	path = filepath.Clean(path)
 	if r, err := e.evalSymlinks(path); err == nil {
 		return r
 	}
-	return path
+	for ancestor := filepath.Dir(path); ; ancestor = filepath.Dir(ancestor) {
+		if r, err := e.evalSymlinks(ancestor); err == nil {
+			rel, err := filepath.Rel(ancestor, path)
+			if err != nil {
+				return path
+			}
+			return filepath.Join(r, rel)
+		}
+		if filepath.Dir(ancestor) == ancestor {
+			return path
+		}
+	}
 }
