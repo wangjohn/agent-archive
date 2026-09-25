@@ -163,7 +163,6 @@ func project(root string, included bool) archive.ProjectActivation {
 }
 
 func TestResolveRules(t *testing.T) {
-	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	tr.mkdir("home/repo/sub")
@@ -373,7 +372,6 @@ func TestClaudeSubagents(t *testing.T) {
 }
 
 func TestFiltersAndPrecedence(t *testing.T) {
-	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	other := tr.repo("home/other")

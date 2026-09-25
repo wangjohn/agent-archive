@@ -49,7 +49,6 @@ func markdownSize(h Handoff) int {
 // `go test ./internal/archive -run TestHandoffGolden -update` and review the
 // diff.
 func TestHandoffGolden(t *testing.T) {
-	t.Parallel()
 	for _, harness := range []string{"claude", "codex", "cursor"} {
 		t.Run(harness, func(t *testing.T) {
 			h, err := BuildHandoff(handoffBundle(t, harness), nil, HandoffOptions{Source: "local"})

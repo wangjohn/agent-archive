@@ -214,7 +214,6 @@ func TestUnreadableFolderIsCounted(t *testing.T) {
 // sessions are still planned, and no path is shown. A store the harness
 // filter leaves out is not reported.
 func TestUnreadableStoreIsNamed(t *testing.T) {
-	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-time.Hour)

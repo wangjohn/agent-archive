@@ -23,7 +23,6 @@ var updateGolden = flag.Bool("update", false, "rewrite internal/backfill/testdat
 // A worktree outside its repository goes through rule 2 on the repository it
 // maps to: excluded with it, or imported under its configured spelling.
 func TestWorktreeOutsideRepository(t *testing.T) {
-	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	feature := tr.worktree("home/repo", "home/repo-feature", "repo-feature")
@@ -52,7 +51,6 @@ func TestWorktreeOutsideRepository(t *testing.T) {
 
 // A worktree whose git directory is gone is not a repository of its own.
 func TestWorktreeWithMissingRepository(t *testing.T) {
-	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	codexWT := tr.path("home/.codex/worktrees/ab12/repo")

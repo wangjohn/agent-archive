@@ -21,7 +21,6 @@ import (
 // LoadBatches names it as unreadable instead of returning it, so undo (which
 // must see every batch) stops rather than select sessions by an empty ID.
 func TestLoadBatchesRejectsInvalidBatchFiles(t *testing.T) {
-	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		file string

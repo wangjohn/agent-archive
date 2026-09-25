@@ -190,7 +190,6 @@ func chatIDs(res CursorDatabaseResult) []string {
 // TestCursorDatabaseReader reads a database with no side files, as Cursor
 // leaves it when closed, in both journal modes.
 func TestCursorDatabaseReader(t *testing.T) {
-	t.Parallel()
 	sept10 := time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)
 	rows := map[string]any{
 		"composerData:a": composerJSON("a", 2, map[string]any{"createdAt": millis(sept10)}),
@@ -366,7 +365,6 @@ func TestCursorDatabaseReaderMissing(t *testing.T) {
 }
 
 func TestCursorDatabaseReaderNotChecked(t *testing.T) {
-	t.Parallel()
 	good := map[string]any{"composerData:a": composerJSON("a", 1, nil)}
 	value := func(v string) func(t *testing.T, path string) {
 		return func(t *testing.T, path string) {
@@ -491,7 +489,6 @@ func TestCursorDatabaseReaderStrayWAL(t *testing.T) {
 // is read immutable, so a write that lands during the read is caught
 // afterwards and the read is not trusted.
 func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
-	t.Parallel()
 	for name, change := range map[string]func(t *testing.T, path string){
 		"modified": func(t *testing.T, path string) {
 			t.Helper()
@@ -739,7 +736,6 @@ func TestCursorDatabaseReaderStaleSideFiles(t *testing.T) {
 // TestCursorDatabaseReaderJournal: a rollback-journal database with a write
 // in progress, and the hot journal a killed writer leaves, are not checked.
 func TestCursorDatabaseReaderJournal(t *testing.T) {
-	t.Parallel()
 	for _, killed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("killed=%v", killed), func(t *testing.T) {
 			home := t.TempDir()
@@ -780,7 +776,6 @@ func TestCursorDatabaseReaderCancelled(t *testing.T) {
 // sessions: a chat without the field a filter needs does not match it.
 // Nothing next to the database changes.
 func TestCursorDatabasePlan(t *testing.T) {
-	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	other := tr.repo("home/other")
@@ -886,7 +881,6 @@ func TestCursorDatabasePlan(t *testing.T) {
 // transcript can't be told apart from a database-only one, so the database
 // is not counted at all, rather than counting every chat as database-only.
 func TestCursorDatabaseSkippedWhenTranscriptsUnreadable(t *testing.T) {
-	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	slugDir := filepath.Join(tr.home, ".cursor", "projects", cursorSlug(site))
