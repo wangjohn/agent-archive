@@ -134,8 +134,13 @@ func Apply(changes []Change) error {
 		if err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
+		if c.Delete && target != c.Path {
+			// It became a link since it was planned: the file it points to
+			// is kept, emptied, as for any link (see PlanRemovalOf).
+			c.Delete = false
+		}
 		if c.Delete {
-			if err = os.Remove(target); err != nil {
+			if err = os.Remove(c.Path); err != nil {
 				return errors.Join(fmt.Errorf("cannot remove %s: %w", c.Path, err), rollback(applied))
 			}
 			applied = append(applied, c)

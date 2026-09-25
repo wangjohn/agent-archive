@@ -140,6 +140,33 @@ func TestRemovalDeletesAFileSetupCreated(t *testing.T) {
 	}
 }
 
+// A file planned for deletion that became a link before Apply (a dotfile
+// manager adopting it) is not deleted through: the link and the file it
+// points to are kept, emptied, as for a link found at planning.
+func TestDeletionOfAFileThatBecameALinkKeepsTheLink(t *testing.T) {
+	home := t.TempDir()
+	files := testFiles(home)
+	changes, err := Plan(files, testHook("/bin/agent-archive"), []string{"claude"})
+	must(t, err)
+	must(t, Apply(changes))
+	removal, err := PlanRemoval(files, Hook{}, []string{"claude"})
+	must(t, err)
+	if len(removal) != 1 || !removal[0].Delete {
+		t.Fatalf("removal: %+v", removal)
+	}
+	target := filepath.Join(t.TempDir(), "dotfiles-settings.json")
+	must(t, os.WriteFile(target, removal[0].Before, 0o600))
+	must(t, os.Remove(files["claude"]))
+	must(t, os.Symlink(target, files["claude"]))
+	must(t, Apply(removal))
+	if info, err := os.Lstat(files["claude"]); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was not kept: %v", err)
+	}
+	if left, err := os.ReadFile(target); err != nil || !Empty(left) {
+		t.Fatalf("target: %q %v", left, err)
+	}
+}
+
 // A write that fails before its final rename left the file as it was, so
 // Apply reports that one failure, not a second one from putting back a file
 // that never changed (H-22).
