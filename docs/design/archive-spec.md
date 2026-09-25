@@ -209,7 +209,7 @@ For small personal archives, rereading a changed transcript is simpler than main
 Separate source event times, snapshot capture time, metadata derivation time, and local operational times:
 
 - Preserve native event timestamps as evidence. Do not replace them with the time the collector reads a record.
-- `captured_at` identifies when a retained source snapshot was first captured. Set it only when retained evidence or its capture/filter provenance changes. Reuse it when rebuilding or retrying the same snapshot.
+- `captured_at` identifies when a retained source snapshot was first captured. Set it only when retained evidence changes. Reuse it when rebuilding or retrying the same snapshot, and when a new filter or adapter version refilters a source that has not changed since it was captured: the republished snapshot carries the new provenance and the old capture time.
 - `metadata_derived_at` identifies when the published summary was derived. Change it only when the source reference, parser version, or meaningful summary fields change. A parser upgrade may update metadata while preserving `captured_at` and the source object.
 - Keep `last_scanned_at`, upload-attempt times, and last successful upload time in local operational status. They are not inputs to the archived source hash or metadata change detection.
 

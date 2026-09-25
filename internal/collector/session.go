@@ -24,7 +24,8 @@ import (
 //	         (regenerateMetadata), without reading the transcript.
 //	read     The source (a transcript file, or a Cursor database chat) is
 //	         read and filtered. A size limit or a deleted transcript ends the
-//	         scan as a recorded gap (blocked).
+//	         scan as a recorded gap (blocked), as does a published source
+//	         that now retains nothing (emptied).
 //	build    The candidate bundle: the filtered records plus supplemental
 //	         evidence (hook evidence, and skill observations when the
 //	         session was active).
@@ -107,6 +108,9 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	read, ok, err := s.read()
 	if !ok || err != nil {
 		return read.outcome, err
+	}
+	if emptied, err := s.emptied(read); emptied || err != nil {
+		return outcomeSkipped, err
 	}
 	candidate, supplemental, err := s.build(read)
 	if err != nil {
@@ -199,8 +203,8 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		// same waiting as having no path at all, one step later. Nothing has
 		// been captured, so there is nothing to block or fail; the request
 		// stays queued and the next pass reads whatever has arrived. A file
-		// emptied after a publication is a rewrite, which the comparison
-		// still reports rather than waits on.
+		// emptied after a publication is a rewrite, which emptied records
+		// rather than waits on.
 		if _, _, published := s.published.LastPublished(); !published {
 			return read, false, nil
 		}
@@ -240,6 +244,35 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 		return outcomeSkipped, errors.Join(err, rememberErr)
 	}
 	return outcomeSkipped, err
+}
+
+// emptied records a source that retains nothing any more, after the session
+// was published, as a rewrite gap: there is no bundle to build from it, and
+// the published snapshot is richer than anything it now holds. The gap
+// keeps that snapshot and acknowledges the request, as the rewrite guard
+// does, and stands until the source changes. As with the rewrite guard, a
+// transcript_rewritten gap is not recoverable (see
+// state.BlockedReason.Recoverable), so hook evidence of requests acknowledged while it stands
+// is dropped, not held for when the source extends the snapshot again. emptied reports that the scan
+// ends here. A never-published source that retains nothing is left to build,
+// which reports it.
+func (s *sessionScan) emptied(read sourceRead) (bool, error) {
+	if len(read.filtered.Records) > 0 {
+		return false, nil
+	}
+	for _, text := range read.filtered.Text {
+		if text != "" {
+			return false, nil
+		}
+	}
+	if _, _, published := s.published.LastPublished(); !published {
+		return false, nil
+	}
+	if err := s.clearEndedBlock(); err != nil {
+		return true, err
+	}
+	_, err := s.block(state.BlockedReasonTranscriptRewritten, nil, &read.observed)
+	return true, err
 }
 
 // build assembles the candidate bundle, and returns the supplemental
@@ -328,13 +361,19 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 		// first observed now. A change that only adds or updates a child link
 		// is the exception: it carries no new activity of this session's own,
 		// so it keeps the capture time its evidence was actually observed at.
+		// So does the same evidence re-filtered by a new filter or adapter
+		// version.
 		candidate.Capture.CapturedAt = s.now
 		if haveCached && !cached.Capture.CapturedAt.IsZero() {
 			linkOnly, err := bundleChangeIsLinkOnly(cached, *candidate)
 			if err != nil {
 				return false, fmt.Errorf("compare linked sessions: %w", err)
 			}
-			if linkOnly {
+			refiltered, err := s.refilteredUnchanged(read, cached, *candidate)
+			if err != nil {
+				return false, err
+			}
+			if linkOnly || refiltered {
 				candidate.Capture.CapturedAt = cached.Capture.CapturedAt
 			}
 		}
@@ -359,6 +398,35 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 		return true, s.recordBlockedSignature(reason, &read.observed)
 	}
 	return true, s.recordScanSignature(read.observed, *candidate)
+}
+
+// refilteredUnchanged reports whether candidate differs from cached only
+// because a new filter or adapter version filtered the same evidence: the
+// versions differ, the source is exactly as the last settled scan left it
+// (when cached was built from it), and the supplemental evidence (hook
+// evidence, skill observations) is the same. Filtered records can't tell
+// that on their own, since a new filter changes what earlier records look
+// like. Without a settled scan signature to compare with, or for a Cursor
+// text transcript, which is never trusted as unchanged on a stat alone (see
+// unchangedSinceLastScan), the change counts as new evidence.
+func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate archive.SourceBundle) (bool, error) {
+	if cached.Capture.FilterVersion == candidate.Capture.FilterVersion && cached.Capture.AdapterVersion == candidate.Capture.AdapterVersion {
+		return false, nil
+	}
+	if len(cached.SupplementalEvidence) > 0 || len(candidate.SupplementalEvidence) > 0 {
+		same, err := jsonEncodingsEqual(cached.SupplementalEvidence, candidate.SupplementalEvidence)
+		if err != nil {
+			return false, fmt.Errorf("compare supplemental evidence: %w", err)
+		}
+		if !same {
+			return false, nil
+		}
+	}
+	signature, settled, err := s.settledSignature()
+	if err != nil {
+		return false, fmt.Errorf("load scan signature: %w", err)
+	}
+	return settled && read.observed.matches(signature), nil
 }
 
 // guard checks that candidate still extends the evidence already retained.

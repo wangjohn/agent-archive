@@ -634,6 +634,60 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 	}
 }
 
+// A transcript emptied after it was published is a rewrite: a recorded gap
+// that keeps the last published snapshot and acknowledges the request, not
+// a failure on every pass.
+//
+// Regression: 2026-09 pre-release review, collector bug 3.
+func TestTranscriptEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	store := newTestStore(t)
+	if err := store.SaveRegistration(registration(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	cloud := storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+		t.Fatal(err)
+	}
+	before := fetchMetadata(t, cloud, "codex", "session-1")
+
+	writeTranscript(t, dir, "codex.jsonl", "")
+	for i, at := range []time.Time{t0.Add(10 * time.Minute), t0.Add(20 * time.Minute)} {
+		if err := store.SaveRequest("session-1", "stop", at); err != nil {
+			t.Fatal(err)
+		}
+		result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return at }})
+		if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
+			t.Fatalf("pass %d: emptied transcript should be a recorded gap: result=%#v err=%v", i, result, err)
+		}
+		if requests, err := store.LoadRequests(); err != nil || len(requests) != 0 {
+			t.Fatalf("pass %d: request on an emptied transcript not acknowledged: %#v err=%v", i, requests, err)
+		}
+		if reason, blocked, err := store.LoadBlocked("session-1"); err != nil || !blocked || reason != state.BlockedReasonTranscriptRewritten {
+			t.Fatalf("pass %d: blocked=%v reason=%q err=%v", i, blocked, reason, err)
+		}
+		if status, err := store.LoadStatus(); err != nil || status.LastError != "" {
+			t.Fatalf("pass %d: status reports a failure: %+v err=%v", i, status, err)
+		}
+	}
+	if after := fetchMetadata(t, cloud, "codex", "session-1"); after.SourceBundle.SHA256 != before.SourceBundle.SHA256 {
+		t.Fatal("an emptied transcript replaced the published snapshot")
+	}
+
+	// Content that again extends the snapshot resumes capture.
+	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
+	t3 := t0.Add(30 * time.Minute)
+	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t3 }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("refilled transcript was not republished: result=%#v err=%v", result, err)
+	}
+	if _, blocked, err := store.LoadBlocked("session-1"); err != nil || blocked {
+		t.Fatalf("session still blocked after republish: blocked=%v err=%v", blocked, err)
+	}
+}
+
 func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
@@ -682,6 +736,151 @@ func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
 	candidate.Capture.AdapterVersion = "2"
 	if !nativeEvidenceExtends(previous, candidate) {
 		t.Fatal("adapter version change must not read as a rewrite")
+	}
+}
+
+// simulateFilterUpgrade rewrites a session's local state as an earlier
+// release with filter version "0" would have left it: the cached and last
+// published bundles, and the scan signature, so the next pass reads the
+// transcript again as it does after a real upgrade.
+func simulateFilterUpgrade(t *testing.T, store *state.Store, id string) {
+	t.Helper()
+	var file publishedFile
+	if err := local.Read(publishedPath(store, id), &file); err != nil {
+		t.Fatal(err)
+	}
+	file.Bundle.Capture.FilterVersion = "0"
+	if file.LastPublished != nil {
+		file.LastPublished.Bundle.Capture.FilterVersion = "0"
+	}
+	if err := local.Write(publishedPath(store, id), file); err != nil {
+		t.Fatal(err)
+	}
+	signature, found, err := store.LoadScanSignature(id)
+	if err != nil || !found {
+		t.Fatalf("no scan signature to upgrade: found=%v err=%v", found, err)
+	}
+	signature.FilterVersion = "0"
+	if err := store.SaveScanSignature(id, signature); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A filter or adapter upgrade re-filters every session, but a transcript
+// that has not changed since it was captured holds no new activity: the
+// republished snapshot keeps its capture time, which retention and the
+// reader's date filters and ordering go by. A transcript that did change
+// under the new filter is captured at the time it was read.
+//
+// Regression: 2026-09 pre-release review, collector bug 1.
+func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	store := newTestStore(t)
+	if err := store.SaveRegistration(registration(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	cloud := storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+		t.Fatal(err)
+	}
+
+	simulateFilterUpgrade(t, store, "session-1")
+	t1 := t0.Add(20 * 24 * time.Hour)
+	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("filter upgrade should republish: result=%#v err=%v", result, err)
+	}
+	metadata := fetchMetadata(t, cloud, "codex", "session-1")
+	if !metadata.CapturedAt.Equal(t0) {
+		t.Fatalf("captured_at = %s after re-filtering an unchanged transcript, want %s", metadata.CapturedAt, t0)
+	}
+	if bundle := fetchBundle(t, cloud, metadata); bundle.Capture.FilterVersion != archive.FilterVersion || !bundle.Capture.CapturedAt.Equal(t0) {
+		t.Fatalf("republished bundle: filter %q captured %s", bundle.Capture.FilterVersion, bundle.Capture.CapturedAt)
+	}
+
+	// New activity arriving with the upgrade is captured when it was read.
+	simulateFilterUpgrade(t, store, "session-1")
+	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
+	t2 := t1.Add(24 * time.Hour)
+	result, err = Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("changed transcript should republish: result=%#v err=%v", result, err)
+	}
+	if got := fetchMetadata(t, cloud, "codex", "session-1").CapturedAt; !got.Equal(t2) {
+		t.Fatalf("captured_at = %s for a transcript that changed, want %s", got, t2)
+	}
+}
+
+// A filter upgrade that arrives with new evidence other than the
+// transcript's (hook evidence, a changed skill observation), or on a source
+// that can't be trusted unchanged on a stat (a Cursor text transcript), is
+// captured when it was read.
+func TestFilterUpgradeWithNewEvidenceIsCapturedNow(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	t1 := t0.Add(20 * 24 * time.Hour)
+	type provider = func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error)
+	inventory := func(name string) provider {
+		return func(_ archive.SessionRegistration, observedAt time.Time) ([]archive.SupplementalEvidence, error) {
+			return []archive.SupplementalEvidence{{Kind: archive.EvidenceKindSkillInventory, ObservedAt: observedAt, Provenance: "filesystem", Payload: map[string]any{"coverage": "installed_only", "skills": []any{map[string]any{"name": name}}}}}, nil
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		first   provider
+		upgrade func(t *testing.T, store *state.Store) provider
+	}{
+		{"a request with hook evidence", nil, func(t *testing.T, store *state.Store) provider {
+			t.Helper()
+			if err := store.SaveRequest("session-1", "stop", t1, lifecycleEvidence(t1, "Stop")); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}},
+		{"a changed skill observation", inventory("one"), func(t *testing.T, store *state.Store) provider {
+			t.Helper()
+			if err := store.SaveRequest("session-1", "stop", t1); err != nil {
+				t.Fatal(err)
+			}
+			return inventory("two")
+		}},
+		{"a Cursor text transcript", nil, func(t *testing.T, store *state.Store) provider {
+			t.Helper()
+			signature, _, err := store.LoadScanSignature("session-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			signature.SourceFormat = cursorTextSourceFormat
+			if err := store.SaveScanSignature("session-1", signature); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+			store := newTestStore(t)
+			if err := store.SaveRegistration(registration(t, path)); err != nil {
+				t.Fatal(err)
+			}
+			cloud := storagetest.NewMemoryStore()
+			if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }, SupplementalEvidence: tc.first}); err != nil {
+				t.Fatal(err)
+			}
+			simulateFilterUpgrade(t, store, "session-1")
+			provider := tc.upgrade(t, store)
+			result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }, SupplementalEvidence: provider})
+			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+				t.Fatalf("upgrade should republish: result=%#v err=%v", result, err)
+			}
+			if got := fetchMetadata(t, cloud, "codex", "session-1").CapturedAt; !got.Equal(t1) {
+				t.Fatalf("captured_at = %s, want %s", got, t1)
+			}
+		})
 	}
 }
 

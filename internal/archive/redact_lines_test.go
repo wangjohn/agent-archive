@@ -157,11 +157,11 @@ func TestPairSetFindsTheSameNeedles(t *testing.T) {
 // proportion to its length. Each assignment used to rescan its line from the
 // start, so the cost grew with the square of the line (0.9 MB took half a
 // minute).
+// It is timed, so it runs alone rather than alongside the parallel tests.
 func TestManyAssignmentsOnOneLineStayLinear(t *testing.T) {
 	if raceEnabled {
 		t.Skip("timings under the race detector are meaningless")
 	}
-	t.Parallel()
 	const unit = "var a={password:e.password,token:t};"
 	fastest := func(n int) time.Duration {
 		in := strings.Repeat(unit, n)
@@ -189,16 +189,16 @@ func TestManyAssignmentsOnOneLineStayLinear(t *testing.T) {
 // time in proportion to the token's length. Each URL used to read the rest
 // of the token again, to its end and for an `@` a host follows, so 1.6 MB
 // of `http://x` took a minute.
+// It is timed, so it runs alone rather than alongside the parallel tests.
 func TestGluedURLsStayLinear(t *testing.T) {
 	if raceEnabled {
 		t.Skip("timings under the race detector are meaningless")
 	}
-	t.Parallel()
 	for _, unit := range []string{"http://x", "http://a:b/", "http://a:b/@"} {
 		fastest := func(n int) time.Duration {
 			in := strings.Repeat(unit, n)
 			best := time.Duration(math.MaxInt64)
-			for range 2 {
+			for range 3 {
 				start := time.Now()
 				redactSensitive(in)
 				best = min(best, time.Since(start))
@@ -206,7 +206,9 @@ func TestGluedURLsStayLinear(t *testing.T) {
 			return best
 		}
 		// Eight times the input: linear is about 8x the time, quadratic 64x.
-		small, large := fastest(4000), fastest(32000)
+		// Sized so the smaller run takes tens of milliseconds, long enough
+		// to time while other tests run.
+		small, large := fastest(32000), fastest(256000)
 		if large > 20*small {
 			t.Errorf("%q: 8x the input took %.1fx as long (%v, then %v)", unit, float64(large)/float64(small), small, large)
 		}
