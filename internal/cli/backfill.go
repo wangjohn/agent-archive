@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -367,7 +368,7 @@ func (w *signalWatch) release() {
 // importRefusal says why an import cannot start now, or "".
 func importRefusal(home string, cfg config.Config) string {
 	switch {
-	case transactionPending(home):
+	case setupjournal.TransactionPending(home):
 		return "setup needs recovery; run agent-archive setup first. Nothing was changed."
 	case cfg.Paused:
 		return errPaused.Error() + ". Nothing was changed."
@@ -505,7 +506,7 @@ func newArchiveState(home string, cfg config.Config) archiveState {
 // Classify reports already_archived when the native session has a
 // registration the configuration accepts, and registered_not_admitted when it
 // has one the configuration no longer accepts. An index entry without a
-// registration does not count, as for hooks (hasRegistration).
+// registration does not count, as for hooks (capture.HasRegistration).
 func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipReason, error) {
 	archiveID, found, err := s.store.ArchiveSessionID(nativeSessionID)
 	if err != nil {

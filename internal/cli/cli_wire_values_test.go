@@ -1,6 +1,10 @@
 package cli
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/capture"
+)
 
 // TestWireValueSpellings pins values that status --json and the stored
 // capture diagnostics write. The typed constants are the only place these
@@ -16,9 +20,9 @@ func TestWireValueSpellings(t *testing.T) {
 		{string(capabilityFixtureValidated), "fixture_validated"},
 		{string(capabilityUnavailable), "unavailable"},
 		{string(capabilityUnknown), "unknown"},
-		{string(diagnosticUnknownSessionStart), "session_start_unknown"},
-		{string(diagnosticPreActivationStart), "session_started_before_activation"},
-		{string(diagnosticSetupInProgress), "setup_in_progress"},
+		{string(capture.DiagnosticUnknownSessionStart), "session_start_unknown"},
+		{string(capture.DiagnosticPreActivationStart), "session_started_before_activation"},
+		{string(capture.DiagnosticSetupInProgress), "setup_in_progress"},
 		{string(storageAccessConfirmedBySetup), "setup"},
 		{string(storageAccessConfirmedByCollector), "collector"},
 	}

@@ -1,8 +1,6 @@
 package capture
 
 import (
-	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,13 +33,13 @@ func twoProjectConfig(t *testing.T, home string, included ...string) []archive.P
 	return projects
 }
 
-func diagnosticFor(root string, at time.Time) captureDiagnostic {
-	return captureDiagnostic{Code: diagnosticSetupInProgress, Harness: "claude", ProjectRoot: root, ObservedAt: at}
+func diagnosticFor(root string, at time.Time) Diagnostic {
+	return Diagnostic{Code: DiagnosticSetupInProgress, Harness: "claude", ProjectRoot: root, ObservedAt: at}
 }
 
 func storedRoots(t *testing.T, home string) map[string]bool {
 	t.Helper()
-	diagnostics, err := readCaptureDiagnostics(home)
+	diagnostics, err := ReadDiagnostics(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,18 +58,18 @@ func TestPrunedProjectDiagnosticIsNotResurrectedByAStaleHook(t *testing.T) {
 	home := t.TempDir()
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	twoProjectConfig(t, home, "/work/kept", "/work/excluded")
-	if err := recordCaptureDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
+	if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
 		t.Fatal(err)
 	}
 
 	projects := twoProjectConfig(t, home, "/work/kept") // setup commits the exclusion
-	if err := pruneCaptureDiagnostics(home, projects); err != nil {
+	if err := PruneDiagnostics(home, projects); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordCaptureDiagnostic(home, diagnosticFor("/work/excluded", at.Add(time.Second))); err != nil {
+	if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at.Add(time.Second))); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordCaptureDiagnostic(home, diagnosticFor("/work/kept", at.Add(time.Second))); err != nil {
+	if err := RecordDiagnostic(home, diagnosticFor("/work/kept", at.Add(time.Second))); err != nil {
 		t.Fatal(err)
 	}
 	roots := storedRoots(t, home)
@@ -85,12 +83,12 @@ func TestPrunedProjectDiagnosticIsNotResurrectedByAStaleHook(t *testing.T) {
 func TestHookDiagnosticWaitIsBoundedAndDropsOnTimeout(t *testing.T) {
 	home := t.TempDir()
 	twoProjectConfig(t, home, "/work/kept")
-	release, err := local.NamedLock(home, diagnosticsLockName)
+	release, err := local.NamedLock(home, DiagnosticsLockName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	err = recordCaptureDiagnostic(home, diagnosticFor("/work/kept", start))
+	err = RecordDiagnostic(home, diagnosticFor("/work/kept", start))
 	elapsed := time.Since(start)
 	release()
 	if err != nil {
@@ -103,7 +101,7 @@ func TestHookDiagnosticWaitIsBoundedAndDropsOnTimeout(t *testing.T) {
 		t.Fatal("a diagnostic was written without the lock")
 	}
 	// Uncontended, it records.
-	if err := recordCaptureDiagnostic(home, diagnosticFor("/work/kept", start)); err != nil || !storedRoots(t, home)["/work/kept"] {
+	if err := RecordDiagnostic(home, diagnosticFor("/work/kept", start)); err != nil || !storedRoots(t, home)["/work/kept"] {
 		t.Fatalf("uncontended record failed: %v", err)
 	}
 }
@@ -113,11 +111,11 @@ func TestPruneWaitsForAHookHoldingTheLock(t *testing.T) {
 	home := t.TempDir()
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	twoProjectConfig(t, home, "/work/kept", "/work/excluded")
-	if err := recordCaptureDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
+	if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
 		t.Fatal(err)
 	}
 	projects := twoProjectConfig(t, home, "/work/kept")
-	release, err := local.NamedLock(home, diagnosticsLockName)
+	release, err := local.NamedLock(home, DiagnosticsLockName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +123,7 @@ func TestPruneWaitsForAHookHoldingTheLock(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		release()
 	}()
-	if err := pruneCaptureDiagnostics(home, projects); err != nil {
+	if err := PruneDiagnostics(home, projects); err != nil {
 		t.Fatalf("prune gave up instead of waiting: %v", err)
 	}
 	if storedRoots(t, home)["/work/excluded"] {
@@ -150,7 +148,7 @@ func TestSetupPruneAndHookDiagnosticRaceNeverResurrects(t *testing.T) {
 	for round := range rounds {
 		home := t.TempDir()
 		twoProjectConfig(t, home, "/work/kept", "/work/excluded")
-		if err := recordCaptureDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
+		if err := RecordDiagnostic(home, diagnosticFor("/work/excluded", at)); err != nil {
 			t.Fatal(err)
 		}
 		var wg sync.WaitGroup
@@ -158,17 +156,17 @@ func TestSetupPruneAndHookDiagnosticRaceNeverResurrects(t *testing.T) {
 		wg.Add(3)
 		go func() { // setup: commit, then prune
 			defer wg.Done()
-			pruneErr = pruneCaptureDiagnostics(home, twoProjectConfig(t, home, "/work/kept"))
+			pruneErr = PruneDiagnostics(home, twoProjectConfig(t, home, "/work/kept"))
 		}()
 		go func() { // a hook holding the pre-commit view of the excluded project
 			defer wg.Done()
 			time.Sleep(time.Duration(round) * 25 * time.Microsecond)
-			excludedErr = recordCaptureDiagnostic(home, diagnosticFor("/work/excluded", at.Add(time.Minute)))
+			excludedErr = RecordDiagnostic(home, diagnosticFor("/work/excluded", at.Add(time.Minute)))
 		}()
 		go func() { // a hook for a project that stays included
 			defer wg.Done()
 			time.Sleep(time.Duration(rounds-round) * 25 * time.Microsecond)
-			keptErr = recordCaptureDiagnostic(home, diagnosticFor("/work/kept", at.Add(time.Minute)))
+			keptErr = RecordDiagnostic(home, diagnosticFor("/work/kept", at.Add(time.Minute)))
 		}()
 		wg.Wait()
 		if pruneErr != nil || excludedErr != nil || keptErr != nil {
@@ -190,10 +188,10 @@ func TestExcludedProjectLeavesNoDiagnostic(t *testing.T) {
 	home := t.TempDir()
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
-	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/private/excluded"}}, at); err != nil {
+	if err := HandleEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/private/excluded"}}, at); err != nil {
 		t.Fatal(err)
 	}
-	ds, _ := readCaptureDiagnostics(home)
+	ds, _ := ReadDiagnostics(home)
 	if len(ds) != 0 {
 		t.Fatalf("excluded paths recorded %+v", ds)
 	}
@@ -206,11 +204,11 @@ func TestResumeBeforeActivationRecordsActivationDiagnostic(t *testing.T) {
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(time.Hour))
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "old", "cwd": "/work/widget"}
-	if err := handleHookEvent(home, "claude", payload, at); err != nil {
+	if err := HandleEvent(home, "claude", payload, at); err != nil {
 		t.Fatal(err)
 	}
-	ds, _ := readCaptureDiagnostics(home)
-	if len(ds) != 1 || ds[0].Code != diagnosticPreActivationStart {
+	ds, _ := ReadDiagnostics(home)
+	if len(ds) != 1 || ds[0].Code != DiagnosticPreActivationStart {
 		t.Fatalf("diagnostics %+v", ds)
 	}
 }

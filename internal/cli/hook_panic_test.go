@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/capture"
 )
 
 // A panic anywhere in the hook handler must still exit 0: Go's own exit 2
@@ -25,11 +27,11 @@ func TestHookRecoversFromAPanicAndExitsZero(t *testing.T) {
 	if !strings.Contains(errOut.String(), "internal error: injected failure") {
 		t.Fatalf("stderr=%q", errOut.String())
 	}
-	ds, err := readCaptureDiagnostics(home)
-	if err != nil || len(ds) != 1 || ds[0].Code != diagnosticHookFailed || ds[0].ProjectRoot != project || ds[0].Harness != "claude" {
+	ds, err := capture.ReadDiagnostics(home)
+	if err != nil || len(ds) != 1 || ds[0].Code != capture.DiagnosticHookFailed || ds[0].ProjectRoot != project || ds[0].Harness != "claude" {
 		t.Fatalf("diagnostics=%#v err=%v", ds, err)
 	}
-	if raw, _ := os.ReadFile(captureDiagnosticsPath(home)); bytes.Contains(raw, []byte("private")) || bytes.Contains(raw, []byte("native-1")) {
+	if raw, _ := os.ReadFile(capture.DiagnosticsPath(home)); bytes.Contains(raw, []byte("private")) || bytes.Contains(raw, []byte("native-1")) {
 		t.Fatalf("diagnostic leaked content: %s", raw)
 	}
 }

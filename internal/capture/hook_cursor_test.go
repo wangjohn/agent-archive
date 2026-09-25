@@ -1,21 +1,16 @@
 package capture
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
-	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // cursorDesktopPayload is a Cursor desktop hook payload in the shape observed
@@ -71,7 +66,7 @@ func TestCursorResumedChatIsDeclinedAtFirstPrompt(t *testing.T) {
 	}
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	for _, event := range []string{"beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionEnd"} {
-		if err := handleHookEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, transcript), at); err != nil {
+		if err := HandleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, transcript), at); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -79,18 +74,18 @@ func TestCursorResumedChatIsDeclinedAtFirstPrompt(t *testing.T) {
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("a resumed chat was registered: %#v", regs)
 	}
-	ds, _ := readCaptureDiagnostics(home)
-	if len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart || ds[0].Harness != "cursor" || ds[0].ProjectRoot != project {
+	ds, _ := ReadDiagnostics(home)
+	if len(ds) != 1 || ds[0].Code != DiagnosticUnknownSessionStart || ds[0].Harness != "cursor" || ds[0].ProjectRoot != project {
 		t.Fatalf("diagnostics = %#v", ds)
 	}
 
 	// Outside every configured project nothing is recorded at all.
 	outside := t.TempDir()
 	other := cursorDesktopPayload("beforeSubmitPrompt", "other-conversation", outside, transcript)
-	if err := handleHookEvent(home, "cursor", other, at); err != nil {
+	if err := HandleEvent(home, "cursor", other, at); err != nil {
 		t.Fatal(err)
 	}
-	if after, _ := readCaptureDiagnostics(home); len(after) != 1 {
+	if after, _ := ReadDiagnostics(home); len(after) != 1 {
 		t.Fatalf("a path outside every project was recorded: %#v", after)
 	}
 }
@@ -103,12 +98,12 @@ func TestCursorTranscriptPathMustMatchTheConversation(t *testing.T) {
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	conversation := "5f3c2a10-0000-4000-8000-00000000e0e0"
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at); err != nil {
 		t.Fatal(err)
 	}
 	wrongName := filepath.Join(filepath.Dir(cursorTranscriptLocation(t, conversation)), "another-conversation.jsonl")
 	for _, path := range []string{wrongName, "relative/" + conversation + ".jsonl", filepath.Join(t.TempDir(), conversation+".txt")} {
-		if err := handleHookEvent(home, "cursor", cursorDesktopPayload("afterAgentResponse", conversation, project, path), at.Add(time.Second)); err != nil {
+		if err := HandleEvent(home, "cursor", cursorDesktopPayload("afterAgentResponse", conversation, project, path), at.Add(time.Second)); err != nil {
 			t.Fatal(err)
 		}
 		if reg := onlyCursorRegistration(t, home); reg.TranscriptPath != "" {
@@ -116,7 +111,7 @@ func TestCursorTranscriptPathMustMatchTheConversation(t *testing.T) {
 		}
 	}
 	right := cursorTranscriptLocation(t, conversation)
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("stop", conversation, project, right), at.Add(2*time.Second)); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("stop", conversation, project, right), at.Add(2*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if reg := onlyCursorRegistration(t, home); reg.TranscriptPath != right {
@@ -124,7 +119,7 @@ func TestCursorTranscriptPathMustMatchTheConversation(t *testing.T) {
 	}
 	elsewhere := cursorTranscriptLocation(t, conversation)
 	for _, event := range []string{"beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionStart"} {
-		if err := handleHookEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, elsewhere), at.Add(3*time.Second)); err != nil {
+		if err := HandleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, elsewhere), at.Add(3*time.Second)); err != nil {
 			t.Fatal(err)
 		}
 		if reg := onlyCursorRegistration(t, home); reg.TranscriptPath != right {
@@ -143,11 +138,11 @@ func TestFirstPromptRegistrationIsCursorOnly(t *testing.T) {
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	for harness, event := range map[string]string{"codex": "UserPromptSubmit", "claude": "UserPromptSubmit"} {
 		payload := map[string]any{"hook_event_name": event, "session_id": harness + "-session", "cwd": project}
-		if err := handleHookEvent(home, harness, payload, at); err != nil {
+		if err := HandleEvent(home, harness, payload, at); err != nil {
 			t.Fatal(err)
 		}
 		start := map[string]any{"hook_event_name": "SessionStart", "session_id": harness + "-start", "cwd": project}
-		if err := handleHookEvent(home, harness, start, at); err != nil {
+		if err := HandleEvent(home, harness, start, at); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,7 +179,7 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 				if event == "beforeSubmitPrompt" {
 					path = nil
 				}
-				errs <- handleHookEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, path), at)
+				errs <- HandleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, path), at)
 			}(event)
 		}
 		wg.Wait()
@@ -217,25 +212,25 @@ func TestCursorLaterPromptContinuesTheRegisteredChat(t *testing.T) {
 	first := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	conversation := "5f3c2a10-0000-4000-8000-00000000bbbb"
 	transcript := cursorTranscriptLocation(t, conversation)
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), first); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), first); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(transcript, []byte(`{"role":"user","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	later := first.Add(time.Hour)
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, transcript), later); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, transcript), later); err != nil {
 		t.Fatal(err)
 	}
 	reg := onlyCursorRegistration(t, home)
 	if !reg.SessionStartedAt.Equal(first) || reg.TranscriptPath != transcript {
 		t.Fatalf("registration = %#v", reg)
 	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+	if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
 		t.Fatalf("a continuation recorded diagnostics: %#v", ds)
 	}
 	other := cursorTranscriptLocation(t, conversation)
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("sessionStart", conversation, project, other), later.Add(time.Hour)); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("sessionStart", conversation, project, other), later.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	if reg = onlyCursorRegistration(t, home); !reg.SessionStartedAt.Equal(first) || reg.TranscriptPath != transcript {
@@ -274,7 +269,7 @@ func TestCursorFirstPromptHonorsNearestConfiguredProject(t *testing.T) {
 		if event == "beforeSubmitPrompt" {
 			path = nil
 		}
-		if err := handleHookEvent(home, "cursor", cursorDesktopPayload(event, excluded, filepath.Join(nested, "sub"), path), at); err != nil {
+		if err := HandleEvent(home, "cursor", cursorDesktopPayload(event, excluded, filepath.Join(nested, "sub"), path), at); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -282,7 +277,7 @@ func TestCursorFirstPromptHonorsNearestConfiguredProject(t *testing.T) {
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("an excluded workspace registered: %#v", regs)
 	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+	if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
 		t.Fatalf("an excluded workspace recorded diagnostics: %#v", ds)
 	}
 	if reqs, _ := store.LoadRequests(); len(reqs) != 0 {
@@ -295,7 +290,7 @@ func TestCursorFirstPromptHonorsNearestConfiguredProject(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", "5f3c2a10-0000-4000-8000-00000000dddd", sub, nil), at); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", "5f3c2a10-0000-4000-8000-00000000dddd", sub, nil), at); err != nil {
 		t.Fatal(err)
 	}
 	if reg := onlyCursorRegistration(t, home); reg.ProjectRoot != parent {
@@ -312,23 +307,23 @@ func TestCursorFirstPromptDuringSetupIsExplainedOnlyForNewChats(t *testing.T) {
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
 	registered := "5f3c2a10-0000-4000-8000-00000000eeee"
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", registered, project, nil), at); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", registered, project, nil), at); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
+	if err := os.WriteFile(setupjournal.JournalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", registered, project, nil), at.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", registered, project, nil), at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+	if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
 		t.Fatalf("a registered chat's prompt was reported as a swallowed start: %#v", ds)
 	}
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", "5f3c2a10-0000-4000-8000-00000000ffff", project, nil), at.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", "5f3c2a10-0000-4000-8000-00000000ffff", project, nil), at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	ds, _ := readCaptureDiagnostics(home)
-	if len(ds) != 1 || ds[0].Code != diagnosticSetupInProgress || ds[0].Harness != "cursor" || ds[0].ProjectRoot != project {
+	ds, _ := ReadDiagnostics(home)
+	if len(ds) != 1 || ds[0].Code != DiagnosticSetupInProgress || ds[0].Harness != "cursor" || ds[0].ProjectRoot != project {
 		t.Fatalf("diagnostics = %#v", ds)
 	}
 	if regs, _ := onlyCursorRegistrationList(t, home); len(regs) != 1 || regs[0].NativeSessionID != registered {
@@ -371,7 +366,7 @@ func TestCursorDatabaseSessionNeverAdoptsTranscriptPath(t *testing.T) {
 	transcript := cursorTranscriptLocation(t, conversation)
 	for i, event := range []string{"beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionStart"} {
 		when := at.Add(time.Duration(i+1) * time.Minute)
-		if err := handleHookEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, transcript), when); err != nil {
+		if err := HandleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, transcript), when); err != nil {
 			t.Fatalf("%s: %v", event, err)
 		}
 		reg := onlyCursorRegistration(t, home)
@@ -393,7 +388,7 @@ func TestCursorVersionDoesNotProveSessionStart(t *testing.T) {
 	// A resumed chat's transcript already has bytes; an arbitrary version
 	// beside it must not turn that into proof of a fresh start.
 	resumed := writeTestTranscript(t, "old.jsonl", "{\"role\":\"user\"}\n")
-	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "cursor_version": "99.0.0", "transcript_path": resumed}, at); err != nil {
+	if err := HandleEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "cursor_version": "99.0.0", "transcript_path": resumed}, at); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -401,8 +396,8 @@ func TestCursorVersionDoesNotProveSessionStart(t *testing.T) {
 	if len(regs) != 0 {
 		t.Fatal("arbitrary version enrolled session")
 	}
-	ds, _ := readCaptureDiagnostics(home)
-	if len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart {
+	ds, _ := ReadDiagnostics(home)
+	if len(ds) != 1 || ds[0].Code != DiagnosticUnknownSessionStart {
 		t.Fatalf("diagnostics %+v", ds)
 	}
 }

@@ -5,13 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -30,7 +29,7 @@ func TestCursorDesktopChatRegistersAtFirstPromptAndPublishes(t *testing.T) {
 	conversation := "5f3c2a10-0000-4000-8000-00000000c3c3"
 	transcript := cursorTranscriptLocation(t, conversation)
 
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), first); err != nil {
+	if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), first); err != nil {
 		t.Fatal(err)
 	}
 	reg := onlyCursorRegistration(t, home)
@@ -62,7 +61,7 @@ func TestCursorDesktopChatRegistersAtFirstPromptAndPublishes(t *testing.T) {
 	if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("afterAgentResponse", conversation, project, transcript), first.Add(5*time.Second)); err != nil {
+	if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload("afterAgentResponse", conversation, project, transcript), first.Add(5*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	if reg = onlyCursorRegistration(t, home); reg.TranscriptPath != transcript {
@@ -70,7 +69,7 @@ func TestCursorDesktopChatRegistersAtFirstPromptAndPublishes(t *testing.T) {
 	}
 	stop := cursorDesktopPayload("stop", conversation, project, transcript)
 	stop["status"] = "completed"
-	if err := handleHookEvent(home, "cursor", stop, first.Add(6*time.Second)); err != nil {
+	if err := capture.HandleEvent(home, "cursor", stop, first.Add(6*time.Second)); err != nil {
 		t.Fatal(err)
 	}
 

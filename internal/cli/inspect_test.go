@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -27,7 +28,7 @@ func publishedFixture(t *testing.T) (Env, *storagetest.MemoryStore, string) {
 	transcript := writeCodexTranscript(t, dir)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
-	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	mem := storagetest.NewMemoryStore()

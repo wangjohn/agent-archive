@@ -2,16 +2,14 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -22,25 +20,25 @@ func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
+	if err := os.WriteFile(setupjournal.JournalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	start := map[string]any{
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": project, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
 	}
-	if err := handleHookEvent(home, "claude", start, now); err != nil {
+	if err := capture.HandleEvent(home, "claude", start, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("a hook registered during a setup transaction: %#v", regs)
 	}
-	ds, err := readCaptureDiagnostics(home)
-	if err != nil || len(ds) != 1 || ds[0].Code != diagnosticSetupInProgress || ds[0].ProjectRoot != project || ds[0].Harness != "claude" {
+	ds, err := capture.ReadDiagnostics(home)
+	if err != nil || len(ds) != 1 || ds[0].Code != capture.DiagnosticSetupInProgress || ds[0].ProjectRoot != project || ds[0].Harness != "claude" {
 		t.Fatalf("diagnostics=%#v err=%v", ds, err)
 	}
-	raw, err := os.ReadFile(captureDiagnosticsPath(home))
+	raw, err := os.ReadFile(capture.DiagnosticsPath(home))
 	if err != nil || bytes.Contains(raw, []byte("native-1")) || bytes.Contains(raw, []byte("transcript")) {
 		t.Fatalf("diagnostic leaked session identity: %s err=%v", raw, err)
 	}
@@ -48,7 +46,7 @@ func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
 	if code := runStatusCommand([]string{"--json"}, &out, os.Stderr, testEnv(t, home, now)); code != 0 {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
-	if !strings.Contains(out.String(), string(diagnosticSetupInProgress)) {
+	if !strings.Contains(out.String(), string(capture.DiagnosticSetupInProgress)) {
 		t.Fatalf("status --json omitted the diagnostic: %s", out.String())
 	}
 }
@@ -68,7 +66,7 @@ func TestCursorWaitingChatShowsInStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	if err := handleHookEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", "5f3c2a10-0000-4000-8000-00000000aaaa", project, nil), at); err != nil {
+	if err := capture.HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", "5f3c2a10-0000-4000-8000-00000000aaaa", project, nil), at); err != nil {
 		t.Fatal(err)
 	}
 	env := testEnv(t, home, at.Add(time.Second))
@@ -93,7 +91,7 @@ func TestExcludedProjectDiagnosticLeavesStatus(t *testing.T) {
 	env := testEnv(t, home, at)
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
 	resumed := writeTestTranscript(t, "old.jsonl", "{\"role\":\"user\"}\n")
-	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}, at); err != nil {
+	if err := capture.HandleEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}, at); err != nil {
 		t.Fatal(err)
 	}
 	var out strings.Builder

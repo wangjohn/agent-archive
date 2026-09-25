@@ -14,10 +14,12 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -120,7 +122,7 @@ type statusView struct {
 	Projects                 []string               `json:"projects"`
 	Apps                     []appStatus            `json:"applications"`
 	Collector                state.Status           `json:"collector"`
-	CaptureDiagnostics       []captureDiagnostic    `json:"capture_diagnostics,omitempty"`
+	CaptureDiagnostics       []capture.Diagnostic   `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
 	// has to upload, and ImportedWithIssues those with a capture gap or a
@@ -227,7 +229,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
-		terminal.Printf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), captureDiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+		terminal.Printf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
 	if view.Collector.LastError != "" {
 		terminal.Printf(stdout, "Last error:    %s\n", view.Collector.LastError)
@@ -368,7 +370,7 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Warnings = append(view.Warnings, view.Next)
 		}
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		view.State = "Setup needs recovery"
 		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}
@@ -384,12 +386,12 @@ func readStatus(env Env) (view statusView, err error) {
 	view.ConfigurationID = configurationID(cfg)
 	// Advisory files: one that cannot be read is left out with a warning,
 	// never a reason to report nothing at all.
-	view.CaptureDiagnostics, err = readCaptureDiagnostics(home)
+	view.CaptureDiagnostics, err = capture.ReadDiagnostics(home)
 	if err != nil {
-		view.Warnings = append(view.Warnings, unreadableWarning(captureDiagnosticsPath(home), err, "The next capture diagnostic replaces it; deleting it loses only past diagnostics."))
+		view.Warnings = append(view.Warnings, unreadableWarning(capture.DiagnosticsPath(home), err, "The next capture diagnostic replaces it; deleting it loses only past diagnostics."))
 		view.CaptureDiagnostics = nil
 	}
-	view.CaptureDiagnostics = includedCaptureDiagnostics(view.CaptureDiagnostics, cfg.Archive.Projects)
+	view.CaptureDiagnostics = capture.IncludedDiagnostics(view.CaptureDiagnostics, cfg.Archive.Projects)
 	view.Authentication.State = "unknown"
 	if err := local.Read(filepath.Join(home, "storage-health.json"), &view.Authentication); err != nil && !os.IsNotExist(err) {
 		view.Warnings = append(view.Warnings, unreadableWarning(filepath.Join(home, "storage-health.json"), err, "The background collector checks storage again and replaces it within a few minutes."))
@@ -821,7 +823,7 @@ func readStatus(env Env) (view statusView, err error) {
 		view.State = "Not installed"
 		view.Next = "Local data is kept. Run agent-archive setup to reinstall."
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		view.State = "Setup needs recovery"
 		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}

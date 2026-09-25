@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -29,7 +30,7 @@ func TestCollectionIncludesSkillHistoryAndExplicitFeedback(t *testing.T) {
 	if err := os.WriteFile(skill, []byte("---\nname: review\n---\nRead design decisions."), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": transcript}, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": transcript}, now); err != nil {
 		t.Fatal(err)
 	}
 	local, err := state.Open(home)

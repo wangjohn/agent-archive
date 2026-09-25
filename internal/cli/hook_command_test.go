@@ -2,17 +2,9 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestRunHookCommandNeverFailsOnMalformedInput(t *testing.T) {

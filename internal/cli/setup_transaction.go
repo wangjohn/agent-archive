@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -381,7 +382,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
 	}
 	journal := setupJournal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
-	if err = local.Write(journalPath(home), journal); err != nil {
+	if err = local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		return err
 	}
 	fail := func(cause error) error {
@@ -409,7 +410,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err = env.loadLaunchAgent(plistPath); err != nil {
 		return fail(fmt.Errorf("start background collector: %w", err))
 	}
-	if err = os.Remove(journalPath(home)); err != nil {
+	if err = os.Remove(setupjournal.JournalPath(home)); err != nil {
 		return fail(err)
 	}
 	return nil
@@ -469,7 +470,7 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 			return err
 		}
 	}
-	return os.Remove(journalPath(home))
+	return os.Remove(setupjournal.JournalPath(home))
 }
 
 // Names of the jobs a setup journal can retire, as recovery errors call them.
@@ -509,14 +510,14 @@ func launchctlBlocked(home, action string, err error) error {
 }
 
 func (e *recoveryBlockedError) guidance() string {
-	return fmt.Sprintf("The interrupted setup is recorded in %s.\nTo keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery\nThen run agent-archive setup to review your settings.", journalPath(e.home))
+	return fmt.Sprintf("The interrupted setup is recorded in %s.\nTo keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery\nThen run agent-archive setup to review your settings.", setupjournal.JournalPath(e.home))
 }
 
 // recoveryPending is what a command other than setup says while an
 // interrupted setup's record exists: where the record is, and both ways
 // out.
 func recoveryPending(home string) string {
-	return fmt.Sprintf("setup was interrupted and needs recovery (recorded in %s). Run agent-archive setup to recover it; if setup reports a file changed outside setup, run agent-archive setup --abandon-recovery to keep your files as they are now", journalPath(home))
+	return fmt.Sprintf("setup was interrupted and needs recovery (recorded in %s). Run agent-archive setup to recover it; if setup reports a file changed outside setup, run agent-archive setup --abandon-recovery to keep your files as they are now", setupjournal.JournalPath(home))
 }
 
 // abandonRecovery discards an interrupted setup's record without touching
@@ -545,7 +546,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 	}
 	defer releaseHooks()
 	var journal setupJournal
-	err = local.Read(journalPath(home), &journal)
+	err = local.Read(setupjournal.JournalPath(home), &journal)
 	if os.IsNotExist(err) {
 		terminal.Println(out, "No interrupted setup to discard. Nothing was changed.")
 		return nil
@@ -553,21 +554,21 @@ func abandonRecovery(out io.Writer, env Env) error {
 	if state.IsUndecodable(err) {
 		// Nothing in it can be trusted, so nothing in it is acted on; it is
 		// kept for anyone who wants to see what setup was doing.
-		aside, moveErr := moveAside(journalPath(home))
+		aside, moveErr := moveAside(setupjournal.JournalPath(home))
 		if moveErr != nil {
 			return moveErr
 		}
-		terminal.Printf(out, "The interrupted setup's record %s could not be read (%v). It was moved to %s, and every file was kept as it is now.\n", journalPath(home), err, aside)
+		terminal.Printf(out, "The interrupted setup's record %s could not be read (%v). It was moved to %s, and every file was kept as it is now.\n", setupjournal.JournalPath(home), err, aside)
 		terminal.Println(out, "Next: run agent-archive setup to review your settings; it reinstalls the hooks and starts the background collector again.")
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("read %s: %w", journalPath(home), err)
+		return fmt.Errorf("read %s: %w", setupjournal.JournalPath(home), err)
 	}
-	if err = os.Remove(journalPath(home)); err != nil {
+	if err = os.Remove(setupjournal.JournalPath(home)); err != nil {
 		return err
 	}
-	terminal.Printf(out, "Discarded the interrupted setup recorded in %s. These files were kept as they are now:\n", journalPath(home))
+	terminal.Printf(out, "Discarded the interrupted setup recorded in %s. These files were kept as they are now:\n", setupjournal.JournalPath(home))
 	for _, c := range journal.Changes {
 		terminal.Printf(out, "  %s\n", c.Path)
 	}
@@ -578,15 +579,15 @@ func abandonRecovery(out io.Writer, env Env) error {
 
 func recoverSetup(home string, env Env) error {
 	var journal setupJournal
-	err := local.Read(journalPath(home), &journal)
+	err := local.Read(setupjournal.JournalPath(home), &journal)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if state.IsUndecodable(err) {
-		return &recoveryBlockedError{home: home, cause: fmt.Sprintf("its record %s could not be read (%v), so nothing in it can be put back", journalPath(home), err)}
+		return &recoveryBlockedError{home: home, cause: fmt.Sprintf("its record %s could not be read (%v), so nothing in it can be put back", setupjournal.JournalPath(home), err)}
 	}
 	if err != nil {
-		return fmt.Errorf("read %s: %w", journalPath(home), err)
+		return fmt.Errorf("read %s: %w", setupjournal.JournalPath(home), err)
 	}
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {

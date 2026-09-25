@@ -2,19 +2,10 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
-	"fmt"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -36,7 +27,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	defer func() {
 		if r := recover(); r != nil {
 			terminal.Printf(stderr, "agent-archive: hook: internal error: %v\n", r)
-			recordHookFailure(home, *harness, payload)
+			capture.RecordFailure(home, *harness, payload)
 			code = 0
 		}
 	}()
@@ -56,7 +47,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 		terminal.Printf(stderr, "agent-archive: hook: resolve home: %v\n", err)
 		return 0
 	}
-	if err := handleHookEvent(home, *harness, payload, env.now()); err != nil {
+	if err := capture.HandleEvent(home, *harness, payload, env.now()); err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 	}
 	return 0

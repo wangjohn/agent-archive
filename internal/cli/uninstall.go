@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -74,7 +75,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	// release is idempotent so the deferred calls cannot unlock twice.
 	release = releaseOnce(release)
 	defer release()
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		return errors.New(recoveryPending(home))
 	}
 	// Fail before prompting when the settings are unreadable; they are
