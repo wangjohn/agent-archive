@@ -112,3 +112,23 @@ func TestOrphanRegisteredAgainIsKept(t *testing.T) {
 		t.Fatalf("orphans = %v %v", orphans, err)
 	}
 }
+
+// A sweep with nothing to delete reads each session's summary, not its
+// source bundles: it runs after every collector pass, over every session.
+func TestSweepWithNothingToDeleteDecodesNoPublishedState(t *testing.T) {
+	local := newTestStore(t)
+	store := storage.NewMemoryStore()
+	dir := t.TempDir()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	for _, id := range []string{"s1", "s2", "s3"} {
+		publishTwice(t, local, store, id, dir, t0)
+	}
+	loads := state.PublishedStateLoads()
+	result := sweep(t, local, store, t0.Add(time.Hour), Options{})
+	if len(result.Errors) != 0 || result.DeletedSnapshots != 0 {
+		t.Fatalf("%#v", result)
+	}
+	if n := state.PublishedStateLoads() - loads; n != 0 {
+		t.Fatalf("a sweep with nothing to delete decoded %d published states", n)
+	}
+}
