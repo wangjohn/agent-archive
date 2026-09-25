@@ -1,6 +1,8 @@
 package golden
 
 import (
+	"go/ast"
+	"go/build/constraint"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -43,9 +45,14 @@ func TestEveryTestedPackageKnowsUpdate(t *testing.T) {
 		if _, seen := tested[dir]; !seen {
 			tested[dir] = false
 		}
-		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly|parser.ParseComments)
 		if err != nil {
 			return err
+		}
+		// Only a file every platform builds counts: a blank import in a
+		// darwin-only file leaves the package without -update elsewhere.
+		if constrained(filepath.Base(path), file) {
+			return nil
 		}
 		for _, spec := range file.Imports {
 			if p, _ := strconv.Unquote(spec.Path.Value); p == importPath {
@@ -65,6 +72,57 @@ func TestEveryTestedPackageKnowsUpdate(t *testing.T) {
 		if !imports && dir != here {
 			rel, _ := filepath.Rel(root, dir)
 			t.Errorf("%s has tests but does not import %s: add\n\t_ %q // registers -update for go test ./... -update\nto one of its test files", rel, importPath, importPath)
+		}
+	}
+}
+
+// constrained reports whether name or a //go:build line limits the file to
+// some platforms.
+func constrained(name string, file *ast.File) bool {
+	for _, group := range file.Comments {
+		if group.Pos() >= file.Package {
+			break
+		}
+		for _, c := range group.List {
+			if constraint.IsGoBuild(c.Text) {
+				return true
+			}
+		}
+	}
+	parts := strings.Split(strings.TrimSuffix(name, "_test.go"), "_")
+	for _, part := range parts[1:] {
+		if knownOS[part] || knownArch[part] {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	knownOS   = map[string]bool{"aix": true, "android": true, "darwin": true, "dragonfly": true, "freebsd": true, "illumos": true, "ios": true, "js": true, "linux": true, "netbsd": true, "openbsd": true, "plan9": true, "solaris": true, "wasip1": true, "windows": true}
+	knownArch = map[string]bool{"386": true, "amd64": true, "arm": true, "arm64": true, "loong64": true, "mips": true, "mips64": true, "mips64le": true, "mipsle": true, "ppc64": true, "ppc64le": true, "riscv64": true, "s390x": true, "wasm": true}
+)
+
+func TestConstrained(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"a_test.go", "package a\n", false},
+		{"keychain_isolation_test.go", "package a\n", false},
+		{"a_darwin_test.go", "package a\n", true},
+		{"a_linux_arm64_test.go", "package a\n", true},
+		{"a_test.go", "//go:build darwin && cgo\n\npackage a\n", true},
+		{"a_test.go", "// Package a is\n// go:build is only mentioned.\npackage a\n", false},
+	} {
+		file, err := parser.ParseFile(token.NewFileSet(), c.name, c.src, parser.ImportsOnly|parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := constrained(c.name, file); got != c.want {
+			t.Errorf("constrained(%s, %q) = %v, want %v", c.name, c.src, got, c.want)
 		}
 	}
 }
