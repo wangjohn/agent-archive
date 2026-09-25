@@ -685,6 +685,80 @@ func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
 	}
 }
 
+// simulateFilterUpgrade rewrites a session's local state as an earlier
+// release with filter version "0" would have left it: the cached and last
+// published bundles, and the scan signature, so the next pass reads the
+// transcript again as it does after a real upgrade.
+func simulateFilterUpgrade(t *testing.T, store *state.Store, id string) {
+	t.Helper()
+	var file publishedFile
+	if err := local.Read(publishedPath(store, id), &file); err != nil {
+		t.Fatal(err)
+	}
+	file.Bundle.Capture.FilterVersion = "0"
+	if file.LastPublished != nil {
+		file.LastPublished.Bundle.Capture.FilterVersion = "0"
+	}
+	if err := local.Write(publishedPath(store, id), file); err != nil {
+		t.Fatal(err)
+	}
+	signature, found, err := store.LoadScanSignature(id)
+	if err != nil || !found {
+		t.Fatalf("no scan signature to upgrade: found=%v err=%v", found, err)
+	}
+	signature.FilterVersion = "0"
+	if err := store.SaveScanSignature(id, signature); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A filter or adapter upgrade re-filters every session, but a transcript
+// that has not changed since it was captured holds no new activity: the
+// republished snapshot keeps its capture time, which retention and the
+// reader's date filters and ordering go by. A transcript that did change
+// under the new filter is captured at the time it was read.
+//
+// Regression: 2026-09 pre-release review, collector bug 1.
+func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	store := newTestStore(t)
+	if err := store.SaveRegistration(registration(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	cloud := storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+		t.Fatal(err)
+	}
+
+	simulateFilterUpgrade(t, store, "session-1")
+	t1 := t0.Add(20 * 24 * time.Hour)
+	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("filter upgrade should republish: result=%#v err=%v", result, err)
+	}
+	metadata := fetchMetadata(t, cloud, "codex", "session-1")
+	if !metadata.CapturedAt.Equal(t0) {
+		t.Fatalf("captured_at = %s after re-filtering an unchanged transcript, want %s", metadata.CapturedAt, t0)
+	}
+	if bundle := fetchBundle(t, cloud, metadata); bundle.Capture.FilterVersion != archive.FilterVersion || !bundle.Capture.CapturedAt.Equal(t0) {
+		t.Fatalf("republished bundle: filter %q captured %s", bundle.Capture.FilterVersion, bundle.Capture.CapturedAt)
+	}
+
+	// New activity arriving with the upgrade is captured when it was read.
+	simulateFilterUpgrade(t, store, "session-1")
+	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
+	t2 := t1.Add(24 * time.Hour)
+	result, err = Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("changed transcript should republish: result=%#v err=%v", result, err)
+	}
+	if got := fetchMetadata(t, cloud, "codex", "session-1").CapturedAt; !got.Equal(t2) {
+		t.Fatalf("captured_at = %s for a transcript that changed, want %s", got, t2)
+	}
+}
+
 func TestStableSupplementalObservationDoesNotRepublish(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)

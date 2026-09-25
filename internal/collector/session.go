@@ -314,13 +314,19 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 		// first observed now. A change that only adds or updates a child link
 		// is the exception: it carries no new activity of this session's own,
 		// so it keeps the capture time its evidence was actually observed at.
+		// So does the same evidence re-filtered by a new filter or adapter
+		// version.
 		candidate.Capture.CapturedAt = s.now
 		if haveCached && !cached.Capture.CapturedAt.IsZero() {
 			linkOnly, err := bundleChangeIsLinkOnly(cached, *candidate)
 			if err != nil {
 				return false, fmt.Errorf("compare linked sessions: %w", err)
 			}
-			if linkOnly {
+			refiltered, err := s.refilteredUnchanged(read, cached, *candidate)
+			if err != nil {
+				return false, err
+			}
+			if linkOnly || refiltered {
 				candidate.Capture.CapturedAt = cached.Capture.CapturedAt
 			}
 		}
@@ -345,6 +351,27 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 		return true, s.recordBlockedSignature(reason, &read.observed)
 	}
 	return true, s.recordScanSignature(read.observed, *candidate)
+}
+
+// refilteredUnchanged reports whether candidate differs from cached only
+// because a new filter or adapter version filtered the same evidence: the
+// versions differ, the source is exactly as the last settled scan left it
+// (when cached was built from it), and this scan brought no hook evidence.
+// Filtered output can't tell that on its own, since a new filter changes
+// what earlier records look like. Without a settled scan signature to
+// compare with, the change counts as new evidence.
+func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate archive.SourceBundle) (bool, error) {
+	if cached.Capture.FilterVersion == candidate.Capture.FilterVersion && cached.Capture.AdapterVersion == candidate.Capture.AdapterVersion {
+		return false, nil
+	}
+	if len(s.req.HookEvidence) > 0 {
+		return false, nil
+	}
+	signature, found, err := s.local.LoadScanSignature(s.id())
+	if err != nil {
+		return false, fmt.Errorf("load scan signature: %w", err)
+	}
+	return found && signature.Blocked == "" && !signature.Failed && read.observed.matches(signature), nil
 }
 
 // guard checks that candidate still extends the evidence already retained.

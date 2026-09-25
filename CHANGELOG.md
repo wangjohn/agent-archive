@@ -201,6 +201,11 @@ can list them, inspect them, and hand one to another agent.
 
 ### Fixed
 
+- A filter or adapter upgrade no longer moves every session's capture
+  time to the day you upgraded. A session whose transcript hasn't changed
+  is refiltered and republished with its original capture time, so it
+  expires when it would have, and `list`'s date filters and newest-first
+  order stay right.
 - Retention can no longer delete your archive because this Mac's clock is
   wrong. Every age it compares was stamped by that clock, so a clock set a
   year ahead deleted every session within a minute. Before deleting anything
