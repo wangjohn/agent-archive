@@ -58,9 +58,13 @@ func (t *tokenTotals) usage() TokenUsage {
 			if !ok {
 				continue
 			}
+			// Each count is at most maxTokenCount, so the sum of two fits in
+			// an int; the total saturates there, so enough hostile records
+			// can neither overflow it negative nor break the schema's
+			// bound (parser 0.11.0; 0.10.0 overflowed after 1,025).
 			total := value
 			if *target != nil {
-				total += **target
+				total = min(total+**target, maxTokenCount)
 			}
 			*target = &total
 			return

@@ -96,11 +96,14 @@ func TestFilterV3DeniesTypedInputAndCredentialArguments(t *testing.T) {
 		}
 	}
 	issue := child(t, contentBlock(t, child(t, records[6], "message"), "tool_use")["input"])
-	if _, kept := issue["max_tokens"]; kept {
-		t.Errorf("max_tokens contains the token fragment and is knowingly dropped: %#v", issue)
+	// Filter 11 matches argument names by the shared credential vocabulary
+	// word by word: max_tokens (a plural) is a budget and stays, and auth is
+	// a credential name, dropped whole.
+	if _, kept := issue["max_tokens"]; !kept {
+		t.Errorf("max_tokens is not a credential name: %#v", issue)
 	}
 	if _, kept := issue["auth"]; kept {
-		t.Errorf("an argument object whose members were all denied is pruned with them: %#v", issue)
+		t.Errorf("auth is a credential argument: %#v", issue)
 	}
 
 	var details []string
@@ -112,7 +115,7 @@ func TestFilterV3DeniesTypedInputAndCredentialArguments(t *testing.T) {
 	if len(details) != 1 {
 		t.Fatalf("want exactly one denied-argument gap, got %d in %#v", len(details), filtered.Gaps)
 	}
-	if details[0] != deniedToolArgumentIntro+"AuthorizationHeader, CredentialsFile, github_token, max_tokens, text, value, values" {
+	if details[0] != deniedToolArgumentIntro+"auth, github_token, text, value, values" {
 		t.Errorf("denied-argument gap detail = %q", details[0])
 	}
 	if strings.Contains(details[0], "typed-secret") {

@@ -15,6 +15,16 @@ import (
 // of TestFilterV9LeavesNonCredentialNamesUnchanged.
 func FuzzRedactSensitive(f *testing.F) {
 	f.Add("DB_PASSWORD=hunter2")
+	for _, s := range gateSeeds() {
+		f.Add(s)
+	}
+	// Private keys cut short or split (see TestPartialPrivateKeyIsRedacted).
+	begin, end := "-----BEGIN RSA "+"PRIVATE KEY-----", "-----END RSA "+"PRIVATE KEY-----"
+	body := "MIIEpAIBAAKCAQEA7synMIIEpAIBAAKCAQEA7synMIIEpAIBAAKCAQEA7synMIIE"
+	f.Add("  3→" + body + "\n  4→" + body + "\n  5→" + end + "\n")
+	f.Add(`{"output": "` + body + `\n` + end + `\n"}`)
+	f.Add("key.pem:1:" + begin + "$\nkey.pem:2:" + body + "$\n")
+	f.Add(`"` + begin + " " + body + " " + body)
 	f.Fuzz(func(t *testing.T, in string) {
 		once, _ := redactSensitive(in)
 		twice, _ := redactSensitive(once)
@@ -60,6 +70,37 @@ var credentialTemplates = []string{
 	"export TOKEN='abc'%s && make",
 	`API_KEY='x'"y"%s`,
 	"mysql --password 'x'%s -u root",
+	// Filter 11: program flags, context shapes, whole values, structures,
+	// entries, and files shown with line numbers.
+	"curl -u admin:%s https://x.test",
+	"mysql -uroot -p%s db",
+	"sshpass -p %s ssh host",
+	"docker login -u me -p %s registry.test",
+	"machine api.test login me password %s",
+	"Cookie: theme=dark; sid=%s",
+	"DB_PASS=%s",
+	"<password>%s</password>",
+	`<add key="ApiKey" value="%s"/>`,
+	"https://api.test/v1?key=%s&x=1",
+	// A password of digits then a slash reads as a port and a path.
+	"postgres://me:p%s@db.test/app",
+	"password: correct horse %s",
+	"password: |\n  %s\nnext: 1",
+	"  12→  password: |\n  13→    %s",
+	"     3\tdb_password:\n     4\t  %s",
+	"- name: DB_PASSWORD\n  value: %s",
+	"  7→  - name: API_TOKEN\n  8→    value: \"%s\"",
+	`{"secret": {"value": "%s"}}`,
+	`"passwords": ["%s"]`,
+	"     1\t{\n     2\t  \"credentials\": {\"github\": \"%s\"}\n     3\t}",
+	`{"name": "Authorization", "value": "%s"}`,
+	"API Key: %s",
+	"PASSWORD＝%s",
+	// YAML structures under a credential key, URL-encoded assignments.
+	"secrets:\n  db: %s\nnext: 1",
+	"passwords:\n- %s\n- x",
+	"  4→credentials:\n  5→  github:\n  6→    token: \"%s\"",
+	"https://x.test/?next=%2Fa%3Fpassword%3D%s%26u%3Db",
 }
 
 // plainSecret is the shape of a secret the templates are fuzzed with: long

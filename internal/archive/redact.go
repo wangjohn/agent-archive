@@ -76,188 +76,402 @@ func injectedInstructionEnd(value string, from int, tag string) int {
 	return pos
 }
 
-// A credential assignment is a name that says it holds a credential, a
-// separator, and a value: `DB_PASSWORD=…`, `export AWS_SECRET_ACCESS_KEY=…`,
-// `"api_key": "…"`, `password: …`, `accessToken = "…"`, `--token=…`. Filter 8
-// and earlier required the trigger word to stand alone (`\bpassword\b`), and
-// since `_` is a word character that missed every snake_case or
-// SCREAMING_CASE name, and a quote between the name and the separator missed
-// every JSON key. The pattern is built from the named parts below. It is
-// case-insensitive throughout. Only the value is replaced; the name and
-// separator are kept so a reader can see which credential was there.
-const (
-	// credentialWords are the words that mark a name as holding a
-	// credential, whatever is glued on before them.
-	credentialWords = `api[_.-]?key|access[_.-]?key|private[_.-]?key|encryption[_.-]?key|signing[_.-]?key|master[_.-]?key|` +
-		`secret|password|passwd|passphrase|token|authorization|bearer|credentials?`
-	// credentialSeparatedWords are words that mark a credential only after a
-	// separator: `pwd` (MYSQL_PWD, DB_PWD), because a bare PWD or OLDPWD is
-	// the shell's working directory, and npm's `_auth` (`:_auth=`,
-	// `npm_config__auth=`), because `auth` alone is far too common.
-	credentialSeparatedWords = `[a-z0-9_.-]*[_.-]pwd|(?:[a-z0-9_.-]*_)?_auth` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialSuffix may follow the word: `key` or `access_key`, then
-	// `base` (SECRET_KEY, AWS_SECRET_ACCESS_KEY, SECRET_KEY_BASE), then a
-	// number (DB_PASSWORD_1, PASSWORD2, API_KEY_2).
-	credentialSuffix = `(?:[_.-]?(?:access[_.-]?)?key(?:[_.-]?base)?)?(?:[_.-]?[0-9]+)?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialName is a name ending in a credential word and optionally the
-	// suffix. Anything may be glued on before the word (DB_PASSWORD,
-	// accessToken, PGPASSWORD, spring.datasource.password, --password), but
-	// nothing after it except the suffix, so `tokens`, `max_tokens`,
-	// `secretary`, `password_policy`, and `TOKEN_URL` are not credential
-	// names.
-	credentialName = `(?:[a-z0-9_.-]*?(?:` + credentialWords + `)|` + credentialSeparatedWords + `)` + credentialSuffix
-	// credentialLead is what may precede a name: the start of the string or a
-	// character that cannot be part of one. It keeps a match from starting in
-	// the middle of an identifier.
-	credentialLead = `(?:^|[^a-z0-9_.-])` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialQuote is an optional quote around a name, as in JSON, Python,
-	// or JSON escaped inside a string once or more (`\"password\"`,
-	// `\\\"password\\\"`).
-	credentialQuote = `(?:\\*["'])?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialSeparator is `=`, `:`, `:=`, or `=>`, with spaces or tabs
-	// around it but not newlines, so a YAML key with its value on the next
-	// line does not swallow the line after it.
-	credentialSeparator = `[ \t]*(?::=|=>|=|:)[ \t]*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialScheme is an HTTP authorization scheme kept before the value
-	// (`Authorization: Bearer [REDACTED]`).
-	credentialScheme = `(?:(?:bearer|basic|digest|token)[ \t]+)?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialQuotedValue is a value in quotes, up to its closing quote, or
-	// to the end of the line when it has none, and for plain quotes whatever
-	// is glued on after the closing quote (credentialQuotedGlue). In order:
-	// JSON escaped once inside a string (`\"…\"`, where an escaped quote inside is `\\\"`);
-	// JSON escaped more than once (`\\\"…\\\"`, up to the first escaped
-	// quote of any depth); double quotes, with backslash escapes (a value
-	// cut off after a lone backslash takes it along, so none is left for a
-	// second pass to glue onto the marker); single quotes.
-	credentialQuotedValue = credentialQuoted + `|(?:` + credentialPlainQuoted + `)` + credentialQuotedGlue
-	credentialQuoted      = `\\"(?:\\\\\\"|[^"\\\n]|\\[^"\n])*(?:\\")?|` +
-		`\\{2,}"(?:[^"\\\n]|\\+[^"\\\n])*(?:\\+")?`
-	credentialPlainQuoted = `"(?:[^"\\\n]|\\.)+\\?"?|'[^'\n]+'?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialQuotedGlue is what a shell reads as part of the same word
-	// after a closing quote: more text, or more closed quoted segments
-	// (`PASSWORD="abc"realsecret` is the value `abcrealsecret`). It is
-	// taken as part of the value, so it is redacted with it. It stops at
-	// whitespace, a separator, a closing bracket (the end of a JSON object
-	// or array), or shell punctuation (`&&`, `|`, a redirection).
-	credentialQuotedGlue = `(?:"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|[^\s,;"'\]})&|<>])*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialBracketedValue is a single token in brackets or braces
-	// (`[hunter2]`, `{abc123}`, an earlier `[REDACTED]`), with whatever is
-	// glued on after it (`[REDACTED]realsecret`, `[REDACTED][a,b]realsecret`:
-	// a glued bracket group is taken whole, whatever it holds). A bracket holding
-	// whitespace, a comma, a colon, or a quote is a structure
-	// (`"credentials": {"type": …}`, `password: [required, min 8]`), whose
-	// members are checked on their own, and is not a value: replacing its
-	// opening bracket would break the line around it. Taking an earlier
-	// [REDACTED] as a value also keeps redacting twice a no-op
-	// (`Bearer [REDACTED]` is not read as the value `Bearer`).
-	credentialBracketedValue = `(?:\[[^\s,:;"'\[\]{}]+\]|\{[^\s,:;"'\[\]{}]+\})(?:\[[^\]\n]*\]|\{[^}\n]*\}|[^\s,;"'])*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialValue is a quoted value, a bracketed one, or an unquoted one,
-	// which runs up to whitespace, `,`, `;`, or a quote, so a value inside a
-	// quoted string (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`) leaves the
-	// closing quote. Each may follow extra `=` signs (`PASSWORD==abc`,
-	// `PASSWORD=="abc"`, `token: =abc`), but no value begins with
-	// whitespace, so `token == nil` is a comparison, not an assignment.
-	credentialValue = `=*(?:` + credentialQuotedValue + `|` + credentialBracketedValue + `)|=*[^\s,;"'={\[][^\s,;"']*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialFlagValue is the value after a space-separated command-line
-	// flag (`--token abc`); one beginning with `-` is the next flag.
-	credentialFlagValue = credentialQuotedValue + `|[^\s,;"'=-][^\s,;"']*` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-)
+// redactSensitive applies every value-level credential pattern to one string
+// and reports whether anything was replaced. The narrow structural patterns
+// run before the broad assignment patterns so that, for example, a
+// `x-access-token:…@host` URL keeps its host instead of losing everything
+// after the word "token", and a YAML block value is taken whole before its
+// key line is read as an assignment. The patterns and the vocabulary they
+// share are in credential_shapes.go and credential_vocabulary.go.
+//
+// A pass reads quote context from the text around a value, and a
+// replacement earlier in the same pass can remove a quote that context
+// depended on, so the passes repeat until the text is stable; redacting
+// twice then changes nothing. Only text that was redacted takes a second
+// pass.
+func redactSensitive(value string) (string, bool) {
+	redacted := false
+	for range maxRedactPasses {
+		next, hit := redactSensitiveOnce(value)
+		if !hit {
+			break
+		}
+		redacted = true
+		if next == value {
+			break
+		}
+		value = next
+	}
+	return value, redacted
+}
 
-// credentialAssignment matches `name<sep>value` for a credential name, and
-// credentialFlag a `--name value` command-line flag. Both capture the value
-// as "value" so redactCredentialValues replaces only it. Their assignment
-// form is deliberately broad and is a known false-positive class: ordinary
-// code such as `token = parse(x)` matches it. See docs/agent-archive-privacy.md.
-var (
-	credentialAssignment = regexp.MustCompile(`(?i)` + credentialLead + credentialQuote + credentialName + credentialQuote + credentialSeparator + credentialScheme + `(?P<value>` + credentialValue + `)`)
-	credentialFlag       = regexp.MustCompile(`(?i)(?:^|[ \t])--` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`)
-)
+// maxRedactPasses bounds redactSensitive's passes. Every pass is complete,
+// so the result is redacted however many ran.
+const maxRedactPasses = 4
 
-// credentialShape matches credentials recognizable by their own structure
-// rather than by an assignment around them: a PEM private key block (from
-// its BEGIN line through the next END line, or to the end of the string when
-// the END line is missing), a JWT (three base64url segments, the first
-// beginning with `eyJ`), GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`,
-// `ghr_`, `github_pat_`), Slack tokens (`xox[baprs]-`), AWS access key IDs
-// (`AKIA…`, and `ASIA…` for temporary STS keys), and Anthropic and OpenAI
-// style `sk-` keys.
-var credentialShape = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:.*?-----END [A-Z0-9 ]*-----|.*)|\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{12,}\b`)
+// redactSensitiveOnce is one pass of every pattern (see redactSensitive).
+// The line-based patterns read the text through a needleText (see
+// linePattern), prepared again only when a step changed the text.
+func redactSensitiveOnce(value string) (string, bool) {
+	return redactOnce(value, newNeedleText)
+}
+
+// redactOnce is redactSensitiveOnce with the text prepared by prepare.
+func redactOnce(value string, prepare func(string) needleText) (string, bool) {
+	redacted := false
+	text := prepare(value)
+	apply := func(out string, hit bool) {
+		if hit {
+			value, redacted = out, true
+			if text.s != value {
+				text = prepare(value)
+			}
+		}
+	}
+	apply(redactPrivateKeyBlocks(value))
+	apply(redactURLUserinfo(value))
+	apply(redactMatches(credentialShape, text, false))
+	for _, pattern := range credentialContextPatterns {
+		apply(redactMatches(pattern, text, true))
+	}
+	apply(redactYAMLBlockValues(text))
+	apply(redactCredentialEntryValues(text))
+	apply(redactCredentialStructures(text))
+	apply(redactAssignments(text))
+	apply(redactMatches(linePattern{credentialFlag, vocabularyNeedles, "-"}, text, true))
+	return value, redacted
+}
+
+// valueSpan is the byte range of one value to redact.
+type valueSpan struct {
+	start int
+	end   int
+}
+
+// redactMatches replaces, in t.s, the "value" group of every match of
+// pattern with [REDACTED], keeping a quoted value's quotes, or with values
+// false the whole match, and reports whether anything was replaced. A
+// pattern may name several alternative groups "value"; the one that matched
+// is replaced.
+func redactMatches(pattern linePattern, t needleText, values bool) (string, bool) {
+	matches := lineMatches(pattern, t)
+	if matches == nil {
+		return t.s, false
+	}
+	if !values {
+		var out strings.Builder
+		last := 0
+		for _, match := range matches {
+			out.WriteString(t.s[last:match[0]])
+			out.WriteString(redactedMarker)
+			last = match[1]
+		}
+		out.WriteString(t.s[last:])
+		return out.String(), true
+	}
+	var groups []int
+	for i, name := range pattern.re.SubexpNames() {
+		if name == "value" {
+			groups = append(groups, i)
+		}
+	}
+	spans := make([]valueSpan, 0, len(matches))
+	for _, match := range matches {
+		for _, group := range groups {
+			if match[2*group] >= 0 {
+				spans = append(spans, valueSpan{match[2*group], match[2*group+1]})
+				break
+			}
+		}
+	}
+	return redactSpans(t.s, spans), len(spans) > 0
+}
+
+// redactAssignments redacts the value of every credential assignment
+// (credentialAssignment). A quoted value ends at its closing quote; an
+// unquoted one runs to the end of its line (see unquotedValueEnd), and one
+// in a URL query to the next parameter. A value that is only a boolean or
+// null, or a YAML block indicator, is not a secret and is left alone.
+//
+// An assignment and its value never cross a line break, so the search runs
+// line by line, on the lines holding a credential word (see linePattern).
+func redactAssignments(t needleText) (string, bool) {
+	s := t.s
+	if t.whole {
+		spans := appendAssignmentSpans(nil, s, 0, len(s))
+		if len(spans) == 0 {
+			return s, false
+		}
+		return redactSpans(s, spans), true
+	}
+	present, gated := t.presentNeedles(vocabularyNeedles)
+	if gated && len(present) == 0 {
+		return s, false
+	}
+	var spans []valueSpan
+	for lineStart := 0; lineStart <= len(s); {
+		lineEnd := strings.IndexByte(s[lineStart:], '\n')
+		if lineEnd < 0 {
+			lineEnd = len(s)
+		} else {
+			lineEnd += lineStart
+		}
+		if lineHasNeedle(t.lower[lineStart:lineEnd], present, gated) && strings.ContainsAny(s[lineStart:lineEnd], assignmentSeparators) {
+			spans = appendAssignmentSpans(spans, s, lineStart, lineEnd)
+		}
+		lineStart = lineEnd + 1
+	}
+	if len(spans) == 0 {
+		return s, false
+	}
+	return redactSpans(s, spans), true
+}
+
+// appendAssignmentSpans appends the value span of every credential
+// assignment in the line s[lineStart:lineEnd].
+func appendAssignmentSpans(spans []valueSpan, s string, lineStart, lineEnd int) []valueSpan {
+	nameGroup := credentialAssignment.SubexpIndex("name")
+	valueGroup := credentialAssignment.SubexpIndex("value")
+	for pos := lineStart; pos < lineEnd; {
+		match := credentialAssignment.FindStringSubmatchIndex(s[pos:lineEnd])
+		if match == nil {
+			break
+		}
+		if match[0] == 0 && pos > lineStart && isNameByte(s[pos-1]) {
+			// The slice's start stood in for credentialLead's `^`, in the
+			// middle of a name.
+			pos++
+			continue
+		}
+		nameStart, nameEnd := pos+match[2*nameGroup], pos+match[2*nameGroup+1]
+		start, end := pos+match[2*valueGroup], pos+match[2*valueGroup+1]
+		end = assignmentValueEnd(s, nameStart, nameEnd, start, end)
+		if end < 0 {
+			pos += match[1]
+			continue
+		}
+		spans = append(spans, valueSpan{start, end})
+		// A value cut short (a URL parameter) resumes the search right after
+		// it, so a credential in the next parameter is still found.
+		pos = end
+	}
+	return spans
+}
+
+// assignmentValueEnd returns where the value of one credential assignment
+// ends, or -1 when the value is not a secret. start and end are the value
+// as credentialAssignment matched it.
+func assignmentValueEnd(s string, nameStart, nameEnd, start, end int) int {
+	bare := strings.TrimLeft(s[start:end], "=")
+	valueStart := end - len(bare)
+	urlParam := nameStart > 0 && (s[nameStart-1] == '?' || s[nameStart-1] == '&')
+	switch {
+	case bare == "":
+		return -1
+	case isQuotedStart(bare):
+		return end
+	case bare[0] == '[' || bare[0] == '{':
+		if urlParam {
+			end = min(end, urlParamEnd(s, start))
+		}
+		// A glued tail stops at the closing quote of a string the
+		// assignment sits in, as an unquoted value does.
+		if quote := assignmentQuoteContext(s, nameStart, nameEnd); quote != 0 {
+			if at := strings.IndexByte(s[start:end], quote); at >= 0 {
+				end = start + at
+			}
+		}
+		return backOffEscapes(s, start, end)
+	}
+	if urlParam {
+		end = urlParamEnd(s, start)
+	} else {
+		end = unquotedValueEnd(s, start, assignmentQuoteContext(s, nameStart, nameEnd), strings.ToLower(s[nameStart:nameEnd]))
+	}
+	end = backOffEscapes(s, start, end)
+	if end <= valueStart || isNonSecretValue(s[valueStart:end]) {
+		return -1
+	}
+	return end
+}
+
+// unquotedValueEnd returns where an unquoted credential value that starts at
+// start ends: at the end of its line, so `password: correct horse battery
+// staple` and `DB_PASSWORD=Xk9;mP2vQ7zR` are redacted whole (filter 10
+// stopped at the first space, `,`, `;`, or quote and kept the rest). It ends
+// earlier at:
+//   - the closing quote of a quoted string the assignment sits in
+//     (`-H 'x-api-key: abc'`, `["TOKEN=abc"]`, an escaped JSON string);
+//   - whitespace followed by shell punctuation (`&&`, `||`, `|`, `;`, a
+//     redirection), a comment (`#`), a flag (`-`), a line continuation, or
+//     another assignment (`user=bob`), so `A=x B=y` and `TOKEN=x && make`
+//     keep what follows;
+//   - `,` or `;` followed by whitespace, which ends a list item or a
+//     statement (`f(password=abc, user=x)`, `password = x; next()`).
+//
+// A Cookie or Set-Cookie value runs to the end of the line whatever it
+// holds, since `; ` separates its cookies. quote is the assignment's quote
+// context (assignmentQuoteContext).
+func unquotedValueEnd(s string, start int, quote byte, name string) int {
+	cookie := strings.HasSuffix(name, "cookie") || strings.HasSuffix(name, "cookies")
+	i := start
+	for i < len(s) {
+		c := s[i]
+		switch {
+		case c == '\n' || c == '\r':
+			return i
+		case quote != 0 && c == quote:
+			return i
+		case c == ' ' || c == '\t':
+			j := i
+			for j < len(s) && (s[j] == ' ' || s[j] == '\t') {
+				j++
+			}
+			if j == len(s) || s[j] == '\n' || s[j] == '\r' || (quote != 0 && s[j] == quote) || (!cookie && valueBoundary(s[j:])) {
+				return i
+			}
+			i = j
+		case !cookie && (c == ',' || c == ';') && (i+1 == len(s) || strings.IndexByte(" \t\r\n", s[i+1]) >= 0):
+			return i
+		default:
+			i++
+		}
+	}
+	return i
+}
+
+// assignmentStart matches another `name=` assignment.
+var assignmentStart = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*=`)
+
+// valueBoundary reports whether text after whitespace ends an unquoted
+// value (see unquotedValueEnd).
+func valueBoundary(t string) bool {
+	for _, prefix := range []string{"&&", "||", "|", ";", ">", "<", "2>", "#", "-"} {
+		if strings.HasPrefix(t, prefix) {
+			return true
+		}
+	}
+	if t[0] == '\\' && (len(t) == 1 || t[1] == '\n' || t[1] == '\r') {
+		return true
+	}
+	return assignmentStart.MatchString(t)
+}
+
+// assignmentQuoteContext returns the quote character of a string the
+// assignment whose name spans s[nameStart:nameEnd] sits in, or 0. A quoted
+// name's own opening quote (`"password": …`) is not such a string; a quote
+// before an unquoted name (`["TOKEN=abc"]`, a backticked “ `PASS=x` “) is.
+func assignmentQuoteContext(s string, nameStart, nameEnd int) byte {
+	lineStart := strings.LastIndexAny(s[:nameStart], "\n\r") + 1
+	prefix := s[lineStart:nameStart]
+	if nameEnd < len(s) && strings.IndexByte("\"'\\", s[nameEnd]) >= 0 {
+		prefix = strings.TrimRight(prefix, "\"'\\")
+	}
+	return enclosingQuote(prefix)
+}
+
+// enclosingQuote returns the quote character of a string left open at the
+// end of prefix (the text of a line before a credential name), or 0 when
+// none is.
+func enclosingQuote(prefix string) byte {
+	var quote byte
+	for i := range len(prefix) {
+		c := prefix[i]
+		switch {
+		case quote == 0 && (c == '"' || c == '\'' || c == '`'):
+			quote = c
+		case quote != 0 && c == quote:
+			quote = 0
+		}
+	}
+	return quote
+}
+
+// urlParamEnd returns where a URL query parameter's value starting at start
+// ends: at the next `&`, a fragment, whitespace, a quote, or an escape.
+func urlParamEnd(s string, start int) int {
+	for i := start; i < len(s); i++ {
+		if strings.IndexByte("&# \t\r\n\"'<>`\\", s[i]) >= 0 {
+			return i
+		}
+	}
+	return len(s)
+}
+
+// backOffEscapes moves a value's end before the backslashes that escape the
+// quote after it (`TOKEN=abc\"` in escaped JSON keeps its `\"`), so the
+// marker is never glued to a backslash a second pass would take along.
+func backOffEscapes(s string, start, end int) int {
+	if end < len(s) && (s[end] == '"' || s[end] == '\'' || s[end] == '`') {
+		for end > start && s[end-1] == '\\' {
+			end--
+		}
+	}
+	return end
+}
+
+func isQuotedStart(value string) bool {
+	rest := strings.TrimLeft(value, `\`)
+	return rest != "" && (rest[0] == '"' || rest[0] == '\'')
+}
+
+func isNameByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '-'
+}
+
+// nonSecretValue matches an unquoted value that cannot be a secret: a
+// boolean or null (`use_password: false`, `token: null`), or a YAML block
+// scalar indicator (`password: |`), whose value is on the lines below (see
+// redactYAMLBlockValues).
+var nonSecretValue = regexp.MustCompile(`(?i)^(?:true|false|null|nil|none|undefined|[|>][0-9+-]*)$`)
+
+func isNonSecretValue(value string) bool {
+	return nonSecretValue.MatchString(strings.TrimSpace(value))
+}
 
 // quotedPrefix matches the quoted part at the start of a quoted value,
 // without anything glued on after its closing quote.
 var quotedPrefix = regexp.MustCompile(`^(?:` + credentialQuoted + `|` + credentialPlainQuoted + `)`)
 
-// redactCredentialValues replaces the "value" group of every match of pattern
-// with [REDACTED], keeping a quoted value's quotes, and reports whether
-// anything was replaced.
-func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool) {
-	matches := pattern.FindAllStringSubmatchIndex(value, -1)
-	if matches == nil {
-		return value, false
-	}
-	group := pattern.SubexpIndex("value")
+// redactSpans replaces each span of value (in order, not overlapping) with
+// [REDACTED] (see writeRedacted).
+func redactSpans(value string, spans []valueSpan) string {
 	var out strings.Builder
 	last := 0
-	for _, match := range matches {
-		start, end := match[2*group], match[2*group+1]
-		out.WriteString(value[last:start])
-		// Extra `=` signs before the value stay (`PASSWORD==[REDACTED]`), and a
-		// quoted value keeps its quotes, with any backslashes escaping them,
-		// so the marker is never glued to text a second pass would take as
-		// part of the value.
-		secret := value[start:end]
-		equals := len(secret) - len(strings.TrimLeft(secret, "="))
-		out.WriteString(secret[:equals])
-		secret, quote := secret[equals:], ""
-		if escapes := len(secret) - len(strings.TrimLeft(secret, `\`)); escapes < len(secret) && (secret[escapes] == '"' || secret[escapes] == '\'') {
-			quote = secret[:escapes+1]
-		}
-		out.WriteString(quote + "[REDACTED]")
-		// Text glued on after the closing quote is part of the value and
-		// goes with it; only the quoted part's closing quote is kept.
-		if quote != "" {
-			if quoted := quotedPrefix.FindString(secret); quoted != "" {
-				secret = quoted
-			}
-		}
-		// The closing quote, with whatever backslashes escape it (they can
-		// differ from the opening's in malformed input), stays too.
-		if quote != "" && len(secret) > len(quote) && secret[len(secret)-1] == quote[len(quote)-1] {
-			body := strings.TrimRight(secret[len(quote):len(secret)-1], `\`)
-			out.WriteString(secret[len(quote)+len(body):])
-		}
-		last = end
+	for _, span := range spans {
+		out.WriteString(value[last:span.start])
+		writeRedacted(&out, value[span.start:span.end])
+		last = span.end
 	}
 	out.WriteString(value[last:])
-	return out.String(), true
+	return out.String()
 }
 
-// urlUserinfo matches the userinfo of a URL (`scheme://user:pass@host`, or a
-// bare `scheme://user@host`). Only the userinfo is replaced; the scheme and
-// host stay so the reference remains legible.
-var urlUserinfo = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.-]*://)[^\s/@]+@`)
-
-// redactSensitive applies every value-level credential pattern to one string
-// and reports whether anything was replaced. The narrow structural patterns
-// run before the broad assignment patterns so that, for example, a
-// `x-access-token:…@host` URL keeps its host instead of losing everything
-// after the word "token".
-func redactSensitive(value string) (string, bool) {
-	redacted := false
-	if urlUserinfo.MatchString(value) {
-		value = urlUserinfo.ReplaceAllString(value, "${1}[REDACTED]@")
-		redacted = true
+// writeRedacted writes the redacted form of one value. Extra `=` signs
+// before the value stay (`PASSWORD==[REDACTED]`), and a quoted value keeps
+// its quotes, with any backslashes escaping them, so the marker is never
+// glued to text a second pass would take as part of the value.
+func writeRedacted(out *strings.Builder, secret string) {
+	equals := len(secret) - len(strings.TrimLeft(secret, "="))
+	out.WriteString(secret[:equals])
+	secret, quote := secret[equals:], ""
+	if escapes := len(secret) - len(strings.TrimLeft(secret, `\`)); escapes < len(secret) && (secret[escapes] == '"' || secret[escapes] == '\'') {
+		quote = secret[:escapes+1]
 	}
-	if credentialShape.MatchString(value) {
-		value = credentialShape.ReplaceAllString(value, "[REDACTED]")
-		redacted = true
-	}
-	for _, pattern := range []*regexp.Regexp{credentialAssignment, credentialFlag} {
-		if replaced, hit := redactCredentialValues(pattern, value); hit {
-			value, redacted = replaced, true
+	out.WriteString(quote + redactedMarker)
+	// Text glued on after the closing quote is part of the value and goes
+	// with it; only the quoted part's closing quote is kept.
+	if quote != "" {
+		if quoted := quotedPrefix.FindString(secret); quoted != "" {
+			secret = quoted
 		}
 	}
-	return value, redacted
+	// The closing quote, with whatever backslashes escape it (they can
+	// differ from the opening's in malformed input), stays too.
+	if quote != "" && len(secret) > len(quote) && secret[len(secret)-1] == quote[len(quote)-1] {
+		body := strings.TrimRight(secret[len(quote):len(secret)-1], `\`)
+		out.WriteString(secret[len(quote)+len(body):])
+	}
 }
 
 // base64DataURL matches a base64 `data:` URL, the form Codex and browser

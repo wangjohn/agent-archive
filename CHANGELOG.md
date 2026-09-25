@@ -40,6 +40,41 @@ can list them, inspect them, and hand one to another agent.
   each binary gets a build provenance attestation. `install.sh` now also
   checks the Developer ID signature and its team, not only the checksum.
   See [releasing](docs/maintainers/releasing.md).
+- **Privacy filter 11.** A password typed through Codex, whose tool
+  arguments are a JSON string, or through any form-filling tool
+  (`browser_fill_form`, chrome-devtools `fill_form`), is no longer archived;
+  any string holding JSON is now filtered as JSON, including Cursor tool
+  results stored as strings. A value beside a "Password", PIN, or card
+  label is dropped for every tool. Argument names and redaction share one
+  credential vocabulary (`X-Api-Key`, `passwd`, `private_key`, `auth` are
+  now dropped). New shapes: `curl -u user:pass`, `mysql -p…`, `sshpass -p`,
+  `docker login -p`, `.netrc`, cookies, `DB_PASS=`, Azure keys, XML, PGP
+  keys, and the token prefixes of Stripe, GitLab, Google, Hugging Face, npm,
+  and more. Unquoted values are redacted to the end of the line, YAML block
+  values whole, and URL passwords holding `@` or `/` whole; so are the
+  string values of a credential-named object or array
+  (`"secret": {"value": …}`), of a YAML mapping under a credential key
+  (`secrets:` then `db: …`), and the `value:` of a Kubernetes `env` entry
+  named like a credential, also in a file an agent read through a tool that
+  numbers its lines; URL-encoded assignments (`password%3D…`) are covered
+  too. A PEM BEGIN line with no END no longer swallows the rest of a file,
+  and a private key read in two parts is redacted in both. Sessions whose
+  transcripts are still on your Mac are refiltered automatically; earlier
+  snapshots stay in your bucket until they expire, unless you
+  [delete them](docs/security/privacy.md#after-a-filter-upgrade). See the
+  [filter changelog](docs/security/filter-changelog.md#source-filter-version-11).
+- **Handoff text can't escape its quoting or drive your terminal.** A bare
+  carriage return (progress bars) no longer ends a block quote early, and
+  terminal escape sequences (colors, OSC 52 clipboard writes, OSC 8 links)
+  and bidirectional overrides are removed from every field of `handoff`
+  output, Markdown and JSON. `list` prints bucket names without control
+  characters, and the JSON that `show`, `list --json`, `status --json`,
+  and `handoff --json` print escapes C1 controls and bidi overrides as
+  `\u` escapes. In a Cursor plain-text transcript, a role
+  header must be in the case of the transcript's first header (`user:` or
+  `User:`), so a line in the other case is content, and a YAML `user:` line
+  in tool output no longer starts a Person turn when sections are
+  blank-line separated.
 - **Handoff output is marked as a record** (#44). Agent text, prompts, and
   summaries are block-quoted, plan items and file names can't add headings,
   and the preamble tells the receiving agent not to follow instructions
