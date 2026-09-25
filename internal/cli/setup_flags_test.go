@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestSetupYesConfiguresR2WithoutQuestions(t *testing.T) {
 				env = withEnvironment(env, map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "private-secret"})
 				stdin = ""
 			}
-			args := []string{"--yes", "--provider", "r2", "--r2-account", "https://0123abcd.r2.cloudflarestorage.com/my-bucket", "--project", project, "--apps", "claude,codex"}
+			args := []string{"--yes", "--provider", "r2", "--r2-account", "https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket", "--project", project, "--apps", "claude,codex"}
 			if from == "stdin" {
 				args = append(args, "--r2-access-key-id", "KEY")
 			}
@@ -58,7 +59,7 @@ func TestSetupYesConfiguresR2WithoutQuestions(t *testing.T) {
 				t.Fatalf("output:\n%s", output)
 			}
 			cfg, found, _ := config.Load(home)
-			if !found || cfg.Storage.Bucket != "my-bucket" || cfg.Storage.R2AccountID != "0123abcd" || !reflect.DeepEqual(cfg.Harnesses, []string{"codex", "claude"}) || includedProjects(cfg.Archive.Projects) != 1 {
+			if !found || cfg.Storage.Bucket != "my-bucket" || cfg.Storage.R2AccountID != testR2Account || !reflect.DeepEqual(cfg.Harnesses, []string{"codex", "claude"}) || includedProjects(cfg.Archive.Projects) != 1 {
 				t.Fatalf("config %+v", cfg)
 			}
 			secret, err := kc.Load(context.Background(), cfg.Storage.R2CredentialRef)
@@ -96,12 +97,96 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 		t.Fatalf("rerun config %+v", next)
 	}
 
-	// Switching apps declines the one left out, so setup does not offer it
-	// again.
-	setupYes(t, env, "", 0, "--yes", "--apps", "codex")
-	next, _, _ = config.Load(home)
-	if !reflect.DeepEqual(next.Harnesses, []string{"codex"}) || !reflect.DeepEqual(next.DeclinedHarnesses, []string{"cursor"}) {
-		t.Fatalf("apps %v declined %v", next.Harnesses, next.DeclinedHarnesses)
+	// Adding an app keeps the one set up; leaving it out is refused, since
+	// --yes never removes hooks or declines an app.
+	setupYes(t, env, "", 0, "--yes", "--apps", "cursor,codex")
+	output := setupYes(t, env, "", 1, "--yes", "--apps", "codex")
+	after, _, _ := config.Load(home)
+	if !strings.Contains(output, "leaves out Cursor") || !reflect.DeepEqual(after.Harnesses, []string{"codex", "cursor"}) || len(after.DeclinedHarnesses) != 0 {
+		t.Fatalf("apps %v declined %v\n%s", after.Harnesses, after.DeclinedHarnesses, output)
+	}
+}
+
+// Rerunning --yes on an R2 install keeps the stored key unless a new one is
+// given, and a storage change moves the destination as interactive setup
+// does.
+func TestSetupYesReconfiguresR2KeyAndStorage(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	kc := newFakeKeychain()
+	env := withEnvironment(setupTestEnv(t, home, t.TempDir(), kc, time.Now()), map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "first-secret"})
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "one", "--project", project, "--apps", "codex")
+	first, _, _ := config.Load(home)
+
+	// No key given: the stored one is kept.
+	keep := withEnvironment(env, nil)
+	setupYes(t, keep, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "one")
+	kept, _, _ := config.Load(home)
+	if kept.Storage != first.Storage || len(kc.items) != 1 {
+		t.Fatalf("storage %+v, %d keys", kept.Storage, len(kc.items))
+	}
+
+	// Another bucket and a new key: the destination moves and the old key
+	// is retired.
+	next := withEnvironment(env, map[string]string{envR2AccessKeyID: "KEY2", envR2SecretAccessKey: "second-secret"})
+	setupYes(t, next, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "two")
+	moved, _, _ := config.Load(home)
+	secret, err := kc.Load(context.Background(), moved.Storage.R2CredentialRef)
+	if moved.Storage.Bucket != "two" || err != nil || secret.SecretAccessKey != "second-secret" || len(moved.PreviousDestinations) != 1 || !slices.Contains(moved.RetiredCredentialRefs, first.Storage.R2CredentialRef) {
+		t.Fatalf("config %+v key %+v %v", moved, secret, err)
+	}
+}
+
+// Once the transaction has started, a failure keeps the new key with the
+// unfinished setup, as interactive setup does: an incomplete rollback could
+// leave the configuration naming it.
+func TestSetupYesKeepsTheKeyWhenApplyFails(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	kc := newFakeKeychain()
+	env := withEnvironment(setupTestEnv(t, home, t.TempDir(), kc, time.Now()), map[string]string{envR2AccessKeyID: "KEY", envR2SecretAccessKey: "private-secret"})
+	env.LoadLaunchAgent = func(string) error { return errors.New("cannot load the job") }
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", project, "--apps", "codex")
+	if !strings.Contains(output, "run agent-archive setup to finish or discard it") || len(kc.items) != 1 {
+		t.Fatalf("%d keys\n%s", len(kc.items), output)
+	}
+	if _, err := os.Stat(draftPath(home)); err != nil {
+		t.Fatalf("no unfinished setup kept: %v", err)
+	}
+}
+
+// Setup --yes refuses a temporary executable, as interactive setup does.
+func TestSetupYesRefusesATemporaryExecutable(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	executable := filepath.Join(t.TempDir(), "go-build123", "b001", "exe", "agent-archive")
+	env.Executable = func() (string, error) { return executable, nil }
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "r", "--project", t.TempDir(), "--apps", "codex")
+	if !strings.Contains(output, "temporary build") {
+		t.Fatalf("output:\n%s", output)
+	}
+	if _, found, _ := config.Load(home); found {
+		t.Fatal("saved a configuration")
+	}
+}
+
+// The R2 key's environment variables are removed once read, so the apps'
+// version commands and launchctl never inherit them.
+func TestSetupYesClearsTheR2Variables(t *testing.T) {
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	env.LookupEnv = nil
+	t.Setenv(envR2AccessKeyID, "KEY")
+	t.Setenv(envR2SecretAccessKey, "private-secret")
+	var seen []string
+	env.DiscoverApplications = func(string) map[string]applicationDiscovery {
+		seen = append(seen, os.Getenv(envR2AccessKeyID), os.Getenv(envR2SecretAccessKey))
+		return map[string]applicationDiscovery{}
+	}
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--project", t.TempDir(), "--apps", "codex")
+	if strings.Join(seen, "") != "" || os.Getenv(envR2SecretAccessKey) != "" {
+		t.Fatalf("variables still set: %q", seen)
 	}
 }
 
@@ -122,9 +207,9 @@ func TestSetupYesRefusesMissingAnswers(t *testing.T) {
 		{"unknown app", 1, []string{"--yes", "--apps", "codex,vim"}, `not "vim"`},
 		{"missing project", 1, []string{"--yes", "--apps", "codex", "--project", filepath.Join(project, "gone")}, "does not exist"},
 		{"no region", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--project", project, "--apps", "codex"}, "pass --region"},
-		{"no r2 key", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", "0123abcd", "--project", project, "--apps", "codex"}, envR2AccessKeyID},
-		{"no r2 secret", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", "0123abcd", "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex"}, envR2SecretAccessKey},
-		{"bucket mismatch", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", "https://0123abcd.r2.cloudflarestorage.com/c", "--project", project, "--apps", "codex"}, "differs"},
+		{"no r2 key", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--project", project, "--apps", "codex"}, envR2AccessKeyID},
+		{"no r2 secret", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex"}, envR2SecretAccessKey},
+		{"bucket mismatch", 1, []string{"--yes", "--provider", "r2", "--bucket", "b", "--r2-account", "https://" + testR2Account + ".r2.cloudflarestorage.com/c", "--project", project, "--apps", "codex"}, "differs"},
 		{"mixed providers", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--r2-account", "a", "--project", project, "--apps", "codex"}, "for --provider r2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,7 +242,7 @@ func TestSetupYesStorageFailureLeavesNothing(t *testing.T) {
 		return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
 	}
 	env = withEnvironment(env, map[string]string{envR2SecretAccessKey: "private-secret"})
-	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--bucket", "b", "--r2-account", "0123abcd", "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex")
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex")
 	if !strings.Contains(output, "storage test failed") || strings.Contains(output, "private-secret") {
 		t.Fatalf("output:\n%s", output)
 	}

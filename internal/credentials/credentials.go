@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -161,20 +162,34 @@ type R2Location struct {
 	Bucket string
 }
 
-// r2DefaultHostSuffix ends the host of an account's default R2 endpoint.
-const r2DefaultHostSuffix = ".r2.cloudflarestorage.com"
+// r2HostSuffix ends the host of every Cloudflare R2 endpoint.
+const r2HostSuffix = ".r2.cloudflarestorage.com"
+
+// r2AccountID is the shape of a Cloudflare account ID.
+var r2AccountID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// Cloudflare reports whether l is on a Cloudflare R2 host. Any other https
+// endpoint is accepted, as an S3-compatible service, but is worth a warning.
+func (l R2Location) Cloudflare() bool {
+	return l.Endpoint == "" || strings.HasSuffix(l.Endpoint, r2HostSuffix)
+}
 
 // ParseR2Location reads an R2 account ID, an S3 API endpoint, or the bucket
 // URL Cloudflare's dashboard shows for a bucket,
 // https://<account>.r2.cloudflarestorage.com/<bucket>: the account comes
-// from the host and the bucket from the path.
+// from the host and the bucket from the path. A Cloudflare host without its
+// https:// is read as a URL.
 func ParseR2Location(input string) (R2Location, error) {
 	input = strings.TrimSpace(input)
+	if !strings.Contains(input, "://") && strings.Contains(strings.ToLower(input), r2HostSuffix) {
+		input = "https://" + input
+	}
 	if !strings.Contains(input, "://") {
-		if _, err := R2Endpoint("", input); err != nil {
-			return R2Location{}, err
+		account := strings.ToLower(input)
+		if !r2AccountID.MatchString(account) {
+			return R2Location{}, errors.New("an R2 account ID is 32 characters, 0-9 and a-f")
 		}
-		return R2Location{AccountID: input}, nil
+		return R2Location{AccountID: account}, nil
 	}
 	u, err := url.Parse(input)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
@@ -184,10 +199,11 @@ func ParseR2Location(input string) (R2Location, error) {
 	if strings.Contains(bucket, "/") {
 		return R2Location{}, errors.New("an R2 bucket URL names only the bucket, not a folder or object inside it")
 	}
-	if account, ok := strings.CutSuffix(strings.ToLower(u.Host), r2DefaultHostSuffix); ok && account != "" && !strings.Contains(account, ".") {
+	host := strings.ToLower(u.Host)
+	if account, ok := strings.CutSuffix(host, r2HostSuffix); ok && r2AccountID.MatchString(account) {
 		return R2Location{AccountID: account, Bucket: bucket}, nil
 	}
-	endpoint, err := R2Endpoint("https://"+u.Host, "")
+	endpoint, err := R2Endpoint("https://"+host, "")
 	if err != nil {
 		return R2Location{}, err
 	}

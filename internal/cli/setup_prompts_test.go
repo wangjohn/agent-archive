@@ -298,7 +298,7 @@ func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
 	var cfg config.Config
 	var out bytes.Buffer
-	err := chooseCapture(newPrompter(strings.NewReader("y\nn\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env)
+	err := chooseCapture(newPrompter(strings.NewReader("y\nn\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
 	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}

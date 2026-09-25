@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -114,6 +115,20 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if opts.given() && !opts.yes {
 		return fs.usageError("answers given as flags need --yes (or run agent-archive setup alone to be asked)")
 	}
+	// Every step asks something, so without a terminal setup would stop at
+	// its first question with nothing but an end-of-input error.
+	if !opts.yes && !env.isTerminal(stdin) {
+		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal, or pass the answers with --yes (see agent-archive setup --help).")
+		return 1
+	}
+	// Every hook and the LaunchAgent run this path, so one that is about to
+	// disappear would leave capture dead as soon as setup exits.
+	if exe, err := env.executable(); err == nil {
+		if problem := env.temporaryExecutableProblem(exe); problem != "" {
+			terminal.Printf(stderr, "agent-archive: setup: %s Nothing was changed. Build or install agent-archive somewhere lasting (for example with go build -o ~/bin/agent-archive ./cmd/agent-archive, or the installer), then run setup from there.\n", problem)
+			return 1
+		}
+	}
 	if opts.yes {
 		if err := setupWithoutQuestions(opts, stdin, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "Setup incomplete: %v\n", err)
@@ -128,12 +143,6 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			return 1
 		}
 		return 0
-	}
-	// Every step asks something, so without a terminal setup would stop at
-	// its first question with nothing but an end-of-input error.
-	if !env.isTerminal(stdin) {
-		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal.")
-		return 1
 	}
 	if err := setup(stdin, stdout, stderr, env); err != nil {
 		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
@@ -189,6 +198,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	reviewed := reviewDiscoveries(discoveries, env.detectHarnesses(userHome))
 	p := newPrompter(stdin, out)
 	p.now = env.now
+	known := knownProjectsOnce(env, userHome)
 	// Said before any question: setup will refuse to install an app's hooks
 	// beside another installation's (see applySetup).
 	for _, problem := range env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), allHarnesses) {
@@ -222,7 +232,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 				draft.Step = 1
 			}
 			if choice == "capture" {
-				if e = chooseCapture(p, &draft.Config, userHome, env); e != nil {
+				if e = chooseCapture(p, &draft.Config, userHome, env, known); e != nil {
 					return e
 				}
 				if e = offerStopImported(p, &draft, existing); e != nil {
@@ -269,7 +279,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			}
 		}
 		if choice == "capture" { // Storage is still verified, but its prompts are skipped.
-			if err = chooseCapture(p, &draft.Config, userHome, env); err != nil {
+			if err = chooseCapture(p, &draft.Config, userHome, env, known); err != nil {
 				return err
 			}
 			if err = offerStopImported(p, &draft, existing); err != nil {
@@ -279,11 +289,10 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 	}
 	save := func() error { return local.Write(savedPath, draft) }
-	known := func(cfg config.Config) []backfill.KnownProject { return knownProjects(env, userHome, cfg) }
 	var verifiedStorage credentials.Config
 	for {
 		if draft.Step == 0 {
-			if err = chooseCapture(p, &draft.Config, userHome, env); err != nil {
+			if err = chooseCapture(p, &draft.Config, userHome, env, known); err != nil {
 				return err
 			}
 			draft.Step = 1
@@ -469,9 +478,12 @@ func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
 // hookNextStep says what each app needs before it captures: Codex asks to
 // review new hooks in /hooks, while Claude Code and Cursor read them when a
 // session starts.
+// Codex and Claude Code prove a fresh start with SessionStart's source,
+// which /clear sets too; Cursor proves it from the transcript, so only a new
+// chat counts there.
 var hookNextStep = map[string]string{
-	"codex":  "Codex: run /hooks and approve the archive hooks, then start a new session.",
-	"claude": "Claude Code: nothing to approve; start a new session.",
+	"codex":  "Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).",
+	"claude": "Claude Code: nothing to approve; start a new session (or /clear).",
 	"cursor": "Cursor: nothing to approve; start a new Agent chat.",
 }
 
@@ -490,11 +502,16 @@ func printNextSteps(p *prompter, apps []string, paused bool) {
 			terminal.Println(p.out, "  "+step)
 		}
 	}
-	terminal.Println(p.out, "Sessions already open are not captured: only a new session (or /clear) in an included project counts.")
+	terminal.Println(p.out, "Sessions already open are not captured: only one started after setup, in an included project, counts.")
 	terminal.Println(p.out, "Check progress with agent-archive status.")
 }
 
-func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) error {
+// chooseCapture asks for the apps and projects to capture. known, when not
+// nil, lists the projects the apps' history mentions.
+func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, known func(config.Config) []backfill.KnownProject) error {
+	if known == nil {
+		known = func(config.Config) []backfill.KnownProject { return nil }
+	}
 	p.step(1, "Choose what to capture")
 	err := chooseHarnesses(p, env.detectHarnesses(userHome), cfg)
 	if err != nil {
@@ -523,7 +540,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 						return e
 					}
 					if more {
-						cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, nil, knownProjects(env, userHome, *cfg), userHome)
+						cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, nil, known(*cfg), userHome)
 						if err != nil {
 							return err
 						}
@@ -533,7 +550,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 		}
 	}
 	if !acceptedProject {
-		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), knownProjects(env, userHome, *cfg), userHome)
+		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), known(*cfg), userHome)
 		if err != nil {
 			return err
 		}
@@ -649,6 +666,9 @@ func promptR2Location(p *prompter, cfg *credentials.Config) (fromURL bool, err e
 		if err == nil {
 			var endpoint string
 			if endpoint, err = credentials.R2Endpoint(loc.Endpoint, loc.AccountID); err == nil {
+				if !loc.Cloudflare() {
+					p.warn("That isn't a Cloudflare R2 address; it is used as an S3-compatible endpoint.")
+				}
 				if loc.Bucket != "" {
 					cfg.Bucket = loc.Bucket
 					terminal.Printf(p.out, "Bucket: %s\n", cfg.Bucket)
@@ -921,8 +941,8 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 		if answer == "" {
 			return result, nil
 		}
-		if numbers, ok := parseNumbers(answer); ok && len(offered) > 0 {
-			if slices.ContainsFunc(numbers, func(n int) bool { return n < 1 || n > len(offered) }) {
+		if numbers, ok, inRange := parseNumbers(answer, len(offered)); ok && len(offered) > 0 {
+			if !inRange {
 				terminal.Printf(p.out, "Enter numbers from 1 to %d, or a project path.\n", len(offered))
 				continue
 			}
@@ -963,26 +983,32 @@ func projectDir(path, home string) (string, error) {
 	return root, nil
 }
 
-// parseNumbers reads a list of numbers such as "1 3", "1,3", or "2-4". ok is
-// false for anything else, such as a path.
-func parseNumbers(answer string) (numbers []int, ok bool) {
+// parseNumbers reads a list of numbers from 1 to limit, such as "1 3",
+// "1,3", or "2-4". ok is false for anything else, such as a path; inRange is
+// false when a number is outside 1 to limit, and no range is expanded then.
+func parseNumbers(answer string, limit int) (numbers []int, ok, inRange bool) {
+	inRange = true
 	for _, field := range strings.FieldsFunc(answer, func(r rune) bool { return r == ' ' || r == ',' }) {
 		first, last, isRange := strings.Cut(field, "-")
 		from, err := strconv.Atoi(first)
 		if err != nil {
-			return nil, false
+			return nil, false, false
 		}
 		to := from
 		if isRange {
 			if to, err = strconv.Atoi(last); err != nil || to < from {
-				return nil, false
+				return nil, false, false
 			}
+		}
+		if from < 1 || to > limit {
+			inRange = false
+			continue
 		}
 		for n := from; n <= to; n++ {
 			numbers = append(numbers, n)
 		}
 	}
-	return numbers, len(numbers) > 0
+	return numbers, len(numbers) > 0 || !inRange, inRange
 }
 
 // displayPath shows path with the home directory as ~.
@@ -1012,17 +1038,29 @@ func lastUsed(at, now time.Time) string {
 	return fmt.Sprintf("%d days ago", days)
 }
 
-// knownProjects lists the projects the apps' session history mentions
-// that cfg does not, most recent first (backfill.KnownProjects). It is only
-// an offer, so a failure or a slow disk leaves the list empty.
-func knownProjects(env Env, userHome string, cfg config.Config) []backfill.KnownProject {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	projects, err := backfill.KnownProjects(ctx, env.backfillEnvironment(userHome, cfg), cfg)
-	if err != nil {
-		return nil
+// knownProjectsOnce returns a function listing the projects the apps'
+// session history mentions that a configuration does not, most recent
+// first (backfill.KnownProjects). A scan reads every transcript's first
+// records, so it is kept for the rest of the run and repeated only for
+// another set of projects, which changes how sessions resolve. It is only an
+// offer, so a failure or a slow disk leaves the list empty.
+func knownProjectsOnce(env Env, userHome string) func(config.Config) []backfill.KnownProject {
+	var scannedFor string
+	var projects []backfill.KnownProject
+	return func(cfg config.Config) []backfill.KnownProject {
+		key, _ := json.Marshal(cfg.Archive.Projects)
+		if projects != nil && string(key) == scannedFor {
+			return projects
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		found, err := backfill.KnownProjects(ctx, env.backfillEnvironment(userHome, cfg), cfg)
+		if err != nil {
+			return nil
+		}
+		scannedFor, projects = string(key), found
+		return projects
 	}
-	return projects
 }
 
 // includedProjects counts the projects capture is on for.
@@ -1124,4 +1162,38 @@ func backfilledProjects(env Env) map[string]bool {
 		}
 	}
 	return out
+}
+
+// temporaryExecutableProblem says why exe cannot be what the hooks and the
+// LaunchAgent run, or "" when it can: go run and go test build into a
+// go-build directory that Go deletes on exit, and macOS clears the
+// temporary folder.
+func (e Env) temporaryExecutableProblem(exe string) string {
+	paths := []string{filepath.Clean(exe)}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		paths = append(paths, resolved)
+	}
+	for _, path := range paths {
+		for dir := filepath.Dir(path); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			if strings.HasPrefix(filepath.Base(dir), "go-build") {
+				return exe + " is a temporary build (from go run or go test) that Go deletes when it exits, so the hooks and background collector would stop working."
+			}
+		}
+	}
+	temp := e.tempDir()
+	if temp == "" {
+		return ""
+	}
+	temps := []string{filepath.Clean(temp)}
+	if resolved, err := filepath.EvalSymlinks(temp); err == nil {
+		temps = append(temps, resolved)
+	}
+	for _, path := range paths {
+		for _, dir := range temps {
+			if local.PathWithin(path, dir) {
+				return fmt.Sprintf("%s is in the temporary folder %s, which is cleared automatically, so the hooks and background collector would stop working.", exe, temp)
+			}
+		}
+	}
+	return ""
 }

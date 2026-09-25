@@ -104,10 +104,16 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 
 - The R2 secret access key comes from `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY`,
   or else from standard input. It is never a flag. The access key ID can
-  also come from `AGENT_ARCHIVE_R2_ACCESS_KEY_ID`.
+  also come from `AGENT_ARCHIVE_R2_ACCESS_KEY_ID`. Setup removes both
+  variables once read, so no command it runs inherits them. Without a new
+  key, the one already stored is kept.
+- If saving fails after the storage check, a new R2 key stays with the
+  unfinished setup; run `agent-archive setup` to finish or discard it.
 - `--r2-account` also takes the bucket URL, which names the bucket too.
 - For S3, `--region` defaults to the profile's region.
 - `--apps` defaults to the apps already set up, else those found on this Mac.
+  It can add apps but never removes one: it must name every app already set
+  up, and to remove an app (and its hooks) you run `agent-archive setup`.
 - `--project` adds to the projects already set up; repeat it for several.
 - Without storage flags, the storage already set up is kept, so
   `agent-archive setup --yes --project DIR` just adds a project.
@@ -180,8 +186,8 @@ Setup ends with one line per app on what to do next:
 - **Cursor:** nothing to approve; start a new Agent chat.
 
 Sessions already open are not captured: capture needs a provable fresh
-start, so only a new session (or `/clear` in Codex or Claude Code) in an
-included project counts. Setup finishes without waiting for it. Check
+start, so only a new session in an included project counts. In Codex and
+Claude Code, `/clear` also starts one; in Cursor, only a new chat does. Setup finishes without waiting for it. Check
 progress with:
 
 ```sh

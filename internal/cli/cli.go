@@ -124,6 +124,10 @@ type Env struct {
 	// Executable returns the absolute path setup installs into hook
 	// commands and the LaunchAgent. Defaults to os.Executable.
 	Executable func() (string, error)
+	// TempDir is the temporary folder setup refuses to install an
+	// executable from, since it is cleared automatically. Defaults to
+	// os.TempDir; tests set it because their executables live in theirs.
+	TempDir func() string
 	// UserHomeDir is the real user home directory — where hook config files
 	// and ~/Library/LaunchAgents live — as distinct from Home, which is
 	// agent-archive's own (possibly redirected) private data directory.
@@ -253,6 +257,13 @@ func (e Env) accountHome() string {
 	return home
 }
 
+func (e Env) tempDir() string {
+	if e.TempDir != nil {
+		return e.TempDir()
+	}
+	return os.TempDir()
+}
+
 func (e Env) userHomeDir() (string, error) {
 	if e.UserHomeDir != nil {
 		return e.UserHomeDir()
@@ -318,15 +329,16 @@ var openKeychain = func() (credentials.CredentialStore, error) {
 	return store, nil
 }
 
-// notSetUp reports whether this Mac has no saved configuration. It reads
+// notSetUp reports whether this Mac is not archiving: it has no saved
+// configuration, or uninstall left one with archiving disabled. It reads
 // only, and says nothing when the data directory cannot be read.
 func notSetUp(env Env) bool {
 	home, err := env.readHome()
 	if err != nil {
 		return false
 	}
-	_, found, err := config.Load(home)
-	return err == nil && !found
+	cfg, found, err := config.Load(home)
+	return err == nil && !(found && cfg.Archive.Enabled)
 }
 
 const usage = `Agent Archive — archive coding-agent sessions to your private storage.

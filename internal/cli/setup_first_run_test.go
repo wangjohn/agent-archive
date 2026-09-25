@@ -2,8 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -11,6 +13,9 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 )
+
+// testR2Account is a well-formed, made-up Cloudflare account ID.
+const testR2Account = "0123456789abcdef0123456789abcdef"
 
 // writeClaudeSession leaves a Claude Code transcript that ran in cwd, last
 // changed at modified, where setup's project discovery finds it.
@@ -104,15 +109,15 @@ func TestSetupTakesAccountAndBucketFromTheR2BucketURL(t *testing.T) {
 	kc := newFakeKeychain()
 	env := setupTestEnv(t, home, t.TempDir(), kc, time.Now())
 	input := strings.Join([]string{"y", "n", "n", project, "", "r2",
-		"https://0123abcd.r2.cloudflarestorage.com/my-bucket/folder",
-		"https://0123abcd.r2.cloudflarestorage.com/my-bucket",
+		"https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket/folder",
+		"https://" + testR2Account + ".r2.cloudflarestorage.com/my-bucket",
 		"ACCESS", "secret-value", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	if strings.Contains(output, "Bucket name") || !strings.Contains(output, "Bucket: my-bucket") || !strings.Contains(output, "only the bucket") {
 		t.Fatalf("unexpected prompts:\n%s", output)
 	}
 	cfg, _, _ := config.Load(home)
-	if cfg.Storage.Bucket != "my-bucket" || cfg.Storage.R2AccountID != "0123abcd" || cfg.Storage.R2Endpoint != "https://0123abcd.r2.cloudflarestorage.com" {
+	if cfg.Storage.Bucket != "my-bucket" || cfg.Storage.R2AccountID != testR2Account || cfg.Storage.R2Endpoint != "https://"+testR2Account+".r2.cloudflarestorage.com" {
 		t.Fatalf("storage %+v", cfg.Storage)
 	}
 }
@@ -125,9 +130,9 @@ func TestSetupNextStepsNameEachApp(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	output := setupRun(t, env, s3SetupInput("b", "us-east-1", "profile", true, true, true, t.TempDir()), 0)
 	for _, want := range []string{
-		"Codex: run /hooks and approve the archive hooks",
-		"Claude Code: nothing to approve; start a new session.",
-		"Cursor: nothing to approve; start a new Agent chat.",
+		"Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).",
+		"Claude Code: nothing to approve; start a new session (or /clear).",
+		"Cursor: nothing to approve; start a new Agent chat.\n",
 		"Sessions already open are not captured",
 	} {
 		if !strings.Contains(output, want) {
@@ -175,5 +180,43 @@ func TestSetupReviewShowsSessionsOnlyWhenNotTheDefault(t *testing.T) {
 		if got := out.String(); tc.want == "" && strings.Contains(got, "Sessions") || tc.want != "" && !strings.Contains(got, tc.want) {
 			t.Errorf("%s: review:\n%s", tc.name, got)
 		}
+	}
+}
+
+// A number or range beyond the list is refused without being expanded, so a
+// typo such as 1-999999999 costs nothing.
+func TestParseNumbersBoundsRangesBeforeExpanding(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		answer      string
+		numbers     []int
+		ok          bool
+		inRangeWant bool
+	}{
+		{"1 3", []int{1, 3}, true, true},
+		{"2-4,1", []int{2, 3, 4, 1}, true, true},
+		{"1-999999999", nil, true, false},
+		{"0", nil, true, false},
+		{"~/src", nil, false, false},
+		{"3-1", nil, false, false},
+	} {
+		numbers, ok, inRange := parseNumbers(tc.answer, 5)
+		if ok != tc.ok || inRange != tc.inRangeWant || tc.inRangeWant && !slices.Equal(numbers, tc.numbers) {
+			t.Errorf("parseNumbers(%q) = %v, %v, %v", tc.answer, numbers, ok, inRange)
+		}
+	}
+}
+
+// After a plain uninstall the configuration stays with archiving disabled;
+// with no arguments, agent-archive says it is not set up.
+func TestNoArgsSaysNotSetUpAfterUninstall(t *testing.T) {
+	t.Parallel()
+	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", true, false, false, t.TempDir()))
+	if code := Run([]string{"uninstall", "--yes"}, nil, io.Discard, io.Discard, env); code != 0 {
+		t.Fatalf("uninstall: exit %d", code)
+	}
+	var out strings.Builder
+	if code := Run(nil, nil, &out, nil, env); code != 0 || !strings.HasPrefix(out.String(), "Not set up yet") {
+		t.Fatalf("exit %d\n%s", code, &out)
 	}
 }

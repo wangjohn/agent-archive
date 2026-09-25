@@ -94,7 +94,8 @@ An interrupted setup is recovered on the next run.
   --region REGION       S3: the bucket's region (default: the profile's)
   --project DIR         Capture this project, besides any saved (repeatable)
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
-                        saved apps, else those found on this Mac)
+                        saved apps, else those found on this Mac). It must
+                        name every app set up now: --yes never removes one
 With --yes, the R2 secret access key is read from
 AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY, or else from standard input.
 Example: agent-archive setup

@@ -108,44 +108,41 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if err = recoverSetup(home, env); err != nil {
 		return err
 	}
-	existing, _, err := config.Load(home)
+	existing, found, err := config.Load(home)
 	if err != nil {
 		return err
 	}
+	// After uninstall the configuration stays with archiving disabled: its
+	// answers are defaults, and no app's hooks are installed.
+	installed := found && existing.Archive.Enabled
 	if _, saved, _, e := readDraft(home); e != nil || saved {
 		return fmt.Errorf("an unfinished setup is saved in %s; run agent-archive setup to finish or discard it first", draftPath(home))
 	}
-	cfg := existing
-	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
-	if err = setupApps(&cfg, opts.apps, env.detectHarnesses(userHome)); err != nil {
-		return err
-	}
-	if problems := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(problems) > 0 {
-		return &otherInstallationError{problems: problems}
-	}
-	if err = setupProjects(&cfg, opts.projects, userHome); err != nil {
-		return err
-	}
-	secret, err := setupStorageFromFlags(&cfg, opts, env)
+	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env)
 	if err != nil {
 		return err
 	}
-	if cfg.RetentionDays <= 0 {
-		cfg.RetentionDays = defaultRetentionDays
-	}
 	p := newPrompter(stdin, out)
 	p.now = env.now
+	if cfg.Storage.Provider == credentials.ProviderR2 && !(credentials.R2Location{Endpoint: cfg.Storage.R2Endpoint}).Cloudflare() {
+		p.warn("--r2-account isn't a Cloudflare R2 address; it is used as an S3-compatible endpoint.")
+	}
 	if cfg.Storage.Provider == credentials.ProviderR2 && secret.AccessKeyID != "" {
 		if secret.SecretAccessKey, err = readR2Secret(p, stdin, env); err != nil {
 			return err
 		}
 	}
+	// The apps' version commands and launchctl run below; they must not
+	// inherit the R2 key.
+	env.forgetR2Variables()
 	discoveries := env.discoverApplications(userHome)
 	discoveredAt := env.now()
 
 	// A new R2 key is staged under a draft, as interactive setup stages it,
-	// so an interrupted run leaves a setup to finish or discard, and a
-	// failed one removes the key again.
+	// so an interrupted run leaves a setup to finish or discard. A run that
+	// fails before the transaction starts removes the key again; once it has
+	// started, the key stays with the draft, as in interactive setup, since
+	// an incomplete rollback can leave the configuration naming it.
 	draft := setupDraft{Version: draftFormat, Config: cfg, Step: 2}
 	discard := func(failure error) error {
 		if e := discardDraft(home, draft, existing, env); e != nil {
@@ -179,9 +176,34 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	terminal.Printf(out, "Apps: %s. Projects: %d. Storage: %s bucket %s.\n", appList(cfg.Harnesses), includedProjects(cfg.Archive.Projects), providerName(cfg.Storage.Provider), cfg.Storage.Bucket)
 	printReviewPrivacy(p, cfg)
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
-		return discard(err)
+		if len(draft.StagedRefs) > 0 {
+			return fmt.Errorf("%w; the new R2 key is kept with the unfinished setup: run agent-archive setup to finish or discard it", err)
+		}
+		return err
 	}
 	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt)
+}
+
+// setupAnswers is the configuration setup --yes saves, before its storage
+// is checked: existing with the flags' answers. secret carries a new R2
+// access key ID, if one was given.
+func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
+	cfg := existing
+	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
+	if err := setupApps(&cfg, opts.apps, env.detectHarnesses(userHome), installed); err != nil {
+		return cfg, credentials.R2Credentials{}, err
+	}
+	if problems := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(problems) > 0 {
+		return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: problems}
+	}
+	if err := setupProjects(&cfg, opts.projects, userHome); err != nil {
+		return cfg, credentials.R2Credentials{}, err
+	}
+	secret, err := setupStorageFromFlags(&cfg, opts, env)
+	if cfg.RetentionDays <= 0 {
+		cfg.RetentionDays = defaultRetentionDays
+	}
+	return cfg, secret, err
 }
 
 // stageR2Key saves a new R2 key in the Keychain under a fresh reference,
@@ -217,9 +239,11 @@ func providerName(provider string) string {
 }
 
 // setupApps sets cfg's apps from --apps, or else keeps the saved apps, or
-// else takes the detected ones. As in interactive setup, an app it includes
-// is no longer declined, and one --apps leaves out of the saved apps is.
-func setupApps(cfg *config.Config, apps string, detected []string) error {
+// else takes the detected ones. An app it includes is no longer declined.
+// It never removes an app: when installed, --apps must name every app whose
+// hooks are installed, since taking them out is a choice for interactive
+// setup, which shows the hooks it removes.
+func setupApps(cfg *config.Config, apps string, detected []string, installed bool) error {
 	var chosen []string
 	switch {
 	case apps != "":
@@ -244,11 +268,22 @@ func setupApps(cfg *config.Config, apps string, detected []string) error {
 			return errors.New("no apps were found on this Mac; pass --apps (codex, claude, cursor)")
 		}
 	}
+	if installed {
+		var dropped []string
+		for _, app := range cfg.Harnesses {
+			if !containsString(chosen, app) {
+				dropped = append(dropped, app)
+			}
+		}
+		if len(dropped) > 0 {
+			return fmt.Errorf("--apps leaves out %s, which this Mac captures now; --yes never removes an app's hooks, so name every app in --apps, or run agent-archive setup to remove one", appList(dropped))
+		}
+	}
 	var ordered, declined []string
 	for _, app := range allHarnesses {
 		if containsString(chosen, app) {
 			ordered = append(ordered, app)
-		} else if containsString(cfg.DeclinedHarnesses, app) || containsString(cfg.Harnesses, app) {
+		} else if containsString(cfg.DeclinedHarnesses, app) {
 			declined = append(declined, app)
 		}
 	}
@@ -373,6 +408,16 @@ func readR2Secret(p *prompter, stdin io.Reader, env Env) (string, error) {
 		return "", fmt.Errorf("the R2 secret access key is needed: set %s or pass it on standard input", envR2SecretAccessKey)
 	}
 	return value, nil
+}
+
+// forgetR2Variables removes the R2 key's environment variables from this
+// process, so no command setup runs inherits them. An injected LookupEnv
+// (tests) reads no process environment, so there is nothing to remove.
+func (e Env) forgetR2Variables() {
+	if e.LookupEnv == nil {
+		_ = os.Unsetenv(envR2AccessKeyID)
+		_ = os.Unsetenv(envR2SecretAccessKey)
+	}
 }
 
 func lookupEnvTrimmed(env Env, key string) string {
