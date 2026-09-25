@@ -463,16 +463,20 @@ func largeCodexTranscript(size int) string {
 
 // The plan's target: 300 unchanged sessions of 400 KB each in well under one
 // second per pass, with no per-session journal, cache, or signature writes
-// and no reads of the published cache at all. The documented number comes
-// from the plain run; under the race detector the same invariants are checked
-// on 20 sessions, because setup alone would otherwise take minutes.
+// and no reads of the published cache at all.
+//
+// The invariants (nothing read, nothing written) are checked on every run,
+// on 20 sessions of 64 KB. The documented number needs the full 300 sessions
+// (setup alone publishes 120 MB, most of the package's test time) and no race
+// detector, so it runs only with AGENT_ARCHIVE_PERF=1 in a plain build: CI
+// has a step for exactly that, since its main run uses -race.
 func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
-	sessions, size := 300, 400*1024
-	if raceEnabled {
-		sessions = 20
-	}
-	if testing.Short() {
-		t.Skip("builds and publishes up to 120 MB of synthetic transcripts")
+	sessions, size, timed := 20, 64*1024, false
+	if os.Getenv(perfEnv) != "" {
+		if raceEnabled {
+			t.Skip("the wall-clock target is for a plain build, not the race detector")
+		}
+		sessions, size, timed = 300, 400*1024, true
 	}
 	home := t.TempDir()
 	local, err := state.Open(home)
@@ -536,8 +540,10 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 	}
 
 	// For comparison, the same pass without the short-circuit: remove the
-	// signatures so every session is read, filtered, compared, and journaled.
+	// signatures of up to 20 sessions so they are read, filtered, compared,
+	// and journaled. (Twenty prove the detector; all 300 would add a minute.)
 	signatures, _ := filepath.Glob(filepath.Join(home, "scan-signatures", "*.json"))
+	signatures = signatures[:min(len(signatures), 20)]
 	for _, path := range signatures {
 		if err := os.Remove(path); err != nil {
 			t.Fatal(err)
@@ -556,18 +562,20 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 			changed++
 		}
 	}
-	if changed < sessions {
-		t.Fatalf("the snapshot saw only %d changed paths after a full pass over %d sessions", changed, sessions)
+	if changed < len(signatures) {
+		t.Fatalf("the snapshot saw only %d changed paths after a full pass over %d sessions", changed, len(signatures))
 	}
 
-	t.Logf("%d unchanged sessions of %d KB: short-circuit pass %s (%.2f ms/session); full re-read pass %s", sessions, size/1024, elapsed, float64(elapsed.Microseconds())/1000/float64(sessions), fullScan)
-	// The wall-clock target is the plain run's number. Under the race
-	// detector on a loaded CI machine the same pass proves the same thing
-	// (nothing read, nothing written) without a deadline that can only flake.
-	if !raceEnabled && elapsed >= time.Second {
+	t.Logf("%d unchanged sessions of %d KB: short-circuit pass %s (%.2f ms/session); full re-read of %d %s", sessions, size/1024, elapsed, float64(elapsed.Microseconds())/1000/float64(sessions), len(signatures), fullScan)
+	if timed && elapsed >= time.Second {
 		t.Fatalf("an unchanged pass took %s, want well under one second", elapsed)
 	}
 }
+
+// perfEnv, set to anything, runs the performance tests at their documented
+// size with their wall-clock assertions (see
+// TestUnchangedSessionsCostNoWritesAndStayFast).
+const perfEnv = "AGENT_ARCHIVE_PERF"
 
 // The on-disk published cache after one publication, for the ledger: the
 // shared-copy marker roughly halves it.
