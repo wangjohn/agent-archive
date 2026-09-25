@@ -52,6 +52,7 @@ func onlyRegistration(t *testing.T, home string) (archive.SessionRegistration, b
 func TestSyncStillExpiresSessionsOfAnExcludedProject(t *testing.T) {
 	now := time.Now().UTC()
 	env, home, _, bucket := publishedThroughSync(t, now)
+	storageClockFollows(t, func() time.Time { return env.Now() })
 	reg, _ := onlyRegistration(t, home)
 	metadataKey, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 
@@ -107,6 +108,7 @@ func TestSyncPrunesPreviousDestinationSessionsWithoutTouchingTheBucket(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			now := time.Now().UTC()
 			env, home, _, bucket := publishedThroughSync(t, now)
+			storageClockFollows(t, func() time.Time { return env.Now() })
 			reg, _ := onlyRegistration(t, home)
 			if reg.DestinationID == "" {
 				t.Fatal("the hook registered the session without its destination ID")

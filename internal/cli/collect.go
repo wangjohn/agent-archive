@@ -53,6 +53,12 @@ var (
 	sweepTimeout        = 5 * time.Minute
 )
 
+// sweepClockForTest, when a test sets it, adjusts the retention sweep's
+// clock checks (retention.Options.ServerClock and PreviousScanAt). A test
+// that moves Env.Now months ahead moves only this Mac's clock; the sweep
+// rightly refuses to delete by it unless the storage clock moves too.
+var sweepClockForTest func(*retention.Options)
+
 // runCollectCommand implements the hidden `_collect` entry point
 // install.LaunchAgent schedules every 60 seconds. Unlike `sync`, it never
 // reports "already running" as a problem: a scheduled tick finding the
@@ -199,6 +205,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		}
 	}
 
+	// The previous pass's time, read before this pass overwrites it: the
+	// retention sweep checks the clock against it (see retention.Options).
+	var previousScanAt time.Time
+	if previous, err := localStore.LoadStatus(); err == nil {
+		previousScanAt = previous.LastScanAt
+	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
 		MachineID:            cfg.MachineID,
 		SupplementalEvidence: skillObserver(env),
@@ -250,7 +262,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 
 	sweepCtx, cancelSweep := context.WithTimeout(context.Background(), sweepTimeout)
 	defer cancelSweep()
-	sweepResult, sweepErr := retention.Sweep(sweepCtx, localStore, objectStore, retention.Options{
+	sweepOptions := retention.Options{
 		Now: env.Now,
 		// Retention sweeps every session this machine registered, including
 		// ones cfg.AcceptSession no longer admits for publication: an excluded
@@ -263,9 +275,14 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		// DestinationSince.
 		CurrentDestination: cfg.InCurrentDestination,
 		// Outstanding work defers expiry only when the collector will do it.
-		Publishable:   cfg.AcceptSession,
-		SessionMaxAge: time.Duration(cfg.RetentionDays) * 24 * time.Hour,
-	})
+		Publishable:    cfg.AcceptSession,
+		SessionMaxAge:  time.Duration(cfg.RetentionDays) * 24 * time.Hour,
+		PreviousScanAt: previousScanAt,
+	}
+	if sweepClockForTest != nil {
+		sweepClockForTest(&sweepOptions)
+	}
+	sweepResult, sweepErr := retention.Sweep(sweepCtx, localStore, objectStore, sweepOptions)
 	if sweepErr != nil {
 		passErr := errors.Join(verifyErr, fmt.Errorf("collection succeeded but retention cleanup failed: %w", sweepErr))
 		recordPreflightError(localStore, passErr)
@@ -273,6 +290,12 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	}
 	if len(sweepResult.Errors) > 0 {
 		recordRetentionErrors(localStore, &result, sweepResult)
+	}
+	// A clock that disagrees with the storage service's holds every deletion
+	// by age until it is fixed, which status must say. A hold for one pass
+	// after a long gap (the Mac was off) clears itself and says nothing.
+	if held := sweepResult.Held; held != nil && !errors.Is(held, retention.ErrClockJumped) {
+		addStatusProblem(localStore, fmt.Sprintf("retention: %v", held))
 	}
 	if verifyErr != nil {
 		recordPreflightError(localStore, verifyErr)
@@ -325,6 +348,21 @@ func recordRetentionErrors(localStore *state.Store, result *collector.Result, sw
 		return
 	}
 	status.LastError = fmt.Sprintf("%d session(s) failed to scan, publish, or clean up", len(result.Errors))
+	_ = localStore.SaveStatus(status)
+}
+
+// addStatusProblem adds problem to Status.LastError, after whatever the pass
+// already recorded there, rather than replacing it. Best effort, like
+// recordPreflightError.
+func addStatusProblem(localStore *state.Store, problem string) {
+	status, err := localStore.LoadStatus()
+	if err != nil {
+		return
+	}
+	if status.LastError != "" {
+		problem = status.LastError + "; " + problem
+	}
+	status.LastError = problem
 	_ = localStore.SaveStatus(status)
 }
 

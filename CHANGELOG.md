@@ -136,9 +136,38 @@ can list them, inspect them, and hand one to another agent.
 - Backfill: undoing an import keeps a project that another import still has
   sessions in, and says so; the undo of the last such import excludes it.
   Ctrl-C while the plan is being made stops cleanly (#42).
+- Long sessions keep being captured: the 64 MiB limit now applies to what
+  the privacy filter keeps, not to the raw transcript, whose bulk is tool
+  output the filter drops (raw files up to 256 MiB are read). A session over
+  the limit keeps its last snapshot and `status` now says capture of it has
+  stopped. Backfill counts a transcript as too large by the same limits.
 
 ### Fixed
 
+- Retention can no longer delete your archive because this Mac's clock is
+  wrong. Every age it compares was stamped by that clock, so a clock set a
+  year ahead deleted every session within a minute. Before deleting anything
+  by age it now checks its clock against the storage service's, and deletes
+  nothing while the Mac is more than an hour ahead (`status` says why). The
+  check runs only when something is due, and at most once an hour while it
+  holds deletion, so a clock that stays wrong does not write a check object
+  to the bucket every minute; a
+  capture time stamped while the clock was ahead no longer keeps a session
+  past retention. See [bucket layout](docs/reference/bucket-layout.md).
+- A retention sweep that runs out of time leaves the rest for the next pass
+  instead of reporting every remaining session as failed (sync exited 1 and
+  status said "Needs attention" when a large import expired).
+- A pass no longer costs anything for sessions whose transcript the app has
+  deleted, or for subagents that are already linked: 200 such sessions took
+  two seconds a pass and 400 subagents 25 seconds; now each is one stat.
+- A local state file that no longer decodes (published, pending, or
+  superseded state; a scan journal; the session index; a removal record) is
+  moved aside or rebuilt once instead of failing its session on every pass;
+  a corrupt superseded ledger no longer re-uploads a session on every pass,
+  and a session whose state was lost is still deleted from the bucket when
+  it expires.
+- Lock files of rejected subagents and forgotten sessions are removed, and
+  stale temporary files in the `list` cache are swept.
 - `uninstall --delete-local-data` always warned of 0 pending sessions; it now
   counts them, and stops if one registers while you confirm.
 - A damaged or newer-version saved setup no longer blocks setup forever:
@@ -196,5 +225,9 @@ can list them, inspect them, and hand one to another agent.
   issue and PR templates (#38).
 - Local session state moved into its own package, `internal/state`, loaded
   once per collector pass (#43); more tests for backfill (#45).
+- Retention owns whole-session deletion and no longer imports the collector
+  (enforced by depguard); every state directory has a declared corruption
+  policy, checked by a test. CI runs the performance assertions in a plain
+  build, since the race detector skips them.
 - Documentation reorganized under `docs/` with an index, a threat-model-first
   privacy page, reference pages, and a link check that runs with the tests.

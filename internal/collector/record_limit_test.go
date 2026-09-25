@@ -86,8 +86,8 @@ func TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges(t *testing.T) {
 				t.Fatalf("gap code = %q", state.BlockedReasonRecordTooLarge)
 			}
 			status, _ := local.LoadStatus()
-			if status.LastError != "" {
-				t.Fatalf("status reports an error: %q", status.LastError)
+			if !strings.Contains(status.LastError, "size limit") {
+				t.Fatalf("status does not name the size-limit gap: %q", status.LastError)
 			}
 			cache := publishedPath(local, "session-1")
 			before := mtime(t, cache)

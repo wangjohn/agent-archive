@@ -363,7 +363,7 @@ var skipLabels = map[SkipReason]string{
 	SkipIdentityMismatch:      "with IDs that do not match the file",
 	SkipEmpty:                 "with no conversation",
 	SkipUnsafeFormat:          "in a format the archive cannot read safely",
-	SkipTooLarge:              "larger than 64 MiB",
+	SkipTooLarge:              "over the size limit",
 	SkipStartUnknown:          "%s whose start time could not be determined",
 	SkipStartInFuture:         "starting in the future (check the clock)",
 }

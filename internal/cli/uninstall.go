@@ -422,7 +422,7 @@ func checkRemovableHome(home, userHome string) error {
 var localStateEntries = []string{
 	"config.json", "setup-draft.json", "setup-transaction.json",
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
-	"status.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
+	"status.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir,
 }
