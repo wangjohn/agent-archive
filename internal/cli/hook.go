@@ -51,9 +51,14 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	// fields at all, and we must never fail loudly on the harness's input.
 	_ = json.NewDecoder(stdin).Decode(&payload)
 
-	home, err := env.home()
+	// Resolved without creating it: a hook left behind after the data
+	// directory was deleted has nothing to record and must not recreate it.
+	home, err := env.readHome()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: resolve home: %v\n", err)
+		return 0
+	}
+	if _, err := os.Stat(home); errors.Is(err, os.ErrNotExist) {
 		return 0
 	}
 	if err := handleHookEvent(home, *harness, payload, env.now()); err != nil {
