@@ -299,7 +299,7 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   `subscription_key`, `secret(s)`, `password(s)`, `passwd`, `passphrase`,
   `pgpass`, `token`, `authorization`, `bearer`, `credential(s)`,
   `cookie(s)`, `dockerconfigjson`; filter 12: `access_key_id`,
-  `seed_phrase`, `recovery_phrase`, `mnemonic_phrase`), with `_`, `-`, `.`, a space, or nothing
+  `seed_phrase`, `recovery_phrase`), with `_`, `-`, `.`, a space, or nothing
   between the parts of a two-word term (`API Key: …`), in any case,
   with anything glued on before it; or in `pass` or `creds` alone or after a separator
   or a camelCase boundary (`DB_PASS`, `redis.pass`, `dbPass`, but not
@@ -389,11 +389,15 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   its `LS0tLS1CRUdJTi` prefix, certificates included (filter 12).
 - Docker `config.json` `"auth"` and `"identitytoken"` values shown as text
   (filter 12).
-- `.pgpass` lines (`host:port:database:user:password`): the password, in a
-  string that names the file (`cat ~/.pgpass`, a heredoc or `echo` into it,
-  `PGPASSFILE`) (filter 12).
+- `.pgpass` lines (`host:port:database:user:password`): the password, to
+  the end of its line, when the port is 5432, 6432, or `*` (a file read by
+  the Claude Code Read tool), and with any port in a string that mentions
+  `.pgpass` or `PGPASSFILE` (`cat ~/.pgpass`, a heredoc into it) (filter
+  12).
 - Wallet seed phrases: 12 to 24 words of three to eight letters after a
-  name holding `mnemonic` (`MNEMONIC="…"`, `mnemonic: …`) (filter 12).
+  name holding `mnemonic` (`MNEMONIC="…"`, `--mnemonic "…"`, a
+  comma-separated list or an array), or exactly 12, 15, 18, 21, or 24 after
+  one holding `seed` (`SEED=…`, `wallet seed:`) (filter 12).
   `SEED_PHRASE=` and `Secret Recovery Phrase:` are credential names above.
 - JWTs: three base64url segments, the first beginning with `eyJ`.
 - URL userinfo: in `scheme://user:pass@host` (or `scheme://user@host`) the
@@ -463,12 +467,17 @@ Known misses.
   `AKIA…` shape and dropped as tool arguments, and an R2 access key ID is
   the ID of the Cloudflare API token behind it. Other key IDs
   (`KMS_KEY_ID`, `private_key_id` aside) are kept.
-- A `.pgpass` file shown without its name in the same string, as the
-  Claude Code Read tool's result is (the path is in the call, a separate
-  record), keeps its passwords: five colon-separated fields alone are too
-  common a shape (timestamps, grep output) to redact. A seed phrase in
-  another language, or not after a `mnemonic` or seed-phrase name, is kept
-  too.
+- **A `.pgpass` line on an unusual port, shown without the file's name
+  in the same string, keeps its password.** The Claude Code Read tool
+  shows a file's lines with its path in the call, a separate record, so
+  `db:15432:app:alice:secret` read that way is kept: five colon-separated
+  fields alone are too common a shape (compiler diagnostics, log lines) to
+  redact. Lines on port 5432, 6432, or `*` are redacted wherever they
+  appear.
+- A seed phrase is recognized only after a `mnemonic` or seed name, on one
+  line: a numbered list (`1. legal 2. winner …`), a YAML block sequence
+  (`mnemonic:` then `- legal` lines), a phrase in another language, or one
+  with words outside three to eight letters is kept.
 - A credential in prose (`the password is hunter2`), a Markdown table row
   (`| password | hunter2 |`), a name spelled with full-width letters or a
   zero-width space, or a leetspeak name (`p4ssword=`) is not recognized;

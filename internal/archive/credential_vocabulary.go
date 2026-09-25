@@ -52,7 +52,7 @@ var credentialVocabulary = []credentialTerm{
 	{words: "encryption key"}, {words: "signing key"}, {words: "master key"}, {words: "account key"},
 	{words: "shared access key"}, {words: "shared access signature"}, {words: "dockerconfigjson"},
 	{words: "auth key"}, {words: "subscription key"}, {words: "access key id"},
-	{words: "seed phrase"}, {words: "recovery phrase"}, {words: "mnemonic phrase"},
+	{words: "seed phrase"}, {words: "recovery phrase"},
 	{words: "secret"}, {words: "secrets"}, {words: "password"}, {words: "passwords"}, {words: "passwd"},
 	{words: "passphrase"}, {words: "token"}, {words: "authorization"}, {words: "bearer"},
 	{words: "credential"}, {words: "credentials"}, {words: "cookie"}, {words: "cookies"}, {words: "pgpass"},

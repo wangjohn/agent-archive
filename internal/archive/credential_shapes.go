@@ -173,6 +173,19 @@ var credentialShapeTable = []struct {
 	{`\bLS0tLS1CRUdJTi[A-Za-z0-9+/]{20,}={0,2}`, []string{"ls0tls1crudjti"}},
 }
 
+// The parts of a seed phrase (see credentialContextPatterns): a word of the
+// BIP-39 list's lengths; what separates two words (spaces or a comma), and
+// in an array a closing quote, a comma, and an opening quote; and what may
+// follow the phrase: a closing quote or bracket, or the end of the line,
+// possibly after a comment. A comma does not end a phrase, so a list of
+// more words than a seed phrase has is not cut to one.
+const (
+	seedWord           = `[a-z]{3,8}`
+	seedSeparator      = `(?:[ \t]*,[ \t]*|[ \t]+)`
+	seedArraySeparator = `(?:[ \t]*,[ \t]*|[ \t]+|\\*["'][ \t]*,[ \t]*\\*["'])`
+	seedEnd            = `(?:\\*["']|[ \t]*[;})\]]|[ \t]*(?:#[^\n]*)?\r?$)`
+)
+
 // credentialShape is credentialShapeTable as one pattern, gated by all of
 // its needles.
 var credentialShape = func() linePattern {
@@ -314,13 +327,20 @@ var credentialContextPatterns = func() []linePattern {
 		// too common a word to redact everywhere (credentialVocabulary).
 		{`(?i)\\*"(?:auth|identitytoken)\\*"[ \t]*:[ \t]*\\*"(?P<value>[A-Za-z0-9+/._-]{12,}={0,2})\\*"`, []string{`"auth`, "identitytoken"}},
 		// A wallet's seed phrase after a name holding `mnemonic`
-		// (`MNEMONIC="…"`, `mnemonic: …`): 12 to 24 words of three to eight
-		// letters, the BIP-39 word list's lengths, and nothing else before
-		// the end of the value. `mnemonic` alone is not a credential name
-		// (an assembler's `mnemonic = "mov"`), so the words must look like
-		// a phrase. `seed phrase` and `recovery phrase` are credential
-		// names (credentialVocabulary), whatever their value.
-		{`(?im)(?:^|[^a-z0-9])[a-z0-9_.-]*mnemonic(?:[_. -]?(?:phrase|words))?` + credentialQuote + credentialSeparator + `(?:\\*["'])?(?P<value>[a-z]{3,8}(?:[ \t]+[a-z]{3,8}){11,23})(?:\\*["']|[ \t]*[,;})\]]|[ \t]*\r?$)`, []string{"mnemonic"}},
+		// (`MNEMONIC="…"`, `mnemonic: …`, `--mnemonic "…"`): 12 to 24
+		// words of three to eight letters, the BIP-39 word list's lengths,
+		// separated by spaces or commas or written as an array (`["legal",
+		// "winner", …]`), and nothing else before the end of the value but
+		// a comment. `mnemonic` alone is not a credential name (an
+		// assembler's `mnemonic = "mov"`), so the words must look like a
+		// phrase.
+		{`(?im)(?:^|[^a-z0-9])[a-z0-9_.-]*mnemonic(?:[_. -]?(?:phrase|words))?` + credentialQuote + `(?:` + credentialSeparator + `|[ \t]+)(?:\[[ \t]*)?(?:\\*["'])?(?P<value>` + seedWord + `(?:` + seedArraySeparator + seedWord + `){11,23})` + seedEnd, []string{"mnemonic"}},
+		// The same after a name holding `seed` (`SEED=…`, `wallet seed:`),
+		// a word too common to take on its own: only when the value is
+		// exactly 12, 15, 18, 21, or 24 words, the lengths a seed phrase
+		// has. `seed phrase` and `recovery phrase` are credential names
+		// (credentialVocabulary), whatever their value.
+		{`(?im)(?:^|[^a-z0-9])[a-z0-9_.-]*seed(?:[_. -]?words)?` + credentialQuote + credentialSeparator + `(?:\\*["'])?(?P<value>` + seedWord + `(?:` + seedSeparator + seedWord + `){11}(?:(?:` + seedSeparator + seedWord + `){3}(?:(?:` + seedSeparator + seedWord + `){3}(?:(?:` + seedSeparator + seedWord + `){3}(?:(?:` + seedSeparator + seedWord + `){3})?)?)?)?)` + seedEnd, []string{"seed"}},
 		// A bearer token outside an Authorization header.
 		{`(?:^|[^A-Za-z0-9_])(?i:bearer)[ \t]+(?P<value>[A-Za-z0-9._~+/-]{20,}=*)`, []string{"bearer"}},
 	} {
@@ -918,32 +938,53 @@ func isDigits(s string) bool {
 	return true
 }
 
-// pgpassField is one field of a .pgpass line: anything but a colon or
-// whitespace, where `\:` and `\\` are a literal colon and backslash.
-const pgpassField = `(?:\\[:\\]|[^\s:\\"'])+` //nolint:gosec // G101: regex fragment for a .pgpass field, not a credential
+// pgpassField is one field of a .pgpass line: anything but a colon, a
+// quote, or whitespace, where `\:` and `\\` are a literal colon and
+// backslash. pgpassHost is the host field, which is not all digits, so a
+// timestamp (`14:05:33:…`) is not a line of the file.
+const (
+	pgpassField = `(?:\\[:\\]|[^\s:\\"'])+`                                                 //nolint:gosec // G101: regex fragment for a .pgpass field, not a credential
+	pgpassHost  = `(?:\\[:\\]|[^\s:\\"'])*(?:\\[:\\]|[^\s:\\"'0-9])(?:\\[:\\]|[^\s:\\"'])*` //nolint:gosec // G101: regex fragment for a .pgpass field, not a credential
+)
 
-// pgpassLine matches a line of a PostgreSQL password file,
-// `host:port:database:user:password` (the port may be `*`), as a display
-// shows it: after a line number (`     3→`, `3:`), the file's name as grep
-// prints it (`/home/me/.pgpass:`), a diff or quote marker, or `echo` and a
-// quote. The password runs to the end of the line, or to a closing quote.
-var pgpassLine = regexp.MustCompile(`(?m)^[ \t]*(?:[0-9]+(?:→|\t|:)[ \t]*)?(?:[^\s:]*(?i:pgpass)[^\s:]*:(?:[0-9]+:)?)?(?:(?:echo|printf)[ \t]+(?:-[a-z]+[ \t]+)*)?(?:[+>][ \t]*)?\\*["']?` +
-	pgpassField + `:(?:[0-9]{1,5}|\*):` + pgpassField + `:` + pgpassField +
-	`:(?P<value>(?:\\[:\\]|[^\\\n\r"'])*(?:\\[:\\]|[^\\\s"']))(?:\\*["'][^\n]*)?[ \t]*\r?$`)
+// pgpassLinePattern matches a line of a PostgreSQL password file,
+// `host:port:database:user:password`, whose port matches port, as a
+// display shows it: after a line number (`     3→`, `3:`), the file's name
+// as grep prints it (`/home/me/.pgpass.bak:3:`), a diff or quote marker,
+// or `echo`. In quotes the password runs to the closing quote; otherwise
+// to the end of the line, whatever it holds (quotes, spaces, a trailing
+// backslash).
+func pgpassLinePattern(port string) *regexp.Regexp {
+	fields := pgpassHost + `:` + port + `:` + pgpassField + `:` + pgpassField + `:`
+	return regexp.MustCompile(`(?m)^[ \t]*(?:[0-9]+(?:→|\t|:)[ \t]*)?(?:[^\s:]*(?i:pgpass)[^\s:]*:(?:[0-9]+:)?)?(?:(?:echo|printf)[ \t]+(?:-[a-z]+[ \t]+)*)?(?:[+>][ \t]*)?` +
+		`(?:\\*"` + fields + `(?P<value>(?:[^"\\\n]|\\[^"\\\n])+)\\*"[^\n]*` +
+		`|'` + fields + `(?P<value>[^'\n]+)'[^\n]*` +
+		`|` + fields + `(?P<value>[^\s](?:[^\r\n]*[^\s])?)[ \t]*\r?)$`)
+}
 
-// redactPgpassLines redacts the password of every .pgpass line in a string
-// that names the file (`cat ~/.pgpass`, grep's `.pgpass:` prefix, a heredoc
-// into it, PGPASSFILE). Five colon-separated fields are too common a shape
-// (a timestamp, grep output) to redact on their own. When a tool shows the
-// file without naming it (a Read tool's result, whose path is in the call),
-// the lines are kept: the filter reads one string at a time.
+// pgpassNamedLine is a .pgpass line with any port of two or more digits,
+// taken only in a string that names the file (redactPgpassLines);
+// pgpassPortLine is one whose port is PostgreSQL's or PgBouncer's usual
+// one (5432, 6432) or `*`, taken anywhere: that is how the Claude Code Read
+// tool shows the file, its path in the call rather than the result.
+var (
+	pgpassNamedLine = pgpassLinePattern(`(?:[0-9]{2,5}|\*)`)
+	pgpassPortLine  = linePattern{re: pgpassLinePattern(`(?:5432|6432|\*)`), needles: []string{"5432", "6432", ":*:"}, anyOf: ":"}
+)
+
+// redactPgpassLines redacts the password of every .pgpass line: with a
+// usual port anywhere, and with any port in a string that mentions
+// `.pgpass` or `PGPASSFILE` (`cat ~/.pgpass`, a heredoc into it, grep's
+// `.pgpass.bak:` prefix). Five colon-separated fields with another port
+// and no such mention are too common a shape (a compiler diagnostic, a log
+// line) to redact on their own.
 func redactPgpassLines(t needleText) (string, bool) {
-	if !strings.Contains(t.lower, "pgpass") {
-		return t.s, false
+	pattern := pgpassPortLine
+	if strings.Contains(t.lower, ".pgpass") || strings.Contains(t.lower, "pgpassfile") {
+		// No needle gates the lines: the name is elsewhere in the string.
+		pattern = linePattern{re: pgpassNamedLine, anyOf: ":"}
 	}
-	// No needle gates the lines themselves: the name is elsewhere in the
-	// string. Every line holds the fields' colons.
-	return redactMatches(linePattern{re: pgpassLine, anyOf: ":"}, t, true)
+	return redactMatches(pattern, t, true)
 }
 
 // lineNumberPrefix matches the line number a display of a file puts before
@@ -1202,7 +1243,9 @@ func redactCredentialEntryValues(t needleText) (string, bool) {
 		}
 		numbered := match[2*numberGroup] >= 0
 		column := match[2*indentGroup+1] - match[2*indentGroup]
-		if span, ok := entryValueSpan(s, lineEnd+1, numbered, column); ok {
+		// Two name lines of one entry (`name: A` then `name: B`, then
+		// `value: …`) find the same value; it is redacted once.
+		if span, ok := entryValueSpan(s, lineEnd+1, numbered, column); ok && (len(spans) == 0 || span.start >= spans[len(spans)-1].end) {
 			spans = append(spans, span)
 		}
 	}

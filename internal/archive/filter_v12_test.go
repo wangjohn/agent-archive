@@ -91,10 +91,26 @@ func TestFilterV12RedactsKeyIDsPgpassAndSeedPhrases(t *testing.T) {
 		{"pgpass through head", "==> /home/me/.pgpass <==\n" + `\:\:1:5432:app:bob:` + "hunter2", "==> /home/me/.pgpass <==\n" + `\:\:1:5432:app:bob:[REDACTED]`},
 		{"pgpass by echo", `echo "db:5432:app:alice:` + `S3cret" >> ~/.pgpass`, `echo "db:5432:app:alice:[REDACTED]" >> ~/.pgpass`},
 		{"pgpass numbered read", "PGPASSFILE=/etc/app/pgpass\n     1\tdb:5432:app:alice:" + "S3cret\n     2\tdb:5432:app:bob:" + "0ther", "PGPASSFILE=/etc/app/pgpass\n     1\tdb:5432:app:alice:[REDACTED]\n     2\tdb:5432:app:bob:[REDACTED]"},
+		{"pgpass read tool, usual port", "     1→db:5432:app:alice:" + "hunter2", "     1→db:5432:app:alice:[REDACTED]"},
+		{"pgpass read tool, pgbouncer port", "     3→pool.internal:6432:app:bob:" + "hunter2", "     3→pool.internal:6432:app:bob:[REDACTED]"},
+		{"pgpass bare, wildcard port", "*:*:*:postgres:" + "hunter2", "*:*:*:postgres:[REDACTED]"},
+		{"pgpass password with a double quote", "db:5432:app:alice:" + `p@ss"word`, "db:5432:app:alice:[REDACTED]"},
+		{"pgpass password with a single quote", "db:5432:app:alice:" + "hun'ter2 x", "db:5432:app:alice:[REDACTED]"},
+		{"pgpass password ending in a backslash", "db:5432:app:alice:" + `hunter2\`, "db:5432:app:alice:[REDACTED]"},
+		{"pgpass single-quoted echo", "echo 'db:15432:app:alice:" + "S3cret' > ~/.pgpass", "echo 'db:15432:app:alice:[REDACTED]' > ~/.pgpass"},
 		{"mnemonic env, quoted", `MNEMONIC="` + words(12) + `"`, `MNEMONIC="[REDACTED]"`},
 		{"mnemonic yaml, 24 words", "  mnemonic: " + words(24), "  mnemonic: [REDACTED]"},
 		{"wallet mnemonic in json", `{"wallet_mnemonic": "` + words(12) + `", "n": 1}`, `{"wallet_mnemonic": "[REDACTED]", "n": 1}`},
 		{"camel-case mnemonic", `walletMnemonic: '` + words(15) + `'`, `walletMnemonic: '[REDACTED]'`},
+		{"mnemonic flag", `cast wallet import dev --mnemonic "` + words(12) + `"`, `cast wallet import dev --mnemonic "[REDACTED]"`},
+		{"mnemonic, comma-separated", "mnemonic: " + strings.ReplaceAll(words(12), " ", ", "), "mnemonic: [REDACTED]"},
+		{"mnemonic, commas without spaces", "MNEMONIC=" + strings.ReplaceAll(words(12), " ", ","), "MNEMONIC=[REDACTED]"},
+		{"mnemonic, json array", `{"mnemonic": ["` + strings.ReplaceAll(words(12), " ", `", "`) + `"]}`, `{"mnemonic": ["[REDACTED]"]}`},
+		{"mnemonic, yaml flow sequence", "mnemonic: [" + strings.ReplaceAll(words(12), " ", ", ") + "]", "mnemonic: [[REDACTED]]"},
+		{"mnemonic with a trailing comment", "MNEMONIC=" + words(12) + "  # dev wallet", "MNEMONIC=[REDACTED]  # dev wallet"},
+		{"seed, 12 words", "SEED=" + words(12), "SEED=[REDACTED]"},
+		{"wallet seed, 24 words, quoted", `wallet seed: "` + words(24) + `"`, `wallet seed: "[REDACTED]"`},
+		{"seed words, 15, comma-separated", "seed_words = " + strings.ReplaceAll(words(15), " ", ","), "seed_words = [REDACTED]"},
 		{"seed phrase env", "SEED_PHRASE=" + words(12), "SEED_PHRASE=[REDACTED]"},
 		{"seed phrase in prose", "seed phrase: " + words(24), "seed phrase: [REDACTED]"},
 		{"secret recovery phrase", "Secret Recovery Phrase = " + words(12), "Secret Recovery Phrase = [REDACTED]"},
@@ -119,7 +135,13 @@ func TestFilterV12KeyIDsPgpassAndSeedPhrasesLeaveBenignTextUnchanged(t *testing.
 		"KMS_KEY_ID=alias/app",
 		"access_key_id_length: 20",
 		"12:30:45:00:01",
-		"localhost:5432:app:alice:S3cret",
+		"db.internal:15432:app:alice:S3cret",
+		"export PGPASSWORD from the vault\n14:05:33:INFO:server started on port 80",
+		"cat ~/.pgpass\n14:05:33:INFO:server started",
+		"cat ~/.pgpass\nsrc/main.rs:10:5:warning: unused variable",
+		"SEED=" + strings.Repeat("abandon ", 12) + "extra",
+		"random_seed: 42",
+		"seed the database with fixtures before each test run starts",
 		"Each line of ~/.pgpass is hostname:port:database:username:password.",
 		"instr.mnemonic = \"mov\"",
 		"mnemonic: a short word list you learn by heart to recall a longer one",
@@ -128,5 +150,17 @@ func TestFilterV12KeyIDsPgpassAndSeedPhrasesLeaveBenignTextUnchanged(t *testing.
 		if out, hit := redactSensitive(in); hit || out != in {
 			t.Errorf("redactSensitive(%q) = %q (hit=%v), want it unchanged", in, out, hit)
 		}
+	}
+}
+
+// Two credential name lines in one YAML entry find the same `value:`,
+// which was redacted twice over and panicked (slice bounds out of range).
+// Found by FuzzRedactSensitive.
+func TestEntryWithTwoCredentialNamesRedactsItsValueOnce(t *testing.T) {
+	t.Parallel()
+	in := "  name: DB_PASSWORD\n  name: API_TOKEN\n  value: S3cret"
+	want := "  name: DB_PASSWORD\n  name: API_TOKEN\n  value: [REDACTED]"
+	if out, _ := redactSensitive(in); out != want {
+		t.Errorf("redactSensitive(%q) = %q, want %q", in, out, want)
 	}
 }

@@ -19,7 +19,8 @@ func gatedPatterns() map[string]linePattern {
 		"assignment":  {credentialAssignment, vocabularyNeedles, assignmentSeparators},
 		"flag":        {credentialFlag, vocabularyNeedles, "-"},
 		"url userinf": {urlScheme, []string{"://"}, ""},
-		"pgpass line": {pgpassLine, nil, ":"},
+		"pgpass port": pgpassPortLine,
+		"pgpass name": {pgpassNamedLine, nil, ":"},
 	}
 	for i, p := range credentialContextPatterns {
 		patterns[fmt.Sprintf("context %d", i)] = p
