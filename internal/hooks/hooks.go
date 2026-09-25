@@ -2,6 +2,7 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -191,10 +192,27 @@ func Remove(existing []byte, harness string, hook Hook) ([]byte, bool, error) {
 	}
 	if len(hs.members) == 0 {
 		doc.remove("hooks")
+		// Setup adds Cursor's "version" beside the hooks it installs; with
+		// no hooks left and nothing else in the file, it goes too, and the
+		// file is left as setup would have found an empty one.
+		if v, ok := doc.root.get("version"); harnessName(harness) == harnessCursor && ok && isOne(v) && len(doc.root.members) == 1 {
+			doc.clear()
+		}
 	} else if err = doc.set("hooks", hs); err != nil {
 		return nil, false, err
 	}
 	return doc.bytes(), true, nil
+}
+
+// Empty reports whether data is a hook file with nothing in it: no settings
+// at all, just an empty JSON object (what Remove leaves of a file setup
+// created). Such a file means the same to every application as no file.
+func Empty(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return true
+	}
+	doc, err := parseDocument(data)
+	return err == nil && len(doc.root.members) == 0
 }
 
 // hooksObject returns the "hooks" member, or nil when there is none (or it
@@ -208,7 +226,40 @@ func hooksObject(root *object) (*object, error) {
 	if !ok {
 		return nil, errors.New("invalid hooks object")
 	}
+	// The applications keep the last of two same-named keys; editing one of
+	// them would silently drop the other's handlers, as it would for the
+	// top-level "hooks" key itself (see parseDocument).
+	if where, key, dup := duplicateKey(hs, `"hooks"`); dup {
+		return nil, fmt.Errorf("%w: %s has more than one %q key; remove the duplicate", errInvalidConfiguration, where, key)
+	}
 	return hs, nil
+}
+
+// duplicateKey finds an object anywhere in value that names one key twice,
+// and says where it is (from where) and which key.
+func duplicateKey(value any, where string) (at, key string, found bool) {
+	switch v := value.(type) {
+	case *object:
+		seen := map[string]bool{}
+		for _, m := range v.members {
+			if seen[m.key] {
+				return where, m.key, true
+			}
+			seen[m.key] = true
+		}
+		for _, m := range v.members {
+			if at, key, found = duplicateKey(m.value, fmt.Sprintf("%s.%q", where, m.key)); found {
+				return at, key, true
+			}
+		}
+	case []any:
+		for i, item := range v {
+			if at, key, found = duplicateKey(item, fmt.Sprintf("%s[%d]", where, i)); found {
+				return at, key, true
+			}
+		}
+	}
+	return "", "", false
 }
 
 func getList(hs *object, event string) ([]any, error) {

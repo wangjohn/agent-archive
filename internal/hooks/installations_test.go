@@ -3,7 +3,6 @@ package hooks
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -66,10 +65,9 @@ func TestTwoInstallationsNeverTouchEachOther(t *testing.T) {
 				t.Fatalf("after the default uninstall: primary=%v secondary=%v", installed(primary), installed(secondary))
 			}
 			remove(secondary)
-			data, err := os.ReadFile(files[app])
-			must(t, err)
-			if strings.Contains(string(data), Owner) {
-				t.Fatalf("a handler was stranded:\n%s", data)
+			// Setup created the file; with both installations gone, so is it.
+			if data, err := os.ReadFile(files[app]); !os.IsNotExist(err) {
+				t.Fatalf("a handler was stranded (%v):\n%s", err, data)
 			}
 		})
 	}
@@ -80,10 +78,10 @@ func TestTwoInstallationsNeverTouchEachOther(t *testing.T) {
 // and an installation's directory matches through symlinks.
 func TestInstallationIdentityIsTheDataDirectory(t *testing.T) {
 	root := t.TempDir()
-	real := filepath.Join(root, "real")
-	must(t, os.MkdirAll(real, 0o700))
+	realDir := filepath.Join(root, "realDir")
+	must(t, os.MkdirAll(realDir, 0o700))
 	link := filepath.Join(root, "link")
-	must(t, os.Symlink(real, link))
+	must(t, os.Symlink(realDir, link))
 	defaultHome := filepath.Join(root, "default")
 	cases := []struct {
 		name     string
@@ -95,10 +93,10 @@ func TestInstallationIdentityIsTheDataDirectory(t *testing.T) {
 		{"default, named", Hook{DataHome: defaultHome, DefaultDataHome: defaultHome}, "", true},
 		{"default, handler names it", Hook{DefaultDataHome: defaultHome}, defaultHome, true},
 		{"default unknown", Hook{}, "", true},
-		{"other directory", Hook{DefaultDataHome: defaultHome}, real, false},
-		{"default versus other", Hook{DataHome: real, DefaultDataHome: defaultHome}, "", false},
-		{"through a symlink", Hook{DataHome: link}, real, true},
-		{"sibling prefix", Hook{DataHome: real}, real + "2", false},
+		{"other directory", Hook{DefaultDataHome: defaultHome}, realDir, false},
+		{"default versus other", Hook{DataHome: realDir, DefaultDataHome: defaultHome}, "", false},
+		{"through a symlink", Hook{DataHome: link}, realDir, true},
+		{"sibling prefix", Hook{DataHome: realDir}, realDir + "2", false},
 	}
 	for _, c := range cases {
 		if got := c.hook.sameInstallation(c.dataHome); got != c.want {

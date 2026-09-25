@@ -116,7 +116,11 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{claudePath, filepath.Join(home, ".codex", "hooks.json"), cursorPath} {
+	// Setup created the Codex file, so removing our hooks removes it.
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("the hook file setup created is still there: %v", err)
+	}
+	for _, path := range []string{claudePath, cursorPath} {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)

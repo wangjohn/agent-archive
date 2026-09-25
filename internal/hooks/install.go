@@ -21,6 +21,31 @@ type Change struct {
 	After   []byte
 	Existed bool
 	Mode    os.FileMode
+	// Delete is a removal that leaves the file with nothing in it (see
+	// Empty): Apply deletes it instead of writing After, so a file setup
+	// created goes away again. Only a regular file is deleted, never a link
+	// a dotfile manager keeps.
+	Delete bool `json:",omitempty"`
+}
+
+// Applied reports whether the file at c.Path is as c leaves it: deleted, or
+// holding After.
+func (c Change) Applied() bool {
+	current, err := os.ReadFile(c.Path)
+	if c.Delete {
+		return os.IsNotExist(err)
+	}
+	return err == nil && string(current) == string(c.After)
+}
+
+// Unapplied reports whether the file at c.Path is as c found it: holding
+// Before, or absent when it did not exist.
+func (c Change) Unapplied() bool {
+	current, err := os.ReadFile(c.Path)
+	if !c.Existed {
+		return os.IsNotExist(err)
+	}
+	return err == nil && string(current) == string(c.Before)
 }
 
 // Files maps each harness to the absolute path of its hook configuration
@@ -86,7 +111,7 @@ func Plan(files Files, hook Hook, harnesses []string) ([]Change, error) {
 			}
 			mode = info.Mode().Perm()
 		}
-		changes = append(changes, Change{path, before, after, exists, mode})
+		changes = append(changes, Change{Path: path, Before: before, After: after, Existed: exists, Mode: mode})
 	}
 	return changes, nil
 }
@@ -109,12 +134,23 @@ func Apply(changes []Change) error {
 		if err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
+		if c.Delete {
+			if err = os.Remove(target); err != nil {
+				return errors.Join(fmt.Errorf("cannot remove %s: %w", c.Path, err), rollback(applied))
+			}
+			applied = append(applied, c)
+			continue
+		}
 		undo, err := snapshot(target)
 		if err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
 		if err = writeFile(target, c.After, c.Mode); err != nil {
-			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), undo.restore(), rollback(applied))
+			// writeFile replaces the file only by its final rename, so a
+			// failure left the file as it was: only directories it created
+			// are taken back.
+			undo.removeCreatedDirs()
+			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
 		// What the application will read is the file through c.Path, links
 		// and all; a write that landed anywhere else is not a success, and
@@ -173,7 +209,14 @@ func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found
 	if err != nil {
 		return Change{}, false, err
 	}
-	return Change{path, before, after, true, info.Mode().Perm()}, true, nil
+	link, err := os.Lstat(path)
+	if err != nil {
+		return Change{}, false, err
+	}
+	// A file left with nothing in it means what no file means, and is what
+	// setup leaves of one it created, so it is deleted.
+	remove := Empty(after) && link.Mode().IsRegular()
+	return Change{Path: path, Before: before, After: after, Existed: true, Mode: info.Mode().Perm(), Delete: remove}, true, nil
 }
 
 // Rollback undoes applied changes in reverse order: each file is restored to
@@ -187,11 +230,11 @@ func rollback(changes []Change) error {
 	var failures []error
 	for i := len(changes) - 1; i >= 0; i-- {
 		c := changes[i]
-		current, e := os.ReadFile(c.Path)
-		if e != nil || string(current) != string(c.After) {
+		if !c.Applied() {
 			failures = append(failures, fmt.Errorf("%s changed; manual recovery required", c.Path))
 			continue
 		}
+		var e error
 		if c.Existed {
 			e = atomicWrite(c.Path, c.Before, c.Mode)
 		} else {
@@ -304,10 +347,15 @@ func (p priorFile) restore() error {
 	if err := os.Remove(p.path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	p.removeCreatedDirs()
+	return nil
+}
+
+// removeCreatedDirs removes the directories a write created, while empty.
+func (p priorFile) removeCreatedDirs() {
 	for _, dir := range p.created {
 		_ = os.Remove(dir) // fails, and keeps the directory, if it is not empty
 	}
-	return nil
 }
 
 // writeFile atomically replaces the regular file at path (no link

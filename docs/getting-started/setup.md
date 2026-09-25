@@ -77,9 +77,13 @@ hooks.
   `uninstall` find them from any shell. Only the `hooks` entry of each file
   is rewritten (and Cursor's `version`, when missing): every other setting
   keeps its exact text, key order, and numbers, and uninstall restores a file
-  setup only added hooks to byte for byte. A file that is a symlink, as
-  dotfile managers such as stow or chezmoi create, is updated at its target
-  and the link is kept.
+  setup only added hooks to byte for byte. A file setup created, which
+  uninstall leaves with nothing in it, is deleted (Cursor's included, with the
+  `version` setup added). A file that is a symlink, as dotfile managers such
+  as stow or chezmoi create, is updated at its target and the link is kept.
+  Setup refuses a file it cannot edit safely and says where the problem is:
+  anything that is not plain JSON (a comment, a trailing comma, a byte-order
+  mark), or a key that appears twice inside `hooks`.
 - **A LaunchAgent**, `~/Library/LaunchAgents/com.agent-archive.collector.plist`,
   which runs the collector every 60 seconds.
 - **Local state** in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`;
