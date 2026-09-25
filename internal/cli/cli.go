@@ -273,6 +273,7 @@ Maintenance
 Run agent-archive COMMAND --help for options and examples.
 Use --version to show the installed version.
 You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
+Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 `
 
 // Run dispatches one CLI invocation and returns a process exit code. It
