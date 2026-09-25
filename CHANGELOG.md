@@ -354,4 +354,5 @@ can list them, inspect them, and hand one to another agent.
   tests of their own; a guard test keeps capture's tests from importing
   anything that runs a program, opens the Keychain, or uses the network.
   Tests that run the go command keep its module and build caches instead
-  of downloading every module. No behavior change.
+  of downloading every module. `status` and `uninstall` are split into
+  named steps and off the function-length exceptions. No behavior change.
