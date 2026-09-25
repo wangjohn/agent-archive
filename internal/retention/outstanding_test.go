@@ -151,7 +151,7 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 					switch capture {
 					case "":
 					case state.CacheStatusPublished, state.CacheStatusRateLimited:
-						if result := collect(t, local, storage.NewMemoryStore(), t0); len(result.Published) != 1 {
+						if result := collect(t, local, storagetest.NewMemoryStore(), t0); len(result.Published) != 1 {
 							t.Fatalf("not published: %#v", result)
 						}
 						published, err := local.LoadPublishedState("s1")
@@ -193,7 +193,7 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 						}
 					}
 
-					result := sweep(t, local, storage.NewMemoryStore(), expiry, Options{
+					result := sweep(t, local, storagetest.NewMemoryStore(), expiry, Options{
 						Publishable:        func(archive.SessionRegistration) bool { return publishable },
 						CurrentDestination: func(archive.SessionRegistration) bool { return current },
 					})
