@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -174,7 +174,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	if !found || !cfg.Archive.Enabled || cfg.Paused {
 		return nil
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		return fmt.Errorf("open local store: %w", err)
 	}
@@ -214,7 +214,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	// and its request write; the store then refuses the write so no orphan
 	// request is left. That is the intended outcome of the race, not a fault
 	// to report on the user's turn.
-	if errors.Is(err, collector.ErrSessionNotRegistered) {
+	if errors.Is(err, state.ErrSessionNotRegistered) {
 		return nil
 	}
 	return err
@@ -254,7 +254,7 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 		if nativeSessionID == "" {
 			return nil
 		}
-		registered, err := hasRegistration(collector.OpenLocalStoreReadOnly(home), nativeSessionID)
+		registered, err := hasRegistration(state.OpenReadOnly(home), nativeSessionID)
 		if err != nil || registered {
 			return err
 		}
@@ -271,7 +271,7 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 	})
 }
 
-func handleSessionActivity(store *collector.LocalStore, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
+func handleSessionActivity(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
 	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)
@@ -296,7 +296,7 @@ func handleSessionActivity(store *collector.LocalStore, harness, nativeSessionID
 
 // hasRegistration reports whether a native session already has an accepted
 // registration. An index entry without a registration does not count.
-func hasRegistration(store *collector.LocalStore, nativeSessionID string) (bool, error) {
+func hasRegistration(store *state.Store, nativeSessionID string) (bool, error) {
 	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
 	if err != nil {
 		return false, fmt.Errorf("look up archive session ID: %w", err)
@@ -332,9 +332,9 @@ func cursorTranscriptPath(payload map[string]any, conversationID string) string 
 // replaced, whatever a later payload says. The write goes through
 // UpdateRegistration, under the lock retention forgets a session with, so a
 // chat forgotten meanwhile is not written back without its index entry; that
-// is reported as collector.ErrSessionNotRegistered, which handleHookEvent
+// is reported as state.ErrSessionNotRegistered, which handleHookEvent
 // treats as the quiet outcome of the race.
-func adoptCursorTranscriptPath(store *collector.LocalStore, reg *archive.SessionRegistration, harness string, payload map[string]any) error {
+func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistration, harness string, payload map[string]any) error {
 	// A chat read from Cursor's database never switches to a file.
 	if canonicalHarness(harness) != "cursor" || reg.TranscriptPath != "" || !reg.ReadsTranscriptFile() {
 		return nil
@@ -354,12 +354,12 @@ func adoptCursorTranscriptPath(store *collector.LocalStore, reg *archive.Session
 		return fmt.Errorf("record transcript path: %w", err)
 	}
 	if !found {
-		return collector.ErrSessionNotRegistered
+		return state.ErrSessionNotRegistered
 	}
 	return nil
 }
 
-func handleSessionStart(home string, store *collector.LocalStore, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
+func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
 	reason := strings.ToLower(eventName)
 	transcriptPath, _ := payload["transcript_path"].(string)
 	isCursor := canonicalHarness(harness) == "cursor"
@@ -645,7 +645,7 @@ func applyHarnessObservation(target *archive.Harness, harness string, payload ma
 // it is folded into the next scheduled publication rather than forcing an
 // upload on every prompt. Stop, end, and response events go through
 // handleSessionStop, whose request is the intended debounce flush.
-func saveLifecycleEvidence(store *collector.LocalStore, archiveID, harness, reason string, payload map[string]any, now time.Time) error {
+func saveLifecycleEvidence(store *state.Store, archiveID, harness, reason string, payload map[string]any, now time.Time) error {
 	evidence, err := filteredHookEvidence(archive.EvidenceKindLifecycleHook, harness, reason, payload, false, now)
 	if err != nil || evidence == nil {
 		return err
@@ -653,7 +653,7 @@ func saveLifecycleEvidence(store *collector.LocalStore, archiveID, harness, reas
 	return store.SaveEvidence(archiveID, reason, now, *evidence)
 }
 
-func handleSessionStop(store *collector.LocalStore, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
+func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
 	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)

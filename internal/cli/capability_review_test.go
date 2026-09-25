@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -46,7 +47,7 @@ func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) 
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	localStore, err := collector.NewLocalStore(home)
+	localStore, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestStatusAttributesClaudeRecordVersionToVerifiedCapture(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	localStore, err := collector.NewLocalStore(home)
+	localStore, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

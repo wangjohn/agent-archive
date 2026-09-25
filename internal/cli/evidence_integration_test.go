@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -30,7 +30,7 @@ func TestCollectionIncludesSkillHistoryAndExplicitFeedback(t *testing.T) {
 	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": transcript}, now); err != nil {
 		t.Fatal(err)
 	}
-	local, err := collector.NewLocalStore(home)
+	local, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

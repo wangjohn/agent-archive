@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -88,7 +90,7 @@ func TestFailedScheduledUpdateBlocksDestinationSwitchUntilRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ls, err := collector.NewLocalStore(home)
+	ls, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +153,7 @@ func TestHookWaitsForOverlappingRegistration(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil || len(regs) != 1 {
 		t.Fatalf("regs=%+v err=%v", regs, err)
 	}

@@ -46,23 +46,23 @@ type CursorDatabaseChat struct {
 type CursorUncheckedReason = cursorstore.Reason
 
 const (
-	// CursorUncheckedLocked: a rollback journal shows an unfinished write
-	// (which may be a hot journal only Cursor can roll back), or Cursor held
-	// a lock past the busy timeout.
+	// CursorUncheckedLocked means a rollback journal shows an unfinished
+	// write (which may be a hot journal only Cursor can roll back) or that
+	// Cursor held a lock past the busy timeout.
 	CursorUncheckedLocked = cursorstore.Locked
-	// CursorUncheckedUnreadable: the file is not a database SQLite can open,
-	// or its side files are in a state that can't be read without changing
-	// them.
+	// CursorUncheckedUnreadable means the file is not a database SQLite can
+	// open, or its side files are in a state that can't be read without
+	// changing them.
 	CursorUncheckedUnreadable = cursorstore.Unreadable
-	// CursorUncheckedUnknownFormat: the table, a composerData value, or its
-	// _v is not a shape this release knows.
+	// CursorUncheckedUnknownFormat means the table, a composerData value, or
+	// its _v is not a shape this release knows.
 	CursorUncheckedUnknownFormat = cursorstore.UnknownFormat
-	// CursorUncheckedChangedDuringRead: Cursor wrote the file while it was
-	// read in place with Cursor closed.
+	// CursorUncheckedChangedDuringRead means Cursor wrote the file while it
+	// was read in place with Cursor closed.
 	CursorUncheckedChangedDuringRead = cursorstore.ChangedDuringRead
-	// CursorUncheckedTranscriptsUnreadable: part of Cursor's transcript store
-	// could not be listed, so a chat with a transcript can't be told apart
-	// from one stored only in the database. The database is not opened.
+	// CursorUncheckedTranscriptsUnreadable means part of Cursor's transcript
+	// store could not be listed, so a chat with a transcript can't be told
+	// apart from one stored only in the database. The database is not opened.
 	CursorUncheckedTranscriptsUnreadable CursorUncheckedReason = "transcripts_unreadable"
 )
 

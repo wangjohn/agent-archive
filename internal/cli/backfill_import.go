@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -86,7 +87,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	defer interrupt.release()
 
 	// Step 5: register, in short holds of hooks.lock.
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		return fail("open local store: %v", err)
 	}
@@ -137,7 +138,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 
 // completeBatch rebuilds the batch's sessions from the registrations, which
 // are the source of truth, and marks it complete.
-func completeBatch(env Env, home string, store *collector.LocalStore, batch *backfill.Batch) error {
+func completeBatch(env Env, home string, store *state.Store, batch *backfill.Batch) error {
 	if err := batch.Reconcile(store); err != nil {
 		return err
 	}
@@ -179,7 +180,7 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 		return nil
 	}
 	last = latest
-	if err := completeBatch(env, home, collector.OpenLocalStoreReadOnly(home), &last); err != nil {
+	if err := completeBatch(env, home, state.OpenReadOnly(home), &last); err != nil {
 		return err
 	}
 	terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
@@ -275,7 +276,7 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err := backfill.CheckClock(cfg, plan, admittedAt); err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
-	batch, err = backfill.OpenBatch(home, collector.OpenLocalStoreReadOnly(home), plan.BatchFilters(), cfg.DestinationID(), now)
+	batch, err = backfill.OpenBatch(home, state.OpenReadOnly(home), plan.BatchFilters(), cfg.DestinationID(), now)
 	if errors.Is(err, backfill.ErrUnreadableImport) {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed. Repair the unreadable file in %s, then run backfill again. Moving it out of the folder also lets backfill run, but its sessions stay archived and backfill undo can no longer remove them", err, filepath.Join(home, "imports"))
 	}
@@ -449,7 +450,7 @@ func (u *upload) refresh() error {
 	if !found {
 		return errNotSetUp
 	}
-	store := collector.OpenLocalStoreReadOnly(u.home)
+	store := state.OpenReadOnly(u.home)
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		return err
@@ -481,7 +482,7 @@ func (u *upload) size(reg archive.SessionRegistration) int64 {
 		// A Cursor database chat has no file to measure. Its last capture's
 		// retained bytes stand in, when it has one; measuring the chat
 		// itself would mean copying Cursor's database.
-		bundle, _, found, err := collector.OpenLocalStoreReadOnly(u.home).LoadLastPublished(reg.ArchiveSessionID)
+		bundle, _, found, err := state.OpenReadOnly(u.home).LoadLastPublished(reg.ArchiveSessionID)
 		if err == nil && found {
 			return int64(bundle.Capture.Boundary.RetainedBytes)
 		}
@@ -555,7 +556,7 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Println(stdout, "No imports yet. Run agent-archive backfill --dry-run to see what an import would do.")
 		return 0
 	}
-	store := collector.OpenLocalStoreReadOnly(home)
+	store := state.OpenReadOnly(home)
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: backfill history: %v\n", err)
@@ -583,7 +584,7 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 // with what is left; interrupted, nothing registered, removed (none of its
 // sessions is registered any more), how many are waiting, or uploaded. Only
 // the latest import can still be finished by running backfill again.
-func batchUploadState(store *collector.LocalStore, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
+func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
 	registered, subagents, waiting := 0, 0, 0
 	for _, reg := range regs {
 		if reg.ImportBatch != b.ID {

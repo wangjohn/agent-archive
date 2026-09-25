@@ -2,12 +2,26 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
+
+// waitingSummary is sync's count of publications held for the upload
+// interval, with the local time the earliest is due, or "" when none wait.
+func waitingSummary(waiting []string, next time.Time) string {
+	if len(waiting) == 0 {
+		return ""
+	}
+	if next.IsZero() {
+		return fmt.Sprintf("%d waiting for the upload interval, ", len(waiting))
+	}
+	return fmt.Sprintf("%d waiting for the upload interval (next at %s), ", len(waiting), next.Local().Format("15:04"))
+}
 
 // runSyncCommand implements `agent-archive sync`: one explicit collection
 // pass, preserving queued work on failure. It respects paused state and
@@ -35,8 +49,8 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 		return 1
 	}
-	terminal.Printf(stdout, "Scanned %d session(s): %d published, %d unchanged, %d failed.\n",
-		result.Scanned, len(result.Published), len(result.Skipped), len(result.Errors))
+	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed.\n",
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors))
 	for id, sessionErr := range result.Errors {
 		terminal.Printf(stdout, "  %s: %v\n", id, sessionErr)
 	}

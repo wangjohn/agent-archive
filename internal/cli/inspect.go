@@ -36,7 +36,7 @@ const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
 // prints, with exit 0 and no rows. No parser version records both a complete
 // eligible-skill set and complete use observation, so no sidecar carries the
 // observed_none detection the query compares against and it can match nothing.
-// help.go and docs/install.md state the same thing in the same words.
+// help.go and docs/guides/list-and-show.md state the same thing.
 const eligibleNoUseUnavailableMessage = "--skill-usage eligible_no_use cannot return sessions yet: no parser version\n" +
 	"records both a complete eligible-skill set and complete use observation, so\n" +
 	"non-use is never proven. The value stays accepted for forward compatibility."
@@ -82,12 +82,18 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
+	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the matching sessions' metadata")
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
 	if *imported && *hookCaptured {
 		return fs.usageError("choose one of --imported and --hook-captured")
 	}
+	canonical, ok := harnessFlag(*harness)
+	if !ok {
+		return fs.usageError("%s", harnessFlagError(*harness))
+	}
+	*harness = canonical
 	if *skillSHA256 != "" && !validLowerSHA256(*skillSHA256) {
 		return fs.usageError("--skill-sha256 must be exactly 64 lowercase hexadecimal characters")
 	}
@@ -110,6 +116,9 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	// answer. The value stays accepted so scripts keep working once a
 	// parser version emits that evidence.
 	if usage == reader.SkillUsageEligibleNoUse {
+		if *jsonOut {
+			return printJSON(stdout, stderr, listDocument{Version: listSchemaVersion, Sessions: []archive.Metadata{}, Unavailable: eligibleNoUseUnavailableMessage})
+		}
 		terminal.Println(stdout, eligibleNoUseUnavailableMessage)
 		return 0
 	}
@@ -146,6 +155,12 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 		sessions = kept
 	}
+	if *jsonOut {
+		if sessions == nil {
+			sessions = []archive.Metadata{}
+		}
+		return printJSON(stdout, stderr, listDocument{Version: listSchemaVersion, Sessions: sessions})
+	}
 	if len(sessions) == 0 {
 		terminal.Println(stdout, "No archived sessions match.")
 		return 0
@@ -161,6 +176,39 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	terminal.Printf(stdout, "%d session(s).\n", len(sessions))
 	return 0
+}
+
+// harnessFlag checks a --harness value and returns its canonical name, as
+// archived metadata records it ("claude-code" is Claude). An empty value
+// means no filter.
+func harnessFlag(value string) (string, bool) {
+	if value == "" {
+		return "", true
+	}
+	name := canonicalHarness(value)
+	//lint:ignore LV1001 harness names are plain strings in config and archive metadata; this checks a user-typed flag against them
+	switch name {
+	case "claude", "codex", "cursor":
+		return name, true
+	}
+	return "", false
+}
+
+func harnessFlagError(value string) string {
+	return fmt.Sprintf("--harness must be claude, codex, or cursor, not %q", value)
+}
+
+// listSchemaVersion versions the `list --json` document.
+const listSchemaVersion = 1
+
+// listDocument is what `list --json` prints: each matching session's
+// metadata sidecar, as `show` prints one, and never conversation content.
+// Unavailable explains a query that cannot return sessions yet, where the
+// text listing prints the same explanation instead of a table.
+type listDocument struct {
+	Version     int                `json:"schema_version"`
+	Sessions    []archive.Metadata `json:"sessions"`
+	Unavailable string             `json:"unavailable,omitempty"`
 }
 
 // warnSkippedSidecar reports, on stderr, a metadata sidecar a listing left
@@ -220,6 +268,9 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
 	normalized := fs.Bool("normalized", false, "also download, verify, and print the normalized conversation view (this prints transcript content)")
+	// show always prints JSON; --json is accepted so the three inspection
+	// commands (list, show, status) take the same flag.
+	_ = fs.Bool("json", false, "print JSON (the default and only format; accepted for consistency with list and status)")
 	// Flags may follow SESSION_ID too (`show SESSION_ID --normalized`).
 	sessionID, ok := fs.parseWithArgument(args)
 	if !ok {
@@ -228,6 +279,11 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if sessionID == "" {
 		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
 	}
+	canonical, ok := harnessFlag(*harness)
+	if !ok {
+		return fs.usageError("%s", harnessFlagError(*harness))
+	}
+	*harness = canonical
 
 	store, found, err := openReadOnlyStore(env)
 	if err != nil {
@@ -339,7 +395,7 @@ func locateMetadataKey(ctx context.Context, store storage.ObjectStore, harness, 
 func printJSON(stdout, stderr io.Writer, value any) int {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
-		terminal.Printf(stderr, "agent-archive: show: encode output: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: encode output: %v\n", err)
 		return 1
 	}
 	terminal.Println(stdout, string(data))

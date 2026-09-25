@@ -87,6 +87,10 @@ type Handoff struct {
 	FullRecordPath string `json:"full_record_path,omitempty"`
 }
 
+// HandoffSession identifies the session a Handoff continues: its IDs, harness,
+// the models it used, when it started and was last active, and, when metadata
+// was supplied, its lifecycle state and last turn outcome. Source names where
+// the bundle came from (HandoffOptions.Source).
 type HandoffSession struct {
 	ArchiveSessionID string        `json:"archive_session_id,omitempty"`
 	NativeSessionID  string        `json:"native_session_id,omitempty"`
@@ -107,6 +111,8 @@ type HandoffWorkspace struct {
 	Branch    string `json:"branch,omitempty"`
 }
 
+// HandoffPlanItem is one entry of the agent's latest plan or todo list, with
+// its status as the agent recorded it (for example "completed").
 type HandoffPlanItem struct {
 	Text string `json:"text"`
 	// Status is copied verbatim from the harness's plan tool.
@@ -147,6 +153,9 @@ const (
 	HandoffStepCollapsed HandoffStepKind = "collapsed"
 )
 
+// HandoffToolCall is one tool call in a HandoffStep: the tool's name, a short
+// summary of its input, whether it failed, and its trimmed result.
+// ResultOmitted is true when the budget dropped the result.
 type HandoffToolCall struct {
 	Name    string `json:"name"`
 	Summary string `json:"summary,omitempty"`
@@ -159,6 +168,7 @@ type HandoffToolCall struct {
 	ResultOmitted bool   `json:"result_omitted,omitempty"`
 }
 
+// HandoffGap counts the source bundle's capture gaps that share one code.
 type HandoffGap struct {
 	Code  string `json:"code"`
 	Count int    `json:"count"`
@@ -176,12 +186,18 @@ type HandoffElision struct {
 // HandoffElisionKind names one FitHandoff budget step.
 type HandoffElisionKind string
 
-// HandoffElisionKind values, as written in the handoff document.
+// HandoffElision kinds, in the order FitHandoff applies them. The first three
+// never touch the protected tail of recent steps.
 const (
-	HandoffElisionToolOutput    HandoffElisionKind = "tool_output"
-	HandoffElisionToolCalls     HandoffElisionKind = "tool_calls"
+	// HandoffElisionToolOutput drops tool results.
+	HandoffElisionToolOutput HandoffElisionKind = "tool_output"
+	// HandoffElisionToolCalls collapses runs of tool calls to per-tool counts.
+	HandoffElisionToolCalls HandoffElisionKind = "tool_calls"
+	// HandoffElisionAssistantText shortens assistant text.
 	HandoffElisionAssistantText HandoffElisionKind = "assistant_text"
-	HandoffElisionPromptText    HandoffElisionKind = "prompt_text"
+	// HandoffElisionPromptText truncates long prompts; prompts are never
+	// dropped.
+	HandoffElisionPromptText HandoffElisionKind = "prompt_text"
 )
 
 // BuildHandoff arranges a filtered bundle for handoff without any budget.
@@ -202,14 +218,13 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 			Source:           opts.Source,
 		},
 		Workspace:              recordedWorkspace(bundle),
-		ToolResultsUnavailable: bundle.Capture.Harness.Name == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0,
+		ToolResultsUnavailable: bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0,
 		Exchanges:              []HandoffExchange{},
 	}
 
 	seenModel := map[string]bool{}
 	addModel := func(model string) {
-		// Claude Code labels messages it writes itself "<synthetic>".
-		if model != "" && !strings.HasPrefix(model, "<") && !seenModel[model] {
+		if model != "" && !isPlaceholderModel(model) && !seenModel[model] {
 			seenModel[model] = true
 			h.Session.Models = append(h.Session.Models, model)
 		}
@@ -341,18 +356,6 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 	return h, nil
 }
 
-// textSectionPrefix is a role prefix CursorAdapter.FilterText keeps.
-type textSectionPrefix string
-
-const (
-	textSectionUser      textSectionPrefix = "user:"
-	textSectionAssistant textSectionPrefix = "assistant:"
-	textSectionTool      textSectionPrefix = "tool:"
-)
-
-// textSectionPrefixes are the role prefixes CursorAdapter.FilterText keeps.
-var textSectionPrefixes = []textSectionPrefix{textSectionUser, textSectionAssistant, textSectionTool}
-
 // textTranscriptExchanges reads the role sections of a filtered text
 // transcript: a "user:" section starts an exchange, an "assistant:" section is
 // agent text, and a "tool:" section is tool output. Continuation lines belong
@@ -361,44 +364,43 @@ func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]Han
 	exchanges := []HandoffExchange{}
 	current := &HandoffExchange{}
 	leftOff := ""
-	var role textSectionPrefix
+	var role textRole
 	body := []string{}
 	flushSection := func() {
 		text := strings.TrimSpace(strings.Join(body, "\n"))
 		switch role {
-		case textSectionUser:
+		case textRoleUser:
 			if current.Prompt != "" || len(current.Steps) > 0 {
 				exchanges = append(exchanges, *current)
 			}
 			current = &HandoffExchange{Prompt: cleanPrompt(text)}
-		case textSectionAssistant:
+		case textRoleAssistant:
 			if text != "" {
 				current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepText, Text: text})
 				leftOff = text
 			}
-		case textSectionTool:
+		case textRoleTool:
 			if text != "" {
 				current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{
 					Name: "tool", Summary: firstLine(text, handoffSummaryCap),
 					Result: trimResult(text, opts.resultLines(), opts.resultBytes()), ResultLines: lineCount(text), ResultBytes: len(text),
 				}})
 			}
+		case textRoleSystem, textRoleDeveloper, textRoleThinking, textRoleAnalysis:
+			// FilterText omitted hidden sections, and only a visible role
+			// starts one here.
 		}
 		role, body = "", body[:0]
 	}
 	for _, transcript := range texts {
 		for line := range strings.SplitSeq(transcript.Content, "\n") {
-			lower := strings.ToLower(strings.TrimSpace(line))
-			started := false
-			for _, prefix := range textSectionPrefixes {
-				if strings.HasPrefix(lower, string(prefix)) {
-					flushSection()
-					role, started = prefix, true
-					body = append(body, strings.TrimSpace(strings.TrimSpace(line)[len(prefix):]))
-					break
-				}
+			if header, rest, ok := textRoleHeader(line); ok && visibleTextRoles[header] {
+				flushSection()
+				role = header
+				body = append(body, strings.TrimSpace(rest))
+				continue
 			}
-			if !started && role != "" {
+			if role != "" {
 				body = append(body, line)
 			}
 		}
@@ -968,7 +970,8 @@ func collapseToolCalls(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 	sort.SliceStable(order, func(i, j int) bool { return counts[order[i]] > counts[order[j]] })
 	parts := make([]string, 0, len(order))
 	for _, name := range order {
-		parts = append(parts, fmt.Sprintf("%s ×%d", name, counts[name]))
+		// A tool name is recorded data: a code span keeps it one inert line.
+		parts = append(parts, fmt.Sprintf("%s ×%d", codeSpan(name), counts[name]))
 	}
 	noun := "tool calls"
 	if total == 1 {
@@ -1009,256 +1012,4 @@ func cloneHandoff(h Handoff) Handoff {
 		out.Exchanges[i] = copied
 	}
 	return out
-}
-
-// HandoffRenderOptions controls markdown rendering.
-type HandoffRenderOptions struct {
-	// Preamble includes the note addressed to the receiving agent.
-	Preamble bool
-}
-
-var harnessDisplayNames = map[string]string{"claude": "Claude Code", "codex": "Codex", "cursor": "Cursor"}
-
-func harnessDisplayName(name string) string {
-	if display := harnessDisplayNames[name]; display != "" {
-		return display
-	}
-	if name == "" {
-		return "coding agent"
-	}
-	return name
-}
-
-// RenderHandoffMarkdown renders h as a prompt another coding agent can
-// continue from. Summary sections come before the conversation so an agent
-// that reads only the top still has the essentials.
-func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
-	var b strings.Builder
-	source := h.Session.Source
-	if source == "" {
-		source = "unknown"
-	}
-	id := h.Session.ArchiveSessionID
-	if id == "" {
-		id = h.Session.NativeSessionID
-	}
-	fmt.Fprintf(&b, "<!-- agent-archive handoff v%d · %s · session %s · source: %s -->\n", HandoffVersion, h.Session.Harness, id, source)
-	fmt.Fprintf(&b, "# Handoff: continuing a %s session\n\n", harnessDisplayName(h.Session.Harness))
-	if opts.Preamble {
-		b.WriteString("> You are picking up work another coding agent started. The conversation\n" +
-			"> below is a filtered record: injected instructions and credentials were\n" +
-			"> removed (a `[REDACTED]` marker is not a real value), tool output is\n" +
-			"> trimmed, and edit bodies are omitted. Before acting, check the\n" +
-			"> repository's current state (`git status`, the files listed below) rather\n" +
-			"> than trusting the record. Ask the person if the next step is unclear.\n\n")
-	}
-
-	b.WriteString("## Session\n")
-	agent := harnessDisplayName(h.Session.Harness)
-	if h.Session.HarnessVersion != "" {
-		agent += " " + h.Session.HarnessVersion
-	}
-	if len(h.Session.Models) > 0 {
-		agent += " · models: " + strings.Join(h.Session.Models, ", ")
-	}
-	fmt.Fprintf(&b, "- Agent: %s\n", agent)
-	var when []string
-	if h.Session.StartedAt != nil {
-		when = append(when, "started "+h.Session.StartedAt.Format("2006-01-02 15:04 UTC"))
-	}
-	if h.Session.LastActivityAt != nil {
-		when = append(when, "last activity "+h.Session.LastActivityAt.Format("2006-01-02 15:04 UTC"))
-	}
-	if h.Session.State != "" && h.Session.State != MetadataStateUnknown {
-		when = append(when, "state: "+string(h.Session.State))
-	}
-	if len(when) > 0 {
-		fmt.Fprintf(&b, "- %s\n", capitalize(strings.Join(when, " · ")))
-	}
-	var where []string
-	if h.Workspace.Branch != "" {
-		where = append(where, "branch: "+h.Workspace.Branch)
-	}
-	if h.Workspace.Directory != "" {
-		where = append(where, "directory: "+h.Workspace.Directory)
-	}
-	if len(where) > 0 {
-		fmt.Fprintf(&b, "- %s (as recorded)\n", capitalize(strings.Join(where, " · ")))
-	}
-	if h.ToolResultsUnavailable {
-		fmt.Fprintf(&b, "- %s does not record tool results, so none appear below.\n", agent)
-	}
-	b.WriteString("\n")
-
-	if h.LeftOff != "" {
-		fmt.Fprintf(&b, "## Where it left off\n%s\n\n", h.LeftOff)
-	}
-	if len(h.Plan) > 0 {
-		b.WriteString("## Plan\n")
-		for _, item := range h.Plan {
-			box, suffix := "[ ]", ""
-			switch strings.ToLower(item.Status) {
-			case "completed", "done":
-				box = "[x]"
-			case "in_progress", "in-progress", "active":
-				suffix = " (in progress)"
-			}
-			fmt.Fprintf(&b, "- %s %s%s\n", box, item.Text, suffix)
-		}
-		b.WriteString("\n")
-	}
-	if len(h.FilesTouched) > 0 {
-		fmt.Fprintf(&b, "## Files touched\n%s\n\n", strings.Join(h.FilesTouched, ", "))
-	}
-
-	b.WriteString("## Conversation\n")
-	for i, exchange := range h.Exchanges {
-		if exchange.Prompt == "" {
-			fmt.Fprintf(&b, "\n### %d · Before the first prompt\n", i+1)
-		} else {
-			fmt.Fprintf(&b, "\n### %d · Person\n", i+1)
-			prompt := exchange.Prompt
-			if exchange.PromptTruncated {
-				prompt += " …(truncated)"
-			}
-			b.WriteString(quote(prompt))
-		}
-		inTools := false
-		for _, step := range exchange.Steps {
-			switch step.Kind {
-			case HandoffStepText:
-				text := step.Text
-				if step.TextTruncated {
-					text += " …(shortened)"
-				}
-				fmt.Fprintf(&b, "\n**Agent:** %s\n", text)
-				inTools = false
-			case HandoffStepShell:
-				fmt.Fprintf(&b, "\n**Person ran:** `%s`\n", firstLine(step.Text, handoffSummaryCap))
-				inTools = false
-			case HandoffStepSummary:
-				text := step.Text
-				if step.TextTruncated {
-					text += " …(shortened)"
-				}
-				fmt.Fprintf(&b, "\n**Conversation compacted.** The agent continued from this summary:\n\n%s", quote(text))
-				inTools = false
-			case HandoffStepTool:
-				if !inTools {
-					b.WriteString("\n")
-					inTools = true
-				}
-				renderTool(&b, step.Tool)
-			case HandoffStepCollapsed:
-				if !inTools {
-					b.WriteString("\n")
-					inTools = true
-				}
-				fmt.Fprintf(&b, "- %s\n", step.Text)
-			}
-		}
-	}
-
-	var footer []string
-	if len(h.Elisions) > 0 {
-		parts := make([]string, 0, len(h.Elisions))
-		for _, e := range h.Elisions {
-			parts = append(parts, describeElision(e))
-		}
-		footer = append(footer, "Omitted to fit the size limit: "+strings.Join(parts, "; ")+".")
-		if h.FullRecordPath != "" {
-			footer = append(footer, fmt.Sprintf("Full record: %s (read it for anything omitted here).", h.FullRecordPath))
-		}
-	}
-	if len(h.Gaps) > 0 {
-		parts := make([]string, 0, len(h.Gaps))
-		for _, gap := range h.Gaps {
-			parts = append(parts, fmt.Sprintf("%s ×%d", gap.Code, gap.Count))
-		}
-		footer = append(footer, "Capture gaps: "+strings.Join(parts, ", ")+".")
-	}
-	if len(footer) > 0 {
-		b.WriteString("\n---\n")
-		b.WriteString(strings.Join(footer, "\n"))
-		b.WriteString("\n")
-	}
-	return []byte(b.String())
-}
-
-func renderTool(b *strings.Builder, tool *HandoffToolCall) {
-	line := "- `" + tool.Name + "`"
-	if tool.Summary != "" {
-		line += " " + tool.Summary
-	}
-	switch {
-	case tool.IsError:
-		line += " → error"
-	case tool.ResultOmitted:
-		line += fmt.Sprintf(" → %d lines (output omitted)", tool.ResultLines)
-	}
-	b.WriteString(line + "\n")
-	if tool.Result != "" {
-		fence := codeFence(tool.Result)
-		fmt.Fprintf(b, "  %s\n", fence)
-		for resultLine := range strings.SplitSeq(tool.Result, "\n") {
-			fmt.Fprintf(b, "  %s\n", resultLine)
-		}
-		fmt.Fprintf(b, "  %s\n", fence)
-	}
-}
-
-// codeFence returns a backtick fence longer than any backtick run in text.
-func codeFence(text string) string {
-	longest, run := 0, 0
-	for _, r := range text {
-		if r == '`' {
-			run++
-			if run > longest {
-				longest = run
-			}
-		} else {
-			run = 0
-		}
-	}
-	if longest < 3 {
-		return "```"
-	}
-	return strings.Repeat("`", longest+1)
-}
-
-func quote(text string) string {
-	var b strings.Builder
-	for line := range strings.SplitSeq(text, "\n") {
-		if line == "" {
-			b.WriteString(">\n")
-			continue
-		}
-		b.WriteString("> " + line + "\n")
-	}
-	return b.String()
-}
-
-func capitalize(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
-}
-
-func describeElision(e HandoffElision) string {
-	span := fmt.Sprintf("exchange %d", e.First)
-	if e.Last != e.First {
-		span = fmt.Sprintf("exchanges %d–%d", e.First, e.Last)
-	}
-	switch e.Kind {
-	case HandoffElisionToolOutput:
-		return fmt.Sprintf("output of %d tool calls in %s", e.Count, span)
-	case HandoffElisionToolCalls:
-		return fmt.Sprintf("%d tool calls in %s collapsed to counts", e.Count, span)
-	case HandoffElisionAssistantText:
-		return fmt.Sprintf("%d agent messages in %s shortened", e.Count, span)
-	case HandoffElisionPromptText:
-		return fmt.Sprintf("%d long prompts in %s truncated", e.Count, span)
-	}
-	return fmt.Sprintf("%d %s in %s", e.Count, e.Kind, span)
 }

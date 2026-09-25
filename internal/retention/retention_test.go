@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -38,9 +39,9 @@ func registration(id, transcriptPath string) archive.SessionRegistration {
 	}
 }
 
-func newTestStore(t *testing.T) *collector.LocalStore {
+func newTestStore(t *testing.T) *state.Store {
 	t.Helper()
-	store, err := collector.NewLocalStore(t.TempDir())
+	store, err := state.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +51,7 @@ func newTestStore(t *testing.T) *collector.LocalStore {
 // publishTwice registers a session, publishes it, then republishes changed
 // content well past the collector's rate limit, so the first snapshot
 // becomes superseded. It returns the first (now superseded) source key.
-func publishTwice(t *testing.T, local *collector.LocalStore, store storage.ObjectStore, id, dir string, t0 time.Time) (firstKey string) {
+func publishTwice(t *testing.T, local *state.Store, store storage.ObjectStore, id, dir string, t0 time.Time) (firstKey string) {
 	t.Helper()
 	path := writeTranscript(t, dir, id+".jsonl", codexTranscript)
 	reg := registration(id, path)
@@ -251,7 +252,7 @@ func TestSweepIsolatesOneSessionsFailure(t *testing.T) {
 	}
 }
 
-func publishThird(t *testing.T, local *collector.LocalStore, store storage.ObjectStore, id, dir string, at time.Time) {
+func publishThird(t *testing.T, local *state.Store, store storage.ObjectStore, id, dir string, at time.Time) {
 	t.Helper()
 	path := filepath.Join(dir, id+".jsonl")
 	data, err := os.ReadFile(path)

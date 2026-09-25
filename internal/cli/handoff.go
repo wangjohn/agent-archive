@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -98,11 +99,11 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	case *maxBytes < 0:
 		return usageError("--max-bytes must be 0 or more")
 	}
-	if *harness != "" {
-		if _, err := archive.NewAdapter(*harness); err != nil {
-			return usageError(fmt.Sprintf("--harness must be claude, codex, or cursor, not %q", *harness))
-		}
+	canonical, ok := harnessFlag(*harness)
+	if !ok {
+		return usageError(harnessFlagError(*harness))
 	}
+	*harness = canonical
 	switch *source {
 	case "auto", "local", "archive":
 	default:
@@ -325,7 +326,7 @@ func (r handoffResolver) byID(id string) (handoffTarget, error) {
 	// reported if it fails too.
 	var localErr error
 	if r.source != "archive" {
-		reg, found, err := collector.OpenLocalStoreReadOnly(r.home).LoadRegistration(id)
+		reg, found, err := state.OpenReadOnly(r.home).LoadRegistration(id)
 		switch {
 		case err != nil:
 			localErr = err
@@ -379,7 +380,7 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	dir = filepath.Clean(dir)
 	now := r.env.now()
 	if r.source != "archive" {
-		regs, err := collector.OpenLocalStoreReadOnly(r.home).LoadRegistrations()
+		regs, err := state.OpenReadOnly(r.home).LoadRegistrations()
 		if err != nil {
 			return handoffTarget{}, err
 		}

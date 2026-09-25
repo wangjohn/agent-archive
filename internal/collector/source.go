@@ -9,6 +9,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // sourceState identifies exactly what one read of a session's source saw,
@@ -29,12 +30,12 @@ func (s sourceState) empty() bool {
 }
 
 // matches reports whether signature was recorded for exactly this state.
-func (s sourceState) matches(signature scanSignature) bool {
+func (s sourceState) matches(signature state.ScanSignature) bool {
 	if signature.SourceKind != s.kind {
 		return false
 	}
 	if s.kind == archive.SourceKindCursorSQLite {
-		return signature.cursorSignature() == s.cursor
+		return signature.CursorSignature() == s.cursor
 	}
 	return s.file == transcriptFileInfo{Size: signature.TranscriptSize, Mtime: signature.TranscriptMtime}
 }
@@ -45,7 +46,7 @@ type sourceReader interface {
 	// Signature observes the source's current state without reading its
 	// content, for unchangedSinceLastScan. ok is false when it can't be
 	// observed (missing, unreadable), which is never "unchanged".
-	Signature(ctx context.Context) (state sourceState, ok bool)
+	Signature(ctx context.Context) (observed sourceState, ok bool)
 	// Filter reads the whole source and filters it with adapter, returning
 	// the state of exactly what it read. A source over maxBytes is
 	// errTranscriptTooLarge, one record over recordLimit errRecordTooLarge,
@@ -193,9 +194,9 @@ func (r cursorSQLiteReader) Filter(ctx context.Context, adapter archive.Adapter,
 	if err != nil {
 		return archive.FilteredTranscript{}, sourceState{}, fmt.Errorf("read Cursor chat: %w", err)
 	}
-	state := sourceState{kind: archive.SourceKindCursorSQLite, cursor: sig}
+	observed := sourceState{kind: archive.SourceKindCursorSQLite, cursor: sig}
 	filtered, err := filterCursorComposer(adapter, c, maxBytes)
-	return filtered, state, err
+	return filtered, observed, err
 }
 
 // cursorDatabase is Cursor's state.vscdb for this user.
@@ -246,19 +247,19 @@ func openCursorPass(registrations []archive.SessionRegistration, opts *Options) 
 // of the database. A failure to read at all (a lock, a changed file) is
 // left to be retried. The size limits in force are recorded too, so raising
 // one reads the chat again.
-func rememberFailedRead(local *LocalStore, reg archive.SessionRegistration, adapter archive.Adapter, state sourceState, opts Options, failure error) error {
-	if state.kind != archive.SourceKindCursorSQLite {
+func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error) error {
+	if observed.kind != archive.SourceKindCursorSQLite {
 		return nil
 	}
 	message := ""
 	if failure != nil {
 		message = failure.Error()
 	}
-	return local.saveScanSignature(reg.ArchiveSessionID, scanSignature{
+	return local.SaveScanSignature(reg.ArchiveSessionID, state.ScanSignature{
 		ParserVersion: opts.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(),
-		SourceKind: state.kind, CursorLastUpdatedAt: state.cursor.LastUpdatedAt,
-		CursorHeaderCount: state.cursor.HeaderCount, CursorLastBubbleID: state.cursor.LastBubbleID,
-		CursorMessageRows: state.cursor.MessageRows, CursorLastMessageHash: state.cursor.LastMessageHash,
+		SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
+		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
+		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		Failed: true, FailedError: message, FailedMaxBytes: opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
 	})
 }

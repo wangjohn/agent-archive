@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestEveryPublicHelpIsReadOnly(t *testing.T) {
@@ -165,7 +165,7 @@ func TestCollectorKeepsLastPublicationOnUnchangedPass(t *testing.T) {
 	if _, err := runOnePass(env, false); err != nil {
 		t.Fatal(err)
 	}
-	store := collector.OpenLocalStoreReadOnly(home)
+	store := state.OpenReadOnly(home)
 	first, _ := store.LoadStatus()
 	env.Now = func() time.Time { return now.Add(time.Minute) }
 	if _, err := runOnePass(env, false); err != nil {

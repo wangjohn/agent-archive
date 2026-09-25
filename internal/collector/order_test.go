@@ -54,7 +54,7 @@ func TestRunOrderProgressAndStop(t *testing.T) {
 	if status.PendingCount != 1 {
 		t.Fatalf("pending after the stop: %d, want b", status.PendingCount)
 	}
-	if _, found, _ := local.loadRequest("b"); !found {
+	if _, found, _ := local.LoadRequest("b"); !found {
 		t.Fatal("b lost its request")
 	}
 

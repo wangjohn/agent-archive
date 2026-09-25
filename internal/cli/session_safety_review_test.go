@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestCursorVersionDoesNotProveSessionStart(t *testing.T) {
@@ -21,7 +21,7 @@ func TestCursorVersionDoesNotProveSessionStart(t *testing.T) {
 	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "cursor_version": "99.0.0", "transcript_path": resumed}, at); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 0 {
 		t.Fatal("arbitrary version enrolled session")
@@ -51,7 +51,7 @@ func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
 	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err == nil {
 		t.Fatal("cross-harness stop accepted")
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 1 || regs[0].TranscriptPath != "/synthetic/transcript.jsonl" || !regs[0].SessionStartedAt.Equal(at) {
 		t.Fatalf("registration %+v", regs)
@@ -97,7 +97,7 @@ func TestCompactFromSubdirectoryKeepsProjectIdentity(t *testing.T) {
 	if err := handleHookEvent(home, "claude", compact, at.Add(time.Minute)); err != nil {
 		t.Fatalf("compact from a subdirectory of the registered project was rejected: %v", err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 1 || regs[0].ProjectRoot != "/work/widget" || regs[0].TranscriptPath != "/synthetic/t2.jsonl" || !regs[0].SessionStartedAt.Equal(at) {
 		t.Fatalf("registration %+v", regs)

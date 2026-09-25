@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -146,7 +146,7 @@ func TestRetentionExpiryLeavesRemovalRecords(t *testing.T) {
 	}
 	for _, id := range []string{"deleted", "unpublished", "previous"} {
 		record, found, err := local.Removal("codex", "native-"+id)
-		if err != nil || !found || record.Reason != collector.RemovalReasonRetention || !record.At.Equal(past) || record.Harness != "codex" {
+		if err != nil || !found || record.Reason != state.RemovalReasonRetention || !record.At.Equal(past) || record.Harness != "codex" {
 			t.Fatalf("%s: record=%#v found=%v err=%v", id, record, found, err)
 		}
 	}
@@ -159,7 +159,7 @@ func TestRetentionExpiryLeavesRemovalRecords(t *testing.T) {
 // reports the failure; the next sweep records and forgets it.
 func TestRetentionRetriesExpiryWhenTheRemovalRecordFails(t *testing.T) {
 	home := t.TempDir()
-	local, err := collector.NewLocalStore(home)
+	local, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

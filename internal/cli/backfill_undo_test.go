@@ -17,10 +17,10 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -214,13 +214,13 @@ func TestBackfillUndoGolden(t *testing.T) {
 	}
 
 	// Forgotten locally, with undo records; the hook-captured session stays.
-	store := collector.OpenLocalStoreReadOnly(f.data)
+	store := state.OpenReadOnly(f.data)
 	if p, c := importRegistrations(t, f.data, firstImport); len(p)+len(c) != 0 {
 		t.Fatalf("%d sessions still registered", len(p)+len(c))
 	}
 	for _, reg := range parents {
 		record, found, err := store.Removal(reg.Harness.Name, reg.NativeSessionID)
-		if err != nil || !found || record.Reason != collector.RemovalReasonUndo || !record.At.Equal(backfillNow.UTC()) {
+		if err != nil || !found || record.Reason != state.RemovalReasonUndo || !record.At.Equal(backfillNow.UTC()) {
 			t.Errorf("removal record of %s: %+v %v %v", reg.ArchiveSessionID, record, found, err)
 		}
 		if _, found, _ := store.ArchiveSessionID(reg.NativeSessionID); found {
@@ -293,7 +293,7 @@ func TestBackfillUndoProject(t *testing.T) {
 	levenshtein := filepath.Join(f.userHome, "levenshtein")
 	all, allChildren := importRegistrations(t, f.data, firstImport)
 	// A hook captured a session in levenshtein after the import added it.
-	store, err := collector.NewLocalStore(f.data)
+	store, err := state.Open(f.data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,7 +414,7 @@ func TestBackfillUndoPartialFailure(t *testing.T) {
 	if len(sessionKeys(t, bucket, failing)) == 0 {
 		t.Fatal("the failed session is gone from the bucket")
 	}
-	if _, found, _ := collector.OpenLocalStoreReadOnly(f.data).Removal(failing.Harness.Name, failing.NativeSessionID); found {
+	if _, found, _ := state.OpenReadOnly(f.data).Removal(failing.Harness.Name, failing.NativeSessionID); found {
 		t.Fatal("the failed session has a removal record")
 	}
 	if line := historyLine(t, f, firstImport); !strings.Contains(line, "partly undone; 1 session left") {
@@ -438,7 +438,7 @@ func TestBackfillUndoPartialFailure(t *testing.T) {
 // every source it published included, and the plan counts it as resumed.
 func TestBackfillUndoResumedSession(t *testing.T) {
 	f, bucket := newUndoFixture(t)
-	store := collector.OpenLocalStoreReadOnly(f.data)
+	store := state.OpenReadOnly(f.data)
 	id, found, _ := store.ArchiveSessionID("c-lev-1")
 	if !found {
 		t.Fatal("c-lev-1 not imported")
@@ -531,7 +531,7 @@ func TestBackfillUndoResumedWithoutHooks(t *testing.T) {
 	if after := sessionKeys(t, bucket, reg); len(after) <= len(before) {
 		t.Fatalf("the rescan did not republish: %v", after)
 	}
-	bundle, _, _, _, err := collector.OpenLocalStoreReadOnly(f.data).LoadPublished(reg.ArchiveSessionID)
+	bundle, _, _, _, err := state.OpenReadOnly(f.data).LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,9 +649,9 @@ func TestBackfillUndoPreviousDestination(t *testing.T) {
 			if bucketSnapshot(t, bucket.MemoryStore) != before || len(bucket.deletes) != 0 {
 				t.Fatal("the bucket changed")
 			}
-			store := collector.OpenLocalStoreReadOnly(f.data)
+			store := state.OpenReadOnly(f.data)
 			for _, reg := range parents {
-				if record, found, _ := store.Removal(reg.Harness.Name, reg.NativeSessionID); !found || record.Reason != collector.RemovalReasonUndo {
+				if record, found, _ := store.Removal(reg.Harness.Name, reg.NativeSessionID); !found || record.Reason != state.RemovalReasonUndo {
 					t.Errorf("%s: no undo record", reg.ArchiveSessionID)
 				}
 			}
@@ -696,7 +696,7 @@ func TestBackfillUndoSwitchedBackDeletesFromTheBucket(t *testing.T) {
 // registrations recorded their destination.
 func stripDestinationIDs(t *testing.T, home string) {
 	t.Helper()
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -832,7 +832,7 @@ func TestBackfillUndoSelectionGrew(t *testing.T) {
 		t.Fatal("no transcript-file parent in the import")
 	}
 	stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() {
-		store, err := collector.NewLocalStore(f.data)
+		store, err := state.Open(f.data)
 		if err != nil {
 			t.Fatal(err)
 		}

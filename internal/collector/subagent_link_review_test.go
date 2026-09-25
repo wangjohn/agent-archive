@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-func linkedSessionEvidenceCount(req Request, childID string) int {
+func linkedSessionEvidenceCount(req state.Request, childID string) int {
 	count := 0
 	for _, item := range req.HookEvidence {
 		if item.Kind != archive.EvidenceKindLinkedSession {
@@ -55,7 +57,7 @@ func TestRepeatedParentLinkNotificationDoesNotGrowTheRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := local.SavePublished("child", bundle, at, CacheStatusPublished); err != nil {
+	if err := statetest.SavePublished(local, "child", bundle, at, state.CacheStatusPublished); err != nil {
 		t.Fatal(err)
 	}
 
@@ -65,7 +67,7 @@ func TestRepeatedParentLinkNotificationDoesNotGrowTheRequest(t *testing.T) {
 		if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil {
 			t.Fatal(err)
 		}
-		request, found, err := local.loadRequest("parent")
+		request, found, err := local.LoadRequest("parent")
 		if err != nil || !found {
 			t.Fatalf("pass %d lost the parent notification: %+v %v", pass, request, err)
 		}
@@ -174,17 +176,17 @@ func TestBlockedParentIsNotRenotifiedUntilItRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := local.SavePublished("child", bundle, at, CacheStatusPublished); err != nil {
+	if err := statetest.SavePublished(local, "child", bundle, at, state.CacheStatusPublished); err != nil {
 		t.Fatal(err)
 	}
 
 	for pass := 1; pass <= 3; pass++ {
 		run(at.Add(time.Duration(pass) * time.Hour))
-		if reason, blocked, err := local.LoadBlocked("parent"); err != nil || !blocked || reason != BlockedReasonTranscriptMissing {
+		if reason, blocked, err := local.LoadBlocked("parent"); err != nil || !blocked || reason != state.BlockedReasonTranscriptMissing {
 			t.Fatalf("pass %d: parent reason=%q blocked=%t err=%v", pass, reason, blocked, err)
 		}
 		if pass > 1 {
-			if _, found, err := local.loadRequest("parent"); err != nil || found {
+			if _, found, err := local.LoadRequest("parent"); err != nil || found {
 				t.Fatalf("pass %d: a blocked parent was re-notified (found=%t err=%v)", pass, found, err)
 			}
 		}

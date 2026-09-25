@@ -3,9 +3,10 @@ package archive
 import "testing"
 
 // TestWireKindSpellings pins the kind values written into handoff documents
-// and source bundles. The typed constants are the only place these spellings
-// live, so a renamed constant value would otherwise change the persisted
-// format without failing any test.
+// and source bundles, and the Cursor text role headers read from them. The
+// typed constants are the only place these spellings live, so a renamed
+// constant value would otherwise change the persisted format without failing
+// any test.
 func TestWireKindSpellings(t *testing.T) {
 	cases := []struct {
 		got  string
@@ -24,6 +25,13 @@ func TestWireKindSpellings(t *testing.T) {
 		{string(SourceLineNativeRecord), "native_record"},
 		{string(SourceLineNativeText), "native_text"},
 		{string(SourceLineSupplementalEvidence), "supplemental_evidence"},
+		{string(textRoleUser), "user"},
+		{string(textRoleAssistant), "assistant"},
+		{string(textRoleTool), "tool"},
+		{string(textRoleSystem), "system"},
+		{string(textRoleDeveloper), "developer"},
+		{string(textRoleThinking), "thinking"},
+		{string(textRoleAnalysis), "analysis"},
 	}
 
 	for _, c := range cases {

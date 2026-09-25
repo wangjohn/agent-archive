@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestFeedbackFileIsFilteredBeforeRequestPersistence(t *testing.T) {
@@ -21,7 +21,7 @@ func TestFeedbackFileIsFilteredBeforeRequestPersistence(t *testing.T) {
 	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": project}, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	path := filepath.Join(t.TempDir(), "feedback.txt")
 	if err := os.WriteFile(path, []byte("useful correction; password=synthetic-secret-value"), 0o600); err != nil {
@@ -81,7 +81,7 @@ func TestFeedbackRejectsSessionExcludedByCurrentSetup(t *testing.T) {
 	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": project}, now); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

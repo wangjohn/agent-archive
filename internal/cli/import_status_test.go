@@ -12,11 +12,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 // saveImportedSession registers an imported Codex session with a transcript.
-func saveImportedSession(t *testing.T, store *collector.LocalStore, now time.Time, id, project string) archive.SessionRegistration {
+func saveImportedSession(t *testing.T, store *state.Store, now time.Time, id, project string) archive.SessionRegistration {
 	t.Helper()
 	path := filepath.Join(project, id+".jsonl")
 	if err := os.WriteFile(path, []byte(`{"type":"turn_context","model":"synthetic","cli_version":"1.2.3"}`+"\n"), 0o600); err != nil {
@@ -45,7 +46,7 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +159,7 @@ func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	publishPairSession(t, home, store, storage.NewMemoryStore(), cfg, now, "hook", project, true)
 	var out strings.Builder
 	if code := runStatusCommand(nil, &out, &out, pairStatusEnv(t, home, userHome, now, "codex")); code != 0 || strings.Contains(out.String(), "Imported:") {
@@ -173,7 +174,7 @@ func TestVerificationReadsBackHookPublicationsBeforeImports(t *testing.T) {
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()
 	cfg := pairTestConfig(now, []string{"codex"}, project)
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

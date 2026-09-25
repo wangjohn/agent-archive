@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -123,7 +124,7 @@ func TestBackfillCursorDatabaseChat(t *testing.T) {
 	if out, errOut, code := f.command(t, "sync"); code != 0 {
 		t.Fatalf("sync: code %d, %s\n%s", code, errOut, out)
 	}
-	if _, blocked, _ := collector.OpenLocalStoreReadOnly(f.data).LoadBlocked(reg.ArchiveSessionID); blocked {
+	if _, blocked, _ := state.OpenReadOnly(f.data).LoadBlocked(reg.ArchiveSessionID); blocked {
 		t.Fatal("the rewritten chat is blocked")
 	}
 	metadata, bundle = publishedCursorSession(t, bucket, reg)
@@ -143,8 +144,8 @@ func TestBackfillCursorDatabaseChat(t *testing.T) {
 	if keys := sessionKeys(t, bucket, reg); len(keys) != 0 {
 		t.Fatalf("left %v", keys)
 	}
-	record, found, err := collector.OpenLocalStoreReadOnly(f.data).Removal("cursor", "k-db-only")
-	if err != nil || !found || record.Reason != collector.RemovalReasonUndo {
+	record, found, err := state.OpenReadOnly(f.data).Removal("cursor", "k-db-only")
+	if err != nil || !found || record.Reason != state.RemovalReasonUndo {
 		t.Fatalf("removal record %+v %v %v", record, found, err)
 	}
 	// Every session of the import, the database chat among them.

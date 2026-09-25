@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -78,17 +79,17 @@ func TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges(t *testing.T) {
 			if len(result.Errors) != 0 || len(result.Published) != 0 {
 				t.Fatalf("an oversize record must be a gap, not an error: %#v", result)
 			}
-			if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != BlockedReasonRecordTooLarge {
+			if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != state.BlockedReasonRecordTooLarge {
 				t.Fatalf("reason=%q blocked=%t", reason, blocked)
 			}
-			if string(BlockedReasonRecordTooLarge) != "record_size_limit" {
-				t.Fatalf("gap code = %q", BlockedReasonRecordTooLarge)
+			if string(state.BlockedReasonRecordTooLarge) != "record_size_limit" {
+				t.Fatalf("gap code = %q", state.BlockedReasonRecordTooLarge)
 			}
 			status, _ := local.LoadStatus()
 			if status.LastError != "" {
 				t.Fatalf("status reports an error: %q", status.LastError)
 			}
-			cache := local.publishedPath("session-1")
+			cache := publishedPath(local, "session-1")
 			before := mtime(t, cache)
 			if result := runAt(t, local, remote, at.Add(time.Minute)); len(result.Errors) != 0 {
 				t.Fatalf("second pass: %#v", result)

@@ -32,19 +32,20 @@ func StateDatabase(home string) string {
 // Reason says why Cursor's database was not checked.
 type Reason string
 
+// Reasons a read of Cursor's database was not done.
 const (
-	// Locked: a rollback journal shows an unfinished write (which may be a
-	// hot journal only Cursor can roll back), or Cursor held a lock past the
-	// busy timeout.
+	// Locked means a rollback journal shows an unfinished write (which may be
+	// a hot journal only Cursor can roll back) or that Cursor held a lock
+	// past the busy timeout.
 	Locked Reason = "locked"
-	// Unreadable: the file is not a database SQLite can open, or its side
-	// files are in a state that can't be read without changing them.
+	// Unreadable means the file is not a database SQLite can open, or its
+	// side files are in a state that can't be read without changing them.
 	Unreadable Reason = "unreadable"
-	// UnknownFormat: the table, or a value read from it, is not a shape this
-	// release knows.
+	// UnknownFormat means the table, or a value read from it, is not a shape
+	// this release knows.
 	UnknownFormat Reason = "unknown_format"
-	// ChangedDuringRead: Cursor wrote the file while it was read in place
-	// with Cursor closed.
+	// ChangedDuringRead means Cursor wrote the file while it was read in
+	// place with Cursor closed.
 	ChangedDuringRead Reason = "changed_during_read"
 )
 
@@ -64,6 +65,9 @@ func (e *NotCheckedError) Error() string {
 	return fmt.Sprintf("Cursor database not checked (%s)", e.Reason)
 }
 
+// Unwrap returns the underlying failure, or nil when there is none. It may
+// name the database's path, so it is for errors.Is and errors.As, not for
+// display.
 func (e *NotCheckedError) Unwrap() error { return e.Err }
 
 // NotChecked returns a *NotCheckedError with reason, for a read callback to

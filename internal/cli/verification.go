@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"github.com/aws/smithy-go"
+
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -92,7 +93,7 @@ type storageHealth struct {
 	ConfigurationID string `json:"configuration_id"`
 	//lint:ignore LV1001 set and compared as literals in collect.go and status.go; typing it needs collect.go to change with it
 	State     string    `json:"state"`
-	CheckedAt time.Time `json:"checked_at"`
+	CheckedAt time.Time `json:"checked_at,omitzero"`
 	Context   string    `json:"context"`
 }
 
@@ -197,7 +198,7 @@ func storageFailureState(err error) string {
 // reported it), and a session whose published state or verification record
 // cannot be read is left out and returned as an error once every other
 // session has been handled.
-func verifyPublications(home string, cfg config.Config, env Env, store *collector.LocalStore, remote storage.ObjectStore) (verificationSummary, error) {
+func verifyPublications(home string, cfg config.Config, env Env, store *state.Store, remote storage.ObjectStore) (verificationSummary, error) {
 	return verifyPublicationsWithin(context.Background(), home, cfg, env, store, remote)
 }
 
@@ -205,7 +206,7 @@ func verifyPublications(home string, cfg config.Config, env Env, store *collecto
 // pass passes its own deadline, so read-back gets what is left of the pass's
 // budget rather than time of its own on top. Read-backs ctx leaves no time
 // for are deferred to the next pass, like those over the per-pass cap.
-func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Config, env Env, store *collector.LocalStore, remote storage.ObjectStore) (verificationSummary, error) {
+func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Config, env Env, store *state.Store, remote storage.ObjectStore) (verificationSummary, error) {
 	var summary verificationSummary
 	regs, _, err := store.ScanRegistrations()
 	if err != nil {
@@ -310,10 +311,10 @@ var verificationTimeout = 5 * time.Minute
 // any other error is treated as transient.
 //
 // The source the metadata must name is the one recorded when it was uploaded
-// (collector.LocalStore.LoadLastPublishedSource). Only state from a version
+// (state.Store.LoadLastPublishedSource). Only state from a version
 // that recorded none falls back to rebuilding the digest from the cached
 // bundle, which a later source schema or compressor can no longer reproduce.
-func verifyPublication(ctx context.Context, cfg config.Config, store *collector.LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, bundle archive.SourceBundle) (string, error) {
+func verifyPublication(ctx context.Context, cfg config.Config, store *state.Store, remote storage.ObjectStore, reg archive.SessionRegistration, bundle archive.SourceBundle) (string, error) {
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
 		return "", err

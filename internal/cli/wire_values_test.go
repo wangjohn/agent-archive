@@ -18,6 +18,8 @@ func TestWireValueSpellings(t *testing.T) {
 		{string(diagnosticUnknownSessionStart), "session_start_unknown"},
 		{string(diagnosticPreActivationStart), "session_started_before_activation"},
 		{string(diagnosticSetupInProgress), "setup_in_progress"},
+		{string(storageAccessConfirmedBySetup), "setup"},
+		{string(storageAccessConfirmedByCollector), "collector"},
 	}
 
 	for _, c := range cases {

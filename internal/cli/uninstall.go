@@ -362,7 +362,7 @@ func checkRemovableHome(home, userHome string) error {
 }
 
 // localStateEntries is every top-level entry agent-archive creates under its
-// data directory: internal/config's config.json, collector.LocalStore's
+// data directory: internal/config's config.json, state.Store's
 // per-session directories and removal records (forgotten/), backfill's
 // import batches (imports/), the lineage
 // ledger, local.Lock's lock file, the collector status file, the

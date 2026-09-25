@@ -21,6 +21,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
+// ErrRefreshRequired means the source bundle a metadata sidecar points to is
+// no longer in the bucket, usually because the session was republished and
+// the old source cleaned up. Reread the metadata and try again, as
+// RefreshAndLoad does once.
 var ErrRefreshRequired = errors.New("source changed or was deleted; refresh metadata and retry")
 
 // ErrInvalidMetadata means a metadata sidecar was read but does not decode
@@ -57,6 +61,12 @@ const (
 	SkillUsageEligibleNoUse SkillUsage = "eligible_no_use"
 )
 
+// Filter selects metadata sidecars. Every set field must match; a zero field
+// matches anything. Harness is compared with the harness name, Model with the
+// request or response model, and From and To bound CapturedAt, inclusive.
+// Skill and SkillSHA256 match a skill by name and content hash, in the
+// relationship SkillUsage names. RequireCompleteCoverage keeps only sessions
+// whose parser status is complete and which have no capture gaps.
 type Filter struct {
 	Harness                 string
 	Model                   string
@@ -68,9 +78,9 @@ type Filter struct {
 	SkillUsage              SkillUsage
 }
 
-// Limits caps how much of a source bundle a read downloads and
-// decompresses. A zero field means the default: 32 MiB compressed and
-// 128 MiB uncompressed.
+// Limits bounds how much of a source bundle LoadSource reads: the compressed
+// object (default 32 MiB) and the decompressed stream (default 128 MiB). A
+// zero or negative value means the default.
 type Limits struct {
 	MaxCompressedBytes   int
 	MaxUncompressedBytes int

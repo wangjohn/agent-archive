@@ -14,6 +14,7 @@ linters:
   default: none
   enable:
     - bodyclose
+    - depguard
     - errcheck
     - errorlint
     - funlen
@@ -26,6 +27,16 @@ linters:
     - staticcheck
     - unused
   settings:
+    depguard:
+      rules:
+        # statetest's whole-file saves bypass the single in-memory copy a
+        # collector scan keeps (see its package doc), so only tests use it.
+        statetest-only-in-tests:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/state/statetest
+              desc: test helpers only; production code saves through state.Published
     revive:
       rules:
         - name: exported
@@ -92,9 +103,6 @@ linters:
 
       # TODO(W3-B, collector state refactor): existing functions over the
       # funlen/gocyclo ceilings. Remove each entry as the function is split.
-      - path: internal/collector/collector\.go
-        text: "(processSession|`Run`|'Run')"
-        linters: [funlen, gocyclo]
       - path: internal/collector/subagent_capture\.go
         text: materializeSubagentCandidate
         linters: [gocyclo]
@@ -137,13 +145,13 @@ linters:
       - path: internal/backfill/render\.go
         text: RenderText
         linters: [gocyclo]
-      - path: internal/archive/handoff\.go
+      - path: internal/archive/handoff(_render)?\.go
         text: (BuildHandoff|RenderHandoffMarkdown)
         linters: [funlen, gocyclo]
       - path: internal/archive/source_jsonl\.go
         text: DecodeSource
         linters: [funlen, gocyclo]
-      - path: internal/archive/views\.go
+      - path: internal/archive/metadata\.go
         text: BuildMetadata
         linters: [funlen, gocyclo]
       - path: internal/reader/reader\.go

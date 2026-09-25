@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestAmbiguousStartIsNotRegisteredAndDiagnosticIsContentFree(t *testing.T) {
@@ -33,7 +33,7 @@ func TestAmbiguousStartIsNotRegisteredAndDiagnosticIsContentFree(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 0 {
 		t.Fatalf("ambiguous starts were registered: %#v", regs)
@@ -104,7 +104,7 @@ func TestHandleHookEventRegistersEligibleSessionStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestHandleHookEventSkipsIneligibleProject(t *testing.T) {
 	if err := handleHookEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 0 {
 		t.Fatalf("regs=%#v", regs)
@@ -148,7 +148,7 @@ func TestHandleHookEventSkipsResumeOfUnknownClaudeSession(t *testing.T) {
 	if err := handleHookEvent(home, "claude", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 0 {
 		t.Fatalf("a resume of a never-seen session must not be registered: %#v", regs)
@@ -169,7 +169,7 @@ func TestHandleHookEventSkipsResumeOfUnknownCodexSession(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 0 {
 		t.Fatalf("a Codex resume/compact of a never-seen session must not be registered: %#v", regs)
@@ -190,7 +190,7 @@ func TestHandleHookEventRegistersCodexStartup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 2 {
 		t.Fatalf("a Codex startup/clear must register a fresh session: %#v", regs)
@@ -217,7 +217,7 @@ func TestHandleHookEventCodexCompactPreservesOriginalStartTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 1 {
 		t.Fatalf("regs=%#v", regs)
@@ -245,7 +245,7 @@ func TestHandleHookEventResumePreservesOriginalStartTime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 1 {
 		t.Fatalf("regs=%#v", regs)
@@ -276,7 +276,7 @@ func TestHandleHookEventStopWritesRequestWithEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	requests, err := store.LoadRequests()
 	if err != nil {
 		t.Fatal(err)
@@ -315,7 +315,7 @@ func TestHandleHookEventCapturesSupportedFinalTextAfterFiltering(t *testing.T) {
 	if err := handleHookEvent(home, "codex", stop, start.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	requests, err := store.LoadRequests()
 	if err != nil {
 		t.Fatal(err)
@@ -342,7 +342,7 @@ func TestHandleHookEventLabelsSubagentFinalGapWithoutClaimingRedaction(t *testin
 	if err := handleHookEvent(home, "codex", stop, start.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	requests, err := store.LoadRequests()
 	if err != nil {
 		t.Fatal(err)
@@ -365,7 +365,7 @@ func TestAcceptedCursorHookCapturesVersionModeModelParamsAndResponse(t *testing.
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	archiveID, _, err := store.EnsureArchiveSessionID("native-1")
 	if err != nil {
 		t.Fatal(err)
@@ -403,7 +403,7 @@ func TestHandleHookEventStopForUnregisteredSessionIsNoop(t *testing.T) {
 	if err := handleHookEvent(home, "claude", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	requests, _ := store.LoadRequests()
 	if len(requests) != 0 {
 		t.Fatalf("requests=%#v", requests)
@@ -449,7 +449,7 @@ func TestHandleHookEventIgnoresUnrelatedEvent(t *testing.T) {
 	if err := handleHookEvent(home, "claude", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 0 {
 		t.Fatalf("regs=%#v", regs)
@@ -484,7 +484,7 @@ func TestHandleHookEventNoopWhilePaused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,7 +545,7 @@ func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.
 			if err := handleHookEvent(home, "claude", start, now); err != nil {
 				t.Fatal(err)
 			}
-			store, _ := collector.NewLocalStore(home)
+			store, _ := state.Open(home)
 			regs, err := store.LoadRegistrations()
 			if err != nil {
 				t.Fatal(err)
@@ -603,7 +603,7 @@ func TestNestedExcludedProjectKeepsItsOwnExclusion(t *testing.T) {
 	if err := handleHookEvent(home, "claude", start, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 0 {
 		t.Fatalf("an excluded nested project was captured through its parent: %#v", regs)
@@ -630,7 +630,7 @@ func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
 	if err := handleHookEvent(home, "claude", start, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 0 {
 		t.Fatalf("a directory outside every project registered: %#v", regs)
@@ -679,7 +679,7 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 			if err := handleHookEvent(home, "cursor", payload, now); err != nil {
 				t.Fatal(err)
 			}
-			store, _ := collector.NewLocalStore(home)
+			store, _ := state.Open(home)
 			regs, _ := store.LoadRegistrations()
 			ds, _ := readCaptureDiagnostics(home)
 			if !tc.registered {
@@ -731,7 +731,7 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 				if err := handleHookEvent(home, harness, payload, now); err != nil {
 					t.Fatal(err)
 				}
-				store, _ := collector.NewLocalStore(home)
+				store, _ := state.Open(home)
 				regs, _ := store.LoadRegistrations()
 				if tc.registered != (len(regs) == 1) {
 					t.Fatalf("registered=%t want %t: %#v", len(regs) == 1, tc.registered, regs)
@@ -757,7 +757,7 @@ func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
 	if err := handleHookEvent(home, "claude", start, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("a hook registered during a setup transaction: %#v", regs)
 	}
@@ -823,7 +823,7 @@ func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
 	if err := handleHookEvent(home, "claude", start, started); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	regs, _ := store.LoadRegistrations()
 	if len(regs) != 1 || regs[0].ProjectRoot != alias || regs[0].ProjectID != archive.ProjectID(alias) {
 		t.Fatalf("a worktree start under a symlinked project did not register under the configured spelling: %#v", regs)
@@ -865,7 +865,7 @@ func TestRelativeTranscriptPathProvesNothing(t *testing.T) {
 	if err := handleHookEvent(home, "cursor", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	store, _ := collector.NewLocalStore(home)
+	store, _ := state.Open(home)
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("a relative transcript path registered a session: %#v", regs)
 	}

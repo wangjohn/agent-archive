@@ -162,7 +162,7 @@ func TestCursorTextSanitizesContinuationLinesAndOmitsHiddenTail(t *testing.T) {
 		"injected line",
 		"</system-reminder> visible tail",
 		"tool: result",
-		"  Thinking: hidden two",
+		"Thinking: hidden two",
 		"hidden continuation two",
 	}, "\n") + "\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart)

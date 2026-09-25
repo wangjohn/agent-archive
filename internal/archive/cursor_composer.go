@@ -713,19 +713,37 @@ func cursorInt(raw any) (int, bool) {
 // cursorTime reads a Cursor timestamp: milliseconds since the epoch (as
 // composerData and the *Ms fields write it) or an RFC 3339 string (as some
 // message rows write createdAt).
+//
+// A time before 2000 or after 9999 is not one Cursor wrote (it cannot even
+// be encoded as RFC 3339), so it is unknown rather than an error later.
 func cursorTime(raw any) (time.Time, bool) {
+	var parsed time.Time
 	switch value := raw.(type) {
 	case float64:
-		if value > 0 {
-			return time.UnixMilli(int64(value)).UTC(), true
+		if value <= 0 || value > float64(cursorTimeMax.UnixMilli()) {
+			return time.Time{}, false
 		}
+		parsed = time.UnixMilli(int64(value)).UTC()
 	case string:
-		if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
-			return parsed.UTC(), true
+		var err error
+		if parsed, err = time.Parse(time.RFC3339Nano, value); err != nil {
+			return time.Time{}, false
 		}
+		parsed = parsed.UTC()
+	default:
+		return time.Time{}, false
 	}
-	return time.Time{}, false
+	if parsed.Before(cursorTimeMin) || parsed.After(cursorTimeMax) {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
+
+// cursorTimeMin and cursorTimeMax bound the timestamps cursorTime accepts.
+var (
+	cursorTimeMin = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	cursorTimeMax = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+)
 
 // cursorMessageTime is when a message (or its header) finished: completedAtMs,
 // else createdAt.

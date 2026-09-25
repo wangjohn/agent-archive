@@ -14,9 +14,9 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 var updateBackfillGolden = flag.Bool("update", false, "rewrite internal/cli/testdata/backfill golden files")
@@ -134,7 +134,7 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 	})
 
 	// c-archived is already registered by a hook.
-	store, err := collector.NewLocalStore(f.data)
+	store, err := state.Open(f.data)
 	if err != nil {
 		t.Fatal(err)
 	}

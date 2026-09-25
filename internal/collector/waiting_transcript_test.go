@@ -37,7 +37,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 		if err != nil || status.LastError != "" {
 			t.Fatalf("pass %d status = %#v err=%v", pass, status, err)
 		}
-		if _, pending, err := local.loadRequest(reg.ArchiveSessionID); err != nil || !pending {
+		if _, pending, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !pending {
 			t.Fatalf("pass %d dropped the queued request: pending=%v err=%v", pass, pending, err)
 		}
 	}
@@ -82,7 +82,7 @@ func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
 		if err != nil || status.LastError != "" {
 			t.Fatalf("pass %d status = %#v err=%v", pass, status, err)
 		}
-		if _, pending, err := local.loadRequest(reg.ArchiveSessionID); err != nil || !pending {
+		if _, pending, err := local.LoadRequest(reg.ArchiveSessionID); err != nil || !pending {
 			t.Fatalf("pass %d dropped the queued request: pending=%v err=%v", pass, pending, err)
 		}
 		if _, _, state, found, err := local.LoadPublished(reg.ArchiveSessionID); err != nil || found {

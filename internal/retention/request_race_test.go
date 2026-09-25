@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -146,7 +146,7 @@ func TestConcurrentHookRequestIsNeverLostToExpiry(t *testing.T) {
 				t.Fatalf("round %d: a request reported as written was lost (registered=%d requests=%d)", round, registered(t, local), len(requests))
 			}
 			kept++
-		case errors.Is(saveErr, collector.ErrSessionNotRegistered):
+		case errors.Is(saveErr, state.ErrSessionNotRegistered):
 			if registered(t, local) != 0 || len(requests) != 0 {
 				t.Fatalf("round %d: refused request left state behind (registered=%d requests=%d)", round, registered(t, local), len(requests))
 			}

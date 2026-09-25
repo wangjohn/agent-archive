@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -81,7 +82,7 @@ func (r *recordingStore) Put(ctx context.Context, key string, data []byte) error
 	return r.ObjectStore.Put(ctx, key, data)
 }
 
-func collect(t *testing.T, local *collector.LocalStore, store storage.ObjectStore, at time.Time) collector.Result {
+func collect(t *testing.T, local *state.Store, store storage.ObjectStore, at time.Time) collector.Result {
 	t.Helper()
 	result, err := collector.Run(context.Background(), local, store, collector.Options{
 		MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1},
@@ -92,7 +93,7 @@ func collect(t *testing.T, local *collector.LocalStore, store storage.ObjectStor
 	return result
 }
 
-func sweep(t *testing.T, local *collector.LocalStore, store storage.ObjectStore, at time.Time, opts Options) Result {
+func sweep(t *testing.T, local *state.Store, store storage.ObjectStore, at time.Time, opts Options) Result {
 	t.Helper()
 	opts.Now = func() time.Time { return at }
 	opts.SessionMaxAge = retentionWindow
@@ -103,7 +104,7 @@ func sweep(t *testing.T, local *collector.LocalStore, store storage.ObjectStore,
 	return result
 }
 
-func registered(t *testing.T, local *collector.LocalStore) int {
+func registered(t *testing.T, local *state.Store) int {
 	t.Helper()
 	regs, err := local.LoadRegistrations()
 	if err != nil {
@@ -402,7 +403,7 @@ func TestSweepIsolatesUnreadableStateFiles(t *testing.T) {
 	if strings.Join(result.DeletedSessions, ",") != "s2" {
 		t.Fatalf("deleted = %v, want only s2", result.DeletedSessions)
 	}
-	if result.Errors["s1"] == nil || !errors.Is(result.Errors["broken"], collector.ErrQuarantined) {
+	if result.Errors["s1"] == nil || !errors.Is(result.Errors["broken"], state.ErrQuarantined) {
 		t.Fatalf("errors = %v", result.Errors)
 	}
 }

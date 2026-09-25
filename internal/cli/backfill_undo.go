@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -75,7 +75,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return 0
 	}
 	bfEnv := env.backfillEnvironment(userHome)
-	plan, err := backfill.PlanUndo(bfEnv, collector.OpenLocalStoreReadOnly(home), cfg, batches, *batch, *project)
+	plan, err := backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -145,7 +145,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return fail("the configuration changed while this was open; run undo again. Nothing was changed.")
 	}
 	confirmed := plan
-	if plan, err = backfill.PlanUndo(bfEnv, collector.OpenLocalStoreReadOnly(home), cfg, batches, *batch, *project); err != nil {
+	if plan, err = backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project); err != nil {
 		return fail("%v", err)
 	}
 	if plan.Grew(confirmed) {
@@ -160,7 +160,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		// have; Grew refuses that, so this is only a guard.
 		return fail("the import changed while this was open; run undo again to review it. Nothing was changed.")
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		return fail("open local store: %v", err)
 	}

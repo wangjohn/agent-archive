@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+// ID returns a new random identifier: 16 bytes from crypto/rand, hex encoded
+// as 32 lowercase characters. It is used for machine IDs and tokens.
 func ID() (string, error) {
 	b := make([]byte, 16)
 	if _, e := rand.Read(b); e != nil {
@@ -23,11 +25,14 @@ func ID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// Home returns the archive's local state directory, creating it if needed:
-// $AGENT_ARCHIVE_HOME, or ~/.local/share/agent-archive. It refuses a
-// directory inside a Git checkout.
+// Home returns the archive's local state directory, creating it if needed
+// and setting its mode to 0700. It is $AGENT_ARCHIVE_HOME when set, otherwise
+// ~/.local/share/agent-archive, with symlinks resolved. It refuses a directory
+// inside a Git checkout, so archive state never lands in a repository.
 func Home() (string, error) { return resolveHome(true) }
 
+// ReadHome is Home without creating or changing the directory, for callers
+// that only read state and must not leave one behind.
 func ReadHome() (string, error) { return resolveHome(false) }
 
 func resolveHome(create bool) (string, error) {
@@ -95,6 +100,8 @@ func ResolveExistingSymlinks(path string) (string, error) {
 	return filepath.Join(resolved, rel), nil
 }
 
+// Write stores value as indented JSON with a trailing newline, atomically,
+// through WriteBytes.
 func Write(path string, value any) error {
 	b, e := json.MarshalIndent(value, "", "  ")
 	if e != nil {
@@ -103,6 +110,10 @@ func Write(path string, value any) error {
 	return WriteBytes(path, append(b, '\n'))
 }
 
+// WriteBytes replaces path with b atomically: it writes a 0600 temporary file
+// in the same directory (created 0700 if missing), syncs it, renames it over
+// path, and syncs the directory. A reader sees the old content or the new,
+// never a partial file.
 func WriteBytes(path string, b []byte) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return e
@@ -214,6 +225,8 @@ func TrimLog(path string, maxBytes, keep int64) (e error) {
 	return f.Sync()
 }
 
+// Read decodes the JSON file at path into value. A missing file returns an
+// error that satisfies errors.Is(err, os.ErrNotExist).
 func Read(path string, value any) error {
 	b, e := os.ReadFile(path)
 	if e != nil {
@@ -222,8 +235,13 @@ func Read(path string, value any) error {
 	return json.Unmarshal(b, value)
 }
 
+// ErrBusy means a lock is held by another process, such as a collector or
+// setup run already in progress.
 var ErrBusy = errors.New("another collector or setup is running")
 
+// Lock takes the collector lock, home/collector.lock, which serializes the
+// collector with setup and other writers of archive state. It does not wait:
+// ErrBusy means another process holds it. See NamedLock.
 func Lock(home string) (func(), error) { return NamedLock(home, "collector.lock") }
 
 // NamedLock takes an exclusive, non-blocking flock on home/name, creating the
@@ -288,7 +306,9 @@ func lockOpened(path string, f *os.File) (release func(), current bool, e error)
 	return nil, false, nil
 }
 
-// NamedLockWait tolerates short contention while preserving the hook deadline.
+// NamedLockWait is NamedLock retried every 10ms until timeout, so a caller
+// with a deadline (a hook) tolerates short contention without overrunning it.
+// When the lock is still held at the deadline it returns ErrBusy.
 func NamedLockWait(home, name string, timeout time.Duration) (func(), error) {
 	deadline := time.Now().Add(timeout)
 	for {

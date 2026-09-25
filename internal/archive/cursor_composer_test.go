@@ -810,7 +810,7 @@ func TestCursorComposerRecordsParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.Capture.SourceFormat != "cursor-composer" || bundle.Capture.FilterVersion != "9" {
+	if bundle.Capture.SourceFormat != "cursor-composer" || bundle.Capture.FilterVersion != FilterVersion {
 		t.Fatalf("capture = %#v", bundle.Capture)
 	}
 	view, err := ParseNormalized(bundle)

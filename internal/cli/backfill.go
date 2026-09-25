@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -43,7 +43,7 @@ func backfillDay(value string, now time.Time) (string, error) {
 
 // runBackfillCommand implements `agent-archive backfill`: it finds the
 // sessions already on this Mac, shows the plan, and after confirmation
-// imports them (see docs/agent-archive-backfill-spec.md). `--dry-run
+// imports them (see docs/design/backfill.md). `--dry-run
 // [--json]` prints the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	if len(args) > 0 && args[0] == "history" {
@@ -325,12 +325,12 @@ func (e Env) backfillEnvironment(userHome string) backfill.Environment {
 // archiveState answers backfill.ArchiveState from this machine's local store
 // and configuration.
 type archiveState struct {
-	store *collector.LocalStore
+	store *state.Store
 	cfg   config.Config
 }
 
 func newArchiveState(home string, cfg config.Config) archiveState {
-	return archiveState{store: collector.OpenLocalStoreReadOnly(home), cfg: cfg}
+	return archiveState{store: state.OpenReadOnly(home), cfg: cfg}
 }
 
 // Classify reports already_archived when the native session has a
@@ -360,7 +360,7 @@ func (s archiveState) Classify(harness, nativeSessionID string) (backfill.SkipRe
 	if err != nil || !found {
 		return "", err
 	}
-	if record.Reason == collector.RemovalReasonUndo {
+	if record.Reason == state.RemovalReasonUndo {
 		return backfill.SkipRemovedByUndo, nil
 	}
 	return backfill.SkipRemovedByRetention, nil

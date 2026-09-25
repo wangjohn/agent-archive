@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // cursorSetup installs for Cursor only, with one included project.
@@ -176,7 +176,7 @@ func TestImportedCursorDatabaseChatBlocksADestinationChange(t *testing.T) {
 	now := time.Now().UTC()
 	env, home, userHome, project := cursorSetup(t, now)
 	cfg, _, _ := config.Load(home)
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

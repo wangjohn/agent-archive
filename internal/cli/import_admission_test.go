@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // A hook admits a new session the moment it starts, and says so.
@@ -22,7 +22,7 @@ func TestHookRegistrationRecordsAdmissionAndOrigin(t *testing.T) {
 	if err := handleHookEvent(home, "claude", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	regs, err := collector.OpenLocalStoreReadOnly(home).LoadRegistrations()
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil || len(regs) != 1 {
 		t.Fatalf("regs=%#v err=%v", regs, err)
 	}
@@ -52,7 +52,7 @@ func TestHookContinuationFollowsTheAdmittedDestination(t *testing.T) {
 	if err := handleHookEvent(home, "claude", startPayload, start); err != nil {
 		t.Fatal(err)
 	}
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestHookContinuationOfLegacyRegistrationKeepsNoDestinationID(t *testing.T) 
 	home := t.TempDir()
 	activated := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, "/work/widget", activated)
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
 	home := t.TempDir()
 	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, "/work/widget", activated)
-	store, err := collector.NewLocalStore(home)
+	store, err := state.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}

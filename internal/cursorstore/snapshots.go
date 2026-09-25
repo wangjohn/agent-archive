@@ -43,7 +43,7 @@ func snapshotRootPath() string {
 	return filepath.Join(base, fmt.Sprintf("agent-archive-cursor-%d", os.Getuid()))
 }
 
-// SnapshotTempDirForTesting, when set, replaces the per-user temporary
+// SnapshotTempDirForTesting replaces, when set, the per-user temporary
 // directory snapshots go under. Only tests set it, so their copies stay in
 // folders of their own.
 var SnapshotTempDirForTesting string

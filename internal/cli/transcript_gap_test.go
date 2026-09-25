@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -62,7 +62,7 @@ func TestStatusReportsDeletedTranscriptAsGapNotError(t *testing.T) {
 		t.Fatalf("a deleted transcript surfaced as an error: %+v", view.Collector)
 	}
 	gaps := view.Apps[0].CaptureGaps
-	if len(gaps) != 1 || gaps[0].Code != string(collector.BlockedReasonTranscriptMissing) || !strings.Contains(gaps[0].Detail, "resumes by itself") {
+	if len(gaps) != 1 || gaps[0].Code != string(state.BlockedReasonTranscriptMissing) || !strings.Contains(gaps[0].Detail, "resumes by itself") {
 		t.Fatalf("gaps=%+v", gaps)
 	}
 	var out strings.Builder

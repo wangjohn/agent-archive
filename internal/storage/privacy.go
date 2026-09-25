@@ -24,6 +24,10 @@ type PrivacyReport struct {
 	Checks          []string   `json:"checks,omitempty"`
 }
 
+// UnknownPrivacy returns the report for a bucket whose public access has not
+// been inspected: state "not_verified", with a reason and guidance link for
+// provider. For "r2" the reason says management credentials are not
+// configured, since R2 object credentials cannot inspect public access.
 func UnknownPrivacy(provider string) PrivacyReport {
 	reason := "inspection_unavailable"
 	guidanceURL := "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html"

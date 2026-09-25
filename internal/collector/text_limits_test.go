@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -20,7 +21,7 @@ func cursorTextTranscript(exchanges, bodyBytes int) string {
 	return b.String()
 }
 
-func cursorTextSession(t *testing.T, local *LocalStore, content string) string {
+func cursorTextSession(t *testing.T, local *state.Store, content string) string {
 	t.Helper()
 	path := writeTranscript(t, t.TempDir(), "cursor.txt", content)
 	reg := registration(t, path)
@@ -44,10 +45,10 @@ func TestCursorTextOverTheLimitBlocksOnceAndClearsOnChange(t *testing.T) {
 	if len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("an oversize text transcript must be a gap, not an error: %#v", result)
 	}
-	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != BlockedReasonRecordTooLarge {
+	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != state.BlockedReasonRecordTooLarge {
 		t.Fatalf("reason=%q blocked=%t", reason, blocked)
 	}
-	cache := local.publishedPath("session-1")
+	cache := publishedPath(local, "session-1")
 	before := mtime(t, cache)
 	if result := runAt(t, local, remote, at.Add(time.Minute)); len(result.Errors) != 0 {
 		t.Fatalf("second pass: %#v", result)
@@ -108,7 +109,7 @@ func TestCursorTextAppendExtendsAndTruncationIsARewrite(t *testing.T) {
 	if result := runAt(t, local, remote, at.Add(2*time.Hour)); len(result.Published) != 0 || len(result.Errors) != 0 {
 		t.Fatalf("result = %#v", result)
 	}
-	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != BlockedReasonTranscriptRewritten {
+	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != state.BlockedReasonTranscriptRewritten {
 		t.Fatalf("a truncated text transcript was not a rewrite: reason=%q blocked=%t", reason, blocked)
 	}
 }
@@ -133,7 +134,7 @@ func TestCursorTextMidSectionEditIsARewrite(t *testing.T) {
 	if result := runAt(t, local, remote, at.Add(time.Hour)); len(result.Published) != 0 || len(result.Errors) != 0 {
 		t.Fatalf("result = %#v", result)
 	}
-	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != BlockedReasonTranscriptRewritten {
+	if reason, blocked, _ := local.LoadBlocked("session-1"); !blocked || reason != state.BlockedReasonTranscriptRewritten {
 		t.Fatalf("a mid-section edit was not a rewrite: reason=%q blocked=%t", reason, blocked)
 	}
 }

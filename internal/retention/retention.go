@@ -26,6 +26,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -98,7 +99,7 @@ type Result struct {
 // session's data and local state behind forever. One session's failure is
 // isolated in Result.Errors and left to retry on the next call, like
 // collector.Run.
-func Sweep(ctx context.Context, local *collector.LocalStore, store storage.ObjectStore, opts Options) (Result, error) {
+func Sweep(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) (Result, error) {
 	now := opts.now()
 	result := Result{Errors: map[string]error{}}
 
@@ -122,7 +123,7 @@ func Sweep(ctx context.Context, local *collector.LocalStore, store storage.Objec
 		result.Errors[id] = issue
 		// A request that could not be read may still hold evidence, so it
 		// defers expiry like any other; a quarantined one no longer exists.
-		if !errors.Is(issue, collector.ErrQuarantined) {
+		if !errors.Is(issue, state.ErrQuarantined) {
 			requested[id] = true
 		}
 	}
@@ -134,7 +135,7 @@ func Sweep(ctx context.Context, local *collector.LocalStore, store storage.Objec
 	return result, nil
 }
 
-func sweepSession(ctx context.Context, local *collector.LocalStore, store storage.ObjectStore, reg archive.SessionRegistration, opts Options, now time.Time, requested map[string]bool, result *Result) error {
+func sweepSession(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, opts Options, now time.Time, requested map[string]bool, result *Result) error {
 	bundle, _, _, found, err := local.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
 		return fmt.Errorf("load published cache: %w", err)
@@ -336,9 +337,9 @@ func sweepSession(ctx context.Context, local *collector.LocalStore, store storag
 // published to a previous destination. ForgetIdleSession writes the record
 // under the request lock, so a session a hook kept alive gets none, and a
 // failed write keeps the session registered for the next sweep to retry.
-func forgetExpired(local *collector.LocalStore, reg archive.SessionRegistration, deferForWork bool, now time.Time) (bool, error) {
-	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &collector.RemovalRecord{
-		Harness: reg.Harness.Name, Reason: collector.RemovalReasonRetention, At: now,
+func forgetExpired(local *state.Store, reg archive.SessionRegistration, deferForWork bool, now time.Time) (bool, error) {
+	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &state.RemovalRecord{
+		Harness: reg.Harness.Name, Reason: state.RemovalReasonRetention, At: now,
 	})
 }
 
@@ -346,7 +347,7 @@ func forgetExpired(local *collector.LocalStore, reg archive.SessionRegistration,
 // publication: a request a hook left behind, or a publication built and not
 // yet accepted by storage. Either one means evidence exists that expiry would
 // destroy before it was ever archived.
-func hasUnfinishedWork(local *collector.LocalStore, requested map[string]bool, archiveSessionID string) (bool, error) {
+func hasUnfinishedWork(local *state.Store, requested map[string]bool, archiveSessionID string) (bool, error) {
 	if requested[archiveSessionID] {
 		return true, nil
 	}
@@ -363,7 +364,7 @@ func hasUnfinishedWork(local *collector.LocalStore, requested map[string]bool, a
 // entry past its grace period can be. This is a conservative necessary
 // condition: it may say yes for an entry the full check then retains, but
 // never no when a deletion is possible, so skipping on false is safe.
-func anySupersededExpirable(superseded []collector.SupersededSource, now time.Time, grace time.Duration) bool {
+func anySupersededExpirable(superseded []state.SupersededSource, now time.Time, grace time.Duration) bool {
 	for i, s := range superseded {
 		if i == len(superseded)-1 {
 			return false

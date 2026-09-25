@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -97,7 +99,7 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	}
 	remote.failMetadata = false
 	now = now.Add(24 * time.Hour)
-	restarted, err := NewLocalStore(local.home)
+	restarted, err := state.Open(local.Home())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +137,7 @@ func TestMetadataUpgradePreservesNewerDeclinedCandidate(t *testing.T) {
 	richer := bundle
 	richer.NativeRecords = append(richer.NativeRecords, map[string]any{"type": "event_msg", "message": "retained candidate"})
 	richer.Capture.CapturedAt = now.Add(time.Minute)
-	if err := local.SavePublished(reg.ArchiveSessionID, richer, at, CacheStatusDeclined); err != nil {
+	if err := statetest.SavePublished(local, reg.ArchiveSessionID, richer, at, state.CacheStatusDeclined); err != nil {
 		t.Fatal(err)
 	}
 	opts.ParserVersion = "two"
@@ -148,7 +150,7 @@ func TestMetadataUpgradePreservesNewerDeclinedCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != CacheStatusDeclined || !candidate.Capture.CapturedAt.Equal(richer.Capture.CapturedAt) || len(candidate.NativeRecords) != len(richer.NativeRecords) {
+	if status != state.CacheStatusDeclined || !candidate.Capture.CapturedAt.Equal(richer.Capture.CapturedAt) || len(candidate.NativeRecords) != len(richer.NativeRecords) {
 		t.Fatal("metadata-only update discarded local evidence")
 	}
 	actual, _, _, err := local.LoadLastPublished(reg.ArchiveSessionID)
@@ -170,7 +172,7 @@ func (s *countedGets) Get(ctx context.Context, key string) ([]byte, error) {
 const grownCodexTranscript = codexTranscript + "\n" + `{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`
 
 // publishOnce runs a first scan with parser "one" and returns what it published.
-func publishOnce(t *testing.T, local *LocalStore, remote storage.ObjectStore, reg archive.SessionRegistration, opts *Options) archive.Metadata {
+func publishOnce(t *testing.T, local *state.Store, remote storage.ObjectStore, reg archive.SessionRegistration, opts *Options) archive.Metadata {
 	t.Helper()
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
@@ -227,7 +229,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 			opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 			before := publishOnce(t, local, remote, reg, &opts)
 			// State written before metadata was cached locally.
-			if err := local.cacheMetadata(reg.ArchiveSessionID, nil); err != nil {
+			if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
 				t.Fatal(err)
 			}
 			corrupt(t, remote, reg, before)
@@ -243,7 +245,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 			if after.SourceBundle.SHA256 == before.SourceBundle.SHA256 || after.Parser.Version != "two" {
 				t.Fatalf("capture did not publish the grown transcript with the current parser: %+v", after)
 			}
-			cached, err := local.loadPublishedMetadata(reg.ArchiveSessionID)
+			cached, err := local.PublishedMetadata(reg.ArchiveSessionID)
 			if err != nil || len(cached) == 0 {
 				t.Fatalf("publication did not cache its metadata: %v", err)
 			}
@@ -258,13 +260,13 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	published := publishOnce(t, local, remote, reg, &opts)
-	if err := local.cacheMetadata(reg.ArchiveSessionID, nil); err != nil {
+	if err := statetest.CacheMetadata(local, reg.ArchiveSessionID, nil); err != nil {
 		t.Fatal(err)
 	}
 	// State written before metadata was cached also predates scan signatures;
 	// without this the session would be skipped as unchanged, which a real
 	// legacy install never is.
-	if err := local.removeScanSignature(reg.ArchiveSessionID); err != nil {
+	if err := local.RemoveScanSignature(reg.ArchiveSessionID); err != nil {
 		t.Fatal(err)
 	}
 	published.Parser.Status = archive.ParserStatusFailed
@@ -284,7 +286,7 @@ func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 		if remote.gets != want {
 			t.Fatalf("scan %d performed %d remote reads, want %d", scan, remote.gets, want)
 		}
-		cached, err := local.loadPublishedMetadata(reg.ArchiveSessionID)
+		cached, err := local.PublishedMetadata(reg.ArchiveSessionID)
 		if err != nil || len(cached) == 0 {
 			t.Fatalf("scan %d did not cache the migrated metadata: %v", scan, err)
 		}
@@ -325,7 +327,7 @@ func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
 	if _, found, err := local.LoadPending(reg.ArchiveSessionID); err != nil || found {
 		t.Fatalf("content publication was rate-limited behind a metadata-only one: pending=%v err=%v", found, err)
 	}
-	if _, _, status, _, err := local.LoadPublished(reg.ArchiveSessionID); err != nil || status != CacheStatusPublished {
+	if _, _, status, _, err := local.LoadPublished(reg.ArchiveSessionID); err != nil || status != state.CacheStatusPublished {
 		t.Fatalf("status=%q err=%v", status, err)
 	}
 }
@@ -374,7 +376,7 @@ func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 		t.Fatal("regeneration published the blocked candidate")
 	}
 	reason, blocked, err := local.LoadBlocked(reg.ArchiveSessionID)
-	if err != nil || !blocked || reason != BlockedReasonTranscriptRewritten {
+	if err != nil || !blocked || reason != state.BlockedReasonTranscriptRewritten {
 		t.Fatalf("metadata-only publish cleared the block: blocked=%v reason=%q err=%v", blocked, reason, err)
 	}
 	cached, _, _, _, err := local.LoadPublished(reg.ArchiveSessionID)
@@ -396,7 +398,7 @@ func TestBlockedSessionWithoutPublicationSkipsRegeneration(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
-	if reason, blocked, err := local.LoadBlocked(reg.ArchiveSessionID); err != nil || !blocked || reason != BlockedReasonTranscriptTooLarge {
+	if reason, blocked, err := local.LoadBlocked(reg.ArchiveSessionID); err != nil || !blocked || reason != state.BlockedReasonTranscriptTooLarge {
 		t.Fatalf("blocked=%v reason=%q err=%v", blocked, reason, err)
 	}
 	if _, _, found, err := local.LoadLastPublished(reg.ArchiveSessionID); err != nil || found {
