@@ -5,7 +5,7 @@ Words agent-archive uses in its output and docs, in alphabetical order.
 **Adapter.** The code that reads one app's transcript format (Claude Code
 JSONL, Codex rollout JSONL, Cursor JSONL, text, or database chats) and hands
 the filter records it understands. Its version is recorded with each capture
-(`capture.adapter_version`); see [versions](versions.md).
+(`capture.adapter_version`); see [versions](../../dev/maintainers/versions.md).
 
 **Admission.** The moment agent-archive took ownership of a session: a
 hook's registration of a new session, or the import that backfill ran
@@ -49,7 +49,7 @@ storage starts a new one and leaves earlier sessions where they are.
 (`filter_version`). A new version refilters and republishes every session
 whose transcript is still on the Mac; see
 [privacy](../security/privacy.md#after-a-filter-upgrade) and the
-[filter changelog](../security/filter-changelog.md).
+[filter changelog](../../dev/specs/privacy-filter-changelog.md).
 
 **Hook.** A command an app runs at points in a session (start, prompt,
 stop). agent-archive's hook records the session locally, typically in

@@ -101,7 +101,7 @@ func printInterruptedImport(out io.Writer, home string, plan backfill.Plan, cfg 
 
 // runBackfillCommand implements `agent-archive backfill`: it finds the
 // sessions already on this Mac, shows the plan, and after confirmation
-// imports them (see docs/design/backfill.md). `--dry-run
+// imports them (see dev/specs/backfill.md). `--dry-run
 // [--json]` prints the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	// A copy of Cursor's database a killed backfill or collector left in the

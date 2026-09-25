@@ -30,19 +30,19 @@ var (
 )
 
 // docCommandSources are the Markdown and issue-template files whose quoted
-// commands must exist: README.md, docs/ except the unmaintained history
-// and the unimplemented proposals, and .github/ISSUE_TEMPLATE.
+// commands must exist: README.md, docs/, dev/ except the unimplemented
+// proposals, and .github/ISSUE_TEMPLATE.
 func docCommandSources(t *testing.T) []string {
 	t.Helper()
 	root := filepath.Join("..", "..")
 	files := []string{filepath.Join(root, "README.md")}
-	for _, dir := range []string{"docs", filepath.Join(".github", "ISSUE_TEMPLATE")} {
+	for _, dir := range []string{"docs", "dev", filepath.Join(".github", "ISSUE_TEMPLATE")} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if d.IsDir() {
-				if slash := filepath.ToSlash(path); strings.HasSuffix(slash, "docs/design/proposed") {
+				if slash := filepath.ToSlash(path); strings.HasSuffix(slash, "dev/proposals") {
 					return filepath.SkipDir
 				}
 				return nil
@@ -134,10 +134,10 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 			t.Fatal(err)
 		}
 		rel, _ := filepath.Rel(filepath.Join("..", ".."), path)
-		// Design documents propose flags that do not exist yet, so only an
-		// explicit `agent-archive ...` is checked there; elsewhere a code
-		// span such as `list --json` names the command too.
-		design := strings.HasPrefix(filepath.ToSlash(rel), "docs/design/")
+		// Specs propose flags that do not exist yet, so only an explicit
+		// `agent-archive ...` is checked there; elsewhere a code span such
+		// as `list --json` names the command too.
+		design := strings.HasPrefix(filepath.ToSlash(rel), "dev/specs/")
 		for _, code := range quotedCode(string(data)) {
 			code = shellContinuation.ReplaceAllString(code, " ")
 			for line := range strings.SplitSeq(code, "\n") {

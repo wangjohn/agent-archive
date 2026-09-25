@@ -11,11 +11,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
-// TestVersionsDocMatchesCode fails when docs/reference/versions.md's
+// TestVersionsDocMatchesCode fails when dev/maintainers/versions.md's
 // "Current" column disagrees with the constants a build records, so a
 // version bump that forgets the doc is caught in review.
 func TestVersionsDocMatchesCode(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "reference", "versions.md"))
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "dev", "maintainers", "versions.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

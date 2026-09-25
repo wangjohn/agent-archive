@@ -1,6 +1,6 @@
 // Package doclinks checks the repository's Markdown documentation: every
 // relative link resolves to a file in the repository, and every #anchor to a
-// heading in it, and docs/reference/versions.md matches the code. It holds
+// heading in it, and dev/maintainers/versions.md matches the code. It holds
 // only these tests, which `go test ./...` runs in CI.
 package doclinks
 

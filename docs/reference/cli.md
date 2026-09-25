@@ -19,7 +19,7 @@ interface and are left out.
 This page is generated from the CLI itself, and `go test ./...` fails when it
 is stale. After changing a command's help or flags, regenerate it with
 `go test ./internal/cli -run TestCLIReferenceIsCurrent -update` (see
-[fixtures and goldens](../contributing/testing.md#fixtures-and-goldens)).
+[fixtures and goldens](../../dev/contributing/testing.md#fixtures-and-goldens)).
 
 ## Commands
 

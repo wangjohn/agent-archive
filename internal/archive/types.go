@@ -40,7 +40,7 @@ const (
 	// starts a section, hides the rest of the transcript, or un-hides a
 	// hidden one; and a quoted credential value takes along whatever a shell
 	// would glue onto it after the closing quote (`PASSWORD="abc"secret`).
-	// See docs/agent-archive-privacy.md.
+	// See dev/specs/privacy-filter.md.
 	FilterVersion = "12"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not

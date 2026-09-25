@@ -18,7 +18,7 @@ validate against a fixed version.
   this build writes. Readers should still accept values they don't know:
   a later version may add one, and older sidecars may carry retired ones.
 - A change that removes or redefines a field bumps the document's
-  `schema_version` (see [versions](versions.md)); adding an optional field
+  `schema_version` (see [versions](../../dev/maintainers/versions.md)); adding an optional field
   does not.
 
 ## How they are kept honest

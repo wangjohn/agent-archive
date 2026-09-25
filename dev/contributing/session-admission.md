@@ -1,10 +1,10 @@
 # Session admission
 
 How a registration's times are used, for contributors. The rules users see
-are in [session eligibility](../reference/session-eligibility.md).
+are in [session eligibility](../../docs/reference/session-eligibility.md).
 
 `agent-archive backfill` registers sessions the hooks never saw, after the
-person confirms a plan ([backfill design](../design/backfill.md)). An
+person confirms a plan ([backfill design](../specs/backfill.md)). An
 imported registration has `origin: import` and two times:
 
 - `session_started_at` is the true start, from the transcript

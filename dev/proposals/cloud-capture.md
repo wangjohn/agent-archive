@@ -1,12 +1,12 @@
 # Cloud session capture: engineering specification
 
-> **Proposed.** Not implemented or scheduled. See the [documentation index](../../README.md) for what exists today.
+> **Proposed.** Not implemented or scheduled. See the [documentation index](../../docs/README.md) for what exists today.
 
 Status: proposed plan for review; not scheduled for implementation. Prepared 2026-09-24. This document describes a target design, not the current implementation. Claude Code on the web facts marked *verified* come from live probes on 2026-09-23 and 2026-09-24; everything else about vendor products comes from vendor documentation read on 2026-09-23 and is marked *documented* or *unknown*.
 
 ## Purpose
 
-The archive covers only sessions that run on a configured Mac. The [product specification](../archive-spec.md#scope-and-non-goals) says: "Remote and cloud-hosted sessions require a collector in their execution environment and are not automatically covered by a Mac installation." Coding agents increasingly run in vendor-hosted VMs (Claude Code on the web, Codex cloud, Cursor Cloud Agents) or on CI runners. Those sessions are invisible to the archive today.
+The archive covers only sessions that run on a configured Mac. The [product specification](../specs/archive.md#scope-and-non-goals) says: "Remote and cloud-hosted sessions require a collector in their execution environment and are not automatically covered by a Mac installation." Coding agents increasingly run in vendor-hosted VMs (Claude Code on the web, Codex cloud, Cursor Cloud Agents) or on CI runners. Those sessions are invisible to the archive today.
 
 This specification adds cloud capture for the three harnesses the archive already supports, Claude Code, Codex and Cursor, wherever the vendors make it possible, without weakening the archive's existing guarantees: filtered native records, fresh-start eligibility, content-addressed sources, metadata written last, no secrets on disk or in output, and nothing on the agent's critical path that can block it.
 
@@ -96,13 +96,13 @@ The metadata schema has `additionalProperties: false`, so cloud fields require `
 
 - `execution`: `{ "kind": "local" | "cloud" | "ci", "provider": "claude_code_web" | "cursor_cloud" | "codex_cloud" | "github_actions" | …, "remote_session_id": "…" }`. `remote_session_id` comes from vendor variables such as `CLAUDE_CODE_REMOTE_SESSION_ID`, so a session can be linked back to the vendor UI.
 - `machine_id`: in cloud mode, a stable pseudo-machine per provider and environment, for example `cloud-claude_code_web`, never the VM's random identity. This keeps `list` grouping meaningful and makes clear that the machine will not sweep its own sessions.
-- `repo_key`: `sha256(normalized origin remote URL)[:16]`, as already proposed in the [handoff specification](../handoff.md). It is written for local and cloud sessions alike, so the same repository groups together even though `project_id` (a path hash) differs between a Mac and a VM.
+- `repo_key`: `sha256(normalized origin remote URL)[:16]`, as already proposed in the [handoff specification](../specs/handoff.md). It is written for local and cloud sessions alike, so the same repository groups together even though `project_id` (a path hash) differs between a Mac and a VM.
 
 `list` and `status` show the execution kind and provider. `show` and `handoff` are unchanged.
 
 ### 5. Adapter coverage
 
-- **Claude.** Review each cloud-only record type and key above against the [privacy rules](../../security/privacy.md): allow what carries conversation structure (likely `attachment` with filtered contents), keep bookkeeping types as counted gaps, and bump the filter version. Add sanitized fixtures from a cloud transcript.
+- **Claude.** Review each cloud-only record type and key above against the [privacy rules](../../docs/security/privacy.md): allow what carries conversation structure (likely `attachment` with filtered contents), keep bookkeeping types as counted gaps, and bump the filter version. Add sanitized fixtures from a cloud transcript.
 - **Cursor.** Reuse the desktop rules: register at the first `beforeSubmitPrompt` when `transcript_path` is null or empty, and adopt the path later. If the Phase 0 probe shows transcripts are disabled on cloud VMs, push capture cannot work and Cursor falls back to pull.
 - **Codex.** Depends entirely on the Phase 0 probe.
 
@@ -156,7 +156,7 @@ Commands:
 - **`agent-archive cloud rotate`** mints a new scoped credential, updates every target it can update programmatically, prints the paste block for the rest, and deletes the old credential only after the user confirms that the paste is done. A `cloud verify` pass, run in a new cloud session after the paste, confirms that the environment has switched to the new credential.
 - **`agent-archive cloud verify`**, run inside a cloud VM (or by the setup script), checks the gate variables, reachability, and a synthetic write, read-back and delete test under a unique key, mirroring setup's storage test. It reports which step failed without printing credentials.
 
-The bootstrap token changes a rule in the [privacy document](../../security/privacy.md): today the tool "does not request another token" beyond object credentials. `provision` asks for one only when the user opts into automated provisioning, keeps it in Keychain, never sends it to a cloud environment, and `cloud provision --forget-bootstrap` deletes it.
+The bootstrap token changes a rule in the [privacy document](../../docs/security/privacy.md): today the tool "does not request another token" beyond object credentials. `provision` asks for one only when the user opts into automated provisioning, keeps it in Keychain, never sends it to a cloud environment, and `cloud provision --forget-bootstrap` deletes it.
 
 Short-lived R2 credentials do not remove the paste. Credentials stored in a vendor's environment settings must outlive the 7-day maximum, so those environments get a long-lived, bucket-scoped key. Short-lived credentials fit only where each launch supplies its own: Cursor launches through the API or SDK, CI jobs, and Claude Code self-hosted runners, whose wrapper script can mint per-session credentials.
 
@@ -168,7 +168,7 @@ Short-lived R2 credentials do not remove the paste. Credentials stored in a vend
 
 | Phase | Scope | Exit criteria |
 | --- | --- | --- |
-| 0. Probes | Rerun the verified Claude probe method on Cursor Cloud Agents and Codex cloud: which hooks fire, the payload keys, whether a transcript exists at stop, egress to S3 and R2, and whether secrets reach hooks | Each unknown in the support matrix answered and recorded in [capture capabilities](../../reference/capture-capabilities.md) |
+| 0. Probes | Rerun the verified Claude probe method on Cursor Cloud Agents and Codex cloud: which hooks fire, the payload keys, whether a transcript exists at stop, egress to S3 and R2, and whether secrets reach hooks | Each unknown in the support matrix answered and recorded in [capture capabilities](../../docs/reference/capture-capabilities.md) |
 | 1. Claude Code | Linux build, cloud-mode configuration, `CaptureSession`, the `--cloud` hook, schema v2 (`execution`, `repo_key`, cloud `machine_id`), Claude adapter review, credential redaction, `cloud provision` (R2 storage, repository files, Claude paste block, GitHub secrets), `cloud verify`, CI documentation for `claude-code-action` | A Claude Code web session and a `claude-code-action` run each publish and read back from the Mac with `show`, including one subagent |
 | 2. Cursor, retention and rotation | Cursor push (if the probe passes), the Mac cloud sweep, `cloud rotate`, S3 provisioning | A Cursor Cloud Agent session reads back; superseded cloud sources are swept |
 | 3. Codex and pull | Codex cloud push if the probe passes, `codex-action`, the Cursor pull importer | Codex CI reads back; Cursor import reads back with `source_kind: vendor_api` |

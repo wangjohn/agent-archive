@@ -43,4 +43,4 @@ retention or `backfill undo` removed leaves a removal record, so a later
 backfill does not import it again unless you pass `--include-removed`.
 
 How admission is implemented, check by check, and the guard tests that keep
-it so, are in [session admission](../contributing/session-admission.md).
+it so, are in [session admission](../../dev/contributing/session-admission.md).

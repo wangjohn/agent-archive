@@ -119,6 +119,6 @@ Old sessions are deleted from the bucket after 90 days by default.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md); never test against your real Mac
-([sandbox recipe](docs/contributing/testing.md)). Report vulnerabilities
+([sandbox recipe](dev/contributing/testing.md)). Report vulnerabilities
 privately as [SECURITY.md](SECURITY.md) describes. Changes are in
 [CHANGELOG.md](CHANGELOG.md). Released under the [MIT License](LICENSE).
