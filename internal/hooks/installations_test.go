@@ -97,6 +97,18 @@ func TestInstallationIdentityIsTheDataDirectory(t *testing.T) {
 		{"default versus other", Hook{DataHome: realDir, DefaultDataHome: defaultHome}, "", false},
 		{"through a symlink", Hook{DataHome: link}, realDir, true},
 		{"sibling prefix", Hook{DataHome: realDir}, realDir + "2", false},
+		{"trailing slash", Hook{DataHome: realDir}, realDir + "/", true},
+		{"missing directory", Hook{DataHome: filepath.Join(root, "gone")}, filepath.Join(root, "gone"), true},
+	}
+	// On a case-insensitive volume (macOS's default), a spelling that differs
+	// only in case is the same directory, so the same installation.
+	if _, err := os.Stat(filepath.Join(root, "REALDIR")); err == nil {
+		cases = append(cases, struct {
+			name     string
+			hook     Hook
+			dataHome string
+			want     bool
+		}{"another case", Hook{DataHome: realDir}, filepath.Join(root, "REALDIR"), true})
 	}
 	for _, c := range cases {
 		if got := c.hook.sameInstallation(c.dataHome); got != c.want {

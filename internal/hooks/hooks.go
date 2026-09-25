@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -361,7 +362,9 @@ func CommandDataHome(command string) (dataHome string, ok bool) {
 // dataHome ("" for the default data directory) belongs to h's installation.
 // Both sides are compared with their symlinks resolved, and "" stands for
 // DefaultDataHome, so the default installation is one installation however
-// its directory was spelled.
+// its directory was spelled. Two spellings of one existing directory that
+// differ only in case (APFS and HFS+ are case-insensitive by default) are
+// one directory too.
 func (h Hook) sameInstallation(dataHome string) bool {
 	resolve := func(dir string) string {
 		if dir == "" {
@@ -375,7 +378,16 @@ func (h Hook) sameInstallation(dataHome string) bool {
 		}
 		return filepath.Clean(dir)
 	}
-	return resolve(dataHome) == resolve(h.DataHome)
+	theirs, ours := resolve(dataHome), resolve(h.DataHome)
+	if theirs == ours {
+		return true
+	}
+	if theirs == "" || ours == "" {
+		return false
+	}
+	a, errA := os.Stat(theirs)
+	b, errB := os.Stat(ours)
+	return errA == nil && errB == nil && os.SameFile(a, b)
 }
 
 // handlerList returns the handlers of one event's list: for Cursor the
