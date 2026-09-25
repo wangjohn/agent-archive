@@ -1,7 +1,8 @@
 # Inspect the archive: list, show, feedback
 
-Two read-only commands show what is in the bucket without touching local
-collector state.
+`list` and `show` are read-only: they show what is in the bucket without
+touching local collector state. `feedback` attaches your own assessment to
+a session.
 
 ```sh
 # Every archived session, newest first: ID, harness, capture time, origin,
@@ -34,10 +35,8 @@ version wrote it, is left out with a warning on stderr; the rest are listed.
 the session's source bundle, verifies its checksum and identity against the
 metadata, and prints the normalized view (turns, tool calls, and
 hook-reported final messages) after the sidecar. If the same session ID was
-published under more than one harness, pass `--harness` to pick one. A bundle
-written by a pre-release build as a single JSON document (schema 1) is not
-read; `show --normalized` and `handoff` report "unsupported source schema
-version 1" for it. The object layout is in
+published under more than one harness, pass `--harness` to pick one. The
+object layout is in
 [bucket layout](../reference/bucket-layout.md).
 
 Before setup has run, both commands print `Not set up.` to stderr and exit 1.

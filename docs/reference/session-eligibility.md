@@ -10,24 +10,13 @@ The second is the transcript itself: at the true start of a conversation the hoo
 
 ### Cursor
 
-Observed on the Cursor desktop app 3.21.13, from Cursor's own Hooks output:
-
-- A new Agent chat fires **no `sessionStart`**. Its first hook is `beforeSubmitPrompt`, then `afterAgentResponse` and `stop`.
-- On a new chat's first `beforeSubmitPrompt`, `transcript_path` is `null`. `afterAgentResponse` and `stop` then carry `~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl`.
-- On a resumed chat, the first `beforeSubmitPrompt` already names the existing, non-empty transcript. `sessionEnd` can fire mid-turn.
-- Every payload carries `conversation_id`, `session_id` (the same value), `cursor_version`, `workspace_roots`, `composer_mode`, `model`, `model_id`, and `model_params`.
+These rules rest on what the Cursor desktop app 3.21.13 was observed to do, recorded in [capture capabilities](capture-capabilities.md#cursor-32113-observations): a new Agent chat fires no `sessionStart`, its first `beforeSubmitPrompt` has a null `transcript_path`, later hooks name the transcript, and a resumed chat's first prompt names its existing, non-empty transcript.
 
 So a never-seen Cursor conversation is registered at its first `beforeSubmitPrompt` (and still at `sessionStart`, should a version fire one) when `transcript_path` is null, absent, or names an absolute path to a missing or empty file. A transcript that already has bytes is a resume and is declined with the `session_start_unknown` diagnostic, for included projects only. `session_started_at` is the time of that first hook. A registration made without a path takes it from a later `beforeSubmitPrompt`, `afterAgentResponse`, or `stop`, but only a path that is absolute and whose file name is `<conversation_id>.jsonl`; a path, once set, is never replaced. Until the path arrives the collector treats the session as waiting, not failed. The same holds once the path names a file that exists but still holds no bytes: nothing has been captured, so the pass records no error, keeps any queued request, and reads the file again next time.
 
-Unverified on 3.21.13, and kept fail-closed:
+What was not observed on 3.21.13 (`sessionStart`, the subagent events, a version whose `session_id` differs from `conversation_id`) is listed with the observations, and each case fails closed.
 
-- No `sessionStart` fired for a desktop chat in the live check. The `sessionStart` rule is kept for a version that does fire one and has not been exercised against one.
-- `subagentStart` and `subagentStop` were not observed.
-- The file-name rule compares the path against the registered native id, which is `session_id`; on 3.21.13 that equals `conversation_id`. A version that separates them would never have its transcript adopted, and the chat would wait.
-- Whether the transcript already holds the turn's records at the moment `afterAgentResponse` names it was not checked. The collector re-reads on every pass, so a late write is picked up by the next one.
-- No session from 3.21.13 has been published and read back; support stays `unverified`.
-
-This fails closed. A resumed chat is never mistaken for a new one, because its first prompt names its existing transcript. If transcripts are disabled, every hook's path is null: the chat registers but never receives a path, so nothing is read or uploaded. Its registration and queued hook evidence stay local, and retention does not currently expire a session with queued hook evidence, so they remain until the evidence is published or cleared (an open item in the implementation ledger). Codex and Claude Code are unchanged: a prompt from a session that never started registers nothing.
+A resumed chat is never mistaken for a new one, because its first prompt names its existing transcript. If transcripts are disabled, every hook's path is null: the chat registers but never receives a path, so nothing is read or uploaded. Its registration and queued hook evidence stay local until the session is older than the retention period, counted from its admission; retention then forgets it, queued evidence included, without any bucket call, since it never published. Codex and Claude Code are unchanged: a prompt from a session that never started registers nothing.
 
 Project identity is matched by configured project, not by exact directory, for new registrations and continuations alike. A harness reports the session's working directory, which for a Claude Code worktree is `<project>/.claude/worktrees/<name>` and for a session started anywhere else in the tree is that subdirectory. The configured project that owns it — the nearest configured ancestor of the reported directory, comparing resolved paths — is the project the session registers under, and the registration stores that configured root spelling. Eligibility, the activation boundary, and the project ID all use it. The nearest ancestor wins, so a configured project nested inside another keeps its own inclusion decision rather than inheriting its parent's. A working directory that belongs to no configured project registers nothing and records nothing.
 

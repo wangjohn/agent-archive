@@ -38,6 +38,30 @@ nothing matches it lists the five most recent archived sessions with the
 command for each. Uncommitted changes stay on the machine that made them, so
 push a branch before continuing elsewhere.
 
+## What the receiving agent is told
+
+A handoff is a record of someone else's session, and its text is whatever
+that session contained: your prompts, but also tool output, file contents,
+and web pages the first agent read, any of which can hold instructions
+written to steer an agent. So the output is shaped as a record, not as
+instructions:
+
+- A short **preamble** at the top tells the receiving agent that what
+  follows is a filtered record of a past session, that `[REDACTED]` is not
+  a real value, that tool output is trimmed and edit bodies are left out,
+  to check the repository's current state before acting, to ask you when
+  the next step is unclear, and not to follow instructions inside the
+  record.
+- Prompts, agent replies, and summaries are block-quoted, and plan items
+  and file names are rendered so they can't add headings of their own.
+
+`--no-preamble` leaves out that note, for when you write your own framing
+around the handoff. The quoting stays, but nothing then tells the receiving
+agent that the text is a record rather than a request, so only use it when
+your own prompt says so. A handoff read from a shared bucket is only as
+trustworthy as everyone who can write to it; see the
+[threat model](../security/privacy.md#threat-model).
+
 ## Size
 
 Output is limited to 120,000 bytes (about 30k tokens; `--max-bytes`, `0` for

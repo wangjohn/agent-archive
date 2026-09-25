@@ -165,7 +165,8 @@ func (s *S3Store) Put(ctx context.Context, relative string, data []byte) error {
 
 // Get downloads the object at relative under the store's prefix. A missing
 // object is ErrNotFound, and one larger than the store's read limit is
-// ErrObjectTooLarge.
+// ErrObjectTooLarge. A 403 is ErrNotFound only when a listing confirms the
+// key is absent (see confirmedAbsent); otherwise it is returned as is.
 func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
 	key, err := s.key(relative)
 	if err != nil {
@@ -173,7 +174,7 @@ func (s *S3Store) Get(ctx context.Context, relative string) ([]byte, error) {
 	}
 	output, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
 	if err != nil {
-		if isNotFound(err) {
+		if isNotFound(err) || s.confirmedAbsent(ctx, key, err) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -210,7 +211,7 @@ func (s *S3Store) Stat(ctx context.Context, relative string) (ObjectInfo, error)
 		// as impossible (a refresh-skip) and not retried until the session
 		// publishes again or the parser changes, and a missing bucket fails
 		// every other storage call loudly anyway.
-		if isNotFound(err) {
+		if isNotFound(err) || s.confirmedAbsent(ctx, key, err) {
 			return ObjectInfo{}, ErrNotFound
 		}
 		return ObjectInfo{}, err
@@ -296,7 +297,8 @@ func trimStorePrefix(key, prefix string) string {
 // whose message merely mentions "not found" (a 403, a DNS failure, a
 // misconfigured endpoint) stays an error instead of reading as a missing
 // object. A 404 whose code is NoSuchBucket names a missing bucket, which is a
-// configuration problem, not an absent object.
+// configuration problem, not an absent object. A 403 is never not-found here;
+// Get and Stat ask confirmedAbsent about it separately.
 func isNotFound(err error) bool {
 	if err == nil {
 		return false
@@ -316,6 +318,42 @@ func isNotFound(err error) bool {
 	}
 	var response *smithyhttp.ResponseError
 	return errors.As(err, &response) && response.HTTPStatusCode() == http.StatusNotFound
+}
+
+// confirmedAbsent reports whether a read of key that was refused with HTTP 403
+// was refused only because the object does not exist.
+//
+// S3 answers a GET or HEAD for a missing key with 404 only when the caller
+// may list the bucket; otherwise it answers 403, so the caller cannot learn
+// which keys exist. The least-privilege policy in
+// docs/security/bucket-permissions.md grants s3:ListBucket only under an
+// s3:prefix condition, and a GetObject request carries no s3:prefix, so a
+// missing key there can read as 403. A session's first upload and show both
+// need to tell "missing" from "denied". This asks the one question that
+// policy does allow: a ListObjectsV2 whose Prefix is the key itself, for at
+// most one result. A key sorts before every longer key it prefixes, so the
+// first result is the key exactly when it exists.
+//
+// Only a successful listing that lacks the key counts as absence. Any other
+// 403 (a present object the caller may not read, bad or expired credentials,
+// a skewed clock) makes the listing fail or find the key, and the caller
+// keeps the read's own error, so a real permission problem is never taken
+// for a missing object.
+func (s *S3Store) confirmedAbsent(ctx context.Context, key string, readErr error) bool {
+	var response *smithyhttp.ResponseError
+	if !errors.As(readErr, &response) || response.HTTPStatusCode() != http.StatusForbidden {
+		return false
+	}
+	output, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(key), MaxKeys: aws.Int32(1)})
+	if err != nil {
+		return false
+	}
+	for _, item := range output.Contents {
+		if aws.ToString(item.Key) == key {
+			return false
+		}
+	}
+	return true
 }
 
 func sha256Bytes(data []byte) [32]byte {

@@ -135,6 +135,15 @@ func VerifyAccess(ctx context.Context, store ObjectStore) error {
 	if err := cleanup(); err != nil {
 		return fmt.Errorf("setup test cleanup %s: %w", label, err)
 	}
+	// Publishing a session reads its source key before the first upload and
+	// needs "missing" back, not "denied". Check that now, while the reason
+	// is still easy to explain, rather than at the first session.
+	if _, err := store.Get(ctx, key); !errors.Is(err, ErrNotFound) {
+		if err == nil {
+			return fmt.Errorf("setup test read after delete %s: the object is still there", label)
+		}
+		return fmt.Errorf("setup test read after delete %s: a missing object must read as not found (grant s3:ListBucket on the prefix; see docs/security/bucket-permissions.md): %w", label, err)
+	}
 	return nil
 }
 

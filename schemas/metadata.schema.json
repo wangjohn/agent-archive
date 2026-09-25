@@ -76,6 +76,7 @@
           "type": "string"
         },
         "status": {
+          "description": "How far the parser vouches for this metadata. 'complete': the adapter has shown it understands every retained record, and list --complete requires it. 'partial' (the default): the metadata was derived, but the parser does not claim to understand every record, so counts and models may be incomplete. 'failed': the filtered source could not be parsed; only identity, the source reference, and hook-derived lifecycle are filled in, and a later parser version may retry.",
           "enum": [
             "partial",
             "failed",
