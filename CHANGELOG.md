@@ -6,7 +6,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-The first release, `v0.1.0`, will be cut from this section.
+## [0.1.0] - 2026-09-25
+
+The first release.
 
 ### Added
 
@@ -76,4 +78,5 @@ The first release, `v0.1.0`, will be cut from this section.
   works for `sync` but not in the background. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/commits/main
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0

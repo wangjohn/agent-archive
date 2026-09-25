@@ -23,9 +23,8 @@ set -eu
 
 # The Apple Developer Team ID that signs release binaries. The release
 # workflow refuses to publish unless it equals the signing team (the
-# APPLE_TEAM_ID secret), so the two cannot drift. Empty until the first
-# signed release: until then there is nothing this script can install.
-team_id=""
+# APPLE_TEAM_ID secret), so the two cannot drift.
+team_id="568CGRV32C"
 
 main() {
   repo_url="https://github.com/wangjohn/agent-archive"
