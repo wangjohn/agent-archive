@@ -35,6 +35,18 @@ func TestRedactsCredentialStructuresAndEntries(t *testing.T) {
 		// A YAML block value read through a line-numbering tool.
 		{"numbered yaml block", "  12→  password: |\n  13→    " + secret + "\n  14→  user: bob", "  12→  password: |\n  13→    [REDACTED]\n  14→  user: bob"},
 		{"cat -n yaml next line", "     3\tdb_password:\n     4\t  " + secret, "     3\tdb_password:\n     4\t  [REDACTED]"},
+		// A YAML mapping or sequence under a credential key: its values,
+		// at any depth, but not its keys, comments, or descriptive values.
+		{"yaml mapping under password", "password:\n  value: " + secret + "\nuser: bob", "password:\n  value: [REDACTED]\nuser: bob"},
+		{"yaml secrets mapping", "secrets:\n  db: " + secret + "\n  api: \"" + secret + "\"  # prod\nhost: x", "secrets:\n  db: [REDACTED]\n  api: \"[REDACTED]\"  # prod\nhost: x"},
+		{"yaml sequence at the key's column", "passwords:\n- " + secret + "\n- " + secret + "\nnext: 1", "passwords:\n- [REDACTED]\n- [REDACTED]\nnext: 1"},
+		{"yaml nested", "credentials:\n  github:\n    token: " + secret + "\n    type: pat\n  other: |\n    " + secret + "\nnext: 1", "credentials:\n  github:\n    token: [REDACTED]\n    type: pat\n  other: |\n    [REDACTED]\nnext: 1"},
+		{"yaml mapping numbered", "  1→secrets:\n  2→  db: " + secret + "\n  3→other: x", "  1→secrets:\n  2→  db: [REDACTED]\n  3→other: x"},
+		{"yaml mapping in a list", "- credentials:\n    user: " + secret + "\n- name: x", "- credentials:\n    user: [REDACTED]\n- name: x"},
+		// URL-encoded assignments in a nested query string or form body.
+		{"url-encoded equals", "https://x.test/login?next=%2Fapp%3Fpassword%3D" + secret + "%26user%3Dbob&x=1", "https://x.test/login?next=%2Fapp%3Fpassword%3D[REDACTED]%26user%3Dbob&x=1"},
+		{"url-encoded colon", "body=api_token%3A" + secret + "%2Cnext", "body=api_token%3A[REDACTED]%2Cnext"},
+		{"url-encoded json", "q=%7B%22password%22%3A%22" + secret + "%22%7D", "q=%7B%22password%22%3A[REDACTED]"},
 		// Names as a person writes them, and words filter 11 did not know.
 		{"api key with a space", "API Key: " + secret, "API Key: [REDACTED]"},
 		{"secret key with a space", "Secret Key = " + secret, "Secret Key = [REDACTED]"},
@@ -60,6 +72,7 @@ func TestRedactsCredentialStructuresAndEntries(t *testing.T) {
 		"- name: DB_PASSWORD\n  valueFrom:\n    secretKeyRef:\n      name: db\n      key: password",
 		`"secretKeyRef": {"name": "db", "key": "password"}`,
 		"password: [required, min 8]",
+		"scope=user%3Aemail%20repo%3Astatus&state=%2Fhome",
 		`"credentials": {"type": "service_account"}`,
 		"The API key is stored in the keychain.",
 		"Rotate your secrets regularly.",

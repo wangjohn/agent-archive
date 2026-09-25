@@ -296,6 +296,10 @@ var credentialContextPatterns = func() []linePattern {
 		// URL query parameters whose names are not credential words on
 		// their own: `?key=`, `&sig=` (Azure SAS), `X-Amz-Signature=`.
 		{`(?i)[?&](?:key|sig|signature|x-amz-signature|x-goog-signature)=(?P<value>[^&#\s"'<>\\]+)`, []string{"key=", "sig=", "signature="}},
+		// A URL-encoded assignment, in a query string or form body nested
+		// in another (`?next=%2Flogin%3Fpassword%3DS3cret`, `password%3AS3cret`):
+		// the value runs to an encoded `&` or `,`, or what ends a URL.
+		{`(?i)` + credentialLead + credentialName + `(?:%22)?(?:%3D|%3A)(?:%20|\+)*(?P<value>(?:[^&%\s"'<>#\\]|%(?:[013-9a-f][0-9a-f]|2[0-57-9abd-f]))+)`, vocabularyNeedles},
 		// Incoming-webhook URLs, whose path is the secret.
 		{`(?i)\bhooks\.slack\.com/(?:services|workflows|triggers)/(?P<value>[A-Za-z0-9/_-]{8,})`, []string{"hooks.slack.com/"}},
 		{`(?i)\bdiscord(?:app)?\.com/api/webhooks/(?P<value>[0-9]+/[A-Za-z0-9_-]{8,})`, []string{"discord"}},
@@ -882,9 +886,11 @@ var yamlStructure = regexp.MustCompile(`^(?:-(?:[ \t]|$)|#|\{|\[|&|\*|\?[ \t]|(?
 // indented plain or quoted scalar on the next lines. Filter 10 read only
 // the key's own line, so it kept both (and replaced a `|` indicator with
 // the marker). A key whose indented lines are a mapping or a sequence
-// (`credentials:` then `user: …`) is a structure; its members are checked
-// on their own. In a file shown with line numbers, each line is read after
-// its number, and the numbers of the value's lines go with it.
+// (`secrets:` then `db: …`, `passwords:` then `- …`) is a structure: every
+// scalar value in it is redacted and its keys, comments, and layout are
+// kept (see yamlStructureSpans), as redactCredentialStructures does for
+// JSON. In a file shown with line numbers, each line is read after its
+// number, and the numbers of the value's lines go with it.
 func redactYAMLBlockValues(t needleText) (string, bool) {
 	s := t.s
 	matches := lineMatches(linePattern{yamlCredentialKey, vocabularyNeedles, ":"}, t)
@@ -904,7 +910,7 @@ func redactYAMLBlockValues(t needleText) (string, bool) {
 		numbered := match[2*numberGroup] >= 0
 		threshold := match[2*indentGroup+1] - match[2*indentGroup]
 		blockIndicator := match[2*indicatorGroup] >= 0
-		start, end, indent := lineEnd+1, -1, ""
+		start, end, indent, structure := lineEnd+1, -1, "", false
 		for pos := start; pos < len(s); {
 			next := strings.IndexByte(s[pos:], '\n')
 			lineStop := len(s)
@@ -919,7 +925,11 @@ func redactYAMLBlockValues(t needleText) (string, bool) {
 			if content := line[prefix:]; strings.TrimSpace(content) != "" {
 				trimmed := strings.TrimLeft(content, " \t")
 				width := len(content) - len(trimmed)
-				if width <= threshold || (end < 0 && !blockIndicator && yamlStructure.MatchString(trimmed)) {
+				if end < 0 && !blockIndicator && (width > threshold || width == threshold && isYAMLSequenceItem(trimmed)) && yamlStructure.MatchString(trimmed) {
+					structure = true
+					break
+				}
+				if width <= threshold {
 					break
 				}
 				if end < 0 {
@@ -931,6 +941,22 @@ func redactYAMLBlockValues(t needleText) (string, bool) {
 				break
 			}
 			pos = lineStop + 1
+		}
+		if structure {
+			spans, regionEnd := yamlStructureSpans(s, start, numbered, threshold)
+			if len(spans) == 0 {
+				continue
+			}
+			out.WriteString(s[last:spans[0].start])
+			for i, span := range spans {
+				if i > 0 {
+					out.WriteString(s[spans[i-1].end:span.start])
+				}
+				writeRedacted(&out, s[span.start:span.end])
+			}
+			out.WriteString(s[spans[len(spans)-1].end:regionEnd])
+			last, hit = regionEnd, true
+			continue
 		}
 		if end < 0 {
 			continue
@@ -944,6 +970,99 @@ func redactYAMLBlockValues(t needleText) (string, bool) {
 	}
 	out.WriteString(s[last:])
 	return out.String(), true
+}
+
+// isYAMLSequenceItem reports whether a line's content, after its
+// indentation, is a sequence item.
+func isYAMLSequenceItem(trimmed string) bool {
+	return trimmed == "-" || strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "-\t")
+}
+
+// yamlStructureSpans returns the value of every scalar in the YAML mapping
+// or sequence under a credential key, starting at pos, and where the
+// structure ends: the lines indented past the key's column threshold (or,
+// for a sequence, at it), in the same display. A mapping entry's value
+// (`db: S3cret`) and a sequence item (`- S3cret`) are values, and so is
+// every line of a block scalar or a multi-line plain scalar; keys,
+// comments, and the values of descriptive keys (`type:`, `name:`, see
+// descriptiveStructureKeys) are kept.
+func yamlStructureSpans(s string, pos int, numbered bool, threshold int) ([]valueSpan, int) {
+	var spans []valueSpan
+	regionEnd, first, sequenceAtKey := pos, true, false
+	for pos < len(s) {
+		next := strings.IndexByte(s[pos:], '\n')
+		lineStop := len(s)
+		if next >= 0 {
+			lineStop = pos + next
+		}
+		line := strings.TrimSuffix(s[pos:lineStop], "\r")
+		prefix, sameDisplay := displayedLine(line, numbered)
+		if !sameDisplay {
+			break
+		}
+		content := line[prefix:]
+		trimmed := strings.TrimLeft(content, " \t")
+		width := len(content) - len(trimmed)
+		if strings.TrimSpace(content) != "" {
+			if first {
+				sequenceAtKey, first = width == threshold && isYAMLSequenceItem(trimmed), false
+			}
+			if width < threshold || (width == threshold && !(sequenceAtKey && isYAMLSequenceItem(trimmed))) {
+				break
+			}
+			if at, length := yamlLineValue(trimmed); length > 0 {
+				start := pos + prefix + width + at
+				spans = append(spans, valueSpan{start, start + length})
+			}
+			regionEnd = pos + len(line)
+		}
+		if next < 0 {
+			break
+		}
+		pos = lineStop + 1
+	}
+	return spans, regionEnd
+}
+
+// yamlMappingKey matches a mapping entry's key and separator at the start
+// of a line's content.
+var yamlMappingKey = regexp.MustCompile(`^(?:"(?P<dq>[^"]*)"|'(?P<sq>[^']*)'|(?P<plain>[^\s#'"][^#]*?))[ \t]*:(?:[ \t]+|$)`)
+
+// yamlLineValue returns where the value in one line of a YAML structure
+// starts in trimmed (the line's content after its indentation) and its
+// length, or length 0 when the line holds none to redact.
+func yamlLineValue(trimmed string) (at, length int) {
+	for isYAMLSequenceItem(trimmed[at:]) {
+		at++
+		for at < len(trimmed) && (trimmed[at] == ' ' || trimmed[at] == '\t') {
+			at++
+		}
+	}
+	rest := trimmed[at:]
+	if loc := yamlMappingKey.FindStringSubmatchIndex(rest); loc != nil {
+		key := ""
+		for _, group := range []string{"dq", "sq", "plain"} {
+			if i := yamlMappingKey.SubexpIndex(group); loc[2*i] >= 0 {
+				key = strings.ToLower(strings.TrimSpace(rest[loc[2*i]:loc[2*i+1]]))
+			}
+		}
+		if descriptiveStructureKeys[key] {
+			return 0, 0
+		}
+		at += loc[1]
+		rest = rest[loc[1]:]
+	}
+	// A comment after the value is kept; a quoted value may hold `#`.
+	if quoted := quotedPrefix.FindString(rest); quoted != "" {
+		rest = quoted
+	} else if comment := strings.Index(rest, " #"); comment >= 0 {
+		rest = rest[:comment]
+	}
+	rest = strings.TrimRight(rest, " \t")
+	if rest == "" || rest[0] == '#' || isNonSecretValue(rest) || strings.Trim(rest, `"'`) == redactedMarker {
+		return 0, 0
+	}
+	return at, len(rest)
 }
 
 // credentialNameEntry matches a YAML entry whose name is a credential and

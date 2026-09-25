@@ -96,6 +96,11 @@ var credentialTemplates = []string{
 	`{"name": "Authorization", "value": "%s"}`,
 	"API Key: %s",
 	"PASSWORD＝%s",
+	// YAML structures under a credential key, URL-encoded assignments.
+	"secrets:\n  db: %s\nnext: 1",
+	"passwords:\n- %s\n- x",
+	"  4→credentials:\n  5→  github:\n  6→    token: \"%s\"",
+	"https://x.test/?next=%2Fa%3Fpassword%3D%s%26u%3Db",
 }
 
 // plainSecret is the shape of a secret the templates are fuzzed with: long
