@@ -134,28 +134,41 @@ func launchLabel(plist string) string {
 	return strings.TrimSuffix(filepath.Base(plist), ".plist")
 }
 
-// previousCollectorPlist is the LaunchAgent an earlier release installed
-// under the default label for a non-default data directory, before labels
-// were derived from the directory: "" unless that plist exists and runs the
-// collector for this data directory. A plist for any other directory is
-// never returned, so another installation's is never touched.
+// previousCollectorPlist is the LaunchAgent an earlier release installed for
+// this data directory under a label other than its own: "" unless that
+// plist exists and runs the collector for this data directory. There are
+// two such labels. The default one, which releases before labels were
+// derived from the directory gave a non-default data directory. And the
+// label derived from the directory as spelled (its symlinks resolved but
+// not its case), which releases before CanonicalPath gave a directory
+// spelled in another case than it is listed in, the default directory
+// included. A plist for any other directory is never returned, so another
+// installation's is never touched.
 func (in installation) previousCollectorPlist() string {
-	if in.isDefault() {
-		return ""
+	var labels []string
+	if !in.isDefault() {
+		labels = append(labels, hooks.LaunchLabel)
 	}
-	path := filepath.Join(in.userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
+	spelled := filepath.Clean(in.home)
+	if resolved, err := local.ResolveExistingSymlinks(in.home); err == nil {
+		spelled = resolved
 	}
-	dataHome, err := hooks.LaunchAgentDataHome(data)
-	if err != nil || dataHome == "" {
-		return ""
+	if label := hooks.CollectorLabel(spelled, ""); label != in.label() {
+		labels = append(labels, label)
 	}
-	if !local.SameLocation(dataHome, in.home) {
-		return ""
+	for _, label := range labels {
+		path := filepath.Join(in.userHome, "Library", "LaunchAgents", label+".plist")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		dataHome, err := hooks.LaunchAgentDataHome(data)
+		if err != nil || dataHome == "" || !local.SameLocation(dataHome, in.home) {
+			continue
+		}
+		return path
 	}
-	return path
+	return ""
 }
 
 // installedCollectorPlist is the LaunchAgent status reports on: the one for

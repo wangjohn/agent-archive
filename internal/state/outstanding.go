@@ -8,7 +8,7 @@ import (
 // state records it. It is the one definition of a "pending" session: status,
 // setup's destination guard, uninstall's warning, backfill's upload progress
 // and history, the collector's scan journal, and retention's expiry deferral
-// all read it through Store.Outstanding, and none re-derives it from the
+// (DefersExpiry) all read it through Store.Outstanding, and none re-derives it from the
 // files underneath (a guard test in this package enforces that).
 //
 // The facets are what the files say; the methods are the questions callers
@@ -67,6 +67,19 @@ func (o Outstanding) Owed() bool {
 // has run, whether its journal entry may be cleared.
 func (o Outstanding) OwedAfterScan() bool {
 	return o.Requested || o.Upload || o.RateLimited
+}
+
+// DefersExpiry reports work that postpones the session's expiry: a queued
+// request or a publication storage has not accepted, evidence that exists
+// only locally and that the collector delivers on a later pass whatever
+// the transcript holds by then. It is the rule retention had before
+// Outstanding existed. An interrupted scan and a rate-limited cache do not
+// defer expiry: a scan that fails on every pass (a transcript the filter
+// refuses since an upgrade, say) leaves both standing for good, so
+// deferring on them would keep that session, locally and in the bucket,
+// past its retention window forever.
+func (o Outstanding) DefersExpiry() bool {
+	return o.Requested || o.Upload
 }
 
 // Pending reports a session users see as pending: owed work, or never

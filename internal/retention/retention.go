@@ -314,8 +314,9 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 		// intact, or it keeps failing and reports itself as a failure. A
 		// session the collector no longer publishes is not deferred: its
 		// outstanding work will never be done, so waiting on it would keep
-		// the session forever.
-		locallyExpired = !owed.Owed()
+		// the session forever. A scan that never finishes does not defer it
+		// either (see state.Outstanding.DefersExpiry).
+		locallyExpired = !owed.DefersExpiry()
 	}
 
 	// A session admitted into another destination has no objects in this
