@@ -48,7 +48,10 @@ may have made; a copy a killed backfill leaves is removed by the next
   setup to capture it; undoing the import removes them again.
 - `--since` and `--until` take a date (`2026-09-01`), an RFC 3339 time, or an
   age (`30d`, `12h`). Backfill selects whole local days, so a time or an age
-  selects from the start of the day it falls on.
+  selects from the start of the day it falls on. An interrupted import run
+  with an age is finished by the same age on a later day too. When the
+  latest import was interrupted and a run with other options would start a
+  new one, the plan says so and prints the command that finishes it.
 - Retention applies to imports from the day they are imported, so a whole
   import expires on one day. Choose `edit` at the prompt to keep them longer.
   Retention applies to the whole archive, so `edit` only raises it; shorten

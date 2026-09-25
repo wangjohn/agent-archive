@@ -45,6 +45,56 @@ func backfillDay(value string, now time.Time) (string, error) {
 	return t.In(now.Location()).Format("2006-01-02"), nil
 }
 
+// relativeTimeArg is a --since or --until value as typed when it is
+// relative to now (an age: 30d, 12h), which names a different local day
+// each day, or "" for a date, an RFC 3339 time, or nothing.
+func relativeTimeArg(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if _, err := time.Parse(time.RFC3339, value); err == nil {
+		return ""
+	}
+	if _, err := time.Parse("2006-01-02", value); err == nil {
+		return ""
+	}
+	return value
+}
+
+// printInterruptedImport points at the latest import when it was
+// interrupted and this run, with other options or another destination,
+// would not continue it: the run starts a new import, and the interrupted
+// one stays partial unless it is run again as it was.
+func printInterruptedImport(out io.Writer, home string, plan backfill.Plan, cfg config.Config) {
+	batches, err := backfill.LoadBatches(home)
+	if err != nil || len(batches) == 0 {
+		return
+	}
+	last := batches[len(batches)-1]
+	if last.CompletedAt != nil || last.UndoneAt != nil || last.Matches(plan.BatchFilters(), cfg.DestinationID()) {
+		return
+	}
+	if last.DestinationID != cfg.DestinationID() {
+		terminal.Printf(out, "Import %s was interrupted, for a storage destination no longer configured;\nthis run starts a new import.\n", last.ID)
+		return
+	}
+	flags, ok := last.Filters.Flags(plan, func(id string) (string, bool) {
+		for _, p := range cfg.Archive.Projects {
+			if p.ProjectID == id {
+				return p.Root, true
+			}
+		}
+		return "", false
+	})
+	if !ok {
+		terminal.Printf(out, "Import %s was interrupted; this run, with other options, starts a new import.\n", last.ID)
+		return
+	}
+	command := strings.TrimSpace("agent-archive backfill " + flags)
+	terminal.Printf(out, "Import %s was interrupted; this run, with other options, starts a new\nimport. To finish %s instead, run:\n  %s\n", last.ID, last.ID, command)
+}
+
 // runBackfillCommand implements `agent-archive backfill`: it finds the
 // sessions already on this Mac, shows the plan, and after confirmation
 // imports them (see docs/design/backfill.md). `--dry-run
@@ -89,6 +139,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	}
 	filters := backfill.Filters{
 		Harnesses: harnesses, Projects: projects, Since: sinceDay, Until: untilDay,
+		SinceArg: relativeTimeArg(*since), UntilArg: relativeTimeArg(*until),
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
 	}
 	if err := filters.Validate(); err != nil {
@@ -167,12 +218,14 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
 		terminal.Println(stdout)
+		printInterruptedImport(stdout, home, plan, cfg)
 		terminal.Println(stdout, "Dry run: nothing was changed.")
 		return 0
 	}
 	if len(plan.Imported()) == 0 {
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
+		printInterruptedImport(stdout, home, plan, cfg)
 		if err := finishInterruptedBatch(env, stdout, home, plan, cfg); err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 			return 1
@@ -196,6 +249,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	terminal.Println(stdout)
 	backfill.RenderText(stdout, plan)
 	terminal.Println(stdout)
+	printInterruptedImport(stdout, home, plan, cfg)
 
 	// Step 3: confirm. edit raises the retention of the whole archive and
 	// shows the plan again with the new deletion date.

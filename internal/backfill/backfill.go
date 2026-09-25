@@ -170,8 +170,14 @@ type Filters struct {
 	Projects  []string
 	// Since and Until are local dates, YYYY-MM-DD, compared inclusively with
 	// the session's start.
-	Since          string
-	Until          string
+	Since string
+	Until string
+	// SinceArg and UntilArg are the --since and --until values as typed
+	// when they are relative (an age such as 30d), which name a different
+	// day each day: an interrupted import is continued by the same value,
+	// not the same day (see BatchFilters). "" for a date, a time, or none.
+	SinceArg       string
+	UntilArg       string
 	IncludeHome    bool
 	IncludeTemp    bool
 	IncludeRemoved bool

@@ -411,7 +411,12 @@ whose `id` is missing or malformed (not `<date>-<n>`), differs from its file
 name, or that has no start time is reported as unreadable, like one that
 isn't JSON, so undo stops rather than select by an empty ID. A rerun with the same
 filters and destination continues an unfinished batch rather than starting a
-new one. `history`, `undo`, and `status` read these files, and
+new one. A relative `--since` or `--until` (an age such as `30d`) is recorded
+as typed too (`since_arg`, `until_arg`), and matches the same value on any
+later day; other values match by the local day they name. When the latest
+batch is interrupted and the run's options would start a new one, the plan
+says so and prints the command, with the batch's options, that finishes
+it. `history`, `undo`, and `status` read these files, and
 `uninstall --delete-local-data` removes them.
 
 ## Removal records

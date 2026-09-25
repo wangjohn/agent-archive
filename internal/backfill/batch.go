@@ -79,6 +79,8 @@ type BatchFilters struct {
 	ProjectIDs     []string `json:"project_ids"`
 	Since          string   `json:"since,omitempty"`
 	Until          string   `json:"until,omitempty"`
+	SinceArg       string   `json:"since_arg,omitempty"`
+	UntilArg       string   `json:"until_arg,omitempty"`
 	IncludeHome    bool     `json:"include_home"`
 	IncludeTemp    bool     `json:"include_temp"`
 	IncludeRemoved bool     `json:"include_removed"`
@@ -91,7 +93,7 @@ func (p Plan) BatchFilters() BatchFilters {
 	f := p.Filters
 	out := BatchFilters{
 		Harnesses: []string{}, ProjectIDs: []string{},
-		Since: f.Since, Until: f.Until,
+		Since: f.Since, Until: f.Until, SinceArg: f.SinceArg, UntilArg: f.UntilArg,
 		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
 	}
 	for _, h := range f.Harnesses {
@@ -152,8 +154,65 @@ func (b *Batch) Continues(filters BatchFilters, destinationID string) bool {
 
 func (f BatchFilters) equal(o BatchFilters) bool {
 	return slices.Equal(f.Harnesses, o.Harnesses) && slices.Equal(f.ProjectIDs, o.ProjectIDs) &&
-		f.Since == o.Since && f.Until == o.Until &&
+		sameBound(f.Since, f.SinceArg, o.Since, o.SinceArg) && sameBound(f.Until, f.UntilArg, o.Until, o.UntilArg) &&
 		f.IncludeHome == o.IncludeHome && f.IncludeTemp == o.IncludeTemp && f.IncludeRemoved == o.IncludeRemoved
+}
+
+// sameBound reports whether two runs' --since (or --until) values match. Two
+// relative values match when typed alike, whichever day they name now, so
+// `--since 30d` continues yesterday's interrupted `--since 30d`; otherwise
+// the days they name are compared, as for a batch that recorded none.
+func sameBound(day, arg, otherDay, otherArg string) bool {
+	if arg != "" && otherArg != "" {
+		return arg == otherArg
+	}
+	return day == otherDay
+}
+
+// Flags are the options a run with these filters is typed with, for
+// telling the person how to continue an import: each --project is named by
+// the configured root with project, the plan's own spelling; ok is false
+// when one of them is no longer configured.
+func (f BatchFilters) Flags(p Plan, projectRoot func(id string) (string, bool)) (flags string, ok bool) {
+	var out []string
+	for _, h := range f.Harnesses {
+		out = append(out, "--harness "+h)
+	}
+	for _, id := range f.ProjectIDs {
+		root, found := projectRoot(id)
+		if !found {
+			return "", false
+		}
+		out = append(out, "--project "+shellWord(p.display(root)))
+	}
+	for _, bound := range []struct{ flag, day, arg string }{{"--since", f.Since, f.SinceArg}, {"--until", f.Until, f.UntilArg}} {
+		switch {
+		case bound.arg != "":
+			out = append(out, bound.flag+" "+shellWord(bound.arg))
+		case bound.day != "":
+			out = append(out, bound.flag+" "+bound.day)
+		}
+	}
+	for _, include := range []struct {
+		flag string
+		set  bool
+	}{{"--include-home", f.IncludeHome}, {"--include-temp", f.IncludeTemp}, {"--include-removed", f.IncludeRemoved}} {
+		if include.set {
+			out = append(out, include.flag)
+		}
+	}
+	return strings.Join(out, " "), true
+}
+
+// shellWord quotes s for a shell when it holds anything but plain path
+// characters.
+func shellWord(s string) string {
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("~/._-+:@", c)) {
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
 }
 
 func batchDir(home string) string { return filepath.Join(home, "imports") }

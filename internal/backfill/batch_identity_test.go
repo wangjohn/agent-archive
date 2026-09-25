@@ -151,3 +151,29 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 		t.Fatalf("compare import IDs through InBatch:\n%s", strings.Join(offenders, "\n"))
 	}
 }
+
+// B-25: a relative --since or --until continues a batch when typed alike,
+// whatever day it names now; otherwise the days are compared, as for a
+// batch that recorded no value.
+func TestBatchFiltersMatchRelativeBoundsAsTyped(t *testing.T) {
+	for _, tc := range []struct {
+		a, b BatchFilters
+		want bool
+	}{
+		{BatchFilters{Since: "2026-08-24", SinceArg: "30d"}, BatchFilters{Since: "2026-08-25", SinceArg: "30d"}, true},
+		{BatchFilters{Since: "2026-08-24", SinceArg: "30d"}, BatchFilters{Since: "2026-08-24", SinceArg: "720h"}, false},
+		{BatchFilters{Since: "2026-08-24", SinceArg: "30d"}, BatchFilters{Since: "2026-08-24"}, true},
+		{BatchFilters{Since: "2026-08-24"}, BatchFilters{Since: "2026-08-25", SinceArg: "30d"}, false},
+		{BatchFilters{Until: "2026-09-01", UntilArg: "3d"}, BatchFilters{Until: "2026-09-02", UntilArg: "3d"}, true},
+	} {
+		if got := tc.a.equal(tc.b); got != tc.want {
+			t.Errorf("%+v vs %+v: %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+	if got := shellWord("~/my code/it's"); got != `'~/my code/it'\''s'` {
+		t.Errorf("shellWord: %s", got)
+	}
+	if got := shellWord("~/code/repo-1"); got != "~/code/repo-1" {
+		t.Errorf("shellWord: %s", got)
+	}
+}
