@@ -88,7 +88,6 @@ func pendingSessions(home string, cfg config.Config) (int, error) {
 // a sync could finish. blocking counts everything else.
 func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int, err error) {
 	store := state.OpenReadOnly(home)
-
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		return 0, 0, err
@@ -97,12 +96,18 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 	if err != nil {
 		return 0, 0, err
 	}
+	return countPending(store, regs, reqs, cfg.AcceptSession)
+}
+
+// countPending is pendingSessionCounts over registrations and requests
+// already loaded, counting the registrations accept admits.
+func countPending(store *state.Store, regs []archive.SessionRegistration, reqs []state.Request, accept func(archive.SessionRegistration) bool) (blocking, waiting int, err error) {
 	requested := map[string]bool{}
 	for _, r := range reqs {
 		requested[r.ArchiveSessionID] = true
 	}
 	for _, r := range regs {
-		if !cfg.AcceptSession(r) {
+		if !accept(r) {
 			continue
 		}
 		_, _, cacheStatus, found, err := store.LoadPublished(r.ArchiveSessionID)

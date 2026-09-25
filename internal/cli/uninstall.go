@@ -12,10 +12,12 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -68,7 +70,8 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	// Fail before prompting when the settings are unreadable; they are
 	// loaded again below, once the collector lock is held too.
-	if _, _, err = config.Load(home); err != nil {
+	previewCfg, previewFound, err := config.Load(home)
+	if err != nil {
 		return err
 	}
 	terminal.Println(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
@@ -93,7 +96,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	previewPending := 0
 	if purge {
-		pending, e := pendingSessions(home, config.Config{})
+		pending, e := unpublishedSessions(home, previewCfg, previewFound)
 		if e != nil {
 			return e
 		}
@@ -121,7 +124,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		return err
 	}
 	if purge {
-		pending, e := pendingSessions(home, config.Config{})
+		pending, e := unpublishedSessions(home, cfg, found)
 		if e != nil {
 			return e
 		}
@@ -260,6 +263,29 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
 	return nil
+}
+
+// unpublishedSessions counts the sessions whose evidence a purge would
+// delete before it was uploaded: what status reports as pending, under the
+// configuration uninstall loaded. Without a configuration nothing says which
+// sessions would have been uploaded, so every one with work outstanding
+// counts. (A zero configuration would admit none: every registration records
+// a destination it does not have.)
+func unpublishedSessions(home string, cfg config.Config, found bool) (int, error) {
+	if found {
+		return pendingSessions(home, cfg)
+	}
+	store := state.OpenReadOnly(home)
+	regs, err := store.LoadRegistrations()
+	if err != nil {
+		return 0, err
+	}
+	reqs, err := store.LoadRequests()
+	if err != nil {
+		return 0, err
+	}
+	blocking, waiting, err := countPending(store, regs, reqs, func(archive.SessionRegistration) bool { return true })
+	return blocking + waiting, err
 }
 
 // installedApps is the apps whose hooks setup installed, per the committed
