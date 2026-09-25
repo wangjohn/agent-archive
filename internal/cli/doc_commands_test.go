@@ -16,7 +16,10 @@ var (
 	docCodeSpan = regexp.MustCompile("`([^`\n]+)`")
 	// docInvocation is `agent-archive` and what follows it on the line, up
 	// to the end of a shell command.
-	docInvocation = regexp.MustCompile(`(?:^|[\s("'$])agent-archive((?:[ \t]+[^\s|;&)"'` + "`" + `]+)*)`)
+	docInvocation = regexp.MustCompile(`(?:^|[\s("'$])agent-archive((?:[ \t]+[^\s|;&)<>"'` + "`" + `]+)*)`)
+	// shellContinuation is a backslash that continues a shell command on
+	// the next line.
+	shellContinuation = regexp.MustCompile(`[ \t]*\\\n[ \t]*`)
 	// shellComment is a shell comment: a # at the start of a line or after
 	// a space, to the end of the line.
 	shellComment = regexp.MustCompile(`(^|\s)#.*$`)
@@ -57,18 +60,16 @@ func docCommandSources(t *testing.T) []string {
 }
 
 // quotedCode returns the code a file quotes: every fenced block (but a
-// diagram's) and inline code span of a Markdown file, and every code span of
-// an issue template, whose YAML strings are Markdown.
-func quotedCode(path string, text string) []string {
+// diagram's) and inline code span. An issue template's YAML strings are
+// Markdown, so the same applies to them.
+func quotedCode(text string) []string {
 	var code []string
-	if strings.HasSuffix(path, ".md") {
-		for _, m := range docFence.FindAllStringSubmatch(text, -1) {
-			if !strings.Contains(m[2], "mermaid") {
-				code = append(code, m[3])
-			}
+	for _, m := range docFence.FindAllStringSubmatch(text, -1) {
+		if !strings.Contains(m[2], "mermaid") {
+			code = append(code, m[3])
 		}
-		text = docFence.ReplaceAllString(text, "")
 	}
+	text = docFence.ReplaceAllString(text, "")
 	for _, m := range docCodeSpan.FindAllStringSubmatch(text, -1) {
 		code = append(code, m[1])
 	}
@@ -137,7 +138,8 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 		// explicit `agent-archive ...` is checked there; elsewhere a code
 		// span such as `list --json` names the command too.
 		design := strings.HasPrefix(filepath.ToSlash(rel), "docs/design/")
-		for _, code := range quotedCode(path, string(data)) {
+		for _, code := range quotedCode(string(data)) {
+			code = shellContinuation.ReplaceAllString(code, " ")
 			for line := range strings.SplitSeq(code, "\n") {
 				line = shellComment.ReplaceAllString(line, "")
 				invocations := docInvocation.FindAllStringSubmatch(line, -1)
@@ -161,6 +163,9 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 					if len(rest) > 0 {
 						if _, ok := commandHelp[command+" "+rest[0]]; ok {
 							command, rest = command+" "+rest[0], rest[1:]
+						} else if near := nearSubcommand(command, rest[0]); near != "" {
+							t.Errorf("%s: `agent-archive %s`: %s has no subcommand %q (%q?)", rel, strings.Join(words, " "), command, rest[0], near)
+							continue
 						}
 					}
 					if set, ok := sets[command]; ok {
@@ -174,7 +179,8 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 						}
 						checked++
 						if !slices.Contains(append([]string{"help", "h"}, accepted...), name) {
-							t.Errorf("%s: `agent-archive %s`: %s has no flag --%s", rel, strings.Join(words, " "), command, name)
+							spelled, _, _ := strings.Cut(strings.Trim(word, "[]"), "=")
+							t.Errorf("%s: `agent-archive %s`: %s has no flag %s", rel, strings.Join(words, " "), command, spelled)
 						}
 					}
 				}
@@ -184,4 +190,43 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 	if checked < 20 {
 		t.Fatalf("checked only %d quoted flags; the extraction is broken", checked)
 	}
+}
+
+// nearSubcommand returns the subcommand of command that word misspells
+// (`backfill histroy`, `backfill undoo`), or "" when word is not within two
+// edits of one. A word further from every subcommand, or too short to tell
+// ("do"), is taken as prose, as in "sessions agent-archive backfill
+// imported".
+func nearSubcommand(command, word string) string {
+	if len(word) < 4 || !docFlagName.MatchString(word) {
+		return ""
+	}
+	for other := range commandHelp {
+		sub, ok := strings.CutPrefix(other, command+" ")
+		if ok && editDistance(sub, word) <= 2 {
+			return sub
+		}
+	}
+	return ""
+}
+
+// editDistance is the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	previous := make([]int, len(b)+1)
+	for j := range previous {
+		previous[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		current := make([]int, len(b)+1)
+		current[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			current[j] = min(previous[j]+1, current[j-1]+1, previous[j-1]+cost)
+		}
+		previous = current
+	}
+	return previous[len(b)]
 }
