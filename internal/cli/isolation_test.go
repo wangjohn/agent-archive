@@ -6,12 +6,17 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
+
+// testTempPrefix names the folder under /tmp that holds one test run's
+// temporary files.
+const testTempPrefix = "agent-archive-cli-test-"
 
 // isolateProcessForTesting makes the package's tests fail closed: a test
 // that leaves an Env field nil gets the default, and every default that
@@ -22,7 +27,9 @@ import (
 //     the login session, so even `launchctl print` from a test reads the
 //     developer's real jobs, and bootstrap or bootout would change them. A
 //     test that means to drive launchctl stubs it with stubLaunchctl.
+//
 //   - The Keychain: openKeychain panics. Set Env.Keychain (newFakeKeychain).
+//
 //   - $HOME and the variables that move app and data directories: HOME is a
 //     fresh temporary directory, and AGENT_ARCHIVE_HOME, CLAUDE_CONFIG_DIR,
 //     CODEX_HOME and the AWS configuration variables are unset, so
@@ -30,17 +37,33 @@ import (
 //     there rather than in the developer's own ~/.claude, ~/.cursor,
 //     ~/.local/share/agent-archive, or ~/.aws.
 //
-// It returns a function that removes the temporary home.
+//   - $TMPDIR, and so every t.TempDir: a fresh folder of the run's own under
+//     /tmp. local.CanonicalPath lists every parent of a path to find its
+//     spelling, and macOS's per-user temporary folder can hold thousands of
+//     entries; listing it for every path was most of this package's run time.
+//
+// It returns a function that removes the temporary folders.
 func isolateProcessForTesting() func() {
-	home, err := os.MkdirTemp("", "cli-home-")
-	if err != nil {
-		panic(err)
-	}
 	must := func(err error) {
 		if err != nil {
 			panic(err)
 		}
 	}
+	parent := ""
+	if info, err := os.Stat("/tmp"); err == nil && info.IsDir() {
+		parent = "/tmp"
+	}
+	// A test binary this one starts (the terminal tests' child) inherits
+	// $TMPDIR and nests its folder there, so this run's removal covers it
+	// even when the child is killed before it can clean up.
+	if inherited := os.Getenv("TMPDIR"); strings.HasPrefix(filepath.Base(filepath.Clean(inherited)), testTempPrefix) {
+		parent = inherited
+	}
+	tmp, err := os.MkdirTemp(parent, testTempPrefix)
+	must(err)
+	must(os.Setenv("TMPDIR", tmp))
+	home, err := os.MkdirTemp("", "cli-home-")
+	must(err)
 	must(os.Setenv("HOME", home))
 	for _, name := range []string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE"} {
 		must(os.Unsetenv(name))
@@ -51,7 +74,7 @@ func isolateProcessForTesting() func() {
 	openKeychain = func() (credentials.CredentialStore, error) {
 		panic("a test reached the real Keychain: set Env.Keychain (newFakeKeychain)")
 	}
-	return func() { _ = os.RemoveAll(home) }
+	return func() { _ = os.RemoveAll(home); _ = os.RemoveAll(tmp) }
 }
 
 // TestIsolationFailsClosed pins isolateProcessForTesting: every default that
@@ -96,4 +119,12 @@ func TestIsolationFailsClosed(t *testing.T) {
 	if got := env.jobState("/nonexistent.plist"); got != "missing" {
 		t.Errorf("testEnv job state = %q", got)
 	}
+}
+
+// stubLaunchctl replaces launchctl for one test.
+func stubLaunchctl(t *testing.T, run func(args ...string) ([]byte, error)) {
+	t.Helper()
+	previous := runLaunchctl
+	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) { return run(args...) }
+	t.Cleanup(func() { runLaunchctl = previous })
 }

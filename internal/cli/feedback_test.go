@@ -15,6 +15,7 @@ import (
 )
 
 func TestFeedbackFileIsFilteredBeforeRequestPersistence(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
@@ -59,6 +60,7 @@ func TestFeedbackFileIsFilteredBeforeRequestPersistence(t *testing.T) {
 }
 
 func TestFeedbackRejectsMissingUnknownAndOversizeInput(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now()
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
@@ -75,6 +77,7 @@ func TestFeedbackRejectsMissingUnknownAndOversizeInput(t *testing.T) {
 }
 
 func TestFeedbackRejectsSessionExcludedByCurrentSetup(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
@@ -109,5 +112,40 @@ func TestFeedbackRejectsSessionExcludedByCurrentSetup(t *testing.T) {
 	requests, err := store.LoadRequests()
 	if err != nil || len(requests) != 1 || len(requests[0].HookEvidence) != 1 || requests[0].HookEvidence[0].Kind != archive.EvidenceKindLifecycleHook || !requests[0].Deferred {
 		t.Fatalf("requests=%#v err=%v", requests, err)
+	}
+}
+
+// Feedback queued while capture is paused says when it will be published.
+func TestFeedbackWhilePausedSaysWhen(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	env := testEnv(t, home, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+	start := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": project, "transcript_path": writeTestTranscript(t, "t.jsonl", "")}
+	if err := handleHookEvent(home, "claude", start, env.now()); err != nil {
+		t.Fatal(err)
+	}
+	regs, _ := state.OpenReadOnly(home).LoadRegistrations()
+	if len(regs) != 1 {
+		t.Fatalf("registrations %d", len(regs))
+	}
+	file := filepath.Join(t.TempDir(), "feedback.txt")
+	must(t, os.WriteFile(file, []byte("worked well"), 0600))
+	run := func() string {
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"feedback", regs[0].ArchiveSessionID, "--file", file}, nil, &out, &errOut, env); code != 0 {
+			t.Fatalf("exit %d: %s", code, &errOut)
+		}
+		return out.String()
+	}
+	if strings.Contains(run(), "paused") {
+		t.Fatal("mentions pause while not paused")
+	}
+	var errOut bytes.Buffer
+	if code := runPauseCommand(&bytes.Buffer{}, &errOut, env, true); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	if !strings.Contains(run(), "agent-archive resume") {
+		t.Fatal("paused feedback does not say when it is published")
 	}
 }

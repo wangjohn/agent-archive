@@ -64,8 +64,8 @@ Anything that changes what leaves the Mac is a privacy change:
   [filter changelog](docs/security/filter-changelog.md), and update
   [privacy](docs/security/privacy.md) if what is uploaded or dropped
   changes.
-- Regenerate the goldens (`go test ./internal/archive -update-filter-golden
-  -update-composer-golden -update`) and review every changed line in the PR.
+- Regenerate the goldens ([how](docs/contributing/testing.md#fixtures-and-goldens))
+  and review every changed line in the PR.
 - Add fixtures for new shapes, with synthetic content only. Never commit a
   real transcript, even a "harmless" one.
 - For redaction or parsing changes, run the fuzz targets for a couple of

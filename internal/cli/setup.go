@@ -95,7 +95,7 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 }
 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("setup", stderr)
+	fs := env.newCommandFlags("setup", stderr)
 	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
 	if !fs.parseFlagsOnly(args) {
 		return 2

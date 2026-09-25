@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,9 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-)
 
-var updateComposerGolden = flag.Bool("update-composer-golden", false, "rewrite testdata/cursor-composer/*.golden.json from the current filter")
+	"github.com/wangjohn/agent-archive/internal/testutil/golden"
+)
 
 // composerFixture is a synthetic chat on disk: the composerData value and the
 // message rows in header order. A bubble without "value" is a missing row.
@@ -98,8 +97,8 @@ func composerGoldenOf(t *testing.T, name string) []byte {
 }
 
 // Every synthetic chat filters to exactly its golden output. Regenerate with
-// -update-composer-golden, which is itself a statement that the filter's
-// output changed on purpose (and needs a FilterVersion bump).
+// -update, which is itself a statement that the filter's output changed on
+// purpose (and needs a FilterVersion bump).
 func TestCursorComposerGolden(t *testing.T) {
 	t.Parallel()
 	names, err := filepath.Glob(filepath.Join("testdata", "cursor-composer", "*.json"))
@@ -123,10 +122,8 @@ func TestCursorComposerGolden(t *testing.T) {
 			t.Fatalf("%s: output is not deterministic", name)
 		}
 		path := filepath.Join("testdata", "cursor-composer", goldenName)
-		if *updateComposerGolden {
-			if err := os.WriteFile(path, got, 0o644); err != nil {
-				t.Fatal(err)
-			}
+		if golden.Update() {
+			golden.Write(t, path, got)
 			continue
 		}
 		if want := readComposerTestdata(t, goldenName); !bytes.Equal(got, want) {

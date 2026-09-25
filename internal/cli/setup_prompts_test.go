@@ -15,6 +15,7 @@ import (
 )
 
 func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		detected []string
@@ -40,6 +41,7 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
 			got, err := promptHarnesses(newPrompter(strings.NewReader(tt.input), &out), tt.detected, tt.existing)
 			if err != nil || !reflect.DeepEqual(got, tt.want) {
@@ -56,6 +58,7 @@ func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 }
 
 func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
@@ -74,6 +77,7 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 }
 
 func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
+	t.Parallel()
 	project := t.TempDir()
 	old := config.Config{
 		Harnesses:     []string{"cursor"},
@@ -98,6 +102,7 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 }
 
 func TestMenuAcceptsNumbersKeysAndPrefixes(t *testing.T) {
+	t.Parallel()
 	options := []option{{"capture", "Apps and projects"}, {"storage", "Storage"}, {"retention", "Retention"}, {"all", "All settings"}}
 	tests := []struct {
 		name    string
@@ -114,6 +119,7 @@ func TestMenuAcceptsNumbersKeysAndPrefixes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
 			got, err := newPrompter(strings.NewReader(tt.input), &out).menu("What would you like to change?", "capture", options...)
 			if err != nil || got != tt.want {
@@ -132,6 +138,7 @@ func TestMenuAcceptsNumbersKeysAndPrefixes(t *testing.T) {
 }
 
 func TestMenuRejectsAmbiguousPrefix(t *testing.T) {
+	t.Parallel()
 	options := []option{{"retention", "Retention"}, {"region", "Region"}}
 	var out bytes.Buffer
 	got, err := newPrompter(strings.NewReader("r\n2\n"), &out).menu("Change?", "", options...)
@@ -141,6 +148,7 @@ func TestMenuRejectsAmbiguousPrefix(t *testing.T) {
 }
 
 func TestReviewActionMapsChoices(t *testing.T) {
+	t.Parallel()
 	for input, want := range map[string]string{"1\n": "start", "\n": "start", "2\n": "edit", "3\n": "cancel", "y\n": "start", "n\n": "cancel", "e\n": "edit"} {
 		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false)
 		if err != nil || got != want {
@@ -149,21 +157,8 @@ func TestReviewActionMapsChoices(t *testing.T) {
 	}
 }
 
-func TestPickAWSProfileByNumberOrName(t *testing.T) {
-	names := []string{"default", "work"}
-	for input, want := range map[string]string{"2\n": "work", "\n": "default", "other\n": "other"} {
-		var out bytes.Buffer
-		got, err := pickAWSProfile(newPrompter(strings.NewReader(input), &out), names, "default")
-		if err != nil || got != want {
-			t.Fatalf("input %q: got %q, %v; want %q", input, got, err, want)
-		}
-		if !strings.Contains(out.String(), "  2) work\n") || !strings.Contains(out.String(), "Enter 1-2, or another profile name [1]: ") {
-			t.Fatalf("unexpected output: %s", &out)
-		}
-	}
-}
-
 func TestNewlyFoundAppsOmitAppsNotDetected(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	got, err := promptHarnesses(newPrompter(strings.NewReader("\n"), &out), []string{"claude", "cursor"}, []string{"cursor"})
 	if err != nil || !reflect.DeepEqual(got, []string{"claude", "cursor"}) {
@@ -178,6 +173,7 @@ func TestNewlyFoundAppsOmitAppsNotDetected(t *testing.T) {
 // setup draft and the saved configuration, is not offered again, and leaves
 // the declined list once the user includes it.
 func TestSetupRemembersDeclinedApps(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"cursor"} }
@@ -217,6 +213,7 @@ func TestSetupRemembersDeclinedApps(t *testing.T) {
 // The review screen's app edit has no detection, so it never offers found
 // apps, and it keeps the declined list apart from any app it includes.
 func TestReviewEditNeverOffersFoundApps(t *testing.T) {
+	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"cursor"}, DeclinedHarnesses: []string{"codex", "claude"}}}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\n"), &out)
@@ -234,6 +231,7 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 // An app removed by hand in the capture step is declined too, so the next
 // reconfigure does not offer it back as found.
 func TestSetupRemembersAppRemovedByHand(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
@@ -256,6 +254,7 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 // An app removed in the review screen's app edit is declined, and a later
 // capture step with it detected does not offer it back.
 func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
+	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}}
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\n"), &bytes.Buffer{})
 	if err := editSetupReview(p, &draft, t.TempDir(), nil); err != nil {
@@ -274,6 +273,7 @@ func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
 }
 
 func TestSetupReviewShowsDeclinedApps(t *testing.T) {
+	t.Parallel()
 	old := config.Config{Harnesses: []string{"cursor"}, RetentionDays: 90, Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2AccountID: "a", Prefix: defaultPrefix}}
 	next := old
 	next.DeclinedHarnesses = []string{"codex", "claude"}
@@ -282,5 +282,51 @@ func TestSetupReviewShowsDeclinedApps(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again)") || strings.Contains(got, "Nothing above differs") {
 		t.Fatalf("declining found apps not shown as a change:\n%s", got)
+	}
+}
+
+func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
+	t.Parallel()
+	project, other := t.TempDir(), t.TempDir()
+	other, _ = filepath.EvalSymlinks(other)
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
+	env.WorkingDir = func() (string, error) { return project, nil }
+	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+	var cfg config.Config
+	var out bytes.Buffer
+	err := chooseCapture(newPrompter(strings.NewReader("y\nn\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env)
+	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
+		t.Fatalf("config=%+v err=%v", cfg, err)
+	}
+}
+
+func TestStorageHelpReturnsToSelection(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3\nbucket\nprofile\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }})
+	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), "https://developers.cloudflare.com/") {
+		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
+	}
+}
+
+func TestManualProjectsExpandInjectedHomeAndDeduplicateSymlinks(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	project := filepath.Join(home, "project")
+	alias := filepath.Join(home, "alias")
+	if err := os.Mkdir(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(project, alias); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, home)
+	canonical, _ := filepath.EvalSymlinks(project)
+	if err != nil || len(projects) != 1 || projects[0].Root != canonical {
+		t.Fatalf("projects=%+v err=%v", projects, err)
 	}
 }

@@ -103,7 +103,7 @@ jobs:
           go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./... > "$RUNNER_TEMP/deadcode.txt"
           # grep exits 1 when every line is an exception; 2 is a real failure.
           status=0
-          grep -v -E '^internal/(state/statetest|storage/storagetest)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$' "$RUNNER_TEMP/deadcode.txt" > "$RUNNER_TEMP/unexpected.txt" || status=$?
+          grep -v -E '^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$' "$RUNNER_TEMP/deadcode.txt" > "$RUNNER_TEMP/unexpected.txt" || status=$?
           if [ "$status" -gt 1 ]; then
             exit "$status"
           fi

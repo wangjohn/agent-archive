@@ -38,6 +38,7 @@ func (f *backfillFixture) hookStart(t *testing.T, native, cwd string) bool {
 // the import adds excluded, so a hook there still captures nothing; a plain
 // subfolder is captured, as the plan says. Undo removes the entry again.
 func TestBackfillKeepsReposUnderAnAddedFolderOutOfCapture(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	notes := filepath.Join(f.userHome, "old-notes")
 	secret := filepath.Join(notes, "secret-repo")
@@ -100,6 +101,7 @@ func TestBackfillKeepsReposUnderAnAddedFolderOutOfCapture(t *testing.T) {
 // the excluded entries that keep the repositories inside an added plain
 // folder out of capture, so the folder captured them after all.
 func TestSetupDraftKeepsKeptOutFolders(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	secret := filepath.Join(f.userHome, "old-notes", "secret-repo")
 	if err := os.MkdirAll(filepath.Join(secret, ".git"), 0o755); err != nil {

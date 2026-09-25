@@ -16,6 +16,7 @@ import (
 )
 
 func TestAmbiguousStartIsNotRegisteredAndDiagnosticIsContentFree(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -67,6 +68,7 @@ func setUpTestConfig(t *testing.T, home, projectRoot string, activatedAt time.Ti
 }
 
 func TestClassifyHookEvent(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		harness string
 		event   string
@@ -92,6 +94,7 @@ func TestClassifyHookEvent(t *testing.T) {
 }
 
 func TestHandleHookEventRegistersEligibleSessionStart(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -121,6 +124,7 @@ func TestHandleHookEventRegistersEligibleSessionStart(t *testing.T) {
 }
 
 func TestHandleHookEventSkipsIneligibleProject(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -137,6 +141,7 @@ func TestHandleHookEventSkipsIneligibleProject(t *testing.T) {
 }
 
 func TestHandleHookEventSkipsResumeOfUnknownClaudeSession(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -156,6 +161,7 @@ func TestHandleHookEventSkipsResumeOfUnknownClaudeSession(t *testing.T) {
 }
 
 func TestHandleHookEventSkipsResumeOfUnknownCodexSession(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -177,6 +183,7 @@ func TestHandleHookEventSkipsResumeOfUnknownCodexSession(t *testing.T) {
 }
 
 func TestHandleHookEventRegistersCodexStartup(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -203,6 +210,7 @@ func TestHandleHookEventRegistersCodexStartup(t *testing.T) {
 }
 
 func TestHandleHookEventCodexCompactPreservesOriginalStartTime(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	firstStart := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -228,6 +236,7 @@ func TestHandleHookEventCodexCompactPreservesOriginalStartTime(t *testing.T) {
 }
 
 func TestHandleHookEventResumePreservesOriginalStartTime(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	firstStart := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -259,6 +268,7 @@ func TestHandleHookEventResumePreservesOriginalStartTime(t *testing.T) {
 }
 
 func TestHandleHookEventStopWritesRequestWithEvidence(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -305,6 +315,7 @@ func TestHandleHookEventStopWritesRequestWithEvidence(t *testing.T) {
 }
 
 func TestHandleHookEventCapturesSupportedFinalTextAfterFiltering(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -332,6 +343,7 @@ func TestHandleHookEventCapturesSupportedFinalTextAfterFiltering(t *testing.T) {
 }
 
 func TestHandleHookEventLabelsSubagentFinalGapWithoutClaimingRedaction(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -362,6 +374,7 @@ func TestHandleHookEventLabelsSubagentFinalGapWithoutClaimingRedaction(t *testin
 }
 
 func TestAcceptedCursorHookCapturesVersionModeModelParamsAndResponse(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -396,6 +409,7 @@ func TestAcceptedCursorHookCapturesVersionModeModelParamsAndResponse(t *testing.
 }
 
 func TestHandleHookEventStopForUnregisteredSessionIsNoop(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -411,6 +425,7 @@ func TestHandleHookEventStopForUnregisteredSessionIsNoop(t *testing.T) {
 }
 
 func TestCursorLifecycleStatusRetainsOnlyDocumentedEnums(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		event string
@@ -442,6 +457,7 @@ func TestCursorLifecycleStatusRetainsOnlyDocumentedEnums(t *testing.T) {
 }
 
 func TestHandleHookEventIgnoresUnrelatedEvent(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -457,6 +473,7 @@ func TestHandleHookEventIgnoresUnrelatedEvent(t *testing.T) {
 }
 
 func TestHandleHookEventNoopWhenNotConfigured(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir() // no config.Save call
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}
@@ -469,6 +486,7 @@ func TestHandleHookEventNoopWhenNotConfigured(t *testing.T) {
 // registrations while paused" requirement: pause must stop new tracking at
 // the hook, not just at collection/upload time.
 func TestHandleHookEventNoopWhilePaused(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	if _, err := config.SetPaused(home, true); err != nil {
@@ -498,6 +516,7 @@ func TestHandleHookEventNoopWhilePaused(t *testing.T) {
 }
 
 func TestRunHookCommandNeverFailsOnMalformedInput(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	env := testEnv(t, home, time.Now())
 	var errOut bytes.Buffer
@@ -523,6 +542,7 @@ func writeTestTranscript(t *testing.T, name, contents string) string {
 // project: they must register under its root, and their later Stop must
 // produce a publication request rather than silently finding no registration.
 func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name     string
 		relative string
@@ -531,6 +551,7 @@ func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.
 		{"subdirectory", filepath.Join("internal", "cli")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
 			setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			cwd := filepath.Join(project, tc.relative)
@@ -576,6 +597,7 @@ func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.
 // The nearest configured ancestor owns the directory, so a project nested
 // inside an included one keeps its own (here: excluded) decision.
 func TestNestedExcludedProjectKeepsItsOwnExclusion(t *testing.T) {
+	t.Parallel()
 	home, parent := t.TempDir(), t.TempDir()
 	nested := filepath.Join(parent, "vendor", "secret")
 	if err := os.MkdirAll(filepath.Join(nested, "sub"), 0o755); err != nil {
@@ -614,6 +636,7 @@ func TestNestedExcludedProjectKeepsItsOwnExclusion(t *testing.T) {
 }
 
 func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -643,6 +666,7 @@ func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
 // Cursor's sessionStart carries conversation_id, cursor_version,
 // workspace_roots, and transcript_path, and no source field at all.
 func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		transcript func(t *testing.T) string
@@ -666,6 +690,7 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 		{"no transcript path is a new desktop chat", func(*testing.T) string { return "" }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
 			setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -704,6 +729,7 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 // The transcript proof is a fallback for Codex and Claude, never an override:
 // a documented source still decides when it is present.
 func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		source     string
@@ -718,6 +744,7 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 	} {
 		for _, harness := range []string{"codex", "claude"} {
 			t.Run(harness+": "+tc.name, func(t *testing.T) {
+				t.Parallel()
 				home, project := t.TempDir(), t.TempDir()
 				setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 				now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -744,6 +771,7 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 // A start that arrives while setup's transaction is open cannot be registered.
 // It must say so instead of disappearing.
 func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -779,6 +807,7 @@ func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
 }
 
 func TestSetupInProgressLeavesNoDiagnosticForUnconfiguredPaths(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -804,6 +833,7 @@ func TestSetupInProgressLeavesNoDiagnosticForUnconfiguredPaths(t *testing.T) {
 // under a symlinked spelling while the hook reports the resolved one, so the
 // match has to go through resolved paths on both sides.
 func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
+	t.Parallel()
 	home, resolved := t.TempDir(), t.TempDir()
 	alias := filepath.Join(t.TempDir(), "alias")
 	if err := os.Symlink(resolved, alias); err != nil {
@@ -850,6 +880,7 @@ func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
 // working directory, where it never exists, so "not found" would pass as
 // proof. Only an absolute path can carry the proof.
 func TestRelativeTranscriptPathProvesNothing(t *testing.T) {
+	t.Parallel()
 	for _, path := range []string{"transcript.jsonl", "~/transcript.jsonl", filepath.Join("sessions", "transcript.jsonl")} {
 		if emptyTranscriptProvesFreshStart(map[string]any{"transcript_path": path}) {
 			t.Fatalf("%q was accepted as proof of a fresh start", path)
@@ -871,5 +902,86 @@ func TestRelativeTranscriptPathProvesNothing(t *testing.T) {
 	}
 	if ds, _ := readCaptureDiagnostics(home); len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart {
 		t.Fatalf("diagnostics=%#v", ds)
+	}
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Now().UTC()
+	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "s", "cwd": "/work/widget", "transcript_path": "/synthetic/transcript.jsonl"}
+	if err := handleHookEvent(home, "claude", payload, at); err != nil {
+		t.Fatal(err)
+	}
+	delete(payload, "transcript_path")
+	payload["source"] = "resume"
+	if err := handleHookEvent(home, "claude", payload, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := handleHookEvent(home, "codex", payload, at.Add(time.Minute)); err == nil {
+		t.Fatal("cross-harness identity accepted")
+	}
+	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err == nil {
+		t.Fatal("cross-harness stop accepted")
+	}
+	store, _ := state.Open(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].TranscriptPath != "/synthetic/transcript.jsonl" || !regs[0].SessionStartedAt.Equal(at) {
+		t.Fatalf("registration %+v", regs)
+	}
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestCompactFromSubdirectoryKeepsProjectIdentity(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	at := time.Now().UTC()
+	cfg := config.Config{
+		MachineID: "machine-1",
+		Storage:   credentialsTestConfig(),
+		Archive: archive.Config{
+			SchemaVersion: 1, MachineID: "machine-1", Enabled: true,
+			Projects: []archive.ProjectActivation{
+				{ProjectID: archive.ProjectID("/work/widget"), Root: "/work/widget", Included: true, ActivatedAt: at.Add(-time.Hour)},
+				{ProjectID: archive.ProjectID("/work/other"), Root: "/work/other", Included: true, ActivatedAt: at.Add(-time.Hour)},
+			},
+		},
+	}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	start := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "s", "cwd": "/work/widget", "transcript_path": "/synthetic/t1.jsonl"}
+	if err := handleHookEvent(home, "claude", start, at); err != nil {
+		t.Fatal(err)
+	}
+	// The agent `cd`'d into a subdirectory; Claude Code's hook cwd follows it.
+	compact := map[string]any{"hook_event_name": "SessionStart", "source": "compact", "session_id": "s", "cwd": "/work/widget/internal/cli", "transcript_path": "/synthetic/t2.jsonl", "model": "model-x"}
+	if err := handleHookEvent(home, "claude", compact, at.Add(time.Minute)); err != nil {
+		t.Fatalf("compact from a subdirectory of the registered project was rejected: %v", err)
+	}
+	store, _ := state.Open(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].ProjectRoot != "/work/widget" || regs[0].TranscriptPath != "/synthetic/t2.jsonl" || !regs[0].SessionStartedAt.Equal(at) {
+		t.Fatalf("registration %+v", regs)
+	}
+	// Both the fresh start and the compact continuation are lifecycle
+	// evidence for the same session; neither asks for an upload.
+	requests, err := store.LoadRequests()
+	if err != nil || len(requests) != 1 || len(requests[0].HookEvidence) != 2 || !requests[0].Deferred {
+		t.Fatalf("compact lifecycle evidence was not recorded: %+v err=%v", requests, err)
+	}
+	if last := requests[0].HookEvidence[1]; last.Provenance != "hook:claude:sessionstart" || last.Payload["model"] != "model-x" {
+		t.Fatalf("compact lifecycle evidence was not recorded: %+v", last)
+	}
+	// A continuation reported from a different configured project is still a conflict.
+	compact["cwd"] = "/work/other/sub"
+	if err := handleHookEvent(home, "claude", compact, at.Add(2*time.Minute)); err == nil {
+		t.Fatal("cross-project identity accepted")
+	}
+	regs, _ = store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].ProjectRoot != "/work/widget" || regs[0].TranscriptPath != "/synthetic/t2.jsonl" {
+		t.Fatalf("registration %+v", regs)
 	}
 }

@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,8 +55,16 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		AWSProfiles:          func() ([]AWSProfile, error) { return nil, nil },
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },
+		Interrupts:           noInterrupts,
 	}
 }
+
+// noInterrupts is Env.Interrupts for tests that do not send signals. The
+// default installs real handlers for Ctrl-C, SIGTERM, and SIGHUP, and while
+// any parallel backfill test held them, a signal sent to the test run would
+// end it through exitOnSignal with a bare exit status instead of the
+// signal's name.
+func noInterrupts() (<-chan os.Signal, func()) { return nil, func() {} }
 
 // credentialsTestConfig is a syntactically valid storage destination for
 // tests that never actually touch storage (they use OpenStore above, or
@@ -64,6 +74,7 @@ func credentialsTestConfig() credentials.Config {
 }
 
 func TestHelpAndVersion(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	if code := Run([]string{"--help"}, nil, &out, nil, Env{}); code != 0 {
 		t.Fatalf("code=%d", code)
@@ -82,6 +93,7 @@ func TestHelpAndVersion(t *testing.T) {
 }
 
 func TestUnknownCommandAndNoArgs(t *testing.T) {
+	t.Parallel()
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"bogus"}, nil, &out, &errOut, Env{}); code != 2 {
 		t.Fatalf("code=%d", code)
@@ -94,4 +106,52 @@ func TestUnknownCommandAndNoArgs(t *testing.T) {
 	if code := Run(nil, nil, &out, &errOut, Env{}); code != 0 {
 		t.Fatalf("code=%d", code)
 	}
+}
+
+// must fails the test on a fixture setup error.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// publishedThroughSync sets up a project, registers and publishes one Codex
+// session into a shared in-memory bucket, and returns the environment, home,
+// transcript path, and bucket. Retention is set to 90 days.
+func publishedThroughSync(t *testing.T, now time.Time) (Env, string, string, storage.ObjectStore) {
+	t.Helper()
+	home, project := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
+	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
+	bucket := storagetest.NewMemoryStore()
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
+	path := writeCodexTranscript(t, project)
+	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now); err != nil {
+		t.Fatal(err)
+	}
+	result, err := runOnePass(env, false)
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("setup publish: %+v %v", result, err)
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.RetentionDays = 90
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	return env, home, path, bucket
+}
+
+func writeCodexTranscript(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "codex.jsonl")
+	content := `{"type":"turn_context","model":"gpt-test"}
+{"type":"response_item","id":"m1","payload":{"type":"message","role":"assistant","content":"visible"}}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

@@ -79,6 +79,7 @@ func bundleJSON(t *testing.T, bundle archive.SourceBundle) string {
 // changed after the import, as resumed and deletes it; and a later plan
 // skips it as removed_by_undo.
 func TestBackfillCursorDatabaseChat(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	backdateTranscripts(t, f)
 	if out, errOut, code := f.importRun(t, nil, false, "--yes"); code != 0 {

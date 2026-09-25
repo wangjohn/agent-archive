@@ -15,8 +15,10 @@ import (
 const legacyPlist = `<?xml version="1.0"?><plist><dict><key>Label</key><string>com.agent-skills.skill-runs-upload</string><key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>/private/runtime/skill_runs.py</string><string>--home</string><string>/private/records</string><string>upload</string></array></dict></plist>`
 
 func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
+	t.Parallel()
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "rollback"}[fail], func(t *testing.T) {
+			t.Parallel()
 			// The prototype's job is retired by the account's default
 			// installation (see TestTestInstallationLeavesPrototypeAlone).
 			account, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
@@ -73,6 +75,7 @@ func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
 }
 
 func TestLegacyMigrationRejectsUnownedJob(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	path := filepath.Join(home, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -95,6 +98,7 @@ func TestLegacyMigrationRejectsUnownedJob(t *testing.T) {
 // launchctl. (Setup itself still does, for its own job's label: see
 // TestFirstSetupRefusesAnUnknownJobState.)
 func TestLegacyMigrationWithoutALegacyJobNeedsNoLaunchctl(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.JobState = func(string) string { return "unknown" }
@@ -108,6 +112,7 @@ func TestLegacyMigrationWithoutALegacyJobNeedsNoLaunchctl(t *testing.T) {
 // a Legacy entry. Recovery must restore and reload the prototype job and
 // remove the half-installed collector.
 func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	legacyPath := filepath.Join(userHome, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
@@ -169,6 +174,7 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 // same HOME) leaves the prototype's job and hooks alone: they are the
 // account's, and the default installation retires them.
 func TestTestInstallationLeavesPrototypeAlone(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	path := filepath.Join(userHome, "Library", "LaunchAgents", legacyLaunchLabel+".plist")

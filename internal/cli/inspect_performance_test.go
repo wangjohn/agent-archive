@@ -42,6 +42,7 @@ func (s *recordingStore) take() ([]string, []string) {
 }
 
 func TestShowReadsDirectlyAndListReusesTheMetadataCache(t *testing.T) {
+	t.Parallel()
 	env, mem, id := publishedFixture(t)
 	recorder := &recordingStore{ObjectStore: mem}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return recorder, nil }

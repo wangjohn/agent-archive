@@ -12,6 +12,8 @@ import (
 // the summary at its head says when the last publication was. Before, each
 // pass decoded every session's whole state (about 158 ms for 200 sessions)
 // only to find it already verified.
+//
+// Not parallel: state.PublishedStateLoads counts every load in the process.
 func TestReadBackOfVerifiedSessionsDecodesNothing(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()

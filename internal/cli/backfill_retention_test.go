@@ -17,6 +17,7 @@ import (
 // too. It only raises now; a lower answer keeps the retention and says to
 // shorten it in setup.
 func TestBackfillEditNeverShortensRetention(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	backdateTranscripts(t, f)
 	out, errOut, code := f.importRun(t, strings.NewReader("edit\n7\ny\n"), true, "--background")
@@ -38,6 +39,7 @@ func TestBackfillEditNeverShortensRetention(t *testing.T) {
 // B-21: with retention off, edit has nothing to keep longer and turns
 // nothing on.
 func TestBackfillEditWithRetentionOff(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	cfg, _, err := config.Load(f.data)
 	if err != nil {
@@ -59,6 +61,7 @@ func TestBackfillEditWithRetentionOff(t *testing.T) {
 // B-21: the batch records the retention an edit raised from, and undo puts
 // it back, saying so first; a later undo never changes it again.
 func TestBackfillUndoRestoresRaisedRetention(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	backdateTranscripts(t, f)
 	if _, errOut, code := f.importRun(t, strings.NewReader("edit\n365\ny\n"), true, "--background"); code != 0 {
@@ -87,6 +90,7 @@ func TestBackfillUndoRestoresRaisedRetention(t *testing.T) {
 // B-21: retention changed in setup after the import is the person's; undo
 // leaves it and says so.
 func TestBackfillUndoKeepsRetentionChangedSince(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	backdateTranscripts(t, f)
 	if _, errOut, code := f.importRun(t, strings.NewReader("edit\n365\ny\n"), true, "--background"); code != 0 {
@@ -113,6 +117,7 @@ func TestBackfillUndoKeepsRetentionChangedSince(t *testing.T) {
 // projects and raised retention again, the next undo excluded them and
 // shortened retention a second time. The rerun now records both.
 func TestBackfillUndoRecordsWhatAnInterruptedRunChanged(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	backdateTranscripts(t, f)
 	if _, errOut, code := f.importRun(t, strings.NewReader("edit\n365\ny\n"), true, "--background"); code != 0 {
@@ -196,6 +201,7 @@ func addOldHookSession(t *testing.T, f *backfillFixture, days int) {
 // old), so `undo --yes` leaves retention as it is and says how to restore
 // it; `--restore-retention` then restores it, as its own later run.
 func TestBackfillUndoYesKeepsRetentionUnlessAsked(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	backdateTranscripts(t, f)
 	if _, errOut, code := f.importRun(t, strings.NewReader("edit\n365\ny\n"), true, "--background"); code != 0 {
@@ -243,6 +249,7 @@ func TestBackfillUndoYesKeepsRetentionUnlessAsked(t *testing.T) {
 // Interactively, undo shows the count and the question names it; declining
 // changes nothing, and yes restores.
 func TestBackfillUndoAsksBeforeShorteningRetention(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	backdateTranscripts(t, f)
 	if _, errOut, code := f.importRun(t, strings.NewReader("edit\n365\ny\n"), true, "--background"); code != 0 {
@@ -270,6 +277,7 @@ func TestBackfillUndoAsksBeforeShorteningRetention(t *testing.T) {
 // --restore-retention is for a whole import: with --project it is a usage
 // error, and nothing is read or changed.
 func TestBackfillUndoRestoreRetentionRejectsProject(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	_, errOut, code := f.undoRun(t, nil, false, "--yes", "--restore-retention", "--project", f.userHome)
 	if code != 2 || !strings.Contains(errOut, "--restore-retention") {

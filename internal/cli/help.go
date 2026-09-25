@@ -258,10 +258,6 @@ func isHelpFlag(arg string) bool {
 	return arg == "--help" || arg == "-h" || arg == "-help"
 }
 
-// onNewCommandFlags, when set (only by tests), sees every command flag set
-// as it is made, so a test can check each flag against the help text.
-var onNewCommandFlags func(*commandFlags)
-
 // commandFlags is a public command's flag set. Every command reports a bad
 // command line the same way, through usageError: one line on stderr naming
 // the problem and the command's help, and exit 2. The flag package's own
@@ -274,13 +270,13 @@ type commandFlags struct {
 
 // newCommandFlags returns the flag set of command, named as the user types
 // it ("backfill undo").
-func newCommandFlags(command string, errOut io.Writer) *commandFlags {
+func (e Env) newCommandFlags(command string, errOut io.Writer) *commandFlags {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	flags := &commandFlags{FlagSet: fs, errOut: errOut}
-	if onNewCommandFlags != nil {
-		onNewCommandFlags(flags)
+	if e.observeFlags != nil {
+		e.observeFlags(flags)
 	}
 	return flags
 }

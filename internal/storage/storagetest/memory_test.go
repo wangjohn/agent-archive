@@ -3,6 +3,8 @@ package storagetest
 import (
 	"context"
 	"testing"
+
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 // MemoryStore stands in for S3 and R2 in reader tests, so its ETag must

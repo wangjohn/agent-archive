@@ -12,6 +12,7 @@ import (
 // again at once unless the apps change, and choosing only apps without
 // another installation's hooks goes ahead.
 func TestSetupRefusesAnotherInstallationsAppBeforeStorageQuestions(t *testing.T) {
+	t.Parallel()
 	primary, secondary, userHome := twoInstallations(t)
 	setupRun(t, primary, s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()), 0)
 	before := hookFileSnapshot(t, userHome)

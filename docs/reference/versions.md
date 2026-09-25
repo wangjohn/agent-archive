@@ -33,8 +33,8 @@ source. Nothing is re-uploaded unless it changed.
   pattern, a new block type — bumps `FilterVersion` and adds a section to the
   [filter changelog](../security/filter-changelog.md) and, if the baseline
   changes, to [privacy](../security/privacy.md). Regenerate the goldens
-  (`go test ./internal/archive -update-filter-golden -update-composer-golden
-  -update`) and review the diff: every changed line is a privacy decision.
+  ([how](../contributing/testing.md#fixtures-and-goldens)) and review the
+  diff: every changed line is a privacy decision.
   Bump `adapterVersion` in the same change.
 - **Any change to derived metadata** (counts, turn detection, model or skill
   attribution) bumps `DefaultParserVersion`.

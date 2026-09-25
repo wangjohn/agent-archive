@@ -85,9 +85,29 @@ type Env struct {
 	// checks (retention.Options.ServerClock and PreviousScanAt). A test that
 	// moves Now months ahead moves only this Mac's clock; the sweep rightly
 	// refuses to delete by it unless the storage clock moves too.
-	sweepClock  func(*retention.Options)
-	AWSProfiles func() ([]AWSProfile, error)
-	WorkingDir  func() (string, error)
+	sweepClock func(*retention.Options)
+	// observeFlags, set only by tests, sees every command flag set as it is
+	// made, so a test can check each flag against the help text.
+	observeFlags func(*commandFlags)
+	// backfillCheckpoint, set only by tests, is called inside the
+	// configuration commit between writing the batch file and saving the
+	// configuration ("batch saved"), after the commit ("committed"), after
+	// each registration hold ("registered"), before the upload
+	// ("uploading"), and when undo holds its locks and has rechecked its plan
+	// ("undoing"), has marked the batch undone but not saved the
+	// configuration ("undo marked"), has saved it but not recorded the
+	// changes in the batch ("undo configured"), and has recorded them but
+	// removed no session ("undo recorded"). A test returns an error from it
+	// to stop the import or undo there, as a crash would.
+	backfillCheckpoint func(step string) error
+	// backfillHoldSteps, when positive (only in tests), caps the steps
+	// registration takes per hold of hooks.lock, to force several holds.
+	backfillHoldSteps int
+	// exitOnSignal, set only by tests, stands in for exitOnSignal (the
+	// function) when a signal stops backfill at once.
+	exitOnSignal func(os.Signal)
+	AWSProfiles  func() ([]AWSProfile, error)
+	WorkingDir   func() (string, error)
 	// JobState reports loaded, running, missing, or unknown without changing launchd.
 	JobState func(string) string
 	Home     func() (string, error)
@@ -361,7 +381,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "sync":
 		return runSyncCommand(args[1:], stdout, stderr, env)
 	case "pause", "resume":
-		if !newCommandFlags(args[0], stderr).parseFlagsOnly(args[1:]) {
+		if !env.newCommandFlags(args[0], stderr).parseFlagsOnly(args[1:]) {
 			return 2
 		}
 		return runPauseCommand(stdout, stderr, env, args[0] == "pause")

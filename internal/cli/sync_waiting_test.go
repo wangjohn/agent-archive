@@ -10,6 +10,7 @@ import (
 // New evidence inside the upload interval is saved and held, and sync says
 // so, with when it is due, rather than calling the session unchanged.
 func TestSyncReportsPublicationsWaitingForTheUploadInterval(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
 	env, _, path, _ := publishedThroughSync(t, now)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
@@ -35,6 +36,7 @@ func TestSyncReportsPublicationsWaitingForTheUploadInterval(t *testing.T) {
 }
 
 func TestWaitingSummary(t *testing.T) {
+	t.Parallel()
 	next := time.Date(2026, 9, 24, 21, 27, 33, 0, time.UTC)
 	if got := waitingSummary(nil, next); got != "" {
 		t.Errorf("no waiting publications: %q", got)

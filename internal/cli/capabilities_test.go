@@ -1,15 +1,24 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"codex", "claude", "cursor"} {
 		profile := captureCapabilityProfile(name)
 		if profile.Transcript.State != capabilityDocumented {
@@ -38,6 +47,7 @@ func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
 }
 
 func TestInstalledVersionSupportNeedsMatchingVerifiedCapture(t *testing.T) {
+	t.Parallel()
 	discovery := applicationDiscovery{Installed: true, Version: "agent 1.2.3", VersionState: "observed"}
 	if got := installedVersionSupport(discovery, nil); got != "unverified" {
 		t.Fatal(got)
@@ -51,6 +61,7 @@ func TestInstalledVersionSupportNeedsMatchingVerifiedCapture(t *testing.T) {
 }
 
 func TestNormalizedVersionKeepsEveryComponentAndFallsBack(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"1.2.3.4":            "1.2.3.4",
 		"v1.2.3":             "1.2.3",
@@ -70,6 +81,7 @@ func TestNormalizedVersionKeepsEveryComponentAndFallsBack(t *testing.T) {
 }
 
 func TestInstalledVersionSupportReportsWhyUnverified(t *testing.T) {
+	t.Parallel()
 	cli := applicationDiscovery{Installed: true, Version: "1.2.3", VersionKind: versionKindCLI, VersionState: "observed"}
 	if state, reason := installedVersionSupportDetail(cli, nil); state != "unverified" || reason != supportReasonNoVerifiedCapture {
 		t.Fatalf("%s %s", state, reason)
@@ -98,6 +110,9 @@ func TestInstalledVersionSupportReportsWhyUnverified(t *testing.T) {
 }
 
 func TestDiscoverCommandVersionTriesEveryPresentCandidate(t *testing.T) {
+	// Not parallel: boundedVersionCommand gives a script's output 250 ms
+	// after it exits, and a busy parallel run (-race, 18 tests at once) can
+	// starve it past that, so the working script reads as failing.
 	if runtime.GOOS == "windows" {
 		t.Skip("shell scripts")
 	}
@@ -127,6 +142,7 @@ func TestDiscoverCommandVersionTriesEveryPresentCandidate(t *testing.T) {
 }
 
 func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
+	t.Parallel()
 	userHome := t.TempDir()
 	root := filepath.Join(userHome, "Library", "Application Support", "Claude", "claude-code")
 	for _, dir := range []string{"2.1.99", "2.1.275", "2.1.280", "2.1.100", "not-a-version", "backup-2.1.300", "2.1.300.bak"} {
@@ -151,6 +167,7 @@ func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
 }
 
 func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
+	t.Parallel()
 	userHome := t.TempDir()
 	bundled := filepath.Join(userHome, "Library", "Application Support", "Claude", "claude-code", "2.1.280")
 	if err := os.MkdirAll(bundled, 0o755); err != nil {
@@ -181,6 +198,7 @@ func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 }
 
 func TestCompareDottedVersions(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		a    string
 		b    string
@@ -199,9 +217,71 @@ func TestCompareDottedVersions(t *testing.T) {
 }
 
 func TestVersionDirPatternIsAnchored(t *testing.T) {
+	t.Parallel()
 	for name, want := range map[string]bool{"2.1.280": true, "0.155.0-alpha.9.2": true, "backup-2.1.300": false, "2.1.300.bak": false, "v2.1.300": false, "2": false} {
 		if got := versionDirPattern.MatchString(name); got != want {
 			t.Fatalf("%q: got %v want %v", name, got, want)
 		}
+	}
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	at := time.Now().UTC()
+	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	localStore, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(project, "synthetic.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"turn_context","model":"synthetic"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reg := archive.SessionRegistration{ArchiveSessionID: "s", NativeSessionID: "n", ProjectID: "p", ProjectRoot: project, Harness: archive.Harness{Name: "codex", Version: "1.2.3"}, TranscriptPath: path, SessionStartedAt: at, RegisteredAt: at}
+	if err := localStore.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	result, err := collector.Run(context.Background(), localStore, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return at }})
+	if err != nil || len(result.Errors) > 0 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
+	if summary, err := verifyPublications(home, cfg, env, localStore, remote); err != nil || summary.Verified != 1 {
+		t.Fatalf("%+v %v", summary, err)
+	}
+	reg.Harness.Version = "2.0.0"
+	if err := localStore.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordApplicationDiscoveries(home, map[string]applicationDiscovery{"codex": {Installed: true, Version: "2.0.0", VersionState: "observed"}}, at); err != nil {
+		t.Fatal(err)
+	}
+	view, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Apps[0].VersionSupport != "unverified" {
+		t.Fatalf("unpublished resumed version verified: %+v", view.Apps[0])
+	}
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestMissingVersionDiscoveryIsUnknown(t *testing.T) {
+	t.Parallel()
+	if got := installedVersionSupport(applicationDiscovery{}, nil); got != "unknown" {
+		t.Fatal(got)
+	}
+	if got := installedVersionSupport(applicationDiscovery{Installed: true, Version: "1.0.0"}, []string{"11.0.0"}); got != "unverified" {
+		t.Fatal(got)
+	}
+	var output cappedBuffer
+	if _, err := output.Write([]byte(strings.Repeat("x", 5000))); err == nil || output.Len() > 4096 {
+		t.Fatal("version output not bounded")
 	}
 }

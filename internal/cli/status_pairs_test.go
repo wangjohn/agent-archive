@@ -17,6 +17,7 @@ import (
 )
 
 func TestStatusRequiresEveryApplicationProjectPair(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	projectA, projectB := t.TempDir(), t.TempDir()
@@ -49,6 +50,7 @@ func TestStatusRequiresEveryApplicationProjectPair(t *testing.T) {
 }
 
 func TestPairVerificationSurvivesUnrelatedChangesButNotReactivationOrDestinationChange(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	projectA, projectB := t.TempDir(), t.TempDir()
@@ -126,6 +128,7 @@ func TestPairVerificationSurvivesUnrelatedChangesButNotReactivationOrDestination
 }
 
 func TestStatusCountsLegacySessionsWithoutConfiguredProjects(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	// Older programmatic configurations carry no projects; AcceptSession
@@ -162,6 +165,7 @@ func TestStatusCountsLegacySessionsWithoutConfiguredProjects(t *testing.T) {
 }
 
 func TestStatusIgnoresDuplicateProjectRoots(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	cfg := pairTestConfig(now, []string{"codex"}, project, project)
@@ -181,6 +185,7 @@ func TestStatusIgnoresDuplicateProjectRoots(t *testing.T) {
 }
 
 func TestStatusTextDoesNotCallPartialReadBackVerified(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	projectA, projectB := t.TempDir(), t.TempDir()
@@ -263,6 +268,7 @@ func pairStatusEnv(t *testing.T, home, userHome string, now time.Time, apps ...s
 // ask the user for the one thing that will actually produce a capture — a new
 // session — instead of the old "this cannot work yet" wording.
 func TestStatusSuggestsCursorCaptureOnceFreshStartIsProvable(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	cfg := pairTestConfig(now, []string{"cursor"}, project)

@@ -113,7 +113,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if len(args) > 0 && args[0] == "undo" {
 		return runBackfillUndo(args[1:], stdin, stdout, stderr, env)
 	}
-	fs := newCommandFlags("backfill", stderr)
+	fs := env.newCommandFlags("backfill", stderr)
 	var harnesses, projects stringList
 	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor); repeatable")
 	fs.Var(&projects, "project", "only sessions in this project directory; repeatable")
@@ -289,22 +289,21 @@ func interruptibleContext(env Env, out io.Writer) (context.Context, func()) {
 // Cursor's database this process made, which the Readers holding them would
 // otherwise never close: a copy of every chat left in the temporary folder
 // until a later sweep. The exit status is the shell's for the signal. A test
-// replaces it.
-var exitOnSignal = func(sig os.Signal) {
+// sets Env.exitOnSignal instead.
+func exitOnSignal(sig os.Signal) {
+	exitAfterSignal(sig, cursorstore.RemoveOwnSnapshots, os.Exit)
+}
+
+// exitAfterSignal is exitOnSignal with the snapshot removal and the exit
+// passed in, so a test can check their order and the exit status.
+func exitAfterSignal(sig os.Signal, removeOwnSnapshots func(), exit func(code int)) {
 	removeOwnSnapshots()
 	code := 1
 	if s, ok := sig.(syscall.Signal); ok {
 		code = 128 + int(s)
 	}
-	exitProcess(code)
+	exit(code)
 }
-
-// removeOwnSnapshots and exitProcess are what exitOnSignal calls; a test
-// replaces them to check their order and the exit status.
-var (
-	removeOwnSnapshots = cursorstore.RemoveOwnSnapshots
-	exitProcess        = os.Exit
-)
 
 // signalWatch watches, while backfill works, for the signals env.interrupts
 // delivers: Ctrl-C, SIGTERM, and SIGHUP. The first Ctrl-C calls onFirst and
@@ -320,6 +319,10 @@ type signalWatch struct {
 
 func watchSignals(env Env, out io.Writer, message string, onFirst func()) *signalWatch {
 	signals, stop := env.interrupts()
+	exit := exitOnSignal
+	if env.exitOnSignal != nil {
+		exit = env.exitOnSignal
+	}
 	w := &signalWatch{stop: releaseOnce(stop), done: make(chan struct{}), exited: make(chan struct{})}
 	handle := func(sig os.Signal) {
 		if sig == os.Interrupt && w.seen.CompareAndSwap(false, true) {
@@ -328,7 +331,7 @@ func watchSignals(env Env, out io.Writer, message string, onFirst func()) *signa
 			return
 		}
 		w.seen.Store(true)
-		exitOnSignal(sig)
+		exit(sig)
 	}
 	// A signal already waiting is handled before the work starts.
 	select {

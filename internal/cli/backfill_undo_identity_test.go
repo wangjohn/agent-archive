@@ -16,6 +16,7 @@ import (
 // into its undo; only SaveBatch's empty-ID check stopped the removal. Undo
 // now names the file and changes nothing, and never plans the hook session.
 func TestBackfillUndoRefusesBatchWithoutID(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		file string
@@ -24,6 +25,7 @@ func TestBackfillUndoRefusesBatchWithoutID(t *testing.T) {
 		{"future-start", `{"started_at":"2027-01-01T00:00:00Z"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f, bucket := newUndoFixture(t)
 			store, err := state.Open(f.data)
 			if err != nil {

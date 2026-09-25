@@ -322,6 +322,12 @@ can list them, inspect them, and hand one to another agent.
   configured store opens the Keychain through `Env`. Fuzz targets for hook
   file edits and hook command parsing.
 
+- Tests are filed by what they cover (`status_gaps_test.go`), not by the
+  review that found the bug; `internal/cli`'s tests run in parallel, and
+  `go test -race ./internal/cli` takes about a minute instead of eight. One
+  `-update` flag rewrites every golden file (`go test ./... -update`). No
+  default test can reach the real Keychain.
+
 - Lint (golangci-lint), `govulncheck`, Dependabot, SHA-pinned Actions, and
   issue and PR templates (#38).
 - Local session state moved into its own package, `internal/state`, loaded

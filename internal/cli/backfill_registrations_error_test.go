@@ -27,6 +27,7 @@ func (a *answerAfter) Read(p []byte) (int, error) {
 // advice about repairing an unreadable file in imports/, which is not the
 // problem.
 func TestBackfillRegistrationsErrorHasNoImportsAdvice(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	registrations := filepath.Join(f.data, "registrations")
 	stdin := &answerAfter{answer: strings.NewReader("y\n"), before: func() {

@@ -46,6 +46,14 @@ linters:
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/storage/storagetest
               desc: test helpers only; production code stores through storage's S3 client
+        # The golden-file helper registers the -update test flag; a
+        # production package importing it would grow that flag.
+        golden-only-in-tests:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/testutil
+              desc: test helpers only
         # Retention deletes; the collector publishes. Retention's whole-session
         # delete lives in retention itself, so it never needs the collector.
         retention-does-not-import-collector:
@@ -93,6 +101,11 @@ linters:
       # scenario tests are long by design.
       - path: _test\.go
         linters: [gosec, funlen, gocyclo]
+      # The same for the test helpers under internal/testutil, which depguard
+      # keeps out of production code: golden files are repository files,
+      # written with the tree's usual modes.
+      - path: internal/testutil/
+        linters: [gosec]
 
       # G304 (file inclusion via variable) is inherent to this tool: it reads
       # transcripts, configs, and state at paths the user's own apps and

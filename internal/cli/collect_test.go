@@ -22,6 +22,7 @@ import (
 // names the quarantined file in status, and keeps collector-error.log (which
 // launchd appends to and never rotates) bounded.
 func TestCollectPassReportsQuarantinedStateAndTrimsErrorLog(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dir := t.TempDir()
 	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -94,6 +95,7 @@ func theRegistration(t *testing.T, home string) archive.SessionRegistration {
 // sudo run, say) fails only its own session: read-back verification skips
 // it, and the retention sweep still runs.
 func TestCollectPassSweepsDespiteUnreadableRegistration(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads unreadable files")
 	}
@@ -161,6 +163,7 @@ func TestCollectPassSoftDeadlineStartsNoNewSession(t *testing.T) {
 // reference recorded at upload, so a cached bundle this build can no longer
 // serialize (a source schema bump) still verifies.
 func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, remote := collectFixture(t, now)
 	if result, err := runOnePass(env, false); err != nil || len(result.Published) != 1 {
@@ -196,6 +199,7 @@ func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
 // cannot be read) is reported, but only after the retention sweep has run:
 // another, expired session is still cleaned up in the same pass.
 func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads unreadable files")
 	}
@@ -265,6 +269,7 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 // Read-back verification works within the pass's deadline: with no time
 // left, a due read-back is deferred to the next pass, not attempted.
 func TestReadBackDefersOnceThePassDeadlineHasPassed(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, remote := collectFixture(t, now)
 	if result, err := runOnePass(env, false); err != nil || len(result.Published) != 1 {
@@ -286,5 +291,105 @@ func TestReadBackDefersOnceThePassDeadlineHasPassed(t *testing.T) {
 	summary, err := verifyPublicationsWithin(ctx, home, cfg, env, store, remote)
 	if err != nil || summary.Attempted != 0 || summary.Deferred != 1 {
 		t.Fatalf("summary = %#v %v", summary, err)
+	}
+}
+
+func TestCollectorKeepsLastPublicationOnUnchangedPass(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	now := time.Now()
+	setUpTestConfig(t, home, project, now.Add(-time.Hour))
+	env := testEnv(t, home, now)
+	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "one", "cwd": project, "transcript_path": writeCodexTranscript(t, project)}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runOnePass(env, false); err != nil {
+		t.Fatal(err)
+	}
+	store := state.OpenReadOnly(home)
+	first, _ := store.LoadStatus()
+	env.Now = func() time.Time { return now.Add(time.Minute) }
+	if _, err := runOnePass(env, false); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := store.LoadStatus()
+	if next.LastPublishedAt.IsZero() || !next.LastPublishedAt.Equal(first.LastPublishedAt) {
+		t.Fatal("lost last publication")
+	}
+}
+
+func TestCollectCommandSilentlyNoopsWhenPausedOrNotSetUp(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := testEnv(t, home, time.Now())
+	var out, errOut bytes.Buffer
+	if code := runCollectCommand(nil, &out, &errOut, env); code != 0 || errOut.Len() != 0 {
+		t.Fatalf("not-set-up _collect should be silent: code=%d stderr=%s", code, errOut.String())
+	}
+
+	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if _, err := config.SetPaused(home, true); err != nil {
+		t.Fatal(err)
+	}
+	if code := runCollectCommand(nil, &out, &errOut, env); code != 0 || errOut.Len() != 0 {
+		t.Fatalf("paused _collect should be silent: code=%d stderr=%s", code, errOut.String())
+	}
+}
+
+func TestCollectCommandRunsQuietlyOnSuccess(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	dir := t.TempDir()
+	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	transcript := writeCodexTranscript(t, dir)
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
+	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+		t.Fatal(err)
+	}
+
+	env := testEnv(t, home, now)
+	var out, errOut bytes.Buffer
+	if code := runCollectCommand(nil, &out, &errOut, env); code != 0 || errOut.Len() != 0 || out.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+	}
+
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.LastPublishedAt.IsZero() {
+		t.Fatal("expected a publish to have happened")
+	}
+}
+
+func TestCollectCommandRecordsPreflightFailureInStatus(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	env := testEnv(t, home, time.Now())
+	openErr := errors.New("simulated broken storage credentials")
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return nil, openErr }
+
+	var out, errOut bytes.Buffer
+	if code := runCollectCommand(nil, &out, &errOut, env); code != 1 {
+		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	}
+
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.LastError, openErr.Error()) {
+		t.Fatalf("expected status.LastError to record the preflight failure, got %q", status.LastError)
 	}
 }

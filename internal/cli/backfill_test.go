@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,14 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/testutil/golden"
+
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
-
-var updateBackfillGolden = flag.Bool("update", false, "rewrite internal/cli/testdata/backfill golden files")
 
 // backfillNow is the planning clock: 2026-09-23 in California.
 var backfillNow = time.Date(2026, 9, 23, 12, 0, 0, 0, time.FixedZone("PDT", -7*3600))
@@ -152,7 +151,8 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 		LookupEnv:        func(string) (string, bool) { return "", false },
 		BackfillTempDirs: []string{filepath.Join(root, "tmp")},
 		// status reads the collector's job state; no test may ask launchd.
-		JobState: func(string) string { return "missing" },
+		JobState:   func(string) string { return "missing" },
+		Interrupts: noInterrupts,
 	}
 	return f
 }
@@ -232,25 +232,11 @@ func (f *backfillFixture) run(t *testing.T, args ...string) (string, string, int
 // diff.
 func checkGolden(t *testing.T, name string, got []byte) {
 	t.Helper()
-	golden := filepath.Join("testdata", "backfill", name)
-	if *updateBackfillGolden {
-		if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(golden, got, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("%v (run with -update to create it)", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("output differs from %s:\n%s", golden, got)
-	}
+	golden.Check(t, filepath.Join("testdata", "backfill", name), got)
 }
 
 func TestBackfillGolden(t *testing.T) {
+	// Not parallel: its subtests share one fixture, in order.
 	f := newBackfillFixture(t)
 	cases := []struct {
 		name string
@@ -285,6 +271,7 @@ func TestBackfillGolden(t *testing.T) {
 // Cursor's database, are byte-for-byte unchanged, with no -journal, -wal, or
 // -shm file created beside the database.
 func TestBackfillDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 	cursorDir := filepath.Dir(backfill.CursorStateDatabase(f.userHome))
 	before, cursorBefore := snapshotTree(t, f.data), snapshotTree(t, cursorDir)
@@ -305,6 +292,7 @@ func TestBackfillDryRunWritesNothing(t *testing.T) {
 // and prints its path: it is counted on one "Not imported" line, and the
 // rest of the plan is shown.
 func TestBackfillUnreadableFolder(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads any folder")
 	}
@@ -378,6 +366,7 @@ func snapshotTree(t *testing.T, dir string) string {
 }
 
 func TestBackfillRefusals(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 
 	if _, errOut, code := f.run(t); code != 1 || !strings.Contains(errOut, "needs a terminal") {
@@ -422,6 +411,7 @@ func TestBackfillRefusals(t *testing.T) {
 }
 
 func TestBackfillHelp(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	if code := Run([]string{"backfill", "--help"}, nil, &out, nil, Env{}); code != 0 || !strings.Contains(out.String(), "Usage: agent-archive backfill") {
 		t.Fatalf("code %d: %s", code, out.String())
@@ -435,6 +425,7 @@ func TestBackfillHelp(t *testing.T) {
 // Classify reports a registration the configuration no longer accepts as
 // registered_not_admitted.
 func TestBackfillArchiveState(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 	cfg, _, err := config.Load(f.data)
 	if err != nil {

@@ -63,7 +63,7 @@ var currentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
 func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("handoff", stderr)
+	fs := env.newCommandFlags("handoff", stderr)
 	latest := fs.Bool("latest", false, "the most recent session for the project")
 	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
 	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")

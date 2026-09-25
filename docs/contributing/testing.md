@@ -82,6 +82,10 @@ In Go tests, everything goes through injection:
   `launchctl` and Keychain with stand-ins that stop the test (see
   `isolation_test.go`). A test that leaves an `Env` field unset can therefore
   never reach your real apps, launchd, or Keychain.
+- `internal/credentials` fails closed too: its `TestMain` replaces every
+  Keychain call `KeychainStore` makes with one that stops the test, so a
+  test can reach the real login Keychain only through the opt-in
+  `TestKeychainRoundTrip` (`AGENT_ARCHIVE_KEYCHAIN_ROUND_TRIP=1`).
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).
@@ -143,15 +147,76 @@ LaunchAgent runs) are not part of the user interface and may change.
 
 - Adapter fixtures are in `internal/archive/testdata/` as `<app>-<shape>.jsonl`
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
-  each fixture filters to; Cursor database chats and handoff output have
-  goldens of their own. Regenerate with `go test ./internal/archive
-  -update-filter-golden -update-composer-golden -update` and review the diff
-  line by line: a golden change is a privacy change (see
-  [versions](../reference/versions.md)).
-- Name tests by the behavior they pin (`TestUndoKeepsAProjectAnotherImportStillNeeds`),
-  not by the review that found the bug.
+  each fixture filters to; Cursor database chats
+  (`internal/archive/testdata/cursor-composer/`), handoff output
+  (`testdata/handoff/`), backfill plans (`internal/cli/testdata/backfill/`,
+  `internal/backfill/testdata/`) have goldens of their own.
+- One flag rewrites every golden file:
+
+  ```sh
+  go test ./... -update                  # or one package: go test ./internal/archive -update
+  git diff                               # review every changed line
+  ```
+
+  Review the diff line by line: a change to the archive's goldens is a
+  privacy change (see [versions](../reference/versions.md)). The flag is
+  defined once, in `internal/testutil/golden` (`golden.Check`,
+  `golden.Update`), which every package with tests imports, so no package
+  rejects it (`TestEveryTestedPackageKnowsUpdate`). A new golden test uses
+  `golden.Check`; a package with tests but no goldens imports the package
+  blank.
 - A bug fix comes with a test that fails without the fix. Check by reverting
   the fix.
+
+## Where tests live
+
+- A test sits next to the production file it covers: tests of `status.go` go
+  in `status_test.go`, or in `status_<aspect>_test.go` when one aspect has
+  enough tests to be worth its own file (`status_gaps_test.go`,
+  `setup_transaction_recovery_test.go`). Package-wide test helpers
+  (`testEnv`, fixtures used by many files) live in `cli_test.go` or the
+  package's `testonly_test.go`; `TestMain` lives in `main_test.go`.
+- Name files and tests by the behavior they pin
+  (`TestUndoKeepsAProjectAnotherImportStillNeeds`), never by the review,
+  round, or pull request that found the bug: no `review_fixes_test.go`,
+  `second_review_test.go`, or `cli_correctness_test.go`.
+- Record where a regression came from in the test's doc comment instead:
+
+  ```go
+  // A resumed chat keeps the project it started in.
+  //
+  // Regression: 2026-09 review H-21.
+  func TestResumeKeepsItsProject(t *testing.T) {
+  ```
+
+- Moving tests between files is a pure move: keep each test's body
+  unchanged, and check that `go test -list '.*' ./...` prints the same names
+  before and after.
+
+## Parallel tests
+
+Tests call `t.Parallel()` unless they cannot share the process: a test that
+assigns a package variable (`stubLaunchctl`, `collectSoftDeadline`,
+`hookDiagnosticsWait`), calls `t.Setenv` or `os.Chdir`, reads a process-wide
+counter (`state.PublishedStateLoads`), removes this process's Cursor
+snapshots or checks what a sweep of the shared snapshot folder did, orders goroutines with real sleeps, or needs work to finish
+within a production time bound that a busy parallel run can exceed (a
+hook's one-second lock wait, a version command's output deadline) stays
+sequential, with a comment saying why when it is not obvious. Go runs every sequential test
+before it releases the parallel ones, so a package variable a sequential
+test changes and restores is never seen by a parallel test. Test seams
+that vary per test belong in `Env` (`observeFlags`, `backfillCheckpoint`,
+`exitOnSignal`), not in package variables. Subtests that each build their
+own fixture call `t.Parallel()` too.
+
+Check a change for order dependence and races with
+`go test -race -count=3 -shuffle=on ./internal/cli`, and for timing
+under load with `go test -race -cpu 1,4,18 -shuffle=on ./internal/cli`.
+`internal/cli`'s `TestMain` puts `$TMPDIR` (so every `t.TempDir`) in a
+folder of the run's own under `/tmp`: `local.CanonicalPath` lists each parent
+of a path, and macOS's per-user temporary folder can hold thousands of
+entries. (The product calls it only from setup, status and uninstall, on
+paths under your home folder, never from a hook or a collector pass.)
 
 ## Fuzzing
 

@@ -19,6 +19,7 @@ import (
 // One session can record several capture gaps. The app line counts sessions
 // with a gap, not gap entries; the detail line reports both.
 func TestStatusCountsSessionsWithCaptureGapsNotGapEntries(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, _, _ := publishedThroughSync(t, now)
 	reg, _ := onlyRegistration(t, home)
@@ -64,6 +65,7 @@ func TestStatusCountsSessionsWithCaptureGapsNotGapEntries(t *testing.T) {
 // the collector's later verified health for the same configuration, and
 // nothing else.
 func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, _, _ := publishedThroughSync(t, now)
 	cfg, _, err := config.Load(home)
@@ -143,6 +145,7 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 }
 
 func TestStorageLabel(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		cfg  credentials.Config
 		want string

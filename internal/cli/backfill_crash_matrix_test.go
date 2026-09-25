@@ -66,6 +66,7 @@ func importRaising(t *testing.T, f *backfillFixture) (string, string, int) {
 // stopped at any step and run again, end exactly where uninterrupted runs
 // end: the same projects, kept-out entries, retention, and batch records.
 func TestBackfillImportAndUndoConvergeAfterACrashAtEachStep(t *testing.T) {
+	t.Parallel()
 	clean := newCrashFixture(t)
 	if _, errOut, code := importRaising(t, clean); code != 0 {
 		t.Fatalf("clean import: %d %s", code, errOut)
@@ -82,10 +83,10 @@ func TestBackfillImportAndUndoConvergeAfterACrashAtEachStep(t *testing.T) {
 		t.Fatalf("clean undo state:\n%s", undoneWant)
 	}
 
-	crashAt := func(step string) {
-		backfillHoldSteps = 3
+	crashAt := func(f *backfillFixture, step string) {
+		f.env.backfillHoldSteps = 3
 		fired := false
-		backfillCheckpoint = func(s string) error {
+		f.env.backfillCheckpoint = func(s string) error {
 			if s == step && !fired {
 				fired = true
 				return errors.New("simulated crash")
@@ -93,16 +94,16 @@ func TestBackfillImportAndUndoConvergeAfterACrashAtEachStep(t *testing.T) {
 			return nil
 		}
 	}
-	t.Cleanup(func() { backfillCheckpoint, backfillHoldSteps = nil, 0 })
 
 	for _, step := range []string{"batch saved", "committed", "registered"} {
 		t.Run("import "+step, func(t *testing.T) {
+			t.Parallel()
 			f := newCrashFixture(t)
-			crashAt(step)
+			crashAt(f, step)
 			if _, errOut, code := importRaising(t, f); code != 1 || !strings.Contains(errOut, "simulated crash") {
 				t.Fatalf("crash: %d %s", code, errOut)
 			}
-			backfillCheckpoint = nil
+			f.env.backfillCheckpoint = nil
 			if out, errOut, code := importRaising(t, f); code != 0 {
 				t.Fatalf("rerun: %d %s\n%s", code, errOut, out)
 			}
@@ -113,16 +114,17 @@ func TestBackfillImportAndUndoConvergeAfterACrashAtEachStep(t *testing.T) {
 	}
 	for _, step := range []string{"undoing", "undo marked", "undo configured", "undo recorded"} {
 		t.Run(step, func(t *testing.T) {
+			t.Parallel()
 			f := newCrashFixture(t)
-			backfillCheckpoint = nil
+			f.env.backfillCheckpoint = nil
 			if _, errOut, code := importRaising(t, f); code != 0 {
 				t.Fatalf("import: %d %s", code, errOut)
 			}
-			crashAt(step)
+			crashAt(f, step)
 			if _, errOut, code := f.undoRun(t, nil, false, "--yes", "--restore-retention"); code != 1 || !strings.Contains(errOut, "simulated crash") {
 				t.Fatalf("crash: %d %s", code, errOut)
 			}
-			backfillCheckpoint = nil
+			f.env.backfillCheckpoint = nil
 			if out, errOut, code := f.undoRun(t, nil, false, "--yes", "--restore-retention"); code != 0 {
 				t.Fatalf("rerun: %d %s\n%s", code, errOut, out)
 			}

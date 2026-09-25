@@ -14,6 +14,7 @@ import (
 // it; undoing B then excludes it. Excluding it with A would have stopped B's
 // session updating without B being undone.
 func TestBackfillUndoKeepsProjectAnotherImportNeeds(t *testing.T) {
+	t.Parallel()
 	f, _ := newUndoFixture(t)
 	levenshtein := filepath.Join(f.userHome, "levenshtein")
 	f.write(t, filepath.Join(".claude", "projects", "slug-c-lev-4", "c-lev-4.jsonl"),
@@ -76,6 +77,7 @@ func included(t *testing.T, home, root string) bool {
 // B-1: the error an unreadable import file gives no longer suggests moving
 // it aside as if that were harmless.
 func TestBackfillUnreadableImportFileAdvice(t *testing.T) {
+	t.Parallel()
 	f, _ := newUndoFixture(t)
 	f.write(t, filepath.Join("..", "data", "imports", "2026-09-22-1.json"), "{not json")
 	f.write(t, filepath.Join(".claude", "projects", "slug-c-new", "c-new.jsonl"),

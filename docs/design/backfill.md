@@ -1004,7 +1004,7 @@ transcript.
   - A second run is a no-op.
   - A configuration change during the prompt aborts, and pause refuses.
   - A hook fired mid-registration succeeds within its one-second wait (real
-    flock, as in `diagnostics_lock_test.go`).
+    flock, as in `capture_diagnostics_test.go`).
   - Crashes injected between steps converge on rerun.
   - Subagents inherit the import fields and carry no hook lifecycle evidence.
   - Hook metadata is byte-identical to before.
