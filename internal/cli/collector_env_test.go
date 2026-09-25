@@ -10,11 +10,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/hooks"
 )
 
+// vaultHelper is the credential_process program awsFixture's profile runs.
+const vaultHelper = "vault-helper"
+
 // awsFixture is an AWS config file outside ~/.aws, as AWS_CONFIG_FILE
-// names one, whose profile "vault" gets credentials by running helper, and
-// a directory (not on launchd's PATH) holding helper.
-func awsFixture(t *testing.T, helper string) (configFile, credentialsFile, binDir string) {
+// names one, whose profile "vault" gets credentials by running
+// vaultHelper, and a directory (not on launchd's PATH) holding it.
+func awsFixture(t *testing.T) (configFile, credentialsFile, binDir string) {
 	t.Helper()
+	helper := vaultHelper
 	dir := t.TempDir()
 	configFile = filepath.Join(dir, "aws config")
 	credentialsFile = filepath.Join(dir, "aws credentials")
@@ -63,7 +67,7 @@ func collectorPlistEnvironment(t *testing.T, env Env, home, userHome string) (ma
 func TestSetupGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
-	configFile, credentialsFile, binDir := awsFixture(t, "vault-helper")
+	configFile, credentialsFile, binDir := awsFixture(t)
 	caBundle := filepath.Join(filepath.Dir(configFile), "corporate-ca.pem")
 	if err := os.WriteFile(caBundle, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -144,7 +148,7 @@ func TestSetupGivesAnR2CollectorOnlyItsDataDirectory(t *testing.T) {
 func TestSetupWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
-	configFile, _, _ := awsFixture(t, "vault-helper")
+	configFile, _, _ := awsFixture(t)
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": "/usr/bin:/bin"})
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "vault", true, false, false, t.TempDir()), 0)
@@ -157,7 +161,7 @@ func TestSetupWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
 func TestSetupYesWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
-	configFile, _, _ := awsFixture(t, "vault-helper")
+	configFile, _, _ := awsFixture(t)
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": "/usr/bin:/bin"})
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
@@ -201,7 +205,7 @@ func TestStatusReportsWhenTheCollectorCannotLoadTheProfile(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			home, userHome := t.TempDir(), t.TempDir()
-			configFile, _, binDir := awsFixture(t, "vault-helper")
+			configFile, _, binDir := awsFixture(t)
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 			env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": binDir + ":/usr/bin:/bin"})
 			setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "vault", true, false, false, t.TempDir()), 0)
