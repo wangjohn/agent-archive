@@ -6,12 +6,17 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
+
+// testTempPrefix names the folder under /tmp that holds one test run's
+// temporary files.
+const testTempPrefix = "agent-archive-cli-test-"
 
 // isolateProcessForTesting makes the package's tests fail closed: a test
 // that leaves an Env field nil gets the default, and every default that
@@ -48,7 +53,13 @@ func isolateProcessForTesting() func() {
 	if info, err := os.Stat("/tmp"); err == nil && info.IsDir() {
 		parent = "/tmp"
 	}
-	tmp, err := os.MkdirTemp(parent, "agent-archive-cli-test-")
+	// A test binary this one starts (the terminal tests' child) inherits
+	// $TMPDIR and nests its folder there, so this run's removal covers it
+	// even when the child is killed before it can clean up.
+	if inherited := os.Getenv("TMPDIR"); strings.HasPrefix(filepath.Base(filepath.Clean(inherited)), testTempPrefix) {
+		parent = inherited
+	}
+	tmp, err := os.MkdirTemp(parent, testTempPrefix)
 	must(err)
 	must(os.Setenv("TMPDIR", tmp))
 	home, err := os.MkdirTemp("", "cli-home-")

@@ -151,7 +151,8 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 		LookupEnv:        func(string) (string, bool) { return "", false },
 		BackfillTempDirs: []string{filepath.Join(root, "tmp")},
 		// status reads the collector's job state; no test may ask launchd.
-		JobState: func(string) string { return "missing" },
+		JobState:   func(string) string { return "missing" },
+		Interrupts: noInterrupts,
 	}
 	return f
 }

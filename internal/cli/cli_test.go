@@ -55,8 +55,16 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		AWSProfiles:          func() ([]AWSProfile, error) { return nil, nil },
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },
+		Interrupts:           noInterrupts,
 	}
 }
+
+// noInterrupts is Env.Interrupts for tests that do not send signals. The
+// default installs real handlers for Ctrl-C, SIGTERM, and SIGHUP, and while
+// any parallel backfill test held them, a signal sent to the test run would
+// end it through exitOnSignal with a bare exit status instead of the
+// signal's name.
+func noInterrupts() (<-chan os.Signal, func()) { return nil, func() {} }
 
 // credentialsTestConfig is a syntactically valid storage destination for
 // tests that never actually touch storage (they use OpenStore above, or

@@ -110,7 +110,9 @@ func TestInstalledVersionSupportReportsWhyUnverified(t *testing.T) {
 }
 
 func TestDiscoverCommandVersionTriesEveryPresentCandidate(t *testing.T) {
-	t.Parallel()
+	// Not parallel: boundedVersionCommand gives a script's output 250 ms
+	// after it exits, and a busy parallel run (-race, 18 tests at once) can
+	// starve it past that, so the working script reads as failing.
 	if runtime.GOOS == "windows" {
 		t.Skip("shell scripts")
 	}

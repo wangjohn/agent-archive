@@ -162,7 +162,10 @@ func TestPlanningInterruptStopWithoutSignal(t *testing.T) {
 // B-24: every backfill command, history, undo, and --dry-run included,
 // first sweeps copies of Cursor's database a killed process left behind.
 func TestEveryBackfillCommandSweepsStaleSnapshots(t *testing.T) {
-	t.Parallel()
+	// Not parallel: every test's sweep shares the process's snapshot folder.
+	// A sweep probing the stale copy's lock at the same moment makes this
+	// command's sweep see it as in use and keep it; another sweep removing
+	// it first would let the test pass without this command's sweep.
 	f := newBackfillFixture(t)
 	root := filepath.Join(cursorstore.SnapshotTempDirForTesting, fmt.Sprintf("agent-archive-cursor-%d", os.Getuid()))
 	for _, args := range [][]string{{"backfill", "history"}, {"backfill", "undo", "--yes"}, {"backfill", "--dry-run", "--json"}} {

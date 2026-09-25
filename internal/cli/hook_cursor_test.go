@@ -241,7 +241,9 @@ func TestFirstPromptRegistrationIsCursorOnly(t *testing.T) {
 // and the rest continue it: one registration, one archive ID, the first
 // hook's time as the start.
 func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
-	t.Parallel()
+	// Not parallel: a hook waits at most a second for hooks.lock, and three
+	// hooks queued behind each other's fsyncs can pass that on a machine
+	// busy with the parallel tests' I/O.
 	for i := range 10 {
 		home, project := t.TempDir(), t.TempDir()
 		setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
