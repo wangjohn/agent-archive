@@ -2,6 +2,8 @@ package archive
 
 import (
 	"fmt"
+	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -103,4 +105,46 @@ func FuzzLineMatchesCoverWholeString(f *testing.F) {
 		}
 		checkLineMatchesCoverWholeString(t, s)
 	})
+}
+
+// A pair set only ever rules a needle out when the text cannot hold it, so
+// the needles found present are the same with it and without it, whatever
+// the text.
+func TestPairSetFindsTheSameNeedles(t *testing.T) {
+	t.Parallel()
+	var needles []string
+	for _, p := range gatedPatterns() {
+		needles = append(needles, p.needles...)
+	}
+	random := rand.New(rand.NewPCG(3, 4))
+	alphabets := []string{"abcdefghijklmnopqrstuvwxyz", "etaoinsrhld_-:=. \n", "\x00\x01\xffAa:-_\u00e9"}
+	for trial := range 2000 {
+		alphabet := alphabets[trial%len(alphabets)]
+		var b strings.Builder
+		for b.Len() < pairSetMinLength+random.IntN(2048) {
+			if random.IntN(20) == 0 {
+				b.WriteString(needles[random.IntN(len(needles))])
+				continue
+			}
+			b.WriteByte(alphabet[random.IntN(len(alphabet))])
+		}
+		text := newNeedleText(b.String())
+		if text.pairs == nil {
+			t.Fatalf("no pair set for %d bytes", len(text.s))
+		}
+		// Every substring of the text is one it may contain.
+		for range 20 {
+			start := random.IntN(len(text.lower))
+			end := min(len(text.lower), start+1+random.IntN(12))
+			if !text.pairs.mayContain(text.lower[start:end]) {
+				t.Fatalf("the pair set rules out %q, which is in the text", text.lower[start:end])
+			}
+		}
+		withPairs, _ := text.presentNeedles(needles)
+		text.pairs = nil
+		without, _ := text.presentNeedles(needles)
+		if !slices.Equal(withPairs, without) {
+			t.Fatalf("needles present with the pair set %v, without %v, in %q", withPairs, without, text.s)
+		}
+	}
 }
