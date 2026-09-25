@@ -132,7 +132,7 @@ func TestPlanSaysWhenNestedCheckIsIncomplete(t *testing.T) {
 	tr := newTree(t)
 	code := tr.mkdir("home/code")
 	for _, d := range []string{"a/b/c", "d/e", "f"} {
-		tr.mkdir(filepath.Join("home/code", d))
+		tr.mkdir("home/code/" + d)
 	}
 	tr.write("home/"+claudeFile("s", "parent"), claudeTranscript("parent", code, fixedNow.Add(-48*time.Hour)))
 	saved := nestedScanBudget

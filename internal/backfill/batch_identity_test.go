@@ -18,7 +18,12 @@ import (
 // LoadBatches names it as unreadable instead of returning it, so undo (which
 // must see every batch) stops rather than select sessions by an empty ID.
 func TestLoadBatchesRejectsInvalidBatchFiles(t *testing.T) {
-	for _, tc := range []struct{ name, file, body, want string }{
+	for _, tc := range []struct {
+		name string
+		file string
+		body string
+		want string
+	}{
 		{"empty object", "zz", `{}`, "no valid import ID"},
 		{"empty id", "2026-09-23-7", `{"id":"","started_at":"2026-09-23T10:00:00Z"}`, "no valid import ID"},
 		{"future start only", "zz", `{"started_at":"2027-01-01T00:00:00Z"}`, "no valid import ID"},
@@ -44,13 +49,14 @@ func TestLoadBatchesRejectsInvalidBatchFiles(t *testing.T) {
 }
 
 func TestValidBatchID(t *testing.T) {
-	for id, want := range map[string]bool{
-		"2026-09-23-1": true, "2026-09-23-12": true,
-		"": false, "2026-09-23": false, "2026-09-23-0": false, "2026-09-23-01": false,
-		"../2026-09-23-1": false, "2026-09-23-1/x": false, "2026-09-23-1 ": false, "x2026-09-23-1": false,
-	} {
-		if got := ValidBatchID(id); got != want {
-			t.Errorf("ValidBatchID(%q) = %v, want %v", id, got, want)
+	for _, id := range []string{"2026-09-23-1", "2026-09-23-12"} {
+		if !ValidBatchID(id) {
+			t.Errorf("ValidBatchID(%q) = false", id)
+		}
+	}
+	for _, id := range []string{"", "2026-09-23", "2026-09-23-0", "2026-09-23-01", "../2026-09-23-1", "2026-09-23-1/x", "2026-09-23-1\n", "x2026-09-23-1"} {
+		if ValidBatchID(id) {
+			t.Errorf("ValidBatchID(%q) = true", id)
 		}
 	}
 }
@@ -157,7 +163,8 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 // batch that recorded no value.
 func TestBatchFiltersMatchRelativeBoundsAsTyped(t *testing.T) {
 	for _, tc := range []struct {
-		a, b BatchFilters
+		a    BatchFilters
+		b    BatchFilters
 		want bool
 	}{
 		{BatchFilters{Since: "2026-08-24", SinceArg: "30d"}, BatchFilters{Since: "2026-08-25", SinceArg: "30d"}, true},

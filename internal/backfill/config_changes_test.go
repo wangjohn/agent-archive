@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,10 @@ import (
 // too. ApplyToConfig refuses it and leaves the configuration as it was.
 func TestApplyToConfigNeverShortensRetention(t *testing.T) {
 	p := Plan{Candidates: []Candidate{{Harness: "claude", ProjectRoot: "/work/new"}}}
-	for _, tc := range []struct{ configured, planned int }{{90, 7}, {90, 89}, {0, 90}} {
+	for _, tc := range []struct {
+		configured int
+		planned    int
+	}{{90, 7}, {90, 89}, {0, 90}} {
 		cfg := config.Config{RetentionDays: tc.configured}
 		p.RetentionDays = tc.planned
 		if _, err := ApplyToConfig(&cfg, p, fixedNow); !errors.Is(err, ErrRetentionShortened) {
@@ -66,9 +70,10 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 		{Harness: "claude", ProjectRoot: "/work/in", ProjectIncluded: true},
 		{Harness: "codex", ProjectRoot: "/work/new"},
 		{Harness: "claude", ProjectRoot: "/work/dir", ProjectKind: ProjectKindDirectory},
-	}}
-	// A plain folder the import adds keeps a repository inside it out.
-	plan.nested = map[string]nestedFolders{"/work/dir": {KeptOut: []string{"/work/dir/repo"}, Complete: true}}
+	},
+		// A plain folder the import adds keeps a repository inside it out.
+		nested: map[string]nestedFolders{"/work/dir": {KeptOut: []string{"/work/dir/repo"}, Complete: true}},
+	}
 	cfg := cloneConfig(t, f.cfg)
 	admitted := fixedNow.Add(-time.Hour).UTC()
 	changes, err := ApplyToConfig(&cfg, plan, admitted)
@@ -113,7 +118,7 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 	// everything else is as before.
 	want := cloneConfig(t, before)
 	for _, p := range after.Archive.Projects {
-		if p.Root == "/work/new" || p.Root == "/work/dir" {
+		if slices.Contains([]string{"/work/new", "/work/dir"}, p.Root) {
 			if p.Included {
 				t.Fatalf("added project still included: %+v", p)
 			}

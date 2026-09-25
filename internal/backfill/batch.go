@@ -185,7 +185,11 @@ func (f BatchFilters) Flags(p Plan, projectRoot func(id string) (string, bool)) 
 		}
 		out = append(out, "--project "+shellWord(p.display(root)))
 	}
-	for _, bound := range []struct{ flag, day, arg string }{{"--since", f.Since, f.SinceArg}, {"--until", f.Until, f.UntilArg}} {
+	for _, bound := range []struct {
+		flag string
+		day  string
+		arg  string
+	}{{"--since", f.Since, f.SinceArg}, {"--until", f.Until, f.UntilArg}} {
 		switch {
 		case bound.arg != "":
 			out = append(out, bound.flag+" "+shellWord(bound.arg))
@@ -208,11 +212,20 @@ func (f BatchFilters) Flags(p Plan, projectRoot func(id string) (string, bool)) 
 // characters.
 func shellWord(s string) string {
 	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("~/._-+:@", c)) {
+		if !plainShellRune(c) {
 			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 		}
 	}
 	return s
+}
+
+// plainShellRune reports whether c needs no quoting in a shell word.
+func plainShellRune(c rune) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	return strings.ContainsRune("~/._-+:@", c)
 }
 
 func batchDir(home string) string { return filepath.Join(home, "imports") }
@@ -238,7 +251,7 @@ func InBatch(reg archive.SessionRegistration, id string) bool {
 // validate checks what LoadBatches relies on in a batch read from the file
 // named stem.json: an ID of the form OpenBatch gives, that file's own name,
 // and a start time.
-func (b Batch) validate(stem string) error {
+func (b *Batch) validate(stem string) error {
 	switch {
 	case !ValidBatchID(b.ID):
 		return errors.New("it has no valid import ID")

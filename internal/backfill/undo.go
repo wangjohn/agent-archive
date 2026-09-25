@@ -693,64 +693,17 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 		scope += " in " + p.view.display(p.Project)
 	}
 	terminal.Printf(w, "Undo %s, started %s.\n\n", scope, p.Batch.StartedAt.In(p.view.GeneratedAt.Location()).Format("2006-01-02 15:04"))
-	if c.Sessions+c.Subagents > 0 {
-		terminal.Println(w, "If you continue:")
-	}
-	sessions := SessionsAndSubagents(c.Sessions, c.Subagents)
-	switch {
-	case c.Deleted > 0 && c.Forgotten == 0:
-		terminal.Printf(w, "  • %s %s deleted from\n    %s.\n", sessions, IsAre(c.Sessions+c.Subagents), p.view.destination())
-	case c.Deleted > 0:
-		terminal.Printf(w, "  • %s %s deleted from\n    %s.\n", CountNoun(c.Deleted, "session"), IsAre(c.Deleted), p.view.destination())
-		terminal.Printf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", CountNoun(c.Forgotten, "session"), IsAre(c.Forgotten))
-	case c.Forgotten > 0:
-		terminal.Printf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, IsAre(c.Sessions+c.Subagents))
-	}
-	if c.Resumed > 0 {
-		terminal.Printf(w, "    This includes %s resumed since the import, with %s newer content.\n", CountNoun(c.Resumed, "session"), theirIts(c.Resumed))
-	}
-	if n := c.ResumeUnknown; n > 0 {
-		terminal.Printf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", CountNoun(n, "Cursor chat")+" "+wasWere(n))
-	}
-	if n := len(p.ExcludeProjects); n > 0 {
-		if c.Sessions+c.Subagents == 0 {
+	// Every change is a bullet under one heading.
+	headed := false
+	bullet := func(format string, args ...any) {
+		if !headed {
+			headed = true
 			terminal.Println(w, "If you continue:")
 		}
-		// Projects the import added, and those it took over from an earlier
-		// undo that kept them for its sessions, are listed apart.
-		var added, takenOver []string
-		for _, project := range p.ExcludeProjects {
-			if from, ok := p.TakenOver[project.ProjectID]; ok {
-				takenOver = append(takenOver, fmt.Sprintf("%s (left included by the undo of %s)", p.view.display(project.Root), importsNoun(from)))
-			} else {
-				added = append(added, p.view.display(project.Root))
-			}
-		}
-		sort.Strings(added)
-		sort.Strings(takenOver)
-		if k := len(added); k > 0 {
-			terminal.Printf(w, "  • %s the import added %s excluded from capture; setup can\n    include %s again:\n", CountNoun(k, "project"), IsAre(k), themIt(k))
-			for _, root := range added {
-				terminal.Printf(w, "      %s\n", root)
-			}
-		}
-		if k := len(takenOver); k > 0 {
-			terminal.Printf(w, "  • %s an earlier undo left included for this import's sessions\n    %s excluded from capture; setup can include %s again:\n", CountNoun(k, "project"), IsAre(k), themIt(k))
-			for _, line := range takenOver {
-				terminal.Printf(w, "      %s\n", line)
-			}
-		}
-		if h := p.HookCapturedStopping; h > 0 {
-			where, verb, what := "these projects", "stop", "they are"
-			if n == 1 {
-				where = "this project"
-			}
-			if h == 1 {
-				verb, what = "stops", "it is"
-			}
-			terminal.Printf(w, "    %s in %s %s uploading; %s not deleted.\n", CountNoun(h, "hook-captured session"), where, verb, what)
-		}
+		terminal.Printf(w, "  • "+format, args...)
 	}
+	renderUndoSessions(w, p, c, bullet)
+	renderUndoExcluded(w, p, bullet)
 	if len(p.RemoveApps) > 0 {
 		names := make([]string, 0, len(p.RemoveApps))
 		for _, app := range p.RemoveApps {
@@ -760,51 +713,114 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 			}
 			names = append(names, name)
 		}
-		terminal.Printf(w, "  • %s imports without hooks are no longer published.\n", joinAnd(names))
+		bullet("%s imports without hooks are no longer published.\n", joinAnd(names))
 	}
-	if n := len(p.KeepProjects); n > 0 {
-		if c.Sessions+c.Subagents == 0 && len(p.ExcludeProjects) == 0 {
-			terminal.Println(w, "If you continue:")
+	renderUndoKept(w, p, bullet)
+	if n := len(p.RemoveKeptOut); n > 0 {
+		bullet("%s the import added as excluded, to keep folders inside a project\n    out of capture, %s removed from setup again; nothing there is captured\n    either way.\n", CountNoun(n, "project"), IsAre(n))
+	}
+	switch r := p.RestoreRetention; {
+	case r != nil && p.RetentionDeletes > 0:
+		bullet("Retention goes back from %d to %d days, as it was before the import\n    raised it. The next collector pass then deletes %s older than\n    %d days from %s.\n", r.To, r.From, CountNoun(p.RetentionDeletes, "session"), r.From, p.view.destination())
+	case r != nil:
+		bullet("Retention goes back from %d to %d days, as it was before the import\n    raised it. No session is old enough for that to delete it now.\n", r.To, r.From)
+	case p.RetentionChangedSince:
+		bullet("Retention stays at %d days: it was changed after the import raised it.\n", p.view.RetentionDays)
+	}
+	bullet("Hook-captured sessions and the apps' own files are not touched.\n")
+	if c.Sessions+c.Subagents > 0 {
+		bullet("These sessions are not imported again unless you run\n    agent-archive backfill --include-removed.\n")
+	}
+}
+
+// renderUndoSessions is RenderUndo's sessions: deleted, or forgotten from a
+// previous destination, and how many were resumed.
+func renderUndoSessions(w io.Writer, p UndoPlan, c UndoCounts, bullet func(string, ...any)) {
+	sessions := SessionsAndSubagents(c.Sessions, c.Subagents)
+	switch {
+	case c.Deleted > 0 && c.Forgotten == 0:
+		bullet("%s %s deleted from\n    %s.\n", sessions, IsAre(c.Sessions+c.Subagents), p.view.destination())
+	case c.Deleted > 0:
+		bullet("%s %s deleted from\n    %s.\n", CountNoun(c.Deleted, "session"), IsAre(c.Deleted), p.view.destination())
+		bullet("%s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", CountNoun(c.Forgotten, "session"), IsAre(c.Forgotten))
+	case c.Forgotten > 0:
+		bullet("%s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, IsAre(c.Sessions+c.Subagents))
+	}
+	if c.Resumed > 0 {
+		terminal.Printf(w, "    This includes %s resumed since the import, with %s newer content.\n", CountNoun(c.Resumed, "session"), theirIts(c.Resumed))
+	}
+	if n := c.ResumeUnknown; n > 0 {
+		terminal.Printf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", CountNoun(n, "Cursor chat")+" "+wasWere(n))
+	}
+}
+
+// renderUndoExcluded is RenderUndo's excluded projects: those the import
+// added, and apart from them those it took over from an earlier undo that
+// kept them for its sessions.
+func renderUndoExcluded(w io.Writer, p UndoPlan, bullet func(string, ...any)) {
+	n := len(p.ExcludeProjects)
+	if n == 0 {
+		return
+	}
+	var added, takenOver []string
+	for _, project := range p.ExcludeProjects {
+		if from, ok := p.TakenOver[project.ProjectID]; ok {
+			takenOver = append(takenOver, fmt.Sprintf("%s (left included by the undo of %s)", p.view.display(project.Root), importsNoun(from)))
+		} else {
+			added = append(added, p.view.display(project.Root))
 		}
-		which := "the import added"
-		if slices.ContainsFunc(p.KeepProjects, func(k KeptProject) bool { _, ok := p.TakenOver[k.Project.ProjectID]; return ok }) {
-			which = "the import added or took over"
+	}
+	sort.Strings(added)
+	sort.Strings(takenOver)
+	if k := len(added); k > 0 {
+		bullet("%s the import added %s excluded from capture; setup can\n    include %s again:\n", CountNoun(k, "project"), IsAre(k), themIt(k))
+		for _, root := range added {
+			terminal.Printf(w, "      %s\n", root)
 		}
-		terminal.Printf(w, "  • %s %s %s included: other imports still have\n    sessions there, which excluding %s would stop updating:\n", CountNoun(n, "project"), which, stayStays(n), themIt(n))
-		kept := make([]string, 0, n)
-		for _, k := range p.KeepProjects {
-			line := fmt.Sprintf("%s (%s from %s", p.view.display(k.Project.Root), CountNoun(k.Sessions, "session"), importsNoun(k.Imports))
-			if from, ok := p.TakenOver[k.Project.ProjectID]; ok {
-				line += "; left included by the undo of " + importsNoun(from)
-			}
-			kept = append(kept, line+")")
-		}
-		sort.Strings(kept)
-		for _, line := range kept {
+	}
+	if k := len(takenOver); k > 0 {
+		bullet("%s an earlier undo left included for this import's sessions\n    %s excluded from capture; setup can include %s again:\n", CountNoun(k, "project"), IsAre(k), themIt(k))
+		for _, line := range takenOver {
 			terminal.Printf(w, "      %s\n", line)
 		}
-		terminal.Printf(w, "    Undoing the last of those imports excludes %s.\n", themIt(n))
 	}
-	if n := len(p.RemoveKeptOut); n > 0 {
-		terminal.Printf(w, "  • %s the import added as excluded, to keep folders inside a project\n    out of capture, %s removed from setup again; nothing there is captured\n    either way.\n", CountNoun(n, "project"), IsAre(n))
-	}
-	if r := p.RestoreRetention; r != nil {
-		if c.Sessions+c.Subagents == 0 && len(p.ExcludeProjects) == 0 && len(p.KeepProjects) == 0 {
-			terminal.Println(w, "If you continue:")
+	if h := p.HookCapturedStopping; h > 0 {
+		where, verb, what := "these projects", "stop", "they are"
+		if n == 1 {
+			where = "this project"
 		}
-		terminal.Printf(w, "  • Retention goes back from %d to %d days, as it was before the import\n    raised it. ", r.To, r.From)
-		if n := p.RetentionDeletes; n > 0 {
-			terminal.Printf(w, "The next collector pass then deletes %s older than\n    %d days from %s.\n", CountNoun(n, "session"), r.From, p.view.destination())
-		} else {
-			terminal.Println(w, "No session is old enough for that to delete it now.")
+		if h == 1 {
+			verb, what = "stops", "it is"
 		}
-	} else if p.RetentionChangedSince {
-		terminal.Printf(w, "  • Retention stays at %d days: it was changed after the import raised it.\n", p.view.RetentionDays)
+		terminal.Printf(w, "    %s in %s %s uploading; %s not deleted.\n", CountNoun(h, "hook-captured session"), where, verb, what)
 	}
-	terminal.Println(w, "  • Hook-captured sessions and the apps' own files are not touched.")
-	if c.Sessions+c.Subagents > 0 {
-		terminal.Println(w, "  • These sessions are not imported again unless you run\n    agent-archive backfill --include-removed.")
+}
+
+// renderUndoKept is RenderUndo's kept projects, with the imports that keep
+// each and, for one taken over, whose undo kept it before.
+func renderUndoKept(w io.Writer, p UndoPlan, bullet func(string, ...any)) {
+	n := len(p.KeepProjects)
+	if n == 0 {
+		return
 	}
+	which := "the import added"
+	if slices.ContainsFunc(p.KeepProjects, func(k KeptProject) bool { _, ok := p.TakenOver[k.Project.ProjectID]; return ok }) {
+		which = "the import added or took over"
+	}
+	bullet("%s %s %s included: other imports still have\n    sessions there, which excluding %s would stop updating:\n", CountNoun(n, "project"), which, stayStays(n), themIt(n))
+	kept := make([]string, 0, n)
+	for _, k := range p.KeepProjects {
+		line := fmt.Sprintf("%s (%s from %s", p.view.display(k.Project.Root), CountNoun(k.Sessions, "session"), importsNoun(k.Imports))
+		if from, ok := p.TakenOver[k.Project.ProjectID]; ok {
+			line += "; left included by the undo of " + importsNoun(from)
+		}
+		kept = append(kept, line+")")
+	}
+	sort.Strings(kept)
+	for _, line := range kept {
+		terminal.Printf(w, "      %s\n", line)
+	}
+	terminal.Printf(w, "    Undoing the last of those imports excludes %s.\n", themIt(n))
 }
 
 // importsNoun names import IDs: "import A", or "imports A and B".
