@@ -12,7 +12,7 @@ import (
 
 var (
 	// docFence is a fenced code block; docCodeSpan an inline code span.
-	docFence    = regexp.MustCompile("(?ms)^[ \t]*(```|~~~)([^\n]*)\n(.*?)^[ \t]*(```|~~~)")
+	docFence    = regexp.MustCompile("(?ms)^[ \t]*(```|~~~)([^\n]*)\n(.*?)\n[ \t]*(```|~~~)")
 	docCodeSpan = regexp.MustCompile("`([^`\n]+)`")
 	// docInvocation is `agent-archive` and what follows it on the line, up
 	// to the end of a shell command.
@@ -44,7 +44,7 @@ func docCommandSources(t *testing.T) []string {
 				}
 				return nil
 			}
-			if ext := filepath.Ext(path); ext == ".md" || ext == ".yml" || ext == ".yaml" {
+			if slices.Contains([]string{".md", ".yml", ".yaml"}, filepath.Ext(path)) {
 				files = append(files, path)
 			}
 			return nil
@@ -81,7 +81,7 @@ func quotedCode(path string, text string) []string {
 // nothing when the first word does not look like a command, as in prose.
 func commandWords(s string) []string {
 	var words []string
-	for _, word := range strings.Fields(s) {
+	for word := range strings.FieldsSeq(s) {
 		if strings.HasPrefix(word, "(") {
 			break
 		}
@@ -173,7 +173,7 @@ func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
 							continue
 						}
 						checked++
-						if name != "help" && name != "h" && !slices.Contains(accepted, name) {
+						if !slices.Contains(append([]string{"help", "h"}, accepted...), name) {
 							t.Errorf("%s: `agent-archive %s`: %s has no flag --%s", rel, strings.Join(words, " "), command, name)
 						}
 					}
