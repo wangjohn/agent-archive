@@ -30,8 +30,9 @@ import (
 //
 // When either disagrees the sweep holds every such deletion (Result.Held) and
 // deletes nothing on account of age; the check runs at most once a sweep, and
-// only when a deletion is about to happen. A clock that is behind only delays
-// deletions, the safe direction, and is let through.
+// only when a deletion is about to happen; a recent reading of the storage
+// clock stands in for a new probe (see cachedProbe). A clock that is behind
+// only delays deletions, the safe direction, and is let through.
 //
 // The mirror case is evidence stamped while the clock was ahead and swept
 // once it is right again: a capture time or supersession time in the future.
@@ -80,7 +81,7 @@ func (s *sweeper) readClock() clockVerdict {
 	s.clock.checked = true
 	serverClock := s.opts.ServerClock
 	if serverClock == nil {
-		serverClock = func(ctx context.Context) (time.Time, error) { return ProbeServerClock(ctx, s.store) }
+		serverClock = s.cachedProbe
 	}
 	serverNow, err := serverClock(s.ctx)
 	switch {
@@ -159,6 +160,75 @@ func (s *sweeper) supersededLedger(id string) ([]state.SupersededSource, error) 
 		return nil, fmt.Errorf("load superseded sources: %w", err)
 	}
 	return superseded, nil
+}
+
+const (
+	// agreeingReadingReuse is how long a reading that let deletion through
+	// stands in for a new one. The estimate it gives (the reading's server
+	// time plus the time this Mac says has passed) misses a forward jump of
+	// this Mac's clock inside the window, so the window is far shorter than
+	// MaxClockSkew: a jump it can miss is too small to matter. A jump past
+	// the window, or any jump backward, reads the clock again.
+	agreeingReadingReuse = 10 * time.Minute
+	// holdingReadingReuse is how long a reading that holds deletion (the
+	// probe failed, or this Mac was ahead) stands in for a new one. Reusing
+	// it can only hold deletion longer, never allow one, so it may stand
+	// longer: a clock that stays wrong costs a probe an hour, not one a pass.
+	holdingReadingReuse = time.Hour
+)
+
+// cachedProbe is the default ServerClock: the storage service's time from
+// the last reading while that may still stand in for a new one (see
+// agreeingReadingReuse and holdingReadingReuse), otherwise from a new probe,
+// which is then recorded. Without it, a sweep that keeps finding something
+// due while deletion is held (a clock that stays ahead, a probe that keeps
+// failing) would write, list, and delete a probe object on every pass: in a
+// versioned bucket, two versions a minute kept forever.
+func (s *sweeper) cachedProbe(ctx context.Context) (time.Time, error) {
+	if reading, found := s.local.LoadStorageClockReading(); found {
+		if serverNow, ok, err := reuseReading(reading, s.now); ok {
+			return serverNow, err
+		}
+	}
+	serverNow, err := ProbeServerClock(ctx, s.store)
+	if ctx.Err() != nil {
+		// The sweep ran out of time; that says nothing about the clock.
+		return serverNow, err
+	}
+	reading := state.StorageClockReading{CheckedAt: s.now.UTC(), ServerAt: serverNow.UTC()}
+	if err != nil {
+		reading = state.StorageClockReading{CheckedAt: s.now.UTC(), Error: err.Error()}
+	}
+	// Best effort: without the record the next sweep only probes again.
+	_ = s.local.SaveStorageClockReading(reading)
+	return serverNow, err
+}
+
+// reuseReading answers from an earlier reading when it may stand in for a
+// new one at now: ok is false when the clock must be read again.
+func reuseReading(reading state.StorageClockReading, now time.Time) (serverNow time.Time, ok bool, err error) {
+	elapsed := now.Sub(reading.CheckedAt)
+	if elapsed < 0 {
+		// This Mac's clock went back since: read again.
+		return time.Time{}, false, nil
+	}
+	if reading.Error != "" {
+		if elapsed >= holdingReadingReuse {
+			return time.Time{}, false, nil
+		}
+		return time.Time{}, true, fmt.Errorf("%s (as of %s ago)", reading.Error, roundedDuration(elapsed))
+	}
+	if reading.ServerAt.IsZero() {
+		return time.Time{}, false, nil
+	}
+	window := agreeingReadingReuse
+	if reading.CheckedAt.Sub(reading.ServerAt) > MaxClockSkew {
+		window = holdingReadingReuse
+	}
+	if elapsed >= window {
+		return time.Time{}, false, nil
+	}
+	return reading.ServerAt.Add(elapsed), true, nil
 }
 
 // clockProbePrefix is where ProbeServerClock writes its object: beside the

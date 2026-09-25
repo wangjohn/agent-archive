@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -338,4 +339,135 @@ func (s slowStore) List(ctx context.Context, p string) ([]storage.Object, error)
 		return nil, err
 	}
 	return s.MemoryStore.List(ctx, p)
+}
+
+// A sweep with nothing due never touches the storage clock: the probe is a
+// write, a listing, and a delete, and sweeps run after every pass.
+func TestSweepWithNothingDueDoesNotProbe(t *testing.T) {
+	local := newTestStore(t)
+	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
+	now := time.Now().UTC()
+	publishTwice(t, local, store, "s1", t.TempDir(), now.Add(-time.Hour))
+	for range 3 {
+		result, err := Sweep(context.Background(), local, store, Options{SessionMaxAge: 90 * 24 * time.Hour})
+		if err != nil || len(result.Errors) != 0 || result.Held != nil {
+			t.Fatalf("%#v %v", result, err)
+		}
+	}
+	if store.probes != 0 {
+		t.Fatalf("probes = %d, want 0", store.probes)
+	}
+}
+
+// A clock that stays ahead keeps finding everything due, and the storage
+// clock is not probed again on every pass for it: the reading that held
+// deletion stands for an hour. Setting the clock back reads it again at once,
+// and the deletions it held go ahead.
+func TestHeldClockIsNotProbedEveryPass(t *testing.T) {
+	local := newTestStore(t)
+	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
+	real := time.Now().UTC()
+	publishTwice(t, local, store, "s1", t.TempDir(), real.Add(-100*24*time.Hour))
+	ahead := real.Add(365 * 24 * time.Hour)
+	for pass := range 30 {
+		at := ahead.Add(time.Duration(pass) * time.Minute)
+		result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return at }, SessionMaxAge: 90 * 24 * time.Hour})
+		if err != nil || !errors.Is(result.Held, ErrClockAhead) || len(result.DeletedSessions) != 0 {
+			t.Fatalf("pass %d: %#v %v", pass, result, err)
+		}
+	}
+	if store.probes != 1 {
+		t.Fatalf("probes = %d over 30 held passes, want 1", store.probes)
+	}
+	later := ahead.Add(holdingReadingReuse)
+	if result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return later }, SessionMaxAge: 90 * 24 * time.Hour}); err != nil || !errors.Is(result.Held, ErrClockAhead) {
+		t.Fatalf("%#v %v", result, err)
+	}
+	if store.probes != 2 {
+		t.Fatalf("probes = %d, want a new probe once the reading is an hour old", store.probes)
+	}
+	result, err := Sweep(context.Background(), local, store, Options{SessionMaxAge: 90 * 24 * time.Hour})
+	if err != nil || result.Held != nil || len(result.DeletedSessions) != 1 || store.probes != 3 {
+		t.Fatalf("after the clock was set back: %#v %v probes=%d", result, err, store.probes)
+	}
+}
+
+// A failed probe holds deletion for the next passes too, without probing
+// again on each.
+func TestFailedProbeIsNotRetriedEveryPass(t *testing.T) {
+	local := newTestStore(t)
+	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore(), failPut: true}
+	real := time.Now().UTC()
+	publishTwice(t, local, store, "s1", t.TempDir(), real.Add(-100*24*time.Hour))
+	for pass := range 5 {
+		at := real.Add(time.Duration(pass) * time.Minute)
+		result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return at }, SessionMaxAge: 90 * 24 * time.Hour})
+		if err != nil || !errors.Is(result.Held, ErrClockUnverified) || len(result.DeletedSessions) != 0 {
+			t.Fatalf("pass %d: %#v %v", pass, result, err)
+		}
+	}
+	if store.probes != 1 {
+		t.Fatalf("probes = %d, want 1", store.probes)
+	}
+}
+
+// A reading that let deletion through is never what lets a clock that has
+// since jumped ahead delete: past agreeingReadingReuse the clock is read
+// again, and a jump inside that window is too small to matter.
+func TestAgreeingReadingDoesNotCoverALaterJump(t *testing.T) {
+	local := newTestStore(t)
+	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
+	dir := t.TempDir()
+	real := time.Now().UTC()
+	publishTwice(t, local, store, "old", dir, real.Add(-100*24*time.Hour))
+	result, err := Sweep(context.Background(), local, store, Options{SessionMaxAge: 90 * 24 * time.Hour})
+	if err != nil || result.Held != nil || len(result.DeletedSessions) != 1 || store.probes != 1 {
+		t.Fatalf("%#v %v probes=%d", result, err, store.probes)
+	}
+	publishTwice(t, local, store, "recent", dir, real)
+	ahead := real.Add(365 * 24 * time.Hour)
+	result, err = Sweep(context.Background(), local, store, Options{Now: func() time.Time { return ahead }, SessionMaxAge: 90 * 24 * time.Hour})
+	if err != nil || !errors.Is(result.Held, ErrClockAhead) || len(result.DeletedSessions) != 0 || store.probes != 2 {
+		t.Fatalf("a jump after an agreeing reading: %#v %v probes=%d", result, err, store.probes)
+	}
+}
+
+func TestReuseReading(t *testing.T) {
+	at := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	agreeing := state.StorageClockReading{CheckedAt: at, ServerAt: at.Add(time.Second)}
+	ahead := state.StorageClockReading{CheckedAt: at, ServerAt: at.Add(-2 * MaxClockSkew)}
+	failed := state.StorageClockReading{CheckedAt: at, Error: "synthetic outage"}
+	for _, tc := range []struct {
+		name    string
+		reading state.StorageClockReading
+		now     time.Time
+		reused  bool
+	}{
+		{"agreeing, soon after", agreeing, at.Add(5 * time.Minute), true},
+		{"agreeing, past its window", agreeing, at.Add(agreeingReadingReuse), false},
+		{"agreeing, clock went back", agreeing, at.Add(-time.Second), false},
+		{"ahead, within the hour", ahead, at.Add(30 * time.Minute), true},
+		{"ahead, an hour on", ahead, at.Add(holdingReadingReuse), false},
+		{"ahead, clock set back", ahead, at.Add(-time.Minute), false},
+		{"failed, within the hour", failed, at.Add(30 * time.Minute), true},
+		{"failed, an hour on", failed, at.Add(holdingReadingReuse), false},
+	} {
+		serverNow, ok, err := reuseReading(tc.reading, tc.now)
+		if ok != tc.reused {
+			t.Errorf("%s: reused = %v, want %v", tc.name, ok, tc.reused)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if tc.reading.Error != "" {
+			if err == nil {
+				t.Errorf("%s: a failed reading reused without its error", tc.name)
+			}
+			continue
+		}
+		if want := tc.reading.ServerAt.Add(tc.now.Sub(at)); err != nil || !serverNow.Equal(want) {
+			t.Errorf("%s: server now = %v %v, want %v", tc.name, serverNow, err, want)
+		}
+	}
 }

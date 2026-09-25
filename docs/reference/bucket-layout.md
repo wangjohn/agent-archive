@@ -47,7 +47,13 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   time of a `.setup-test/clock-*` object it writes and deletes). While the
   Mac's clock is more than an hour ahead, or the service's clock can't be
   read, nothing is deleted by age and `status` says why; a clock that jumped
-  more than a day since the previous pass waits one pass.
+  more than a day since the previous pass waits one pass. The check runs only
+  when something is due for deletion, and its reading is reused for up to an
+  hour while it holds deletion (ten minutes while it allows it), so a clock
+  that stays wrong costs one check object an hour. In a bucket with
+  versioning on, each check leaves a noncurrent version and a delete marker
+  under `.setup-test/`; a lifecycle rule that expires noncurrent versions
+  there clears them.
 - Nothing outside `<prefix>/` is read or written, and objects are never made
   public. See [bucket permissions](../security/bucket-permissions.md).
 

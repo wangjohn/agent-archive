@@ -76,6 +76,7 @@ var corruptionPolicies = map[string]corruption{
 	"sessions":            rebuiltFromRegistrations,
 	"forgotten":           readAsRemoved,
 	"status.json":         replacedByNextPass,
+	storageClockFile:      readAsAbsent,
 	"request-locks":       holdsNoContent,
 }
 

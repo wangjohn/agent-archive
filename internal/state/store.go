@@ -82,12 +82,13 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
 
 // OwnedEntries lists every top-level entry a Store can create under its
-// home: its directories and its status file. Uninstall deletes a data
+// home: its directories, its status file, and the storage clock reading
+// retention caches. Uninstall deletes a data
 // directory entry by entry and must know all of them; a test there checks
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json")
+	return append(entries, "status.json", storageClockFile)
 }
 
 func safeFileComponent(value string) bool {
