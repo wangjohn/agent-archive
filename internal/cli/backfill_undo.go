@@ -73,7 +73,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		terminal.Println(stdout, "No imports to undo.")
 		return 0
 	}
-	bfEnv := env.backfillEnvironment(userHome)
+	bfEnv := env.backfillEnvironment(userHome, cfg)
 	plan, err := backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project)
 	if err != nil {
 		return fail("%v", err)

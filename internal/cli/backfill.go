@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -17,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -192,7 +195,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	// folder. A second Ctrl-C, SIGTERM, or SIGHUP quits at once, removing
 	// the copy first.
 	planCtx, stopPlanning := interruptibleContext(env, stderr)
-	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome), newArchiveState(home, cfg), cfg, filters)
+	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	if err != nil {
@@ -207,7 +210,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return 1
 	}
 	if *jsonOut {
-		if err := backfill.RenderJSON(stdout, plan, false); err != nil {
+		if err := backfill.RenderJSON(stdout, plan); err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 			return 1
 		}
@@ -437,7 +440,7 @@ func configFingerprint(cfg config.Config) string {
 // temporary directories, and the clock. Files are read from the real file
 // system, and Cursor's database is opened read-only to count the chats only
 // it holds.
-func (e Env) backfillEnvironment(userHome string) backfill.Environment {
+func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	temps := e.BackfillTempDirs
 	if temps == nil {
 		temps = append([]string(nil), backfill.DefaultTempDirs...)
@@ -445,7 +448,37 @@ func (e Env) backfillEnvironment(userHome string) backfill.Environment {
 			temps = append(temps, strings.TrimSpace(tmp))
 		}
 	}
-	return backfill.Environment{Home: userHome, TempDirs: temps, Now: e.now, CursorDatabase: backfill.CursorDatabaseReader(userHome)}
+	claude, codex := e.appSessionDirs(userHome, cfg)
+	return backfill.Environment{
+		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
+		TempDirs: temps, Now: e.now, CursorDatabase: backfill.CursorDatabaseReader(userHome),
+	}
+}
+
+// appSessionDirs are the folders Claude Code and Codex keep their sessions
+// in, resolved as setup resolves their hook files (hooks.ResolveFiles): the
+// default ~/.claude and ~/.codex, the folders CLAUDE_CONFIG_DIR and
+// CODEX_HOME name in this command's environment, and those setup recorded
+// installing hooks into (config.HookFiles), which a shell without the
+// variables still finds. A session found in two of them is imported once.
+func (e Env) appSessionDirs(userHome string, cfg config.Config) (claude, codex []string) {
+	add := func(dirs []string, dir string) []string {
+		if dir == "" || !filepath.IsAbs(dir) || slices.Contains(dirs, filepath.Clean(dir)) {
+			return dirs
+		}
+		return append(dirs, filepath.Clean(dir))
+	}
+	claude = add(claude, filepath.Join(userHome, ".claude"))
+	codex = add(codex, filepath.Join(userHome, ".codex"))
+	for _, files := range []hooks.Files{e.hookFiles(userHome), cfg.HookFiles} {
+		if path := files["claude"]; path != "" {
+			claude = add(claude, filepath.Dir(path))
+		}
+		if path := files["codex"]; path != "" {
+			codex = add(codex, filepath.Dir(path))
+		}
+	}
+	return claude, codex
 }
 
 // archiveState answers backfill.ArchiveState from this machine's local store

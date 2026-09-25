@@ -861,7 +861,7 @@ func TestCursorDatabasePlan(t *testing.T) {
 		t.Fatalf("no unchecked line:\n%s", out.String())
 	}
 	out.Reset()
-	if err := RenderJSON(&out, p, false); err != nil {
+	if err := RenderJSON(&out, p); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), `"cursor_database_unchecked_reason": "unreadable"`) {

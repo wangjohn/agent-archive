@@ -249,6 +249,12 @@ func canonicalHarness(name string) string {
 type Environment struct {
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
+	// ClaudeDirs and CodexDirs are the folders Claude Code and Codex keep
+	// their sessions in: ~/.claude and ~/.codex, and any other folder
+	// CLAUDE_CONFIG_DIR or CODEX_HOME names, now or when setup ran. Nil
+	// means the default one under Home.
+	ClaudeDirs []string
+	CodexDirs  []string
 	// TempDirs are the temporary directories (rule 6 of project resolution).
 	// Nil means DefaultTempDirs; the CLI adds $TMPDIR.
 	TempDirs []string
@@ -345,6 +351,20 @@ func (e Environment) fileCreated(path string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return info.ModTime(), nil
+}
+
+func (e Environment) claudeDirs() []string {
+	if e.ClaudeDirs != nil {
+		return e.ClaudeDirs
+	}
+	return []string{filepath.Join(e.Home, ".claude")}
+}
+
+func (e Environment) codexDirs() []string {
+	if e.CodexDirs != nil {
+		return e.CodexDirs
+	}
+	return []string{filepath.Join(e.Home, ".codex")}
 }
 
 func (e Environment) tempDirs() []string {

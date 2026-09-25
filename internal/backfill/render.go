@@ -641,11 +641,16 @@ type planJSON struct {
 	AppsWithoutHooks []string           `json:"apps_without_hooks"`
 	RetentionDays    int                `json:"retention_days"`
 	// ExpiresOn is empty when retention is off.
-	ExpiresOn             string `json:"expires_on"`
-	StorageChecked        bool   `json:"storage_checked"`
-	CursorDatabaseChecked bool   `json:"cursor_database_checked"`
+	ExpiresOn string `json:"expires_on"`
+	// StorageChecked is always false. This JSON is printed only by a dry
+	// run, which writes nothing, locally or remotely, and checking storage
+	// writes a test object; only an import checks it, before its prompt.
+	// The key is kept so scripts that read it keep working.
+	StorageChecked        bool `json:"storage_checked"`
+	CursorDatabaseChecked bool `json:"cursor_database_checked"`
 	// CursorDatabaseUncheckedReason is set when the database was not
-	// checked: locked, unreadable, unknown_format, or changed_during_read.
+	// checked: locked, unreadable, unknown_format, changed_during_read, or
+	// transcripts_unreadable (see CursorUncheckedReason).
 	CursorDatabaseUncheckedReason CursorUncheckedReason `json:"cursor_database_unchecked_reason,omitempty"`
 	// CursorDatabaseNewerFormat counts the database rows read although
 	// their format version is newer than this release knows.
@@ -698,9 +703,10 @@ type projectJSON struct {
 	KeptOutComplete bool     `json:"kept_out_complete"`
 }
 
-// RenderJSON writes the plan with the spec's top-level keys. storageChecked
-// says whether storage access was verified before planning.
-func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
+// RenderJSON writes the plan with the spec's top-level keys, for
+// `backfill --dry-run --json`. It holds project roots, which are paths, but
+// never a transcript path, a native or archive session ID, or content.
+func RenderJSON(w io.Writer, p Plan) error {
 	out := planJSON{
 		Destination: p.Destination,
 		Filters: filtersJSON{
@@ -712,7 +718,7 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 		Skipped:          p.Skipped(),
 		AppsWithoutHooks: p.AppsWithoutHooks(),
 		RetentionDays:    p.RetentionDays,
-		StorageChecked:   storageChecked,
+		StorageChecked:   false,
 		// False when Cursor's database could not be read; see
 		// CursorDatabaseReader.
 		CursorDatabaseChecked:         p.CursorDatabaseChecked,

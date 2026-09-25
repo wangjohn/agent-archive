@@ -27,6 +27,9 @@ may have made; a copy a killed backfill leaves is removed by the next
 
 ## What gets imported
 
+- Claude Code and Codex sessions are read from `~/.claude` and `~/.codex`,
+  and from wherever `CLAUDE_CONFIG_DIR` or `CODEX_HOME` points, now or when
+  you ran setup.
 - Projects the import adds are captured from then on, like projects you
   include in setup. Setup asks once whether to keep them.
 - Codex and Cursor sessions import even without their hooks installed. New

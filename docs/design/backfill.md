@@ -168,8 +168,12 @@ registered sessions persist locally, and the next collector pass uploads them.
 `captures_subfolders`, `kept_out`, the folders inside it the import adds as
 excluded projects, and `kept_out_complete`),
 `skipped` (a count for each reason), `apps_without_hooks`, `retention_days`,
-`expires_on`, and `storage_checked`, then `cursor_database_checked`,
-`cursor_database_unchecked_reason` (when not checked),
+`expires_on`, and `storage_checked` (always `false` in a dry run, which
+writes nothing; the storage check writes a test object), then
+`cursor_database_checked`,
+`cursor_database_unchecked_reason` (when not checked: `locked`,
+`unreadable`, `unknown_format`, `changed_during_read`, or
+`transcripts_unreadable`),
 `cursor_database_newer_format`, `cursor_subagents_not_imported`,
 `subagents_skipped`, `unreadable_folders`, and `unreadable_stores`.
 
@@ -563,6 +567,13 @@ being read at the same time, so a file that doesn't fit waits for room.
 | Native ID | File stem. Must be among the records' `sessionId` values; a forked file also carries its parent's ID. A conversation with no `sessionId` at all is `identity_mismatch`. | `session_meta.payload.id`. Must equal `session_id` (when present) and the UUID in the file name. | `<id>`, which is what hooks register |
 | Start | Earliest record (`transcript`) | `session_meta` timestamp, else earliest record (`transcript`) | File birth time (`file_created`). Records have no timestamps. |
 | Project | `cwd` | `payload.cwd` | Slug match, below |
+
+Claude Code's and Codex's folders are found as setup finds their hook files:
+besides `~/.claude` and `~/.codex`, backfill looks in the folders
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` name in its environment, and in the
+folders of the hook files setup recorded (`hook_files`), so a shell without
+the variables still finds them. A session in two of these folders is a
+`duplicate_session`. Cursor has no such variable.
 
 - **Identity.** An ID mismatch is skipped with `identity_mismatch`.
   Acceptance must confirm that hooks register Codex sessions under
