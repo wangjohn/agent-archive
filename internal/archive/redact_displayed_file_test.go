@@ -12,6 +12,7 @@ import (
 // key file read by Claude Code was not redacted at all; filter 10 took
 // everything between BEGIN and END.)
 func TestPrivateKeyInADisplayedFileIsRedacted(t *testing.T) {
+	t.Parallel()
 	// Split so secret scanners do not take this file for a key.
 	body := []string{"MIIEpAIBAAKCAQEA7syntheticAbCdEfGh12345678", "QkFTRTY0c3ludGhldGljYm9keWxpbmV0d28K", "c3ludGhldGljdGhpcmRsaW5l=="}
 	begin, end := "-----BEGIN RSA "+"PRIVATE KEY-----", "-----END RSA "+"PRIVATE KEY-----"
@@ -69,6 +70,7 @@ func TestPrivateKeyInADisplayedFileIsRedacted(t *testing.T) {
 // short, a one-line key cut short. Each part's key lines are redacted.
 // Certificates and public keys, next to a key or alone, are kept.
 func TestPartialPrivateKeyIsRedacted(t *testing.T) {
+	t.Parallel()
 	b64 := func(n int, seed string) string { return strings.Repeat(seed, n/len(seed)+1)[:n] }
 	l1, l2, l3 := b64(64, "MIIEpAIBAAKCAQEA7syn"), b64(64, "QkFTRTY0c3ludGhldGlj"), b64(40, "c3ludGhldGljdGhpcmRs")+"=="
 	// Split so secret scanners do not take this file for a key.

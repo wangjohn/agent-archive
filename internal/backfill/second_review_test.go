@@ -17,6 +17,7 @@ import (
 // A larger copy of a session that cannot be imported never displaces a copy
 // that can: the good copy is imported and the bad one is the duplicate.
 func TestDuplicateKeepsTheImportableCopy(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-24 * time.Hour)
@@ -51,6 +52,7 @@ func TestDuplicateKeepsTheImportableCopy(t *testing.T) {
 // A missing worktree under home maps to home by its path; when home itself
 // is a configured, included project, that configuration wins.
 func TestWorktreeMappedToConfiguredHome(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	cfg := config.Config{Archive: archive.Config{Projects: []archive.ProjectActivation{project(tr.home, true)}}}
 	got := newResolver(tr.env(), cfg, Filters{}).resolve(filepath.Join(tr.home, ".claude", "worktrees", "gone"))
@@ -62,6 +64,7 @@ func TestWorktreeMappedToConfiguredHome(t *testing.T) {
 // An existing worktree outside the apps' worktree folders whose git
 // directory is gone cannot be mapped to its repository.
 func TestExistingWorktreeWithMissingGitDir(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	wt := tr.mkdir("home/elsewhere/feature")
 	tr.write("home/elsewhere/feature/.git", "gitdir: "+filepath.Join(tr.root, "gone", ".git", "worktrees", "feature")+"\n")
@@ -73,6 +76,7 @@ func TestExistingWorktreeWithMissingGitDir(t *testing.T) {
 // A blank native ID is an identity problem for that session, not a reason
 // to abandon the whole plan.
 func TestBlankNativeID(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	const id = "0a9b3c4d-0000-4000-8000-0000000000ab"
@@ -99,6 +103,7 @@ func (refusingBlank) Classify(_, nativeSessionID string) (SkipReason, error) {
 // A session retention removed is reported as removed_by_retention, ahead of
 // the reasons after it, and --include-removed imports it.
 func TestRemovedByRetentionInPlan(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-time.Hour)
@@ -124,6 +129,7 @@ func TestRemovedByRetentionInPlan(t *testing.T) {
 // start_unknown, even though the file's creation time is available: only
 // Cursor's start comes from the file. A date filter does not claim it.
 func TestNoRecordTimeIsStartUnknown(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	tr.write(filepath.Join("home", claudeFile("s", "no-time")), `{"type":"user","uuid":"a","sessionId":"no-time","cwd":"`+repo+`","message":{"role":"user","content":"please check it"}}`+"\n")
@@ -147,6 +153,7 @@ func TestNoRecordTimeIsStartUnknown(t *testing.T) {
 // be matched with a hook's registration: identity_mismatch. A file with no
 // conversation and no ID is still reported as empty.
 func TestClaudeWithoutSessionID(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	tr.write(filepath.Join("home", claudeFile("s", "no-id")), `{"type":"user","uuid":"a","cwd":"`+repo+`","timestamp":"2026-09-22T10:00:00Z","message":{"role":"user","content":"please check it"}}`+"\n")
@@ -164,6 +171,7 @@ func TestClaudeWithoutSessionID(t *testing.T) {
 // counted; the rest of the plan goes on, and the folder's path is never
 // shown.
 func TestUnreadableFolderIsCounted(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-time.Hour)
@@ -206,6 +214,7 @@ func TestUnreadableFolderIsCounted(t *testing.T) {
 // sessions are still planned, and no path is shown. A store the harness
 // filter leaves out is not reported.
 func TestUnreadableStoreIsNamed(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-time.Hour)
@@ -273,6 +282,7 @@ func TestUnreadableStoreIsNamed(t *testing.T) {
 // The header scan reads at most headScanLimit bytes: a working directory
 // first recorded beyond it is not found, and the session has no project.
 func TestHeaderScanCap(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	line := `{"type":"summary","summary":"` + strings.Repeat("x", headLineLimit/2) + `"}` + "\n"

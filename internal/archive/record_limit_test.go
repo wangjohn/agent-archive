@@ -27,6 +27,7 @@ const smallClaudePrompt = `{"type":"user","uuid":"p1","sessionId":"native-claude
 // record whose bulk is a dropped field now filters, and only allowed fields
 // are retained.
 func TestFilterReadsARecordOverTheOldTwoMegabyteLimit(t *testing.T) {
+	t.Parallel()
 	jsonl := smallClaudePrompt + "\n" + bigToolResultRecord(5<<20) + "\n"
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(jsonl))
 	if err != nil {

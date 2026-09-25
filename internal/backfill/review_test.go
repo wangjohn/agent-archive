@@ -23,6 +23,7 @@ var updateGolden = flag.Bool("update", false, "rewrite internal/backfill/testdat
 // A worktree outside its repository goes through rule 2 on the repository it
 // maps to: excluded with it, or imported under its configured spelling.
 func TestWorktreeOutsideRepository(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	feature := tr.worktree("home/repo", "home/repo-feature", "repo-feature")
@@ -51,6 +52,7 @@ func TestWorktreeOutsideRepository(t *testing.T) {
 
 // A worktree whose git directory is gone is not a repository of its own.
 func TestWorktreeWithMissingRepository(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	codexWT := tr.path("home/.codex/worktrees/ab12/repo")
@@ -78,6 +80,7 @@ func TestWorktreeWithMissingRepository(t *testing.T) {
 // A folder that no longer exists under a symlinked parent resolves through
 // the parent, so its spelling and configured owner match the real path.
 func TestMissingFolderUnderSymlink(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	proj := tr.mkdir("home/proj")
 	if err := os.Symlink(tr.home, tr.path("alias")); err != nil {
@@ -93,6 +96,7 @@ func TestMissingFolderUnderSymlink(t *testing.T) {
 }
 
 func TestDuplicateSessions(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-24 * time.Hour)
@@ -136,6 +140,7 @@ func TestDuplicateSessions(t *testing.T) {
 // A file that disappears during planning is not counted at all; one that
 // grows past the limit after discovery is too_large.
 func TestFilesChangingMidScan(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-24 * time.Hour)
@@ -175,6 +180,7 @@ func TestFilesChangingMidScan(t *testing.T) {
 
 // Discovery never follows a symlink out of an app's store.
 func TestSymlinkedTranscriptsSkipped(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	elsewhere := tr.write("elsewhere/x.jsonl", claudeTranscript("linked", repo, fixedNow.Add(-time.Hour)))
@@ -195,6 +201,7 @@ func TestSymlinkedTranscriptsSkipped(t *testing.T) {
 // Cursor's text form is imported through the collector's text filter; when a
 // chat has both forms, the JSONL file wins.
 func TestCursorTextForm(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/site")
 	dir := filepath.Join("home", ".cursor", "projects", cursorSlug(repo), "agent-transcripts")
@@ -215,6 +222,7 @@ func TestCursorTextForm(t *testing.T) {
 
 // Header reads pass over lines too long or malformed to be a header.
 func TestReadHeadBounds(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-time.Hour)
@@ -241,6 +249,7 @@ func TestReadHeadBounds(t *testing.T) {
 }
 
 func TestSubagentChecks(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-time.Hour)
@@ -277,6 +286,7 @@ func TestSubagentChecks(t *testing.T) {
 
 // The plan is the same whatever the worker count.
 func TestPlanDeterministic(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	for i, id := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"} {
@@ -292,6 +302,7 @@ func TestPlanDeterministic(t *testing.T) {
 }
 
 func TestPlanCancelled(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	tr.write(filepath.Join("home", claudeFile("s", "a")), claudeTranscript("a", tr.home, fixedNow))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -305,6 +316,7 @@ func TestPlanCancelled(t *testing.T) {
 // order. Regenerate with `go test ./internal/backfill -run
 // TestSkipReasonsGolden -update` and review the diff.
 func TestSkipReasonsGolden(t *testing.T) {
+	t.Parallel()
 	start := time.Date(2026, 9, 20, 9, 0, 0, 0, time.UTC)
 	p := Plan{
 		GeneratedAt: fixedNow, Home: "/Users/p", RetentionDays: 90, Harnesses: []string{"claude"},

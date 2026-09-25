@@ -12,6 +12,7 @@ import (
 // without a sample fails here. The samples are split so secret scanners do
 // not take this file for a leak.
 func TestCredentialShapeNeedles(t *testing.T) {
+	t.Parallel()
 	a := func(n int) string { return strings.Repeat("a", n) }
 	d := func(n int) string { return strings.Repeat("0", n) }
 	samples := []string{

@@ -12,6 +12,7 @@ import (
 )
 
 func TestCanonicalHarness(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		in    string
 		want  string
@@ -46,6 +47,7 @@ func TestCanonicalHarness(t *testing.T) {
 // helper, or where it is not a harness name at all; anything else is
 // another copy.
 func TestHarnessAliasIsSpelledOnce(t *testing.T) {
+	t.Parallel()
 	allowed := map[string]string{
 		"internal/archive/harness.go": "the canonical helper",
 		// A folder of Claude's desktop app, not a harness name.

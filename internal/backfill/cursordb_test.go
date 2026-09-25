@@ -190,6 +190,7 @@ func chatIDs(res CursorDatabaseResult) []string {
 // TestCursorDatabaseReader reads a database with no side files, as Cursor
 // leaves it when closed, in both journal modes.
 func TestCursorDatabaseReader(t *testing.T) {
+	t.Parallel()
 	sept10 := time.Date(2026, 9, 10, 9, 0, 0, 0, time.UTC)
 	rows := map[string]any{
 		"composerData:a": composerJSON("a", 2, map[string]any{"createdAt": millis(sept10)}),
@@ -277,6 +278,7 @@ func TestCursorDatabaseReader(t *testing.T) {
 // TestCursorDatabaseReaderNewerFormat: rows with a newer _v are still read
 // when the fields the count needs decode, and are counted for the plan.
 func TestCursorDatabaseReaderNewerFormat(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	writeCursorDB(t, CursorStateDatabase(home), false, map[string]any{
 		"composerData:known": composerJSON("known", 1, nil),
@@ -293,6 +295,7 @@ func TestCursorDatabaseReaderNewerFormat(t *testing.T) {
 // side files: read beside the link, a live WAL would be missed and the
 // chats only it holds silently left out.
 func TestCursorDatabaseReaderSymlink(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	target := filepath.Join(t.TempDir(), "elsewhere", "state.vscdb")
 	w := startCursorWriter(t, target, true)
@@ -325,6 +328,7 @@ func TestCursorDatabaseReaderSymlink(t *testing.T) {
 }
 
 func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "state.vscdb")
 	db := openCursorWriter(t, path, false)
 	closeAtEnd(t, db)
@@ -351,6 +355,7 @@ func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
 }
 
 func TestCursorDatabaseReaderMissing(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if res := readCursor(t, home); !res.Checked || len(res.Chats) != 0 {
 		t.Fatalf("%+v", res)
@@ -361,6 +366,7 @@ func TestCursorDatabaseReaderMissing(t *testing.T) {
 }
 
 func TestCursorDatabaseReaderNotChecked(t *testing.T) {
+	t.Parallel()
 	good := map[string]any{"composerData:a": composerJSON("a", 1, nil)}
 	value := func(v string) func(t *testing.T, path string) {
 		return func(t *testing.T, path string) {
@@ -466,6 +472,7 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 // so the database is counted as closed, and left exactly as it was, rather
 // than being unreadable until Cursor next runs.
 func TestCursorDatabaseReaderStrayWAL(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	path := CursorStateDatabase(home)
 	writeCursorDB(t, path, true, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
@@ -484,6 +491,7 @@ func TestCursorDatabaseReaderStrayWAL(t *testing.T) {
 // is read immutable, so a write that lands during the read is caught
 // afterwards and the read is not trusted.
 func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
+	t.Parallel()
 	for name, change := range map[string]func(t *testing.T, path string){
 		"modified": func(t *testing.T, path string) {
 			t.Helper()
@@ -639,6 +647,7 @@ func (w *cursorWriter) kill() {
 // TestCursorWriterProcess is the writer process of cursorWriter: it never
 // checkpoints, and runs one command per line of stdin until stdin closes.
 func TestCursorWriterProcess(t *testing.T) {
+	t.Parallel()
 	path := os.Getenv("BACKFILL_CURSOR_WRITER_DB")
 	if path == "" {
 		t.Skip("run by startCursorWriter")
@@ -683,6 +692,7 @@ func TestCursorWriterProcess(t *testing.T) {
 // TestCursorDatabaseReaderLive reads a WAL database in place while Cursor
 // holds it open with writes not yet checkpointed.
 func TestCursorDatabaseReaderLive(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	path := CursorStateDatabase(home)
 	w := startCursorWriter(t, path, true)
@@ -708,6 +718,7 @@ func TestCursorDatabaseReaderLive(t *testing.T) {
 // TestCursorDatabaseReaderStaleSideFiles reads, in place, the -wal and -shm a
 // killed Cursor left behind, including the writes only the -wal holds.
 func TestCursorDatabaseReaderStaleSideFiles(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	path := CursorStateDatabase(home)
 	w := startCursorWriter(t, path, true)
@@ -728,6 +739,7 @@ func TestCursorDatabaseReaderStaleSideFiles(t *testing.T) {
 // TestCursorDatabaseReaderJournal: a rollback-journal database with a write
 // in progress, and the hot journal a killed writer leaves, are not checked.
 func TestCursorDatabaseReaderJournal(t *testing.T) {
+	t.Parallel()
 	for _, killed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("killed=%v", killed), func(t *testing.T) {
 			home := t.TempDir()
@@ -752,6 +764,7 @@ func TestCursorDatabaseReaderJournal(t *testing.T) {
 }
 
 func TestCursorDatabaseReaderCancelled(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	writeCursorDB(t, CursorStateDatabase(home), false, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -767,6 +780,7 @@ func TestCursorDatabaseReaderCancelled(t *testing.T) {
 // sessions: a chat without the field a filter needs does not match it.
 // Nothing next to the database changes.
 func TestCursorDatabasePlan(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	other := tr.repo("home/other")
@@ -872,6 +886,7 @@ func TestCursorDatabasePlan(t *testing.T) {
 // transcript can't be told apart from a database-only one, so the database
 // is not counted at all, rather than counting every chat as database-only.
 func TestCursorDatabaseSkippedWhenTranscriptsUnreadable(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	slugDir := filepath.Join(tr.home, ".cursor", "projects", cursorSlug(site))

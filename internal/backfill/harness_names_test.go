@@ -7,6 +7,7 @@ import "testing"
 // filter spelled that way matched nothing. It now uses
 // archive.CanonicalHarness like every other package.
 func TestHarnessFilterAcceptsEverySpellingOfAnApp(t *testing.T) {
+	t.Parallel()
 	for _, spelling := range []string{"claude", "Claude", " CLAUDE", "claude-code", "Claude-Code"} {
 		f := Filters{Harnesses: []string{spelling}}
 		if err := f.Validate(); err != nil {

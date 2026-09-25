@@ -13,6 +13,7 @@ import (
 // Multiple blocks of different kinds in one string are all removed and the
 // text between them is kept.
 func TestFilterV3StripsNestedAndMultipleInstructionBlocks(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		in   string
 		want string
@@ -58,6 +59,7 @@ func TestFilterV3StripsNestedAndMultipleInstructionBlocks(t *testing.T) {
 // typing or form-submitting tool sends outward, and any argument whose name
 // looks like a credential. The key name goes into a gap; the value never does.
 func TestFilterV3DeniesTypedInputAndCredentialArguments(t *testing.T) {
+	t.Parallel()
 	record := func(name string, input string) string {
 		return `{"type":"assistant","uuid":"a","timestamp":"2026-09-20T10:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"` + name + `","input":` + input + `}]}}`
 	}
@@ -126,6 +128,7 @@ func TestFilterV3DeniesTypedInputAndCredentialArguments(t *testing.T) {
 // Cursor carries the tool name in tool_name beside tool_input; the deny list
 // must read that spelling too.
 func TestFilterV3DeniesTypedInputForCursorToolCalls(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"tool_call","timestamp":"2026-09-20T10:00:00Z","tool_name":"computer","tool_input":{"action":"type","text":"typed-secret"}}`
 	filtered, err := (CursorAdapter{}).FilterJSONL(strings.NewReader(input))
 	if err != nil {
@@ -140,6 +143,7 @@ func TestFilterV3DeniesTypedInputForCursorToolCalls(t *testing.T) {
 // Supplemental evidence has no per-transcript name collector; a denied
 // argument there falls back to the content-free gap and is still dropped.
 func TestFilterV3DeniedArgumentsInSupplementalEvidenceFallBackToPlainGap(t *testing.T) {
+	t.Parallel()
 	filtered, gaps, err := FilterSupplementalEvidence([]SupplementalEvidence{{
 		//lint:ignore LV1001 deliberately a kind with no declared constant
 		Kind: "hook_event", ObservedAt: time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC), Provenance: "test",
@@ -158,6 +162,7 @@ func TestFilterV3DeniedArgumentsInSupplementalEvidenceFallBackToPlainGap(t *test
 }
 
 func TestFilterV3RedactsCredentialShapes(t *testing.T) {
+	t.Parallel()
 	positive := map[string]string{
 		"pem":                      "config:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA7synthetic\nline2\n-----END RSA PRIVATE KEY-----\ndone",
 		"pem openssh unterminated": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAAsynthetic",
@@ -204,6 +209,7 @@ func TestFilterV3RedactsCredentialShapes(t *testing.T) {
 // known false-positive class is the pre-existing assignment pattern, which
 // this test pins so a change to it is deliberate.
 func TestFilterV3DoesNotRedactOrdinaryCode(t *testing.T) {
+	t.Parallel()
 	negative := []string{
 		"tokens := lexer.Tokenize(src)",
 		"func parseToken(t Token) error { return nil }",
@@ -231,6 +237,7 @@ func TestFilterV3DoesNotRedactOrdinaryCode(t *testing.T) {
 // otherwise a repeated background scan would look like new evidence and mint
 // a new source snapshot.
 func TestFilterV3OutputIsDeterministicAcrossScans(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		adapter Adapter

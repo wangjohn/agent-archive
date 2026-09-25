@@ -15,6 +15,7 @@ import (
 // database unreadable (an unfinished write Cursor holds), undo says it could
 // not check rather than silently counting the chat as not resumed.
 func TestUndoResumedCursorDatabaseChat(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	store, err := state.Open(t.TempDir())
 	if err != nil {

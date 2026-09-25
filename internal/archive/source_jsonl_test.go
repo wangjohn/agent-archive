@@ -100,6 +100,7 @@ func canonicalJSON(t *testing.T, value any) string {
 // Every fixture survives build -> compress -> streaming decode unchanged, and
 // re-encoding the decoded bundle reproduces the exact compressed bytes.
 func TestSourceBundleJSONLRoundTripsEveryFixture(t *testing.T) {
+	t.Parallel()
 	for name, bundle := range fixtureBundles(t) {
 		compressed, err := BuildCompressedSource(bundle)
 		if err != nil {
@@ -123,6 +124,7 @@ func TestSourceBundleJSONLRoundTripsEveryFixture(t *testing.T) {
 }
 
 func TestSourceBundleJSONLBuildsAreByteIdentical(t *testing.T) {
+	t.Parallel()
 	for name, bundle := range fixtureBundles(t) {
 		first, err := BuildCompressedSource(bundle)
 		if err != nil {
@@ -147,6 +149,7 @@ func TestSourceBundleJSONLBuildsAreByteIdentical(t *testing.T) {
 // The decompressed form is one object per line, header first, with the kinds
 // in their fixed order.
 func TestSourceBundleJSONLLineLayout(t *testing.T) {
+	t.Parallel()
 	bundle := fixtureBundles(t)["claude-tool-evidence.jsonl"]
 	var plain bytes.Buffer
 	if err := EncodeSource(&plain, bundle); err != nil {
@@ -210,6 +213,7 @@ const recordLine = `{"kind":"native_record","record":{"type":"response_item"}}`
 const evidenceLineJSON = `{"kind":"supplemental_evidence","evidence":{"kind":"explicit_feedback","observed_at":"2026-09-23T10:00:00Z","provenance":"user","payload":{"text":"ok"}}}`
 
 func TestSourceBundleJSONLRejectsMalformedStreams(t *testing.T) {
+	t.Parallel()
 	v1, err := json.Marshal(SourceBundle{SchemaVersion: 1, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", NativeRecords: []map[string]any{{"type": "x"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -261,6 +265,7 @@ func TestSourceBundleJSONLRejectsMalformedStreams(t *testing.T) {
 // The line cap is inclusive on the decode side exactly as it is on the encode
 // side: a line of exactly the cap decodes, one byte more does not.
 func TestDecodeSourceLineCapIsExact(t *testing.T) {
+	t.Parallel()
 	const limit = 4096
 	lineOf := func(n int) string {
 		prefix, suffix := `{"kind":"native_record","record":{"text":"`, `"}}`
@@ -291,6 +296,7 @@ func TestDecodeSourceLineCapIsExact(t *testing.T) {
 // Hitting the total cap in the middle of a line reports the cap, not a
 // truncated stream.
 func TestDecodeSourceReportsTotalCapHitMidLine(t *testing.T) {
+	t.Parallel()
 	stream := gzipBytes(t, []byte(headerLine(1, 0)+"\n"+recordLine))
 	_, err := ReadSourceBundle(bytes.NewReader(stream), DecodeOptions{MaxUncompressedBytes: 64})
 	if !errors.Is(err, ErrSourceTooLarge) || err.Error() != ErrSourceTooLarge.Error() {
@@ -302,6 +308,7 @@ func TestDecodeSourceReportsTotalCapHitMidLine(t *testing.T) {
 // memory or through the compressed JSONL decoder: the normalized view for
 // every fixture, and the handoff document for each harness's golden file.
 func TestSourceBundleJSONLPreservesNormalizedAndHandoffViews(t *testing.T) {
+	t.Parallel()
 	throughDecoder := func(t *testing.T, bundle SourceBundle) SourceBundle {
 		t.Helper()
 		compressed, err := BuildCompressedSource(bundle)
@@ -345,6 +352,7 @@ func TestSourceBundleJSONLPreservesNormalizedAndHandoffViews(t *testing.T) {
 
 // A callback error stops the decode and is returned as is.
 func TestDecodeSourceStopsOnCallbackError(t *testing.T) {
+	t.Parallel()
 	stop := errors.New("stop here")
 	lines := 0
 	err := DecodeSource(bytes.NewReader(gzipLines(t, headerLine(2, 0), recordLine, recordLine)), DecodeOptions{}, func(SourceLine) error {
@@ -438,6 +446,7 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 // The on-disk fixtures directory is where every native shape lives; keep the
 // round trip honest if one is added under a new harness prefix.
 func TestFixtureBundlesCoverEveryHarnessPrefix(t *testing.T) {
+	t.Parallel()
 	entries, err := os.ReadDir("testdata")
 	if err != nil {
 		t.Fatal(err)

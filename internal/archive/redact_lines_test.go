@@ -62,6 +62,7 @@ func checkLineMatchesCoverWholeString(t *testing.T, s string) {
 // a needle (a word every match must contain), for speed; that must never
 // miss what matching the whole string finds.
 func TestLineMatchesAgreeWithWholeStringMatches(t *testing.T) {
+	t.Parallel()
 	for _, s := range gateSeeds() {
 		checkLineMatchesCoverWholeString(t, s)
 	}

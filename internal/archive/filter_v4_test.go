@@ -10,6 +10,7 @@ import (
 // slash command). Filter 4 keeps the record, its ids, its parent link and the
 // flag, and drops its text with a hidden_instruction_omitted gap.
 func TestFilterV4StripsMetaRecordTextButKeepsTheRecord(t *testing.T) {
+	t.Parallel()
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "claude-skill-command.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -46,6 +47,7 @@ func TestFilterV4StripsMetaRecordTextButKeepsTheRecord(t *testing.T) {
 }
 
 func TestFilterV4StripsOnlyMetaRecords(t *testing.T) {
+	t.Parallel()
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "claude-local-command.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +69,7 @@ func TestFilterV4StripsOnlyMetaRecords(t *testing.T) {
 // Only text is stripped from a meta record; any other block is left to the
 // ordinary rules, and a record whose isMeta is not true is untouched.
 func TestFilterV4MetaStrippingKeepsNonTextBlocks(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"user","uuid":"m1","timestamp":"2026-09-22T10:00:00Z","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"expanded instructions"},{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"}]}}` + "\n" +
 		`{"type":"user","uuid":"m2","timestamp":"2026-09-22T10:00:01Z","isMeta":false,"message":{"role":"user","content":"typed by a person"}}`
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
@@ -90,6 +93,7 @@ func TestFilterV4MetaStrippingKeepsNonTextBlocks(t *testing.T) {
 // under that key is prose filter 3 never retained, and filter 4 must not start
 // retaining it anywhere the ordinary allowlist applies.
 func TestFilterV4RetainsIsMetaOnlyAsABoolean(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"user","uuid":"m1","timestamp":"2026-09-22T10:00:00Z","isMeta":"prose under the flag name","message":{"role":"user","content":"hi","isMeta":{"note":"nested prose under the flag name"}}}` + "\n" +
 		`{"type":"user","uuid":"m2","timestamp":"2026-09-22T10:00:01Z","isMeta":true,"message":{"role":"user","content":"expanded"}}`
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
@@ -116,6 +120,7 @@ func TestFilterV4RetainsIsMetaOnlyAsABoolean(t *testing.T) {
 // it keeps its identifiers but loses its nested content text, and a block of
 // an unknown type loses its own text.
 func TestFilterV4StripsNestedTextInMetaRecords(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"user","uuid":"m1","timestamp":"2026-09-22T10:00:00Z","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"expanded instructions"},{"type":"tool_result","tool_use_id":"toolu_1","is_error":false,"content":[{"type":"text","text":"nested tool text"},{"type":"text","text":"more nested text"}]},{"type":"tool_result","tool_use_id":"toolu_2","content":"string tool text"},{"type":"other","text":"loose text","name":"kept"}]}}`
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
 	if err != nil {

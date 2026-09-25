@@ -54,6 +54,7 @@ func countIs(t *testing.T, label string, got *int, want int) {
 // are human prompts; messages are prompts plus assistant records, including
 // assistant records whose only content is a tool call.
 func TestParserV06CountsHumanPromptsNotToolResults(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "claude", "claude-tool-only-assistant.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 3)
@@ -76,6 +77,7 @@ func TestParserV06CountsHumanPromptsNotToolResults(t *testing.T) {
 }
 
 func TestParserV06LinksClaudeToolCallsToTheirResults(t *testing.T) {
+	t.Parallel()
 	view, _ := parsedFixture(t, "claude", "claude-tool-only-assistant.jsonl")
 	if len(view.ToolCalls) != 1 {
 		t.Fatalf("tool calls = %#v", view.ToolCalls)
@@ -101,6 +103,7 @@ func TestParserV06LinksClaudeToolCallsToTheirResults(t *testing.T) {
 // The B1 Edit fixture carries the argument subtree filter 3 restored; the
 // parser must surface it and link the result that answers it.
 func TestParserV06SurfacesEditArgumentsFromTheFilterFixture(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "claude", "claude-tool-evidence.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 2)
@@ -126,6 +129,7 @@ func TestParserV06SurfacesEditArgumentsFromTheFilterFixture(t *testing.T) {
 // again as an item_completed event. Both must be recognized, and the same
 // work must not be counted twice.
 func TestParserV06CountsCodexToolEventsWithoutDoubleCounting(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "codex", "codex-tool-events.jsonl")
 	countIs(t, "tool calls", metadata.Counts.ToolCalls, 3)
 	names := map[string]bool{}
@@ -144,6 +148,7 @@ func TestParserV06CountsCodexToolEventsWithoutDoubleCounting(t *testing.T) {
 }
 
 func TestParserV06CountsCodexPromptsToolCallsAndTokens(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "codex", "codex-tool-and-usage.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 1)
@@ -171,6 +176,7 @@ func TestParserV06CountsCodexPromptsToolCallsAndTokens(t *testing.T) {
 // which the previous parser never read: every Cursor session derived zero
 // turns. Its end-of-turn record is the only outcome signal it has.
 func TestParserV06DerivesCursorTurnsAndOutcome(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "cursor", "cursor-turn.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 2)
@@ -193,6 +199,7 @@ func TestParserV06DerivesCursorTurnsAndOutcome(t *testing.T) {
 // An observed hook outcome is stronger evidence than a native end-of-turn
 // record and must not be overwritten by it.
 func TestParserV06NativeTurnEndDoesNotOverrideHookEvidence(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
 		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
@@ -215,6 +222,7 @@ func TestParserV06NativeTurnEndDoesNotOverrideHookEvidence(t *testing.T) {
 // A tool result which identifies no call is linked by position, which is all
 // a harness that names neither side offers.
 func TestParserV06LinksUnidentifiedToolResultsByPosition(t *testing.T) {
+	t.Parallel()
 	input := `{"role":"assistant","message":{"content":[{"type":"tool_use","name":"read_file","input":{"path":"a.go"}}]}}` + "\n" +
 		`{"role":"tool","message":{"content":[{"type":"tool_result","content":"package widget"}]}}`
 	filtered, err := (CursorAdapter{}).FilterJSONL(strings.NewReader(input))
@@ -242,6 +250,7 @@ func TestParserV06LinksUnidentifiedToolResultsByPosition(t *testing.T) {
 // A result naming a call this bundle does not contain stays unlinked rather
 // than being attached to whichever call happens to be next.
 func TestParserV06DoesNotMislinkAnUnknownCallID(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 20, 15, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
 		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
@@ -267,6 +276,7 @@ func TestParserV06DoesNotMislinkAnUnknownCallID(t *testing.T) {
 // and no usage. It must still parse and regenerate metadata; the fields this
 // parser version added simply stay absent.
 func TestParserV06RegeneratesFilterTwoBundles(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
 		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
@@ -310,6 +320,7 @@ func TestParserV06RegeneratesFilterTwoBundles(t *testing.T) {
 // ParseNormalized still refuses a source which carries a hidden role: the
 // parser is not a second chance for content the filter must have removed.
 func TestParserV06StillRejectsHiddenRoles(t *testing.T) {
+	t.Parallel()
 	bundle := SourceBundle{
 		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
 		Capture:       SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", AdapterVersion: adapterVersion, SourceFormat: "codex-jsonl", FilterVersion: FilterVersion, CapturedAt: time.Now()},
@@ -327,6 +338,7 @@ func TestParserV06StillRejectsHiddenRoles(t *testing.T) {
 // as an empty text block: beside a tool result, and as a whole prompt.
 // Neither is a human prompt.
 func TestParserV06CountsStreamedUsageOncePerMessage(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "claude", "claude-streamed-usage.jsonl")
 	countIs(t, "input tokens", metadata.Counts.InputTokens, 30)
 	countIs(t, "output tokens", metadata.Counts.OutputTokens, 12)
@@ -353,6 +365,7 @@ func TestParserV06CountsStreamedUsageOncePerMessage(t *testing.T) {
 // A Codex prompt that was only injected instructions is stripped to an empty
 // input_text block by the filter and must not count as a prompt either.
 func TestParserV06IgnoresCodexInjectedOnlyPrompts(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\nAGENTS.md: keep it small.\n</user_instructions>"}]}}` + "\n" +
 		`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<user_instructions>\nAGENTS.md: keep it small.\n</user_instructions>\n\nAdd a test."}]}}` + "\n"
 	adapter, err := NewAdapter("codex")
@@ -382,6 +395,7 @@ func TestParserV06IgnoresCodexInjectedOnlyPrompts(t *testing.T) {
 // holding any leaves every structure-derived count unknown, the new token and
 // tool-result counts included.
 func TestParserV06TextBundlesLeaveCountsUnknown(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
 		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",

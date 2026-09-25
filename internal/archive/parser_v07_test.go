@@ -20,6 +20,7 @@ func turnKinds(view NormalizedView) map[int]TurnKind {
 // CommandExecution with source unified_exec_startup. That is not a tool call
 // the model made.
 func TestParserV07ExcludesCodexStartupShell(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "codex", "codex-startup-shell.jsonl")
 	countIs(t, "tool calls", metadata.Counts.ToolCalls, 2)
 	ids := map[string]bool{}
@@ -38,6 +39,7 @@ func TestParserV07ExcludesCodexStartupShell(t *testing.T) {
 // Claude Code streams one response as several records sharing message.id.
 // It is one message, and one turn for its model.
 func TestParserV07CountsStreamedResponsesOnce(t *testing.T) {
+	t.Parallel()
 	_, metadata := parsedFixture(t, "claude", "claude-streamed-response.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 3)
@@ -52,6 +54,7 @@ func TestParserV07CountsStreamedResponsesOnce(t *testing.T) {
 
 // Assistant records without a message id cannot be grouped and each counts.
 func TestParserV07AssistantRecordsWithoutIDsCountIndividually(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 22, 15, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
 		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
@@ -72,6 +75,7 @@ func TestParserV07AssistantRecordsWithoutIDsCountIndividually(t *testing.T) {
 // /model is a local command: its caveat is isMeta, its output is
 // <local-command-stdout>, and no assistant answers it. None of it is a prompt.
 func TestParserV07LocalCommandIsNotAPrompt(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "claude", "claude-local-command.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 2)
@@ -88,6 +92,7 @@ func TestParserV07LocalCommandIsNotAPrompt(t *testing.T) {
 // A skill slash command expands into an isMeta record and is answered by the
 // assistant: the command is the prompt, the expansion is not.
 func TestParserV07AnsweredSlashCommandIsAPrompt(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "claude", "claude-skill-command.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "messages", metadata.Counts.Messages, 2)
@@ -103,6 +108,7 @@ func TestParserV07AnsweredSlashCommandIsAPrompt(t *testing.T) {
 // A `!` command is the person running a shell command directly: not a prompt,
 // not a model tool call, and counted on its own.
 func TestParserV07CountsUserShellCommands(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "claude", "claude-shell-command.jsonl")
 	countIs(t, "user shell commands", metadata.Counts.UserShellCommands, 1)
 	countIs(t, "turns", metadata.Counts.Turns, 1)
@@ -119,6 +125,7 @@ func TestParserV07CountsUserShellCommands(t *testing.T) {
 // that kept content (a bundle from a harness that set the flag on something
 // the filter cannot strip) is still never a prompt.
 func TestParserV07SlashCommandResolution(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 22, 16, 0, 0, 0, time.UTC)
 	user := func(content string) map[string]any {
 		return map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}}
@@ -193,6 +200,7 @@ func harnessSession(withMetaFlags bool) []map[string]any {
 // every streamed record a message) and never below the true figures. The same
 // session captured under filter 4 must then give the same counts.
 func TestParserV07RegeneratesFilterThreeBundlesNoWorse(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 22, 18, 0, 0, 0, time.UTC)
 	reference := SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}
 	filterThree := SourceBundle{
@@ -263,6 +271,7 @@ func mustJSON(t *testing.T, value any) []byte {
 // startup shell. Another completed item type, or another source, is a tool
 // call the model made.
 func TestParserV07StartupShellExclusionIsExact(t *testing.T) {
+	t.Parallel()
 	for _, item := range []map[string]any{
 		{"type": "McpToolCall", "source": "unified_exec_startup", "id": "x"},
 		{"type": "CommandExecution", "source": "UNIFIED_EXEC_STARTUP", "id": "x"},
@@ -282,6 +291,7 @@ func TestParserV07StartupShellExclusionIsExact(t *testing.T) {
 // content or a text block alike; a prompt that merely mentions a tag is still
 // a prompt.
 func TestParserV07HarnessTagsAreRecognizedByPrefixOnly(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 22, 16, 0, 0, 0, time.UTC)
 	user := func(content any) map[string]any {
 		return map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}}
@@ -313,6 +323,7 @@ func TestParserV07HarnessTagsAreRecognizedByPrefixOnly(t *testing.T) {
 // deterministic: repeated scans produce byte-identical compressed bundles and
 // metadata.
 func TestParserV07FixturesScanDeterministically(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 22, 18, 0, 0, 0, time.UTC)
 	for _, name := range []string{"claude-local-command.jsonl", "claude-shell-command.jsonl", "claude-skill-command.jsonl", "claude-streamed-response.jsonl", "codex-startup-shell.jsonl"} {
 		harness := "claude"

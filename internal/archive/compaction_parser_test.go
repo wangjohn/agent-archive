@@ -11,6 +11,7 @@ import (
 // Parser 0.8: a compaction summary is not a prompt or a message, /compact is
 // still a local command, and each compaction is counted once.
 func TestParserV08CompactionSummariesAreNotPrompts(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "claude", "claude-compaction.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 2)
 	countIs(t, "messages", metadata.Counts.Messages, 5)
@@ -65,6 +66,7 @@ func metadataOf(t *testing.T, bundle SourceBundle) Metadata {
 // since nothing in it says otherwise) and reports compactions as unknown
 // rather than zero.
 func TestParserV08KeepsEarlierFilterCounts(t *testing.T) {
+	t.Parallel()
 	_, records := filteredRecords(t, ClaudeAdapter{}, string(fixture(t, "claude-compaction.jsonl")))
 	var withoutFlags []map[string]any
 	for _, record := range records {
@@ -97,6 +99,7 @@ func TestParserV08KeepsEarlierFilterCounts(t *testing.T) {
 // boundary was retained the summaries stand in, and a subagent's compaction
 // inlined in its parent's transcript is the child's, not the parent's.
 func TestParserV08CountsEachCompactionOnce(t *testing.T) {
+	t.Parallel()
 	summary := func(id string, sidechain bool) map[string]any {
 		return map[string]any{"type": "user", "uuid": id, "isCompactSummary": true, "isSidechain": sidechain, "message": map[string]any{"role": "user", "content": "summary"}}
 	}
@@ -113,6 +116,7 @@ func TestParserV08CountsEachCompactionOnce(t *testing.T) {
 // answer, since the assistant cannot be answering a command the summary has
 // summarized away.
 func TestParserV08CompactCommandIsNeverPromotedAcrossTheSummary(t *testing.T) {
+	t.Parallel()
 	bundle := claudeBundle(FilterVersion, []map[string]any{
 		{"type": "user", "message": map[string]any{"role": "user", "content": "<command-name>/compact</command-name>"}},
 		{"type": "user", "isCompactSummary": true, "message": map[string]any{"role": "user", "content": "summary"}},

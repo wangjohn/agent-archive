@@ -13,6 +13,7 @@ import (
 // the trigger word to stand alone, so every snake_case or SCREAMING_CASE name
 // and every quoted JSON key passed through. Only the value is replaced.
 func TestFilterV9RedactsCredentialAssignments(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		in   string
@@ -114,6 +115,7 @@ func TestFilterV9RedactsCredentialAssignments(t *testing.T) {
 // bare credential word assigned code, such as `token = parse(x)`) is pinned
 // in TestFilterV3DoesNotRedactOrdinaryCode.
 func TestFilterV9LeavesNonCredentialNamesUnchanged(t *testing.T) {
+	t.Parallel()
 	negative := []string{
 		"password_policy = strong",
 		"max_tokens: 4096",
@@ -158,6 +160,7 @@ func TestFilterV9LeavesNonCredentialNamesUnchanged(t *testing.T) {
 // whose data is base64. Filter 8 kept them: their key names (type, source,
 // data) were all on the allowlist. They are dropped whole, with a gap.
 func TestFilterV9DropsBinaryContentBlocks(t *testing.T) {
+	t.Parallel()
 	const payload = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
 	lines := []string{
 		// A Read of an image file: the tool result's content is an image block.
@@ -207,6 +210,7 @@ func TestFilterV9DropsBinaryContentBlocks(t *testing.T) {
 // `data` is no longer allowed globally: nothing this filter retains needs it,
 // and it is where base64 content lives.
 func TestFilterV9OmitsDataKey(t *testing.T) {
+	t.Parallel()
 	line := `{"type":"user","uuid":"u1","timestamp":"2026-09-24T10:00:00Z","message":{"role":"user","content":[{"type":"text","text":"hi","data":"opaque-synthetic-blob"}]}}`
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(line))
 	if err != nil {
@@ -223,6 +227,7 @@ func TestFilterV9OmitsDataKey(t *testing.T) {
 // {"password": …, "image": …} came through whole. It is now sanitized like a
 // tool-argument subtree first.
 func TestCursorComposerSanitizesStructuredToolResults(t *testing.T) {
+	t.Parallel()
 	composer := json.RawMessage(`{"_v":18,"composerId":"c1","createdAt":1758700000000,"status":"completed","fullConversationHeadersOnly":[{"bubbleId":"b1","type":2},{"bubbleId":"b2","type":2}]}`)
 	bubble1 := json.RawMessage(`{"_v":3,"bubbleId":"b1","type":2,"toolFormerData":{"status":"completed","toolCallId":"t1","name":"read_file","rawArgs":"{\"path\":\"cfg.json\"}","result":{"contents":"host=db note=DB_PASSWORD=hunter2synthetic","password":"hunter2hunter2","image":"iVBORw0KGgoAAAANSUhEUg","nested":{"clientSecretValue":"abc","ok":1},"blocks":[{"type":"image","source":{"type":"base64","data":"QUJDREVGR0hJSktMTU5PUA"}}]}}}`)
 	bubble2 := json.RawMessage(`{"_v":3,"bubbleId":"b2","type":2,"toolFormerData":{"status":"error","toolCallId":"t2","name":"run","rawArgs":"{}","error":{"message":"denied","api_token":"tok-synthetic"}}}`)
@@ -252,6 +257,7 @@ func TestCursorComposerSanitizesStructuredToolResults(t *testing.T) {
 // nothing of is named among the omitted keys, not reported as a record
 // without allowed fields (it is no record).
 func TestCursorComposerStructuredResultEmptyAndFullyDropped(t *testing.T) {
+	t.Parallel()
 	composer := json.RawMessage(`{"_v":18,"composerId":"c1","createdAt":1758700000000,"status":"completed","fullConversationHeadersOnly":[{"bubbleId":"b1","type":2},{"bubbleId":"b2","type":2}]}`)
 	empty := json.RawMessage(`{"_v":3,"bubbleId":"b1","type":2,"toolFormerData":{"status":"completed","toolCallId":"t1","name":"noop","rawArgs":"{}","result":{}}}`)
 	dropped := json.RawMessage(`{"_v":3,"bubbleId":"b2","type":2,"toolFormerData":{"status":"completed","toolCallId":"t2","name":"login","rawArgs":"{}","result":{"password":"hunter2hunter2","token":"tok-synthetic"}}}`)
@@ -278,6 +284,7 @@ func TestCursorComposerStructuredResultEmptyAndFullyDropped(t *testing.T) {
 // The 64 KB string cap cuts on a character boundary, so a retained string is
 // always valid UTF-8.
 func TestFilterV9TruncatesOnRuneBoundary(t *testing.T) {
+	t.Parallel()
 	const maxTextBytes = 64 * 1024
 	text := strings.Repeat("a", maxTextBytes-1) + "é" + "tail"
 	state := sanitizeState{addGap: func(string, int, string) {}}

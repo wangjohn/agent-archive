@@ -19,6 +19,7 @@ import (
 // session in the archive, and a shorter one deletes hook-captured sessions
 // too. ApplyToConfig refuses it and leaves the configuration as it was.
 func TestApplyToConfigNeverShortensRetention(t *testing.T) {
+	t.Parallel()
 	p := Plan{Candidates: []Candidate{{Harness: "claude", ProjectRoot: "/work/new"}}}
 	for _, tc := range []struct {
 		configured int
@@ -44,6 +45,7 @@ func TestApplyToConfigNeverShortensRetention(t *testing.T) {
 // A continued import keeps the retention it first raised from, so its undo
 // restores what was there before the first run.
 func TestBatchKeepsFirstRetentionAcrossRuns(t *testing.T) {
+	t.Parallel()
 	var b Batch
 	b.AddChanges(ConfigChanges{Retention: &RetentionChange{From: 30, To: 90}})
 	b.AddChanges(ConfigChanges{})
@@ -61,6 +63,7 @@ func TestBatchKeepsFirstRetentionAcrossRuns(t *testing.T) {
 // fails here. The one intended difference after the undo: an added project
 // stays configured, excluded.
 func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	f.include("/work/in")
 	f.cfg.Harnesses = []string{"claude"}
@@ -161,6 +164,7 @@ func cloneConfig(t *testing.T, cfg config.Config) config.Config {
 // retention then deletes: those admitted (or last captured) over the old
 // period ago and not already past the new one, and not removed by the undo.
 func TestUndoRestoresRetentionAndCountsWhatItDeletes(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	f.include("/work/p")
 	f.cfg.RetentionDays = 365

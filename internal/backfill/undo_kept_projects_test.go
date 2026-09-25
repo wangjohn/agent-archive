@@ -13,6 +13,7 @@ import (
 // and exclude it, stopping hook capture of a project the person included.
 // Once any undo has excluded a project, no undo excludes it again.
 func TestUndoNeverExcludesAProjectSetupIncludedAgain(t *testing.T) {
+	t.Parallel()
 	for _, recorded := range []bool{false, true} {
 		f := newUndoFixture(t)
 		root := "/work/p"
@@ -42,6 +43,7 @@ func TestUndoNeverExcludesAProjectSetupIncludedAgain(t *testing.T) {
 // Adjacent to B-22: the import that added P is undone after another import's
 // undo excluded P and setup included it again. P is the person's now.
 func TestUndoOfTheAddingImportLeavesAProjectAnotherUndoExcluded(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	root := "/work/p"
 	pid := f.include(root)
@@ -65,6 +67,7 @@ func TestUndoOfTheAddingImportLeavesAProjectAnotherUndoExcluded(t *testing.T) {
 // sessions there does not. The plan lists a taken-over project apart from
 // the ones the import added.
 func TestUndoTakesOverOnlyForTheImportsAProjectWasKeptFor(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	root := "/work/p"
 	pid := f.include(root)

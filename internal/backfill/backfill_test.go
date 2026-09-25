@@ -163,6 +163,7 @@ func project(root string, included bool) archive.ProjectActivation {
 }
 
 func TestResolveRules(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	tr.mkdir("home/repo/sub")
@@ -222,6 +223,7 @@ func TestResolveRules(t *testing.T) {
 }
 
 func TestCursorSlugs(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	tr.repo("home/a-b/c")
 	tr.repo("home/a/b-c")
@@ -254,6 +256,7 @@ func TestCursorSlugs(t *testing.T) {
 
 // A Cursor slug also matches a root that only a Claude Code session names.
 func TestCursorSlugFromClaudeRoot(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	gone := filepath.Join(tr.home, "old-repo")
 	tr.write(filepath.Join("home", claudeFile("home-old-repo", "c1")), claudeTranscript("c1", gone, fixedNow.Add(-48*time.Hour)))
@@ -265,6 +268,7 @@ func TestCursorSlugFromClaudeRoot(t *testing.T) {
 }
 
 func TestIdentityAndClassification(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-72 * time.Hour)
@@ -327,6 +331,7 @@ func TestIdentityAndClassification(t *testing.T) {
 // Codex: sessions/ wins over archived_sessions/, and the session_meta
 // timestamp is the start.
 func TestCodexDiscovery(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	const id = "0a9b3c4d-0000-4000-8000-00000000000a"
@@ -350,6 +355,7 @@ func TestCodexDiscovery(t *testing.T) {
 }
 
 func TestClaudeSubagents(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	start := fixedNow.Add(-24 * time.Hour)
@@ -367,6 +373,7 @@ func TestClaudeSubagents(t *testing.T) {
 }
 
 func TestFiltersAndPrecedence(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	other := tr.repo("home/other")
@@ -441,6 +448,7 @@ func TestFiltersAndPrecedence(t *testing.T) {
 }
 
 func TestFilterValidation(t *testing.T) {
+	t.Parallel()
 	for _, f := range []Filters{
 		{Harnesses: []string{"vim"}}, {Since: "09/01/2026"}, {Until: "2026-13-01"},
 		{Since: "2026-09-10", Until: "2026-09-01"}, {Projects: []string{""}},
@@ -457,6 +465,7 @@ func TestFilterValidation(t *testing.T) {
 // chat is a duplicate, and what is left is imported under its chat ID with
 // its createdAt as its start.
 func TestCursorDatabaseCandidates(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/site")
 	tr.write(filepath.Join("home", ".cursor", "projects", cursorSlug(repo), "agent-transcripts", "k1", "k1.jsonl"), cursorTranscript)
@@ -521,6 +530,7 @@ func TestCursorDatabaseCandidates(t *testing.T) {
 // workspaceIdentifier.uri, then workspace.json, then its messages'
 // workspaceUris, through the usual project rules.
 func TestCursorDatabaseChatOutcomes(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	ws := tr.repo("home/ws")
@@ -604,6 +614,7 @@ func TestCursorDatabaseChatOutcomes(t *testing.T) {
 }
 
 func TestByteBudget(t *testing.T) {
+	t.Parallel()
 	b := newByteBudget(100)
 	if n := b.acquire(500); n != 100 {
 		t.Fatalf("an oversized file takes the whole budget, got %d", n)

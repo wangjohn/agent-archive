@@ -50,6 +50,7 @@ const (
 )
 
 func TestImportBatchKeepsTheOnDiskFormat(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name  string
 		file  string
@@ -97,6 +98,7 @@ func TestImportBatchKeepsTheOnDiskFormat(t *testing.T) {
 // this pins that, since nothing else would notice the blank func field
 // going away.
 func TestImportBatchCannotBeCompared(t *testing.T) {
+	t.Parallel()
 	for _, typ := range []reflect.Type{reflect.TypeFor[ImportBatch](), reflect.TypeFor[SessionRegistration]()} {
 		if typ.Comparable() {
 			t.Errorf("%s is comparable, so an import ID can be matched with == outside InBatch", typ)
@@ -105,6 +107,7 @@ func TestImportBatchCannotBeCompared(t *testing.T) {
 }
 
 func TestInBatchNeedsAnImportAndAnID(t *testing.T) {
+	t.Parallel()
 	imported := SessionRegistration{Origin: SessionOriginImport, ImportBatch: NewImportBatch("2026-09-23-1")}
 	hook := SessionRegistration{Origin: SessionOriginHook, ImportBatch: NewImportBatch("2026-09-23-1")}
 	unbatched := SessionRegistration{Origin: SessionOriginImport}
