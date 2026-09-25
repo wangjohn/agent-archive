@@ -123,6 +123,34 @@ func TestOrphanIsKeptWhileTheClockIsAhead(t *testing.T) {
 	}
 }
 
+// A registration that exists but cannot be read this time (a permission
+// problem, not corruption) still owns its session: the session is not an
+// orphan, and nothing of it is deleted however old it is.
+func TestUnreadableRegistrationIsNotAnOrphan(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	local := newTestStore(t)
+	store := storage.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	publishTwice(t, local, store, "s1", t.TempDir(), t0)
+	path := filepath.Join(local.Home(), "registrations", "s1.json")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	result := sweep(t, local, store, t0.Add(retentionWindow+time.Hour), Options{})
+	if len(result.DeletedSessions) != 0 || result.Errors["s1"] == nil {
+		t.Fatalf("%#v", result)
+	}
+	if sessionObjects(t, store, "s1") == 0 {
+		t.Fatal("a session whose registration was only unreadable was deleted")
+	}
+	if _, err := os.Stat(filepath.Join(local.Home(), "published", "s1.json")); err != nil {
+		t.Fatalf("its published state was forgotten: %v", err)
+	}
+}
+
 // An orphan is not forgotten if its registration reappears before the sweep
 // gets to it: a hook registering the native session again reuses its ID.
 func TestOrphanRegisteredAgainIsKept(t *testing.T) {
