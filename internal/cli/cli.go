@@ -46,9 +46,11 @@ func versionString() string {
 	return describeVersion(Version, info)
 }
 
-// describeVersion returns version unchanged unless it is "dev" and info
-// records a VCS revision; then it is "dev-<first 12 hex of the commit>", with
-// "-dirty" when the working tree had uncommitted changes.
+// describeVersion returns version unchanged unless it is "dev". A "dev"
+// build from a checkout that records a VCS revision reports
+// "dev-<first 12 hex of the commit>", with "-dirty" when the working tree had
+// uncommitted changes; one with no revision, as `go install ...@vX.Y.Z`
+// builds it, reports its module version.
 func describeVersion(version string, info *debug.BuildInfo) string {
 	if version != "dev" || info == nil {
 		return version
@@ -65,6 +67,9 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 		}
 	}
 	if revision == "" {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
 		return version
 	}
 	if len(revision) > 12 {
@@ -324,6 +329,18 @@ var openKeychain = func() (credentials.CredentialStore, error) {
 	return store, nil
 }
 
+// notSetUp reports whether this Mac is not archiving: it has no saved
+// configuration, or uninstall left one with archiving disabled. It reads
+// only, and says nothing when the data directory cannot be read.
+func notSetUp(env Env) bool {
+	home, err := env.readHome()
+	if err != nil {
+		return false
+	}
+	cfg, found, err := config.Load(home)
+	return err == nil && (!found || !cfg.Archive.Enabled)
+}
+
 const usage = `Agent Archive — archive coding-agent sessions to your private storage.
 
 Get started
@@ -369,6 +386,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		stdin = strings.NewReader("")
 	}
 	if len(args) == 0 {
+		if notSetUp(env) {
+			terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
+			terminal.Println(stdout)
+		}
 		terminal.Print(stdout, usage)
 		return 0
 	}

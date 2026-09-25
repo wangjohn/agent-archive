@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | pre-release | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 11 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.11.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 12 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.12.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | `archive.DefaultParserVersion` | metadata `parser.version` | 0.11.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps. |
 | Source schema | `archive.SourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |
@@ -21,11 +21,13 @@ The per-version filter changes are in the
 ## What a bump does
 
 The collector compares each session's last scan (its scan signature) with the
-running build's parser, filter, and adapter versions. When any differ, it
-re-reads the transcript, filters it again, and republishes the session; when
-only the parser changed and the retained source can't be rebuilt (the
-transcript is gone), it republishes metadata derived from the retained
-source. Nothing is re-uploaded unless it changed.
+running build's parser, filter, and adapter versions. When the filter or
+adapter differs, it re-reads the transcript, filters it again, and
+republishes the session. When only the parser changed, it republishes
+metadata derived from the retained source, and reads the transcript only
+if it changed since the last scan (an unchanged one would filter to
+exactly what was retained); a changed one is published as usual. Nothing
+is re-uploaded unless it changed.
 
 ## Rules for contributors
 

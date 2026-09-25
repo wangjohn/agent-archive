@@ -1,6 +1,7 @@
 """The release gate must reject each absent secret without exposing values."""
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -11,13 +12,18 @@ INSTALL_SH = SCRIPTS.parent / 'install.sh'
 TEAM = 'SYNTH12345'
 
 
+def with_team(script, team):
+    """script with its team_id line naming team, whatever it named before."""
+    return re.sub(r'^team_id="[A-Z0-9]*"$', f'team_id="{team}"', script, count=1, flags=re.M)
+
+
 class ReleaseSigningTest(unittest.TestCase):
     def setUp(self):
         # A copy of install.sh that names the synthetic signing team, as the
         # real one must before the first release.
         self.root = Path(tempfile.mkdtemp())
         self.install_sh = self.root / 'install.sh'
-        self.install_sh.write_text(INSTALL_SH.read_text().replace('team_id=""', f'team_id="{TEAM}"', 1))
+        self.install_sh.write_text(with_team(INSTALL_SH.read_text(), TEAM))
         self.names = (
             'APPLE_CERTIFICATE_P12_BASE64 APPLE_CERTIFICATE_PASSWORD '
             'APPLE_SIGNING_IDENTITY APPLE_ID APPLE_TEAM_ID '
@@ -43,8 +49,8 @@ class ReleaseSigningTest(unittest.TestCase):
 
     def test_install_script_must_name_the_signing_team(self):
         cases = {
-            'other team': self.install_sh.read_text().replace(f'team_id="{TEAM}"', 'team_id="OTHER12345"'),
-            'no team': self.install_sh.read_text().replace(f'team_id="{TEAM}"', 'team_id=""'),
+            'other team': with_team(self.install_sh.read_text(), 'OTHER12345'),
+            'no team': with_team(self.install_sh.read_text(), ''),
             'set twice': self.install_sh.read_text() + f'\nteam_id="{TEAM}"\n',
         }
         for name, text in cases.items():

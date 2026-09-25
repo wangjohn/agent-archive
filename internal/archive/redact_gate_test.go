@@ -71,6 +71,12 @@ func gateSeeds() []string {
 		"password%3Dabc&token%3Axyz",
 		"\rpassword=abc\rnext",
 	)
+	// The same again past pairSetMinLength, where the needle checks go
+	// through a pair set first.
+	padding := strings.Repeat("an ordinary line of text before it\n", pairSetMinLength/35+1)
+	for _, seed := range seeds[:len(seeds):len(seeds)] {
+		seeds = append(seeds, padding+seed)
+	}
 	return seeds
 }
 

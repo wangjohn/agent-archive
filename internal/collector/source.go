@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -88,7 +89,13 @@ func (r fileReader) Signature(context.Context) (sourceState, error) {
 	return sourceState{file: statTranscript(info)}, nil
 }
 
+// transcriptFilters counts fileReader.Filter calls. Filtering a transcript
+// is most of what a scan of a large session costs, so a scan does it at most
+// once; tests use the count to keep it that way.
+var transcriptFilters atomic.Int64
+
 func (r fileReader) Filter(_ context.Context, adapter archive.Adapter, maxBytes int64) (archive.FilteredTranscript, sourceState, error) {
+	transcriptFilters.Add(1)
 	filtered, stat, err := filterTranscript(adapter, r.reg, maxBytes)
 	return filtered, sourceState{file: stat}, err
 }

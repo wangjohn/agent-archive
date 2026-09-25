@@ -29,6 +29,8 @@ func TestDescribeVersionNamesTheCommitOfADevBuild(t *testing.T) {
 		{"dev with a short revision", "dev", vcs("vcs.revision", "abc"), "dev-abc"},
 		{"dev without VCS information", "dev", vcs("-trimpath", "true"), "dev"},
 		{"dev without build information", "dev", nil, "dev"},
+		{"go install at a tag", "dev", &debug.BuildInfo{Main: debug.Module{Version: "v0.1.0"}}, "v0.1.0"},
+		{"go build in a checkout", "dev", &debug.BuildInfo{Main: debug.Module{Version: "v0.0.0-20260925144638-0123456789ab"}, Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: sha}}}, "dev-0123456789ab"},
 	}
 	for _, c := range cases {
 		if got := describeVersion(c.version, c.info); got != c.want {

@@ -487,3 +487,44 @@ func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 		t.Fatalf("fresh temporary was removed: %v", err)
 	}
 }
+
+// A publication whose upload keeps failing is retried every pass, and its
+// pending file holds the whole compressed source and bundle: marking it
+// attempted is written once, not again on every retry.
+func TestRetriedPublicationDoesNotRewriteItsPendingFile(t *testing.T) {
+	t.Parallel()
+	local := newTestStore(t)
+	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript)
+	if err := local.SaveRegistration(registration(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
+	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	opts := Options{MachineID: "m", Now: func() time.Time { return at }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	pendingFile := filepath.Join(local.Home(), "pending", "session-1.json")
+	var written os.FileInfo
+	for pass := range 3 {
+		result, err := Run(context.Background(), local, remote, opts)
+		if err != nil || len(result.Errors) != 1 {
+			t.Fatalf("pass %d: result=%#v err=%v", pass, result, err)
+		}
+		pending, found, err := local.LoadPending("session-1")
+		if err != nil || !found || !pending.Attempted {
+			t.Fatalf("pass %d: pending attempted=%t found=%t err=%v", pass, pending.Attempted, found, err)
+		}
+		info, err := os.Stat(pendingFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Every save renames a new file into place.
+		if written != nil && !os.SameFile(written, info) {
+			t.Fatalf("pass %d rewrote the pending publication", pass)
+		}
+		written = info
+		at = at.Add(time.Minute)
+	}
+	remote.failMetadata = false
+	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Published) != 1 {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}

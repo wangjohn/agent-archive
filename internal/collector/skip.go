@@ -145,6 +145,34 @@ func sourceStillAt(ctx context.Context, reader sourceReader, signature state.Sca
 	return err == nil && observed.matches(signature)
 }
 
+// settledSignature returns the signature the session's last scan settled at
+// (one recorded by recordScanSignature, not a gap or a failure), when a stat
+// of the source can be trusted against it: exactly as far as
+// unchangedSinceLastScan trusts one, so never for a Cursor text transcript.
+func (s *sessionScan) settledSignature() (state.ScanSignature, bool, error) {
+	signature, found, err := s.local.LoadScanSignature(s.id())
+	if err != nil || !found || signature.Blocked != "" || signature.Failed || signature.SourceFormat == cursorTextSourceFormat {
+		return state.ScanSignature{}, false, err
+	}
+	return signature, true, nil
+}
+
+// sourceSettled reports whether the session's source is still in the state
+// its last scan settled at (see settledSignature), and that scan ran the
+// filter and adapter this build runs: reading the source now would produce
+// exactly the evidence that scan cached.
+func (s *sessionScan) sourceSettled(reader sourceReader) bool {
+	signature, settled, err := s.settledSignature()
+	if err != nil || !settled {
+		return false
+	}
+	adapterVersion, known := harnessAdapterVersion(s.reg.Harness.Name)
+	if !known || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion {
+		return false
+	}
+	return sourceStillAt(s.ctx, reader, signature)
+}
+
 // owesNothing reports that a session has no publication pending and, unless
 // failed (a remembered Cursor failure, whose scan stays journaled), no
 // interrupted scan journaled.

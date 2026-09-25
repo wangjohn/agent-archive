@@ -248,3 +248,32 @@ func TestCommandProgram(t *testing.T) {
 		}
 	}
 }
+
+// setup --yes installs the same collector as interactive setup: it records
+// the AWS settings the storage check ran with, and says when the profile's
+// credential_process is not a program the collector can find.
+func TestSetupYesGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
+	t.Parallel()
+	for name, onPath := range map[string]bool{"helper on PATH": true, "helper not on PATH": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home, userHome := t.TempDir(), t.TempDir()
+			configFile, _, binDir := awsFixture(t, "vault-helper")
+			path := "/usr/bin:/bin"
+			if onPath {
+				path = binDir + ":" + path
+			}
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			env = withEnvironment(env, map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": path})
+			output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex")
+			warned := strings.Contains(output, `AWS profile "vault" gets its credentials by running vault-helper, which the background collector cannot find on its PATH`)
+			if warned == onPath {
+				t.Fatalf("warned=%v with the helper on PATH=%v:\n%s", warned, onPath, output)
+			}
+			environment, _ := collectorPlistEnvironment(t, env, home, userHome)
+			if environment["AWS_CONFIG_FILE"] != configFile || environment["PATH"] != collectorPath(path) {
+				t.Fatalf("collector environment %v", environment)
+			}
+		})
+	}
+}

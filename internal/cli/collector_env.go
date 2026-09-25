@@ -249,3 +249,12 @@ func (e Env) awsFilesDrift(storage credentials.Config, environment map[string]st
 	}
 	return fmt.Sprintf("This shell's AWS settings files differ from the background collector's (%s). The collector uses the ones setup verified; if this shell's are the right ones, run agent-archive setup again from here.", strings.Join(differ, "; "))
 }
+
+// warnCollectorEnvironment says, before setup commits, why the collector it
+// is about to install could not load storage's profile (see
+// collectorEnvironmentProblems).
+func warnCollectorEnvironment(p *prompter, storage credentials.Config, userHome string, env Env) {
+	for _, problem := range collectorEnvironmentProblems(storage, env.collectorEnvironment(storage), userHome) {
+		p.warn(problem, "Scheduled uploads will fail until it can; agent-archive sync from this shell still works. Run setup from a shell where the profile works without aliases or shell functions.")
+	}
+}

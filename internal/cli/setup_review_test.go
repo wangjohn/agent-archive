@@ -168,7 +168,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{"personal", "us-west-2"}}, nil }
 			probes := 0
 			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { probes++; return storagetest.NewMemoryStore(), nil }
-			out := setupRun(t, env, "\n\ns3\ntest-bucket\n\n"+tc.edits, 0)
+			out := setupRun(t, env, "\n\n\ns3\ntest-bucket\n\n"+tc.edits, 0)
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {
 				t.Fatalf("load: %v", err)

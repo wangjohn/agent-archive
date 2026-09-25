@@ -175,9 +175,19 @@ func hasDotComponent(value string) bool {
 }
 
 // PutSourceThenMetadata implements source-first publication. The source is
-// uploaded and read back with checksum verification before metadata is
-// published. Retry attempts reuse the exact input bytes, so a retry cannot
-// produce another source hash or timestamp.
+// uploaded and verified in storage before metadata is published. Retry
+// attempts reuse the exact input bytes, so a retry cannot produce another
+// source hash or timestamp.
+//
+// Verification goes through verifyStoredObject, before the upload (a source
+// already stored with these exact bytes is not uploaded again) and after it.
+// A store that reports an object's SHA-256 (ObjectStatter) is checked that
+// way, without a download: S3Store.Put sends the source's SHA-256 with the
+// upload, the service refuses a body that does not match it, and a HEAD then
+// reports the checksum and size of the object now stored at the key. A
+// matching checksum and size therefore prove that key holds exactly these
+// bytes, as a download would, and a HEAD needs the same read permission as a
+// GET. A store that reports no checksum is read back and hashed instead.
 func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, metadataKey string, source, metadata []byte, retry RetryPolicy) error {
 	if sourceKey == "" || metadataKey == "" {
 		return errors.New("source and metadata keys are required")
@@ -185,20 +195,20 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 	if sourceKey == metadataKey {
 		return errors.New("source and metadata keys must differ")
 	}
+	sum := SHA256Hex(source)
 	if err := retry.run(ctx, func() error {
-		if existing, getErr := store.Get(ctx, sourceKey); getErr == nil {
-			if VerifySHA256(existing, SHA256Hex(source)) {
-				return nil
-			}
-			return fmt.Errorf("%w for existing source %q", ErrChecksumMismatch, sourceKey)
-		} else if !errors.Is(getErr, ErrNotFound) {
-			return getErr
+		switch err := verifyStoredObject(ctx, store, sourceKey, sum, len(source)); {
+		case err == nil:
+			return nil
+		case errors.Is(err, ErrChecksumMismatch):
+			return fmt.Errorf("existing source: %w", err)
+		case !errors.Is(err, ErrNotFound):
+			return err
 		}
 		if err := store.Put(ctx, sourceKey, source); err != nil {
 			return err
 		}
-		_, err := ReadAndVerify(ctx, store, sourceKey, SHA256Hex(source))
-		return err
+		return verifyStoredObject(ctx, store, sourceKey, sum, len(source))
 	}); err != nil {
 		return fmt.Errorf("publish source %q: %w", sourceKey, err)
 	}

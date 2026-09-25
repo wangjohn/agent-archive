@@ -32,8 +32,10 @@ flowchart LR
 2. **Collector** (`internal/collector`, run by `_collect` or `sync`). Under
    `collector.lock`, for each registered session it reads the transcript,
    filters it through the app's adapter, builds a source bundle, derives
-   metadata, and publishes source then metadata. It then reads both back to
-   verify them. Retention runs after each pass.
+   metadata, and publishes source then metadata, verifying the source in
+   storage (its SHA-256 and size, or a read-back where the service reports
+   no checksum) before the metadata points at it. Retention runs after each
+   pass.
 3. **Reader** (`internal/reader`). `list`, `show`, and `handoff` read the
    bucket: metadata first, and a source only when asked, verified against
    the metadata's checksum.
