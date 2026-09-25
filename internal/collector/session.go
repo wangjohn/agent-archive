@@ -406,10 +406,13 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 	}
 
 	readyAt := publicationReadyAt(s.now, lastPublishedAt, s.req, s.opts)
+	// A publication due now is uploaded straight after it is saved, so it is
+	// saved already marked attempted (see publishPending): marking it
+	// separately would write the whole file a second time.
 	pending := state.PendingPublication{
 		Bundle: candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
-		RequestToken: s.req.Token, ReadyAt: readyAt,
+		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)
