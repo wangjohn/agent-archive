@@ -167,7 +167,7 @@ func queryCursorDatabase(ctx context.Context, db *sql.DB) (CursorDatabaseResult,
 	if err != nil {
 		return CursorDatabaseResult{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var chats []CursorDatabaseChat
 	newer := 0
@@ -256,13 +256,13 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		}
 		return raw, true
 	}
-	var c composer
+	newer := false
 	if raw, ok := present("_v"); ok {
 		var v int
 		if json.Unmarshal(raw, &v) != nil || v < 1 {
 			return composer{}, false
 		}
-		c.newer = v > maxComposerVersion
+		newer = v > maxComposerVersion
 	}
 	var isDraft bool
 	if raw, ok := present("isDraft"); ok && json.Unmarshal(raw, &isDraft) != nil {
@@ -288,48 +288,66 @@ func decodeComposerData(key string, value []byte) (composer, bool) {
 		}
 	}
 
+	keyID := strings.TrimPrefix(key, "composerData:")
+	var id string
+	malformed := false
 	if raw, ok := present("composerId"); ok {
-		if json.Unmarshal(raw, &c.chat.ID) != nil {
-			c.chat.Malformed = true
+		if json.Unmarshal(raw, &id) != nil {
+			malformed = true
 		}
 	}
-	c.chat.KeyID = strings.TrimPrefix(key, "composerData:")
-	if c.chat.ID == "" {
-		c.chat.ID = c.chat.KeyID
+	if id == "" {
+		id = keyID
 	}
+	var subagents []string
 	if raw, ok := present("subagentComposerIds"); ok {
 		var ids []json.RawMessage
 		if json.Unmarshal(raw, &ids) == nil {
 			for _, rawID := range ids {
-				var id string
-				if json.Unmarshal(rawID, &id) == nil && id != "" {
-					c.subagents = append(c.subagents, id)
+				var subagentID string
+				if json.Unmarshal(rawID, &subagentID) == nil && subagentID != "" {
+					subagents = append(subagents, subagentID)
 				}
 			}
 		}
 	}
-	c.counted = !isDraft && messages > 0
-	if !c.counted {
-		return c, true
-	}
-	if raw, ok := present("createdAt"); ok {
-		var ms float64
-		if json.Unmarshal(raw, &ms) == nil && ms > 0 {
-			c.chat.CreatedAt = time.UnixMilli(int64(ms)).UTC()
+	counted := !isDraft && messages > 0
+
+	// The rest is read only for a chat that is counted.
+	var createdAt time.Time
+	var folder, workspaceID string
+	if counted {
+		if raw, ok := present("createdAt"); ok {
+			var ms float64
+			if json.Unmarshal(raw, &ms) == nil && ms > 0 {
+				createdAt = time.UnixMilli(int64(ms)).UTC()
+			}
 		}
-	}
-	if raw, ok := present("workspaceIdentifier"); ok {
-		var ws map[string]json.RawMessage
-		if json.Unmarshal(raw, &ws) == nil {
-			c.chat.Folder = composerWorkspaceFolder(ws["uri"])
-			if rawID, ok := ws["id"]; ok {
-				if json.Unmarshal(rawID, &c.chat.WorkspaceID) != nil {
-					c.chat.Malformed = true
+		if raw, ok := present("workspaceIdentifier"); ok {
+			var ws map[string]json.RawMessage
+			if json.Unmarshal(raw, &ws) == nil {
+				folder = composerWorkspaceFolder(ws["uri"])
+				if rawID, ok := ws["id"]; ok {
+					if json.Unmarshal(rawID, &workspaceID) != nil {
+						malformed = true
+					}
 				}
 			}
 		}
 	}
-	return c, true
+	return composer{
+		chat: CursorDatabaseChat{
+			ID:          id,
+			KeyID:       keyID,
+			CreatedAt:   createdAt,
+			Folder:      folder,
+			WorkspaceID: workspaceID,
+			Malformed:   malformed,
+		},
+		counted:   counted,
+		subagents: subagents,
+		newer:     newer,
+	}, true
 }
 
 // composerWorkspaceFolder turns workspaceIdentifier.uri into a local folder:
@@ -445,10 +463,10 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 			continue
 		}
 		w := &work{
-			t:    &transcript{harness: "cursor", nativeID: chat.ID},
+			t:    &transcript{harness: harnessCursor, nativeID: chat.ID},
 			chat: chat,
 			c: Candidate{
-				Harness: "cursor", NativeSessionID: chat.ID,
+				Harness: string(harnessCursor), NativeSessionID: chat.ID,
 				SourceKind: archive.SourceKindCursorSQLite, SourceKey: chat.ID,
 				StartedAt: chat.CreatedAt, StartedAtSource: archive.StartedAtSourceCursorComposer,
 			},

@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 type appStatus struct {
@@ -62,9 +63,10 @@ type appStatus struct {
 	verifiedHarnessVersions []string
 	Projects                []projectCaptureStatus `json:"projects"`
 
-	Code            string    `json:"code"`
-	Hooks           string    `json:"hooks"`
-	Name            string    `json:"name"`
+	Code  string `json:"code"`
+	Hooks string `json:"hooks"`
+	Name  string `json:"name"`
+	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
 	State           string    `json:"state"`
 	Sessions        int       `json:"sessions"`
 	LastPublishedAt time.Time `json:"last_published_at,omitzero"`
@@ -84,6 +86,7 @@ type projectCaptureStatus struct {
 	VerificationState string    `json:"verification_state"`
 	VerifiedAt        time.Time `json:"verified_at,omitzero"`
 }
+
 type statusView struct {
 	PrivacyEvidence storage.PrivacyReport `json:"privacy_evidence"`
 	ConfigurationID string                `json:"configuration_id,omitempty"`
@@ -91,6 +94,7 @@ type statusView struct {
 
 	Code    string `json:"code"`
 	Version int    `json:"schema_version"`
+	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
 	State   string `json:"state"`
 	Storage string `json:"storage,omitempty"`
 	// StorageVerifiedAt is when setup's storage check (write, read, list,
@@ -101,15 +105,15 @@ type statusView struct {
 	// check, or the collector's last verified storage health for the same
 	// configuration (its access probe or a pass that uploaded).
 	// StorageAccessConfirmedBy names which: "setup" or "collector".
-	StorageAccessConfirmedAt time.Time           `json:"storage_access_confirmed_at,omitzero"`
-	StorageAccessConfirmedBy string              `json:"storage_access_confirmed_by,omitempty"`
-	Privacy                  string              `json:"privacy"`
-	Background               string              `json:"background"`
-	Paused                   bool                `json:"paused"`
-	Projects                 []string            `json:"projects"`
-	Apps                     []appStatus         `json:"applications"`
-	Collector                state.Status        `json:"collector"`
-	CaptureDiagnostics       []captureDiagnostic `json:"capture_diagnostics,omitempty"`
+	StorageAccessConfirmedAt time.Time              `json:"storage_access_confirmed_at,omitzero"`
+	StorageAccessConfirmedBy storageAccessConfirmer `json:"storage_access_confirmed_by,omitempty"`
+	Privacy                  string                 `json:"privacy"`
+	Background               string                 `json:"background"`
+	Paused                   bool                   `json:"paused"`
+	Projects                 []string               `json:"projects"`
+	Apps                     []appStatus            `json:"applications"`
+	Collector                state.Status           `json:"collector"`
+	CaptureDiagnostics       []captureDiagnostic    `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
 	// has to upload, and ImportedWithIssues those with a capture gap or a
@@ -135,26 +139,26 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	view, err := readStatus(env)
 	if err != nil {
-		fmt.Fprintf(stderr, "Cannot read archive status: %v\n", err)
+		terminal.Printf(stderr, "Cannot read archive status: %v\n", err)
 		return 1
 	}
 	if *jsonOut {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(view); err != nil {
-			fmt.Fprintln(stderr, err)
+			terminal.Println(stderr, err)
 			return 1
 		}
 		return 0
 	}
-	fmt.Fprintf(stdout, "Agent Archive — %s\n\n", view.State)
+	terminal.Printf(stdout, "Agent Archive — %s\n\n", view.State)
 	if !view.configured {
 		// Nothing is installed to report on: no storage, collector, or apps.
-		fmt.Fprintf(stdout, "Next: %s\n", view.Next)
+		terminal.Printf(stdout, "Next: %s\n", view.Next)
 		return 0
 	}
 	if view.Storage != "" {
-		fmt.Fprintf(stdout, "Storage:       %s\nAccess:        %s\n", view.Storage, storageAccessLine(view))
+		terminal.Printf(stdout, "Storage:       %s\nAccess:        %s\n", view.Storage, storageAccessLine(view))
 		printBucketPrivacy(stdout, view.PrivacyEvidence)
 	}
 	checked := "not checked yet"
@@ -164,12 +168,12 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if view.Authentication.Context != "" {
 		checked += "; " + view.Authentication.Context
 	}
-	fmt.Fprintf(stdout, "Authentication: %s (%s)\n", view.Authentication.State, checked)
-	fmt.Fprintf(stdout, "Background:    %s\n", view.Background)
+	terminal.Printf(stdout, "Authentication: %s (%s)\n", view.Authentication.State, checked)
+	terminal.Printf(stdout, "Background:    %s\n", view.Background)
 	if view.Paused {
-		fmt.Fprintln(stdout, "Collection:    paused")
+		terminal.Println(stdout, "Collection:    paused")
 	}
-	fmt.Fprintf(stdout, "Projects:      %d included\nPending:       %d session(s)\nLast scan:     %s\nLast publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
+	terminal.Printf(stdout, "Projects:      %d included\nPending:       %d session(s)\nLast scan:     %s\nLast publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("%d session(s), %d waiting to upload", view.ImportedSessions, view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
@@ -178,66 +182,75 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		if view.LastImport != "" {
 			imported += "; last import " + view.LastImport
 		}
-		fmt.Fprintf(stdout, "Imported:      %s\n", imported)
+		terminal.Printf(stdout, "Imported:      %s\n", imported)
 	}
 	for _, app := range view.Apps {
 		gaps := ""
 		if len(app.CaptureGaps) > 0 {
 			gaps = fmt.Sprintf("; %d with a capture gap", app.SessionsWithCaptureGaps)
 		}
-		fmt.Fprintf(stdout, "%s: %s (%d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Sessions, gaps, app.Hooks)
+		terminal.Printf(stdout, "%s: %s (%d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Sessions, gaps, app.Hooks)
 		if app.Trust == "unknown" {
-			fmt.Fprintln(stdout, "  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
+			terminal.Println(stdout, "  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
 		}
-		fmt.Fprintf(stdout, "  Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
-		if app.Capabilities.FreshStart.State == "unavailable" {
-			fmt.Fprintf(stdout, "  Fresh-start capture: unavailable. %s\n", app.Capabilities.FreshStart.NextAction)
+		terminal.Printf(stdout, "  Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
+		if app.Capabilities.FreshStart.State == capabilityUnavailable {
+			terminal.Printf(stdout, "  Fresh-start capture: unavailable. %s\n", app.Capabilities.FreshStart.NextAction)
 		}
 		for _, pair := range app.Projects {
-			fmt.Fprintf(stdout, "  Project %s: %s.\n", pair.ProjectRoot, pair.VerificationState)
+			terminal.Printf(stdout, "  Project %s: %s.\n", pair.ProjectRoot, pair.VerificationState)
 		}
 		switch {
 		case app.ReadBackVerified && !app.VerifiedAt.IsZero():
-			fmt.Fprintf(stdout, "  Read-back verified: %s; evidence is for that publication.\n", formatTimeOrNever(app.VerifiedAt))
+			terminal.Printf(stdout, "  Read-back verified: %s; evidence is for that publication.\n", formatTimeOrNever(app.VerifiedAt))
 		case !app.VerifiedAt.IsZero():
 			// Some evidence exists but not every project (or session) is
 			// covered, so do not call the app verified on the line below
 			// its "read-back pending" state.
-			fmt.Fprintf(stdout, "  Last read-back: %s (%s).\n", formatTimeOrNever(app.VerifiedAt), readBackProgress(app))
+			terminal.Printf(stdout, "  Last read-back: %s (%s).\n", formatTimeOrNever(app.VerifiedAt), readBackProgress(app))
 		}
 		if app.VerificationDetail != "" {
-			fmt.Fprintf(stdout, "  Read-back: %s\n", app.VerificationDetail)
+			terminal.Printf(stdout, "  Read-back: %s\n", app.VerificationDetail)
 		}
 		if len(app.CaptureGaps) > 0 {
-			fmt.Fprintf(stdout, "  Capture gaps: %d recorded across %d session(s); see status --json for details.\n", len(app.CaptureGaps), app.SessionsWithCaptureGaps)
+			terminal.Printf(stdout, "  Capture gaps: %d recorded across %d session(s); see status --json for details.\n", len(app.CaptureGaps), app.SessionsWithCaptureGaps)
 		}
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
-		fmt.Fprintf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), captureDiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+		terminal.Printf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), captureDiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
 	if view.Collector.LastError != "" {
-		fmt.Fprintf(stdout, "Last error:    %s\n", view.Collector.LastError)
+		terminal.Printf(stdout, "Last error:    %s\n", view.Collector.LastError)
 	}
 	if n := len(view.Collector.QuarantinedFiles); n > 0 {
-		fmt.Fprintf(stdout, "Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)
+		terminal.Printf(stdout, "Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)
 	}
 	if n := view.Collector.UnrefreshableSummaries; n > 0 {
-		fmt.Fprintf(stdout, "Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
+		terminal.Printf(stdout, "Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
 	}
 	for _, warning := range view.Warnings {
-		fmt.Fprintf(stdout, "Warning:       %s\n", warning)
+		terminal.Printf(stdout, "Warning:       %s\n", warning)
 	}
-	fmt.Fprintf(stdout, "\nNext: %s\n", view.Next)
+	terminal.Printf(stdout, "\nNext: %s\n", view.Next)
 	return 0
 }
+
+// storageAccessConfirmer is what last confirmed access to the destination,
+// as status --json reports it in storage_access_confirmed_by.
+type storageAccessConfirmer string
+
+const (
+	storageAccessConfirmedBySetup     storageAccessConfirmer = "setup"
+	storageAccessConfirmedByCollector storageAccessConfirmer = "collector"
+)
 
 // storageAccessLine is the text status's Access line: when access to the
 // destination was last confirmed, and by what.
 func storageAccessLine(view statusView) string {
 	switch view.StorageAccessConfirmedBy {
-	case "setup":
+	case storageAccessConfirmedBySetup:
 		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by setup's storage check (write, read, list, delete)"
-	case "collector":
+	case storageAccessConfirmedByCollector:
 		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by the collector's last successful storage access"
 	}
 	return "not confirmed yet"
@@ -263,6 +276,8 @@ func blockedReasonDetail(reason state.BlockedReason) string {
 		return "The application has deleted its own transcript, as each one does on its own schedule. The last published snapshot stays retained and readable, and capture resumes by itself if the file returns."
 	case state.BlockedReasonRecordTooLarge:
 		return fmt.Sprintf("One record in the transcript (or a plain-text transcript as a whole) is larger than the %d MiB record size limit, so the transcript cannot be read. The last published snapshot, if any, stays retained, and capture resumes when the transcript changes.", archive.MaxRecordBytes>>20)
+	case state.BlockedReasonTranscriptRewritten, state.BlockedReasonTranscriptTooLarge:
+		// Permanent for the current transcript: the general wording below.
 	}
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
 }
@@ -270,6 +285,7 @@ func blockedReasonDetail(reason state.BlockedReason) string {
 // versionSupportNote explains an unverified installed version in the text
 // status without changing the support state or reason code.
 func versionSupportNote(app appStatus) string {
+	//lint:ignore LV1001 the reason codes are untyped constants in capabilities.go, which computes this field
 	switch app.VersionSupportReason {
 	case supportReasonNoVerifiedCapture:
 		return " (no session from this version has been published and read back yet)"
@@ -305,6 +321,7 @@ func installedVersionLabel(app appStatus) string {
 	}
 	return "unknown"
 }
+
 func readStatus(env Env) (view statusView, err error) {
 	defer func() {
 		view.Code = statusCode(view.State)
@@ -315,8 +332,16 @@ func readStatus(env Env) (view statusView, err error) {
 	// Before setup there is no collector or storage to ask about: the job is
 	// missing, as launchd reports a job that is not loaded, and storage not
 	// configured; neither is unknown.
-	view = statusView{Version: 3, State: "Not set up", Privacy: "not_verified", Background: "missing", Projects: []string{}, Apps: []appStatus{}, Next: "Run agent-archive setup to get started."}
-	view.Authentication.State = "not_configured"
+	view = statusView{
+		Version:        3,
+		State:          "Not set up",
+		Privacy:        "not_verified",
+		Background:     "missing",
+		Authentication: storageHealth{State: "not_configured"},
+		Projects:       []string{},
+		Apps:           []appStatus{},
+		Next:           "Run agent-archive setup to get started.",
+	}
 	home, err := env.readHome()
 	if err != nil {
 		return view, err
@@ -361,10 +386,10 @@ func readStatus(env Env) (view statusView, err error) {
 	// confirmed" beside an Authentication line that says verified. Health
 	// without this configuration's ID is not evidence for it.
 	if !view.StorageVerifiedAt.IsZero() {
-		view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy = view.StorageVerifiedAt, "setup"
+		view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy = view.StorageVerifiedAt, storageAccessConfirmedBySetup
 	}
 	if view.Authentication.State == "verified" && view.Authentication.ConfigurationID == view.ConfigurationID && view.Authentication.CheckedAt.After(view.StorageAccessConfirmedAt) {
-		view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy = view.Authentication.CheckedAt, "collector"
+		view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy = view.Authentication.CheckedAt, storageAccessConfirmedByCollector
 	}
 	// The background probe only runs while collection is active, so a paused
 	// install keeps its last known state (with its checked time) rather than
@@ -425,7 +450,7 @@ func readStatus(env Env) (view statusView, err error) {
 				ActivatedAt: project.ActivatedAt, Configured: true, VerificationState: "not_verified",
 			})
 		}
-		readBackIssue := ""
+		var readBackIssue verificationOutcome
 		for _, reg := range regs {
 			// An import is not evidence that this app's hooks work: it
 			// never counts toward the app's sessions, hook observation,
@@ -487,13 +512,11 @@ func readStatus(env Env) (view statusView, err error) {
 			if len(app.CaptureGaps) > gapsBefore {
 				app.SessionsWithCaptureGaps++
 			}
-			publishedBundle, actualAt, published, e := store.LoadLastPublished(reg.ArchiveSessionID)
+			publishedBundle, at, published, e := store.LoadLastPublished(reg.ArchiveSessionID)
 			if e != nil {
 				return view, e
 			}
 			if published {
-				at := actualAt
-
 				app.Published = true
 				app.PublishedSessions++
 				if pair != nil {
@@ -570,6 +593,8 @@ func readStatus(env Env) (view statusView, err error) {
 				app.VerificationState = "read_back_mismatch"
 			case verificationOutcomeFailed:
 				app.VerificationState = "read_back_failed"
+			case verificationOutcomeVerified:
+				// A verified session is not a read-back issue.
 			}
 		}
 		view.Apps = append(view.Apps, app)
@@ -663,7 +688,7 @@ func readStatus(env Env) (view statusView, err error) {
 			}
 			view.State = "Waiting for capture"
 			switch {
-			case app.Capabilities.FreshStart.State == "unavailable" && !pair.HookObserved:
+			case app.Capabilities.FreshStart.State == capabilityUnavailable && !pair.HookObserved:
 				view.Next = app.Capabilities.FreshStart.NextAction
 			case pair.Published:
 				view.Next = "Run agent-archive sync to retry read-back verification for " + appName(app.Name) + " in " + pair.ProjectRoot + "."
@@ -685,7 +710,7 @@ func readStatus(env Env) (view statusView, err error) {
 			break
 		}
 	}
-	if view.Background != "running" && view.Background != "loaded" {
+	if !launchJobActive(view.Background) {
 		view.State = "Needs attention"
 		view.Next = "Run agent-archive setup to restore the background collector."
 		if view.Background == jobAnotherInstallation {

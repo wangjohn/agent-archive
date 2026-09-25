@@ -49,7 +49,7 @@ func TestStatusReportsDeletedTranscriptAsGapNotError(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.Now = func() time.Time { return now.Add(time.Hour) }
-	for pass := 0; pass < 2; pass++ {
+	for pass := range 2 {
 		if result, err := runOnePass(env, false); err != nil || len(result.Errors) != 0 {
 			t.Fatalf("pass %d: %+v %v", pass, result, err)
 		}

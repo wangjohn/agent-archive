@@ -161,7 +161,7 @@ func TestListWithHarnessListsOnlyThatHarnessPrefix(t *testing.T) {
 
 func TestListSkipsNonMetadataKeysBeforeAnyGet(t *testing.T) {
 	store := newCountingStore()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		putSession(t, store, "codex", fmt.Sprintf("s%d", i), baseTime.Add(time.Duration(i)*time.Minute))
 	}
 	if _, err := ListMetadata(context.Background(), store, "sessions", Filter{}); err != nil {
@@ -180,7 +180,7 @@ func TestListSkipsNonMetadataKeysBeforeAnyGet(t *testing.T) {
 
 func TestListReadsSidecarsWithBoundedConcurrency(t *testing.T) {
 	store := newCountingStore()
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		putSession(t, store, "codex", fmt.Sprintf("s%02d", i), baseTime.Add(time.Duration(i)*time.Minute))
 	}
 	store.delay = 15 * time.Millisecond
@@ -206,12 +206,12 @@ func TestListReadsSidecarsWithBoundedConcurrency(t *testing.T) {
 func TestListReportsTheFirstFailingSidecarInKeyOrder(t *testing.T) {
 	store := newCountingStore()
 	var keys []string
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		keys = append(keys, putSession(t, store, "codex", fmt.Sprintf("s%02d", i), baseTime))
 	}
 	store.failGet[keys[3]] = errors.New("synthetic outage")
 	store.failGet[keys[12]] = errors.New("synthetic outage")
-	for attempt := 0; attempt < 5; attempt++ {
+	for range 5 {
 		_, err := ListMetadata(context.Background(), store, "sessions", Filter{})
 		if err == nil || !strings.Contains(err.Error(), keys[3]) {
 			t.Fatalf("error = %v, want the failure for %s", err, keys[3])
@@ -226,7 +226,7 @@ func TestListReportsTheFirstFailingSidecarInKeyOrder(t *testing.T) {
 func TestListStopsOnContextCancelWithoutLeakingReads(t *testing.T) {
 	for _, ignoreCtx := range []bool{false, true} {
 		store := newCountingStore()
-		for i := 0; i < 40; i++ {
+		for i := range 40 {
 			putSession(t, store, "codex", fmt.Sprintf("s%02d", i), baseTime)
 		}
 		store.delay = 20 * time.Millisecond

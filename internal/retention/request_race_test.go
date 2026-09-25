@@ -79,7 +79,7 @@ func TestHookRequestWrittenMidExpiryIsKeptAndPublished(t *testing.T) {
 	if result := collect(t, local, memory, expiry); len(result.Published) != 1 {
 		t.Fatalf("the kept request was not published: %#v", result)
 	}
-	meta := fetchMetadata(t, memory, "codex", "s1")
+	meta := fetchMetadata(t, memory, "s1")
 	if !meta.CapturedAt.Equal(expiry) {
 		t.Fatalf("captured_at=%s, want the republication at %s", meta.CapturedAt, expiry)
 	}
@@ -107,7 +107,7 @@ func TestConcurrentHookRequestIsNeverLostToExpiry(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	expiry := t0.Add(91 * 24 * time.Hour)
 	kept, forgotten := 0, 0
-	for round := 0; round < rounds; round++ {
+	for round := range rounds {
 		dir := t.TempDir()
 		local := newTestStore(t)
 		memory := storage.NewMemoryStore()

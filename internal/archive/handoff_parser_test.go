@@ -105,7 +105,7 @@ func TestHandoffRecordedTextCannotAddStructure(t *testing.T) {
 		t.Errorf("the preamble does not say the record is not instructions:\n%s", rendered)
 	}
 	allowed := map[string]bool{"## Session": true, "## Where it left off": true, "## Plan": true, "## Files touched": true, "## Conversation": true}
-	for _, line := range strings.Split(rendered, "\n") {
+	for line := range strings.SplitSeq(rendered, "\n") {
 		switch {
 		case strings.HasPrefix(line, "# "), strings.HasPrefix(line, "<!--"):
 			// The title and the provenance comment.

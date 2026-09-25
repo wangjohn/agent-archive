@@ -137,9 +137,16 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if opts.MachineID == "" {
 		return Result{}, errors.New("machine ID is required")
 	}
-	p := &pass{ctx: ctx, local: local, remote: store, opts: opts, now: opts.now()}
+	now := opts.now()
 	local.RemoveStaleTemps()
-	p.result = Result{Errors: materializeSubagentCandidates(local, opts)}
+	p := &pass{
+		ctx:    ctx,
+		local:  local,
+		remote: store,
+		opts:   opts,
+		now:    now,
+		result: Result{Errors: materializeSubagentCandidates(local, opts)},
+	}
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
@@ -342,7 +349,7 @@ func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request)
 		// queued, as it does for a transcript file the filter refuses: its
 		// evidence is the only copy, and the chat's next change reads the
 		// chat again with it.
-		p.fail(id, errUnchangedSinceFailure{message: failure})
+		p.fail(id, unchangedSinceFailureError{message: failure})
 		return true
 	}
 	// Settled, or a recorded gap (a size limit) at the same state. A request
@@ -390,15 +397,21 @@ func (p *pass) saveStatus() error {
 	if err != nil && !state.IsUndecodable(err) {
 		return err
 	}
-	status := state.Status{
-		LastScanAt: p.now.UTC(), PendingCount: p.pending, LastPublishedAt: previous.LastPublishedAt,
-		QuarantinedFiles: p.local.QuarantinedFiles(), UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
-	}
+	lastPublishedAt := previous.LastPublishedAt
 	if len(p.result.Published) > 0 {
-		status.LastPublishedAt = p.now.UTC()
+		lastPublishedAt = p.now.UTC()
 	}
+	var lastError string
 	if len(p.result.Errors) > 0 {
-		status.LastError = fmt.Sprintf("%d session(s) failed to scan or publish", len(p.result.Errors))
+		lastError = fmt.Sprintf("%d session(s) failed to scan or publish", len(p.result.Errors))
+	}
+	status := state.Status{
+		LastScanAt:             p.now.UTC(),
+		PendingCount:           p.pending,
+		LastPublishedAt:        lastPublishedAt,
+		LastError:              lastError,
+		QuarantinedFiles:       p.local.QuarantinedFiles(),
+		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
 	}
 	if err := p.local.SaveStatus(status); err != nil {
 		return fmt.Errorf("save status: %w", err)
@@ -438,6 +451,16 @@ func orderOldestRequestsFirst(registrations []archive.SessionRegistration, reque
 
 // cursorTextSourceFormat labels a Cursor transcript captured as plain text.
 const cursorTextSourceFormat = "cursor-text"
+
+// harnessAdapterVersion returns the version of the adapter that reads
+// harness, or known=false when no adapter does.
+func harnessAdapterVersion(harness string) (string, bool) {
+	adapter, err := archive.NewAdapter(harness)
+	if err != nil {
+		return "", false
+	}
+	return adapter.Version(), true
+}
 
 // unchangedSinceLastScan answers the spec's "transcript changed?" question
 // without opening, reading, parsing, or journaling anything: one stat of the
@@ -488,11 +511,11 @@ func unchangedSinceLastScan(ctx context.Context, local *state.Store, reg archive
 	if signature.SourceFormat == cursorTextSourceFormat {
 		return false, nil
 	}
-	adapter, err := archive.NewAdapter(reg.Harness.Name)
-	if err != nil {
+	adapterVersion, known := harnessAdapterVersion(reg.Harness.Name)
+	if !known {
 		return false, nil
 	}
-	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapter.Version() {
+	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion {
 		return false, nil
 	}
 	if signature.Failed && (signature.FailedMaxBytes != opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -171,11 +173,11 @@ func TestHandoffCursorContent(t *testing.T) {
 // text, and three tool calls with long results.
 func bigHandoff(n int) Handoff {
 	h := Handoff{Version: HandoffVersion, Session: HandoffSession{Harness: "claude"}, LeftOff: "final words"}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		exchange := HandoffExchange{Prompt: fmt.Sprintf("prompt %d ", i) + strings.Repeat("p", 3000)}
-		exchange.Steps = append(exchange.Steps, HandoffStep{Kind: "text", Text: strings.Repeat("a", 2000)})
-		for j := 0; j < 3; j++ {
-			exchange.Steps = append(exchange.Steps, HandoffStep{Kind: "tool", Tool: &HandoffToolCall{Name: "Bash", Summary: "go test", Result: strings.Repeat("r", 1500), ResultLines: 1, ResultBytes: 1500}})
+		exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepText, Text: strings.Repeat("a", 2000)})
+		for range 3 {
+			exchange.Steps = append(exchange.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "Bash", Summary: "go test", Result: strings.Repeat("r", 1500), ResultLines: 1, ResultBytes: 1500}})
 		}
 		h.Exchanges = append(h.Exchanges, exchange)
 	}
@@ -218,15 +220,15 @@ func TestFitHandoffAppliesStepsInOrderAndKeepsRecentExchanges(t *testing.T) {
 
 func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
 	fit, _ := FitHandoff(bigHandoff(40), 40_000, markdownSize)
-	var kinds []string
+	var kinds []HandoffElisionKind
 	for _, e := range fit.Elisions {
 		kinds = append(kinds, e.Kind)
 	}
-	want := []string{HandoffElisionToolOutput, HandoffElisionToolCalls, HandoffElisionAssistantText, HandoffElisionPromptText}
-	if strings.Join(kinds, ",") != strings.Join(want, ",") {
+	want := []HandoffElisionKind{HandoffElisionToolOutput, HandoffElisionToolCalls, HandoffElisionAssistantText, HandoffElisionPromptText}
+	if !slices.Equal(kinds, want) {
 		t.Fatalf("elision order = %v, want %v", kinds, want)
 	}
-	if steps := fit.Exchanges[0].Steps; len(steps) != 2 || steps[1].Kind != "collapsed" || steps[1].Text != "3 tool calls: `Bash` ×3" {
+	if steps := fit.Exchanges[0].Steps; len(steps) != 2 || steps[1].Kind != HandoffStepCollapsed || steps[1].Text != "3 tool calls: `Bash` ×3" {
 		t.Fatalf("collapsed = %#v", steps)
 	}
 	for _, exchange := range fit.Exchanges {
@@ -329,8 +331,8 @@ func TestHandoffJSONRoundTrips(t *testing.T) {
 // handoffKeptSteps steps are protected.
 func TestFitHandoffTrimsASingleLongExchange(t *testing.T) {
 	h := bigHandoff(1)
-	for i := 0; i < 60; i++ {
-		h.Exchanges[0].Steps = append(h.Exchanges[0].Steps, HandoffStep{Kind: "tool", Tool: &HandoffToolCall{Name: "Read", Summary: fmt.Sprint(i), Result: strings.Repeat("r", 1500)}})
+	for i := range 60 {
+		h.Exchanges[0].Steps = append(h.Exchanges[0].Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "Read", Summary: strconv.Itoa(i), Result: strings.Repeat("r", 1500)}})
 	}
 	fit, ok := FitHandoff(h, 40_000, markdownSize)
 	if !ok {
@@ -553,7 +555,7 @@ func TestHandoffShowsCompactionSummaries(t *testing.T) {
 	var summaries int
 	for _, exchange := range h.Exchanges {
 		for _, step := range exchange.Steps {
-			if step.Kind == "summary" && step.Text != "" {
+			if step.Kind == HandoffStepSummary && step.Text != "" {
 				summaries++
 			}
 		}

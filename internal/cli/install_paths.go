@@ -52,11 +52,11 @@ func (in installation) isDefault() bool {
 // hook is what setup installs into the apps' hook files: a non-default data
 // directory travels in the command.
 func (in installation) hook(executable string) hooks.Hook {
-	hook := hooks.Hook{Executable: executable}
+	dataHome := ""
 	if !in.isDefault() {
-		hook.DataHome = in.home
+		dataHome = in.home
 	}
-	return hook
+	return hooks.Hook{Executable: executable, DataHome: dataHome}
 }
 
 // label is the background collector's launchd label (see

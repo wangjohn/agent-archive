@@ -331,8 +331,10 @@ func TestOnlyTheAccountsDefaultInstallationGetsTheDefaultLabel(t *testing.T) {
 	accountDefault := filepath.Join(account, ".local", "share", "agent-archive")
 	sandboxDefault := filepath.Join(sandbox, ".local", "share", "agent-archive")
 	for _, tc := range []struct {
-		name, home, userHome string
-		isDefault            bool
+		name      string
+		home      string
+		userHome  string
+		isDefault bool
 	}{
 		{"the account's own install", accountDefault, account, true},
 		{"HOME-only sandbox", sandboxDefault, sandbox, false},

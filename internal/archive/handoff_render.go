@@ -127,30 +127,30 @@ func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
 		inTools := false
 		for _, step := range exchange.Steps {
 			switch step.Kind {
-			case "text":
+			case HandoffStepText:
 				text := step.Text
 				if step.TextTruncated {
 					text += " …(shortened)"
 				}
 				fmt.Fprintf(&b, "\n**Agent:**\n%s", quote(text))
 				inTools = false
-			case "shell":
+			case HandoffStepShell:
 				fmt.Fprintf(&b, "\n**Person ran:** %s\n", codeSpan(firstLine(step.Text, handoffSummaryCap)))
 				inTools = false
-			case "summary":
+			case HandoffStepSummary:
 				text := step.Text
 				if step.TextTruncated {
 					text += " …(shortened)"
 				}
 				fmt.Fprintf(&b, "\n**Conversation compacted.** The agent continued from this summary:\n\n%s", quote(text))
 				inTools = false
-			case "tool":
+			case HandoffStepTool:
 				if !inTools {
 					b.WriteString("\n")
 					inTools = true
 				}
 				renderTool(&b, step.Tool)
-			case "collapsed":
+			case HandoffStepCollapsed:
 				if !inTools {
 					b.WriteString("\n")
 					inTools = true
@@ -201,7 +201,7 @@ func renderTool(b *strings.Builder, tool *HandoffToolCall) {
 	if tool.Result != "" {
 		fence := codeFence(tool.Result)
 		fmt.Fprintf(b, "  %s\n", fence)
-		for _, resultLine := range strings.Split(tool.Result, "\n") {
+		for resultLine := range strings.SplitSeq(tool.Result, "\n") {
 			fmt.Fprintf(b, "  %s\n", resultLine)
 		}
 		fmt.Fprintf(b, "  %s\n", fence)
@@ -269,7 +269,7 @@ func codeSpan(text string) string {
 
 func quote(text string) string {
 	var b strings.Builder
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if line == "" {
 			b.WriteString(">\n")
 			continue

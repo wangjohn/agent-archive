@@ -172,7 +172,8 @@ func TestOnlyParsableParserVersionsAtOrAbove040ProveUnusedSkill(t *testing.T) {
 		"v0.4.0":  false,
 		"0.4.0-a": false,
 		"0.04.0":  false,
-		" 0.4.0":  false,
+		//lint:ignore mapKey the leading space is the case under test
+		" 0.4.0": false,
 	} {
 		m := archive.Metadata{Parser: archive.ParserInfo{Version: version}, SkillDetection: archive.SkillDetectionObservedNone, SkillsAvailable: []archive.SkillSnapshot{{Name: "review", Coverage: archive.SkillCoverageEligible}}}
 		if got := matches(m, Filter{Skill: "review", SkillUsage: SkillUsageEligibleNoUse}); got != want {

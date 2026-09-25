@@ -466,7 +466,7 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 	remote := storage.NewMemoryStore()
 	dir := t.TempDir()
 	content := largeCodexTranscript(size)
-	for i := 0; i < sessions; i++ {
+	for i := range sessions {
 		reg := registration(t, writeTranscript(t, dir, fmt.Sprintf("s%03d.jsonl", i), content))
 		reg.ArchiveSessionID = fmt.Sprintf("session-%03d", i)
 		reg.NativeSessionID = fmt.Sprintf("native-%03d", i)

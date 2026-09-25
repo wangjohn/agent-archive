@@ -6,6 +6,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 var commandHelp = map[string]string{
@@ -181,23 +183,25 @@ Example: agent-archive feedback SESSION_ID --file /private/path/feedback.txt
 // Preflight never resolves paths, credentials, or runtime dependencies.
 func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 	cmd := args[0]
+	//lint:ignore LV1001 cmd is raw argv; these are the spellings that ask for help
 	if cmd == "help" || cmd == "--help" || cmd == "-h" {
 		if len(args) == 1 {
-			fmt.Fprint(out, usage)
+			terminal.Print(out, usage)
 			return true, 0
 		}
 		if cmd == "help" && (len(args) == 2 || len(args) == 3) {
 			if help, ok := commandHelp[strings.Join(args[1:], " ")]; ok {
-				fmt.Fprint(out, help)
+				terminal.Print(out, help)
 				return true, 0
 			}
 		}
-		fmt.Fprintln(errOut, "Use agent-archive help COMMAND.")
+		terminal.Println(errOut, "Use agent-archive help COMMAND.")
 		return true, 2
 	}
+	//lint:ignore LV1001 cmd is raw argv; these are the spellings that ask for the version
 	if cmd == "version" || cmd == "--version" || cmd == "-v" {
 		if len(args) != 1 {
-			fmt.Fprintln(errOut, "--version takes no arguments.")
+			terminal.Println(errOut, "--version takes no arguments.")
 			return true, 2
 		}
 		return false, 0
@@ -213,8 +217,9 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 		}
 	}
 	for _, arg := range args[1:] {
+		//lint:ignore LV1001 arg is raw argv, checked for a help flag
 		if arg == "--help" || arg == "-h" || arg == "-help" {
-			fmt.Fprint(out, help)
+			terminal.Print(out, help)
 			return true, 0
 		}
 	}
@@ -245,14 +250,14 @@ func newCommandFlags(command string, errOut io.Writer) *commandFlags {
 // usageError reports a problem with the command line and returns exit
 // code 2.
 func (f *commandFlags) usageError(format string, args ...any) int {
-	fmt.Fprintf(f.errOut, "agent-archive: %s: %s; run agent-archive %s --help\n", f.Name(), fmt.Sprintf(format, args...), f.Name())
+	terminal.Printf(f.errOut, "agent-archive: %s: %s; run agent-archive %s --help\n", f.Name(), fmt.Sprintf(format, args...), f.Name())
 	return 2
 }
 
 // parse parses the flags in args, leaving positional arguments in Args. It
 // reports a bad flag and returns false; the command then exits 2.
 func (f *commandFlags) parse(args []string) bool {
-	if err := f.FlagSet.Parse(args); err != nil {
+	if err := f.Parse(args); err != nil {
 		f.usageError("%s", describeFlagError(err))
 		return false
 	}

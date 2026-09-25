@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 type setupJournal struct {
@@ -32,6 +33,7 @@ type setupJournal struct {
 }
 
 func journalPath(home string) string { return filepath.Join(home, "setup-transaction.json") }
+
 func transactionPending(home string) bool {
 	_, err := os.Stat(journalPath(home))
 	return !os.IsNotExist(err)
@@ -110,7 +112,7 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 		if err != nil {
 			return 0, 0, err
 		}
-		if !(scanPending || requested[r.ArchiveSessionID] || !found || cacheStatus == state.CacheStatusRateLimited) {
+		if !scanPending && !requested[r.ArchiveSessionID] && found && cacheStatus != state.CacheStatusRateLimited {
 			continue
 		}
 		idle, err := waitingForTranscript(store, r)
@@ -160,6 +162,7 @@ func waitingForTranscript(store *state.Store, r archive.SessionRegistration) (bo
 	pending, err := store.HasPending(r.ArchiveSessionID)
 	return !pending, err
 }
+
 func reviewChanges(home string, old, next config.Config, p *prompter, env Env) error {
 	if old.MachineID == "" {
 		return nil
@@ -396,7 +399,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err != nil {
 		return err
 	}
-	journal := setupJournal{Legacy: legacy, Relabeled: relabeled, Changes: changes, Plist: plistPath, WasLoaded: job == "loaded" || job == "running"}
+	journal := setupJournal{Legacy: legacy, Relabeled: relabeled, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
 	if err = local.Write(journalPath(home), journal); err != nil {
 		return err
 	}
@@ -429,6 +432,13 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	return nil
 }
 
+// launchJobActive reports whether a launchd job state from Env.JobState means
+// the job is loaded, whether or not it is running at the moment.
+func launchJobActive(job string) bool {
+	//lint:ignore LV1001 Env.JobState (cli.go) reports launchd states as plain strings, and tests stub it with string-returning funcs
+	return job == "loaded" || job == "running"
+}
+
 // Recover only files still equal to our before/after snapshots. A user's later
 // edits are never overwritten by crash recovery.
 func restoreSetup(home string, journal setupJournal, env Env) error {
@@ -441,7 +451,7 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 			continue
 		}
 		if err != nil || string(b) != string(c.After) {
-			return &recoveryBlockedError{home: home, cause: fmt.Sprintf("%s changed outside setup, and recovery never overwrites your edits", c.Path)}
+			return &recoveryBlockedError{home: home, cause: c.Path + " changed outside setup, and recovery never overwrites your edits"}
 		}
 		changed = append(changed, c)
 	}
@@ -452,7 +462,7 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 		return err
 	}
 	state := env.jobState(journal.Plist)
-	if state == "loaded" || state == "running" {
+	if launchJobActive(state) {
 		if err := env.unloadLaunchAgent(journal.Plist); err != nil {
 			return err
 		}
@@ -533,7 +543,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 	var journal setupJournal
 	err = local.Read(journalPath(home), &journal)
 	if os.IsNotExist(err) {
-		fmt.Fprintln(out, "No interrupted setup to discard. Nothing was changed.")
+		terminal.Println(out, "No interrupted setup to discard. Nothing was changed.")
 		return nil
 	}
 	if err != nil {
@@ -542,12 +552,12 @@ func abandonRecovery(out io.Writer, env Env) error {
 	if err = os.Remove(journalPath(home)); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Discarded the interrupted setup recorded in %s. These files were kept as they are now:\n", journalPath(home))
+	terminal.Printf(out, "Discarded the interrupted setup recorded in %s. These files were kept as they are now:\n", journalPath(home))
 	for _, c := range journal.Changes {
-		fmt.Fprintf(out, "  %s\n", c.Path)
+		terminal.Printf(out, "  %s\n", c.Path)
 	}
-	fmt.Fprintln(out, "The background collector may be stopped: the interrupted setup can have stopped it before it was interrupted, and nothing restarts it now.")
-	fmt.Fprintln(out, "Next: run agent-archive setup to review your settings; it reinstalls the hooks and starts the background collector again. agent-archive status shows what is running.")
+	terminal.Println(out, "The background collector may be stopped: the interrupted setup can have stopped it before it was interrupted, and nothing restarts it now.")
+	terminal.Println(out, "Next: run agent-archive setup to review your settings; it reinstalls the hooks and starts the background collector again. agent-archive status shows what is running.")
 	return nil
 }
 
@@ -596,7 +606,7 @@ func planRelabel(home, userHome string, env Env) (*legacyJob, error) {
 		// launchd runs that label from another plist: not this one's to retire.
 		return nil, nil
 	}
-	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: state == "loaded" || state == "running"}, nil
+	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)}, nil
 }
 
 func withoutBucketPrivacy(cfg config.Config) config.Config {

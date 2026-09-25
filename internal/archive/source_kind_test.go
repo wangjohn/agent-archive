@@ -32,10 +32,11 @@ func TestSessionRegistrationSourceKind(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*SessionRegistration){
-		"no source key":   func(r *SessionRegistration) { r.SourceKey = " " },
-		"a path":          func(r *SessionRegistration) { r.TranscriptPath = "/t/n.jsonl" },
-		"another key":     func(r *SessionRegistration) { r.SourceKey = "other" },
-		"not cursor":      func(r *SessionRegistration) { r.Harness.Name = "codex" },
+		"no source key": func(r *SessionRegistration) { r.SourceKey = " " },
+		"a path":        func(r *SessionRegistration) { r.TranscriptPath = "/t/n.jsonl" },
+		"another key":   func(r *SessionRegistration) { r.SourceKey = "other" },
+		"not cursor":    func(r *SessionRegistration) { r.Harness.Name = "codex" },
+		//lint:ignore LV1001 deliberately a source kind with no declared constant
 		"an unknown kind": func(r *SessionRegistration) { r.SourceKind = "cursor-leveldb" },
 	} {
 		r := chat

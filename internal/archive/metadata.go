@@ -50,7 +50,7 @@ func tokenCount(raw any) (int, bool) {
 	return int(value), true
 }
 
-func (t tokenTotals) usage() TokenUsage {
+func (t *tokenTotals) usage() TokenUsage {
 	var out TokenUsage
 	add := func(target **int, source map[string]any, keys ...string) {
 		for _, key := range keys {
@@ -147,23 +147,25 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 	if parser.Status == "" {
 		parser.Status = ParserStatusPartial
 	}
+	view, parseErr := ParseNormalized(bundle)
+	if parseErr != nil {
+		parser.Status = ParserStatusFailed
+	}
+	state, outcome := deriveLifecycle(bundle.SupplementalEvidence)
 	metadata := Metadata{
 		SchemaVersion: MetadataSchemaVersion, SessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID,
 		MachineID: machineID, ProjectID: bundle.ProjectID, StartedAt: startedAt.UTC(), CapturedAt: bundle.Capture.CapturedAt.UTC(),
 		MetadataDerivedAt: derivedAt.UTC(), Harness: bundle.Capture.Harness,
 		Adapter: AdapterInfo{Name: bundle.Capture.AdapterName, Version: bundle.Capture.AdapterVersion}, Parser: parser,
-		FilterVersion: bundle.Capture.FilterVersion, State: MetadataStateUnknown, TurnOutcome: TurnOutcomeUnknown,
+		FilterVersion: bundle.Capture.FilterVersion, State: state, TurnOutcome: outcome,
 		SemanticConventions: &SemanticConventionsInfo{Name: "OpenTelemetry GenAI semantic conventions", Revision: OpenTelemetryGenAIRevision},
 		SkillDetection:      SkillDetectionUnavailable,
 		CaptureGaps:         append([]CaptureGap(nil), bundle.Capture.Gaps...), SourceBundle: reference,
 		ParentSessionID: bundle.ParentSessionID,
 		LinkedSessions:  append([]LinkedSessionReference(nil), bundle.LinkedSessions...),
 	}
-	metadata.State, metadata.TurnOutcome = deriveLifecycle(bundle.SupplementalEvidence)
-	view, err := ParseNormalized(bundle)
-	if err != nil {
-		metadata.Parser.Status = ParserStatusFailed
-		return metadata, err
+	if parseErr != nil {
+		return metadata, parseErr
 	}
 	// A native end-of-turn record fills in only what the hook evidence could
 	// not establish: an observed hook stop, interrupt, or closure still wins.
@@ -196,11 +198,16 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 		case TurnKindShellCommand:
 			shellCommands++
 			continue
-		default:
+		case TurnKindToolResult, TurnKindHarnessMeta, TurnKindCommandOutput, TurnKindLocalCommand,
+			TurnKindCompactSummary, TurnKindHarnessNotification:
 			// A tool result, command output, an unanswered slash command, or a
 			// harness-written record is not a message any author sent.
 			continue
+		default:
+			// A kind added later is not counted either.
+			continue
 		}
+		//lint:ignore LV1001 roles are copied from native records, an external and open vocabulary
 		if turn.Role != "user" && turn.Role != "assistant" {
 			continue
 		}
@@ -275,11 +282,37 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 
 type lifecycleObservation struct {
 	at         time.Time
-	event      string
-	status     string
+	event      lifecycleEvent
+	status     lifecycleStatus
 	provenance string
 	payloadKey string
 }
+
+// lifecycleEvent is a hook event name, lowercased with underscores removed.
+// Only the events below mean anything to deriveLifecycle; any other name is
+// kept as observed and ignored.
+type lifecycleEvent string
+
+const (
+	lifecycleSessionStart       lifecycleEvent = "sessionstart"
+	lifecycleUserPromptSubmit   lifecycleEvent = "userpromptsubmit"
+	lifecycleBeforeSubmitPrompt lifecycleEvent = "beforesubmitprompt"
+	lifecycleStop               lifecycleEvent = "stop"
+	lifecycleInterrupt          lifecycleEvent = "interrupt"
+	lifecycleStopFailure        lifecycleEvent = "stopfailure"
+	lifecycleSessionEnd         lifecycleEvent = "sessionend"
+	lifecycleSubagentStop       lifecycleEvent = "subagentstop"
+)
+
+// lifecycleStatus is a hook payload's lowercased status. Only Cursor's
+// documented values below are read.
+type lifecycleStatus string
+
+const (
+	lifecycleStatusCompleted lifecycleStatus = "completed"
+	lifecycleStatusAborted   lifecycleStatus = "aborted"
+	lifecycleStatusError     lifecycleStatus = "error"
+)
 
 // deriveLifecycle applies conservative rules to filtered hook evidence.
 // Sorting makes duplicate, delayed, and out-of-order delivery deterministic.
@@ -291,13 +324,13 @@ func deriveLifecycle(evidence []SupplementalEvidence) (MetadataState, TurnOutcom
 		if item.Kind != EvidenceKindLifecycleHook {
 			continue
 		}
-		event := strings.ToLower(strings.ReplaceAll(firstString(item.Payload, "event_name"), "_", ""))
+		event := lifecycleEvent(strings.ToLower(strings.ReplaceAll(firstString(item.Payload, "event_name"), "_", "")))
 		if event == "" {
 			continue
 		}
 		payload, _ := json.Marshal(item.Payload)
 		observations = append(observations, lifecycleObservation{
-			at: item.ObservedAt, event: event, status: strings.ToLower(firstString(item.Payload, "status")),
+			at: item.ObservedAt, event: event, status: lifecycleStatus(strings.ToLower(firstString(item.Payload, "status"))),
 			provenance: item.Provenance, payloadKey: string(payload),
 		})
 	}
@@ -308,60 +341,61 @@ func deriveLifecycle(evidence []SupplementalEvidence) (MetadataState, TurnOutcom
 		if lifecycleRank(observations[i].event) != lifecycleRank(observations[j].event) {
 			return lifecycleRank(observations[i].event) < lifecycleRank(observations[j].event)
 		}
-		left := observations[i].event + "\x00" + observations[i].status + "\x00" + observations[i].provenance + "\x00" + observations[i].payloadKey
-		right := observations[j].event + "\x00" + observations[j].status + "\x00" + observations[j].provenance + "\x00" + observations[j].payloadKey
+		left := string(observations[i].event) + "\x00" + string(observations[i].status) + "\x00" + observations[i].provenance + "\x00" + observations[i].payloadKey
+		right := string(observations[j].event) + "\x00" + string(observations[j].status) + "\x00" + observations[j].provenance + "\x00" + observations[j].payloadKey
 		return left < right
 	})
 	state, outcome := MetadataStateUnknown, TurnOutcomeUnknown
 	for _, observation := range observations {
 		switch observation.event {
-		case "sessionstart", "userpromptsubmit", "beforesubmitprompt":
+		case lifecycleSessionStart, lifecycleUserPromptSubmit, lifecycleBeforeSubmitPrompt:
 			state, outcome = MetadataStateActive, TurnOutcomeUnknown
-		case "stop":
+		case lifecycleStop:
 			state, outcome = MetadataStateIdle, documentedLifecycleOutcome(observation.event, observation.status, observation.provenance)
-		case "interrupt":
+		case lifecycleInterrupt:
 			state, outcome = MetadataStateIdle, TurnOutcomeInterrupted
-		case "stopfailure":
+		case lifecycleStopFailure:
 			state, outcome = MetadataStateIdle, TurnOutcomeError
-		case "sessionend":
+		case lifecycleSessionEnd:
 			state = MetadataStateClosed
 			// Closing the session does not undo a previously observed turn outcome.
 			if observed := documentedLifecycleOutcome(observation.event, observation.status, observation.provenance); observed != TurnOutcomeUnknown {
 				outcome = observed
 			}
+		case lifecycleSubagentStop:
+			// A subagent finishing says nothing about the parent session, which
+			// is still running: its state and outcome are left as observed.
 		}
-		// A subagent finishing says nothing about the parent session, which
-		// is still running: its state and outcome are left as observed.
 	}
 	return state, outcome
 }
 
-func lifecycleRank(event string) int {
+func lifecycleRank(event lifecycleEvent) int {
 	switch event {
-	case "sessionstart", "userpromptsubmit", "beforesubmitprompt":
+	case lifecycleSessionStart, lifecycleUserPromptSubmit, lifecycleBeforeSubmitPrompt:
 		return 1
-	case "stop", "interrupt", "stopfailure":
+	case lifecycleStop, lifecycleInterrupt, lifecycleStopFailure:
 		return 2
-	case "sessionend", "subagentstop":
+	case lifecycleSessionEnd, lifecycleSubagentStop:
 		return 3
 	default:
 		return 0
 	}
 }
 
-func documentedLifecycleOutcome(event, status, provenance string) TurnOutcome {
-	if event == "stop" && provenance != "hook:cursor:stop" {
+func documentedLifecycleOutcome(event lifecycleEvent, status lifecycleStatus, provenance string) TurnOutcome {
+	if event == lifecycleStop && provenance != "hook:cursor:stop" {
 		return TurnOutcomeUnknown
 	}
-	if event == "sessionend" && provenance != "hook:cursor:sessionend" {
+	if event == lifecycleSessionEnd && provenance != "hook:cursor:sessionend" {
 		return TurnOutcomeUnknown
 	}
 	switch status {
-	case "completed":
+	case lifecycleStatusCompleted:
 		return TurnOutcomeCompleted
-	case "aborted":
+	case lifecycleStatusAborted:
 		return TurnOutcomeInterrupted
-	case "error":
+	case lifecycleStatusError:
 		return TurnOutcomeError
 	default:
 		return TurnOutcomeUnknown
@@ -444,6 +478,8 @@ func deriveSkills(bundle SourceBundle, nativeSkillUses []SkillUse, metadata *Met
 			recordUse(SkillUse{Name: name, SHA256: hash, Evidence: SkillUseEvidenceNativeInvocation})
 		case EvidenceKindSkillRead:
 			recordUse(SkillUse{Name: name, SHA256: hash, Evidence: SkillUseEvidenceReadInference})
+		case EvidenceKindLifecycleHook, EvidenceKindFinalResponse, EvidenceKindExplicitFeedback,
+			EvidenceKindLinkedSession, EvidenceKindCaptureGap:
 		}
 	}
 	// Native invocation/read-inference evidence is collected once, in
@@ -494,7 +530,7 @@ func skillNameFromPath(value string) string {
 // ValidateSourceReference checks that metadata has the supported schema
 // version and names its source bundle: an object key and a 64-character
 // SHA-256.
-func (m Metadata) ValidateSourceReference() error {
+func (m *Metadata) ValidateSourceReference() error {
 	if m.SchemaVersion != MetadataSchemaVersion {
 		return fmt.Errorf("unsupported metadata schema version %d", m.SchemaVersion)
 	}

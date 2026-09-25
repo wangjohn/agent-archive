@@ -202,16 +202,19 @@ func putMetadata(t *testing.T, remote storage.ObjectStore, reg archive.SessionRe
 func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 	cases := map[string]func(t *testing.T, remote *storage.MemoryStore, reg archive.SessionRegistration, published archive.Metadata){
 		"missing remote metadata": func(t *testing.T, remote *storage.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
+			t.Helper()
 			key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 			if err := remote.Delete(context.Background(), key); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"metadata from another machine": func(t *testing.T, remote *storage.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
+			t.Helper()
 			published.MachineID = "elsewhere"
 			putMetadata(t, remote, reg, published)
 		},
 		"metadata for a different source": func(t *testing.T, remote *storage.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
+			t.Helper()
 			published.SourceBundle.SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
 			putMetadata(t, remote, reg, published)
 		},

@@ -31,7 +31,7 @@ type verificationEvidence struct {
 	// verificationOutcomeMismatch (the remote no longer identifies what this
 	// machine published; permanent for this publication, cleared only by a
 	// republish or a configuration change).
-	Outcome string `json:"outcome,omitempty"`
+	Outcome verificationOutcome `json:"outcome,omitempty"`
 	// Attempts counts read-backs tried for this publication under this
 	// configuration; NextRetryAt is when the next one may run, following
 	// verificationBackoff. Both reset when the publication or configuration
@@ -41,10 +41,16 @@ type verificationEvidence struct {
 	NextRetryAt time.Time `json:"next_retry_at,omitempty"`
 }
 
+// verificationOutcome is the result of one read-back attempt.
+type verificationOutcome string
+
 const (
-	verificationOutcomeVerified = "verified"
-	verificationOutcomeFailed   = "failed"
-	verificationOutcomeMismatch = "mismatch"
+	verificationOutcomeVerified verificationOutcome = "verified"
+	verificationOutcomeFailed   verificationOutcome = "failed"
+	verificationOutcomeMismatch verificationOutcome = "mismatch"
+)
+
+const (
 	// maxVerificationsPerPass bounds the read-back downloads (each up to the
 	// reader's compressed limit) one pass may perform, so a configuration
 	// change that invalidates every record does not re-download every
@@ -73,22 +79,28 @@ func verificationRetryDelay(attempts int) time.Duration {
 
 // verificationSummary reports what one verifyPublications pass did.
 type verificationSummary struct {
-	Attempted, Verified, Failed, Mismatched int
+	Attempted  int
+	Verified   int
+	Failed     int
+	Mismatched int
 	// Deferred counts publications still unverified that were not attempted
 	// this pass, because their backoff has not elapsed or the per-pass cap
 	// was reached.
 	Deferred int
 }
+
 type storageHealth struct {
-	ConfigurationID string    `json:"configuration_id"`
-	State           string    `json:"state"`
-	CheckedAt       time.Time `json:"checked_at,omitzero"`
-	Context         string    `json:"context"`
+	ConfigurationID string `json:"configuration_id"`
+	//lint:ignore LV1001 set and compared as literals in collect.go and status.go; typing it needs collect.go to change with it
+	State     string    `json:"state"`
+	CheckedAt time.Time `json:"checked_at,omitzero"`
+	Context   string    `json:"context"`
 }
 
 func configurationID(cfg config.Config) string {
 	// These fields contain references, never credentials. Pausing, retention,
 	// and unrelated historical settings do not invalidate capture verification.
+	//lint:ignore musttag hash input for the configuration ID: its key names are the Go field names, and changing them would invalidate stored verification evidence
 	data, _ := json.Marshal(struct {
 		Storage            any
 		Harnesses          []string
@@ -107,6 +119,7 @@ func sessionVerificationConfigurationID(cfg config.Config, reg archive.SessionRe
 			break
 		}
 	}
+	//lint:ignore musttag hash input for the configuration ID: its key names are the Go field names, and changing them would invalidate stored verification evidence
 	data, _ := json.Marshal(struct {
 		Storage            any
 		Machine            string
@@ -118,9 +131,11 @@ func sessionVerificationConfigurationID(cfg config.Config, reg archive.SessionRe
 	}{cfg.Storage, cfg.MachineID, cfg.DestinationSince, reg.Harness.Name, reg.ProjectRoot, activation, 1})
 	return storage.SHA256Hex(data)
 }
+
 func verificationPath(home, id string) string {
 	return filepath.Join(home, "sessions", id, "verification.json")
 }
+
 func readVerification(home, id string) (verificationEvidence, error) {
 	var v verificationEvidence
 	err := local.Read(verificationPath(home, id), &v)
@@ -129,6 +144,7 @@ func readVerification(home, id string) (verificationEvidence, error) {
 	}
 	return v, err
 }
+
 func recordStorageHealth(home string, cfg config.Config, env Env, background bool, state string) error {
 	contextName := "manual_sync"
 	if background {

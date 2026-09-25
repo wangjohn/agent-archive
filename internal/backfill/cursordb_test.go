@@ -77,11 +77,22 @@ func openCursorWriter(t *testing.T, path string, wal bool) *sql.DB {
 		stmts = append([]string{`PRAGMA journal_mode=WAL`}, stmts...)
 	}
 	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
+		if _, err := db.ExecContext(t.Context(), s); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return db
+}
+
+// closeAtEnd closes c once the test and its subtests finish, and fails the
+// test if closing fails.
+func closeAtEnd(t *testing.T, c io.Closer) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 }
 
 type execer interface {
@@ -125,15 +136,15 @@ func snapshotDir(t *testing.T, dir string) map[string]fileState {
 		if err != nil {
 			t.Fatal(err)
 		}
-		st := fileState{size: info.Size(), mode: info.Mode(), modTime: info.ModTime()}
+		var sum [32]byte
 		if info.Mode().IsRegular() {
 			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 			if err != nil {
 				t.Fatal(err)
 			}
-			st.sum = sha256.Sum256(data)
+			sum = sha256.Sum256(data)
 		}
-		out[e.Name()] = st
+		out[e.Name()] = fileState{size: info.Size(), mode: info.Mode(), modTime: info.ModTime(), sum: sum}
 	}
 	return out
 }
@@ -283,17 +294,17 @@ func TestCursorDatabaseReaderNewerFormat(t *testing.T) {
 // chats only it holds silently left out.
 func TestCursorDatabaseReaderSymlink(t *testing.T) {
 	home := t.TempDir()
-	real := filepath.Join(t.TempDir(), "elsewhere", "state.vscdb")
-	w := startCursorWriter(t, real, true)
+	target := filepath.Join(t.TempDir(), "elsewhere", "state.vscdb")
+	w := startCursorWriter(t, target, true)
 	w.do("a", "checkpoint", "b", "c")
 	link := CursorStateDatabase(home)
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
-	dir, linkDir := filepath.Dir(real), filepath.Dir(link)
+	dir, linkDir := filepath.Dir(target), filepath.Dir(link)
 	before, linkBefore := snapshotDir(t, dir), snapshotDir(t, linkDir)
 	if res := readCursor(t, home); !res.Checked || !reflect.DeepEqual(chatIDs(res), []string{"a", "b", "c"}) {
 		t.Fatalf("%+v", res)
@@ -316,12 +327,12 @@ func TestCursorDatabaseReaderSymlink(t *testing.T) {
 func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.vscdb")
 	db := openCursorWriter(t, path, false)
-	defer db.Close()
-	rows, err := db.Query(`EXPLAIN QUERY PLAN ` + cursorComposerQuery)
+	closeAtEnd(t, db)
+	rows, err := db.QueryContext(t.Context(), `EXPLAIN QUERY PLAN `+cursorComposerQuery)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var plan []string
 	for rows.Next() {
 		var id, parent, notUsed int
@@ -330,6 +341,9 @@ func TestCursorDatabaseQueryUsesIndex(t *testing.T) {
 			t.Fatal(err)
 		}
 		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
 	}
 	if got := strings.Join(plan, "; "); !strings.Contains(got, "USING INDEX") || !strings.Contains(got, "key>? AND key<?") {
 		t.Fatalf("query plan %q does not search the key index", got)
@@ -350,6 +364,7 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 	good := map[string]any{"composerData:a": composerJSON("a", 1, nil)}
 	value := func(v string) func(t *testing.T, path string) {
 		return func(t *testing.T, path string) {
+			t.Helper()
 			writeCursorDB(t, path, false, map[string]any{"composerData:a": composerJSON("a", 1, nil), "composerData:b": v})
 		}
 	}
@@ -358,6 +373,7 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 		reason CursorUncheckedReason
 	}{
 		"garbage": {func(t *testing.T, path string) {
+			t.Helper()
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -366,6 +382,7 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 			}
 		}, CursorUncheckedUnreadable},
 		"truncated": {func(t *testing.T, path string) {
+			t.Helper()
 			writeCursorDB(t, path, false, good)
 			data, _ := os.ReadFile(path)
 			if err := os.WriteFile(path, data[:len(data)/2], 0o644); err != nil {
@@ -373,11 +390,13 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 			}
 		}, CursorUncheckedUnreadable},
 		"directory": {func(t *testing.T, path string) {
+			t.Helper()
 			if err := os.MkdirAll(path, 0o755); err != nil {
 				t.Fatal(err)
 			}
 		}, CursorUncheckedUnreadable},
 		"no table": {func(t *testing.T, path string) {
+			t.Helper()
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -385,10 +404,12 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.Exec(`CREATE TABLE ItemTable (key TEXT, value BLOB)`); err != nil {
+			if _, err := db.ExecContext(t.Context(), `CREATE TABLE ItemTable (key TEXT, value BLOB)`); err != nil {
 				t.Fatal(err)
 			}
-			db.Close()
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
 		}, CursorUncheckedUnknownFormat},
 		"not json":               {value("not json"), CursorUncheckedUnknownFormat},
 		"not an object":          {value(`[1,2]`), CursorUncheckedUnknownFormat},
@@ -402,12 +423,14 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 		// read without SQLite creating the missing one. (An empty -wal
 		// alone is the exception; see TestCursorDatabaseReaderStrayWAL.)
 		"wal without shm": {func(t *testing.T, path string) {
+			t.Helper()
 			writeCursorDB(t, path, true, good)
 			if err := os.WriteFile(path+"-wal", []byte("frames"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}, CursorUncheckedUnreadable},
 		"shm without wal": {func(t *testing.T, path string) {
+			t.Helper()
 			writeCursorDB(t, path, true, good)
 			if err := os.WriteFile(path+"-shm", nil, 0o644); err != nil {
 				t.Fatal(err)
@@ -416,6 +439,7 @@ func TestCursorDatabaseReaderNotChecked(t *testing.T) {
 		// A rollback journal is a write in progress, or a hot journal only a
 		// writer may roll back.
 		"journal": {func(t *testing.T, path string) {
+			t.Helper()
 			writeCursorDB(t, path, false, good)
 			if err := os.WriteFile(path+"-journal", []byte("journal"), 0o644); err != nil {
 				t.Fatal(err)
@@ -462,22 +486,27 @@ func TestCursorDatabaseReaderStrayWAL(t *testing.T) {
 func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 	for name, change := range map[string]func(t *testing.T, path string){
 		"modified": func(t *testing.T, path string) {
+			t.Helper()
 			later := time.Now().Add(time.Minute)
 			if err := os.Chtimes(path, later, later); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"grown": func(t *testing.T, path string) {
+			t.Helper()
 			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer f.Close()
 			if _, err := f.Write(make([]byte, 4096)); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.Close(); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"replaced": func(t *testing.T, path string) {
+			t.Helper()
 			data, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
@@ -490,7 +519,7 @@ func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer old.Close()
+			defer func() { _ = old.Close() }()
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
@@ -503,6 +532,7 @@ func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 		},
 		// Same size, time, and inode; only SQLite's change counter moved.
 		"header": func(t *testing.T, path string) {
+			t.Helper()
 			info, err := os.Stat(path)
 			if err != nil {
 				t.Fatal(err)
@@ -514,12 +544,15 @@ func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 			if _, err := f.WriteAt([]byte{0xff}, 27); err != nil {
 				t.Fatal(err)
 			}
-			f.Close()
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
 			if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"cursor started": func(t *testing.T, path string) {
+			t.Helper()
 			if err := os.WriteFile(path+"-wal", nil, 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -555,7 +588,9 @@ func startCursorWriter(t *testing.T, path string, wal bool) *cursorWriter {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(os.Args[0], "-test.run=^TestCursorWriterProcess$")
+	// Not t.Context(): the writer is stopped by closing its stdin in the
+	// cleanup, which runs after that context is cancelled.
+	cmd := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestCursorWriterProcess$")
 	cmd.Env = append(os.Environ(), "BACKFILL_CURSOR_WRITER_DB="+path, fmt.Sprintf("BACKFILL_CURSOR_WRITER_WAL=%v", wal))
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
@@ -571,8 +606,10 @@ func startCursorWriter(t *testing.T, path string, wal bool) *cursorWriter {
 	}
 	w := &cursorWriter{t: t, cmd: cmd, stdin: stdin, replies: bufio.NewScanner(stdout)}
 	t.Cleanup(func() {
-		stdin.Close()
-		_ = cmd.Wait() // the writer exits once stdin closes; its status is not under test
+		// Closing stdin ends the writer. Either may fail after kill, which
+		// has already stopped it.
+		_ = stdin.Close()
+		_ = cmd.Wait()
 	})
 	return w
 }
@@ -581,7 +618,9 @@ func startCursorWriter(t *testing.T, path string, wal bool) *cursorWriter {
 func (w *cursorWriter) do(commands ...string) {
 	w.t.Helper()
 	for _, c := range commands {
-		fmt.Fprintln(w.stdin, c)
+		if _, err := fmt.Fprintln(w.stdin, c); err != nil {
+			w.t.Fatal(err)
+		}
 		if !w.replies.Scan() || w.replies.Text() != "ok" {
 			w.t.Fatalf("the writer did not do %s: %q", c, w.replies.Text())
 		}
@@ -594,7 +633,8 @@ func (w *cursorWriter) kill() {
 	if err := w.cmd.Process.Kill(); err != nil {
 		w.t.Fatal(err)
 	}
-	_ = w.cmd.Wait() // killed, so it reports the kill
+	// The error only reports the kill.
+	_ = w.cmd.Wait()
 }
 
 // TestCursorWriterProcess is the writer process of cursorWriter: it never
@@ -605,12 +645,12 @@ func TestCursorWriterProcess(t *testing.T) {
 		t.Skip("run by startCursorWriter")
 	}
 	db := openCursorWriter(t, path, os.Getenv("BACKFILL_CURSOR_WRITER_WAL") == "true")
-	defer db.Close()
+	closeAtEnd(t, db)
 	conn, err := db.Conn(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	closeAtEnd(t, conn)
 	if _, err := conn.ExecContext(context.Background(), `PRAGMA wal_autocheckpoint=0`); err != nil {
 		t.Fatal(err)
 	}
@@ -754,9 +794,11 @@ func TestCursorDatabasePlan(t *testing.T) {
 
 	// "bare" names no workspace, so it has no project (and no start).
 	for _, tc := range []struct {
-		name                          string
-		filters                       Filters
-		imported, filtered, noProject int
+		name      string
+		filters   Filters
+		imported  int
+		filtered  int
+		noProject int
 	}{
 		{"no filters", Filters{}, 3, 0, 1},
 		{"since", Filters{Since: "2026-09-10"}, 2, 2, 0},
@@ -776,6 +818,7 @@ func TestCursorDatabasePlan(t *testing.T) {
 				t.Fatalf("checked %v, outcomes %v, want %v", p.CursorDatabaseChecked, got, want)
 			}
 			for _, c := range databaseCandidates(p) {
+				//lint:ignore LV1001 native session IDs are external Cursor chat IDs, not a closed set
 				if c.NativeSessionID == "k1" || c.NativeSessionID == "draft" {
 					t.Fatalf("%s planned from the database", c.NativeSessionID)
 				}
@@ -838,7 +881,10 @@ func TestCursorDatabaseSkippedWhenTranscriptsUnreadable(t *testing.T) {
 		"composerData:k1": composerJSON("k1", 3, nil),
 		"composerData:k2": composerJSON("k2", 1, nil),
 	})
-	for _, tc := range []struct{ name, unreadable string }{
+	for _, tc := range []struct {
+		name       string
+		unreadable string
+	}{
 		{"store", filepath.Join(tr.home, ".cursor", "projects")},
 		{"one project's transcripts", filepath.Join(slugDir, "agent-transcripts")},
 	} {

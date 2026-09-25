@@ -244,16 +244,32 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 		if kind == TurnKindCompactSummary {
 			view.CompactSummaries++
 		}
-		turn := NormalizedTurn{RecordIndex: i, Role: role, Kind: kind, MessageID: nestedMessageID(record), Text: text, Provider: firstStringDeep(record, "model_provider"), ID: firstStringDeep(record, "id", "uuid"), ParentID: firstStringDeep(record, "parent_id", "parent_uuid", "parentUuid"), TurnID: firstStringDeep(record, "turn_id"), Timestamp: firstStringDeep(record, "timestamp", "created_at")}
+		var model, responseModel, reasoning string
+		var modelSource TurnModelSource
 		switch bundle.harness() {
 		case "codex":
-			turn.Model, turn.Reasoning, turn.ModelSource = codexModel, codexReasoning, TurnModelSourceTurnContext
+			model, reasoning, modelSource = codexModel, codexReasoning, TurnModelSourceTurnContext
 		case "claude":
-			turn.ResponseModel, turn.ModelSource = recordModel(record), TurnModelSourceNativeResponse
+			responseModel, modelSource = recordModel(record), TurnModelSourceNativeResponse
 		default:
-			turn.Model, turn.Reasoning, turn.ModelSource = recordModel(record), firstStringDeep(record, "reasoning_effort"), TurnModelSourceNativeTranscript
+			model, reasoning, modelSource = recordModel(record), firstStringDeep(record, "reasoning_effort"), TurnModelSourceNativeTranscript
 		}
-		view.Turns = append(view.Turns, turn)
+		view.Turns = append(view.Turns, NormalizedTurn{
+			RecordIndex:   i,
+			Role:          role,
+			Kind:          kind,
+			MessageID:     nestedMessageID(record),
+			Text:          text,
+			Model:         model,
+			ResponseModel: responseModel,
+			ModelSource:   modelSource,
+			Provider:      firstStringDeep(record, "model_provider"),
+			Reasoning:     reasoning,
+			ID:            firstStringDeep(record, "id", "uuid"),
+			ParentID:      firstStringDeep(record, "parent_id", "parent_uuid", "parentUuid"),
+			TurnID:        firstStringDeep(record, "turn_id"),
+			Timestamp:     firstStringDeep(record, "timestamp", "created_at"),
+		})
 	}
 	resolveSlashCommands(view.Turns)
 	view.ToolCalls = dedupeToolCalls(candidates)

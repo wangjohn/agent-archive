@@ -124,13 +124,13 @@ func (b *Batch) Reconcile(store *state.Store) error {
 
 // Matches reports whether a run with these filters and destination
 // continues the batch.
-func (b Batch) Matches(filters BatchFilters, destinationID string) bool {
+func (b *Batch) Matches(filters BatchFilters, destinationID string) bool {
 	return b.Filters.equal(filters) && b.DestinationID == destinationID
 }
 
 // Continues reports whether a run with these filters and destination
 // finishes the batch: it was interrupted, not undone since, and matches.
-func (b Batch) Continues(filters BatchFilters, destinationID string) bool {
+func (b *Batch) Continues(filters BatchFilters, destinationID string) bool {
 	return b.CompletedAt == nil && b.UndoneAt == nil && b.Matches(filters, destinationID)
 }
 

@@ -59,6 +59,7 @@ func loadLaunchAgent(plistPath string) error {
 // loaded. A label alone does not prove ownership, so it first confirms
 // launchd loaded the job from plistPath itself, and refuses otherwise.
 func unloadLaunchAgent(plistPath string) error {
+	//lint:ignore LV1001 Env.JobState (cli.go) reports launchd states as plain strings, and tests stub it with string-returning funcs
 	switch state := launchdJobState(plistPath); state {
 	case "loaded", "running":
 	case "missing":
@@ -112,7 +113,7 @@ func parseJobState(output string, err error, plist string) string {
 		return "unknown"
 	}
 	loadedFrom := ""
-	for _, line := range strings.Split(output, "\n") {
+	for line := range strings.SplitSeq(output, "\n") {
 		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "path = "); ok {
 			loadedFrom = strings.TrimSpace(value)
 			break

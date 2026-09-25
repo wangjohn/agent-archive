@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -41,6 +42,7 @@ func TestMergePreservesAndIsIdempotent(t *testing.T) {
 		})
 	}
 }
+
 func TestPreserveUnrelatedHandler(t *testing.T) {
 	data, e := Merge([]byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"other"}]}]}}`), "codex", testHook("/bin/agent-archive"))
 	if e != nil {
@@ -50,6 +52,7 @@ func TestPreserveUnrelatedHandler(t *testing.T) {
 		t.Fatalf("removed unrelated handler:\n%s", data)
 	}
 }
+
 func TestInvalidConfigIsNotOverwritten(t *testing.T) {
 	for _, s := range []string{`null`, `[]`, `{"hooks":42}`, `{"hooks":{"Stop":[{}]}}`, `{"a":1} {"b":2}`, `{"a":1,}`} {
 		if _, e := Merge([]byte(s), "codex", testHook("/bin/archive")); e == nil {
@@ -179,7 +182,7 @@ func TestHookCommandCarriesTheDataDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("/bin/sh", "-c", command)
+	cmd := exec.CommandContext(context.Background(), "/bin/sh", "-c", command)
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, output)

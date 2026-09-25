@@ -17,10 +17,11 @@ import (
 
 const grownTranscript = codexTranscript + "\n" + `{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}` + "\n"
 
-// editPublishedState rewrites a session's published state as raw JSON, to
+// editPublishedState rewrites session-1's published state as raw JSON, to
 // stand in for state an older build wrote.
-func editPublishedState(t *testing.T, local *state.Store, id string, edit func(state map[string]any)) {
+func editPublishedState(t *testing.T, local *state.Store, edit func(state map[string]any)) {
 	t.Helper()
+	const id = "session-1"
 	data, err := os.ReadFile(publishedPath(local, id))
 	if err != nil {
 		t.Fatal(err)
@@ -55,21 +56,21 @@ func withoutRecordedSource(state map[string]any) {
 
 // publishThenGrow publishes session-1 at t0, then grows its transcript and
 // queues a stop request, and returns the first publication's source key.
-func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore, t0 time.Time) (path, firstKey string) {
+func publishThenGrow(t *testing.T, local *state.Store, store storage.ObjectStore, t0 time.Time) string {
 	t.Helper()
-	path = writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
+	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
 	if result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil || len(result.Published) != 1 {
 		t.Fatalf("first publication: %#v %v", result, err)
 	}
-	firstKey = fetchMetadata(t, store, "codex", "session-1").SourceBundle.Key
+	firstKey := fetchMetadata(t, store, "codex", "session-1").SourceBundle.Key
 	writeTranscript(t, filepath.Dir(path), "codex.jsonl", grownTranscript)
 	if err := local.SaveRequest("session-1", "stop", t0.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	return path, firstKey
+	return firstKey
 }
 
 func assertRepublishedSuperseding(t *testing.T, local *state.Store, store storage.ObjectStore, now time.Time, wantSuperseded []string) {
@@ -107,8 +108,8 @@ func TestPublishAfterSourceSchemaBumpSupersedesUploadedKey(t *testing.T) {
 	local := newTestStore(t)
 	store := storage.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	_, firstKey := publishThenGrow(t, local, store, t0)
-	editPublishedState(t, local, "session-1", olderSourceSchema)
+	firstKey := publishThenGrow(t, local, store, t0)
+	editPublishedState(t, local, olderSourceSchema)
 	assertRepublishedSuperseding(t, local, store, t0.Add(time.Hour), []string{firstKey})
 }
 
@@ -118,8 +119,8 @@ func TestPublishWithOlderStateReadsSupersededKeyFromCachedMetadata(t *testing.T)
 	local := newTestStore(t)
 	store := storage.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	_, firstKey := publishThenGrow(t, local, store, t0)
-	editPublishedState(t, local, "session-1", func(state map[string]any) {
+	firstKey := publishThenGrow(t, local, store, t0)
+	editPublishedState(t, local, func(state map[string]any) {
 		olderSourceSchema(state)
 		withoutRecordedSource(state)
 	})
@@ -133,7 +134,7 @@ func TestPublishWithUnknownPreviousSourceStillCompletes(t *testing.T) {
 	store := storage.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishThenGrow(t, local, store, t0)
-	editPublishedState(t, local, "session-1", func(state map[string]any) {
+	editPublishedState(t, local, func(state map[string]any) {
 		olderSourceSchema(state)
 		withoutRecordedSource(state)
 		delete(state, "metadata_bytes")
@@ -156,7 +157,7 @@ func TestParserUpgradeOverUnreproducibleBundleDoesNotFailSession(t *testing.T) {
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
-	editPublishedState(t, local, "session-1", olderSourceSchema)
+	editPublishedState(t, local, olderSourceSchema)
 	now = now.Add(time.Hour)
 	opts.ParserVersion = "two"
 	result, err := Run(context.Background(), local, store, opts)
@@ -420,7 +421,7 @@ func TestFIFOTranscriptFailsWithoutBlockingThePass(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		// Unblock the stuck open so the goroutine can end.
 		if f, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
-			f.Close()
+			_ = f.Close()
 		}
 		t.Fatal("pass blocked opening a FIFO transcript")
 	}
@@ -435,7 +436,7 @@ func TestOpenRegularFileRefusesNonRegularPaths(t *testing.T) {
 	for _, path := range []string{dir, fifo, "/dev/null"} {
 		if f, err := openRegularFile(path); !errors.Is(err, errNotRegularFile) {
 			if f != nil {
-				f.Close()
+				_ = f.Close()
 			}
 			t.Fatalf("%s: err = %v", path, err)
 		}
@@ -449,7 +450,7 @@ func TestOpenRegularFileRefusesNonRegularPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("symlink to a regular file: %v", err)
 	}
-	f.Close()
+	_ = f.Close()
 }
 
 // A pass clears the atomic-write temporaries a crashed writer left, and only

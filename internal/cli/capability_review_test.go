@@ -39,6 +39,7 @@ func TestSetupShowsVersionsBeforeActivationAndDiscoversOnce(t *testing.T) {
 		t.Fatalf("cancel persisted discovery: %v %v", observations, err)
 	}
 }
+
 func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
@@ -82,6 +83,7 @@ func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) 
 		t.Fatalf("unpublished resumed version verified: %+v", view.Apps[0])
 	}
 }
+
 func TestMissingVersionDiscoveryIsUnknown(t *testing.T) {
 	if got := installedVersionSupport(applicationDiscovery{}, nil); got != "unknown" {
 		t.Fatal(got)

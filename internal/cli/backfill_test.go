@@ -27,8 +27,10 @@ var backfillNow = time.Date(2026, 9, 23, 12, 0, 0, 0, time.FixedZone("PDT", -7*3
 // backfillFixture is a Mac with history in all three apps. Every transcript
 // is synthetic, shaped like internal/archive/testdata's fixtures.
 type backfillFixture struct {
-	env                  Env
-	root, userHome, data string
+	env      Env
+	root     string
+	userHome string
+	data     string
 	// nativeIDs are every native session ID in the tree; none may be printed.
 	nativeIDs []string
 }
@@ -71,12 +73,11 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 	}
 
 	day := func(d, h int) time.Time { return time.Date(2026, 9, d, h, 0, 0, 0, time.UTC) }
-	claude := func(id, cwd string, start time.Time) string {
+	claude := func(id, cwd string, start time.Time) {
 		f.nativeIDs = append(f.nativeIDs, id)
-		path := f.write(t, filepath.Join(".claude", "projects", "slug-"+id, id+".jsonl"), fmt.Sprintf(`{"type":"user","uuid":"a","sessionId":%q,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":"please check it"}}
+		f.write(t, filepath.Join(".claude", "projects", "slug-"+id, id+".jsonl"), fmt.Sprintf(`{"type":"user","uuid":"a","sessionId":%q,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":"please check it"}}
 {"type":"assistant","uuid":"b","sessionId":%q,"timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":"Checked."}]}}
 `, id, cwd, start.Format(time.RFC3339), id, start.Add(time.Minute).Format(time.RFC3339)))
-		return path
 	}
 	claude("c-aa-1", agentArchive, day(19, 9))
 	claude("c-aa-2", filepath.Join(agentArchive, ".claude", "worktrees", "gone"), day(21, 9))
@@ -158,7 +159,8 @@ func newBackfillFixture(t *testing.T) *backfillFixture {
 func cursorSlugFor(path string) string {
 	b := []byte(strings.TrimPrefix(path, "/"))
 	for i, c := range b {
-		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9') {
+		alnum := 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9'
+		if !alnum {
 			b[i] = '-'
 		}
 	}
@@ -177,12 +179,16 @@ func (f *backfillFixture) cursorDatabase(t *testing.T, rows map[string]string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)`); err != nil {
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE cursorDiskKV (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)`); err != nil {
 		t.Fatal(err)
 	}
 	for k, v := range rows {
-		if _, err := db.Exec(`INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, []byte(v)); err != nil {
+		if _, err := db.ExecContext(t.Context(), `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, k, []byte(v)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -433,14 +439,14 @@ func TestBackfillArchiveState(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := newArchiveState(f.data, cfg)
-	if got, err := state.Classify("claude", "c-archived"); err != nil || got != "already_archived" {
+	if got, err := state.Classify("claude", "c-archived"); err != nil || got != backfill.SkipAlreadyArchived {
 		t.Fatalf("accepted: %q, %v", got, err)
 	}
 	if got, err := state.Classify("claude", "c-lev-1"); err != nil || got != "" {
 		t.Fatalf("unknown: %q, %v", got, err)
 	}
 	cfg.Archive.Projects[0].Included = false
-	if got, err := newArchiveState(f.data, cfg).Classify("claude", "c-archived"); err != nil || got != "registered_not_admitted" {
+	if got, err := newArchiveState(f.data, cfg).Classify("claude", "c-archived"); err != nil || got != backfill.SkipRegisteredNotAdmitted {
 		t.Fatalf("not admitted: %q, %v", got, err)
 	}
 }

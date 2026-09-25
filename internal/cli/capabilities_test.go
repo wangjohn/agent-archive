@@ -12,14 +12,14 @@ import (
 func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
 	for _, name := range []string{"codex", "claude", "cursor"} {
 		profile := captureCapabilityProfile(name)
-		if profile.Transcript.State != "documented" {
+		if profile.Transcript.State != capabilityDocumented {
 			t.Fatalf("%s profile=%#v", name, profile)
 		}
-		expectedSubagent := "unavailable"
+		expectedSubagent := capabilityUnavailable
 		if name == "claude" {
-			expectedSubagent = "fixture_validated"
+			expectedSubagent = capabilityFixtureValidated
 		}
-		if profile.SkillEvidence.State != "unavailable" || profile.SubagentLinkage.State != expectedSubagent {
+		if profile.SkillEvidence.State != capabilityUnavailable || profile.SubagentLinkage.State != expectedSubagent {
 			t.Fatalf("%s invented native capability: %#v", name, profile)
 		}
 	}
@@ -29,7 +29,7 @@ func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
 	// Cursor fresh start rests on the documented transcript_path, not on
 	// cursor_version or on an unverified reading of sessionStart semantics.
 	cursorStart := captureCapabilityProfile("cursor").FreshStart
-	if cursorStart.State != "documented" || !strings.Contains(cursorStart.Evidence, "transcript_path") {
+	if cursorStart.State != capabilityDocumented || !strings.Contains(cursorStart.Evidence, "transcript_path") {
 		t.Fatalf("Cursor start=%#v", cursorStart)
 	}
 	if strings.Contains(cursorStart.Evidence, "cursor_version") {
@@ -128,7 +128,7 @@ func TestDiscoverCommandVersionTriesEveryPresentCandidate(t *testing.T) {
 
 func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
 	userHome := t.TempDir()
-	root := filepath.Join(userHome, "Library/Application Support/Claude/claude-code")
+	root := filepath.Join(userHome, "Library", "Application Support", "Claude", "claude-code")
 	for _, dir := range []string{"2.1.99", "2.1.275", "2.1.280", "2.1.100", "not-a-version", "backup-2.1.300", "2.1.300.bak"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
 			t.Fatal(err)
@@ -140,7 +140,7 @@ func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
 	got := claudeDesktopBundledCLIs(userHome)
 	var want []string
 	for _, version := range []string{"2.1.280", "2.1.275", "2.1.100", "2.1.99"} {
-		want = append(want, filepath.Join(root, version, "claude.app/Contents/MacOS/claude"))
+		want = append(want, filepath.Join(root, version, "claude.app", "Contents", "MacOS", "claude"))
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v\nwant %v", got, want)
@@ -152,7 +152,7 @@ func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
 
 func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 	userHome := t.TempDir()
-	bundled := filepath.Join(userHome, "Library/Application Support/Claude/claude-code/2.1.280")
+	bundled := filepath.Join(userHome, "Library", "Application Support", "Claude", "claude-code", "2.1.280")
 	if err := os.MkdirAll(bundled, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 	for _, candidate := range claudeVersionCandidates(userHome) {
 		claude = append(claude, candidate[0])
 	}
-	want := []string{"claude", filepath.Join(userHome, ".local/bin/claude"), filepath.Join(userHome, ".claude/local/claude"), filepath.Join(bundled, "claude.app/Contents/MacOS/claude")}
+	want := []string{"claude", filepath.Join(userHome, ".local", "bin", "claude"), filepath.Join(userHome, ".claude", "local", "claude"), filepath.Join(bundled, "claude.app", "Contents", "MacOS", "claude")}
 	if !reflect.DeepEqual(claude, want) {
 		t.Fatalf("claude candidates %v", claude)
 	}
@@ -170,10 +170,10 @@ func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 	}
 	want = []string{
 		"/Applications/Codex.app/Contents/Resources/codex",
-		filepath.Join(userHome, "Applications/Codex.app/Contents/Resources/codex"),
+		filepath.Join(userHome, "Applications", "Codex.app", "Contents", "Resources", "codex"),
 		"codex",
 		"/Applications/ChatGPT.app/Contents/Resources/codex",
-		filepath.Join(userHome, "Applications/ChatGPT.app/Contents/Resources/codex"),
+		filepath.Join(userHome, "Applications", "ChatGPT.app", "Contents", "Resources", "codex"),
 	}
 	if !reflect.DeepEqual(codex, want) {
 		t.Fatalf("codex candidates %v", codex)
@@ -182,7 +182,8 @@ func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 
 func TestCompareDottedVersions(t *testing.T) {
 	for _, tt := range []struct {
-		a, b string
+		a    string
+		b    string
 		want int
 	}{
 		{"2.1.280", "2.1.275", 1},

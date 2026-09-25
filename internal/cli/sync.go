@@ -8,6 +8,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // waitingSummary is sync's count of publications held for the upload
@@ -33,25 +34,25 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if err != nil {
 		switch {
 		case errors.Is(err, errPaused):
-			fmt.Fprintln(stdout, "agent-archive: "+err.Error())
+			terminal.Println(stdout, "agent-archive: "+err.Error())
 			return 0
 		case errors.Is(err, errNotSetUp):
-			fmt.Fprintln(stderr, "agent-archive: "+err.Error())
+			terminal.Println(stderr, "agent-archive: "+err.Error())
 		case errors.Is(err, local.ErrBusy):
-			fmt.Fprintln(stderr, "agent-archive: sync: another sync is already running")
+			terminal.Println(stderr, "agent-archive: sync: another sync is already running")
 		default:
-			fmt.Fprintf(stderr, "agent-archive: sync: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: sync: %v\n", err)
 			// A Keychain failure has one specific fix; say which.
 			if action := credentials.RecoveryAction(err); action != "" {
-				fmt.Fprintln(stderr, "agent-archive: sync: "+action)
+				terminal.Println(stderr, "agent-archive: sync: "+action)
 			}
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed.\n",
+	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed.\n",
 		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors))
 	for id, sessionErr := range result.Errors {
-		fmt.Fprintf(stdout, "  %s: %v\n", id, sessionErr)
+		terminal.Printf(stdout, "  %s: %v\n", id, sessionErr)
 	}
 	if len(result.Errors) > 0 {
 		return 1

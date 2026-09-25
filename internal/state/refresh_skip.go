@@ -52,11 +52,17 @@ func (s *Store) LoadRefreshSkip(id string) (RefreshSkip, bool, error) {
 	if !safeFileComponent(id) {
 		return RefreshSkip{}, false, errors.New("archive session ID is not a safe file name component")
 	}
-	var skip RefreshSkip
-	if err := local.Read(s.refreshSkipPath(id), &skip); err != nil {
-		return RefreshSkip{}, false, nil
+	skip, found := readRefreshSkip(s.refreshSkipPath(id))
+	return skip, found, nil
+}
+
+// readRefreshSkip decodes the refresh-skip record at path; found is false
+// when it cannot be read (see LoadRefreshSkip).
+func readRefreshSkip(path string) (skip RefreshSkip, found bool) {
+	if err := local.Read(path, &skip); err != nil {
+		return RefreshSkip{}, false
 	}
-	return skip, true, nil
+	return skip, true
 }
 
 // RemoveRefreshSkip drops a session's record once a publication makes it

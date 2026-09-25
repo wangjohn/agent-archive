@@ -15,7 +15,7 @@ import (
 // given number of user/assistant exchanges.
 func cursorTextTranscript(exchanges, bodyBytes int) string {
 	var b strings.Builder
-	for i := 0; i < exchanges; i++ {
+	for i := range exchanges {
 		fmt.Fprintf(&b, "user: request %d\nassistant: answer %d %s\n", i, i, strings.Repeat("a", bodyBytes))
 	}
 	return b.String()

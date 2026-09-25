@@ -46,13 +46,24 @@ func (f *undoFixture) include(root string) string {
 func (f *undoFixture) register(native, root, batch string, admitted time.Time) archive.SessionRegistration {
 	f.t.Helper()
 	reg, err := f.store.RegisterNewSession(native, func(id string) archive.SessionRegistration {
-		r := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: native, ProjectID: archive.ProjectID(root), ProjectRoot: root,
-			Harness: archive.Harness{Name: "claude"}, SessionStartedAt: admitted.Add(-time.Hour), StartedAtSource: archive.StartedAtSourceTranscript,
-			RegisteredAt: admitted, AdmittedAt: admitted, Origin: archive.SessionOriginHook}
+		origin, destination := archive.SessionOriginHook, ""
 		if batch != "" {
-			r.Origin, r.ImportBatch, r.DestinationID = archive.SessionOriginImport, batch, "dest"
+			origin, destination = archive.SessionOriginImport, "dest"
 		}
-		return r
+		return archive.SessionRegistration{
+			ArchiveSessionID: id,
+			NativeSessionID:  native,
+			ProjectID:        archive.ProjectID(root),
+			ProjectRoot:      root,
+			Harness:          archive.Harness{Name: "claude"},
+			SessionStartedAt: admitted.Add(-time.Hour),
+			StartedAtSource:  archive.StartedAtSourceTranscript,
+			RegisteredAt:     admitted,
+			AdmittedAt:       admitted,
+			Origin:           origin,
+			ImportBatch:      batch,
+			DestinationID:    destination,
+		}
 	})
 	if err != nil {
 		f.t.Fatal(err)
@@ -71,8 +82,6 @@ func (f *undoFixture) batch(id string, started time.Time, projectsAdded ...strin
 	return b
 }
 
-// B-1: a new import is numbered past every ID a registration still carries,
-// so an ID whose batch file was moved aside is never reused.
 // OpenBatch tells an unreadable batch file (ErrUnreadableImport, which the
 // CLI answers with advice about imports/) from registrations it can't list,
 // which is a different problem.
@@ -100,6 +109,8 @@ func TestOpenBatchSeparatesRegistrationErrorsFromImportFiles(t *testing.T) {
 	}
 }
 
+// B-1: a new import is numbered past every ID a registration still carries,
+// so an ID whose batch file was moved aside is never reused.
 func TestOpenBatchSkipsIDsRegistrationsStillCarry(t *testing.T) {
 	f := newUndoFixture(t)
 	first, err := OpenBatch(f.home, f.store, BatchFilters{}, "dest", fixedNow)
@@ -217,12 +228,12 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 	reg := f.register("n1", "/p", "b", fixedNow.UTC())
 	records := make([]map[string]any, 0, 50000)
 	text := strings.Repeat("x", 200)
-	for i := 0; i < cap(records); i++ {
+	for i := range cap(records) {
 		records = append(records, map[string]any{"type": "user", "i": float64(i), "text": text})
 	}
 	evidence := []archive.SupplementalEvidence{{Kind: archive.EvidenceKindFinalResponse, ObservedAt: fixedNow.UTC(), Provenance: "hook:claude-stop", Payload: map[string]any{"text": "done"}}}
 	bundle := archive.SourceBundle{SchemaVersion: archive.SourceSchemaVersion, ArchiveSessionID: reg.ArchiveSessionID, NativeRecords: records, SupplementalEvidence: evidence}
-	if err := statetest.SavePublished(f.store, reg.ArchiveSessionID, bundle, fixedNow, state.CacheStatus("published")); err != nil {
+	if err := statetest.SavePublished(f.store, reg.ArchiveSessionID, bundle, fixedNow, state.CacheStatusPublished); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(f.home, "published", reg.ArchiveSessionID+".json"))

@@ -46,7 +46,7 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("open transcript: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil {
 		return archive.FilteredTranscript{}, transcriptFileInfo{}, fmt.Errorf("stat transcript: %w", err)
@@ -118,7 +118,7 @@ func openRegularFile(path string) (*os.File, error) {
 		return nil, err
 	}
 	if info, err = file.Stat(); err != nil || !info.Mode().IsRegular() {
-		file.Close()
+		_ = file.Close()
 		if err == nil {
 			err = fmt.Errorf("%w (%s)", errNotRegularFile, info.Mode().Type())
 		}

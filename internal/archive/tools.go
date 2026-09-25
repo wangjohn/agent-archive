@@ -188,6 +188,7 @@ func toolActivity(record map[string]any, index int, model, reasoning string) ([]
 func walkKeys(item map[string]any, isResult bool) []string {
 	keys := make([]string, 0, len(item))
 	for key := range item {
+		//lint:ignore LV1001 keys of an external JSON record are an open domain
 		if toolArgumentKeys[key] || (isResult && (key == "content" || key == "output")) {
 			continue
 		}

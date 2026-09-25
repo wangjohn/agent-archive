@@ -16,12 +16,13 @@ import (
 
 func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
 	tests := []struct {
-		name               string
-		detected, existing []string
-		input              string
-		want               []string
-		prompt             string
-		manual             bool
+		name     string
+		detected []string
+		existing []string
+		input    string
+		want     []string
+		prompt   string
+		manual   bool
 	}{
 		{"accept detected", []string{"claude", "codex", "codex"}, nil, "\n", []string{"codex", "claude"}, "Include Codex and Claude Code? [Y/n]", false},
 		{"single app", []string{"cursor"}, nil, "y\n", []string{"cursor"}, "Include Cursor? [Y/n]", false},
@@ -99,8 +100,10 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 func TestMenuAcceptsNumbersKeysAndPrefixes(t *testing.T) {
 	options := []option{{"capture", "Apps and projects"}, {"storage", "Storage"}, {"retention", "Retention"}, {"all", "All settings"}}
 	tests := []struct {
-		name, input, want string
-		retried           bool
+		name    string
+		input   string
+		want    string
+		retried bool
 	}{
 		{"number", "2\n", "storage", false},
 		{"blank takes default", "\n", "capture", false},

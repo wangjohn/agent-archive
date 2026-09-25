@@ -27,13 +27,14 @@ func TestPublishedReflectsEverySaveInMemory(t *testing.T) {
 	republished := archive.SourceReference{Key: "sessions/codex/session-1/source.b.jsonl.gz", SHA256: strings.Repeat("b", 64), CompressedBytes: 11}
 
 	type want struct {
-		cached, last string
-		status       CacheStatus
-		found        bool
-		lastFound    bool
-		source       *archive.SourceReference
-		metadata     string
-		blocked      BlockedReason
+		cached    string
+		last      string
+		status    CacheStatus
+		found     bool
+		lastFound bool
+		source    *archive.SourceReference
+		metadata  string
+		blocked   BlockedReason
 	}
 	check := func(step string, w want) {
 		t.Helper()

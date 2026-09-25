@@ -13,7 +13,11 @@ import (
 // the trigger word to stand alone, so every snake_case or SCREAMING_CASE name
 // and every quoted JSON key passed through. Only the value is replaced.
 func TestFilterV9RedactsCredentialAssignments(t *testing.T) {
-	cases := []struct{ name, in, want string }{
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
 		// .env and shell
 		{"env db password", "DB_PASSWORD=hunter2hunter2", "DB_PASSWORD=[REDACTED]"},
 		{"env aws secret", "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "AWS_SECRET_ACCESS_KEY=[REDACTED]"},

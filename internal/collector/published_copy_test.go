@@ -19,8 +19,8 @@ func TestParserUpgradeAndPublicationInOneScanOverLegacyState(t *testing.T) {
 	local := newTestStore(t)
 	store := storage.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	_, firstKey := publishThenGrow(t, local, store, t0)
-	editPublishedState(t, local, "session-1", func(state map[string]any) {
+	firstKey := publishThenGrow(t, local, store, t0)
+	editPublishedState(t, local, func(state map[string]any) {
 		withoutRecordedSource(state)
 		delete(state, "metadata_bytes")
 	})

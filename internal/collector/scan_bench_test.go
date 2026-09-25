@@ -19,7 +19,7 @@ func largeTranscript(n int) string {
 	var b strings.Builder
 	b.WriteString(`{"type":"turn_context","model":"gpt-test"}` + "\n")
 	text := strings.Repeat("A long assistant message about the change in progress. ", 36)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		fmt.Fprintf(&b, `{"type":"response_item","id":"m%d","payload":{"type":"message","role":"assistant","content":%q}}`+"\n", i, text)
 	}
 	return b.String()
@@ -29,6 +29,7 @@ func largeTranscript(n int) string {
 // published session. prepare runs (untimed) before each pass to give it
 // work: a hook request for an unchanged transcript, or a new record.
 func benchmarkScan(b *testing.B, records int, prepare func(b *testing.B, local *state.Store, path string, i int)) {
+	b.Helper()
 	dir := b.TempDir()
 	path := filepath.Join(dir, "codex.jsonl")
 	if err := os.WriteFile(path, []byte(largeTranscript(records)), 0o600); err != nil {
@@ -50,7 +51,7 @@ func benchmarkScan(b *testing.B, records int, prepare func(b *testing.B, local *
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		b.StopTimer()
 		now = now.Add(time.Hour)
 		prepare(b, local, path, i)
@@ -66,6 +67,7 @@ func benchmarkScan(b *testing.B, records int, prepare func(b *testing.B, local *
 // pass reads, filters, and compares everything, and publishes nothing.
 func BenchmarkScanLargeUnchangedSession(b *testing.B) {
 	benchmarkScan(b, 2000, func(b *testing.B, local *state.Store, _ string, i int) {
+		b.Helper()
 		if err := local.SaveRequest("session-1", "stop", time.Date(2026, 2, 1, 0, 0, i, 0, time.UTC)); err != nil {
 			b.Fatal(err)
 		}
@@ -76,12 +78,17 @@ func BenchmarkScanLargeUnchangedSession(b *testing.B) {
 // pass reads, compares, and publishes it again.
 func BenchmarkScanLargeGrowingSession(b *testing.B) {
 	benchmarkScan(b, 2000, func(b *testing.B, local *state.Store, path string, i int) {
+		b.Helper()
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 		if err != nil {
 			b.Fatal(err)
 		}
-		fmt.Fprintf(f, `{"type":"response_item","id":"n%d","payload":{"type":"message","role":"assistant","content":"more"}}`+"\n", i)
-		f.Close()
+		if _, err := fmt.Fprintf(f, `{"type":"response_item","id":"n%d","payload":{"type":"message","role":"assistant","content":"more"}}`+"\n", i); err != nil {
+			b.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			b.Fatal(err)
+		}
 		if err := local.SaveRequest("session-1", "stop", time.Date(2026, 2, 1, 0, 0, i, 0, time.UTC)); err != nil {
 			b.Fatal(err)
 		}

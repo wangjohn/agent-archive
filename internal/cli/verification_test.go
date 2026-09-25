@@ -35,7 +35,7 @@ func publishSyntheticSessions(t *testing.T, home, project string, remote storage
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		path := filepath.Join(project, fmt.Sprintf("synthetic-%d.jsonl", i))
 		if err := os.WriteFile(path, []byte(fmt.Sprintf(`{"type":"turn_context","model":"synthetic-%d"}`+"\n", i)), 0600); err != nil {
 			t.Fatal(err)
@@ -178,7 +178,7 @@ func TestReadBackCapsAttemptsPerPassOldestFirst(t *testing.T) {
 	remote := storage.NewMemoryStore()
 	total := maxVerificationsPerPass + 2
 	cfg, store := publishSyntheticSessions(t, home, project, remote, at, total)
-	for i := 0; i < total; i++ {
+	for i := range total {
 		removeRemoteSource(t, remote, fmt.Sprintf("s%d", i))
 	}
 	now := at.Add(time.Hour)
@@ -188,7 +188,7 @@ func TestReadBackCapsAttemptsPerPassOldestFirst(t *testing.T) {
 	if err != nil || summary.Attempted != maxVerificationsPerPass || summary.Deferred != 2 {
 		t.Fatalf("%#v %v", summary, err)
 	}
-	for i := 0; i < total; i++ {
+	for i := range total {
 		record, err := readVerification(home, fmt.Sprintf("s%d", i))
 		if err != nil {
 			t.Fatal(err)

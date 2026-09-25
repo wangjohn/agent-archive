@@ -34,7 +34,7 @@ func TestWrongShapeStateFileIsReportedNotQuarantined(t *testing.T) {
 // the first copy, never over it.
 func TestSecondQuarantineKeepsTheFirst(t *testing.T) {
 	local := newTestStore(t)
-	for pass := 0; pass < 2; pass++ {
+	for range 2 {
 		corruptFile(t, requestPath(local, "orphan"))
 		if _, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
 			t.Fatal(err)
@@ -79,7 +79,7 @@ func uploadedByAnotherBuild(t *testing.T, local *state.Store, store storage.Obje
 	if err := store.Put(context.Background(), ref.Key, data); err != nil {
 		t.Fatal(err)
 	}
-	editPublishedState(t, local, "session-1", func(state map[string]any) {
+	editPublishedState(t, local, func(state map[string]any) {
 		state["last_published"].(map[string]any)["source"] = ref
 		raw, err := base64.StdEncoding.DecodeString(state["metadata_bytes"].(string))
 		if err != nil {
@@ -189,7 +189,7 @@ func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
 			if err := os.Remove(path); err != nil {
 				t.Fatal(err)
 			}
-			editPublishedState(t, local, "session-1", olderSourceSchema)
+			editPublishedState(t, local, olderSourceSchema)
 			recorded, _, err := local.LoadLastPublishedSource("session-1")
 			if err != nil {
 				t.Fatal(err)
@@ -264,7 +264,7 @@ func TestUnderivableMetadataIsRecordedUntilTheNextPublication(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	editPublishedState(t, local, "session-1", olderSourceSchema)
+	editPublishedState(t, local, olderSourceSchema)
 	opts.ParserVersion = "two"
 	for pass := 1; pass <= 2; pass++ {
 		now = now.Add(time.Hour)

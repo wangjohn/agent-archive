@@ -9,7 +9,6 @@
 package cli
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -25,6 +24,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // Version is the released version string. main overrides it via
@@ -274,7 +274,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		stdin = strings.NewReader("")
 	}
 	if len(args) == 0 {
-		fmt.Fprint(stdout, usage)
+		terminal.Print(stdout, usage)
 		return 0
 	}
 	if handled, code := commandPreflight(args, stdout, stderr); handled {
@@ -283,10 +283,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 
 	switch args[0] {
 	case "-h", "--help", "help":
-		fmt.Fprint(stdout, usage)
+		terminal.Print(stdout, usage)
 		return 0
 	case "-v", "--version", "version":
-		fmt.Fprintln(stdout, Version)
+		terminal.Println(stdout, Version)
 		return 0
 	case "_hook":
 		return runHookCommand(args[1:], stdin, stderr, env)
@@ -316,7 +316,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "backfill":
 		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
 	default:
-		fmt.Fprintf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
+		terminal.Printf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
 }

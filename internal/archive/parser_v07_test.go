@@ -321,7 +321,7 @@ func TestParserV07FixturesScanDeterministically(t *testing.T) {
 			harness, adapter = "codex", CodexAdapter{}
 		}
 		var bundles, metadatas [][]byte
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			filtered, err := adapter.FilterJSONL(bytes.NewReader(fixture(t, name)))
 			if err != nil {
 				t.Fatal(err)

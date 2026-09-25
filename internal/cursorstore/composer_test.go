@@ -87,7 +87,7 @@ func TestReadComposerClosed(t *testing.T) {
 				t.Fatalf("side files before the read: %v", before)
 			}
 			r := NewReader(path)
-			defer r.Close()
+			defer closeOrFail(t, r)
 			c, sig, err := r.ReadComposer(context.Background(), "c")
 			if err != nil {
 				t.Fatal(err)
@@ -171,17 +171,17 @@ func TestReadComposerLive(t *testing.T) {
 
 	// Cursor starts a write and has not committed it: the snapshot is the
 	// committed state, the new message and its row together or neither.
-	w.do(writerCommand{Op: "begin"},
-		writerCommand{Op: "put", Key: "bubbleId:c:b2", Value: bubble("second")},
-		writerCommand{Op: "put", Key: "composerData:c", Value: chat("c", 2000, "b1", "b2", "b3", "b4")},
-		writerCommand{Op: "put", Key: "bubbleId:c:b4", Value: bubble("fourth")})
+	w.do(writerCommand{Op: writerBegin},
+		writerCommand{Op: writerPut, Key: "bubbleId:c:b2", Value: bubble("second")},
+		writerCommand{Op: writerPut, Key: "composerData:c", Value: chat("c", 2000, "b1", "b2", "b3", "b4")},
+		writerCommand{Op: writerPut, Key: "bubbleId:c:b4", Value: bubble("fourth")})
 	c, sig = read()
 	assertComposer(t, c, wantComposer(rows, "c", "b1", "b2", "b3"))
 	if sig != chatSignature() {
 		t.Fatalf("an uncommitted write was read: %+v", sig)
 	}
 
-	w.do(writerCommand{Op: "commit"})
+	w.do(writerCommand{Op: writerCommit})
 	rows["bubbleId:c:b2"] = bubble("second")
 	rows["composerData:c"] = chat("c", 2000, "b1", "b2", "b3", "b4")
 	rows["bubbleId:c:b4"] = bubble("fourth")
@@ -199,7 +199,7 @@ func TestReaderTakesOneSnapshot(t *testing.T) {
 	root := useTempSnapshots(t)
 	rows := map[string]string{}
 	var ids []string
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		id := fmt.Sprintf("chat-%d", i)
 		ids = append(ids, id)
 		rows["composerData:"+id] = chat(id, int64(i+1), "m")
@@ -231,14 +231,16 @@ func TestReaderTakesOneSnapshot(t *testing.T) {
 		if _, _, err := r.ReadComposer(context.Background(), ids[0]); err != nil || r.Snapshots() != 2 {
 			t.Fatalf("after Close: %v, %d snapshots", err, r.Snapshots())
 		}
-		r.Close()
+		if err := r.Close(); err != nil {
+			t.Fatal(err)
+		}
 		assertEmpty(t, root)
 	})
 	t.Run("closed", func(t *testing.T) {
 		path := StateDatabase(t.TempDir())
 		writeDB(t, path, true, toAny(rows))
 		r := NewReader(path)
-		defer r.Close()
+		defer closeOrFail(t, r)
 		for _, id := range ids {
 			if _, _, err := r.ReadComposer(context.Background(), id); err != nil {
 				t.Fatal(err)
@@ -273,6 +275,7 @@ func TestReadComposerSignature(t *testing.T) {
 		{"the last message replaced", map[string]string{"composerData:c": chat("c", 3000, "b1", "b2", "b3", "b5")}, true},
 	}
 	check := func(t *testing.T, path string, apply func(map[string]string)) {
+		t.Helper()
 		_, prev, err := ReadComposer(context.Background(), path, "c")
 		if err != nil {
 			t.Fatal(err)
@@ -365,7 +368,9 @@ func TestStrayEmptyWAL(t *testing.T) {
 			t.Fatalf("%s: err %v", name, err)
 		}
 		mustWrite(t, path+"-wal", nil)
-		os.Remove(path + "-shm")
+		if err := os.Remove(path + "-shm"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
 	}
 
 	if err := os.WriteFile(path+"-wal", []byte("frames"), 0o644); err != nil {
@@ -516,6 +521,7 @@ func isReason(r Reason) func(error) bool {
 func TestSnapshotRootMustBePrivate(t *testing.T) {
 	for name, setup := range map[string]func(t *testing.T, root string){
 		"readable by others": func(t *testing.T, root string) {
+			t.Helper()
 			if err := os.Mkdir(root, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -524,6 +530,7 @@ func TestSnapshotRootMustBePrivate(t *testing.T) {
 			}
 		},
 		"a link": func(t *testing.T, root string) {
+			t.Helper()
 			if err := os.Symlink(t.TempDir(), root); err != nil {
 				t.Fatal(err)
 			}
@@ -597,7 +604,7 @@ func TestBackupRetriesWhileBusy(t *testing.T) {
 	defer func() { backupRetried = nil }()
 
 	// The lock outlasts the read's deadline.
-	w.do(writerCommand{Op: "exclusive"})
+	w.do(writerCommand{Op: writerExclusive})
 	retries := 0
 	backupRetried = func() { retries++ }
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
@@ -614,7 +621,7 @@ func TestBackupRetriesWhileBusy(t *testing.T) {
 	backupRetried = func() {
 		retries++
 		if retries == 1 {
-			w.do(writerCommand{Op: "normal"})
+			w.do(writerCommand{Op: writerNormal})
 			close(released)
 		}
 	}
@@ -631,23 +638,9 @@ func TestBackupRetriesWhileBusy(t *testing.T) {
 // index, not a scan of every row.
 func TestBubbleQueryUsesIndex(t *testing.T) {
 	db := openWriter(t, filepath.Join(t.TempDir(), "state.vscdb"), false)
-	defer db.Close()
+	defer closeOrFail(t, db)
 	for _, q := range []string{bubbleQuery, bubbleKeyQuery} {
-		rows, err := db.Query(`EXPLAIN QUERY PLAN `+q, "bubbleId:c:", "bubbleId:c;")
-		if err != nil {
-			t.Fatal(err)
-		}
-		var plan []string
-		for rows.Next() {
-			var id, parent, notUsed int
-			var detail string
-			if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
-				t.Fatal(err)
-			}
-			plan = append(plan, detail)
-		}
-		rows.Close()
-		got := strings.Join(plan, "; ")
+		got := queryPlan(t, db, q)
 		if !strings.Contains(got, "USING INDEX") && !strings.Contains(got, "USING COVERING INDEX") {
 			t.Fatalf("query plan %q does not search the key index", got)
 		}
@@ -656,4 +649,32 @@ func TestBubbleQueryUsesIndex(t *testing.T) {
 			t.Fatalf("query plan %q reads the table for keys", got)
 		}
 	}
+}
+
+// queryPlan is SQLite's plan for a bubble query of chat "c", its steps joined
+// with "; ".
+func queryPlan(t *testing.T, db *sql.DB, q string) string {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), `EXPLAIN QUERY PLAN `+q, "bubbleId:c:", "bubbleId:c;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	var plan []string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(plan, "; ")
 }

@@ -39,7 +39,7 @@ func testFiles(home string) Files {
 
 func TestPlanApplyAndRollback(t *testing.T) {
 	home := t.TempDir()
-	path := filepath.Join(home, ".claude/settings.json")
+	path := filepath.Join(home, ".claude", "settings.json")
 	must(t, os.MkdirAll(filepath.Dir(path), 0700))
 	original := []byte(`{"permissions":{"allow":["Read"]}}`)
 	must(t, os.WriteFile(path, original, 0600))
@@ -57,10 +57,11 @@ func TestPlanApplyAndRollback(t *testing.T) {
 	if string(b) != string(original) {
 		t.Fatal("original changed")
 	}
-	if _, e = os.Stat(filepath.Join(home, ".codex/hooks.json")); !os.IsNotExist(e) {
+	if _, e = os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(e) {
 		t.Fatal("new file not removed")
 	}
 }
+
 func TestConcurrentEditPreserved(t *testing.T) {
 	home := t.TempDir()
 	plan, _ := Plan(testFiles(home), testHook("/bin/agent-archive"), []string{"codex"})
@@ -71,6 +72,7 @@ func TestConcurrentEditPreserved(t *testing.T) {
 		t.Fatal("overwrote concurrent edit")
 	}
 }
+
 func TestLaunchAgentEscapesPaths(t *testing.T) {
 	b, e := LaunchAgent("/a & b/agent-archive", "/private/data", LaunchLabel)
 	if e != nil {
@@ -86,12 +88,12 @@ func TestLaunchAgentEscapesPaths(t *testing.T) {
 
 func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 	home := t.TempDir()
-	claudePath := filepath.Join(home, ".claude/settings.json")
+	claudePath := filepath.Join(home, ".claude", "settings.json")
 	must(t, os.MkdirAll(filepath.Dir(claudePath), 0700))
 	// An unrelated hook on an event we also use, plus unrelated settings.
 	original := []byte(`{"permissions":{"allow":["Read"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
 	must(t, os.WriteFile(claudePath, original, 0600))
-	cursorPath := filepath.Join(home, ".cursor/hooks.json")
+	cursorPath := filepath.Join(home, ".cursor", "hooks.json")
 	must(t, os.MkdirAll(filepath.Dir(cursorPath), 0700))
 	must(t, os.WriteFile(cursorPath, []byte(`{"version":1,"hooks":{"stop":[{"command":"echo unrelated"}]}}`), 0600))
 
@@ -114,7 +116,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{claudePath, filepath.Join(home, ".codex/hooks.json"), cursorPath} {
+	for _, path := range []string{claudePath, filepath.Join(home, ".codex", "hooks.json"), cursorPath} {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)
@@ -147,7 +149,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 
 func TestPlanRemovalSkipsMissingAndUnrelatedFiles(t *testing.T) {
 	home := t.TempDir()
-	path := filepath.Join(home, ".codex/hooks.json")
+	path := filepath.Join(home, ".codex", "hooks.json")
 	must(t, os.MkdirAll(filepath.Dir(path), 0700))
 	unrelated := []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
 	must(t, os.WriteFile(path, unrelated, 0600))

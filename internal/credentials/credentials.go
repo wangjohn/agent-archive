@@ -37,10 +37,12 @@ const KeychainService = "agent-archive"
 // R2Credentials are intentionally only accepted through a Keychain-backed
 // reference in production setup. They are value types so callers can inject a
 // test credential provider without any shell or command-line transport.
+// The JSON tags pin the format already stored in users' Keychains: renaming
+// one would make existing credentials unreadable.
 type R2Credentials struct {
-	AccessKeyID     string
-	SecretAccessKey string
-	SessionToken    string
+	AccessKeyID     string `json:"AccessKeyID"`
+	SecretAccessKey string `json:"SecretAccessKey"`
+	SessionToken    string `json:"SessionToken"`
 }
 
 func (c R2Credentials) validate() error {
@@ -61,15 +63,17 @@ type CredentialStore interface {
 // Config describes one archive storage destination. For S3, AWSProfile is
 // mandatory and is loaded deterministically. For R2, R2CredentialRef points
 // to a Keychain item and Endpoint may be omitted when AccountID is supplied.
+// The JSON tags spell the Go field names, the format already saved in users'
+// config files: renaming one would make existing configs unreadable.
 type Config struct {
-	Provider        string
-	Bucket          string
-	Region          string
-	Prefix          string
-	AWSProfile      string
-	R2CredentialRef string
-	R2AccountID     string
-	R2Endpoint      string
+	Provider        string `json:"Provider"`
+	Bucket          string `json:"Bucket"`
+	Region          string `json:"Region"`
+	Prefix          string `json:"Prefix"`
+	AWSProfile      string `json:"AWSProfile"`
+	R2CredentialRef string `json:"R2CredentialRef"`
+	R2AccountID     string `json:"R2AccountID"`
+	R2Endpoint      string `json:"R2Endpoint"`
 }
 
 // Config.Provider values.

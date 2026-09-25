@@ -62,7 +62,8 @@ type Registration struct {
 type RegistrationResult struct {
 	// Sessions and Subagents are the archive session IDs registered, and
 	// given to subagent candidates.
-	Sessions, Subagents []string
+	Sessions  []string
+	Subagents []string
 	// AlreadyArchived counts sessions a hook, or another run, registered
 	// after the plan was made.
 	AlreadyArchived int
@@ -77,7 +78,8 @@ type RegistrationResult struct {
 	// Invalid counts sessions whose registration would not be valid, and
 	// SubagentsInvalid subagents whose candidate conflicts with an earlier
 	// one or is incomplete. Neither stops the import.
-	Invalid, SubagentsInvalid int
+	Invalid          int
+	SubagentsInvalid int
 }
 
 // parentWork is one imported session in progress. Its subagent candidates
@@ -93,7 +95,8 @@ type parentWork struct {
 	// chatChecked and chatGone are the result of checking, before the hold,
 	// whether a chat found only in Cursor's database is still there (see
 	// checkChats).
-	chatChecked, chatGone bool
+	chatChecked bool
+	chatGone    bool
 }
 
 // Run registers every candidate, in order.
@@ -196,7 +199,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 		if err != nil || skip {
 			return true, err
 		}
-		if err := r.registration(c, "check").Validate(); err != nil {
+		if !r.valid(c) {
 			result.Invalid++
 			return true, nil
 		}
@@ -307,6 +310,12 @@ func (r Registration) subagent(w *parentWork, sub Subagent) error {
 	w.links = append(w.links, link)
 	w.children = append(w.children, childID)
 	return nil
+}
+
+// valid reports whether c's registration would be valid. An invalid one is
+// counted, not returned as an error: it does not stop the import.
+func (r Registration) valid(c Candidate) bool {
+	return r.registration(c, "check").Validate() == nil
 }
 
 // registration is the imported session's registration: its true start, the

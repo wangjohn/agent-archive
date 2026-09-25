@@ -45,6 +45,7 @@ func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
 		if !ok {
 			continue
 		}
+		//lint:ignore LV1001 XML element names from a launchd plist, an external format
 		switch start.Name.Local {
 		case "key":
 			if err := decoder.DecodeElement(&key, &start); err != nil {
@@ -92,7 +93,7 @@ func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
 	if state == jobAnotherInstallation {
 		return nil, fmt.Errorf("launchd's legacy upload job was loaded from a plist other than %s; preserve it and resolve it before setup", path)
 	}
-	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: state == "loaded" || state == "running"}, nil
+	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)}, nil
 }
 
 func retireLegacyJob(job *legacyJob, env Env) error {
@@ -132,6 +133,7 @@ func restoreLegacyJob(home string, job *legacyJob, name string, env Env) error {
 	}
 	if job.WasLoaded {
 		state := env.jobState(job.Change.Path)
+		//lint:ignore LV1001 Env.JobState (cli.go) reports launchd states as plain strings, and tests stub it with string-returning funcs
 		switch state {
 		case "unknown":
 			return &recoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to launchctl and rerun setup", name)}

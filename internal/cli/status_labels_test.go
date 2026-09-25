@@ -117,7 +117,7 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !view.StorageAccessConfirmedAt.Equal(checked) || view.StorageAccessConfirmedBy != "collector" || !view.StorageVerifiedAt.IsZero() {
+	if !view.StorageAccessConfirmedAt.Equal(checked) || view.StorageAccessConfirmedBy != storageAccessConfirmedByCollector || !view.StorageVerifiedAt.IsZero() {
 		t.Fatalf("confirmed=%v by=%q verified=%v", view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy, view.StorageVerifiedAt)
 	}
 	out := text()
@@ -134,7 +134,7 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if view, err = readStatus(env); err != nil || !view.StorageVerifiedAt.Equal(cfg.StorageVerifiedAt) || !view.StorageAccessConfirmedAt.Equal(cfg.StorageVerifiedAt) || view.StorageAccessConfirmedBy != "setup" {
+	if view, err = readStatus(env); err != nil || !view.StorageVerifiedAt.Equal(cfg.StorageVerifiedAt) || !view.StorageAccessConfirmedAt.Equal(cfg.StorageVerifiedAt) || view.StorageAccessConfirmedBy != storageAccessConfirmedBySetup {
 		t.Fatalf("verified=%v confirmed=%v by=%q err=%v", view.StorageVerifiedAt, view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy, err)
 	}
 	if out := text(); !strings.Contains(out, "by setup's storage check (write, read, list, delete)") {

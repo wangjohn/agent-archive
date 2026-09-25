@@ -25,13 +25,16 @@ type getOnlyStore struct {
 func (s *getOnlyStore) Put(ctx context.Context, key string, data []byte) error {
 	return s.inner.Put(ctx, key, data)
 }
+
 func (s *getOnlyStore) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets++
 	return s.inner.Get(ctx, key)
 }
+
 func (s *getOnlyStore) List(ctx context.Context, prefix string) ([]Object, error) {
 	return s.inner.List(ctx, prefix)
 }
+
 func (s *getOnlyStore) Delete(ctx context.Context, key string) error {
 	return s.inner.Delete(ctx, key)
 }

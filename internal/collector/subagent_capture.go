@@ -36,6 +36,11 @@ func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCa
 	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || !strings.EqualFold(parent.Harness.Name, candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
 		return rejectSubagentCandidate(local, candidate, "subagent_parent_ownership_unavailable")
 	}
+	var startedAtSource archive.StartedAtSource
+	if parent.Imported() {
+		// Its start is set below from the earliest native record.
+		startedAtSource = archive.StartedAtSourceTranscript
+	}
 	reg := archive.SessionRegistration{
 		ArchiveSessionID: candidate.ArchiveSessionID, NativeSessionID: candidate.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness,
@@ -45,11 +50,8 @@ func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCa
 		// The child is admitted with its parent, into the same destination,
 		// and by the same import when the parent was imported.
 		AdmittedAt: parent.AdmittedAt, Origin: parent.Origin, ImportBatch: parent.ImportBatch,
-		DestinationID: parent.DestinationID,
-	}
-	if parent.Imported() {
-		// Its start is set below from the earliest native record.
-		reg.StartedAtSource = archive.StartedAtSourceTranscript
+		DestinationID:   parent.DestinationID,
+		StartedAtSource: startedAtSource,
 	}
 	adapter, err := archive.NewAdapter(reg.Harness.Name)
 	if err != nil {

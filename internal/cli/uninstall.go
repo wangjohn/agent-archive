@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // Uninstall leaves data and credentials available for reinstall unless the
@@ -29,15 +30,16 @@ func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Write
 		return 2
 	}
 	if !*yes && !env.isTerminal(stdin) {
-		fmt.Fprintln(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking.")
+		terminal.Println(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking.")
 		return 1
 	}
 	if err := uninstall(*purge, *yes, stdin, stdout, env); err != nil {
-		fmt.Fprintf(stderr, "Uninstall incomplete: %v\n", err)
+		terminal.Printf(stderr, "Uninstall incomplete: %v\n", err)
 		return 1
 	}
 	return 0
 }
+
 func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	home, err := env.home()
 	if err != nil {
@@ -64,15 +66,16 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	if transactionPending(home) {
 		return errors.New(recoveryPending(home))
 	}
-	// An unreadable configuration fails before anything is asked.
+	// Fail before prompting when the settings are unreadable; they are
+	// loaded again below, once the collector lock is held too.
 	if _, _, err = config.Load(home); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
+	terminal.Println(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
 	if purge {
-		fmt.Fprintf(out, "Also delete owned local state and credentials under %s.\n", home)
+		terminal.Printf(out, "Also delete owned local state and credentials under %s.\n", home)
 	} else {
-		fmt.Fprintln(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
+		terminal.Println(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
 	}
 	p := newPrompter(stdin, out)
 	confirm := func(question string) (bool, error) {
@@ -81,7 +84,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		}
 		confirmed, err := p.yesNo(question, false)
 		if err == nil && !confirmed {
-			fmt.Fprintln(out, "Cancelled. No changes were made.")
+			terminal.Println(out, "Cancelled. No changes were made.")
 		}
 		return confirmed, err
 	}
@@ -95,7 +98,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 			return e
 		}
 		previewPending = pending
-		fmt.Fprintf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
+		terminal.Printf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
 		if confirmed, err := confirm("Delete local data and stored credentials too?"); err != nil || !confirmed {
 			return err
 		}
@@ -112,7 +115,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	releaseHooks = releaseOnce(releaseHooks)
 	defer releaseHooks()
-	// Load under the lock; pause/resume may have completed meanwhile.
+	// Reload after acquiring the lock; pause/resume may have completed meanwhile.
 	cfg, found, err := config.Load(home)
 	if err != nil {
 		return err
@@ -145,11 +148,11 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 			return fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
 		}
 		if state == jobAnotherInstallation {
-			fmt.Fprintf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchLabel(plist), plist)
+			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchLabel(plist), plist)
 			kept[plist] = true
 			continue
 		}
-		if state == "running" || state == "loaded" {
+		if launchJobActive(state) {
 			if err = env.unloadLaunchAgent(plist); err != nil {
 				return fmt.Errorf("stop collector: %w", err)
 			}
@@ -177,7 +180,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		}
 	}
 	for _, problem := range skipped {
-		fmt.Fprintln(out, problem)
+		terminal.Println(out, problem)
 	}
 	if purge {
 		refs := map[string]bool{}
@@ -250,7 +253,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 			return errors.New(strings.Join(problems, "; "))
 		}
 	}
-	fmt.Fprintln(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
+	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
 	return nil
 }
 
@@ -395,6 +398,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	}
 	for _, entry := range entries {
 		name := entry.Name()
+		//lint:ignore LV1001 file names found in the state directory, an open set; these are the lock files
 		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" {
 			continue
 		}

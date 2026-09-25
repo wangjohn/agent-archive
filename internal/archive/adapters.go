@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -136,11 +137,30 @@ func (CursorAdapter) FilterJSONL(r io.Reader) (FilteredTranscript, error) {
 	})
 }
 
+// textRole is the lower-case role name of a Cursor text transcript section
+// header, such as "user" in "user: fix the build".
+type textRole string
+
+// The visible textRole values: the sections FilterText retains.
+const (
+	textRoleUser      textRole = "user"
+	textRoleAssistant textRole = "assistant"
+	textRoleTool      textRole = "tool"
+)
+
+// The hidden textRole values: the sections FilterText omits.
+const (
+	textRoleSystem    textRole = "system"
+	textRoleDeveloper textRole = "developer"
+	textRoleThinking  textRole = "thinking"
+	textRoleAnalysis  textRole = "analysis"
+)
+
 // visibleTextRoles and hiddenTextRoles are the role headers of a Cursor
 // text transcript: a visible section is retained, a hidden one omitted.
 var (
-	visibleTextRoles = map[string]bool{"user": true, "assistant": true, "tool": true}
-	hiddenTextRoles  = map[string]bool{"system": true, "developer": true, "thinking": true, "analysis": true}
+	visibleTextRoles = map[textRole]bool{textRoleUser: true, textRoleAssistant: true, textRoleTool: true}
+	hiddenTextRoles  = map[textRole]bool{textRoleSystem: true, textRoleDeveloper: true, textRoleThinking: true, textRoleAnalysis: true}
 )
 
 // textRoleHeader reports whether line starts a role section of a Cursor text
@@ -149,13 +169,13 @@ var (
 // column 0, then a space or the end of the line; the role is returned in
 // lower case. An indented "user:" is content, such as a YAML key in tool
 // output, and must never start a turn or hide what follows it.
-func textRoleHeader(line string) (role, rest string, ok bool) {
+func textRoleHeader(line string) (role textRole, rest string, ok bool) {
 	line = strings.TrimSuffix(line, "\r")
 	colon := strings.IndexByte(line, ':')
 	if colon <= 0 {
 		return "", "", false
 	}
-	role, rest = strings.ToLower(line[:colon]), line[colon+1:]
+	role, rest = textRole(strings.ToLower(line[:colon])), line[colon+1:]
 	if !visibleTextRoles[role] && !hiddenTextRoles[role] {
 		return "", "", false
 	}
@@ -217,7 +237,7 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	// Split into sections, keeping each visible section's lines as they were.
 	var sections [][]string
 	hidden := false
-	for _, line := range strings.Split(string(content), "\n") {
+	for line := range strings.SplitSeq(string(content), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -583,6 +603,7 @@ func compactBoundaryRecord(raw map[string]any, omit func(string)) map[string]any
 	out := map[string]any{"type": "system", "subtype": "compact_boundary"}
 	for key, value := range raw {
 		switch {
+		//lint:ignore LV1001 keys of an external JSON record are an open domain
 		case key == "type" || key == "subtype":
 		case key == "timestamp":
 			if stamp, ok := value.(string); ok && !parseNativeTimestamp(map[string]any{"timestamp": stamp}).IsZero() {
@@ -724,10 +745,8 @@ func appendUniqueString(values []string, candidate string) []string {
 	if candidate == "" {
 		return values
 	}
-	for _, existing := range values {
-		if existing == candidate {
-			return values
-		}
+	if slices.Contains(values, candidate) {
+		return values
 	}
 	return append(values, candidate)
 }

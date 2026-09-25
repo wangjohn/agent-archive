@@ -18,7 +18,7 @@ type deleteAfterList struct {
 
 func (d deleteAfterList) List(ctx context.Context, prefix string) ([]storage.Object, error) {
 	objects, err := d.countingStore.List(ctx, prefix)
-	_ = d.MemoryStore.Delete(ctx, d.key)
+	_ = d.Delete(ctx, d.key)
 	return objects, err
 }
 
@@ -27,7 +27,7 @@ func (d deleteAfterList) List(ctx context.Context, prefix string) ([]storage.Obj
 func TestListSkipsSidecarDeletedAfterListing(t *testing.T) {
 	store := newCountingStore()
 	var keys []string
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys = append(keys, putSession(t, store, "codex", fmt.Sprintf("s%02d", i), baseTime))
 	}
 	var skipped []SkippedSidecar
@@ -50,7 +50,7 @@ func TestListSkipsSidecarDeletedAfterListing(t *testing.T) {
 func TestListReportsInvalidSidecarsAndListsTheRest(t *testing.T) {
 	store := newCountingStore()
 	var keys []string
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		keys = append(keys, putSession(t, store, "codex", fmt.Sprintf("s%02d", i), baseTime))
 	}
 	for _, k := range []string{keys[4], keys[1]} {

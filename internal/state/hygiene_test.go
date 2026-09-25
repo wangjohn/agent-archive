@@ -32,7 +32,7 @@ func TestForgetSessionRemovesSubagentCandidateLock(t *testing.T) {
 // Quarantined copies of one file are capped at quarantineKeep, newest kept.
 func TestQuarantineKeepsOnlyTheNewestCopies(t *testing.T) {
 	store := newTestStore(t)
-	for pass := 0; pass < quarantineKeep+2; pass++ {
+	for range quarantineKeep + 2 {
 		if err := os.WriteFile(store.requestPath("orphan"), []byte(`{"archive_session_id":"trunc`), 0o600); err != nil {
 			t.Fatal(err)
 		}

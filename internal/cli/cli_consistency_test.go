@@ -187,7 +187,7 @@ func TestStatusReportsAStuckCollectorLock(t *testing.T) {
 	// The same old record while a new holder has the lock but has not yet
 	// written its own: the PID it names is gone, so status must not send the
 	// user to kill it (by then the number may belong to another process).
-	dead := exec.Command("/usr/bin/true")
+	dead := exec.CommandContext(t.Context(), "/usr/bin/true")
 	must(t, dead.Run())
 	must(t, local.Write(filepath.Join(home, collectorLockRecordName), collectorLockRecord{Holder: "sync", PID: dead.Process.Pid, Since: now.Add(-3 * time.Hour)}))
 	unlock, err = local.Lock(home)

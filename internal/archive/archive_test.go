@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -301,9 +302,7 @@ func TestLifecycleDerivationIsOrderedConservativeAndDeterministic(t *testing.T) 
 	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	event := func(at time.Time, name string, fields map[string]any) SupplementalEvidence {
 		payload := map[string]any{"event_name": name}
-		for key, value := range fields {
-			payload[key] = value
-		}
+		maps.Copy(payload, fields)
 		return SupplementalEvidence{Kind: EvidenceKindLifecycleHook, ObservedAt: at, Provenance: "hook:fixture:" + strings.ToLower(name), Payload: payload}
 	}
 	// Deliberately append out of order and repeat an exact event. The delayed

@@ -35,7 +35,7 @@ func TestForgetSessionRefusesWhileItsCandidateIsUnreadable(t *testing.T) {
 		t.Skip("root reads unreadable files")
 	}
 	store := newTestStore(t)
-	if err := store.SaveRegistration(registration(t, "/unused")); err != nil {
+	if err := store.SaveRegistration(registration(t)); err != nil {
 		t.Fatal(err)
 	}
 	at := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)

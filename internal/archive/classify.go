@@ -118,6 +118,8 @@ func resolveSlashCommands(turns []NormalizedTurn) {
 				break scan
 			case TurnKindHumanPrompt, TurnKindLocalCommand, TurnKindShellCommand, TurnKindCompactSummary:
 				break scan
+			case TurnKindToolResult, TurnKindHarnessMeta, TurnKindCommandOutput, TurnKindHarnessNotification:
+				// Keep looking for the answer.
 			}
 		}
 	}

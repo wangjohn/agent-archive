@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -108,9 +109,7 @@ func Sweep(ctx context.Context, local *state.Store, store storage.ObjectStore, o
 	if err != nil {
 		return Result{}, err
 	}
-	for id, issue := range registrationIssues {
-		result.Errors[id] = issue
-	}
+	maps.Copy(result.Errors, registrationIssues)
 	// One directory read for the whole sweep, rather than one per session.
 	requests, requestIssues, err := local.ScanRequests()
 	if err != nil {

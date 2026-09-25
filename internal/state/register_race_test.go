@@ -12,10 +12,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
-func registrationFor(id, native string) archive.SessionRegistration {
+func registrationFor(id string) archive.SessionRegistration {
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	return archive.SessionRegistration{
-		ArchiveSessionID: id, NativeSessionID: native, ProjectID: "project-1", ProjectRoot: "/p",
+		ArchiveSessionID: id, NativeSessionID: "native-1", ProjectID: "project-1", ProjectRoot: "/p",
 		Harness: archive.Harness{Name: "claude"}, TranscriptPath: "/t.jsonl", SessionStartedAt: at, RegisteredAt: at,
 	}
 }
@@ -24,7 +24,7 @@ func registrationFor(id, native string) archive.SessionRegistration {
 // written back; an update error saves nothing.
 func TestUpdateRegistrationReportsAForgottenSessionAndSavesNothingOnError(t *testing.T) {
 	local := newTestStore(t)
-	reg, err := local.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id, "native-1") })
+	reg, err := local.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestUpdateRegistrationReportsAForgottenSessionAndSavesNothingOnError(t *tes
 // whose index entry it created, instead of reusing the dead one.
 func TestRegisterNewSessionDoesNotReuseAnIndexEntryBeingForgotten(t *testing.T) {
 	store := newTestStore(t)
-	old, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id, "native-1") })
+	old, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestRegisterNewSessionDoesNotReuseAnIndexEntryBeingForgotten(t *testing.T) 
 	done := make(chan archive.SessionRegistration, 1)
 	failed := make(chan error, 1)
 	go func() {
-		reg, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id, "native-1") })
+		reg, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
 		if err != nil {
 			failed <- err
 			return
@@ -108,7 +108,7 @@ func TestRegisterNewSessionDoesNotReuseAnIndexEntryBeingForgotten(t *testing.T) 
 // anything for the forgotten ID, whichever inode it holds.
 func TestStaleLockInodeAfterForgetCannotWriteForTheSession(t *testing.T) {
 	store := newTestStore(t)
-	old, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id, "native-1") })
+	old, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestStaleLockInodeAfterForgetCannotWriteForTheSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer stale.Close()
+	defer func() { _ = stale.Close() }()
 	if err := store.ForgetSession(old.ArchiveSessionID, "native-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestStaleLockInodeAfterForgetCannotWriteForTheSession(t *testing.T) {
 	if err := store.SaveRequest(old.ArchiveSessionID, "stop", time.Now()); !errors.Is(err, ErrSessionNotRegistered) {
 		t.Fatalf("SaveRequest on a forgotten ID: %v", err)
 	}
-	fresh, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id, "native-1") })
+	fresh, err := store.RegisterNewSession("native-1", func(id string) archive.SessionRegistration { return registrationFor(id) })
 	if err != nil {
 		t.Fatal(err)
 	}

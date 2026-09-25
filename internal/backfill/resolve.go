@@ -30,7 +30,8 @@ type resolver struct {
 	cfg     config.Config
 	filters Filters
 	// home and homeRaw are the home directory resolved and as given.
-	home, homeRaw string
+	home    string
+	homeRaw string
 	// workspaces are the folders desktop apps start chats in (rule 5).
 	workspaces []workspaceFolder
 	temps      []string
@@ -41,20 +42,31 @@ type resolver struct {
 }
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
-	r := &resolver{env: env, cfg: cfg, filters: filters, homeRaw: filepath.Clean(env.Home), cache: map[string]resolution{}}
-	r.home = env.resolved(env.Home)
+	var workspaces []workspaceFolder
 	for _, folder := range workspaceFolders(env.Home) {
-		r.workspaces = append(r.workspaces, workspaceFolder{root: env.resolved(folder), forms: uniquePaths(filepath.Clean(folder), env.resolved(folder))})
+		workspaces = append(workspaces, workspaceFolder{root: env.resolved(folder), forms: uniquePaths(filepath.Clean(folder), env.resolved(folder))})
 	}
+	var temps []string
 	for _, t := range env.tempDirs() {
 		if t != "" {
-			r.temps = append(r.temps, uniquePaths(filepath.Clean(t), env.resolved(t))...)
+			temps = append(temps, uniquePaths(filepath.Clean(t), env.resolved(t))...)
 		}
 	}
+	var worktreeStores []string
 	for _, store := range []string{filepath.Join(env.Home, ".codex", "worktrees"), filepath.Join(env.Home, ".cursor", "worktrees")} {
-		r.worktreeStores = append(r.worktreeStores, uniquePaths(filepath.Clean(store), env.resolved(store))...)
+		worktreeStores = append(worktreeStores, uniquePaths(filepath.Clean(store), env.resolved(store))...)
 	}
-	return r
+	return &resolver{
+		env:            env,
+		cfg:            cfg,
+		filters:        filters,
+		home:           env.resolved(env.Home),
+		homeRaw:        filepath.Clean(env.Home),
+		workspaces:     workspaces,
+		temps:          temps,
+		worktreeStores: worktreeStores,
+		cache:          map[string]resolution{},
+	}
 }
 
 func uniquePaths(paths ...string) []string {
@@ -370,7 +382,7 @@ func cursorSlug(path string) string {
 func slugName(name string) string {
 	b := []byte(name)
 	for i, c := range b {
-		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9') {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
 			b[i] = '-'
 		}
 	}

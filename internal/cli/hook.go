@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // runHookCommand implements the hidden `_hook` entry point hooks.Merge
@@ -34,7 +35,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	)
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintf(stderr, "agent-archive: hook: internal error: %v\n", r)
+			terminal.Printf(stderr, "agent-archive: hook: internal error: %v\n", r)
 			recordHookFailure(home, *harness, payload)
 			code = 0
 		}
@@ -52,11 +53,11 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 
 	home, err := env.home()
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: hook: resolve home: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: hook: resolve home: %v\n", err)
 		return 0
 	}
 	if err := handleHookEvent(home, *harness, payload, env.now()); err != nil {
-		fmt.Fprintf(stderr, "agent-archive: hook: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 	}
 	return 0
 }
@@ -104,6 +105,7 @@ const (
 func classifyHookEvent(harness, eventName string) hookEventKind {
 	switch strings.ToLower(strings.TrimSpace(harness)) {
 	case "codex":
+		//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
 		switch eventName {
 		case "SessionStart":
 			return hookEventStart
@@ -115,6 +117,7 @@ func classifyHookEvent(harness, eventName string) hookEventKind {
 			return hookEventSubagentStop
 		}
 	case "claude", "claude-code":
+		//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
 		switch eventName {
 		case "SessionStart":
 			return hookEventStart
@@ -126,6 +129,7 @@ func classifyHookEvent(harness, eventName string) hookEventKind {
 			return hookEventSubagentStop
 		}
 	case "cursor":
+		//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
 		switch eventName {
 		case "sessionStart":
 			return hookEventStart
@@ -200,9 +204,11 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 			err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
 		}
 	case hookEventSubagentStop:
-		err = handleSubagentStop(store, cfg, harness, nativeSessionID, eventName, payload, now)
+		err = handleSubagentStop(store, cfg, harness, nativeSessionID, payload, now)
 	case hookEventStop, hookEventResponse:
 		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
+	case hookEventIgnored:
+		// Handled by the early return above, before the lock was taken.
 	}
 	// Retention can forget a session between this hook's registration lookup
 	// and its request write; the store then refuses the write so no orphan
@@ -667,6 +673,7 @@ func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName s
 	if canonicalHarness(registration.Harness.Name) != canonicalHarness(harness) {
 		return fmt.Errorf("session event does not match the accepted harness")
 	}
+	//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
 	if eventName == "afterAgentResponse" || eventName == "stop" {
 		if err := adoptCursorTranscriptPath(store, &registration, harness, payload); err != nil {
 			return err
@@ -694,6 +701,7 @@ func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName s
 }
 
 func isSessionLifecycleEvent(eventName string) bool {
+	//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
 	switch eventName {
 	case "Stop", "Interrupt", "SessionEnd", "StopFailure", "stop", "sessionEnd":
 		return true
@@ -768,27 +776,40 @@ func filteredHookEvidence(kind archive.SupplementalEvidenceKind, harness, event 
 	return &filtered[0], nil
 }
 
+// cursorLifecycleStatus is a documented value of Cursor's stop status or
+// sessionEnd reason.
+type cursorLifecycleStatus string
+
+const (
+	cursorStatusCompleted   cursorLifecycleStatus = "completed"
+	cursorStatusAborted     cursorLifecycleStatus = "aborted"
+	cursorStatusError       cursorLifecycleStatus = "error"
+	cursorStatusWindowClose cursorLifecycleStatus = "window_close"
+	cursorStatusUserClose   cursorLifecycleStatus = "user_close"
+)
+
 // documentedLifecycleStatus retains only closed native enums. Free-form
 // reason/status text is never archived as lifecycle metadata.
 func documentedLifecycleStatus(harness, event string, payload map[string]any) string {
 	if !strings.EqualFold(strings.TrimSpace(harness), "cursor") {
 		return ""
 	}
-	field := ""
+	var field cursorLifecycleStatus
+	//lint:ignore LV1001 event is the hook_event_name Cursor sends, or a lowercased start or prompt reason; other values carry no status
 	switch event {
 	case "stop":
-		field = firstNonEmptyString(payload, "status")
+		field = cursorLifecycleStatus(firstNonEmptyString(payload, "status"))
 	case "sessionEnd":
-		field = firstNonEmptyString(payload, "reason")
+		field = cursorLifecycleStatus(firstNonEmptyString(payload, "reason"))
 	default:
 		return ""
 	}
 	switch field {
-	case "completed", "aborted", "error":
-		return field
-	case "window_close", "user_close":
+	case cursorStatusCompleted, cursorStatusAborted, cursorStatusError:
+		return string(field)
+	case cursorStatusWindowClose, cursorStatusUserClose:
 		if event == "sessionEnd" {
-			return field
+			return string(field)
 		}
 	}
 	return ""

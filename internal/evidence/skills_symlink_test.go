@@ -14,7 +14,11 @@ import (
 
 // skillLayout is a temporary home, project, and an unrelated directory
 // outside both, standing in for ~/.aws or another repository.
-type skillLayout struct{ home, project, outside string }
+type skillLayout struct {
+	home    string
+	project string
+	outside string
+}
 
 func newSkillLayout(t *testing.T) skillLayout {
 	t.Helper()
@@ -67,6 +71,10 @@ func observeClaudeSkills(t *testing.T, l skillLayout, scope string) (map[string]
 			inventory = e.Payload
 		case archive.EvidenceKindSkillSnapshot:
 			snapshots = append(snapshots, e.Payload)
+		case archive.EvidenceKindSkillDiscovered, archive.EvidenceKindSkillInvocation, archive.EvidenceKindSkillRead,
+			archive.EvidenceKindLifecycleHook, archive.EvidenceKindFinalResponse, archive.EvidenceKindExplicitFeedback,
+			archive.EvidenceKindLinkedSession, archive.EvidenceKindCaptureGap:
+			// Only the skill inventory and snapshots are under test.
 		}
 	}
 	return inventory, snapshots, string(encoded)
@@ -115,7 +123,12 @@ func TestObserveSkillsIgnoresProjectSkillLinkedToNonSkillFileInProject(t *testin
 // link to the project (or a folder in it), "inside the skill root" would
 // admit any project file. A project skill must be a file named SKILL.md.
 func TestObserveSkillsIgnoresProjectFileBehindALinkedSkillRoot(t *testing.T) {
-	for _, tc := range []struct{ name, rootTarget, secret, link string }{
+	for _, tc := range []struct {
+		name       string
+		rootTarget string
+		secret     string
+		link       string
+	}{
 		{"root is the project", "..", ".env", filepath.Join("envskill", "SKILL.md")},
 		{"root is a project folder", filepath.Join("..", "config"), filepath.Join("config", "master.key"), filepath.Join("k", "SKILL.md")},
 	} {

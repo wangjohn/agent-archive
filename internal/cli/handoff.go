@@ -22,6 +22,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // handoffDir is the data-directory entry holding untrimmed handoffs saved when
@@ -46,7 +47,8 @@ type handoffTarget struct {
 	// startedAt and lastActivityAt are what this machine knows about a local
 	// session (its registration, its transcript's modification time), used
 	// only where the transcript records no timestamps.
-	startedAt, lastActivityAt time.Time
+	startedAt      time.Time
+	lastActivityAt time.Time
 }
 
 // currentSessionEnv names environment variables an agent sets for the commands
@@ -125,7 +127,7 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 
 	home, err := env.readHome()
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: handoff: resolve home: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: handoff: resolve home: %v\n", err)
 		return 1
 	}
 	ctx := context.Background()
@@ -135,11 +137,11 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	} else {
 		cfg, found, loadErr := config.Load(home)
 		if loadErr != nil {
-			fmt.Fprintf(stderr, "agent-archive: handoff: load config: %v\n", loadErr)
+			terminal.Printf(stderr, "agent-archive: handoff: load config: %v\n", loadErr)
 			return 1
 		}
 		if !found {
-			fmt.Fprintln(stderr, notSetUpMessage)
+			terminal.Println(stderr, notSetUpMessage)
 			return 1
 		}
 		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source, skip: currentSessions(env), stderr: stderr}
@@ -156,16 +158,16 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: handoff: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return 1
 	}
 	if target.describe != "" {
-		fmt.Fprintf(stderr, "handoff: using %s\n", target.describe)
+		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
 	}
 
 	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt})
 	if err != nil {
-		fmt.Fprintf(stderr, "agent-archive: handoff: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return 1
 	}
 	render := func(h archive.Handoff) []byte {
@@ -186,10 +188,10 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		// without setup, and must not create it just to hold a copy of a
 		// transcript nobody opted in to archiving.
 		if _, statErr := os.Stat(home); statErr != nil {
-			fmt.Fprintln(stderr, "agent-archive: handoff: note: output was trimmed and, without setup, the untrimmed version is not saved; use --max-bytes 0 for all of it")
+			terminal.Println(stderr, "agent-archive: handoff: note: output was trimmed and, without setup, the untrimmed version is not saved; use --max-bytes 0 for all of it")
 			fitted.FullRecordPath = ""
 		} else if err := local.WriteBytes(fullPath, full); err != nil {
-			fmt.Fprintf(stderr, "agent-archive: handoff: warning: could not save the untrimmed handoff: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: handoff: warning: could not save the untrimmed handoff: %v\n", err)
 			fitted.FullRecordPath = ""
 		}
 	} else {
@@ -197,20 +199,20 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	rendered := render(fitted)
 	if !fits {
-		fmt.Fprintf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), *maxBytes)
+		terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), *maxBytes)
 	}
 	if *output == "" {
 		if _, err := stdout.Write(rendered); err != nil {
-			fmt.Fprintf(stderr, "agent-archive: handoff: %v\n", err)
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 			return 1
 		}
 		return 0
 	}
 	if err := writeHandoffOutput(*output, rendered, *force); err != nil {
-		fmt.Fprintf(stderr, "agent-archive: handoff: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stderr, "handoff: wrote %s (%d bytes)\n", *output, len(rendered))
+	terminal.Printf(stderr, "handoff: wrote %s (%d bytes)\n", *output, len(rendered))
 	return 0
 }
 
@@ -280,11 +282,8 @@ func (r handoffResolver) localTarget(reg archive.SessionRegistration) (handoffTa
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	target := handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt}
-	if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase()); ok {
-		target.lastActivityAt = at
-	}
-	return target, nil
+	lastActivityAt, _ := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase())
+	return handoffTarget{bundle: bundle, source: "local", startedAt: reg.SessionStartedAt, lastActivityAt: lastActivityAt}, nil
 }
 
 // hasPrompt reports whether a bundle holds anything the person said, so
@@ -537,9 +536,10 @@ func (r handoffResolver) noMatch(dir string, sessions []archive.Metadata, now ti
 		if i == handoffFallbackRows {
 			break
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\tagent-archive handoff %s\n", m.Harness.Name, relativeAge(now, m.CapturedAt), r.machineLabel(m.MachineID), m.SessionID)
+		// The table is built in memory, where writes cannot fail.
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\tagent-archive handoff %s\n", m.Harness.Name, relativeAge(now, m.CapturedAt), r.machineLabel(m.MachineID), m.SessionID)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 	return errors.New(strings.TrimRight(b.String(), "\n"))
 }
 
@@ -619,11 +619,11 @@ func writeHandoffOutput(path string, data []byte, force bool) error {
 		return err
 	}
 	if err := f.Chmod(0o600); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()
+		_ = f.Close()
 		return err
 	}
 	return f.Close()

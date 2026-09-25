@@ -114,7 +114,9 @@ type HandoffWorkspace struct {
 // HandoffPlanItem is one entry of the agent's latest plan or todo list, with
 // its status as the agent recorded it (for example "completed").
 type HandoffPlanItem struct {
-	Text   string `json:"text"`
+	Text string `json:"text"`
+	// Status is copied verbatim from the harness's plan tool.
+	//lint:ignore LV1001 the harnesses' plan-status vocabulary is external and open
 	Status string `json:"status,omitempty"`
 }
 
@@ -133,11 +135,23 @@ type HandoffExchange struct {
 // once the budget has collapsed tool calls — a count of them such as
 // "14 tool calls: Bash ×9, Read ×5".
 type HandoffStep struct {
-	Kind          string           `json:"kind"` // "text", "tool", "shell", "summary", or "collapsed"
+	Kind          HandoffStepKind  `json:"kind"`
 	Text          string           `json:"text,omitempty"`
 	TextTruncated bool             `json:"text_truncated,omitempty"`
 	Tool          *HandoffToolCall `json:"tool,omitempty"`
 }
+
+// HandoffStepKind says which of the HandoffStep shapes a step is.
+type HandoffStepKind string
+
+// HandoffStepKind values, as written in the handoff document.
+const (
+	HandoffStepText      HandoffStepKind = "text"
+	HandoffStepTool      HandoffStepKind = "tool"
+	HandoffStepShell     HandoffStepKind = "shell"
+	HandoffStepSummary   HandoffStepKind = "summary"
+	HandoffStepCollapsed HandoffStepKind = "collapsed"
+)
 
 // HandoffToolCall is one tool call in a HandoffStep: the tool's name, a short
 // summary of its input, whether it failed, and its trimmed result.
@@ -163,24 +177,27 @@ type HandoffGap struct {
 // HandoffElision records one budget step: what it removed and from which
 // exchanges (1-based, inclusive).
 type HandoffElision struct {
-	Kind  string `json:"kind"`
-	First int    `json:"first_exchange"`
-	Last  int    `json:"last_exchange"`
-	Count int    `json:"count"`
+	Kind  HandoffElisionKind `json:"kind"`
+	First int                `json:"first_exchange"`
+	Last  int                `json:"last_exchange"`
+	Count int                `json:"count"`
 }
+
+// HandoffElisionKind names one FitHandoff budget step.
+type HandoffElisionKind string
 
 // HandoffElision kinds, in the order FitHandoff applies them. The first three
 // never touch the protected tail of recent steps.
 const (
 	// HandoffElisionToolOutput drops tool results.
-	HandoffElisionToolOutput = "tool_output"
+	HandoffElisionToolOutput HandoffElisionKind = "tool_output"
 	// HandoffElisionToolCalls collapses runs of tool calls to per-tool counts.
-	HandoffElisionToolCalls = "tool_calls"
+	HandoffElisionToolCalls HandoffElisionKind = "tool_calls"
 	// HandoffElisionAssistantText shortens assistant text.
-	HandoffElisionAssistantText = "assistant_text"
+	HandoffElisionAssistantText HandoffElisionKind = "assistant_text"
 	// HandoffElisionPromptText truncates long prompts; prompts are never
 	// dropped.
-	HandoffElisionPromptText = "prompt_text"
+	HandoffElisionPromptText HandoffElisionKind = "prompt_text"
 )
 
 // BuildHandoff arranges a filtered bundle for handoff without any budget.
@@ -191,16 +208,19 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 	if err != nil {
 		return Handoff{}, err
 	}
-	h := Handoff{Version: HandoffVersion, Exchanges: []HandoffExchange{}}
-	h.Session = HandoffSession{
-		ArchiveSessionID: bundle.ArchiveSessionID,
-		NativeSessionID:  bundle.NativeSessionID,
-		Harness:          bundle.Capture.Harness.Name,
-		HarnessVersion:   bundle.Capture.Harness.Version,
-		Source:           opts.Source,
+	h := Handoff{
+		Version: HandoffVersion,
+		Session: HandoffSession{
+			ArchiveSessionID: bundle.ArchiveSessionID,
+			NativeSessionID:  bundle.NativeSessionID,
+			Harness:          bundle.Capture.Harness.Name,
+			HarnessVersion:   bundle.Capture.Harness.Version,
+			Source:           opts.Source,
+		},
+		Workspace:              recordedWorkspace(bundle),
+		ToolResultsUnavailable: bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0,
+		Exchanges:              []HandoffExchange{},
 	}
-	h.Workspace = recordedWorkspace(bundle)
-	h.ToolResultsUnavailable = bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0
 
 	seenModel := map[string]bool{}
 	addModel := func(model string) {
@@ -280,20 +300,22 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 				current = &HandoffExchange{Prompt: cleanPrompt(turn.Text), Timestamp: turn.Timestamp}
 			case TurnKindAssistant:
 				if text := strings.TrimSpace(turn.Text); text != "" {
-					current.Steps = append(current.Steps, HandoffStep{Kind: "text", Text: text})
+					current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepText, Text: text})
 					h.LeftOff = text
 				}
 			case TurnKindShellCommand:
 				if command := strings.TrimSpace(stripHarnessTag(turn.Text, "bash-input")); command != "" {
-					current.Steps = append(current.Steps, HandoffStep{Kind: "shell", Text: command})
+					current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepShell, Text: command})
 				}
 			case TurnKindCompactSummary:
 				// After /compact the agent worked from this model-written
 				// summary rather than the turns before it, so the receiving
 				// agent should see it where it happened.
 				if text := strings.TrimSpace(turn.Text); text != "" {
-					current.Steps = append(current.Steps, HandoffStep{Kind: "summary", Text: text})
+					current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepSummary, Text: text})
 				}
+			case TurnKindToolResult, TurnKindHarnessMeta, TurnKindCommandOutput, TurnKindLocalCommand, TurnKindHarnessNotification:
+				// Not part of the exchange the receiving agent reads.
 			}
 			continue
 		}
@@ -327,14 +349,13 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 		if plan := planItems(name, call.Input); plan != nil {
 			h.Plan = plan
 		}
-		current.Steps = append(current.Steps, HandoffStep{Kind: "tool", Tool: tool})
+		current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: tool})
 	}
 	flush()
 	h.FilesTouched = files.list
 	return h, nil
 }
 
-// textSectionPrefixes are the role prefixes CursorAdapter.FilterText keeps.
 // textTranscriptExchanges reads the role sections of a filtered text
 // transcript: a "user:" section starts an exchange, an "assistant:" section is
 // agent text, and a "tool:" section is tool output. Continuation lines belong
@@ -343,32 +364,36 @@ func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]Han
 	exchanges := []HandoffExchange{}
 	current := &HandoffExchange{}
 	leftOff := ""
-	role, body := "", []string{}
+	var role textRole
+	body := []string{}
 	flushSection := func() {
 		text := strings.TrimSpace(strings.Join(body, "\n"))
 		switch role {
-		case "user":
+		case textRoleUser:
 			if current.Prompt != "" || len(current.Steps) > 0 {
 				exchanges = append(exchanges, *current)
 			}
 			current = &HandoffExchange{Prompt: cleanPrompt(text)}
-		case "assistant":
+		case textRoleAssistant:
 			if text != "" {
-				current.Steps = append(current.Steps, HandoffStep{Kind: "text", Text: text})
+				current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepText, Text: text})
 				leftOff = text
 			}
-		case "tool":
+		case textRoleTool:
 			if text != "" {
-				current.Steps = append(current.Steps, HandoffStep{Kind: "tool", Tool: &HandoffToolCall{
+				current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{
 					Name: "tool", Summary: firstLine(text, handoffSummaryCap),
 					Result: trimResult(text, opts.resultLines(), opts.resultBytes()), ResultLines: lineCount(text), ResultBytes: len(text),
 				}})
 			}
+		case textRoleSystem, textRoleDeveloper, textRoleThinking, textRoleAnalysis:
+			// FilterText omitted hidden sections, and only a visible role
+			// starts one here.
 		}
 		role, body = "", body[:0]
 	}
 	for _, transcript := range texts {
-		for _, line := range strings.Split(transcript.Content, "\n") {
+		for line := range strings.SplitSeq(transcript.Content, "\n") {
 			if header, rest, ok := textRoleHeader(line); ok && visibleTextRoles[header] {
 				flushSection()
 				role = header
@@ -417,17 +442,17 @@ func handoffEvents(view NormalizedView) []handoffEvent {
 // recordedWorkspace returns the directory the session started in, reduced to
 // its base name, and the last git branch the transcript recorded.
 func recordedWorkspace(bundle SourceBundle) HandoffWorkspace {
-	var out HandoffWorkspace
+	directory := ""
 	if root := workspaceRoot(bundle); root != "" {
-		out.Directory = path.Base(root)
+		directory = path.Base(root)
 	}
+	branch := ""
 	for i := len(bundle.NativeRecords) - 1; i >= 0; i-- {
-		if branch := firstStringDeep(bundle.NativeRecords[i], "gitBranch"); branch != "" {
-			out.Branch = branch
+		if branch = firstStringDeep(bundle.NativeRecords[i], "gitBranch"); branch != "" {
 			break
 		}
 	}
-	return out
+	return HandoffWorkspace{Directory: directory, Branch: branch}
 }
 
 // workspaceRoot is the first working directory the transcript recorded: where
@@ -544,14 +569,14 @@ func TruncateUTF8(s string, n int) string {
 	return s[:n]
 }
 
-// firstLine returns the first non-empty line of s, capped at max bytes.
-func firstLine(s string, max int) string {
+// firstLine returns the first non-empty line of s, capped at limit bytes.
+func firstLine(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = strings.TrimSpace(s[:i]) + " …"
 	}
-	if len(s) > max {
-		s = TruncateUTF8(s, max) + "…"
+	if len(s) > limit {
+		s = TruncateUTF8(s, limit) + "…"
 	}
 	return s
 }
@@ -691,10 +716,10 @@ func touchedFiles(name string, input map[string]any, raw map[string]any) []strin
 		patch, _ = raw["input"].(string)
 	}
 	var out []string
-	for _, line := range strings.Split(patch, "\n") {
+	for line := range strings.SplitSeq(patch, "\n") {
 		for _, prefix := range []string{"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "} {
-			if strings.HasPrefix(line, prefix) {
-				out = append(out, strings.TrimSpace(strings.TrimPrefix(line, prefix)))
+			if file, ok := strings.CutPrefix(line, prefix); ok {
+				out = append(out, strings.TrimSpace(file))
 			}
 		}
 	}
@@ -708,8 +733,8 @@ func relativeTo(file, root string) string {
 		return file
 	}
 	clean := path.Clean(file)
-	if strings.HasPrefix(clean, root+"/") {
-		return strings.TrimPrefix(clean, root+"/")
+	if relative, ok := strings.CutPrefix(clean, root+"/"); ok {
+		return relative
 	}
 	return clean
 }
@@ -789,7 +814,7 @@ func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bo
 		return out, true
 	}
 	steps := []struct {
-		kind  string
+		kind  HandoffElisionKind
 		apply func(steps []HandoffStep, limit int) ([]HandoffStep, int)
 	}{
 		{HandoffElisionToolOutput, dropToolOutput},
@@ -804,7 +829,7 @@ func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bo
 		apply := func(k int) (Handoff, HandoffElision) {
 			trial := cloneHandoff(out)
 			elision := HandoffElision{Kind: step.kind}
-			for i := 0; i < k; i++ {
+			for i := range k {
 				var n int
 				trial.Exchanges[i].Steps, n = step.apply(trial.Exchanges[i].Steps, limits[i])
 				if n > 0 {
@@ -829,7 +854,7 @@ func FitHandoff(h Handoff, maxBytes int, measure func(Handoff) int) (Handoff, bo
 	apply := func(k int) (Handoff, HandoffElision) {
 		trial := cloneHandoff(out)
 		elision := HandoffElision{Kind: HandoffElisionPromptText}
-		for i := 0; i < k; i++ {
+		for i := range k {
 			exchange := &trial.Exchanges[i]
 			if len(exchange.Prompt) > handoffPromptCap {
 				exchange.Prompt = TruncateUTF8(exchange.Prompt, handoffPromptCap)
@@ -931,7 +956,7 @@ func collapseToolCalls(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 		}
 		if at < 0 {
 			at = len(out)
-			out = append(out, HandoffStep{Kind: "collapsed"})
+			out = append(out, HandoffStep{Kind: HandoffStepCollapsed})
 		}
 		if counts[step.Tool.Name] == 0 {
 			order = append(order, step.Tool.Name)
@@ -960,7 +985,7 @@ func shortenAssistantText(steps []HandoffStep, limit int) ([]HandoffStep, int) {
 	n := 0
 	for i := range steps[:limit] {
 		step := &steps[i]
-		if (step.Kind == "text" || step.Kind == "summary") && len(step.Text) > handoffAssistantTextCap {
+		if (step.Kind == HandoffStepText || step.Kind == HandoffStepSummary) && len(step.Text) > handoffAssistantTextCap {
 			step.Text = TruncateUTF8(step.Text, handoffAssistantTextCap)
 			step.TextTruncated = true
 			n++

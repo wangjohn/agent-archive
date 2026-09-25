@@ -42,7 +42,7 @@ func resolveHome(create bool) (string, error) {
 		if e != nil {
 			return "", e
 		}
-		path = filepath.Join(home, ".local/share/agent-archive")
+		path = filepath.Join(home, ".local", "share", "agent-archive")
 	}
 	path, e := ResolveExistingSymlinks(path)
 	if e != nil {
@@ -89,7 +89,7 @@ func ResolveExistingSymlinks(path string) (string, error) {
 		}
 		ancestor = next
 	}
-	real, e := filepath.EvalSymlinks(ancestor)
+	resolved, e := filepath.EvalSymlinks(ancestor)
 	if e != nil {
 		return "", e
 	}
@@ -97,7 +97,7 @@ func ResolveExistingSymlinks(path string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	return filepath.Join(real, rel), nil
+	return filepath.Join(resolved, rel), nil
 }
 
 // Write stores value as indented JSON with a trailing newline, atomically,
@@ -122,7 +122,8 @@ func WriteBytes(path string, b []byte) error {
 	if e != nil {
 		return e
 	}
-	defer os.Remove(f.Name())
+	// After a successful rename there is nothing left to remove.
+	defer func() { _ = os.Remove(f.Name()) }()
 	if e = f.Chmod(0600); e == nil {
 		_, e = f.Write(b)
 	}
@@ -143,7 +144,7 @@ func WriteBytes(path string, b []byte) error {
 	if e != nil {
 		return e
 	}
-	defer d.Close()
+	defer func() { _ = d.Close() }()
 	return d.Sync()
 }
 
@@ -187,7 +188,7 @@ func RemoveStaleTemps(dir string, olderThan time.Duration) error {
 // replaced so a writer holding it open with O_APPEND (launchd's redirect of
 // the collector's stderr) keeps writing to the same file. It must not run
 // while another process writes the file. A missing file is not an error.
-func TrimLog(path string, maxBytes, keep int64) error {
+func TrimLog(path string, maxBytes, keep int64) (e error) {
 	f, e := os.OpenFile(path, os.O_RDWR, 0)
 	if errors.Is(e, os.ErrNotExist) {
 		return nil
@@ -195,7 +196,11 @@ func TrimLog(path string, maxBytes, keep int64) error {
 	if e != nil {
 		return e
 	}
-	defer f.Close()
+	defer func() {
+		if ce := f.Close(); ce != nil && e == nil {
+			e = ce
+		}
+	}()
 	info, e := f.Stat()
 	if e != nil {
 		return e
@@ -251,7 +256,7 @@ func Lock(home string) (func(), error) { return NamedLock(home, "collector.lock"
 // not, the lock is dropped and taken again on whatever the path names now.
 func NamedLock(home, name string) (func(), error) {
 	path := filepath.Join(home, name)
-	for attempt := 0; attempt < lockAttempts; attempt++ {
+	for range lockAttempts {
 		f, e := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 		if e != nil {
 			return nil, e
@@ -275,13 +280,16 @@ const lockAttempts = 100
 // f is unlocked and closed; otherwise release does both.
 func lockOpened(path string, f *os.File) (release func(), current bool, e error) {
 	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
-		f.Close()
+		_ = f.Close()
 		if errors.Is(e, syscall.EWOULDBLOCK) || errors.Is(e, syscall.EAGAIN) {
 			return nil, false, ErrBusy
 		}
 		return nil, false, e
 	}
-	release = func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }
+	release = func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}
 	locked, e := f.Stat()
 	if e != nil {
 		release()

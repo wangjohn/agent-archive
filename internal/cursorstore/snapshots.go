@@ -1,6 +1,7 @@
 package cursorstore
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -76,7 +77,7 @@ var (
 // once per process so builds need no cgo; "" when it can't be read.
 func darwinUserTempDir() string {
 	darwinTempOnce.Do(func() {
-		out, err := exec.Command("/usr/bin/getconf", "DARWIN_USER_TEMP_DIR").Output()
+		out, err := exec.CommandContext(context.Background(), "/usr/bin/getconf", "DARWIN_USER_TEMP_DIR").Output()
 		if err == nil && strings.TrimSpace(string(out)) != "" {
 			darwinTempDir = filepath.Clean(strings.TrimSpace(string(out)))
 		}
@@ -115,7 +116,7 @@ func lockSnapshot(dir string) (*os.File, error) {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	return f, nil
@@ -128,7 +129,7 @@ func snapshotInUse(dir string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return true
 	}
@@ -175,7 +176,7 @@ func RemoveStaleSnapshots() {
 			age, info, err = abandonedSnapshotAge, lock, nil
 		}
 		if err == nil && time.Since(info.ModTime()) > age {
-			os.RemoveAll(dir)
+			_ = os.RemoveAll(dir)
 		}
 	}
 }

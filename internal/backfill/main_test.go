@@ -17,6 +17,8 @@ func TestMain(m *testing.M) {
 	}
 	cursorstore.SnapshotTempDirForTesting = dir
 	code := m.Run()
-	os.RemoveAll(dir)
+	// A folder left behind holds only this run's copies; the run's result
+	// stands either way.
+	_ = os.RemoveAll(dir)
 	os.Exit(code)
 }

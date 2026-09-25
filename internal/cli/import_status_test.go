@@ -16,7 +16,8 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-func saveImportedSession(t *testing.T, store *state.Store, now time.Time, id, harness, project string) archive.SessionRegistration {
+// saveImportedSession registers an imported Codex session with a transcript.
+func saveImportedSession(t *testing.T, store *state.Store, now time.Time, id, project string) archive.SessionRegistration {
 	t.Helper()
 	path := filepath.Join(project, id+".jsonl")
 	if err := os.WriteFile(path, []byte(`{"type":"turn_context","model":"synthetic","cli_version":"1.2.3"}`+"\n"), 0o600); err != nil {
@@ -24,7 +25,7 @@ func saveImportedSession(t *testing.T, store *state.Store, now time.Time, id, ha
 	}
 	reg := archive.SessionRegistration{
 		ArchiveSessionID: id, NativeSessionID: "native-" + id, ProjectID: archive.ProjectID(project), ProjectRoot: project,
-		Harness: archive.Harness{Name: harness, Version: "1.2.3"}, TranscriptPath: path,
+		Harness: archive.Harness{Name: "codex", Version: "1.2.3"}, TranscriptPath: path,
 		SessionStartedAt: now.AddDate(-1, 0, 0), RegisteredAt: now, AdmittedAt: now,
 		Origin: archive.SessionOriginImport, StartedAtSource: archive.StartedAtSourceTranscript, ImportBatch: "batch-1",
 	}
@@ -50,14 +51,14 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := storage.NewMemoryStore()
-	saveImportedSession(t, store, now, "published", "codex", project)
+	saveImportedSession(t, store, now, "published", project)
 	if result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil || len(result.Published) != 1 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 	if summary, err := verifyPublications(home, cfg, testEnv(t, home, now), store, remote); err != nil || summary.Verified != 1 {
 		t.Fatalf("read-back did not run on the import: %#v %v", summary, err)
 	}
-	saveImportedSession(t, store, now, "waiting", "codex", project)
+	saveImportedSession(t, store, now, "waiting", project)
 
 	env := pairStatusEnv(t, home, userHome, now, "codex")
 	view, err := readStatus(env)
@@ -109,12 +110,12 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saveImportedSession(t, store, now, "fine", "codex", project)
-	gone := saveImportedSession(t, store, now, "gone", "codex", project)
+	saveImportedSession(t, store, now, "fine", project)
+	gone := saveImportedSession(t, store, now, "gone", project)
 	if err := os.Remove(gone.TranscriptPath); err != nil {
 		t.Fatal(err)
 	}
-	saveImportedSession(t, store, now, "failing", "codex", project)
+	saveImportedSession(t, store, now, "failing", project)
 	if _, err := collector.Run(context.Background(), store, storage.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
-	publishPairSession(t, home, store, storage.NewMemoryStore(), cfg, now, "hook", "codex", project, true)
+	publishPairSession(t, home, store, storage.NewMemoryStore(), cfg, now, "hook", project, true)
 	var out strings.Builder
 	if code := runStatusCommand(nil, &out, &out, pairStatusEnv(t, home, userHome, now, "codex")); code != 0 || strings.Contains(out.String(), "Imported:") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
@@ -178,15 +179,15 @@ func TestVerificationReadsBackHookPublicationsBeforeImports(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := storage.NewMemoryStore()
-	for i := 0; i < maxVerificationsPerPass+1; i++ {
-		saveImportedSession(t, store, now, "import-"+string(rune('a'+i)), "codex", project)
+	for i := range maxVerificationsPerPass + 1 {
+		saveImportedSession(t, store, now, "import-"+string(rune('a'+i)), project)
 	}
 	// The imports publish first, so they are the oldest publications.
 	if result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 	later := now.Add(time.Hour)
-	publishPairSession(t, home, store, remote, cfg, later, "hook", "codex", project, false)
+	publishPairSession(t, home, store, remote, cfg, later, "hook", project, false)
 	summary, err := verifyPublications(home, cfg, testEnv(t, home, later), store, remote)
 	if err != nil || summary.Attempted != maxVerificationsPerPass || summary.Deferred != 2 {
 		t.Fatalf("summary=%#v err=%v", summary, err)

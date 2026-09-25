@@ -95,6 +95,26 @@ func TestUninstallRejectsTruncatedInputInsteadOfProceeding(t *testing.T) {
 	}
 }
 
+func TestUninstallFailsBeforePromptingWhenSettingsAreUnreadable(t *testing.T) {
+	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
+	if err := os.WriteFile(filepath.Join(home, "config.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runUninstallCommand(nil, strings.NewReader("y\n"), &stdout, &stderr, env)
+
+	if code != 1 {
+		t.Fatalf("code=%d, want 1: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("uninstall prompted before finding the settings unreadable: %s", stdout.String())
+	}
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); err != nil {
+		t.Fatalf("a failed uninstall must keep the plist: %v", err)
+	}
+}
+
 func TestUninstallPreservesUnrelatedHooksAndSettings(t *testing.T) {
 	home := t.TempDir()
 	userHome := t.TempDir()

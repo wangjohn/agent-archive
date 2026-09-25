@@ -34,9 +34,19 @@ func TestHarnessFlagRejectsUnknownApps(t *testing.T) {
 // "claude-code" names Claude, as hooks and backfill already accept, and
 // filters as "claude" does rather than matching nothing.
 func TestHarnessFlagAcceptsCanonicalAliases(t *testing.T) {
-	for value, want := range map[string]string{"": "", "claude": "claude", "claude-code": "claude", " Codex ": "codex", "cursor": "cursor"} {
-		if got, ok := harnessFlag(value); !ok || got != want {
-			t.Errorf("harnessFlag(%q) = %q, %v; want %q", value, got, ok, want)
+	cases := []struct {
+		value string
+		want  string
+	}{
+		{value: "", want: ""},
+		{value: "claude", want: "claude"},
+		{value: "claude-code", want: "claude"},
+		{value: " Codex ", want: "codex"},
+		{value: "cursor", want: "cursor"},
+	}
+	for _, tc := range cases {
+		if got, ok := harnessFlag(tc.value); !ok || got != tc.want {
+			t.Errorf("harnessFlag(%q) = %q, %v; want %q", tc.value, got, ok, tc.want)
 		}
 	}
 	env, _, id := publishedFixture(t)

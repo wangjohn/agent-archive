@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -43,9 +44,9 @@ func ResolveFiles(userHome string, lookupEnv func(string) (string, bool)) Files 
 		return filepath.Join(userHome, fallback)
 	}
 	return Files{
-		"claude": filepath.Join(dir("CLAUDE_CONFIG_DIR", ".claude"), "settings.json"),
-		"codex":  filepath.Join(dir("CODEX_HOME", ".codex"), "hooks.json"),
-		"cursor": filepath.Join(userHome, ".cursor", "hooks.json"),
+		string(harnessClaude): filepath.Join(dir("CLAUDE_CONFIG_DIR", ".claude"), "settings.json"),
+		string(harnessCodex):  filepath.Join(dir("CODEX_HOME", ".codex"), "hooks.json"),
+		string(harnessCursor): filepath.Join(userHome, ".cursor", "hooks.json"),
 	}
 }
 
@@ -319,7 +320,8 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	// After a successful rename there is nothing left at name to remove.
+	defer func() { _ = os.Remove(name) }()
 	if err = f.Chmod(mode); err == nil {
 		_, err = f.Write(data)
 	}
@@ -401,6 +403,7 @@ func LaunchAgentDataHome(plist []byte) (string, error) {
 		switch t := token.(type) {
 		case xml.StartElement:
 			depth++
+			//lint:ignore LV1001 plist element names come from an external XML format; any other element is skipped
 			switch t.Name.Local {
 			case "key", "string":
 				reading = true
@@ -416,6 +419,7 @@ func LaunchAgentDataHome(plist []byte) (string, error) {
 			}
 		case xml.EndElement:
 			reading = false
+			//lint:ignore LV1001 plist element names come from an external XML format; any other element is skipped
 			switch t.Name.Local {
 			case "key":
 				lastKey = strings.TrimSpace(text.String())
@@ -456,6 +460,7 @@ func LaunchAgentProgram(plist []byte) (string, error) {
 		}
 		switch t := token.(type) {
 		case xml.StartElement:
+			//lint:ignore LV1001 plist element names come from an external XML format; any other element is skipped
 			switch t.Name.Local {
 			case "key":
 				readingKey = true
@@ -471,6 +476,7 @@ func LaunchAgentProgram(plist []byte) (string, error) {
 				text.Write(t)
 			}
 		case xml.EndElement:
+			//lint:ignore LV1001 plist element names come from an external XML format; any other element is skipped
 			switch t.Name.Local {
 			case "key":
 				readingKey = false
@@ -516,7 +522,8 @@ func Installed(files Files, hook Hook, harness string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if harness == "cursor" {
+	app := harnessName(harness)
+	if app == harnessCursor {
 		if v, _ := doc.root.get("version"); !isOne(v) {
 			return false, nil
 		}
@@ -543,7 +550,7 @@ func Installed(files Files, hook Hook, harness string) (bool, error) {
 				return false, errors.New("invalid hook entry")
 			}
 			handlers := []any{g}
-			if harness != "cursor" {
+			if app != harnessCursor {
 				raw, _ := g.get("hooks")
 				if handlers, ok = raw.([]any); !ok {
 					return false, errors.New("invalid hook handlers")
@@ -554,19 +561,19 @@ func Installed(files Files, hook Hook, harness string) (bool, error) {
 				if !ok {
 					return false, errors.New("invalid hook handler")
 				}
-				if !owned(handler, harness) {
+				if !owned(handler, app) {
 					continue
 				}
 				got, _ := handler.get("command")
 				kind, _ := handler.get("type")
-				if got != command || (harness != "cursor" && kind != "command") {
+				if got != command || (app != harnessCursor && kind != "command") {
 					return false, nil
 				}
 				ours++
 			}
 		}
 		want := 0
-		if contains(names, m.key) {
+		if slices.Contains(names, m.key) {
 			want = 1
 		}
 		if ours != want {

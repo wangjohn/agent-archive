@@ -14,10 +14,16 @@ import (
 type privacyHTTP func(*http.Request) (*http.Response, error)
 
 func (f privacyHTTP) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestPrivacyInspection(t *testing.T) {
 	for _, tc := range []struct {
-		name, provider, blocks, policy, acl, want string
-		requests                                  int
+		name     string
+		provider string
+		blocks   string
+		policy   string
+		acl      string
+		want     string
+		requests int
 	}{
 		{"r2", "r2", "", "", "", "not_verified", 0},
 		{"unknown endpoint", "", "", "", "", "not_verified", 0},

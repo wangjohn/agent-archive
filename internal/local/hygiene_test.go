@@ -89,7 +89,7 @@ func TestTrimLogKeepsRecentLinesInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer appender.Close()
+	defer func() { _ = appender.Close() }()
 	before, _ := os.Stat(path)
 
 	if err := TrimLog(path, 1024, 100); err != nil {

@@ -57,8 +57,9 @@ func TestWorktreeWithMissingRepository(t *testing.T) {
 	claudeWT := tr.path("home/repo/.claude/worktrees/w1")
 	tr.write("home/repo/.claude/worktrees/w1/.git", "gitdir: ../../../.git/worktrees/w1\n")
 	cases := []struct {
-		name, cwd string
-		want      resolution
+		name string
+		cwd  string
+		want resolution
 	}{
 		{"Codex worktree", codexWT, resolution{skip: SkipWorktreeUnresolved}},
 		{"Claude worktree maps by path", claudeWT, resolution{root: repo, kind: ProjectKindRepository}},
@@ -108,14 +109,12 @@ func TestDuplicateSessions(t *testing.T) {
 	p := plan(t, tr.env(), nil, config.Config{}, Filters{})
 	kept := map[string]string{}
 	for _, c := range p.Candidates {
-		switch c.Skip {
-		case "":
+		if c.Skip == "" {
 			if kept[c.NativeSessionID] != "" {
 				t.Fatalf("%s imported twice", c.NativeSessionID)
 			}
 			kept[c.NativeSessionID] = c.TranscriptPath
-		case SkipDuplicateSession:
-		default:
+		} else if c.Skip != SkipDuplicateSession {
 			t.Errorf("%s: unexpected skip %q", c.TranscriptPath, c.Skip)
 		}
 	}

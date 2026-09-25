@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -19,8 +20,10 @@ var (
 	markdownLink  = regexp.MustCompile(`\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
 	referenceLink = regexp.MustCompile(`(?m)^\s*\[[^\]]+\]:\s*(\S+)`)
 	heading       = regexp.MustCompile(`(?m)^#{1,6}\s+(.+?)\s*#*\s*$`)
-	fence         = regexp.MustCompile("(?ms)^\\s*(```|~~~).*?^\\s*(```|~~~)")
-	inlineCode    = regexp.MustCompile("`[^`\n]*`")
+	// The closing fence starts a line: the newline before it is matched
+	// explicitly, which is the same as a mid-pattern ^ in multiline mode.
+	fence      = regexp.MustCompile("(?ms)^\\s*(```|~~~).*?\n\\s*(```|~~~)")
+	inlineCode = regexp.MustCompile("`[^`\n]*`")
 )
 
 // repoRoot is the repository root, two levels above this package.
@@ -45,7 +48,7 @@ func markdownFiles(t *testing.T, root string) []string {
 		}
 		if d.IsDir() && path != root {
 			name := d.Name()
-			if name == "node_modules" || name == "dist" || strings.HasPrefix(name, ".") && name != ".github" {
+			if slices.Contains([]string{"node_modules", "dist"}, name) || strings.HasPrefix(name, ".") && name != ".github" {
 				return filepath.SkipDir
 			}
 		}

@@ -156,7 +156,8 @@ func withCleanupError(primary error, cleanup func() error, label string) error {
 }
 
 func hasDotComponent(value string) bool {
-	for _, component := range strings.Split(value, "/") {
+	for component := range strings.SplitSeq(value, "/") {
+		//lint:ignore LV1001 path components are arbitrary text; only the two dot names are special
 		if component == "." || component == ".." {
 			return true
 		}
@@ -317,7 +318,7 @@ func (p RetryPolicy) run(ctx context.Context, operation func() error) error {
 		maxWait = time.Second
 	}
 	var err error
-	for attempt := 0; attempt < attempts; attempt++ {
+	for attempt := range attempts {
 		if err = operation(); err == nil {
 			return nil
 		}

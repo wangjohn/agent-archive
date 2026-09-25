@@ -20,7 +20,7 @@ func TestVersionsDocMatchesCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	current := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		cells := strings.Split(line, "|")
 		// | Version | Where | Recorded in | Current | Changes when |
 		if len(cells) != 7 {

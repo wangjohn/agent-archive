@@ -3,12 +3,12 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 type privacyInspector interface {
@@ -30,6 +30,7 @@ func privacyConfigurationID(cfg config.Config) string {
 	data, _ := json.Marshal(cfg.Storage)
 	return storage.SHA256Hex(data)
 }
+
 func inspectBucketPrivacy(cfg config.Config, store storage.ObjectStore, at time.Time) *storage.PrivacyReport {
 	report := storage.UnknownPrivacy(cfg.Storage.Provider)
 	if inspector, ok := store.(privacyInspector); ok {
@@ -54,10 +55,12 @@ func privacyEvidenceAge(cfg config.Config, at time.Time) (time.Duration, bool) {
 	}
 	return at.Sub(*report.CheckedAt), true
 }
+
 func bucketPrivacyNeedsRefresh(cfg config.Config, at time.Time) bool {
 	age, ok := privacyEvidenceAge(cfg, at)
 	return !ok || age > bucketPrivacyRefreshAfter
 }
+
 func currentBucketPrivacy(cfg config.Config, at time.Time) storage.PrivacyReport {
 	report := storage.UnknownPrivacy(cfg.Storage.Provider)
 	if cfg.BucketPrivacy == nil {
@@ -73,18 +76,20 @@ func currentBucketPrivacy(cfg config.Config, at time.Time) storage.PrivacyReport
 	}
 	return report
 }
+
 func printBucketPrivacy(out io.Writer, report storage.PrivacyReport) {
+	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
 	switch report.State {
 	case "verified_private":
-		fmt.Fprintln(out, "Bucket privacy: native public access blocked at the last check.")
+		terminal.Println(out, "Bucket privacy: native public access blocked at the last check.")
 	case "public_or_risky":
-		fmt.Fprintln(out, "Bucket privacy: public configuration detected; review access before archiving.")
+		terminal.Println(out, "Bucket privacy: public configuration detected; review access before archiving.")
 	default:
-		fmt.Fprintln(out, "Bucket privacy not verified.")
+		terminal.Println(out, "Bucket privacy not verified.")
 	}
 	checked := "never"
 	if report.CheckedAt != nil {
 		checked = formatTimeOrNever(*report.CheckedAt)
 	}
-	fmt.Fprintf(out, "  Checked: %s; %s.\n  Review: %s\n", checked, report.Reason, report.GuidanceURL)
+	terminal.Printf(out, "  Checked: %s; %s.\n  Review: %s\n", checked, report.Reason, report.GuidanceURL)
 }

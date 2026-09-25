@@ -193,8 +193,8 @@ func validSourceReference(ref archive.SourceReference) bool {
 func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time, status CacheStatus, reason BlockedReason, metadata []byte, deferred []archive.SupplementalEvidence, source *archive.SourceReference) publishedState {
 	last := p.detachedLastPublished()
 	if last == nil && p.Status == CacheStatusPublished {
-		copy := publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.PublishedAt}
-		last = &copy
+		snapshot := publishedSnapshot{Bundle: p.Bundle, PublishedAt: p.PublishedAt}
+		last = &snapshot
 	}
 	if status == CacheStatusPublished {
 		// The candidate becoming the current bundle is exactly what was just

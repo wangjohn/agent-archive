@@ -31,7 +31,10 @@ func TestVerifyAccessUsesUniqueObjectAndCleansUp(t *testing.T) {
 }
 
 func TestPrefixRejectsEscapes(t *testing.T) {
-	for _, test := range []struct{ prefix, key string }{
+	for _, test := range []struct {
+		prefix string
+		key    string
+	}{
 		{"/private", "x"}, {"private/../other", "x"}, {"private", "/x"}, {"private", "../x"}, {"private", `dir\\x`},
 	} {
 		if _, err := Prefix(test.prefix, test.key); err == nil {
@@ -154,6 +157,7 @@ func newFakeS3Server() *httptest.Server {
 		key := strings.TrimPrefix(r.URL.Path, "/archive/")
 		fake.mu.Lock()
 		defer fake.mu.Unlock()
+		//lint:ignore LV1001 r.Method is an arbitrary request method; the cases are net/http's own constants
 		switch r.Method {
 		case http.MethodPut:
 			body, _ := io.ReadAll(r.Body)

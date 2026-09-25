@@ -32,7 +32,10 @@ func (s *Store) StoredEvidence(archiveSessionID string) ([]archive.SupplementalE
 		return nil, errors.New("archive session ID is not a safe file name component")
 	}
 	var out []archive.SupplementalEvidence
-	for _, file := range []struct{ path, what string }{
+	for _, file := range []struct {
+		path string
+		what string
+	}{
 		{s.pendingPath(archiveSessionID), "pending publication"},
 		{s.publishedPath(archiveSessionID), "published state"},
 	} {

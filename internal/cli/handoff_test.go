@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -58,15 +59,13 @@ func newHandoffFixture(t *testing.T, sync bool) handoffFixture {
 	env := testEnv(t, home, now)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
 	env.WorkingDir = func() (string, error) { return project, nil }
-	f := handoffFixture{env: env, home: home, project: project, mem: mem}
 	if sync {
 		var out, errOut bytes.Buffer
 		if code := runSyncCommand(nil, &out, &errOut, env); code != 0 {
 			t.Fatalf("sync code=%d stderr=%s", code, errOut.String())
 		}
 	}
-	f.id = onlyRegistrationID(t, home)
-	return f
+	return handoffFixture{env: env, home: home, project: project, mem: mem, id: onlyRegistrationID(t, home)}
 }
 
 func onlyRegistrationID(t *testing.T, home string) string {
@@ -166,7 +165,13 @@ func TestHandoffLocalAndArchiveRenderTheSameConversation(t *testing.T) {
 	if !strings.Contains(archiveOut, "source: archive") {
 		t.Fatalf("archive output:\n%s", archiveOut)
 	}
-	conversation := func(s string) string { return s[strings.Index(s, "## Where it left off"):] }
+	conversation := func(s string) string {
+		i := strings.Index(s, "## Where it left off")
+		if i < 0 {
+			t.Fatalf("no conversation section:\n%s", s)
+		}
+		return s[i:]
+	}
 	if conversation(localOut) != conversation(archiveOut) {
 		t.Fatalf("local and archive differ:\n--- local\n%s\n--- archive\n%s", localOut, archiveOut)
 	}
@@ -215,7 +220,7 @@ func TestHandoffSavesFullVersionWhenTrimmed(t *testing.T) {
 	// Thirty more tool calls give the budget something outside the protected
 	// tail to trim.
 	var extra strings.Builder
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		fmt.Fprintf(&extra, `{"type":"response_item","timestamp":"2026-01-02T00:01:%02dZ","payload":{"type":"function_call","name":"exec_command","call_id":"call_x%d","arguments":"{\"cmd\":\"go test -run T%d\"}"}}`+"\n", i, i, i)
 		fmt.Fprintf(&extra, `{"type":"response_item","timestamp":"2026-01-02T00:01:%02dZ","payload":{"type":"function_call_output","call_id":"call_x%d","output":"%s"}}`+"\n", i, i, strings.Repeat("ok ", 200))
 	}
@@ -297,12 +302,9 @@ func TestHandoffFileNeedsNoSetupAndIsFiltered(t *testing.T) {
 }
 
 func TestUninstallOwnsHandoffDirectory(t *testing.T) {
-	for _, entry := range localStateEntries {
-		if entry == handoffDir {
-			return
-		}
+	if !slices.Contains(localStateEntries, handoffDir) {
+		t.Fatalf("localStateEntries does not include %q", handoffDir)
 	}
-	t.Fatalf("localStateEntries does not include %q", handoffDir)
 }
 
 // Run inside an agent, --latest skips the session running the command: it is
@@ -386,7 +388,7 @@ func TestHandoffLatestFromAParentDirectoryDoesNotMatchChildProjects(t *testing.T
 func TestHandoffFileWithoutSetupDoesNotCreateTheDataDirectory(t *testing.T) {
 	var transcript strings.Builder
 	transcript.WriteString(`{"type":"user","uuid":"u1","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"go"}}` + "\n")
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		fmt.Fprintf(&transcript, `{"type":"assistant","uuid":"a%d","timestamp":"2026-01-02T00:00:01Z","message":{"id":"m%d","role":"assistant","content":[{"type":"tool_use","id":"t%d","name":"Bash","input":{"command":"echo %d"}}]}}`+"\n", i, i, i, i)
 		fmt.Fprintf(&transcript, `{"type":"user","uuid":"r%d","timestamp":"2026-01-02T00:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t%d","content":"%s"}]}}`+"\n", i, i, strings.Repeat("x", 500))
 	}

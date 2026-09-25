@@ -48,6 +48,7 @@ func comparisons(fset *token.FileSet, file *ast.File, left, right []string) []to
 			if !ok {
 				return true
 			}
+			//lint:ignore LV1001 method names from parsed Go source are an open domain
 			switch selector.Sel.Name {
 			case "Before", "After", "Equal", "Compare", "Sub":
 			default:

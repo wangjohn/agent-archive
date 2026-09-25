@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 var (
@@ -68,7 +69,7 @@ func runCollectCommand(_ []string, _ io.Writer, stderr io.Writer, env Env) int {
 		if errors.Is(err, errNotSetUp) || errors.Is(err, errPaused) {
 			return 0
 		}
-		fmt.Fprintf(stderr, "agent-archive: collect: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: collect: %v\n", err)
 		return 1
 	}
 	return 0

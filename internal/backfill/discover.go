@@ -16,7 +16,7 @@ import (
 
 // transcript is one native transcript file found on disk, before resolution.
 type transcript struct {
-	harness string
+	harness harness
 	path    string
 	size    int64
 	// nativeID is the ID the session is registered under: the Claude Code
@@ -110,8 +110,9 @@ func readDirIfExists(env Environment, dir string) ([]dirEntry, error) {
 }
 
 type dirEntry struct {
-	name         string
-	dir, regular bool
+	name    string
+	dir     bool
+	regular bool
 }
 
 // fileSize stats a regular file without following symlinks; ok is false when
@@ -143,7 +144,7 @@ func discoverClaude(env Environment, u *unreadable) []*transcript {
 			if !ok {
 				continue
 			}
-			found = append(found, &transcript{harness: "claude", path: path, size: size, nativeID: strings.TrimSuffix(f.name, ".jsonl")})
+			found = append(found, &transcript{harness: harnessClaude, path: path, size: size, nativeID: strings.TrimSuffix(f.name, ".jsonl")})
 		}
 	}
 	return found
@@ -171,7 +172,7 @@ func discoverCodex(env Environment, u *unreadable) []*transcript {
 				continue
 			}
 			seen[e.name] = true
-			found = append(found, &transcript{harness: "codex", path: path, size: size})
+			found = append(found, &transcript{harness: harnessCodex, path: path, size: size})
 		}
 	}
 	sessions := filepath.Join(env.Home, ".codex", "sessions")
@@ -190,7 +191,7 @@ func discoverCodex(env Environment, u *unreadable) []*transcript {
 			continue
 		}
 		seen[e.name] = true
-		found = append(found, &transcript{harness: "codex", path: path, size: size})
+		found = append(found, &transcript{harness: harnessCodex, path: path, size: size})
 	}
 	return found
 }
@@ -241,7 +242,7 @@ func discoverCursor(env Environment, u *unreadable) []*transcript {
 			} else {
 				order = append(order, id)
 			}
-			chats[id] = &transcript{harness: "cursor", path: path, size: size, nativeID: id, cursorSlug: slug.name}
+			chats[id] = &transcript{harness: harnessCursor, path: path, size: size, nativeID: id, cursorSlug: slug.name}
 		}
 		for _, id := range order {
 			found = append(found, chats[id])
@@ -256,7 +257,7 @@ func discoverCursor(env Environment, u *unreadable) []*transcript {
 // payload.session_id when present and the UUID in the file name.
 func readHead(env Environment, t *transcript) error {
 	switch t.harness {
-	case "claude":
+	case harnessClaude:
 		return scanRecords(env, t.path, func(line []byte) bool {
 			var r struct {
 				Cwd string `json:"cwd"`
@@ -267,7 +268,7 @@ func readHead(env Environment, t *transcript) error {
 			}
 			return true
 		})
-	case "codex":
+	case harnessCodex:
 		seen := 0
 		metaFound := false
 		err := scanRecords(env, t.path, func(line []byte) bool {
@@ -306,6 +307,8 @@ func readHead(env Environment, t *transcript) error {
 			t.identityMismatch = true
 		}
 		return err
+	case harnessCursor:
+		// Cursor's ID and project come from its folders, not its records.
 	}
 	return nil
 }
@@ -342,7 +345,7 @@ func scanRecords(env Environment, path string, visit func([]byte) bool) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	reader := bufio.NewReaderSize(io.LimitReader(f, headScanLimit), 64*1024)
 	var line []byte
 	tooLong := false
@@ -362,7 +365,7 @@ func scanRecords(env Environment, path string, visit func([]byte) bool) error {
 			return nil
 		}
 		line, tooLong = line[:0], false
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {

@@ -28,7 +28,7 @@ func TestStoredEvidenceReadsPendingAndPublished(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Save(bundle, at, CacheStatus("published")); err != nil {
+	if err := p.Save(bundle, at, CacheStatusPublished); err != nil {
 		t.Fatal(err)
 	}
 	bundle.SupplementalEvidence = evidence("hook:pending")

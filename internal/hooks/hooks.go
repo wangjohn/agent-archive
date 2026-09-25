@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -15,6 +16,16 @@ import (
 // comment on the command; other harnesses carry it as the statusMessage the
 // application shows while the hook runs.
 const Owner = "agent-archive lifecycle capture"
+
+// harnessName is an app whose hook configuration this package edits. The
+// exported functions take its string form, as archive.Harness.Name holds it.
+type harnessName string
+
+const (
+	harnessCodex  harnessName = "codex"
+	harnessClaude harnessName = "claude"
+	harnessCursor harnessName = "cursor"
+)
 
 // prototypeOwner marks the handlers the pre-release prototype installed;
 // setup and uninstall remove them like our own.
@@ -56,12 +67,12 @@ func (h Hook) Command(harness string) (string, error) {
 
 // events are the lifecycle events installed for harness.
 func events(harness string) ([]string, error) {
-	switch harness {
-	case "codex":
+	switch harnessName(harness) {
+	case harnessCodex:
 		return []string{"SessionStart", "UserPromptSubmit", "Stop", "Interrupt", "SessionEnd", "SubagentStop"}, nil
-	case "claude":
+	case harnessClaude:
 		return []string{"SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd", "SubagentStop"}, nil
-	case "cursor":
+	case harnessCursor:
 		return []string{"sessionStart", "beforeSubmitPrompt", "afterAgentResponse", "stop", "sessionEnd", "subagentStop"}, nil
 	}
 	return nil, errors.New("unsupported harness")
@@ -76,11 +87,12 @@ func Merge(existing []byte, harness string, hook Hook) ([]byte, error) {
 		return nil, err
 	}
 	names, _ := events(harness)
+	app := harnessName(harness)
 	doc, err := parseDocument(existing)
 	if err != nil {
 		return nil, err
 	}
-	if harness == "cursor" {
+	if app == harnessCursor {
 		v, ok := doc.root.get("version")
 		if ok && !isOne(v) {
 			return nil, errors.New("unsupported Cursor hook configuration version")
@@ -99,13 +111,13 @@ func Merge(existing []byte, harness string, hook Hook) ([]byte, error) {
 	if hs == nil {
 		hs = &object{}
 	}
-	emptied, err := stripOwned(hs, harness)
+	emptied, err := stripOwned(hs, app)
 	if err != nil {
 		return nil, err
 	}
 	for event, empty := range emptied {
 		// An event an earlier release installed and this one no longer uses.
-		if empty && !contains(names, event) {
+		if empty && !slices.Contains(names, event) {
 			hs.remove(event, 0)
 		}
 	}
@@ -114,7 +126,7 @@ func Merge(existing []byte, harness string, hook Hook) ([]byte, error) {
 		// setup over an existing installation changes nothing.
 		handler := &object{members: []member{{"command", command}, {"timeout", json.Number("2")}}}
 		var entry any = handler
-		if harness != "cursor" {
+		if app != harnessCursor {
 			handler = &object{members: []member{{"command", command}, {"statusMessage", Owner}, {"timeout", json.Number("2")}, {"type", "command"}}}
 			entry = &object{members: []member{{"hooks", []any{handler}}}}
 		}
@@ -153,7 +165,7 @@ func Remove(existing []byte, harness string) ([]byte, bool, error) {
 	if hs == nil {
 		return existing, false, nil
 	}
-	emptied, err := stripOwned(hs, harness)
+	emptied, err := stripOwned(hs, harnessName(harness))
 	if err != nil {
 		return nil, false, err
 	}
@@ -207,8 +219,8 @@ func isOne(v any) bool {
 
 // owned reports whether a handler is ours (or the prototype's) and so
 // something setup replaces and uninstall removes.
-func owned(handler *object, harness string) bool {
-	if harness == "cursor" {
+func owned(handler *object, app harnessName) bool {
+	if app == harnessCursor {
 		command, _ := handler.get("command")
 		s, ok := command.(string)
 		return ok && strings.HasSuffix(s, " # "+Owner)
@@ -222,7 +234,7 @@ func owned(handler *object, harness string) bool {
 // implementation. It never removes by substring alone. It returns each
 // event it removed a handler from, mapped to whether that left the event
 // empty.
-func stripOwned(hs *object, harness string) (map[string]bool, error) {
+func stripOwned(hs *object, app harnessName) (map[string]bool, error) {
 	changed := map[string]bool{}
 	for i, m := range hs.members {
 		groups, ok := m.value.([]any)
@@ -236,8 +248,8 @@ func stripOwned(hs *object, harness string) (map[string]bool, error) {
 			if !ok {
 				return nil, errors.New("invalid hook entry")
 			}
-			if harness == "cursor" {
-				if owned(g, harness) {
+			if app == harnessCursor {
+				if owned(g, app) {
 					removed = true
 					continue
 				}
@@ -255,7 +267,7 @@ func stripOwned(hs *object, harness string) (map[string]bool, error) {
 				if !ok {
 					return nil, errors.New("invalid hook handler")
 				}
-				if owned(handler, harness) {
+				if owned(handler, app) {
 					removed = true
 					continue
 				}
@@ -277,12 +289,3 @@ func stripOwned(hs *object, harness string) (map[string]bool, error) {
 }
 
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
-
-func contains(values []string, target string) bool {
-	for _, v := range values {
-		if v == target {
-			return true
-		}
-	}
-	return false
-}

@@ -95,7 +95,7 @@ func TestSetupGroupsBackfilledProjects(t *testing.T) {
 		want  int
 	}{{"y\ny\n\n", 4}, {"n\ny\n\n", 1}} {
 		var out bytes.Buffer
-		projects, err := promptProjects(newPrompter(strings.NewReader(tc.input), &out), existing, backfilled, time.Time{})
+		projects, err := promptProjects(newPrompter(strings.NewReader(tc.input), &out), existing, backfilled)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,14 +129,14 @@ func TestSetupKeepsExclusions(t *testing.T) {
 		{ProjectID: archive.ProjectID(root), Root: root, Included: false},
 	}
 	var out bytes.Buffer
-	projects, err := promptProjects(newPrompter(strings.NewReader("y\n\n"), &out), existing, nil, time.Time{})
+	projects, err := promptProjects(newPrompter(strings.NewReader("y\n\n"), &out), existing, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(projects) != 3 || includedProjects(projects) != 1 || strings.Contains(out.String(), "/work/excluded") {
 		t.Fatalf("%+v\n%s", projects, out.String())
 	}
-	projects, err = promptProjects(newPrompter(strings.NewReader("y\n"+root+"\n\n"), &out), existing, nil, time.Time{})
+	projects, err = promptProjects(newPrompter(strings.NewReader("y\n"+root+"\n\n"), &out), existing, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestBackfillErrorPathReconciles(t *testing.T) {
 	if err := os.Chmod(imports, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := loadBatch(t, f.data, firstImport)
+	b, _ := loadBatch(t, f.data)
 	crashed, _ := importRegistrations(t, f.data, firstImport)
 	if len(b.Sessions) >= len(crashed) {
 		t.Fatalf("no gap to repair: %d recorded, %d registered", len(b.Sessions), len(crashed))
@@ -204,7 +204,7 @@ func TestBackfillErrorPathReconciles(t *testing.T) {
 		t.Fatalf("second run: code %d, %s", code, errOut)
 	}
 	registered, _ := importRegistrations(t, f.data, firstImport)
-	b, _ = loadBatch(t, f.data, firstImport)
+	b, _ = loadBatch(t, f.data)
 	if len(registered) <= len(crashed) || len(b.Sessions) != len(registered) || b.CompletedAt != nil {
 		t.Fatalf("%d registered, batch records %d", len(registered), len(b.Sessions))
 	}
@@ -231,7 +231,7 @@ func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
 		t.Fatalf("the unwritable batch file did not stop the import: %s", errOut)
 	}
 	registered, _ := importRegistrations(t, f.data, firstImport)
-	b, _ := loadBatch(t, f.data, firstImport)
+	b, _ := loadBatch(t, f.data)
 	if len(registered) == 0 || len(b.Sessions) >= len(registered) {
 		t.Fatalf("setup failed to reproduce the gap: %d registered, %d recorded", len(registered), len(b.Sessions))
 	}
@@ -244,7 +244,7 @@ func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
 		t.Fatalf("rerun: %s\n%s", errOut, out)
 	}
 	parents, _ := importRegistrations(t, f.data, firstImport)
-	b, _ = loadBatch(t, f.data, firstImport)
+	b, _ = loadBatch(t, f.data)
 	if len(parents) != 12 || len(b.Sessions) != 12 || len(b.Subagents) != 2 || b.CompletedAt == nil {
 		t.Fatalf("%d registered, batch %+v", len(parents), b)
 	}
@@ -257,7 +257,7 @@ func TestBackfillCompletesInterruptedImportWithNothingLeft(t *testing.T) {
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
 		t.Fatalf("import: %s", errOut)
 	}
-	b, _ := loadBatch(t, f.data, firstImport)
+	b, _ := loadBatch(t, f.data)
 	b.CompletedAt, b.Sessions = nil, b.Sessions[:2]
 	if err := backfill.SaveBatch(f.data, b); err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestBackfillCompletesInterruptedImportWithNothingLeft(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "Nothing to import.") || !strings.Contains(out, "Import "+firstImport+", which was interrupted, is complete: 12 sessions registered.") {
 		t.Fatalf("code %d, %s\n%s", code, errOut, out)
 	}
-	b, _ = loadBatch(t, f.data, firstImport)
+	b, _ = loadBatch(t, f.data)
 	if b.CompletedAt == nil || len(b.Sessions) != 12 {
 		t.Fatalf("batch %+v", b)
 	}
@@ -299,7 +299,7 @@ func TestBackfillInterruptedRegistration(t *testing.T) {
 		t.Fatalf("code %d:\n%s", code, out)
 	}
 	partial, _ := importRegistrations(t, f.data, firstImport)
-	b, _ := loadBatch(t, f.data, firstImport)
+	b, _ := loadBatch(t, f.data)
 	if b.CompletedAt != nil || len(partial) == 0 || len(partial) == 12 || len(b.Sessions) != len(partial) {
 		t.Fatalf("%d registered, batch %+v", len(partial), b)
 	}
@@ -309,7 +309,7 @@ func TestBackfillInterruptedRegistration(t *testing.T) {
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
 		t.Fatalf("rerun: %s", errOut)
 	}
-	b, _ = loadBatch(t, f.data, firstImport)
+	b, _ = loadBatch(t, f.data)
 	if b.CompletedAt == nil || len(b.Sessions) != 12 {
 		t.Fatalf("batch %+v", b)
 	}

@@ -19,7 +19,7 @@ func TestForgetIdleSessionKeepsASessionThatGainedWork(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			local := newTestStore(t)
-			reg := registration(t, "/unused")
+			reg := registration(t)
 			if err := local.SaveRegistration(reg); err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +41,7 @@ func TestForgetIdleSessionKeepsASessionThatGainedWork(t *testing.T) {
 
 func TestForgetIdleSessionKeepsASessionWithAPendingPublication(t *testing.T) {
 	local := newTestStore(t)
-	reg := registration(t, "/unused")
+	reg := registration(t)
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestForgetIdleSessionKeepsASessionWithAPendingPublication(t *testing.T) {
 // would count as pending forever.
 func TestSaveRequestForAForgottenSessionLeavesNoOrphan(t *testing.T) {
 	local := newTestStore(t)
-	reg := registration(t, "/unused")
+	reg := registration(t)
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}

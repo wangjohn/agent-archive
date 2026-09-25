@@ -144,7 +144,7 @@ func historyLine(t *testing.T, f *backfillFixture, id string) string {
 	if code != 0 {
 		t.Fatalf("history: %d %s", code, errOut)
 	}
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.HasPrefix(line, id+" ") {
 			return line
 		}
@@ -249,7 +249,7 @@ func TestBackfillUndoGolden(t *testing.T) {
 			t.Errorf("project %s included %v", p.Root, p.Included)
 		}
 	}
-	b, _ := loadBatch(t, f.data, firstImport)
+	b, _ := loadBatch(t, f.data)
 	if b.UndoneAt == nil || len(b.ProjectsExcluded) != 4 {
 		t.Fatalf("batch %+v", b)
 	}
@@ -451,7 +451,9 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 	if _, err := file.WriteString(`{"type":"user","uuid":"c","sessionId":"c-lev-1","timestamp":"2026-09-23T20:00:00Z","message":{"role":"user","content":"one more thing"}}` + "\n"); err != nil {
 		t.Fatal(err)
 	}
-	file.Close()
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
 	resumedAt := backfillNow.Add(time.Hour)
 	if err := handleHookEvent(f.data, "claude", map[string]any{
 		"hook_event_name": "Stop", "session_id": "c-lev-1", "cwd": reg.ProjectRoot, "transcript_path": reg.TranscriptPath,
@@ -518,7 +520,9 @@ func TestBackfillUndoResumedWithoutHooks(t *testing.T) {
 	if _, err := file.WriteString(`{"type":"response_item","timestamp":"2026-09-23T20:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"and the other file"}]}}` + "\n"); err != nil {
 		t.Fatal(err)
 	}
-	file.Close()
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
 	touchAfterImport(t, reg.TranscriptPath)
 	f.env.Now = func() time.Time { return backfillNow.Add(2 * time.Hour) }
 	if _, errOut, code := f.command(t, "sync"); code != 0 {
@@ -794,7 +798,7 @@ func TestBackfillUndoStorageCheckFails(t *testing.T) {
 	if !bytes.Equal(mustRead(t, filepath.Join(f.data, "config.json")), config0) {
 		t.Fatal("config.json changed")
 	}
-	if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt != nil {
+	if b, _ := loadBatch(t, f.data); b.UndoneAt != nil {
 		t.Fatal("batch marked undone")
 	}
 }
@@ -851,7 +855,7 @@ func TestBackfillUndoSelectionGrew(t *testing.T) {
 	if p, _ := importRegistrations(t, f.data, firstImport); len(p) != 12 {
 		t.Fatalf("%d left", len(p))
 	}
-	if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt != nil {
+	if b, _ := loadBatch(t, f.data); b.UndoneAt != nil {
 		t.Fatal("batch marked undone")
 	}
 }
@@ -920,7 +924,7 @@ func TestBackfillUndoLatestByDefault(t *testing.T) {
 // that was never registered is ignored, and the import is still undone.
 func TestBackfillUndoIgnoresUnregisteredBatchEntries(t *testing.T) {
 	f, _ := newUndoFixture(t)
-	b, _ := loadBatch(t, f.data, firstImport)
+	b, _ := loadBatch(t, f.data)
 	b.Sessions = append(b.Sessions, "never-registered")
 	b.Subagents = append(b.Subagents, "never-materialized")
 	if err := backfill.SaveBatch(f.data, b); err != nil {
@@ -982,6 +986,7 @@ func TestBackfillUndoKeepsReincludedProject(t *testing.T) {
 // configuration is written. Either way nothing is removed or recorded.
 func TestBackfillUndoConfigChanged(t *testing.T) {
 	change := func(t *testing.T, home string) {
+		t.Helper()
 		cfg, _, _ := config.Load(home)
 		cfg.RequireSkillUse = true
 		if err := config.Save(home, cfg); err != nil {
@@ -1023,7 +1028,7 @@ func TestBackfillUndoConfigChanged(t *testing.T) {
 					t.Fatalf("project %s excluded", p.Root)
 				}
 			}
-			if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt != nil {
+			if b, _ := loadBatch(t, f.data); b.UndoneAt != nil {
 				t.Fatal("batch marked undone")
 			}
 		})
@@ -1054,7 +1059,7 @@ func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
 	if excluded != 4 || len(cfg.ImportedHarnesses) != 0 {
 		t.Fatalf("%d excluded, imported apps %v", excluded, cfg.ImportedHarnesses)
 	}
-	if b, _ := loadBatch(t, f.data, firstImport); b.UndoneAt == nil || len(b.ProjectsExcluded) != 4 {
+	if b, _ := loadBatch(t, f.data); b.UndoneAt == nil || len(b.ProjectsExcluded) != 4 {
 		t.Fatalf("batch %+v", b)
 	}
 	if line := historyLine(t, f, firstImport); !strings.Contains(line, "partly undone; 12 sessions left") {
@@ -1081,7 +1086,7 @@ func TestBackfillUndoneImportNotContinued(t *testing.T) {
 	if _, errOut, code := f.undoRun(t, nil, false, "--yes"); code != 0 {
 		t.Fatalf("undo: %s", errOut)
 	}
-	b, _ := loadBatch(t, f.data, firstImport)
+	b, _ := loadBatch(t, f.data)
 	if b.CompletedAt != nil || b.UndoneAt == nil {
 		t.Fatalf("batch %+v", b)
 	}

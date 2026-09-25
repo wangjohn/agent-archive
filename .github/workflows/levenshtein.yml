@@ -1,0 +1,55 @@
+name: Levenshtein
+# Shared lint and security checks from wangjohn/levenshtein, run in its pinned
+# Linux container. levenshtein.json selects the checks for each run. Run the
+# same thing locally from a sibling checkout of Levenshtein:
+#
+#   ../levenshtein/verify pre-merge --source .
+#
+# The container lints with Linux build tags, so the darwin-only files (the
+# Keychain and launchd code) are covered by the macOS golangci-lint job in
+# test.yml instead.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Daily fresh audit, so a newly published vulnerability surfaces without
+    # waiting for the next change.
+    - cron: '41 7 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out agent-archive
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          path: app
+          persist-credentials: false
+      # Pinned to a reviewed Levenshtein commit. Adopt new shared checks by
+      # updating this SHA, never a moving branch.
+      - name: Check out Levenshtein
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: wangjohn/levenshtein
+          ref: b8b8ee429de80d44c00ae7c8020662de89f927c6
+          path: levenshtein
+          persist-credentials: false
+      - name: Set up Go for the Levenshtein launcher
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: levenshtein/.go-version
+          cache-dependency-path: levenshtein/go.sum
+      - name: Verify
+        env:
+          EVENT: ${{ github.event_name }}
+          NO_COLOR: '1'
+        run: |
+          run=pre-merge
+          if [[ "$EVENT" == schedule ]]; then
+            run=main
+          fi
+          ./levenshtein/verify "$run" --source ./app

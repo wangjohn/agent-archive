@@ -290,7 +290,7 @@ func query(ctx context.Context, dsn string, read func(context.Context, *sql.DB) 
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
 	return read(ctx, db)
 }
@@ -302,7 +302,7 @@ func sqliteHeader(path string) (header []byte, ok bool) {
 	if err != nil {
 		return nil, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	header = make([]byte, 100)
 	if _, err := io.ReadFull(f, header); err != nil {
 		return nil, false

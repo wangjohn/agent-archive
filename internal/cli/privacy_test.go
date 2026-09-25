@@ -29,6 +29,7 @@ func (s *privateTestStore) InspectPrivacy(ctx context.Context) storage.PrivacyRe
 	p.Reason = "all_bucket_public_access_blocks_enabled"
 	return p
 }
+
 func TestPrivacyEvidenceIsScopedAndExpires(t *testing.T) {
 	cfg := config.Config{Storage: credentialsTestConfig()}
 	at := time.Now().UTC()

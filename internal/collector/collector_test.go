@@ -667,10 +667,14 @@ func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
 		t.Fatal("republish did not replace the old-filter source")
 	}
 
-	previous := archive.SourceBundle{NativeRecords: []map[string]any{{"a": 1}, {"b": 2}}}
-	previous.Capture.AdapterVersion = "1"
-	candidate := archive.SourceBundle{NativeRecords: []map[string]any{{"a": 1}}}
-	candidate.Capture.AdapterVersion = "1"
+	previous := archive.SourceBundle{
+		NativeRecords: []map[string]any{{"a": 1}, {"b": 2}},
+		Capture:       archive.SourceCapture{AdapterVersion: "1"},
+	}
+	candidate := archive.SourceBundle{
+		NativeRecords: []map[string]any{{"a": 1}},
+		Capture:       archive.SourceCapture{AdapterVersion: "1"},
+	}
 	if nativeEvidenceExtends(previous, candidate) {
 		t.Fatal("same-version truncation must still be caught")
 	}

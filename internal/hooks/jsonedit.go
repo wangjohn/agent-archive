@@ -185,25 +185,36 @@ type document struct {
 }
 
 type memberSpan struct {
-	key                        string
-	keyStart, valStart, valEnd int
+	key      string
+	keyStart int
+	valStart int
+	valEnd   int
 }
 
 type edit struct {
-	start, end int
-	text       string
+	start int
+	end   int
+	text  string
 }
 
 var errInvalidConfiguration = errors.New("invalid existing hook configuration")
 
 // parseDocument reads src, which must be empty or a single JSON object.
 func parseDocument(src []byte) (*document, error) {
-	d := &document{src: src, newline: "\n"}
+	newline := "\n"
 	if bytes.Contains(src, []byte("\r\n")) {
-		d.newline = "\r\n"
+		newline = "\r\n"
 	}
-	if len(bytes.TrimSpace(src)) == 0 {
-		d.src, d.created, d.indent = []byte("{}"), true, "  "
+	created := len(bytes.TrimSpace(src)) == 0
+	var indent string
+	if created {
+		src, indent = []byte("{}"), "  "
+	}
+	d := &document{
+		src:     src,
+		newline: newline,
+		created: created,
+		indent:  indent,
 	}
 	dec := json.NewDecoder(bytes.NewReader(d.src))
 	dec.UseNumber()
@@ -226,6 +237,7 @@ func parseDocument(src []byte) (*document, error) {
 		// Setup would edit one of two members that tools resolve
 		// differently (the last wins in Go and JavaScript, not everywhere),
 		// so a duplicate of a member it owns is refused.
+		//lint:ignore LV1001 top-level member names of a user's JSON file are an open set; only these two are setup's
 		if _, dup := d.span(key); dup && (key == "hooks" || key == "version") {
 			return nil, fmt.Errorf("%w: more than one top-level %q key; remove the duplicate", errInvalidConfiguration, key)
 		}
@@ -242,7 +254,7 @@ func parseDocument(src []byte) (*document, error) {
 		return nil, errInvalidConfiguration
 	}
 	d.close = int(dec.InputOffset()) - 1
-	if _, err = dec.Token(); err != io.EOF {
+	if _, err = dec.Token(); !errors.Is(err, io.EOF) {
 		return nil, errInvalidConfiguration
 	}
 	if !d.created {

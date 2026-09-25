@@ -25,7 +25,7 @@ func gapsWithCode(gaps []CaptureGap, code string) int {
 // two lines. Every tenth tool section carries a synthetic credential.
 func cursorTextSession(exchanges, bodyBytes int) string {
 	var b strings.Builder
-	for i := 0; i < exchanges; i++ {
+	for i := range exchanges {
 		fmt.Fprintf(&b, "user: request %d\n", i)
 		fmt.Fprintf(&b, "assistant: answer %d begins\n%s\n", i, strings.Repeat("a", bodyBytes))
 		if i%10 == 0 {
@@ -218,7 +218,7 @@ func BenchmarkCursorTextFilterFiveMegabytes(b *testing.B) {
 	input := cursorTextSession(2600, 2000)
 	b.SetBytes(int64(len(input)))
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if _, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart); err != nil {
 			b.Fatal(err)
 		}
