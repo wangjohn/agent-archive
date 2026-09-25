@@ -157,6 +157,13 @@ func TestLargeGrowingSessionPassStaysFast(t *testing.T) {
 	}
 	t.Logf("metadata refresh after a parser bump: %s", refreshed)
 
+	// A store that reports each object's checksum verifies a publication
+	// without downloading it.
+	for name, cost := range map[string]largePassCost{"first publication": first, "republication": grown, "metadata refresh": refreshed} {
+		if cost.downloaded != 0 {
+			t.Errorf("%s downloaded %d bytes", name, cost.downloaded)
+		}
+	}
 	_ = timed
 }
 

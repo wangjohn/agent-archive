@@ -33,9 +33,15 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
 
 ## How objects change
 
-- A session is published by uploading the new source first, then replacing
-  `metadata.json` to point at it, then reading both back to verify them. A
-  reader always finds a complete source behind the metadata it reads.
+- A session is published by uploading the new source first and verifying
+  it in storage, then replacing `metadata.json` to point at it. A reader
+  always finds a complete source behind the metadata it reads. The upload
+  carries the source's SHA-256, which the service checks before it stores
+  anything, and the verification asks the service (a `HEAD` request) for
+  the SHA-256 and size of the object now at the key, so it downloads
+  nothing; a service that reports no checksum has the source read back and
+  hashed instead. A source already stored with the same bytes is not
+  uploaded again.
 - The previous source is kept (the immediate predecessor always, older ones
   for a 24-hour grace period), then deleted by the Mac that owns the session.
 - When a session expires (retention, 90 days by default) or `backfill undo`
