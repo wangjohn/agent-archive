@@ -527,7 +527,7 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 	if pending.SourceKey == "" || pending.MetadataKey == "" || pending.SourceSHA256 == "" || len(pending.MetadataBytes) == 0 || (len(pending.SourceBytes) == 0 && (!pending.MetadataOnly || pending.SourceSize <= 0)) {
 		return errors.New("pending publication is incomplete")
 	}
-	return local.Write(s.pendingPath(id), pending)
+	return local.WriteCompact(s.pendingPath(id), pending)
 }
 
 // LoadPending returns a session's outstanding publication transaction, if

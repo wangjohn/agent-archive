@@ -591,14 +591,14 @@ func TestPublishedCacheSizeIsAboutOneBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.MarshalIndent(bundle, "", "  ")
+	encoded, err := json.Marshal(bundle)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(raw) > len(encoded)*3/2 {
 		t.Fatalf("published cache is %d bytes for a %d-byte bundle; the bundle is stored more than once", len(raw), len(encoded))
 	}
-	if !bytes.Contains(raw, []byte(`"same_as_bundle": true`)) {
+	if !bytes.Contains(raw, []byte(`"same_as_bundle":true`)) {
 		t.Fatal("the shared-copy marker is missing")
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,13 +102,31 @@ func ResolveExistingSymlinks(path string) (string, error) {
 }
 
 // Write stores value as indented JSON with a trailing newline, atomically,
-// through WriteBytes.
+// as WriteBytes does.
 func Write(path string, value any) error {
 	b, e := json.MarshalIndent(value, "", "  ")
 	if e != nil {
 		return e
 	}
-	return WriteBytes(path, append(b, '\n'))
+	return writeAtomic(path, func(w io.Writer) error {
+		if _, e := w.Write(b); e != nil {
+			return e
+		}
+		_, e := w.Write([]byte{'\n'})
+		return e
+	})
+}
+
+// WriteCompact stores value as compact JSON (json.Marshal's bytes) with a
+// trailing newline, atomically, as WriteBytes does. It is the one to use for
+// a value that can be megabytes of JSON (a source bundle): Write indents the
+// encoded document into a second copy, and the file comes out a third
+// larger, where this encodes it once, in the encoder's buffer, and writes
+// that.
+func WriteCompact(path string, value any) error {
+	return writeAtomic(path, func(w io.Writer) error {
+		return json.NewEncoder(w).Encode(value)
+	})
 }
 
 // WriteBytes replaces path with b atomically: it writes a 0600 temporary file
@@ -115,6 +134,16 @@ func Write(path string, value any) error {
 // path, and syncs the directory. A reader sees the old content or the new,
 // never a partial file.
 func WriteBytes(path string, b []byte) error {
+	return writeAtomic(path, func(w io.Writer) error {
+		_, e := w.Write(b)
+		return e
+	})
+}
+
+// writeAtomic is WriteBytes with the content written by write, which must
+// report any failure to write it: nothing is renamed over path unless it
+// returns nil.
+func writeAtomic(path string, write func(io.Writer) error) error {
 	if e := os.MkdirAll(filepath.Dir(path), 0700); e != nil {
 		return e
 	}
@@ -125,7 +154,7 @@ func WriteBytes(path string, b []byte) error {
 	// After a successful rename there is nothing left to remove.
 	defer func() { _ = os.Remove(f.Name()) }()
 	if e = f.Chmod(0600); e == nil {
-		_, e = f.Write(b)
+		e = write(f)
 	}
 	if e == nil {
 		e = f.Sync()
