@@ -12,6 +12,7 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
         source.<sha256>.jsonl.gz     a filtered source snapshot; <sha256> is of these bytes
         source.<sha256>.jsonl.gz     an earlier snapshot, until retention removes it
   .setup-test/<random>.json          a connection test object, deleted within seconds
+  .setup-test/clock-<random>.json    a clock check before retention deletes anything, deleted at once
 ```
 
 - **Archive session ID.** 32 lowercase hex characters, assigned on the Mac
@@ -41,6 +42,12 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   removes it, its metadata is deleted before its sources, so an interruption
   leaves at worst unreferenced source objects for the next pass, never a
   pointer to missing data.
+- Both deletions go by age, measured by the Mac's clock, so before either
+  the Mac checks its clock against the storage service's (the modification
+  time of a `.setup-test/clock-*` object it writes and deletes). While the
+  Mac's clock is more than an hour ahead, or the service's clock can't be
+  read, nothing is deleted by age and `status` says why; a clock that jumped
+  more than a day since the previous pass waits one pass.
 - Nothing outside `<prefix>/` is read or written, and objects are never made
   public. See [bucket permissions](../security/bucket-permissions.md).
 
