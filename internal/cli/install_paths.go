@@ -27,27 +27,19 @@ func (e Env) installation(home, userHome string) installation {
 
 // defaultDataHome is the data directory of the account's own default
 // installation: ~/.local/share/agent-archive under the account's real home,
-// with its symlinks resolved as local.Home resolves them.
+// spelled canonically (local.CanonicalPath).
 func (in installation) defaultDataHome() string {
-	return canonicalPath(filepath.Join(in.accountHome, ".local", "share", "agent-archive"))
+	return local.CanonicalPath(filepath.Join(in.accountHome, ".local", "share", "agent-archive"))
 }
 
-// canonicalPath is path with its existing symlinks resolved, as local.Home
-// resolves the data directory, so two spellings of one directory compare
-// equal.
-func canonicalPath(path string) string {
-	if resolved, err := local.ResolveExistingSymlinks(path); err == nil {
-		return resolved
-	}
-	return filepath.Clean(path)
-}
-
-// isDefault reports whether this is the account's default installation.
-// Anything else (AGENT_ARCHIVE_HOME set elsewhere, or a sandbox that
-// overrides $HOME and so moves the data directory with it) is not, and gets
-// labels and hook commands of its own.
+// isDefault reports whether this is the account's default installation,
+// however its directory is spelled (a symlink, or another case on a
+// case-insensitive volume): the same test hooks use to tell installations
+// apart (local.SameLocation). Anything else (AGENT_ARCHIVE_HOME set
+// elsewhere, or a sandbox that overrides $HOME and so moves the data
+// directory with it) is not, and gets labels and hook commands of its own.
 func (in installation) isDefault() bool {
-	return in.accountHome != "" && canonicalPath(in.home) == in.defaultDataHome()
+	return in.accountHome != "" && local.SameLocation(in.home, in.defaultDataHome())
 }
 
 // hook is what setup installs into the apps' hook files: a non-default data
@@ -127,7 +119,7 @@ func (in installation) label() string {
 	if in.isDefault() {
 		return hooks.LaunchLabel
 	}
-	return hooks.CollectorLabel(canonicalPath(in.home), "")
+	return hooks.CollectorLabel(local.CanonicalPath(in.home), "")
 }
 
 // collectorPlist is the LaunchAgent path of the background collector; its
@@ -160,7 +152,7 @@ func (in installation) previousCollectorPlist() string {
 	if err != nil || dataHome == "" {
 		return ""
 	}
-	if canonicalPath(dataHome) != canonicalPath(in.home) {
+	if !local.SameLocation(dataHome, in.home) {
 		return ""
 	}
 	return path
