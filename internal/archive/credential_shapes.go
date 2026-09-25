@@ -162,6 +162,11 @@ var credentialShapeTable = []struct {
 	{`\bkey-[0-9a-f]{32}\b`, []string{"key-"}},
 	{`\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b`, []string{":aa"}},
 	{`\b[A-Za-z0-9_~.-]{3}[78]Q~[A-Za-z0-9_~.-]{31,34}`, []string{"7q~", "8q~"}},
+	// Groq (`gsk_` and 52 characters; 48 in some reports) and xAI (`xai-`
+	// and 80). The prefix alone is too short to mean a key: xAI's model
+	// names begin `xai-` too.
+	{`\bgsk_[A-Za-z0-9]{48,}`, []string{"gsk_"}},
+	{`\bxai-[A-Za-z0-9]{70,}`, []string{"xai-"}},
 	// A PEM block encoded in base64 whole, as kubeconfig's client-key-data
 	// holds a private key: every one begins with base64 of "-----BEGIN".
 	// Certificates encoded the same way are redacted too.
@@ -308,6 +313,14 @@ var credentialContextPatterns = func() []linePattern {
 		// the file is shown as text rather than parsed as JSON: `"auth"` is
 		// too common a word to redact everywhere (credentialVocabulary).
 		{`(?i)\\*"(?:auth|identitytoken)\\*"[ \t]*:[ \t]*\\*"(?P<value>[A-Za-z0-9+/._-]{12,}={0,2})\\*"`, []string{`"auth`, "identitytoken"}},
+		// A wallet's seed phrase after a name holding `mnemonic`
+		// (`MNEMONIC="…"`, `mnemonic: …`): 12 to 24 words of three to eight
+		// letters, the BIP-39 word list's lengths, and nothing else before
+		// the end of the value. `mnemonic` alone is not a credential name
+		// (an assembler's `mnemonic = "mov"`), so the words must look like
+		// a phrase. `seed phrase` and `recovery phrase` are credential
+		// names (credentialVocabulary), whatever their value.
+		{`(?im)(?:^|[^a-z0-9])[a-z0-9_.-]*mnemonic(?:[_. -]?(?:phrase|words))?` + credentialQuote + credentialSeparator + `(?:\\*["'])?(?P<value>[a-z]{3,8}(?:[ \t]+[a-z]{3,8}){11,23})(?:\\*["']|[ \t]*[,;})\]]|[ \t]*\r?$)`, []string{"mnemonic"}},
 		// A bearer token outside an Authorization header.
 		{`(?:^|[^A-Za-z0-9_])(?i:bearer)[ \t]+(?P<value>[A-Za-z0-9._~+/-]{20,}=*)`, []string{"bearer"}},
 	} {
@@ -764,7 +777,13 @@ var urlScheme = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://`)
 // host so the reference stays legible. Filter 10 ended the userinfo at the
 // first `@` and never crossed a `/`, so a password holding either
 // (`postgres://u:p@ss@db`, `postgres://u:pa/ss@db`) kept the rest of itself.
-// See userinfoEnd for how the end is found.
+// See userinfoScanner.end for how the end is found.
+//
+// Each URL is read to the end of its token (the next whitespace, quote, or
+// angle bracket). URLs glued together into one long token (`http://x`
+// repeated with nothing between) used to have that token read again for
+// each of them, so the cost grew with the square of its length: 1.6 MB took
+// a minute. The scanner now carries what it found forward along the string.
 func redactURLUserinfo(s string) (string, bool) {
 	if !strings.Contains(s, "://") {
 		return s, false
@@ -775,22 +794,19 @@ func redactURLUserinfo(s string) (string, bool) {
 	}
 	var out strings.Builder
 	last, hit := 0, false
+	scan := userinfoScanner{s: s, tokenStop: -1, hostFrom: -1}
 	for _, match := range matches {
 		start := match[1]
 		if start < last {
 			continue
 		}
-		tokenEnd := strings.IndexAny(s[start:], " \t\r\n\"'<>`")
-		if tokenEnd < 0 {
-			tokenEnd = len(s) - start
-		}
-		at := userinfoEnd(s[start : start+tokenEnd])
-		if at <= 0 {
+		at := scan.end(start)
+		if at <= start {
 			continue
 		}
 		out.WriteString(s[last:start])
 		out.WriteString(redactedMarker)
-		last, hit = start+at, true
+		last, hit = at, true
 	}
 	if !hit {
 		return s, false
@@ -799,34 +815,95 @@ func redactURLUserinfo(s string) (string, bool) {
 	return out.String(), true
 }
 
-// userinfoEnd returns the index of the `@` that ends a URL's userinfo in
-// token (the URL after `://`), or -1 when it has none. The authority runs to
-// the first `/`, `?`, or `#`, and an `@` inside it ends the userinfo at the
-// last one, so a password may hold `@`. A password may also hold `/`, `?`,
-// or `#`, which cut the authority short: when the authority is `user:…`
-// with no `@`, and the part after the colon is not a port, the userinfo
-// ends at the first later `@` that a host name follows. So
-// `https://medium.com/@user` (no colon) and `http://host:8080/?to=a@b`
-// (a port) keep their text.
-func userinfoEnd(token string) int {
+// urlTokenStops are the characters that end a URL's token.
+const urlTokenStops = " \t\r\n\"'<>`"
+
+// userinfoScanner finds the end of each URL's userinfo in s. Its queries
+// come in increasing order of start (the URLs of one string, in order), so
+// it keeps the next token stop and the next `@` a host name follows, and
+// reads each part of s a bounded number of times.
+type userinfoScanner struct {
+	s string
+	// tokenStop is the first token stop at or after the last start queried
+	// (len(s) when there is none), or -1 before the first query.
+	tokenStop int
+	// hostAt is the first `@` a host name follows at or after hostFrom
+	// (len(s) when there is none); hostFrom is -1 before the first search.
+	hostFrom, hostAt int
+}
+
+// end returns the index in s of the `@` that ends the userinfo of the URL
+// whose authority starts at start, or -1 when it has none. The authority
+// runs to the first `/`, `?`, or `#`, and an `@` inside it ends the
+// userinfo at the last one, so a password may hold `@`. A password may also
+// hold `/`, `?`, or `#`, which cut the authority short: when the authority
+// is `user:…` with no `@`, and the part after the colon is not a port, the
+// userinfo ends at the first later `@` in the token that a host name
+// follows. So `https://medium.com/@user` (no colon) and
+// `http://host:8080/?to=a@b` (a port) keep their text.
+func (u *userinfoScanner) end(start int) int {
+	if u.tokenStop < start {
+		u.tokenStop = len(u.s)
+		if i := strings.IndexAny(u.s[start:], urlTokenStops); i >= 0 {
+			u.tokenStop = start + i
+		}
+	}
+	token := u.s[start:u.tokenStop]
 	authorityEnd := strings.IndexAny(token, "/?#")
 	if authorityEnd < 0 {
 		authorityEnd = len(token)
 	}
 	authority := token[:authorityEnd]
 	if at := strings.LastIndexByte(authority, '@'); at >= 0 {
-		return at
+		return start + at
 	}
 	colon := strings.IndexByte(authority, ':')
 	if colon < 0 || isDigits(authority[colon+1:]) {
 		return -1
 	}
-	for at := authorityEnd; at < len(token); at++ {
-		if token[at] == '@' && isHostStart(token[at+1:]) {
-			return at
-		}
+	if at := u.nextHostAt(start + authorityEnd); at < u.tokenStop {
+		return at
 	}
 	return -1
+}
+
+// nextHostAt returns the first `@` at or after from that a host name
+// follows (see hostStartsAt), or len(s). No such `@` lies between hostFrom
+// and hostAt, so a query in that range is answered without reading s.
+func (u *userinfoScanner) nextHostAt(from int) int {
+	if u.hostFrom >= 0 && from >= u.hostFrom && from <= u.hostAt {
+		return u.hostAt
+	}
+	u.hostFrom, u.hostAt = from, len(u.s)
+	for i := from; i < len(u.s); i++ {
+		next := strings.IndexByte(u.s[i:], '@')
+		if next < 0 {
+			break
+		}
+		i += next
+		if hostStartsAt(u.s, i+1) {
+			u.hostAt = i
+			break
+		}
+	}
+	return u.hostAt
+}
+
+// hostStartsAt reports whether s at i begins with a host name (or a
+// bracketed IPv6 address) that ends the authority: at a port, path, query,
+// fragment, or the end of the URL's token.
+func hostStartsAt(s string, i int) bool {
+	j := i
+	for ; j < len(s); j++ {
+		c := s[j]
+		if strings.IndexByte(":/?#", c) >= 0 || strings.IndexByte(urlTokenStops, c) >= 0 {
+			break
+		}
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && strings.IndexByte(".-[]_", c) < 0 {
+			return false
+		}
+	}
+	return j > i
 }
 
 func isDigits(s string) bool {
@@ -838,25 +915,32 @@ func isDigits(s string) bool {
 	return true
 }
 
-// isHostStart reports whether rest begins with a host name (or a bracketed
-// IPv6 address) that ends the authority: at a port, path, query, fragment,
-// or the end of the URL.
-func isHostStart(rest string) bool {
-	end := strings.IndexAny(rest, ":/?#")
-	if end < 0 {
-		end = len(rest)
+// pgpassField is one field of a .pgpass line: anything but a colon or
+// whitespace, where `\:` and `\\` are a literal colon and backslash.
+const pgpassField = `(?:\\[:\\]|[^\s:\\"'])+`
+
+// pgpassLine matches a line of a PostgreSQL password file,
+// `host:port:database:user:password` (the port may be `*`), as a display
+// shows it: after a line number (`     3→`, `3:`), the file's name as grep
+// prints it (`/home/me/.pgpass:`), a diff or quote marker, or `echo` and a
+// quote. The password runs to the end of the line, or to a closing quote.
+var pgpassLine = regexp.MustCompile(`(?m)^[ \t]*(?:[0-9]+(?:→|\t|:)[ \t]*)?(?:[^\s:]*(?i:pgpass)[^\s:]*:(?:[0-9]+:)?)?(?:(?:echo|printf)[ \t]+(?:-[a-z]+[ \t]+)*)?(?:[+>][ \t]*)?\\*["']?` +
+	pgpassField + `:(?:[0-9]{1,5}|\*):` + pgpassField + `:` + pgpassField +
+	`:(?P<value>(?:\\[:\\]|[^\\\n\r"'])*(?:\\[:\\]|[^\\\s"']))(?:\\*["'][^\n]*)?[ \t]*\r?$`)
+
+// redactPgpassLines redacts the password of every .pgpass line in a string
+// that names the file (`cat ~/.pgpass`, grep's `.pgpass:` prefix, a heredoc
+// into it, PGPASSFILE). Five colon-separated fields are too common a shape
+// (a timestamp, grep output) to redact on their own. When a tool shows the
+// file without naming it (a Read tool's result, whose path is in the call),
+// the lines are kept: the filter reads one string at a time.
+func redactPgpassLines(t needleText) (string, bool) {
+	if !strings.Contains(t.lower, "pgpass") {
+		return t.s, false
 	}
-	host := rest[:end]
-	if host == "" {
-		return false
-	}
-	for i := range len(host) {
-		c := host[i]
-		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && !strings.ContainsRune(".-[]_", rune(c)) {
-			return false
-		}
-	}
-	return true
+	// No needle gates the lines themselves: the name is elsewhere in the
+	// string. Every line holds the fields' colons.
+	return redactMatches(linePattern{re: pgpassLine, anyOf: ":"}, t, true)
 }
 
 // lineNumberPrefix matches the line number a display of a file puts before

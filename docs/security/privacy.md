@@ -63,8 +63,9 @@ the metadata sidecar.
   branch names; model names; token counts; timestamps; the app's own session
   and message IDs; summaries the app wrote when compacting a conversation;
   and final messages hooks reported.
-- **Skill evidence**: for every hook-captured session, the name, SHA-256,
-  and filtered body (the first 16 KB) of each `SKILL.md` installed in that
+- **Skill evidence**: for every hook-captured session, the name, SHA-256
+  (of the whole file with its credentials redacted, from filter 12; of the
+  original bytes before), and filtered body (the first 16 KB) of each `SKILL.md` installed in that
   app's skill folders, and which folder it came from. These are your
   **user-level** folders, whatever the project, plus the project's own:
 
@@ -267,7 +268,8 @@ sorted, capped at 64, names only) and the value is never retained.
   (`api key`, `access key`, `private key`, `secret(s)`, `password(s)`,
   `passwd`, `pass`, `passphrase`, `token`, `authorization`, `bearer`,
   `credential(s)`, `creds`, `cookie(s)`, `auth`, `auth key`, `account key`,
-  `shared access key`, `subscription key`, and a few more; `pwd` only after
+  `shared access key`, `subscription key`, `access key id`, `seed phrase`,
+  `recovery phrase`, and a few more; `pwd` only after
   another word). So `X-Api-Key`, `passwd`, `pass`, `private_key`, `auth`,
   `secrets`, and `password_confirmation` are dropped, while budgets such as
   `max_tokens` (a plural is another word) are kept. An
@@ -296,7 +298,8 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   `account_key`, `shared_access_key`, `shared_access_signature`, `auth_key`,
   `subscription_key`, `secret(s)`, `password(s)`, `passwd`, `passphrase`,
   `pgpass`, `token`, `authorization`, `bearer`, `credential(s)`,
-  `cookie(s)`, `dockerconfigjson`), with `_`, `-`, `.`, a space, or nothing
+  `cookie(s)`, `dockerconfigjson`; filter 12: `access_key_id`,
+  `seed_phrase`, `recovery_phrase`, `mnemonic_phrase`), with `_`, `-`, `.`, a space, or nothing
   between the parts of a two-word term (`API Key: …`), in any case,
   with anything glued on before it; or in `pass` or `creds` alone or after a separator
   or a camelCase boundary (`DB_PASS`, `redis.pass`, `dbPass`, but not
@@ -365,7 +368,8 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   its siblings), Google (`AIza…`, `GOCSPX-`, `ya29.`), Hugging Face (`hf_`),
   npm (`npm_`), PyPI, SendGrid, Shopify, DigitalOcean, HashiCorp Vault,
   Databricks, Linear, Grafana, Postman, New Relic, Sentry, Atlassian, Figma,
-  Doppler, age, Mailgun, Telegram bots, and Azure AD client secrets; Slack,
+  Doppler, age, Mailgun, Telegram bots, and Azure AD client secrets, and
+  since filter 12 Groq (`gsk_`) and xAI (`xai-`) keys; Slack,
   Discord, and Teams incoming-webhook URLs (the path after the host); and a
   `Bearer` token outside a header.
 - PEM and PGP private key blocks: `-----BEGIN … PRIVATE KEY-----` (or
@@ -385,6 +389,12 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   its `LS0tLS1CRUdJTi` prefix, certificates included (filter 12).
 - Docker `config.json` `"auth"` and `"identitytoken"` values shown as text
   (filter 12).
+- `.pgpass` lines (`host:port:database:user:password`): the password, in a
+  string that names the file (`cat ~/.pgpass`, a heredoc or `echo` into it,
+  `PGPASSFILE`) (filter 12).
+- Wallet seed phrases: 12 to 24 words of three to eight letters after a
+  name holding `mnemonic` (`MNEMONIC="…"`, `mnemonic: …`) (filter 12).
+  `SEED_PHRASE=` and `Secret Recovery Phrase:` are credential names above.
 - JWTs: three base64url segments, the first beginning with `eyJ`.
 - URL userinfo: in `scheme://user:pass@host` (or `scheme://user@host`) the
   userinfo is replaced and the scheme and host are kept. The userinfo ends
@@ -444,10 +454,21 @@ Known misses.
 - A project skill's `SKILL.md` that is a hard link to another file cannot be
   told apart from a real file. A cloned repository cannot create one (git
   does not store hard links); it needs local write access to the project.
-- A name that does not end in a trigger word (`AWS_ACCESS_KEY_ID`,
-  `DATABASE_URL`, `DSN`, `CONNECTION_STRING`) is not redacted by this
-  pattern; its value is redacted only if it has a recognizable shape
-  (`AKIA…`/`ASIA…`, URL userinfo).
+- A name that does not end in a trigger word (`DATABASE_URL`, `DSN`,
+  `CONNECTION_STRING`) is not redacted by this pattern; its value is
+  redacted only if it has a recognizable shape (`AKIA…`/`ASIA…`, URL
+  userinfo).
+- Access key IDs are redacted (`*_ACCESS_KEY_ID`, filter 12), although an
+  ID is not a secret on its own: AWS's were already redacted by their
+  `AKIA…` shape and dropped as tool arguments, and an R2 access key ID is
+  the ID of the Cloudflare API token behind it. Other key IDs
+  (`KMS_KEY_ID`, `private_key_id` aside) are kept.
+- A `.pgpass` file shown without its name in the same string, as the
+  Claude Code Read tool's result is (the path is in the call, a separate
+  record), keeps its passwords: five colon-separated fields alone are too
+  common a shape (timestamps, grep output) to redact. A seed phrase in
+  another language, or not after a `mnemonic` or seed-phrase name, is kept
+  too.
 - A credential in prose (`the password is hunter2`), a Markdown table row
   (`| password | hunter2 |`), a name spelled with full-width letters or a
   zero-width space, or a leetspeak name (`p4ssword=`) is not recognized;

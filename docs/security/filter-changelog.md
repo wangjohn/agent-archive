@@ -18,6 +18,42 @@ Adapter version 0.12.0 goes with it; the parser is unchanged.
   `user:password`, were dropped only when the file was parsed as JSON. They
   are now redacted in text as well: a file read with line numbers, or JSON
   following other command output.
+- **Groq and xAI keys by their prefix.** `gsk_` followed by 48 or more
+  letters and digits (Groq writes 52) and `xai-` followed by 70 or more
+  (xAI writes 80) are redacted wherever they appear, whatever holds them
+  (`GROQ=gsk_…`). Before, only a credential-named variable (`GROQ_API_KEY=`)
+  was caught.
+- **Access key IDs by name.** `access key id` joins the credential
+  vocabulary, so `R2_ACCESS_KEY_ID=…`, `AWS_ACCESS_KEY_ID=…`,
+  `"accessKeyId": …`, and `Access Key ID: …` have their values redacted.
+  An access key ID is an identifier rather than a secret, but AWS's were
+  already redacted by their `AKIA…` shape and a tool argument named
+  `access_key_id` was already dropped; an R2 access key ID, 32 hex
+  characters with no prefix, is the ID of the account's API token and
+  passed through.
+- **`.pgpass` passwords.** In a string that names the file (`cat
+  ~/.pgpass`, a heredoc or `echo` into it, `PGPASSFILE`, grep's
+  `.pgpass.bak:` prefix), the password of each `host:port:database:user:
+  password` line is redacted, after a line number or a diff marker too. A
+  `.pgpass` shown without its name in the same string (a Read tool's
+  result, whose path is in the call) is kept.
+- **Wallet seed phrases.** 12 to 24 words of three to eight letters after a
+  name holding `mnemonic` (`MNEMONIC="…"`, `mnemonic: …`,
+  `"wallet_mnemonic": "…"`) are redacted. `seed phrase`, `recovery phrase`,
+  and `mnemonic phrase` join the credential vocabulary (`SEED_PHRASE=…`,
+  `Secret Recovery Phrase: …`), so their values are redacted whatever they
+  hold, and tool arguments with those names are dropped.
+- **Skill hashes are of the redacted text.** A skill snapshot's `sha256`,
+  and the inventory's, was the SHA-256 of the original `SKILL.md`, uploaded
+  beside its redacted body, so whoever holds the bucket could confirm a
+  guess at a redacted secret. It is now the SHA-256 of the whole file with
+  its credentials redacted, which for a file with nothing to redact is its
+  own SHA-256. Sessions archived earlier keep the old hashes.
+- **Faster URL scan, same output.** Finding the userinfo of URLs glued
+  into one long token (`http://x` repeated with no space) read the rest of
+  the token again for each URL: 1.6 MB took about a minute. It now reads
+  the text once. The redacted output is unchanged, which a test checks
+  against the previous scan.
 
 ## Source filter version 11
 

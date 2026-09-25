@@ -13,7 +13,12 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
-func TestObserveSkillsHashesOriginalAndFiltersSnapshot(t *testing.T) {
+// The recorded hash is of the redacted text, never the original: a hash of
+// the original, uploaded beside the redacted snapshot, would let whoever
+// holds the bucket confirm a guess at the redacted secret.
+//
+// Regression: 2026-09 review of filter 12.
+func TestObserveSkillsHashesRedactedTextAndFiltersSnapshot(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	dir := filepath.Join(project, ".agents", "skills", "folder-name")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -37,6 +42,15 @@ func TestObserveSkillsHashesOriginalAndFiltersSnapshot(t *testing.T) {
 	snapshot := got[3].Payload
 	if snapshot["name"] != "reviewed-name" || len(snapshot["sha256"].(string)) != 64 || snapshot["redacted"] != true {
 		t.Fatalf("snapshot=%#v", snapshot)
+	}
+	redacted := strings.Replace(content, "synthetic-secret-value", "[REDACTED]", 1)
+	want, original := sha256.Sum256([]byte(redacted)), sha256.Sum256([]byte(content))
+	if snapshot["sha256"] != hex.EncodeToString(want[:]) || snapshot["sha256"] == hex.EncodeToString(original[:]) {
+		t.Fatalf("snapshot hash=%v, want the hash of %q", snapshot["sha256"], redacted)
+	}
+	inventory := got[2].Payload["skills"].([]any)[0].(map[string]any)
+	if inventory["sha256"] != snapshot["sha256"] {
+		t.Fatalf("inventory hash=%v, snapshot hash=%v", inventory["sha256"], snapshot["sha256"])
 	}
 	if text := snapshot["snapshot"].(string); strings.Contains(text, "synthetic-secret-value") || !strings.Contains(text, "[REDACTED]") {
 		t.Fatalf("snapshot text=%q", text)
