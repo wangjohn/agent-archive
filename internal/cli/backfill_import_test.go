@@ -432,6 +432,7 @@ func TestBackfillConcurrentChanges(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f, bucket := newImportFixture(t)
 			stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() { tc.change(t, f.data) }}
 			var out, errOut bytes.Buffer
@@ -458,6 +459,7 @@ func TestBackfillConcurrentChanges(t *testing.T) {
 	}
 
 	t.Run("privacy refresh", func(t *testing.T) {
+		t.Parallel()
 		f, _ := newImportFixture(t)
 		checked := backfillNow.UTC()
 		stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() {
@@ -473,6 +475,7 @@ func TestBackfillConcurrentChanges(t *testing.T) {
 	})
 
 	t.Run("refused before planning", func(t *testing.T) {
+		t.Parallel()
 		f, bucket := newImportFixture(t)
 		if _, err := config.SetPaused(f.data, true); err != nil {
 			t.Fatal(err)

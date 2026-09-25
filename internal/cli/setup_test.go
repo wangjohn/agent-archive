@@ -121,6 +121,7 @@ func TestSetupFirstTimeProviders(t *testing.T) {
 	t.Parallel()
 	for _, provider := range []string{"s3", "r2"} {
 		t.Run(provider, func(t *testing.T) {
+			t.Parallel()
 			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 			kc := newFakeKeychain()
 			now := time.Now().UTC()
@@ -424,6 +425,7 @@ func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
 	t.Parallel()
 	for _, choice := range []string{"region", "prefix"} {
 		t.Run(choice, func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 			attempts := 0

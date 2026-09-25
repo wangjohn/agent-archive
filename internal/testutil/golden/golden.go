@@ -28,29 +28,29 @@ var update = flag.Bool("update", false, "rewrite golden files from the current o
 func Update() bool { return *update }
 
 // Write writes got to the golden file at path, creating its directory.
-func Write(t testing.TB, path string, got []byte) {
-	t.Helper()
+func Write(tb testing.TB, path string, got []byte) {
+	tb.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	if err := os.WriteFile(path, got, 0o644); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }
 
-// Check fails t unless got equals the golden file at path. With -update it
+// Check fails tb unless got equals the golden file at path. With -update it
 // first writes got there, so the run passes and the change shows in the
 // diff.
-func Check(t testing.TB, path string, got []byte) {
-	t.Helper()
+func Check(tb testing.TB, path string, got []byte) {
+	tb.Helper()
 	if Update() {
-		Write(t, path, got)
+		Write(tb, path, got)
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("%v (run go test with -update to create it)", err)
+		tb.Fatalf("%v (run go test with -update to create it)", err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Fatalf("output differs from %s (if the change is intended, rerun with -update and review the diff):\n%s", path, got)
+		tb.Fatalf("output differs from %s (if the change is intended, rerun with -update and review the diff):\n%s", path, got)
 	}
 }

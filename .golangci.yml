@@ -101,6 +101,11 @@ linters:
       # scenario tests are long by design.
       - path: _test\.go
         linters: [gosec, funlen, gocyclo]
+      # The same for the test helpers under internal/testutil, which depguard
+      # keeps out of production code: golden files are repository files,
+      # written with the tree's usual modes.
+      - path: internal/testutil/
+        linters: [gosec]
 
       # G304 (file inclusion via variable) is inherent to this tool: it reads
       # transcripts, configs, and state at paths the user's own apps and

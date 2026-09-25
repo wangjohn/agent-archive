@@ -235,7 +235,7 @@ func checkGolden(t *testing.T, name string, got []byte) {
 }
 
 func TestBackfillGolden(t *testing.T) {
-	t.Parallel()
+	// Not parallel: its subtests share one fixture, in order.
 	f := newBackfillFixture(t)
 	cases := []struct {
 		name string

@@ -133,7 +133,7 @@ func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestSetupAfterImportWithMissingFolders(t *testing.T) {
-	t.Parallel()
+	// Not parallel: its subtests share one fixture, in order.
 	f, bucket := newImportFixture(t)
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
 		t.Fatalf("import: %s", errOut)

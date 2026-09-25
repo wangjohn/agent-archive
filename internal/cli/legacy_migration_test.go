@@ -18,6 +18,7 @@ func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
 	t.Parallel()
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "rollback"}[fail], func(t *testing.T) {
+			t.Parallel()
 			// The prototype's job is retired by the account's default
 			// installation (see TestTestInstallationLeavesPrototypeAlone).
 			account, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()

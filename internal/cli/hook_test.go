@@ -551,6 +551,7 @@ func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.
 		{"subdirectory", filepath.Join("internal", "cli")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
 			setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			cwd := filepath.Join(project, tc.relative)
@@ -689,6 +690,7 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 		{"no transcript path is a new desktop chat", func(*testing.T) string { return "" }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
 			setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -742,6 +744,7 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 	} {
 		for _, harness := range []string{"codex", "claude"} {
 			t.Run(harness+": "+tc.name, func(t *testing.T) {
+				t.Parallel()
 				home, project := t.TempDir(), t.TempDir()
 				setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 				now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)

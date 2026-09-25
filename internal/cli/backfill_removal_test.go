@@ -54,6 +54,7 @@ func TestHookFreshStartIgnoresRemovalRecord(t *testing.T) {
 	t.Parallel()
 	for _, reason := range []state.RemovalReason{state.RemovalReasonUndo, state.RemovalReasonRetention} {
 		t.Run(string(reason), func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			store, err := state.Open(home)

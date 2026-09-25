@@ -22,6 +22,7 @@ func TestRecoveryBlockedByLaunchctlAdvertisesAbandon(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"restart", "stop"} {
 		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
 			home, userHome := t.TempDir(), t.TempDir()
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 			plist := env.installation(home, userHome).collectorPlist()

@@ -197,6 +197,7 @@ func TestReviewEditCancellationDoesNotInstall(t *testing.T) {
 		{"cancel", "n\n", 0}, {"EOF", "", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home := t.TempDir()
 			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 			input := s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir())
