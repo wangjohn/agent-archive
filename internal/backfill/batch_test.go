@@ -200,7 +200,7 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 		t.Fatal("a session starting after its admission was given an archive ID")
 	}
 	reg, _, _ := store.LoadRegistration(result.Sessions[0])
-	if reg.Origin != archive.SessionOriginImport || reg.ImportBatch != "2026-09-23-1" || !reg.AdmittedAt.Equal(admitted) || reg.NativeSessionID != "ok" {
+	if reg.Origin != archive.SessionOriginImport || reg.ImportBatch.Recorded() != "2026-09-23-1" || !reg.AdmittedAt.Equal(admitted) || reg.NativeSessionID != "ok" {
 		t.Fatalf("%+v", reg)
 	}
 
@@ -262,7 +262,7 @@ func TestBatchReconcile(t *testing.T) {
 		}
 		t.Helper()
 		reg := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "n-" + id, ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"},
-			SessionStartedAt: fixedNow, ImportBatch: batch, ParentSessionID: parent, Origin: origin}
+			SessionStartedAt: fixedNow, ImportBatch: archive.NewImportBatch(batch), ParentSessionID: parent, Origin: origin}
 		if err := store.SaveRegistration(reg); err != nil {
 			t.Fatal(err)
 		}

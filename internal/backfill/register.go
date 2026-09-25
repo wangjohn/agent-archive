@@ -335,7 +335,7 @@ func (r Registration) registration(c Candidate, archiveID string) archive.Sessio
 		RegisteredAt:     r.AdmittedAt,
 		AdmittedAt:       r.AdmittedAt,
 		Origin:           archive.SessionOriginImport,
-		ImportBatch:      r.Batch,
+		ImportBatch:      archive.NewImportBatch(r.Batch),
 		DestinationID:    r.DestinationID,
 	}
 }

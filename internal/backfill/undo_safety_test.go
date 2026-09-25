@@ -61,7 +61,7 @@ func (f *undoFixture) register(native, root, batch string, admitted time.Time) a
 			RegisteredAt:     admitted,
 			AdmittedAt:       admitted,
 			Origin:           origin,
-			ImportBatch:      batch,
+			ImportBatch:      archive.NewImportBatch(batch),
 			DestinationID:    destination,
 		}
 	})

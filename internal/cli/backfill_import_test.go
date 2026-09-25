@@ -120,7 +120,7 @@ func importRegistrations(t *testing.T, home, batch string) (parents, children []
 		t.Fatal(err)
 	}
 	for _, reg := range regs {
-		if reg.ImportBatch != batch {
+		if reg.ImportBatch.Recorded() != batch {
 			continue
 		}
 		if reg.ParentSessionID != "" {
@@ -623,7 +623,7 @@ func TestBackfillSubagentsInheritImport(t *testing.T) {
 		}
 	}
 	for _, child := range children {
-		if child.ParentSessionID != parentID || child.Origin != archive.SessionOriginImport || child.ImportBatch != firstImport || !child.AdmittedAt.Equal(parent.AdmittedAt) ||
+		if child.ParentSessionID != parentID || child.Origin != archive.SessionOriginImport || child.ImportBatch.Recorded() != firstImport || !child.AdmittedAt.Equal(parent.AdmittedAt) ||
 			parent.DestinationID == "" || child.DestinationID != parent.DestinationID {
 			t.Errorf("child %+v", child)
 		}
