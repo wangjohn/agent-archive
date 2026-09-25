@@ -409,12 +409,13 @@ func LaunchAgent(executable, dataHome, label string, environment map[string]stri
 		_ = xml.EscapeText(&b, []byte(s)) // a strings.Builder never fails to write
 		return b.String()
 	}
-	variables := "<key>AGENT_ARCHIVE_HOME</key><string>" + escape(dataHome) + "</string>"
+	var variables strings.Builder
+	variables.WriteString("<key>AGENT_ARCHIVE_HOME</key><string>" + escape(dataHome) + "</string>")
 	for _, name := range slices.Sorted(maps.Keys(environment)) {
 		if name == "" || name == "AGENT_ARCHIVE_HOME" {
 			return nil, fmt.Errorf("LaunchAgent cannot set %q", name)
 		}
-		variables += "<key>" + escape(name) + "</key><string>" + escape(environment[name]) + "</string>"
+		variables.WriteString("<key>" + escape(name) + "</key><string>" + escape(environment[name]) + "</string>")
 	}
 	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -427,7 +428,7 @@ func LaunchAgent(executable, dataHome, label string, environment map[string]stri
 <key>StandardOutPath</key><string>%s</string>
 <key>StandardErrorPath</key><string>%s</string>
 </dict></plist>
-`, escape(label), escape(executable), variables, escape(filepath.Join(dataHome, "collector.log")), escape(filepath.Join(dataHome, "collector-error.log")))), nil
+`, escape(label), escape(executable), variables.String(), escape(filepath.Join(dataHome, "collector.log")), escape(filepath.Join(dataHome, "collector-error.log")))), nil
 }
 
 // LaunchAgentDataHome returns the AGENT_ARCHIVE_HOME a LaunchAgent plist

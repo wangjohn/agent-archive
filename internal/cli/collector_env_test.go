@@ -142,11 +142,13 @@ func TestStatusReportsWhenTheCollectorCannotLoadTheProfile(t *testing.T) {
 	t.Parallel()
 	for name, drift := range map[string]func(t *testing.T, env Env, home, userHome, configFile, binDir string){
 		"helper removed": func(t *testing.T, _ Env, _, _, _, binDir string) {
+			t.Helper()
 			if err := os.Remove(filepath.Join(binDir, "vault-helper")); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"LaunchAgent without PATH": func(t *testing.T, env Env, home, userHome, configFile, _ string) {
+			t.Helper()
 			plistPath := env.installation(home, userHome).collectorPlist()
 			executable, _ := env.executable()
 			plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": configFile})
@@ -158,6 +160,7 @@ func TestStatusReportsWhenTheCollectorCannotLoadTheProfile(t *testing.T) {
 			}
 		},
 		"config file moved": func(t *testing.T, _ Env, _, _, configFile, _ string) {
+			t.Helper()
 			if err := os.Rename(configFile, configFile+".old"); err != nil {
 				t.Fatal(err)
 			}

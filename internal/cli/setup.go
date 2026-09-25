@@ -931,7 +931,7 @@ func (e Env) temporaryExecutableProblem(exe string) string {
 	for _, path := range paths {
 		for dir := filepath.Dir(path); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
 			if strings.HasPrefix(filepath.Base(dir), "go-build") {
-				return fmt.Sprintf("%s is a temporary build (from go run or go test) that Go deletes when it exits, so the hooks and background collector would stop working.", exe)
+				return exe + " is a temporary build (from go run or go test) that Go deletes when it exits, so the hooks and background collector would stop working."
 			}
 		}
 	}

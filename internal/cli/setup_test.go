@@ -497,10 +497,12 @@ func TestSetupAfterUninstallSetsUpAgain(t *testing.T) {
 func TestSetupRefusesATemporaryExecutable(t *testing.T) {
 	t.Parallel()
 	for name, place := range map[string]func(t *testing.T, env *Env) string{
-		"go-build": func(t *testing.T, env *Env) string {
+		"go-build": func(t *testing.T, _ *Env) string {
+			t.Helper()
 			return filepath.Join(t.TempDir(), "go-build3829104", "b001", "exe", "agent-archive")
 		},
 		"temporary folder": func(t *testing.T, env *Env) string {
+			t.Helper()
 			temp := t.TempDir()
 			env.TempDir = func() string { return temp + string(filepath.Separator) }
 			return filepath.Join(temp, "downloads", "agent-archive")

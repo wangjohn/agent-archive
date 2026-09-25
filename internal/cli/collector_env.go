@@ -181,7 +181,10 @@ func programFound(program, path, userHome string) bool {
 		program = filepath.Join(userHome, rest)
 	}
 	if strings.Contains(program, "/") {
-		return executableProblem(filepath.Join("/", program)) == ""
+		if !filepath.IsAbs(program) {
+			program = string(filepath.Separator) + program
+		}
+		return executableProblem(filepath.Clean(program)) == ""
 	}
 	for _, dir := range filepath.SplitList(path) {
 		if filepath.IsAbs(dir) && executableProblem(filepath.Join(dir, program)) == "" {
