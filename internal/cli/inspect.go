@@ -397,13 +397,16 @@ func locateMetadataKey(ctx context.Context, store storage.ObjectStore, harness, 
 	return "", fmt.Errorf("session %q exists under more than one harness (%s); pass --harness", sessionID, strings.Join(harnesses, ", "))
 }
 
+// printJSON prints value as indented JSON. Its strings come from bucket
+// metadata, so the text goes through archive.DisplayJSON: a C1 control or
+// bidi override is printed as a \u escape, never raw to the terminal.
 func printJSON(stdout, stderr io.Writer, value any) int {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: encode output: %v\n", err)
 		return 1
 	}
-	terminal.Println(stdout, string(data))
+	terminal.Println(stdout, string(archive.DisplayJSON(data)))
 	return 0
 }
 

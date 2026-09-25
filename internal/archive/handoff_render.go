@@ -363,6 +363,34 @@ func DisplayLine(text string) string {
 	return oneLine(displayText(text))
 }
 
+// DisplayJSON returns JSON text (from encoding/json) safe to print to a
+// terminal, with the same meaning: every character displayText removes
+// that encoding/json leaves as it is (DEL, the C1 controls such as U+009B,
+// a terminal's one-byte CSI, and the bidi overrides) is written as a \u
+// escape. encoding/json already escapes the C0 controls, U+2028 and U+2029,
+// and invalid UTF-8; outside strings, JSON text holds none of these.
+func DisplayJSON(data []byte) []byte {
+	needs := false
+	for _, r := range string(data) {
+		if r >= 0x7f && isRemovedControl(r) {
+			needs = true
+			break
+		}
+	}
+	if !needs {
+		return data
+	}
+	out := make([]byte, 0, len(data)+32)
+	for _, r := range string(data) {
+		if r >= 0x7f && isRemovedControl(r) {
+			out = fmt.Appendf(out, `\u%04x`, r)
+			continue
+		}
+		out = utf8.AppendRune(out, r)
+	}
+	return out
+}
+
 func oneLine(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }

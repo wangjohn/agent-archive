@@ -9,6 +9,26 @@ import (
 	"unicode/utf8"
 )
 
+// DisplayJSON escapes what encoding/json prints raw (DEL, C1, bidi
+// overrides) and keeps the JSON's meaning.
+func TestDisplayJSONEscapesControlsLosslessly(t *testing.T) {
+	value := map[string]string{"a": "x\u009b31m\x7f\u202e\u2066y\u00e9\t\x1b", "b": "plain"}
+	data, _ := json.Marshal(value)
+	out := DisplayJSON(data)
+	for _, r := range string(out) {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			t.Fatalf("control %U left in %q", r, out)
+		}
+	}
+	var back map[string]string
+	if err := json.Unmarshal(out, &back); err != nil || !reflect.DeepEqual(back, value) {
+		t.Fatalf("round trip: %v %q", err, back)
+	}
+	if plain := []byte(`{"b":"plain é"}`); &DisplayJSON(plain)[0] != &plain[0] {
+		t.Fatal("clean JSON was copied")
+	}
+}
+
 // A-21: recorded text is display text. A lone carriage return (which
 // CommonMark reads as a line ending) becomes a newline, so quote and the
 // fences cover every line; terminal control sequences and bidirectional

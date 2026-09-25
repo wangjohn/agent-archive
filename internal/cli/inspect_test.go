@@ -461,3 +461,47 @@ func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
 		t.Fatalf("names not shown as text:\n%s", out.String())
 	}
 }
+
+// `show` and `list --json` print bucket metadata as JSON. encoding/json
+// escapes C0 controls but writes DEL, the C1 controls (U+009B is a
+// one-byte CSI to many terminals), and bidi overrides as they are; the
+// printed JSON escapes them too, and still decodes to the same names.
+func TestJSONOutputEscapesEveryControl(t *testing.T) {
+	env, mem, id := publishedFixture(t)
+	key, err := archive.MetadataObjectKey("codex", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := mem.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	name := "rev\u009b2Jiew\x7f\u202eevil\u0085"
+	m.SkillsUsed = []archive.SkillUse{{Name: name, SHA256: strings.Repeat("a", 64), Evidence: archive.SkillUseEvidenceNativeInvocation}}
+	m.SkillDetection = archive.SkillDetectionObserved
+	encoded, _ := json.Marshal(m)
+	if err := mem.Put(context.Background(), key, encoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"show", id}, {"list", "--json"}} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, nil, &out, &errOut, env); code != 0 {
+			t.Fatalf("%v: code=%d stderr=%s", args, code, errOut.String())
+		}
+		for _, r := range out.String() {
+			if (r < 0x20 && r != '\n') || r == 0x7f || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) {
+				t.Fatalf("%v: control %U in output:\n%q", args, r, out.String())
+			}
+		}
+		if !strings.Contains(out.String(), `rev\u009b2Jiew\u007f\u202eevil\u0085`) {
+			t.Fatalf("%v: name not escaped:\n%q", args, out.String())
+		}
+		if !json.Valid(out.Bytes()) {
+			t.Fatalf("%v: output is not JSON:\n%s", args, out.String())
+		}
+	}
+}

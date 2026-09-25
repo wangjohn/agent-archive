@@ -58,8 +58,8 @@ func gateSeeds() []string {
 		`{"cmd":"export TOKEN=abc\nmake","env":"PASSWORD=x\r\ny"}`,
 		"pass\nword=abc\nPASS\r\nWORD: x",
 		"TO\x00KEN=abc\x00PASSWORD=def",
-		"PAſſWORD: abc\nTOKEN=x",
-		"apiKey=abc",
+		"PA\u017f\u017fWORD: abc\nTOKEN=x",
+		"api\u212aey=abc",
 		"ＰＡＳＳＷＯＲＤ=abc\npassword＝def",
 		"password: |\r\n  abc\r\nnext: 1",
 		"  1→secrets:\n  2→  db: abc\n  3→other: x",
@@ -317,9 +317,9 @@ func lowered(runes []rune) []string {
 		switch {
 		case 'A' <= r && r <= 'Z':
 			r += 'a' - 'A'
-		case r == 'ſ':
+		case r == '\u017f':
 			r = 's'
-		case r == 'K':
+		case r == '\u212a':
 			r = 'k'
 		}
 		if s := string(r); !slices.Contains(set, s) {
