@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"strings"
 	"time"
 
@@ -290,11 +291,24 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 	// window, its request (which can carry hook text) stops deferring expiry;
 	// otherwise the registration and that text would stay on this machine
 	// forever. It never published, so forgetting it needs no bucket call. A
-	// session read from Cursor's database has no path by design and is
-	// captured all the same, so its work still defers expiry.
+	// transcript file the app created but never wrote is the same case one
+	// step later: nothing of it was ever captured, unless a first
+	// publication is still waiting to upload (built before the file was
+	// emptied). A session read from Cursor's database has no path by design
+	// and is captured all the same, so its work still defers expiry.
 	deferForWork := s.opts.Publishable == nil || s.opts.Publishable(reg)
-	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" && s.expired(reg.Admitted()) {
-		deferForWork = false
+	if reg.ReadsTranscriptFile() && s.expired(reg.Admitted()) {
+		neverCapturable := reg.TranscriptPath == ""
+		if !neverCapturable && !found && transcriptEmpty(reg.TranscriptPath) {
+			owed, err := s.local.Outstanding(reg, s.requested[id])
+			if err != nil {
+				return fmt.Errorf("check outstanding work: %w", err)
+			}
+			neverCapturable = !owed.Upload
+		}
+		if neverCapturable {
+			deferForWork = false
+		}
 	}
 	// What the session still owes (state.Outstanding), read only for a
 	// session old enough to expire: the steady state stays a summary read.
@@ -344,6 +358,13 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 		}
 	}
 	return s.remote(reg, summary, ageFrom, locallyExpired, deferForWork)
+}
+
+// transcriptEmpty reports a transcript file that exists and holds nothing:
+// the collector waits on it without capturing anything (collector.read).
+func transcriptEmpty(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Size() == 0
 }
 
 // remote does the part of a session's sweep that consults the bucket:

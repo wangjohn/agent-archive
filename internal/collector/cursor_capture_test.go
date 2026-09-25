@@ -334,3 +334,42 @@ func mustRequest(t *testing.T, local *state.Store, id string) state.Request {
 	}
 	return req
 }
+
+// A Cursor database chat emptied after it was published (every message
+// removed) is a transcript_rewritten gap that keeps the published snapshot,
+// as an emptied transcript file is, not a failure on every pass: there is
+// nothing to publish in its place.
+func TestCursorSQLiteChatEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
+	passes := countSnapshots(t)
+	local := newTestStore(t)
+	db := newCursorDB(t, true)
+	db.chatSaying("chat", 1000, "hello", "b1", "b2")
+	reg := cursorRegistration("session", "chat")
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
+	if result, _ := run(t, local, remote, opts, passes); len(result.Published) != 1 {
+		t.Fatalf("first capture: %+v", result)
+	}
+	before := fetchMetadata(t, remote, "cursor", reg.ArchiveSessionID)
+
+	db.chatSaying("chat", 2000, "")
+	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	result, _ := run(t, local, remote, opts, passes)
+	if len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatalf("emptied chat should be a recorded gap: %+v", result)
+	}
+	if reason, blocked, err := local.LoadBlocked(reg.ArchiveSessionID); err != nil || !blocked || reason != state.BlockedReasonTranscriptRewritten {
+		t.Fatalf("blocked=%v reason=%q err=%v", blocked, reason, err)
+	}
+	if requests, err := local.LoadRequests(); err != nil || len(requests) != 0 {
+		t.Fatalf("request on an emptied chat not acknowledged: %#v err=%v", requests, err)
+	}
+	if after := fetchMetadata(t, remote, "cursor", reg.ArchiveSessionID); after.SourceBundle.SHA256 != before.SourceBundle.SHA256 {
+		t.Fatal("an emptied chat replaced the published snapshot")
+	}
+}
