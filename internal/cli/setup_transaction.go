@@ -44,13 +44,6 @@ func (j setupJournal) relabeled() []*legacyJob {
 	return append([]*legacyJob{j.Relabeled}, j.MoreRelabeled...)
 }
 
-func journalPath(home string) string { return filepath.Join(home, "setup-transaction.json") }
-
-func transactionPending(home string) bool {
-	_, err := os.Stat(journalPath(home))
-	return !os.IsNotExist(err)
-}
-
 func discardDraft(home string, draft setupDraft, active config.Config, env Env) error {
 	refs := append([]string{}, draft.StagedRefs...)
 	if draft.CredentialRef != "" && !containsString(refs, draft.CredentialRef) {

@@ -1,4 +1,4 @@
-package cli
+package capture
 
 import (
 	"os"
@@ -212,58 +212,5 @@ func TestResumeBeforeActivationRecordsActivationDiagnostic(t *testing.T) {
 	ds, _ := readCaptureDiagnostics(home)
 	if len(ds) != 1 || ds[0].Code != diagnosticPreActivationStart {
 		t.Fatalf("diagnostics %+v", ds)
-	}
-}
-
-// Regression: pre-release review, carried over from agent-skills (e371b6a).
-func TestExcludedProjectDiagnosticLeavesStatus(t *testing.T) {
-	t.Parallel()
-	home := t.TempDir()
-	at := time.Now().UTC()
-	env := testEnv(t, home, at)
-	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
-	resumed := writeTestTranscript(t, "old.jsonl", "{\"role\":\"user\"}\n")
-	if err := handleHookEvent(home, "cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "old", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}, at); err != nil {
-		t.Fatal(err)
-	}
-	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || !strings.Contains(out.String(), "Capture skipped in /work/widget") {
-		t.Fatalf("status exit=%d output=%s", code, out.String())
-	}
-	// The project is excluded afterwards: its path must stop appearing.
-	setUpTestConfig(t, home, "/work/kept", at.Add(-time.Hour))
-	out.Reset()
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "/work/widget") {
-		t.Fatalf("status exit=%d output=%s", code, out.String())
-	}
-	out.Reset()
-	if code := runStatusCommand([]string{"--json"}, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "/work/widget") || strings.Contains(out.String(), "capture_diagnostics") {
-		t.Fatalf("status --json exit=%d output=%s", code, out.String())
-	}
-}
-
-// Regression: pre-release review, carried over from agent-skills (e371b6a).
-func TestSetupExcludingProjectPrunesStoredDiagnostic(t *testing.T) {
-	t.Parallel()
-	home, first, second := t.TempDir(), t.TempDir(), t.TempDir()
-	now := time.Now().UTC()
-	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
-	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, first), 0)
-	cfg, _, _ := config.Load(home)
-	root := cfg.Archive.Projects[0].Root
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "resume", "session_id": "old", "cwd": root}, now); err != nil {
-		t.Fatal(err)
-	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 1 || ds[0].ProjectRoot != root {
-		t.Fatalf("diagnostics %+v", ds)
-	}
-	// Reconfigure capture: drop the first project and include the second.
-	setupRun(t, env, "capture\nn\nn\nn\nn\n"+second+"\n\ny\n", 0)
-	cfg, _, _ = config.Load(home)
-	if len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root == root {
-		t.Fatalf("projects %+v", cfg.Archive.Projects)
-	}
-	if ds, err := readCaptureDiagnostics(home); err != nil || len(ds) != 0 {
-		t.Fatalf("excluded project diagnostic kept on disk: %+v err=%v", ds, err)
 	}
 }

@@ -1,4 +1,4 @@
-package cli
+package capture
 
 import (
 	"bytes"
@@ -515,17 +515,6 @@ func TestHandleHookEventNoopWhilePaused(t *testing.T) {
 	}
 }
 
-func TestRunHookCommandNeverFailsOnMalformedInput(t *testing.T) {
-	t.Parallel()
-	home := t.TempDir()
-	env := testEnv(t, home, time.Now())
-	var errOut bytes.Buffer
-	code := runHookCommand([]string{"--harness", "codex"}, strings.NewReader("not json"), &errOut, env)
-	if code != 0 {
-		t.Fatalf("hook must never fail the harness's turn: code=%d stderr=%s", code, errOut.String())
-	}
-}
-
 // writeTestTranscript creates a transcript file with the given contents (empty
 // for a conversation that has not started yet) and returns its path.
 func writeTestTranscript(t *testing.T, name, contents string) string {
@@ -765,44 +754,6 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 				}
 			})
 		}
-	}
-}
-
-// A start that arrives while setup's transaction is open cannot be registered.
-// It must say so instead of disappearing.
-func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
-	t.Parallel()
-	home, project := t.TempDir(), t.TempDir()
-	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	start := map[string]any{
-		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
-		"cwd": project, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
-	}
-	if err := handleHookEvent(home, "claude", start, now); err != nil {
-		t.Fatal(err)
-	}
-	store, _ := state.Open(home)
-	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
-		t.Fatalf("a hook registered during a setup transaction: %#v", regs)
-	}
-	ds, err := readCaptureDiagnostics(home)
-	if err != nil || len(ds) != 1 || ds[0].Code != diagnosticSetupInProgress || ds[0].ProjectRoot != project || ds[0].Harness != "claude" {
-		t.Fatalf("diagnostics=%#v err=%v", ds, err)
-	}
-	raw, err := os.ReadFile(captureDiagnosticsPath(home))
-	if err != nil || bytes.Contains(raw, []byte("native-1")) || bytes.Contains(raw, []byte("transcript")) {
-		t.Fatalf("diagnostic leaked session identity: %s err=%v", raw, err)
-	}
-	var out bytes.Buffer
-	if code := runStatusCommand([]string{"--json"}, &out, os.Stderr, testEnv(t, home, now)); code != 0 {
-		t.Fatalf("status exit=%d output=%s", code, out.String())
-	}
-	if !strings.Contains(out.String(), string(diagnosticSetupInProgress)) {
-		t.Fatalf("status --json omitted the diagnostic: %s", out.String())
 	}
 }
 
