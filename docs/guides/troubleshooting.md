@@ -133,6 +133,15 @@ behalf.
 These notes are for builds from before the first release; a new install
 can skip them.
 
+- With S3 storage, run `agent-archive setup` again and save your settings
+  unchanged; saving rewrites the collector's LaunchAgent. An
+  earlier build's LaunchAgent gives the background collector none of your
+  shell's AWS settings files, CA bundle, endpoints, proxy or `PATH`, so a
+  profile outside `~/.aws` or one using `credential_process` (`aws-vault`,
+  `op`, `granted`) uploads only when you run `sync`. `status` reports the
+  cases it can see: a `credential_process` helper launchd's `PATH` doesn't
+  find, or your shell's AWS files differing from the collector's.
+
 - A source bundle written by an early build as a single JSON document
   (schema 1) is not read: `show --normalized` and `handoff` report
   "unsupported source schema version 1" for it.

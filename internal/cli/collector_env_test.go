@@ -286,3 +286,45 @@ func TestSetupYesGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 		t.Fatalf("collector environment %v", environment)
 	}
 }
+
+// A network that only lets traffic out through a proxy needs the proxy
+// settings in the background too, so setup records them; one with a
+// password in it is left out of the LaunchAgent, and setup says so.
+func TestSetupGivesTheCollectorTheProxySettings(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.LookupEnv = shellEnvironment(map[string]string{
+		"HTTPS_PROXY": "http://proxy.internal.example:3128",
+		"no_proxy":    "localhost,169.254.169.254",
+		"http_proxy":  "http://someone:proxy-password@proxy.internal.example:3128",
+	})
+	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()), 0)
+	if !strings.Contains(output, "http_proxy holds a user name or password, so the background collector runs without it.") {
+		t.Fatalf("setup did not say the proxy with a password was left out:\n%s", output)
+	}
+	environment, plist := collectorPlistEnvironment(t, env, home, userHome)
+	if environment["HTTPS_PROXY"] != "http://proxy.internal.example:3128" || environment["no_proxy"] != "localhost,169.254.169.254" {
+		t.Fatalf("collector environment %v", environment)
+	}
+	if _, ok := environment["http_proxy"]; ok || strings.Contains(plist, "proxy-password") {
+		t.Fatal("the LaunchAgent carries a proxy password")
+	}
+}
+
+func TestCarriesCredentials(t *testing.T) {
+	t.Parallel()
+	for value, want := range map[string]bool{
+		"http://proxy:3128":           false,
+		"proxy:3128":                  false,
+		"https://s3.internal.example": false,
+		"localhost,.internal":         false,
+		"http://user:pass@proxy:3128": true,
+		"http://user@proxy:3128":      true,
+		"user:pass@proxy:3128":        true,
+	} {
+		if got := carriesCredentials(value); got != want {
+			t.Errorf("carriesCredentials(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
