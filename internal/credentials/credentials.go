@@ -184,16 +184,14 @@ func ParseR2Location(input string) (R2Location, error) {
 	if strings.Contains(bucket, "/") {
 		return R2Location{}, errors.New("an R2 bucket URL names only the bucket, not a folder or object inside it")
 	}
-	loc := R2Location{Bucket: bucket}
-	host := strings.ToLower(u.Host)
-	if account, ok := strings.CutSuffix(host, r2DefaultHostSuffix); ok && account != "" && !strings.Contains(account, ".") {
-		loc.AccountID = account
-		return loc, nil
+	if account, ok := strings.CutSuffix(strings.ToLower(u.Host), r2DefaultHostSuffix); ok && account != "" && !strings.Contains(account, ".") {
+		return R2Location{AccountID: account, Bucket: bucket}, nil
 	}
-	if loc.Endpoint, err = R2Endpoint("https://"+u.Host, ""); err != nil {
+	endpoint, err := R2Endpoint("https://"+u.Host, "")
+	if err != nil {
 		return R2Location{}, err
 	}
-	return loc, nil
+	return R2Location{Endpoint: endpoint, Bucket: bucket}, nil
 }
 
 // EncodeSecret is used by KeychainStore and is exported solely so a test can

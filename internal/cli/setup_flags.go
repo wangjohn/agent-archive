@@ -223,7 +223,7 @@ func setupApps(cfg *config.Config, apps string, detected []string) error {
 	var chosen []string
 	switch {
 	case apps != "":
-		for _, app := range strings.Split(apps, ",") {
+		for app := range strings.SplitSeq(apps, ",") {
 			app = strings.TrimSpace(app)
 			if !containsString(allHarnesses, app) {
 				return fmt.Errorf("--apps takes codex, claude, and cursor, not %q", app)

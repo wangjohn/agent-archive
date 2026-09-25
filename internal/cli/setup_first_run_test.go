@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func TestSetupOffersProjectsFromAppHistory(t *testing.T) {
 func TestSetupAddsAnotherProjectAfterTheCurrentRepository(t *testing.T) {
 	t.Parallel()
 	for _, add := range []bool{false, true} {
-		t.Run(fmt.Sprint(add), func(t *testing.T) {
+		t.Run(strconv.FormatBool(add), func(t *testing.T) {
 			t.Parallel()
 			home, current, other := t.TempDir(), gitRepo(t), gitRepo(t)
 			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
