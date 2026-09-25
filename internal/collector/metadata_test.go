@@ -333,6 +333,35 @@ func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
 	}
 }
 
+// After a parser upgrade the refresh reads the live transcript to see
+// whether normal capture will publish; when it will, capture uses that
+// read rather than filtering the whole transcript again. Not parallel: it
+// reads a package-wide counter.
+func TestParserUpgradeWithNewContentReadsTheTranscriptOnce(t *testing.T) {
+	local := newTestStore(t)
+	dir := t.TempDir()
+	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	published := publishOnce(t, local, remote, reg, &opts)
+
+	writeTranscript(t, dir, "s.jsonl", grownCodexTranscript)
+	now = now.Add(10 * time.Minute)
+	opts.ParserVersion = "two"
+	before := transcriptFilters.Load()
+	result, err := Run(context.Background(), local, remote, opts)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("%#v %v", result, err)
+	}
+	if filters := transcriptFilters.Load() - before; filters != 1 {
+		t.Fatalf("the scan filtered the transcript %d times", filters)
+	}
+	if after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); after.Parser.Version != "two" || after.SourceBundle == published.SourceBundle {
+		t.Fatalf("metadata = %+v", after)
+	}
+}
+
 func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 	local := newTestStore(t)
 	dir := t.TempDir()

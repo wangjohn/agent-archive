@@ -220,10 +220,13 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if err != nil {
 		return false
 	}
-	filtered, _, err := source.Filter(s.ctx, adapter, s.opts.maxTranscriptBytes())
+	filtered, observed, err := source.Filter(s.ctx, adapter, s.opts.maxTranscriptBytes())
 	if err != nil {
 		return false
 	}
+	// Normal capture reads this same source next unless the refresh ends the
+	// scan, so it keeps what was read here.
+	s.filtered = &filteredSource{transcript: filtered, observed: observed}
 	candidate, err := archive.NewSourceBundle(s.reg, adapter, filtered, s.now, cached.SupplementalEvidence)
 	if err != nil {
 		return false

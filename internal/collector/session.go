@@ -71,6 +71,16 @@ type sessionScan struct {
 	warnings []error
 	// gap is the capture gap the scan ended in, if it did (see block).
 	gap state.BlockedReason
+	// filtered is the source as the refresh step already read and filtered
+	// it (see liveTranscriptChanged), which read then uses rather than
+	// filtering the whole source a second time in the same scan.
+	filtered *filteredSource
+}
+
+// filteredSource is a source read and filtered once in a scan.
+type filteredSource struct {
+	transcript archive.FilteredTranscript
+	observed   sourceState
 }
 
 // warn records a failure that does not end the scan.
@@ -174,7 +184,11 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if read.adapter, err = archive.NewAdapter(s.reg.Harness.Name); err != nil {
 		return read, false, err
 	}
-	read.filtered, read.observed, err = reader.Filter(s.ctx, read.adapter, s.opts.maxTranscriptBytes())
+	if s.filtered != nil {
+		read.filtered, read.observed = s.filtered.transcript, s.filtered.observed
+	} else {
+		read.filtered, read.observed, err = reader.Filter(s.ctx, read.adapter, s.opts.maxTranscriptBytes())
+	}
 	if err != nil {
 		read.outcome, err = s.readFailed(read, err)
 		return read, false, err
