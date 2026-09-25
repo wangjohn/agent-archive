@@ -68,8 +68,8 @@ jobs:
             done
           done
           # Guard against a listing that silently finds nothing: internal/archive
-          # has nine targets and internal/hooks two.
-          test "$found" -ge 11
+          # has ten targets and internal/hooks two.
+          test "$found" -ge 12
 
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is

@@ -168,6 +168,7 @@ Redaction, parsing and hook-file editing have fuzz targets
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
 | `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |
 | `FuzzLineMatchesCoverWholeString` | any text | running each credential pattern line by line, only on lines with its needles, finds everything matching the whole string finds |
+| `FuzzGatedRedactionMatchesWhole` | any text | the redaction as it runs (line by line, gated by needles and separators) equals the same redaction run ungated over the whole string |
 
 In `internal/hooks`:
 
