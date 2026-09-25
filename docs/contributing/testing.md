@@ -143,11 +143,24 @@ LaunchAgent runs) are not part of the user interface and may change.
 
 - Adapter fixtures are in `internal/archive/testdata/` as `<app>-<shape>.jsonl`
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
-  each fixture filters to; Cursor database chats and handoff output have
-  goldens of their own. Regenerate with `go test ./internal/archive
-  -update-filter-golden -update-composer-golden -update` and review the diff
-  line by line: a golden change is a privacy change (see
-  [versions](../reference/versions.md)).
+  each fixture filters to; Cursor database chats
+  (`internal/archive/testdata/cursor-composer/`), handoff output
+  (`testdata/handoff/`), backfill plans (`internal/cli/testdata/backfill/`,
+  `internal/backfill/testdata/`) have goldens of their own.
+- One flag rewrites every golden file:
+
+  ```sh
+  go test ./... -update                  # or one package: go test ./internal/archive -update
+  git diff                               # review every changed line
+  ```
+
+  Review the diff line by line: a change to the archive's goldens is a
+  privacy change (see [versions](../reference/versions.md)). The flag is
+  defined once, in `internal/testutil/golden` (`golden.Check`,
+  `golden.Update`), which every package with tests imports, so no package
+  rejects it (`TestEveryTestedPackageKnowsUpdate`). A new golden test uses
+  `golden.Check`; a package with tests but no goldens imports the package
+  blank.
 - A bug fix comes with a test that fails without the fix. Check by reverting
   the fix.
 

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 func TestR2EndpointCanBeDerived(t *testing.T) {

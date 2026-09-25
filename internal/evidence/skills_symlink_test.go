@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 // skillLayout is a temporary home, project, and an unrelated directory

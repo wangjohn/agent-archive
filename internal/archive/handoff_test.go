@@ -3,7 +3,6 @@ package archive
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,9 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-)
 
-var updateHandoffGolden = flag.Bool("update", false, "rewrite internal/archive/testdata/handoff golden files")
+	"github.com/wangjohn/agent-archive/internal/testutil/golden"
+)
 
 // handoffBundle filters a handoff fixture through the harness's adapter, the
 // same path the collector and `handoff --source local` take.
@@ -56,19 +55,7 @@ func TestHandoffGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := RenderHandoffMarkdown(h, HandoffRenderOptions{Preamble: true})
-			golden := filepath.Join("testdata", "handoff", harness+".md")
-			if *updateHandoffGolden {
-				if err := os.WriteFile(golden, got, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			want, err := os.ReadFile(golden)
-			if err != nil {
-				t.Fatalf("%v (run with -update to create it)", err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Fatalf("handoff for %s differs from %s:\n%s", harness, golden, got)
-			}
+			golden.Check(t, filepath.Join("testdata", "handoff", harness+".md"), got)
 		})
 	}
 }

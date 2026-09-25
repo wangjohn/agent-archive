@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"database/sql"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,14 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/testutil/golden"
+
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
-
-var updateBackfillGolden = flag.Bool("update", false, "rewrite internal/cli/testdata/backfill golden files")
 
 // backfillNow is the planning clock: 2026-09-23 in California.
 var backfillNow = time.Date(2026, 9, 23, 12, 0, 0, 0, time.FixedZone("PDT", -7*3600))
@@ -232,22 +231,7 @@ func (f *backfillFixture) run(t *testing.T, args ...string) (string, string, int
 // diff.
 func checkGolden(t *testing.T, name string, got []byte) {
 	t.Helper()
-	golden := filepath.Join("testdata", "backfill", name)
-	if *updateBackfillGolden {
-		if err := os.MkdirAll(filepath.Dir(golden), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(golden, got, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("%v (run with -update to create it)", err)
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("output differs from %s:\n%s", golden, got)
-	}
+	golden.Check(t, filepath.Join("testdata", "backfill", name), got)
 }
 
 func TestBackfillGolden(t *testing.T) {

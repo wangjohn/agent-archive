@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 )

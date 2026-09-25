@@ -4,15 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
-)
 
-var updateFilterGolden = flag.Bool("update-filter-golden", false, "rewrite testdata/filter-golden.json from the current filter")
+	"github.com/wangjohn/agent-archive/internal/testutil/golden"
+)
 
 const filterGoldenPath = "testdata/filter-golden.json"
 
@@ -71,12 +70,12 @@ func filterGoldenOf(t *testing.T, name string) filterGoldenEntry {
 // is only true if every fixture filters to exactly the bytes it did before;
 // testdata/filter-golden.json was generated from the filter as it was before
 // the change. A fixture added later is checked once its golden entry exists
-// (regenerate with -update-filter-golden, which is itself a statement that
-// the filter's output changed on purpose).
+// (regenerate with -update, which is itself a statement that the filter's
+// output changed on purpose).
 func TestFilterOutputIsUnchangedByTheRecordLimit(t *testing.T) {
 	t.Parallel()
 	names := filterGoldenFixtures(t)
-	if *updateFilterGolden {
+	if golden.Update() {
 		golden := map[string]filterGoldenEntry{}
 		for _, name := range names {
 			golden[name] = filterGoldenOf(t, name)

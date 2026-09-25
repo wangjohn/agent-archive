@@ -46,6 +46,14 @@ linters:
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/storage/storagetest
               desc: test helpers only; production code stores through storage's S3 client
+        # The golden-file helper registers the -update test flag; a
+        # production package importing it would grow that flag.
+        golden-only-in-tests:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/testutil
+              desc: test helpers only
         # Retention deletes; the collector publishes. Retention's whole-session
         # delete lives in retention itself, so it never needs the collector.
         retention-does-not-import-collector:

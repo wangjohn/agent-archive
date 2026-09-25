@@ -28,8 +28,8 @@ end. Don't infer a field from documentation alone.
   instructions must be dropped and reported as gaps.
 - Add fixtures under `internal/archive/testdata/` named `<app>-<shape>.jsonl`
   (the round-trip test requires every fixture to have an app prefix), and
-  regenerate `filter-golden.json` (`go test ./internal/archive
-  -update-filter-golden`). Review every retained line.
+  regenerate `filter-golden.json` (`go test ./internal/archive -update`;
+  see [goldens](testing.md#fixtures-and-goldens)). Review every retained line.
 - Teach the normalized view (`views.go`) and handoff (`handoff.go`) to find
   turns, prompts, and tool calls in the new records, with fixtures and
   golden output in `testdata/handoff/`.

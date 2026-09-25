@@ -2,14 +2,12 @@ package backfill
 
 import (
 	"bytes"
-	"flag"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
-)
 
-var updateGolden = flag.Bool("update", false, "rewrite internal/backfill/testdata golden files")
+	"github.com/wangjohn/agent-archive/internal/testutil/golden"
+)
 
 // Every skip reason renders with its wording and override, in the spec's
 // order. Regenerate with `go test ./internal/backfill -run
@@ -42,22 +40,7 @@ func TestSkipReasonsGolden(t *testing.T) {
 	p.CursorSubagentsNotImported, p.CursorDatabaseChecked, p.CursorDatabaseUnchecked, p.Filters.IncludeHome, p.UnreadableFolders, p.UnreadableStores = 0, false, CursorUncheckedLocked, true, 1, nil
 	p.Candidates = p.Candidates[:2]
 	RenderText(&out, p)
-	golden := filepath.Join("testdata", "skip-reasons.txt")
-	if *updateGolden {
-		if err := os.MkdirAll("testdata", 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(golden, out.Bytes(), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("%v (run with -update to create it)", err)
-	}
-	if !bytes.Equal(out.Bytes(), want) {
-		t.Fatalf("differs from %s:\n%s", golden, out.Bytes())
-	}
+	golden.Check(t, filepath.Join("testdata", "skip-reasons.txt"), out.Bytes())
 	for _, reason := range skipOrder {
 		if skipLabels[reason] == "" {
 			t.Errorf("%s has no label", reason)
