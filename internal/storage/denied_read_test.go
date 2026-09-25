@@ -3,10 +3,10 @@ package storage
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -66,7 +66,7 @@ func (f *deniedReadS3) serve(t *testing.T) *httptest.Server {
 				deny(w, r)
 				return
 			}
-			w.Header().Set("Content-Length", fmt.Sprint(len(body)))
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 			w.WriteHeader(http.StatusOK)
 			if r.Method == http.MethodGet {
 				_, _ = w.Write(body)
