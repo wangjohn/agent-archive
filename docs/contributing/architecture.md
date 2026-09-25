@@ -21,12 +21,14 @@ flowchart LR
 
 ## The paths through it
 
-1. **Hook** (`internal/cli` `_hook`). An app runs `agent-archive _hook
+1. **Hook** (`internal/capture`, run by `_hook`). An app runs `agent-archive _hook
    --harness <app>` at session start, stop, and similar events. The hook checks the
    configuration, records the session (`registrations/`) or queues work
    (`requests/`) under `hooks.lock`, and returns within milliseconds. It does
    no filtering or uploading, never touches the network, and never writes to
-   stdout.
+   stdout. The `_hook` command in `internal/cli` is only the adapter: it
+   parses `--harness`, decodes stdin, and always exits 0, recovering a panic
+   into a diagnostic.
 2. **Collector** (`internal/collector`, run by `_collect` or `sync`). Under
    `collector.lock`, for each registered session it reads the transcript,
    filters it through the app's adapter, builds a source bundle, derives
@@ -52,12 +54,35 @@ flowchart LR
 | `config` | `config.json`: the one record of how this Mac is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
 | `hooks` | Planning, installing, and removing hook entries and the LaunchAgent. |
+| `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. No command-line, network, launchctl, or Keychain dependencies (enforced by depguard and `TestCaptureImportBoundary`). |
+| `setupjournal` | Setup's transaction record (`setup-transaction.json`): where it lives and whether one is pending, which every command and the hook check. |
 | `evidence` | Skill inventories and snapshots, as privacy-filtered evidence. |
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |
 | `backfill` | Discovery, the import plan, registration, and undo. |
 | `reader` | Listing metadata and loading verified sources, with a disposable metadata cache. |
-| `cli` | Every command. Process state (args, stdio, the clock, the home directory, launchctl, the Keychain) reaches commands through an injectable `Env`. A few lower packages still read the process directly: `local` (`AGENT_ARCHIVE_HOME` and `$HOME`), `credentials` (AWS configuration files and the Keychain), and `cursorstore` (the user's temporary directory). |
+| `cli` | Every command: flags, prompts, rendering, and the wiring between packages. Process state (args, stdio, the clock, the home directory, launchctl, the Keychain) reaches commands through an injectable `Env`. A few lower packages still read the process directly: `local` (`AGENT_ARCHIVE_HOME` and `$HOME`), `credentials` (AWS configuration files and the Keychain), and `cursorstore` (the user's temporary directory). |
 | `doclinks` | A test that the documentation's relative links resolve. |
+
+## Package dependencies
+
+Arrows point at what a package imports; `local` and `archive`, which nearly
+everything imports, are left out. Only `cmd/agent-archive` imports `cli`; `capture` and
+`setupjournal` never import `cli`, `terminal`, or `golang.org/x/term`
+(depguard in `.golangci.yml`, and a test in each package).
+
+```mermaid
+flowchart TD
+  cli --> capture & setupjournal & backfill & collector & retention & reader & hooks & evidence
+  cli --> config & state & storage & credentials & cursorstore & terminal
+  capture --> setupjournal & config & state
+  backfill --> collector & retention & config & state & storage & cursorstore & terminal
+  retention --> reader & state & storage
+  collector --> state & storage & cursorstore
+  reader --> storage
+  config --> credentials & storage
+  state --> cursorstore
+  storage --> credentials
+```
 
 ## Invariants worth knowing before you change anything
 
@@ -71,6 +96,8 @@ flowchart LR
   retry uploads byte-identical objects.
 - Local writes are atomic and durable (temporary file, fsync, rename,
   directory fsync). One unreadable state file is quarantined, not fatal.
-- Hooks must be fast and silent: an app waits for them.
+- Hooks must be fast and silent: an app waits for them. `capture` waits at
+  most a second for `hooks.lock` and 50 ms for `diagnostics.lock`, and the
+  `_hook` command exits 0 whatever happens.
 - Every side effect in `cli` goes through `Env`, so tests never touch the real
   home, launchd, Keychain, or a bucket.
