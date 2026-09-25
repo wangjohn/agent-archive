@@ -338,7 +338,7 @@ func notSetUp(env Env) bool {
 		return false
 	}
 	cfg, found, err := config.Load(home)
-	return err == nil && !(found && cfg.Archive.Enabled)
+	return err == nil && (!found || !cfg.Archive.Enabled)
 }
 
 const usage = `Agent Archive — archive coding-agent sessions to your private storage.
