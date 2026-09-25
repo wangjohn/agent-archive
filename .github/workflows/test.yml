@@ -43,7 +43,7 @@ jobs:
       - run: python3 scripts/test_purge_recipe.py
 
   fuzz:
-    # Every parser and redaction fuzz target, briefly, so a change that
+    # Every parser, redaction, and hook fuzz target, briefly, so a change that
     # breaks one of their properties fails before merge
     # (docs/contributing/testing.md). The failure message quotes the input;
     # reproduce it locally and keep it as a seed.
@@ -68,8 +68,8 @@ jobs:
             done
           done
           # Guard against a listing that silently finds nothing: internal/archive
-          # has ten targets and internal/hooks two.
-          test "$found" -ge 12
+          # has ten targets, internal/hooks two, and internal/cli one.
+          test "$found" -ge 13
 
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is
