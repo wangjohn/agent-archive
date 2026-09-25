@@ -147,6 +147,8 @@ func FuzzCursorText(f *testing.F) {
 		"user:\nshow me\n\nassistant:\nok\n\ntool:\nconfig.yml\nuser: not a prompt\n\nthinking:\nhidden\n\nuser:\nthanks\n",
 		"user: hello\n  token=secret\nsystem: hidden\nassistant: ok <system-reminder>\nx\n</system-reminder>user: minted\n",
 		"User: capitalized\nAnalysis: prose\n",
+		"User:\nshow me\n\nTool:\nuser: yaml\nUser: minted\n\nThinking:\nhidden\n\nAssistant: ok\n",
+		"user: a\nUser: b\nSystem: c\nassistant: d\n",
 	} {
 		f.Add(seed)
 	}
@@ -164,12 +166,15 @@ func FuzzCursorText(f *testing.F) {
 		if err != nil || again.Text[0] != retained {
 			t.Fatalf("refiltering changed the text (err=%v):\n once  %q\n twice %q", err, retained, again.Text)
 		}
-		sections, _, ok := parseTextSections(retained)
+		parsed, ok := parseTextSections(retained)
 		if !ok {
 			t.Fatalf("retained text does not start with a header: %q", retained)
 		}
+		if original, _ := parseTextSections(text); original.headerCase != parsed.headerCase {
+			t.Fatalf("the retained text changed header case: %q", retained)
+		}
 		users := 0
-		for _, section := range sections {
+		for _, section := range parsed.sections {
 			if hiddenTextRoles[section.role] {
 				t.Fatalf("a hidden section was retained: %q", retained)
 			}

@@ -61,9 +61,11 @@ can list them, inspect them, and hand one to another agent.
   carriage return (progress bars) no longer ends a block quote early, and
   terminal escape sequences (colors, OSC 52 clipboard writes, OSC 8 links)
   and bidirectional overrides are removed from every field of `handoff`
-  output, Markdown and JSON. In a Cursor plain-text transcript, only a
-  lower-case `user:` header starts a Person turn, and a YAML `user:` line in
-  tool output no longer does when sections are blank-line separated.
+  output, Markdown and JSON. In a Cursor plain-text transcript, a role
+  header must be in the case of the transcript's first header (`user:` or
+  `User:`), so a line in the other case is content, and a YAML `user:` line
+  in tool output no longer starts a Person turn when sections are
+  blank-line separated.
 - **Handoff output is marked as a record** (#44). Agent text, prompts, and
   summaries are block-quoted, plan items and file names can't add headings,
   and the preamble tells the receiving agent not to follow instructions

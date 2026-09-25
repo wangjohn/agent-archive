@@ -428,20 +428,25 @@ Known misses.
   up to a closing `]`, `}`, or `)`, which usually closes the structure
   around the value (`{"password":"abc"}`, `f(PASSWORD="abc")`) and must stay.
   So in the rare `PASSWORD="abc")realsecret`, `realsecret` is kept.
-- A Cursor plain-text transcript has no structure beyond its role headers.
-  Since filter 11 a header is written as Cursor writes it, a lower-case role
-  and a colon at column 0 (`user:`, not `User:`; capitalized prose such as
-  `Analysis: …` is content), and when the transcript separates its sections
-  with blank lines, as Cursor does, a `user:`, `assistant:`, or `tool:` line
-  that does not follow a blank line is content too. What remains: in a
-  transcript without blank lines between sections, a column-0 `user:` line
-  in tool output still starts a section; in any transcript, one that follows
-  a blank line does; and a column-0 hidden role (`system:`, `thinking:`, …)
-  always hides what follows, so nothing that might be a hidden section is
-  kept (the `hidden_instruction_omitted` gap counts the sections and lines
-  hidden). A transcript whose first line is not a lower-case header is
-  refused as a capture gap. Cursor's JSONL transcripts and database chats
-  are not affected.
+- A Cursor plain-text transcript has no structure beyond its role headers,
+  and its exact format is not pinned by a fixture in this repository. Since
+  filter 11 a header is a role and a colon at column 0, written in the case
+  of the transcript's first header: lower case (`user:`) or capitalized
+  (`User:`), never both in one transcript. A line in the other case is
+  content, so in a lower-case transcript capitalized prose such as
+  `Analysis: …` hides nothing, and in a capitalized one a YAML `user:` line
+  in tool output starts no Person turn. When the transcript separates its
+  sections with blank lines, a `user:`, `assistant:`, or `tool:` line that
+  does not follow a blank line is content too. What remains: a column-0
+  line in the transcript's own header case still starts a section in a
+  transcript without blank lines between sections, and after a blank line
+  in any transcript; and a column-0 hidden role in that case (`system:`,
+  `thinking:`, …) always hides what follows, so nothing that might be a
+  hidden section is kept (the `hidden_instruction_omitted` gap counts the
+  sections and lines hidden). A transcript whose first line is not a header
+  in either case (`USER:`, or text before the first header) is refused as
+  a capture gap. Cursor's JSONL transcripts and database chats are not
+  affected.
 
 Redaction is best effort in both directions: a legitimate value that looks like
 a credential is redacted, and a tool argument that happens to contain one of

@@ -62,11 +62,15 @@ version 0.11.0 go with it. Every format changes.
 - **A PEM BEGIN line without an END line** takes only the base64 body that
   follows it (P-26). Filter 10 took everything to the end of the string, so
   source code that named the BEGIN line lost the rest of the file.
-- **Cursor text headers as Cursor writes them** (A-20). A role header is a
-  lower-case role and a colon at column 0; `User:` or `Analysis: …` is
-  content. When the transcript separates sections with blank lines, a
-  visible role line that does not follow one is content, so YAML in tool
-  output cannot start a Person turn. A hidden role line always hides what
+- **Cursor text headers in one case** (A-20). A role header is a role and a
+  colon at column 0, in the case of the transcript's first header: lower
+  case (`user:`) or capitalized (`User:`). A line in the other case is
+  content, so `Analysis: …` in a lower-case transcript hides nothing and a
+  YAML `user:` line in a capitalized one starts no turn. (The real Cursor
+  format is not pinned by a fixture; accepting both cases keeps capture
+  going whichever it is.) When the transcript separates sections with blank
+  lines, a visible role line that does not follow one is content, so YAML
+  in tool output cannot start a Person turn. A hidden role line always hides what
   follows (fail closed), and the gap now counts the hidden sections and
   lines. A header-shaped line inside a retained section is indented by one
   space, so the handoff reads the retained text back exactly as it was
@@ -82,9 +86,9 @@ Known trade-offs, chosen toward the secret:
   substring rule did.
 - A space-separated `-p value` after a program the filter does not know is
   kept, since `-p` is a port or a flag to most programs.
-- Cursor text transcripts whose headers are not lower case are refused as a
-  capture gap rather than guessed at; one without blank lines between
-  sections is read as before.
+- A Cursor text transcript whose first header is neither lower case nor
+  capitalized (`USER:`) is refused as a capture gap rather than guessed at;
+  one without blank lines between sections is read as before.
 - Benign text is pinned by `TestFilterV11LeavesBenignTextUnchanged`: code
   that names a password, prose, hashes, UUIDs, git SHAs, `ssh -p 22`,
   `mkdir -p`, and URLs with an `@` in the path are left alone.

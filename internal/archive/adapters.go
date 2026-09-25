@@ -164,23 +164,46 @@ var (
 	hiddenTextRoles  = map[textRole]bool{textRoleSystem: true, textRoleDeveloper: true, textRoleThinking: true, textRoleAnalysis: true}
 )
 
+// textHeaderCase is how a Cursor text transcript writes its role headers:
+// `user:` or `User:`. The real format is not pinned by a fixture, so both
+// are read, but one transcript uses one: the case of its first header (see
+// textHeaderCaseOf) is the only one that starts a section anywhere in it.
+type textHeaderCase int
+
+const (
+	// textHeaderLower is a lower-case header: `user:`, `assistant:`.
+	textHeaderLower textHeaderCase = iota
+	// textHeaderTitle is a capitalized header: `User:`, `Assistant:`.
+	textHeaderTitle
+)
+
 // textRoleHeader reports whether line has the shape of a role header of a
-// Cursor text transcript, and returns the role and the text after the
-// header. A header is written exactly as Cursor writes one: a lower-case
-// role name and a colon at column 0, then a space or the end of the line.
+// Cursor text transcript written in headerCase, and returns the role and
+// the text after the header. A header is a role name written exactly in
+// that case and a colon at column 0, then a space or the end of the line.
 // An indented "user:" is content (a YAML key in tool output), and so, since
-// filter 11, is a capitalized one: prose such as "Analysis: the bug is …"
-// or "System: linux" at the start of a line no longer hides what follows
-// it. Whether a line with this shape really starts a section also depends
-// on the lines around it; see parseTextSections.
-func textRoleHeader(line string) (role textRole, rest string, ok bool) {
+// filter 11, is a header in the other case: in a lower-case transcript,
+// prose such as "Analysis: the bug is …" or "System: linux" at the start of
+// a line no longer hides what follows it, and in a capitalized one a YAML
+// `user:` line no longer starts a Person turn. Whether a line with this
+// shape really starts a section also depends on the lines around it; see
+// parseTextSections.
+func textRoleHeader(line string, headerCase textHeaderCase) (role textRole, rest string, ok bool) {
 	line = strings.TrimSuffix(line, "\r")
 	colon := strings.IndexByte(line, ':')
 	if colon <= 0 {
 		return "", "", false
 	}
-	role, rest = textRole(line[:colon]), line[colon+1:]
+	name := line[:colon]
+	role, rest = textRole(strings.ToLower(name)), line[colon+1:]
 	if !visibleTextRoles[role] && !hiddenTextRoles[role] {
+		return "", "", false
+	}
+	want := string(role)
+	if headerCase == textHeaderTitle {
+		want = strings.ToUpper(want[:1]) + want[1:]
+	}
+	if name != want {
 		return "", "", false
 	}
 	if rest != "" && rest[0] != ' ' {
@@ -189,18 +212,36 @@ func textRoleHeader(line string) (role textRole, rest string, ok bool) {
 	return role, strings.TrimPrefix(rest, " "), true
 }
 
+// textHeaderCaseOf returns the header case of a Cursor text transcript: the
+// case of its first non-blank line when that is a header in either case. A
+// transcript whose first non-blank line is no header is refused by
+// parseTextSections whatever the case.
+func textHeaderCaseOf(content string) textHeaderCase {
+	for line := range strings.SplitSeq(content, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if _, _, ok := textRoleHeader(line, textHeaderTitle); ok {
+			return textHeaderTitle
+		}
+		break
+	}
+	return textHeaderLower
+}
+
 // indentHeaderShapedLines indents by one space every line of a sanitized
-// section, after its first, that has a role header's shape. Such a line was
-// content in the transcript (parseTextSections decided so), or sanitizing
-// brought it to the start of a line (stripping an injected block can); the
-// handoff reads the retained text back with the same parser, and the
-// indent keeps the line content there too, so a line of a tool's output
-// can never become a Person turn or hide the rest.
-func indentHeaderShapedLines(section string) string {
+// section, after its first, that has a role header's shape in the
+// transcript's header case. Such a line was content in the transcript
+// (parseTextSections decided so), or sanitizing brought it to the start of
+// a line (stripping an injected block can); the handoff reads the retained
+// text back with the same parser, and the indent keeps the line content
+// there too, so a line of a tool's output can never become a Person turn or
+// hide the rest.
+func indentHeaderShapedLines(section string, headerCase textHeaderCase) string {
 	lines := strings.Split(section, "\n")
 	changed := false
 	for i := 1; i < len(lines); i++ {
-		if _, _, header := textRoleHeader(lines[i]); header {
+		if _, _, header := textRoleHeader(lines[i], headerCase); header {
 			lines[i], changed = " "+lines[i], true
 		}
 	}
@@ -210,12 +251,25 @@ func indentHeaderShapedLines(section string) string {
 	return strings.Join(lines, "\n")
 }
 
-// textSection is one role section of a Cursor text transcript: its role and
-// its lines, the header line first. Blank lines inside the section are kept;
-// blank lines after its last line are not.
+// textSection is one role section of a Cursor text transcript: its role,
+// the text after its header, and its lines, the header line first. Blank
+// lines inside the section are kept; blank lines after its last line are
+// not.
 type textSection struct {
-	role  textRole
-	lines []string
+	role   textRole
+	header string
+	lines  []string
+}
+
+// textSections is a Cursor text transcript split into its role sections
+// (see parseTextSections).
+type textSections struct {
+	sections []textSection
+	// blankSeparated reports whether the transcript separates its sections
+	// with a blank line.
+	blankSeparated bool
+	// headerCase is the transcript's header case (textHeaderCaseOf).
+	headerCase textHeaderCase
 }
 
 // parseTextSections splits a Cursor text transcript into its role sections.
@@ -223,8 +277,9 @@ type textSection struct {
 // read back exactly as it was filtered. It returns ok false when non-blank
 // text comes before the first header; that text is in no section.
 //
-// A line with a header's shape (textRoleHeader) at column 0 starts a
-// section, with one refinement. Cursor separates its sections with a blank
+// A line with a header's shape (textRoleHeader) at column 0, in the case of
+// the transcript's first header (textHeaderCaseOf), starts a section, with
+// one refinement. Cursor separates its sections with a blank
 // line; when the transcript does (its second header follows a blank line),
 // a visible header that does not follow a blank line is content, so a
 // `user: …` line in the middle of a tool's output cannot start a Person
@@ -233,11 +288,13 @@ type textSection struct {
 // transcript whose second header does not follow a blank line is read as
 // filter 10 read it, one header per line. blankSeparated reports which
 // reading applied.
-func parseTextSections(content string) (sections []textSection, blankSeparated, ok bool) {
-	decided, previousBlank, leading := false, false, false
+func parseTextSections(content string) (parsed textSections, ok bool) {
+	headerCase := textHeaderCaseOf(content)
+	var sections []textSection
+	decided, blankSeparated, previousBlank, leading := false, false, false, false
 	for line := range strings.SplitSeq(content, "\n") {
 		blank := strings.TrimSpace(line) == ""
-		role, _, header := textRoleHeader(line)
+		role, rest, header := textRoleHeader(line, headerCase)
 		if header && len(sections) > 0 {
 			switch {
 			case !decided:
@@ -249,7 +306,7 @@ func parseTextSections(content string) (sections []textSection, blankSeparated, 
 		previousBlank = blank
 		switch {
 		case header:
-			sections = append(sections, textSection{role: role, lines: []string{line}})
+			sections = append(sections, textSection{role: role, header: rest, lines: []string{line}})
 		case len(sections) > 0:
 			sections[len(sections)-1].lines = append(sections[len(sections)-1].lines, line)
 		case !blank:
@@ -264,7 +321,7 @@ func parseTextSections(content string) (sections []textSection, blankSeparated, 
 		}
 		sections[i].lines = lines
 	}
-	return sections, blankSeparated, !leading
+	return textSections{sections: sections, blankSeparated: blankSeparated, headerCase: headerCase}, !leading
 }
 
 // FilterText retains a hook-provided Cursor text transcript only when the hook
@@ -316,7 +373,7 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	}
 	addGap("text_structure_partial", "Cursor role sections retained without manufactured events")
 
-	parsed, blankSeparated, ok := parseTextSections(string(content))
+	parsed, ok := parseTextSections(string(content))
 	if !ok {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has unrecognized role section"}
 	}
@@ -326,7 +383,7 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	// text is read back with the same rule.
 	var sections [][]string
 	hiddenSections, hiddenLines := 0, 0
-	for _, section := range parsed {
+	for _, section := range parsed.sections {
 		if hiddenTextRoles[section.role] {
 			hiddenSections++
 			for _, line := range section.lines {
@@ -355,13 +412,13 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 		if !ok {
 			return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript is not text"}
 		}
-		retained = append(retained, indentHeaderShapedLines(text))
+		retained = append(retained, indentHeaderShapedLines(text, parsed.headerCase))
 	}
 	if len(retained) == 0 {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable content"}
 	}
 	separator := "\n"
-	if blankSeparated {
+	if parsed.blankSeparated {
 		separator = "\n\n"
 	}
 	text := strings.Join(retained, separator)

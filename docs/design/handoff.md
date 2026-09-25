@@ -339,9 +339,10 @@ every string field by reflection and checks both outputs.
 
 One case remains, inherent to Cursor's plain-text transcripts: in a
 transcript whose sections are not separated by blank lines, a line of tool
-output that starts at column 0 with a lower-case `user:` reads as a role
-header, so it starts a Person turn. When sections are blank-line separated,
-as Cursor writes them, only a `user:` line after a blank line does. The
+output that starts at column 0 with `user:` in the transcript's own header
+case (that of its first header, `user:` or `User:`) reads as a role header,
+so it starts a Person turn. When sections are blank-line separated, only
+such a line after a blank line does. The
 handoff reads the retained text with the same parser the filter used (see
 the privacy doc's known misses).
 

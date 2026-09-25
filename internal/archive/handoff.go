@@ -400,14 +400,13 @@ func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]Han
 		role, body = "", body[:0]
 	}
 	for _, transcript := range texts {
-		sections, _, _ := parseTextSections(transcript.Content)
-		for _, section := range sections {
+		parsed, _ := parseTextSections(transcript.Content)
+		for _, section := range parsed.sections {
 			if !visibleTextRoles[section.role] {
 				continue
 			}
-			_, rest, _ := textRoleHeader(section.lines[0])
 			role = section.role
-			body = append(body, strings.TrimSpace(rest))
+			body = append(body, strings.TrimSpace(section.header))
 			body = append(body, section.lines[1:]...)
 			flushSection()
 		}
