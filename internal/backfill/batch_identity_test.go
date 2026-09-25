@@ -1,11 +1,14 @@
 package backfill
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -126,35 +129,112 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 	}
 }
 
-// Guard (B-23 hardening): every comparison with a registration's import ID
-// in production code goes through InBatch, so no caller can select a
-// hook-captured session, or everything with an empty ID, by comparing the
-// field itself. Comparisons with "" (is there an ID at all) are allowed.
+// Guard (B-23 hardening): every test of a registration's import ID in
+// production code goes through InBatch, so no caller can select a
+// hook-captured session, or everything with an empty ID, by testing the
+// field itself. It parses every non-test Go file in the module and flags
+// the field as an operand of == or != (except against "", which asks
+// whether there is an ID at all), as a switch tag, as a map index, or as
+// an argument to a membership or comparison function. Copying the field
+// (collecting IDs, carrying it to a subagent) is allowed.
 func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
-	compare := regexp.MustCompile(`\.ImportBatch\s*(==|!=)\s*[^"\s]|[^"\s]\s*(==|!=)\s*[A-Za-z_.]*\.ImportBatch\b`)
+	membership := map[string]bool{"Contains": true, "ContainsFunc": true, "Index": true, "IndexFunc": true, "EqualFold": true, "Compare": true, "HasPrefix": true, "HasSuffix": true}
 	var offenders []string
-	for _, dir := range []string{".", filepath.Join("..", "cli"), filepath.Join("..", "collector"), filepath.Join("..", "state")} {
-		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
-		for _, file := range files {
-			if strings.HasSuffix(file, "_test.go") {
+		if d.IsDir() {
+			if name := d.Name(); name == "testdata" || name == "vendor" || strings.HasPrefix(name, ".") && path != root {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		isField := func(e ast.Expr) bool {
+			sel, ok := ast.Unparen(e).(*ast.SelectorExpr)
+			return ok && sel.Sel.Name == "ImportBatch"
+		}
+		isEmpty := func(e ast.Expr) bool {
+			lit, ok := ast.Unparen(e).(*ast.BasicLit)
+			return ok && lit.Kind == token.STRING && (lit.Value == `""` || lit.Value == "``")
+		}
+		flag := func(n ast.Node, how string) {
+			offenders = append(offenders, fset.Position(n.Pos()).String()+": "+how)
+		}
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "InBatch" && fn.Recv == nil && file.Name.Name == "backfill" {
 				continue
 			}
-			data, err := os.ReadFile(file)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for n, line := range strings.Split(string(data), "\n") {
-				if compare.MatchString(line) && !strings.Contains(line, "reg.Imported() && reg.ImportBatch == id") {
-					offenders = append(offenders, file+":"+strconv.Itoa(n+1)+": "+strings.TrimSpace(line))
+			ast.Inspect(decl, func(n ast.Node) bool {
+				switch n := n.(type) {
+				case *ast.BinaryExpr:
+					if n.Op != token.EQL && n.Op != token.NEQ {
+						break
+					}
+					if isField(n.X) && !isEmpty(n.Y) || isField(n.Y) && !isEmpty(n.X) {
+						flag(n, "compared with "+n.Op.String())
+					}
+				case *ast.SwitchStmt:
+					if n.Tag != nil && isField(n.Tag) {
+						flag(n, "switched on")
+					}
+				case *ast.IndexExpr:
+					if isField(n.Index) {
+						flag(n, "used as an index")
+					}
+				case *ast.CallExpr:
+					name := ""
+					switch fun := ast.Unparen(n.Fun).(type) {
+					case *ast.SelectorExpr:
+						name = fun.Sel.Name
+					case *ast.Ident:
+						name = fun.Name
+					}
+					if membership[name] && slices.ContainsFunc(n.Args, isField) {
+						flag(n, "passed to "+name)
+					}
 				}
-			}
+				return true
+			})
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	if len(offenders) > 0 {
-		t.Fatalf("compare import IDs through InBatch:\n%s", strings.Join(offenders, "\n"))
+		t.Fatalf("test import IDs through backfill.InBatch:\n%s", strings.Join(offenders, "\n"))
+	}
+}
+
+// InBatch needs an import registration and a non-empty, equal ID.
+func TestInBatch(t *testing.T) {
+	imported := archive.SessionRegistration{Origin: archive.SessionOriginImport, ImportBatch: "2026-09-23-1"}
+	hook := archive.SessionRegistration{Origin: archive.SessionOriginHook, ImportBatch: "2026-09-23-1"}
+	unbatched := archive.SessionRegistration{Origin: archive.SessionOriginImport}
+	for _, tc := range []struct {
+		reg  archive.SessionRegistration
+		id   string
+		want bool
+	}{
+		{imported, "2026-09-23-1", true},
+		{imported, "2026-09-23-2", false},
+		{imported, "", false},
+		{hook, "2026-09-23-1", false},
+		{unbatched, "", false},
+	} {
+		if got := InBatch(tc.reg, tc.id); got != tc.want {
+			t.Errorf("InBatch(%+v, %q) = %v", tc.reg, tc.id, got)
+		}
 	}
 }
 
