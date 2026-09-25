@@ -20,7 +20,9 @@ type reviewRow struct {
 }
 
 // reviewRows lists what setup will save, in the order the review shows it.
-func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery) []reviewRow {
+// The Sessions row appears only when showSessions is set: it is noise while
+// every new session is saved, the default.
+func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, showSessions bool) []reviewRow {
 	var apps []string
 	for _, app := range cfg.Harnesses {
 		apps = append(apps, appWithVersion(app, discoveries[app]))
@@ -41,16 +43,16 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery) 
 	if len(cfg.DeclinedHarnesses) > 0 {
 		// An app leaves this list only by being included, which changes the
 		// Apps row, so the row need not appear when the list is empty.
-		rows = append(rows, reviewRow{"Skipped", []string{appList(cfg.DeclinedHarnesses) + " (setup will not offer again)"}})
+		rows = append(rows, reviewRow{"Skipped", []string{appList(cfg.DeclinedHarnesses) + " (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)"}})
 	}
 	if len(cfg.ImportedHarnesses) > 0 {
 		rows = append(rows, reviewRow{"Imported", []string{friendlyApps(cfg.ImportedHarnesses) + " (sessions imported by backfill stay published; new sessions are not captured)"}})
 	}
-	rows = append(rows, []reviewRow{
-		{"Projects", projects},
-		{"Sessions", []string{sessions}},
-		{"Keep for", []string{fmt.Sprintf("%d days, then deleted automatically", cfg.RetentionDays)}},
-	}...)
+	rows = append(rows, reviewRow{"Projects", projects})
+	if showSessions {
+		rows = append(rows, reviewRow{"Sessions", []string{sessions}})
+	}
+	rows = append(rows, reviewRow{"Keep for", []string{fmt.Sprintf("%d days, then deleted automatically", cfg.RetentionDays)}})
 	s := cfg.Storage
 	if s.Provider == credentials.ProviderS3 {
 		rows = append(rows, reviewRow{"Storage", []string{"Amazon S3"}}, reviewRow{"Bucket", []string{s.Bucket}}, reviewRow{"AWS", []string{"profile " + s.AWSProfile + " · " + s.Region}})
@@ -103,14 +105,16 @@ func showSetupReview(p *prompter, cfg, existing config.Config, reconfiguring boo
 		title = "Review your changes"
 	}
 	p.step(3, title)
+	// A change back to saving every session still shows, as a change.
+	showSessions := cfg.RequireSkillUse || reconfiguring && existing.RequireSkillUse
 	before := map[string][]string{}
 	if reconfiguring {
-		for _, row := range reviewRows(existing, discoveries) {
+		for _, row := range reviewRows(existing, discoveries, showSessions) {
 			before[row.label] = row.values
 		}
 	}
 	changed := 0
-	for _, row := range reviewRows(cfg, discoveries) {
+	for _, row := range reviewRows(cfg, discoveries, showSessions) {
 		old, had := before[row.label]
 		isChanged := reconfiguring && strings.Join(old, "\n") != strings.Join(row.values, "\n")
 		mark := "  "
@@ -188,21 +192,28 @@ func printReviewNotes(p *prompter, cfg config.Config, discoveries map[string]app
 // prompter's clock, so the review screen agrees with status output.
 func printReviewPrivacy(p *prompter, cfg config.Config) {
 	report := currentBucketPrivacy(cfg, p.clock())
-	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
-	switch report.State {
-	case "verified_private":
+	switch {
+	case report.State == "verified_private":
 		p.item(p.style.green("✓"), "Bucket privacy: native public access blocked at the last check.", nil)
-	case "public_or_risky":
+	case report.State == "public_or_risky":
 		p.item(p.style.red("!"), p.style.red("The bucket looks public ("+privacyReasonText(report.Reason)+")."), []string{"Fix its access before archiving: " + report.GuidanceURL})
+	case report.Reason == r2PrivacyUnreadable:
+		// Every R2 bucket reads this way, and nothing setup can do changes
+		// it, so it is a reminder rather than a warning.
+		p.note("Check that public access is disabled for the bucket in the Cloudflare dashboard.")
 	default:
 		p.warn("Bucket privacy not verified: "+privacyReasonText(report.Reason)+".", "Make sure public access is off: "+report.GuidanceURL)
 	}
 }
 
+// r2PrivacyUnreadable is the privacy reason of every R2 bucket: its object
+// keys cannot read public-access settings (storage.UnknownPrivacy).
+const r2PrivacyUnreadable = "r2_management_credentials_not_configured"
+
 func privacyReasonText(reason string) string {
 	//lint:ignore LV1001 reason codes come from package storage, and unknown ones are shown as words
 	switch reason {
-	case "r2_management_credentials_not_configured":
+	case r2PrivacyUnreadable:
 		return "R2 storage keys cannot read public-access settings"
 	case "inspection_unavailable":
 		return "public-access settings could not be read"

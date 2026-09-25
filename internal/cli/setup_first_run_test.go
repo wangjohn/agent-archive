@@ -134,3 +134,44 @@ func TestSetupNextStepsNameEachApp(t *testing.T) {
 		}
 	}
 }
+
+// R2 object keys can never read public-access settings, so the review
+// reminds rather than warns; status keeps reporting not_verified.
+func TestSetupReviewRemindsR2UsersToCheckPublicAccess(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	output := setupRun(t, env, r2SetupInput(t.TempDir(), "secret-value"), 0)
+	if strings.Contains(output, "Bucket privacy not verified") || !strings.Contains(output, "· Check that public access is disabled for the bucket in the Cloudflare dashboard.") {
+		t.Fatalf("unexpected privacy note:\n%s", output)
+	}
+	cfg, _, _ := config.Load(home)
+	if cfg.BucketPrivacy == nil || cfg.BucketPrivacy.State != "not_verified" || cfg.BucketPrivacy.Reason != r2PrivacyUnreadable {
+		t.Fatalf("privacy evidence %+v", cfg.BucketPrivacy)
+	}
+}
+
+// The Sessions row shows only when it is not the default, or when a
+// reconfiguration changes it back to the default.
+func TestSetupReviewShowsSessionsOnlyWhenNotTheDefault(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{Harnesses: []string{"codex"}, RetentionDays: 90}
+	skills := cfg
+	skills.RequireSkillUse = true
+	for _, tc := range []struct {
+		name          string
+		next, current config.Config
+		reconfiguring bool
+		want          string
+	}{
+		{"default", cfg, config.Config{}, false, ""},
+		{"skills only", skills, config.Config{}, false, "Sessions  Only new sessions that use skills"},
+		{"back to all", cfg, skills, true, "* Sessions  All new sessions, with or without skills"},
+	} {
+		var out strings.Builder
+		showSetupReview(newPrompter(strings.NewReader(""), &out), tc.next, tc.current, tc.reconfiguring, nil)
+		if got := out.String(); tc.want == "" && strings.Contains(got, "Sessions") || tc.want != "" && !strings.Contains(got, tc.want) {
+			t.Errorf("%s: review:\n%s", tc.name, got)
+		}
+	}
+}

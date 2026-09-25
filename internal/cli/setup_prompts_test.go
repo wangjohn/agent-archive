@@ -64,12 +64,13 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
 	input := strings.Join([]string{"y", project, "", "s3", "test-bucket", "profile", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
-	for _, unwanted := range []string{"Detected settings", "capture policy", "Include Cursor?", "Include Codex?"} {
+	// The Sessions row is left out while it shows the default.
+	for _, unwanted := range []string{"Detected settings", "capture policy", "Include Cursor?", "Include Codex?", "All new sessions, with or without skills"} {
 		if strings.Contains(output, unwanted) {
 			t.Fatalf("unexpected %q in %s", unwanted, output)
 		}
 	}
-	for _, want := range []string{"Include Codex and Claude Code?", "All new sessions, with or without skills", "90 days, then deleted automatically", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
+	for _, want := range []string{"Include Codex and Claude Code?", "90 days, then deleted automatically", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q in %s", want, output)
 		}
@@ -280,7 +281,7 @@ func TestSetupReviewShowsDeclinedApps(t *testing.T) {
 	var out bytes.Buffer
 	showSetupReview(newPrompter(strings.NewReader(""), &out), next, old, true, nil)
 	got := out.String()
-	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again)") || strings.Contains(got, "Nothing above differs") {
+	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)") || strings.Contains(got, "Nothing above differs") {
 		t.Fatalf("declining found apps not shown as a change:\n%s", got)
 	}
 }
