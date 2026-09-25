@@ -168,9 +168,22 @@ func TestLargeGrowingSessionPassStaysFast(t *testing.T) {
 }
 
 // variedTranscript is a codex transcript of n assistant messages of about 2
-// KiB each, like largeTranscript, but of varied words, so it compresses about
-// as well as real prose does rather than to almost nothing.
+// KiB each, like largeTranscript, but of words drawn at random from a
+// working session's vocabulary, so it compresses about as well as real
+// prose does rather than to almost nothing.
 func variedTranscript(n int) string {
+	words := strings.Fields(`the a to of and in is it that for on with this be as are was at by
+		from or an not but can will if we you they have has had do does did so all
+		one when which would there their what about out up into than then them
+		these some could other more also only new just like time over after
+		function return error value file test build change code line package
+		import type struct string int bool map slice config path directory run
+		call method field result check update read write open close parse
+		output input request response server client handler context cancel
+		loop index length count buffer bytes format print log debug trace
+		commit branch merge diff review patch release version module go make
+		fix bug issue case default switch range append copy delete sort
+		compare equal hash sum limit size cache store load save state lock`)
 	random := rand.New(rand.NewPCG(1, 2))
 	var b strings.Builder
 	b.WriteString(`{"type":"turn_context","model":"gpt-test"}` + "\n")
@@ -178,9 +191,7 @@ func variedTranscript(n int) string {
 	for i := range n {
 		text.Reset()
 		for text.Len() < 2000 {
-			for range 2 + random.IntN(8) {
-				text.WriteByte(byte('a' + random.IntN(26)))
-			}
+			text.WriteString(words[random.IntN(len(words))])
 			text.WriteByte(' ')
 		}
 		fmt.Fprintf(&b, `{"type":"response_item","id":"m%d","payload":{"type":"message","role":"assistant","content":%q}}`+"\n", i, text.String())
