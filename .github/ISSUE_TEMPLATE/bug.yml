@@ -5,13 +5,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Please don't paste transcript content, bucket names you'd rather keep private, access keys, or anything from your Keychain. For a security problem (for example, a secret that got past redaction), don't open an issue: follow SECURITY.md instead.
+        Thanks for reporting. Please don't paste transcript content, bucket names you'd rather keep private, access keys, or anything from your Keychain. For a security problem (for example, a secret that got past redaction), don't open an issue: follow SECURITY.md, or use the **Security contact request** template if private reporting isn't available.
         If a session wasn't archived or its counts look wrong, use the **Capture gap** template.
   - type: input
     id: version
     attributes:
       label: agent-archive version
-      description: Output of `agent-archive --version`.
+      description: Output of `agent-archive --version`. A source build prints `dev-<commit>`; if yours prints only `dev`, add the commit (`git rev-parse --short HEAD` in your checkout).
     validations:
       required: true
   - type: input

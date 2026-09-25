@@ -13,12 +13,16 @@ link above; it is the one that governs.
 ## Reporting
 
 Report unacceptable behavior to the maintainer,
-[@wangjohn](https://github.com/wangjohn), through a private channel: a
+[@wangjohn](https://github.com/wangjohn), privately, never in a public
+issue: a
 [private security advisory](https://github.com/wangjohn/agent-archive/security/advisories/new)
 works for anything you don't want to raise publicly, whether or not it is
-about security. If that isn't enabled, ask for a private contact the way
-[SECURITY.md](SECURITY.md#reporting-a-vulnerability) describes, without
-details. Reports are handled confidentially.
+about security. If that link says private reporting isn't enabled, open an
+issue with the
+[Security contact request](https://github.com/wangjohn/agent-archive/issues/new?template=security-contact.yml)
+template, which asks for no details; the maintainer will add you to a
+private draft advisory, and you report there. Reports are handled
+confidentially.
 
 The maintainer will review each report and act as the Contributor
 Covenant's enforcement guidelines describe, from a private correction up to
