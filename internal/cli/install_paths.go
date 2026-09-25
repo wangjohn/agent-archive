@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,13 +51,73 @@ func (in installation) isDefault() bool {
 }
 
 // hook is what setup installs into the apps' hook files: a non-default data
-// directory travels in the command.
+// directory travels in the command. It also identifies this installation's
+// handlers among other installations' in the same files (see hooks.Hook).
 func (in installation) hook(executable string) hooks.Hook {
-	dataHome := ""
+	dataHome, defaultHome := "", ""
 	if !in.isDefault() {
 		dataHome = in.home
 	}
-	return hooks.Hook{Executable: executable, DataHome: dataHome}
+	if in.accountHome != "" {
+		defaultHome = in.defaultDataHome()
+	}
+	return hooks.Hook{Executable: executable, DataHome: dataHome, DefaultDataHome: defaultHome}
+}
+
+// owner identifies this installation's hook handlers, for removing them;
+// the executable they run does not matter there.
+func (in installation) owner() hooks.Hook { return in.hook("") }
+
+// otherInstallationProblems describes, one message per file, the hook
+// handlers another installation (another data directory) put in the hook
+// files of apps: setup will not install beside them, and uninstall and
+// status leave them alone. A file that cannot be read is skipped; setup and
+// status report that on their own.
+func (in installation) otherInstallationProblems(files hooks.Files, apps []string) []string {
+	var problems []string
+	for _, app := range apps {
+		others, err := hooks.OtherInstallations(files, in.owner(), app)
+		if err != nil || len(others) == 0 {
+			continue
+		}
+		problems = append(problems, describeOtherInstallations(files[app], app, others))
+	}
+	return problems
+}
+
+// describeOtherInstallations says whose handlers are in path and how to
+// resolve it: every command that finds another installation's hooks
+// describes them this way.
+func describeOtherInstallations(path, app string, others []hooks.OtherInstallation) string {
+	var owners, fixes []string
+	for _, other := range others {
+		switch {
+		case other.Command != "":
+			owners = append(owners, fmt.Sprintf("an edited agent-archive hook whose data directory cannot be read (%s)", other.Command))
+			fixes = append(fixes, "remove that hook from the file by hand")
+		case other.Default:
+			owner := "the default installation"
+			if other.DataHome != "" {
+				owner += " in " + other.DataHome
+			}
+			owners = append(owners, owner)
+			fixes = append(fixes, "run agent-archive uninstall with AGENT_ARCHIVE_HOME unset")
+		default:
+			owners = append(owners, "the installation in "+other.DataHome)
+			fixes = append(fixes, fmt.Sprintf("run AGENT_ARCHIVE_HOME=%s agent-archive uninstall", shellQuote(other.DataHome)))
+		}
+	}
+	return fmt.Sprintf("%s holds %s hooks of another agent-archive installation (%s), which this installation never changes. Setup installs no %s hooks beside them, since two installations would each capture every session. To remove them, %s. To test an installation on its own, give it its own HOME (or CLAUDE_CONFIG_DIR and CODEX_HOME), so the apps' hook files are separate too.",
+		path, appName(app), strings.Join(owners, "; "), appName(app), strings.Join(fixes, "; "))
+}
+
+// shellQuote quotes s for a shell command line the user copies, only when it
+// needs quoting.
+func shellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+~") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // label is the background collector's launchd label (see

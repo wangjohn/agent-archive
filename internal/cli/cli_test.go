@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,28 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storage.NewMemoryStore(), nil
 		},
+		// Everything below would otherwise reach this Mac itself. Reads get
+		// a harmless answer; anything that would change the Mac fails the
+		// test. A test that needs one sets it (setupTestEnv sets them all).
+		JobState: func(string) string { return "missing" },
+		LoadLaunchAgent: func(plist string) error {
+			t.Errorf("unexpected LaunchAgent load of %s: set Env.LoadLaunchAgent", plist)
+			return errors.New("no launchd in this test")
+		},
+		UnloadLaunchAgent: func(plist string) error {
+			t.Errorf("unexpected LaunchAgent unload of %s: set Env.UnloadLaunchAgent", plist)
+			return errors.New("no launchd in this test")
+		},
+		Keychain: func() (credentials.CredentialStore, error) {
+			return nil, errors.New("no Keychain in this test: set Env.Keychain")
+		},
+		Executable: func() (string, error) {
+			return "", errors.New("no executable in this test: set Env.Executable")
+		},
+		WorkingDir:           func() (string, error) { return "", errors.New("no working directory in this test") },
+		AWSProfiles:          func() ([]AWSProfile, error) { return nil, nil },
+		DetectHarnesses:      func(string) []string { return nil },
+		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },
 	}
 }
 

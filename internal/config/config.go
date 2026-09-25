@@ -7,7 +7,9 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -82,17 +84,27 @@ type Config struct {
 func path(home string) string { return filepath.Join(home, "config.json") }
 
 // Load reads this machine's configuration. found is false, with a nil error,
-// when setup has never run.
+// when setup has never run. An error names the file, and for one that no
+// longer decodes, the way out: every command needs it, so nothing else can
+// say which file stopped it.
 func Load(home string) (cfg Config, found bool, err error) {
 	err = local.Read(path(home), &cfg)
 	if errors.Is(err, os.ErrNotExist) {
 		return Config{}, false, nil
 	}
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
+		return Config{}, false, fmt.Errorf("%w: %s (%w). Restore it from a backup, or fix the JSON by hand; moving it aside (keep the copy: it records this Mac's machine ID) and running agent-archive setup configures this Mac again", ErrUnreadable, path(home), err)
+	}
 	if err != nil {
-		return Config{}, false, err
+		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
 	return cfg, true, nil
 }
+
+// ErrUnreadable is a configuration file that exists but does not decode.
+var ErrUnreadable = errors.New("the settings file cannot be read")
 
 // Save durably writes cfg, replacing any prior configuration atomically.
 func Save(home string, cfg Config) error {

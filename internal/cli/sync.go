@@ -30,16 +30,19 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if !newCommandFlags("sync", stderr).parseFlagsOnly(args) {
 		return 2
 	}
+	// Like every command: what was asked for goes to stdout; why it was not
+	// done (or not all of it) goes to stderr, with exit 1.
 	result, err := runOnePass(env, false)
 	if err != nil {
 		switch {
-		case errors.Is(err, errPaused):
-			terminal.Println(stdout, "agent-archive: "+err.Error())
-			return 0
-		case errors.Is(err, errNotSetUp):
-			terminal.Println(stderr, "agent-archive: "+err.Error())
+		case errors.Is(err, errPaused), errors.Is(err, errNotSetUp):
+			terminal.Println(stderr, "agent-archive: sync: "+err.Error())
 		case errors.Is(err, local.ErrBusy):
-			terminal.Println(stderr, "agent-archive: sync: another sync is already running")
+			holder := "another agent-archive command"
+			if home, homeErr := env.readHome(); homeErr == nil {
+				holder = lockHolder(home)
+			}
+			terminal.Printf(stderr, "agent-archive: sync: %s holds the collector lock; retry when it finishes\n", holder)
 		default:
 			terminal.Printf(stderr, "agent-archive: sync: %v\n", err)
 			// A Keychain failure has one specific fix; say which.
@@ -52,7 +55,7 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed.\n",
 		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors))
 	for id, sessionErr := range result.Errors {
-		terminal.Printf(stdout, "  %s: %v\n", id, sessionErr)
+		terminal.Printf(stderr, "agent-archive: sync: %s: %v\n", id, sessionErr)
 	}
 	if len(result.Errors) > 0 {
 		return 1

@@ -56,7 +56,7 @@ flowchart LR
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |
 | `backfill` | Discovery, the import plan, registration, and undo. |
 | `reader` | Listing metadata and loading verified sources, with a disposable metadata cache. |
-| `cli` | Every command and the only package that touches process state (args, stdio, the clock, the home directory, launchctl), all through an injectable `Env`. |
+| `cli` | Every command. Process state (args, stdio, the clock, the home directory, launchctl, the Keychain) reaches commands through an injectable `Env`. A few lower packages still read the process directly: `local` (`AGENT_ARCHIVE_HOME` and `$HOME`), `credentials` (AWS configuration files and the Keychain), and `cursorstore` (the user's temporary directory). |
 | `doclinks` | A test that the documentation's relative links resolve. |
 
 ## Invariants worth knowing before you change anything

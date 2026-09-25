@@ -110,6 +110,30 @@ can list them, inspect them, and hand one to another agent.
 
 ### Changed
 
+- **Each installation owns only its own hooks.** A second or test
+  installation (`AGENT_ARCHIVE_HOME` set, same `HOME`) used to take over your
+  main installation's hooks, so capture silently stopped, and its uninstall
+  removed them all. Hooks now belong to the data directory their command runs
+  with: setup and uninstall touch only their own, setup refuses to install
+  beside another installation's hooks and names it with how to resolve it,
+  and `status` reports them (`other_installations`). Existing installs keep
+  working unchanged. Only the default installation retires the prototype's
+  job and hooks.
+- What a command was asked for goes to stdout, and why it did not do it (or
+  not all of it) to stderr with exit 1. **Behavior change:** a paused `sync`
+  now exits 1 (it exited 0; the background collector is unaffected), and
+  per-session sync failures go to stderr. `sync`, `pause`, `setup`, and
+  `uninstall` name the command holding the collector lock instead of
+  "another sync is already running".
+- Uninstall deletes a hook file that removing its hooks leaves empty
+  (`{}`, or Cursor's `{"version": 1}` alone), as when setup created it,
+  unless it is a symlink. A file that was already `{}` before setup is
+  deleted too; to the apps, an empty file and no file mean the same.
+- Help: `version --help` shows help instead of failing, `handoff --force` and
+  the `show` options have lines of their own, `list --skill-usage` states its
+  default, `list --complete` says it also excludes capture gaps, both
+  `--since` helps say which day they mean (UTC for `list`, local for
+  `backfill`), and the top-level help links the docs.
 - The least-privilege S3 policy works whether S3 answers a read of a
   missing object with 404 or 403: on a 403, agent-archive checks with a
   listing of that one key before treating it as missing, and setup's
@@ -139,6 +163,25 @@ can list them, inspect them, and hand one to another agent.
 
 ### Fixed
 
+- `uninstall --delete-local-data` always warned of 0 pending sessions; it now
+  counts them, and stops if one registers while you confirm.
+- A damaged or newer-version saved setup no longer blocks setup forever:
+  setup names it and offers to move it aside. A damaged recovery record is
+  named, and `setup --abandon-recovery` moves it aside; a launchctl failure
+  during recovery now points to `--abandon-recovery` too.
+- `status` no longer fails on one unreadable advisory file (collector status,
+  storage health, capture diagnostics, a session's records); it reports the
+  rest with a warning naming the file, and a damaged `capture-diagnostics.json`
+  now heals. Every error about a damaged `config.json` names it.
+- `show`, `list`, `feedback`, `pause`, `resume`, and `sync` before setup no
+  longer create the data directory. A Git checkout above the data directory
+  (a dotfiles repository at `~`) is named, with `AGENT_ARCHIVE_HOME` as the
+  way out.
+- Hook files: a key that appears twice inside `hooks` is refused (one copy's
+  handlers used to be dropped), a parse error says where and whether it is a
+  comment, a trailing comma, or a byte-order mark, a file whose first key
+  shares the brace's line gets indented members, and a failed write reports
+  one error, not two.
 - Docs: "What leaves your Mac" now names the user-level skill folders whose
   `SKILL.md` text every captured session uploads; the Cursor 3.21.13
   read-back and the expiry of Cursor chats that never get a transcript are
@@ -166,6 +209,12 @@ can list them, inspect them, and hand one to another agent.
   backfill reads Cursor's database (#42).
 
 ### Internal
+
+- `internal/cli` tests fail closed: `TestMain` gives them a temporary `HOME`
+  and stand-ins for launchctl and the Keychain that stop the test, and
+  `testEnv` fails every side-effecting call a test did not set up. The
+  configured store opens the Keychain through `Env`. Fuzz targets for hook
+  file edits and hook command parsing.
 
 - Lint (golangci-lint), `govulncheck`, Dependabot, SHA-pinned Actions, and
   issue and PR templates (#38).
