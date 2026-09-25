@@ -39,10 +39,10 @@ func asMainBatch(t *testing.T, home string) {
 	if err := json.Unmarshal(raw["filters"], &filters); err != nil {
 		t.Fatal(err)
 	}
+	keepFilters := map[string]bool{"harnesses": true, "project_ids": true, "since": true, "until": true,
+		"include_home": true, "include_temp": true, "include_removed": true}
 	for k := range filters {
-		switch k {
-		case "harnesses", "project_ids", "since", "until", "include_home", "include_temp", "include_removed":
-		default:
+		if !keepFilters[k] {
 			delete(filters, k)
 		}
 	}
@@ -95,14 +95,13 @@ func TestBackfillMainBatchStillContinuesAndUndoes(t *testing.T) {
 	if out, errOut, code = f.command(t, "backfill", "history"); code != 0 || !strings.Contains(out, firstImport) {
 		t.Fatalf("history: %d %s\n%s", code, errOut, out)
 	}
-	regs, subs := importRegistrations(t, f.data, firstImport)
-	if len(regs) == 0 {
+	if regs, _ := importRegistrations(t, f.data, firstImport); len(regs) == 0 {
 		t.Fatal("nothing registered")
 	}
 	if out, errOut, code = f.undoRun(t, nil, false, "--yes"); code != 0 {
 		t.Fatalf("undo: %d %s\n%s", code, errOut, out)
 	}
-	if regs, subs = importRegistrations(t, f.data, firstImport); len(regs)+len(subs) != 0 {
+	if regs, subs := importRegistrations(t, f.data, firstImport); len(regs)+len(subs) != 0 {
 		t.Fatalf("%d still registered", len(regs)+len(subs))
 	}
 	if keys := bucketSnapshot(t, bucket); keys != "" {

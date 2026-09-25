@@ -150,7 +150,7 @@ Import 29 sessions from 6 projects? [y/N/edit]
   retention is still what the import set, showing first how many sessions
   the shorter period then deletes (hook-captured and other imports' too;
   the confirmation question names the count). `undo --yes` leaves retention
-  alone (`UndoPlan.KeepRetention`) unless `--restore-retention` is given,
+  alone (`UndoPlan.WithRetentionKept`) unless `--restore-retention` is given,
   and says how to restore it; the batch is not marked restored, so a later
   `undo ID --restore-retention` still can. A `--project` undo leaves
   retention alone.

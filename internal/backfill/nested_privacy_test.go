@@ -21,8 +21,9 @@ import (
 func TestProtectedOutside(t *testing.T) {
 	protected := privacyProtectedFolders(Environment{Home: "/Users/me", EvalSymlinks: func(p string) (string, error) { return p, nil }})
 	for _, tc := range []struct {
-		path, root string
-		want       bool
+		path string
+		root string
+		want bool
 	}{
 		{"/Users/me/code/x", "/Users/me/code", false},
 		{"/Users/me/Documents/code/x", "/Users/me/Documents/code", false},

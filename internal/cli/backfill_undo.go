@@ -90,7 +90,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return fail("%v", err)
 	}
 	if keepRetention {
-		plan.KeepRetention()
+		plan = plan.WithRetentionKept()
 	}
 	// Nothing to do needs no confirmation, so these come before the
 	// terminal requirement.
@@ -173,7 +173,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return fail("%v", err)
 	}
 	if keepRetention {
-		plan.KeepRetention()
+		plan = plan.WithRetentionKept()
 	}
 	if plan.Grew(confirmed) {
 		return fail("the import changed while this was open; run undo again to review it. Nothing was changed.")

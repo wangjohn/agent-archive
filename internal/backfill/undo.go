@@ -65,7 +65,7 @@ type UndoPlan struct {
 	// RetentionChangedSince is set when the import raised retention and it
 	// was changed again afterwards, so undo leaves it as it is.
 	RetentionChangedSince bool
-	// RetentionKept is set by KeepRetention: retention is still what the
+	// RetentionKept is set by WithRetentionKept: retention is still what the
 	// import set and could go back (RetentionDeletes counts what that would
 	// delete), but this undo leaves it. A later undo of the same import can
 	// still restore it.
@@ -556,16 +556,16 @@ func hasHookEvidence(evidence []archive.SupplementalEvidence) bool {
 	})
 }
 
-// KeepRetention makes the plan leave retention as it is instead of
+// WithRetentionKept returns the plan leaving retention as it is instead of
 // restoring the shorter value from before the import. `backfill undo --yes`
-// does this unless --restore-retention is given: the shorter retention
+// uses it unless --restore-retention is given: the shorter retention
 // deletes sessions that are not from the import (hook-captured ones, other
 // imports'), which an unattended run must not do silently.
-func (p *UndoPlan) KeepRetention() {
-	if p.RestoreRetention == nil {
-		return
+func (p UndoPlan) WithRetentionKept() UndoPlan {
+	if p.RestoreRetention != nil {
+		p.RetentionKept, p.RestoreRetention = p.RestoreRetention, nil
 	}
-	p.RetentionKept, p.RestoreRetention = p.RestoreRetention, nil
+	return p
 }
 
 // Empty reports whether nothing of the import is left to undo.
