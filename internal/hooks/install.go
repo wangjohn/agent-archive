@@ -21,6 +21,31 @@ type Change struct {
 	After   []byte
 	Existed bool
 	Mode    os.FileMode
+	// Delete is a removal that leaves the file with nothing in it (see
+	// Empty): Apply deletes it instead of writing After, so a file setup
+	// created goes away again. Only a regular file is deleted, never a link
+	// a dotfile manager keeps.
+	Delete bool `json:",omitempty"`
+}
+
+// Applied reports whether the file at c.Path is as c leaves it: deleted, or
+// holding After.
+func (c Change) Applied() bool {
+	current, err := os.ReadFile(c.Path)
+	if c.Delete {
+		return os.IsNotExist(err)
+	}
+	return err == nil && string(current) == string(c.After)
+}
+
+// Unapplied reports whether the file at c.Path is as c found it: holding
+// Before, or absent when it did not exist.
+func (c Change) Unapplied() bool {
+	current, err := os.ReadFile(c.Path)
+	if !c.Existed {
+		return os.IsNotExist(err)
+	}
+	return err == nil && string(current) == string(c.Before)
 }
 
 // Files maps each harness to the absolute path of its hook configuration
@@ -86,7 +111,7 @@ func Plan(files Files, hook Hook, harnesses []string) ([]Change, error) {
 			}
 			mode = info.Mode().Perm()
 		}
-		changes = append(changes, Change{path, before, after, exists, mode})
+		changes = append(changes, Change{Path: path, Before: before, After: after, Existed: exists, Mode: mode})
 	}
 	return changes, nil
 }
@@ -109,12 +134,28 @@ func Apply(changes []Change) error {
 		if err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
+		if c.Delete && target != c.Path {
+			// It became a link since it was planned: the file it points to
+			// is kept, emptied, as for any link (see PlanRemovalOf).
+			c.Delete = false
+		}
+		if c.Delete {
+			if err = os.Remove(c.Path); err != nil {
+				return errors.Join(fmt.Errorf("cannot remove %s: %w", c.Path, err), rollback(applied))
+			}
+			applied = append(applied, c)
+			continue
+		}
 		undo, err := snapshot(target)
 		if err != nil {
 			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
 		if err = writeFile(target, c.After, c.Mode); err != nil {
-			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), undo.restore(), rollback(applied))
+			// writeFile replaces the file only by its final rename, so a
+			// failure left the file as it was: only directories it created
+			// are taken back.
+			undo.removeCreatedDirs()
+			return errors.Join(fmt.Errorf("cannot update %s: %w", c.Path, err), rollback(applied))
 		}
 		// What the application will read is the file through c.Path, links
 		// and all; a write that landed anywhere else is not a success, and
@@ -128,15 +169,16 @@ func Apply(changes []Change) error {
 }
 
 // PlanRemoval prepares the inverse of Plan for uninstall: for each harness,
-// a Change whose After is the current file with only our own handlers
-// stripped (see Remove). A harness whose hook file is missing, or whose file
-// never contained our entries, yields no Change at all, so an unrelated
-// configuration is never rewritten or reformatted. Apply the result with
+// a Change whose After is the current file with only hook's installation's
+// handlers (and the prototype's) stripped (see Remove). A harness whose hook
+// file is missing, or whose file never contained those, yields no Change at
+// all, so an unrelated configuration, or one only another installation's
+// hooks are in, is never rewritten or reformatted. Apply the result with
 // Apply, which keeps its refuse-on-concurrent-edit and rollback behavior.
-func PlanRemoval(files Files, harnesses []string) ([]Change, error) {
+func PlanRemoval(files Files, hook Hook, harnesses []string) ([]Change, error) {
 	changes := []Change{}
 	for _, h := range harnesses {
-		c, found, err := PlanRemovalOf(files, h)
+		c, found, err := PlanRemovalOf(files, hook, h)
 		if err != nil {
 			return nil, err
 		}
@@ -148,8 +190,8 @@ func PlanRemoval(files Files, harnesses []string) ([]Change, error) {
 }
 
 // PlanRemovalOf is PlanRemoval for one harness; found is false when its file
-// holds nothing of ours.
-func PlanRemovalOf(files Files, harness string) (change Change, found bool, err error) {
+// holds nothing of hook's installation.
+func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found bool, err error) {
 	path, err := files.path(harness)
 	if err != nil {
 		return Change{}, false, err
@@ -161,7 +203,7 @@ func PlanRemovalOf(files Files, harness string) (change Change, found bool, err 
 	if err != nil {
 		return Change{}, false, fmt.Errorf("cannot read %s", path)
 	}
-	after, removed, err := Remove(before, harness)
+	after, removed, err := Remove(before, harness, hook)
 	if err != nil {
 		return Change{}, false, fmt.Errorf("%s: %w", path, err)
 	}
@@ -172,7 +214,14 @@ func PlanRemovalOf(files Files, harness string) (change Change, found bool, err 
 	if err != nil {
 		return Change{}, false, err
 	}
-	return Change{path, before, after, true, info.Mode().Perm()}, true, nil
+	link, err := os.Lstat(path)
+	if err != nil {
+		return Change{}, false, err
+	}
+	// A file left with nothing in it means what no file means, and is what
+	// setup leaves of one it created, so it is deleted.
+	remove := Empty(after) && link.Mode().IsRegular()
+	return Change{Path: path, Before: before, After: after, Existed: true, Mode: info.Mode().Perm(), Delete: remove}, true, nil
 }
 
 // Rollback undoes applied changes in reverse order: each file is restored to
@@ -186,11 +235,11 @@ func rollback(changes []Change) error {
 	var failures []error
 	for i := len(changes) - 1; i >= 0; i-- {
 		c := changes[i]
-		current, e := os.ReadFile(c.Path)
-		if e != nil || string(current) != string(c.After) {
+		if !c.Applied() {
 			failures = append(failures, fmt.Errorf("%s changed; manual recovery required", c.Path))
 			continue
 		}
+		var e error
 		if c.Existed {
 			e = atomicWrite(c.Path, c.Before, c.Mode)
 		} else {
@@ -303,10 +352,15 @@ func (p priorFile) restore() error {
 	if err := os.Remove(p.path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	p.removeCreatedDirs()
+	return nil
+}
+
+// removeCreatedDirs removes the directories a write created, while empty.
+func (p priorFile) removeCreatedDirs() {
 	for _, dir := range p.created {
 		_ = os.Remove(dir) // fails, and keeps the directory, if it is not empty
 	}
-	return nil
 }
 
 // writeFile atomically replaces the regular file at path (no link
@@ -498,10 +552,11 @@ func LaunchAgentProgram(plist []byte) (string, error) {
 }
 
 // Installed reports whether harness's hook file holds exactly what setup
-// installs: in every lifecycle event, exactly one handler of ours running
-// hook's command, wherever it sits among the user's own handlers, and no
-// handler of ours anywhere else. Formatting, key order, and the user's own
-// handlers do not affect the result.
+// installs: in every lifecycle event, exactly one handler of hook's
+// installation running hook's command, wherever it sits among the user's own
+// handlers, and no handler of that installation (or the prototype) anywhere
+// else. Formatting, key order, the user's own handlers, and another
+// installation's do not affect the result (see OtherInstallations).
 func Installed(files Files, hook Hook, harness string) (bool, error) {
 	path, err := files.path(harness)
 	if err != nil {
@@ -543,34 +598,21 @@ func Installed(files Files, hook Hook, harness string) (bool, error) {
 		if !ok {
 			return false, fmt.Errorf("invalid hook list for %s", m.key)
 		}
+		handlers, err := handlerList(groups, app)
+		if err != nil {
+			return false, err
+		}
 		ours := 0
-		for _, item := range groups {
-			g, ok := item.(*object)
-			if !ok {
-				return false, errors.New("invalid hook entry")
+		for _, handler := range handlers {
+			if kind, _, _ := classify(handler, app, hook); !hook.replaces(kind) {
+				continue
 			}
-			handlers := []any{g}
-			if app != harnessCursor {
-				raw, _ := g.get("hooks")
-				if handlers, ok = raw.([]any); !ok {
-					return false, errors.New("invalid hook handlers")
-				}
+			got, _ := handler.get("command")
+			kind, _ := handler.get("type")
+			if got != command || (app != harnessCursor && kind != "command") {
+				return false, nil
 			}
-			for _, h := range handlers {
-				handler, ok := h.(*object)
-				if !ok {
-					return false, errors.New("invalid hook handler")
-				}
-				if !owned(handler, app) {
-					continue
-				}
-				got, _ := handler.get("command")
-				kind, _ := handler.get("type")
-				if got != command || (app != harnessCursor && kind != "command") {
-					return false, nil
-				}
-				ours++
-			}
+			ours++
 		}
 		want := 0
 		if slices.Contains(names, m.key) {
@@ -581,4 +623,72 @@ func Installed(files Files, hook Hook, harness string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// OtherInstallation is a hook handler another installation of agent-archive
+// (another data directory) installed in a file this one uses.
+type OtherInstallation struct {
+	// DataHome is the data directory the handler runs with: its
+	// AGENT_ARCHIVE_HOME, or the default installation's directory (""
+	// when that is not known).
+	DataHome string
+	// Default is whether it is the account's default installation, whose
+	// handlers set no AGENT_ARCHIVE_HOME.
+	Default bool
+	// Command is the handler's command when no data directory could be read
+	// from it (it was edited by hand); DataHome is then "".
+	Command string
+}
+
+// OtherInstallations lists, once each, the other installations whose
+// handlers are in harness's hook file: handlers that carry agent-archive's
+// marker but run with another data directory than hook's. Setup, uninstall,
+// and Installed leave them alone; setup refuses to install beside them, since
+// every session would then be captured twice. A missing file has none.
+func OtherInstallations(files Files, hook Hook, harness string) ([]OtherInstallation, error) {
+	path, err := files.path(harness)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	doc, err := parseDocument(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	hs, err := hooksObject(doc.root)
+	if err != nil || hs == nil {
+		return nil, err
+	}
+	app := harnessName(harness)
+	var others []OtherInstallation
+	for _, m := range hs.members {
+		groups, ok := m.value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("%s: invalid hook list for %s", path, m.key)
+		}
+		handlers, err := handlerList(groups, app)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		for _, handler := range handlers {
+			kind, dataHome, unreadable := classify(handler, app, hook)
+			if kind != kindOther {
+				continue
+			}
+			other := OtherInstallation{DataHome: dataHome, Command: unreadable}
+			if other.Command == "" && other.DataHome == "" {
+				other.DataHome, other.Default = hook.DefaultDataHome, true
+			}
+			if !slices.Contains(others, other) {
+				others = append(others, other)
+			}
+		}
+	}
+	return others, nil
 }

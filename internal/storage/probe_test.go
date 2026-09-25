@@ -39,7 +39,7 @@ func TestVerifyAccessConfiguredS3Namespace(t *testing.T) {
 			if prefix != "" {
 				expected = strings.TrimSuffix(prefix, "/") + "/" + expected
 			}
-			if len(paths) != 4 {
+			if len(paths) != 5 { // put, get, list, delete, get-after-delete
 				t.Fatalf("requests = %v", paths)
 			}
 			for _, path := range paths {

@@ -1,8 +1,11 @@
 # JSON output
 
-Three commands print JSON for scripts. Each is a stable contract: fields may
-be added, but an existing field keeps its meaning, and an incompatible change
-bumps the document's `schema_version`. None of them ever contains
+Three commands print JSON for scripts. Each document carries a
+`schema_version`. The aim is that fields are only added, an existing field
+keeps its meaning, and an incompatible change bumps `schema_version`; that
+becomes a promise from `v0.1.0`. Until then agent-archive is pre-release
+and any of it may still change, so check `schema_version` and read the
+[changelog](../../CHANGELOG.md) when you upgrade. None of them ever contains
 conversation content, except `show --normalized`, which you ask for
 explicitly.
 
@@ -64,11 +67,11 @@ Treat an absent field and `null` the same way.
 | `background` | The launchd job: `loaded`, `running`, `missing`, `another_installation` (launchd runs this installation's label from a different plist, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
 | `paused` | Whether collection is paused. |
 | `projects` | Included project roots. |
-| `applications[]` | Per app: hook state (`installed`, `missing or incomplete`, `broken`), installed version and its support (`verified_by_capture` once a session from that version was read back, else `unverified`), capture evidence (`configured`, `hook_observed`, `captured_locally`, `published`, `read_back_verified`, with counts), `sessions_with_capture_gaps`, observed app and adapter versions, and per-project breakdowns. |
+| `applications[]` | Per app: hook state (`installed`, `missing or incomplete`, `broken`, or `unknown` when the hook file could not be read or no executable is recorded to check the hooks against; `warnings` then names the file), `other_installations` (the data directories of other agent-archive installations whose hooks are in the same hook file; this installation never changes them, and setup won't install beside them), installed version and its support (`verified_by_capture` once a session from that version was read back, else `unverified`), capture evidence (`configured`, `hook_observed`, `captured_locally`, `published`, `read_back_verified`, with counts), `sessions_with_capture_gaps`, observed app and adapter versions, and per-project breakdowns. |
 | `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_error`, `session_issues` (per session), `quarantined_files` (state files moved aside; see [local state](local-state.md)), and `unrefreshable_summaries` (sessions whose metadata this version can't refresh). |
 | `capture_diagnostics` | Content-free records of sessions a hook declined, for included projects. |
 | `imported_sessions`, `imported_pending`, `imported_with_issues`, `last_import` | Backfill imports. |
-| `warnings` | Local files status couldn't read; everything else is still reported. |
+| `warnings` | Problems status found but reported around: each local file it couldn't read (named, with what to do; everything else is still reported), a hook file it couldn't check, and another installation's hooks in this one's hook files. |
 
 Before setup, `state` says setup is needed, `background` is `missing`, and
 `authentication` is `not_configured`. When a command has held the collector

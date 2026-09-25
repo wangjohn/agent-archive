@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,7 +66,12 @@ type appStatus struct {
 
 	Code  string `json:"code"`
 	Hooks string `json:"hooks"`
-	Name  string `json:"name"`
+	// OtherInstallations lists the data directories of other agent-archive
+	// installations whose hooks are in this app's hook file (or, for one
+	// whose directory cannot be read, its command). This installation never
+	// changes them.
+	OtherInstallations []string `json:"other_installations,omitempty"`
+	Name               string   `json:"name"`
 	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
 	State           string    `json:"state"`
 	Sessions        int       `json:"sessions"`
@@ -350,9 +356,13 @@ func readStatus(env Env) (view statusView, err error) {
 	if err != nil {
 		return view, err
 	}
-	if _, err := os.Stat(filepath.Join(home, "setup-draft.json")); err == nil {
+	if _, err := os.Stat(draftPath(home)); err == nil {
 		view.State = "Setup saved"
 		view.Next = "Run agent-archive setup to continue your saved choices."
+		if _, _, problem, _ := readDraft(home); problem != "" {
+			view.Next = fmt.Sprintf("The saved setup in %s cannot be used (%s). Run agent-archive setup: it offers to move it aside and start again.", draftPath(home), problem)
+			view.Warnings = append(view.Warnings, view.Next)
+		}
 	}
 	if transactionPending(home) {
 		view.State = "Setup needs recovery"
@@ -368,14 +378,18 @@ func readStatus(env Env) (view statusView, err error) {
 	view.PrivacyEvidence = currentBucketPrivacy(cfg, env.now())
 	view.Privacy = view.PrivacyEvidence.State
 	view.ConfigurationID = configurationID(cfg)
+	// Advisory files: one that cannot be read is left out with a warning,
+	// never a reason to report nothing at all.
 	view.CaptureDiagnostics, err = readCaptureDiagnostics(home)
 	if err != nil {
-		return view, err
+		view.Warnings = append(view.Warnings, unreadableWarning(captureDiagnosticsPath(home), err, "The next capture diagnostic replaces it; deleting it loses only past diagnostics."))
+		view.CaptureDiagnostics = nil
 	}
 	view.CaptureDiagnostics = includedCaptureDiagnostics(view.CaptureDiagnostics, cfg.Archive.Projects)
 	view.Authentication.State = "unknown"
 	if err := local.Read(filepath.Join(home, "storage-health.json"), &view.Authentication); err != nil && !os.IsNotExist(err) {
-		return view, err
+		view.Warnings = append(view.Warnings, unreadableWarning(filepath.Join(home, "storage-health.json"), err, "The background collector checks storage again and replaces it within a few minutes."))
+		view.Authentication = storageHealth{State: "unknown"}
 	}
 	if view.Authentication.ConfigurationID != "" && view.Authentication.ConfigurationID != view.ConfigurationID {
 		view.Authentication.State = "stale_configuration"
@@ -406,22 +420,48 @@ func readStatus(env Env) (view statusView, err error) {
 	store := state.OpenReadOnly(home)
 	view.Collector, err = store.LoadStatus()
 	if err != nil {
-		return view, err
+		view.Warnings = append(view.Warnings, unreadableWarning(filepath.Join(home, "status.json"), err, "The collector replaces it on its next pass; agent-archive sync runs one now."))
+		view.Collector = state.Status{}
 	}
-	queued, err := pendingSessions(home, cfg)
-	if err != nil {
-		return view, err
+	regs, reqs, stateWarnings := statusState(home, store)
+	view.Warnings = append(view.Warnings, stateWarnings...)
+	// A session whose own files cannot be read is left out of every count
+	// below, with one warning naming it.
+	skipped := map[string]bool{}
+	skip := func(id string, err error) {
+		if !skipped[id] {
+			skipped[id] = true
+			view.Warnings = append(view.Warnings, fmt.Sprintf("Local state of session %s could not be read (%v); status left that session out.", id, err))
+		}
+	}
+	requested := map[string]bool{}
+	for _, r := range reqs {
+		requested[r.ArchiveSessionID] = true
+	}
+	queued := 0
+	for _, reg := range regs {
+		if !cfg.AcceptSession(reg) {
+			continue
+		}
+		if pending, _, err := sessionPending(store, reg, requested[reg.ArchiveSessionID]); err != nil {
+			skip(reg.ArchiveSessionID, err)
+		} else if pending {
+			queued++
+		}
 	}
 	if queued > view.Collector.PendingCount {
 		view.Collector.PendingCount = queued
 	}
-	regs, err := store.LoadRegistrations()
-	if err != nil {
-		return view, err
+	var readable []archive.SessionRegistration
+	for _, reg := range regs {
+		if !skipped[reg.ArchiveSessionID] {
+			readable = append(readable, reg)
+		}
 	}
+	regs = readable
 	view.ImportedSessions, view.ImportedPending, view.ImportedWithIssues, err = importedSessionCounts(store, cfg, regs, view.Collector.SessionIssues)
 	if err != nil {
-		return view, err
+		view.Warnings = append(view.Warnings, fmt.Sprintf("Imported sessions could not all be counted: %v.", err))
 	}
 	// One unreadable import file must not hide the rest of status.
 	batches, err := backfill.LoadBatches(home)
@@ -483,12 +523,14 @@ func readStatus(env Env) (view statusView, err error) {
 			}
 			bundle, _, cacheStatus, found, err := store.LoadPublished(reg.ArchiveSessionID)
 			if err != nil {
-				return view, err
+				skip(reg.ArchiveSessionID, err)
+				continue
 			}
 			if cacheStatus == state.CacheStatusBlocked {
 				reason, _, e := store.LoadBlocked(reg.ArchiveSessionID)
 				if e != nil {
-					return view, e
+					skip(reg.ArchiveSessionID, e)
+					continue
 				}
 				app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: blockedReasonDetail(reason)})
 			}
@@ -514,7 +556,8 @@ func readStatus(env Env) (view statusView, err error) {
 			}
 			publishedBundle, at, published, e := store.LoadLastPublished(reg.ArchiveSessionID)
 			if e != nil {
-				return view, e
+				skip(reg.ArchiveSessionID, e)
+				continue
 			}
 			if published {
 				app.Published = true
@@ -526,7 +569,8 @@ func readStatus(env Env) (view statusView, err error) {
 				app.State = "published; read-back pending"
 				verification, e := readVerification(home, reg.ArchiveSessionID)
 				if e != nil {
-					return view, e
+					skip(reg.ArchiveSessionID, e)
+					continue
 				}
 				verificationConfigurationID := sessionVerificationConfigurationID(cfg, reg)
 				if verification.ConfigurationID == verificationConfigurationID && verification.PublishedAt.Equal(at) && !verification.VerifiedAt.IsZero() {
@@ -644,11 +688,21 @@ func readStatus(env Env) (view statusView, err error) {
 		view.Apps[i].VersionState = appDiscovery.VersionState
 		view.Apps[i].Capabilities = captureCapabilityProfile(view.Apps[i].Name)
 		view.Apps[i].VersionSupport, view.Apps[i].VersionSupportReason = installedVersionSupportDetail(appDiscovery, view.Apps[i].verifiedHarnessVersions)
-		installed, e := hooks.Installed(hookFiles, env.installation(home, userHome).hook(executable), view.Apps[i].Name)
+		in := env.installation(home, userHome)
+		installed, e := hooks.Installed(hookFiles, in.hook(executable), view.Apps[i].Name)
+		if others, err := hooks.OtherInstallations(hookFiles, in.owner(), view.Apps[i].Name); err == nil && len(others) > 0 {
+			for _, other := range others {
+				view.Apps[i].OtherInstallations = append(view.Apps[i].OtherInstallations, cmp.Or(other.DataHome, other.Command, "default"))
+			}
+			view.Warnings = append(view.Warnings, describeOtherInstallations(hookFiles[view.Apps[i].Name], view.Apps[i].Name, others))
+		}
 		switch {
 		case binaryProblem != "":
 			view.Apps[i].Hooks = hooksBroken
-		case e != nil || executableErr != nil:
+		case e != nil:
+			view.Apps[i].Hooks = "unknown"
+			view.Warnings = append(view.Warnings, fmt.Sprintf("%s hooks could not be checked: %v. Fix or restore %s, then run agent-archive setup.", appName(view.Apps[i].Name), e, hookFiles[view.Apps[i].Name]))
+		case executableErr != nil:
 			view.Apps[i].Hooks = "unknown"
 		case !installed:
 			view.Apps[i].Hooks = "missing or incomplete"
@@ -707,6 +761,10 @@ func readStatus(env Env) (view statusView, err error) {
 		if app.Hooks != "installed" {
 			view.State = "Needs attention"
 			view.Next = "Run agent-archive setup to check the hooks for " + appName(app.Name) + "."
+			if len(app.OtherInstallations) > 0 {
+				// setup refuses to install beside them, so it is not the way out.
+				view.Next = "Another agent-archive installation's hooks are in " + appName(app.Name) + "'s hook file (see the warning above). Remove that installation, or give this one its own HOME, then run agent-archive setup."
+			}
 			break
 		}
 	}

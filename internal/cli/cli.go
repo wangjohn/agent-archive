@@ -2,10 +2,13 @@
 // hidden `_hook` and `_collect` entry points a real installation's hooks
 // and LaunchAgent invoke, and the user-facing
 // setup/status/sync/pause/resume/uninstall, read-only list/show, and
-// handoff commands. It is the only package that touches process-level state
-// (args, stdio, the real clock, the real home directory) directly; every
-// other package in this module stays free of that so it can be tested
-// without a real environment.
+// handoff commands. Process-level state (args, stdio, the clock, the home
+// directory, launchctl, the Keychain) reaches commands through Env, so a test
+// can substitute every piece of it; a nil Env field means the real thing.
+// A few lower packages still read the process directly: local resolves the
+// data directory from AGENT_ARCHIVE_HOME and $HOME, credentials reads the AWS
+// configuration files and the Keychain, and cursorstore asks getconf for the
+// user's temporary directory.
 package cli
 
 import (
@@ -14,6 +17,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -27,10 +31,49 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// Version is the released version string. main overrides it via
-// -ldflags "-X .../cli.Version=..." at build time (see the Distribution PR);
-// it stays "dev" for a local build.
+// Version is the released version string. scripts/build-release.sh sets it
+// with -ldflags "-X .../cli.Version=..."; it stays "dev" for a local build,
+// which --version then reports with its commit (see versionString).
 var Version = "dev"
+
+// versionString is what --version prints: Version, or for a "dev" build the
+// commit it was built from, so a bug report from a source build says which
+// code it ran.
+func versionString() string {
+	info, _ := debug.ReadBuildInfo()
+	return describeVersion(Version, info)
+}
+
+// describeVersion returns version unchanged unless it is "dev" and info
+// records a VCS revision; then it is "dev-<first 12 hex of the commit>", with
+// "-dirty" when the working tree had uncommitted changes.
+func describeVersion(version string, info *debug.BuildInfo) string {
+	if version != "dev" || info == nil {
+		return version
+	}
+	var revision string
+	var modified bool
+	for _, setting := range info.Settings {
+		//lint:ignore LV1001 build setting keys are arbitrary text; only these two matter
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if revision == "" {
+		return version
+	}
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	version += "-" + revision
+	if modified {
+		version += "-dirty"
+	}
+	return version
+}
 
 // Env carries the process-level dependencies a command needs, so tests can
 // substitute a temporary home directory, a fixed clock, and an in-memory
@@ -147,7 +190,7 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
-	return openConfiguredStore(cfg)
+	return openConfiguredStore(cfg, e.keychain)
 }
 
 func (e Env) executable() (string, error) {
@@ -227,7 +270,19 @@ func (e Env) keychain() (credentials.CredentialStore, error) {
 	if e.Keychain != nil {
 		return e.Keychain()
 	}
-	return credentials.NewKeychainStore(credentials.KeychainService)
+	return openKeychain()
+}
+
+// openKeychain opens the login Keychain's agent-archive items: Env.Keychain's
+// default. The package's tests replace it with one that fails the test, so a
+// test that forgets to set Env.Keychain can never reach the real Keychain.
+var openKeychain = func() (credentials.CredentialStore, error) {
+	store, err := credentials.NewKeychainStore(credentials.KeychainService)
+	if err != nil {
+		// Never a non-nil interface holding a nil store.
+		return nil, err
+	}
+	return store, nil
 }
 
 const usage = `Agent Archive — archive coding-agent sessions to your private storage.
@@ -258,6 +313,7 @@ Maintenance
 Run agent-archive COMMAND --help for options and examples.
 Use --version to show the installed version.
 You supply a private Cloudflare R2 or Amazon S3 bucket. No archive account needed.
+Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 `
 
 // Run dispatches one CLI invocation and returns a process exit code. It
@@ -286,7 +342,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		terminal.Print(stdout, usage)
 		return 0
 	case "-v", "--version", "version":
-		terminal.Println(stdout, Version)
+		terminal.Println(stdout, versionString())
 		return 0
 	case "_hook":
 		return runHookCommand(args[1:], stdin, stderr, env)

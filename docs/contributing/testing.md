@@ -3,15 +3,20 @@
 ```sh
 go test -race ./...
 go vet ./...
-golangci-lint run                                        # v2.14.0; what CI blocks on
-golangci-lint run --enable-only=revive --new-from-merge-base=origin/main
+golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
+golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
+python3 scripts/test_release_signing.py
+python3 scripts/test_install.py
+python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
 ```
 
-CI runs these on macOS and Ubuntu with Go 1.27.1 exactly (go.mod's
-`toolchain` line), plus `govulncheck`. The Keychain code needs cgo and
-Xcode's command line tools on macOS; elsewhere a stub is built.
-`go test ./...` also runs `internal/doclinks`, which fails on a broken
-relative link or `#anchor` in any Markdown file.
+CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
+1.27.1 exactly (go.mod's `toolchain` line), and golangci-lint on macOS: the
+first run blocks, and revive's doc-comment rule runs only on code a pull
+request adds or changes. The Keychain code needs cgo and Xcode's command
+line tools on macOS; elsewhere a stub is built. `go test ./...` also runs
+`internal/doclinks`, which fails on a broken relative link or `#anchor` in
+any Markdown file.
 
 Performance tests check what a pass costs on every run (published-state
 decodes and local writes, counted, not timed). Their wall-clock targets run
@@ -20,6 +25,40 @@ only at full size in a plain build, which CI does in a step of its own:
 ```sh
 AGENT_ARCHIVE_PERF=1 go test -count=1 -run 'StayFast|FiveMegabyte' ./internal/collector ./internal/archive
 ```
+
+## Levenshtein checks
+
+The `verify` job (`levenshtein.yml`) runs the shared checks from
+[wangjohn/levenshtein](https://github.com/wangjohn/levenshtein) at the
+commit that workflow pins, in a Linux container: Go lint (staticcheck and
+more) and vet, HTTP and SQL rules, `go.mod` hygiene, `govulncheck`,
+`actionlint`, and `zizmor` for the workflows. `levenshtein.json` picks the
+checks. Run the same thing from a sibling checkout of Levenshtein at the
+pinned commit (it needs Docker):
+
+```sh
+../levenshtein/verify pre-merge --source .
+```
+
+The Go lint is the check most changes trip, and it runs natively in
+seconds. Build its binary once from the pinned commit, then lint as the
+container does, with Linux build tags and the checks list from
+Levenshtein's `runner/toolchain.json`:
+
+```sh
+pin=$(sed -n 's/^ *ref: \([0-9a-f]\{40\}\)$/\1/p' .github/workflows/levenshtein.yml)
+git -C ../levenshtein worktree add /tmp/levenshtein-pin "$pin"
+(cd /tmp/levenshtein-pin/runner/lint && go build -o /tmp/levenshtein-lint ./cmd/levenshtein-lint)
+GOOS=linux CGO_ENABLED=0 /tmp/levenshtein-lint \
+  -checks 'all,-ST1000,-ST1003,-ST1016,-ST1020,-ST1021,-ST1022,-gocognit' ./...
+```
+
+It prints nothing when clean. Because it lints Linux build tags, the
+darwin-only Keychain and launchd files are covered by the macOS
+golangci-lint job instead. Two things it enforces that surprise people:
+a `//lint:ignore nilerr` directive never works (restructure the code
+instead), and terminal output goes through `internal/terminal` rather than
+`_, _ = fmt.Fprintf`.
 
 ## Never test against your real Mac
 
@@ -32,8 +71,16 @@ In Go tests, everything goes through injection:
 
 - `internal/cli` tests build an `Env` (see `testEnv` in `cli_test.go`) with a
   temporary data directory, temporary user and account homes, a fixed clock,
-  no environment variables, and an in-memory bucket. Replace `runLaunchctl`
-  with `stubLaunchctl` for anything that would load or stop a job.
+  no environment variables, and an in-memory bucket. Its launchd, Keychain,
+  and executable fields fail the test unless the test sets them. Replace
+  `runLaunchctl` with `stubLaunchctl` for anything that would load or stop a
+  job.
+- Isolation in `internal/cli` fails closed. Its `TestMain` points `$HOME` at a
+  temporary folder, unsets `AGENT_ARCHIVE_HOME`, `CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME` and the AWS configuration variables, and replaces the real
+  `launchctl` and Keychain with stand-ins that stop the test (see
+  `isolation_test.go`). A test that leaves an `Env` field unset can therefore
+  never reach your real apps, launchd, or Keychain.
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).

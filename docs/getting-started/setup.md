@@ -52,7 +52,10 @@ The summary shows the apps, projects, destination, session scope, and
 automatic deletion period (90 days by default; older sessions are deleted
 from the bucket automatically). At "Start archiving?", enter the number for
 "Edit a setting" to adjust apps, projects, session scope, retention, storage,
-the folder inside the bucket, or the AWS region. Storage changes are checked
+the folder inside the bucket, or the AWS region. The folder inside the
+bucket (the prefix) is `agent-archive/` unless you change it. Retention is
+a whole number of days from 1 to 36,500; there is no "keep forever" (36,500
+days is about a century). Storage changes are checked
 again before starting. If the connection test fails, choose "Edit settings"
 or "Retry" after restoring access.
 
@@ -77,9 +80,13 @@ hooks.
   `uninstall` find them from any shell. Only the `hooks` entry of each file
   is rewritten (and Cursor's `version`, when missing): every other setting
   keeps its exact text, key order, and numbers, and uninstall restores a file
-  setup only added hooks to byte for byte. A file that is a symlink, as
-  dotfile managers such as stow or chezmoi create, is updated at its target
-  and the link is kept.
+  setup only added hooks to byte for byte. A file that removing the hooks
+  leaves empty (`{}`, or Cursor's `version` alone), as when setup created
+  it, is deleted. A file that is a symlink, as dotfile managers such
+  as stow or chezmoi create, is updated at its target and the link is kept.
+  Setup refuses a file it cannot edit safely and says where the problem is:
+  anything that is not plain JSON (a comment, a trailing comma, a byte-order
+  mark), or a key that appears twice inside `hooks`.
 - **A LaunchAgent**, `~/Library/LaunchAgents/com.agent-archive.collector.plist`,
   which runs the collector every 60 seconds.
 - **Local state** in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`;
@@ -92,21 +99,27 @@ label `com.agent-archive.collector`. Any other data directory, whether set
 with `AGENT_ARCHIVE_HOME` or moved by a sandbox that overrides `HOME`, gets a
 label of its own (`com.agent-archive.collector.<hash>`), and its hooks carry
 the directory in their command, since apps run hooks without your shell's
-environment. Before stopping a job, setup and uninstall check that launchd
-loaded it from this installation's own plist; a job loaded from any other
-plist is left running and reported. These keep a second or test installation
-from stopping or replacing the default one. They do not stop it from loading
-its own job into your real launchd: stub `launchctl` in tests (see
+environment. That directory is also how each installation recognizes its own
+hooks: setup replaces and uninstall removes only handlers whose command runs
+with this installation's data directory, and leaves another installation's
+alone. If an app's hook file already holds another installation's hooks,
+setup names that installation and installs nothing beside it (two
+installations would each capture every session), and `status` reports it;
+uninstall that installation first, or give the new one its own `HOME` (or
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME`) so the apps' hook files are separate
+too. Before stopping a job, setup and uninstall check that launchd loaded it
+from this installation's own plist; a job loaded from any other plist is left
+running and reported. These keep a second or test installation from stopping
+or replacing the default one. They do not stop it from loading its own job
+into your real launchd: stub `launchctl` in tests (see
 [testing](../contributing/testing.md)).
-
-Setup retires the old `com.agent-skills.skill-runs-upload` job only when its
-label and command match that prototype, and keeps the prototype's private
-records.
 
 ## After setup
 
-Approve the hooks in each app (Codex CLI: `/hooks`), then start a harmless new
-session in an included project. Setup finishes without waiting for it. Check
+Approve the hooks in each app if it asks (Codex CLI: `/hooks`): an app
+doesn't run hooks it hasn't approved, and this is the most common reason
+nothing is captured. Then start a harmless new session in an included
+project. Setup finishes without waiting for it. Check
 progress with:
 
 ```sh

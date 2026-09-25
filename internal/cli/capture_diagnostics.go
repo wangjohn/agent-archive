@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 // captureDiagnosticCode names the boundary that prevented a capture.
@@ -91,6 +92,11 @@ func recordCaptureDiagnostic(home string, diagnostic captureDiagnostic) error {
 		return nil
 	}
 	diagnostics, err := readCaptureDiagnostics(home)
+	if state.IsUndecodable(err) {
+		// Advisory, and rewritten whole below: a file that no longer decodes
+		// is replaced rather than left to fail every later diagnostic.
+		diagnostics, err = nil, nil
+	}
 	if err != nil {
 		return err
 	}
@@ -140,6 +146,11 @@ func pruneCaptureDiagnostics(home string, projects []archive.ProjectActivation) 
 	}
 	defer unlock()
 	diagnostics, err := readCaptureDiagnostics(home)
+	if state.IsUndecodable(err) {
+		// Replaced by an empty list: nothing in it can be pruned, and it
+		// must not stop setup.
+		return local.Write(captureDiagnosticsPath(home), []captureDiagnostic{})
+	}
 	if err != nil {
 		return err
 	}

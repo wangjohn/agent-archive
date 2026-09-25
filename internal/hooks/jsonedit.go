@@ -199,6 +199,44 @@ type edit struct {
 
 var errInvalidConfiguration = errors.New("invalid existing hook configuration")
 
+// invalid is errInvalidConfiguration for src, saying where and, for the
+// forms people most often put in these files by accident, what: a
+// byte-order mark, a comment (JSONC), or a trailing comma, none of which is
+// JSON. The applications themselves read the files as plain JSON.
+func invalid(src []byte, err error) error {
+	if bytes.HasPrefix(src, []byte("\xef\xbb\xbf")) {
+		return fmt.Errorf("%w: the file starts with a byte-order mark (BOM), which JSON does not allow; save it as UTF-8 without one", errInvalidConfiguration)
+	}
+	var syntaxErr *json.SyntaxError
+	offset := -1
+	switch {
+	case errors.As(err, &syntaxErr):
+		offset = int(syntaxErr.Offset) - 1
+	case errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		offset = len(src)
+	}
+	if offset < 0 || offset > len(src) {
+		return fmt.Errorf("%w: %w", errInvalidConfiguration, err)
+	}
+	// Offset counts the bytes read, which ends just after the one that
+	// failed; step back over whitespace to the character itself.
+	for offset > 0 && offset < len(src) && (src[offset] == ' ' || src[offset] == '\n' || src[offset] == '\r' || src[offset] == '\t') {
+		offset--
+	}
+	line := 1 + bytes.Count(src[:offset], []byte("\n"))
+	column := offset - bytes.LastIndexByte(src[:offset], '\n')
+	hint := ""
+	rest := src[offset:]
+	after := bytes.TrimLeft(bytes.TrimPrefix(rest, []byte(",")), " \t\r\n")
+	switch {
+	case bytes.HasPrefix(rest, []byte("//")) || bytes.HasPrefix(rest, []byte("/*")):
+		hint = "; comments (JSONC) are not JSON, so remove them"
+	case bytes.HasPrefix(rest, []byte(",")) && (bytes.HasPrefix(after, []byte("}")) || bytes.HasPrefix(after, []byte("]"))):
+		hint = "; a comma before a closing brace or bracket (a trailing comma) is not JSON, so remove it"
+	}
+	return fmt.Errorf("%w: line %d, column %d: %w%s", errInvalidConfiguration, line, column, err, hint)
+}
+
 // parseDocument reads src, which must be empty or a single JSON object.
 func parseDocument(src []byte) (*document, error) {
 	newline := "\n"
@@ -219,8 +257,11 @@ func parseDocument(src []byte) (*document, error) {
 	dec := json.NewDecoder(bytes.NewReader(d.src))
 	dec.UseNumber()
 	token, err := dec.Token()
-	if delim, ok := token.(json.Delim); err != nil || !ok || delim != '{' {
-		return nil, errInvalidConfiguration
+	if err != nil {
+		return nil, invalid(d.src, err)
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '{' {
+		return nil, fmt.Errorf("%w: the file must hold one JSON object", errInvalidConfiguration)
 	}
 	d.open = int(dec.InputOffset()) - 1
 	d.root = &object{}
@@ -228,11 +269,11 @@ func parseDocument(src []byte) (*document, error) {
 		before := int(dec.InputOffset())
 		keyToken, err := dec.Token()
 		if err != nil {
-			return nil, errInvalidConfiguration
+			return nil, invalid(d.src, err)
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return nil, errInvalidConfiguration
+			return nil, fmt.Errorf("%w: an object key is not a string", errInvalidConfiguration)
 		}
 		// Setup would edit one of two members that tools resolve
 		// differently (the last wins in Go and JavaScript, not everywhere),
@@ -245,30 +286,46 @@ func parseDocument(src []byte) (*document, error) {
 		valStart := skipSpace(d.src, skipSpace(d.src, int(dec.InputOffset()))+1)
 		value, err := decodeValue(dec)
 		if err != nil {
-			return nil, errInvalidConfiguration
+			return nil, invalid(d.src, err)
 		}
 		d.root.members = append(d.root.members, member{key, value})
 		d.spans = append(d.spans, memberSpan{key, keyStart, valStart, int(dec.InputOffset())})
 	}
-	if token, err = dec.Token(); err != nil || token != json.Delim('}') {
-		return nil, errInvalidConfiguration
+	if token, err = dec.Token(); err != nil {
+		return nil, invalid(d.src, err)
+	} else if token != json.Delim('}') {
+		return nil, fmt.Errorf("%w: the file must hold one JSON object", errInvalidConfiguration)
 	}
 	d.close = int(dec.InputOffset()) - 1
 	if _, err = dec.Token(); !errors.Is(err, io.EOF) {
-		return nil, errInvalidConfiguration
+		return nil, fmt.Errorf("%w: more than one JSON value in the file", errInvalidConfiguration)
 	}
 	if !d.created {
-		d.indent = "  "
-		if len(d.spans) > 0 {
-			lead := string(d.src[d.open+1 : d.spans[0].keyStart])
-			if i := strings.LastIndexByte(lead, '\n'); i >= 0 {
-				d.indent = lead[i+1:]
-			} else {
-				d.indent = ""
-			}
-		}
+		d.indent = d.memberIndent()
 	}
 	return d, nil
+}
+
+// memberIndent is the whitespace a top-level key is indented with: that of
+// the first member that starts a line of its own, so a file whose first key
+// shares the opening brace's line ({"a": 1,\n  "b": 2}) still gets its
+// new members on lines of their own. It is "" for a compact file (no member
+// starts a line), and two spaces for an empty object.
+func (d *document) memberIndent() string {
+	if len(d.spans) == 0 {
+		return "  "
+	}
+	start := d.open + 1
+	for _, s := range d.spans {
+		lead := string(d.src[start:s.keyStart])
+		// Only a key that starts its line counts: "\n  ," puts the
+		// separator there, which is no indentation.
+		if i := strings.LastIndexByte(lead, '\n'); i >= 0 && strings.Trim(lead[i+1:], " \t") == "" {
+			return lead[i+1:]
+		}
+		start = s.valEnd
+	}
+	return ""
 }
 
 func skipSpace(src []byte, i int) int {
@@ -399,6 +456,12 @@ func (d *document) remove(key string) {
 	default:
 		d.edits = append(d.edits, edit{d.open + 1, d.close, ""})
 	}
+}
+
+// clear empties the root object, replacing every edit made so far.
+func (d *document) clear() {
+	d.root.members = nil
+	d.edits = []edit{{d.open + 1, d.close, ""}}
 }
 
 // bytes applies the edits. Edits never overlap: each touches one member.

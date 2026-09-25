@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -87,7 +88,6 @@ func pendingSessions(home string, cfg config.Config) (int, error) {
 // a sync could finish. blocking counts everything else.
 func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int, err error) {
 	store := state.OpenReadOnly(home)
-
 	regs, err := store.LoadRegistrations()
 	if err != nil {
 		return 0, 0, err
@@ -96,36 +96,53 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 	if err != nil {
 		return 0, 0, err
 	}
+	return countPending(store, regs, reqs, cfg.AcceptSession)
+}
+
+// countPending is pendingSessionCounts over registrations and requests
+// already loaded, counting the registrations accept admits.
+func countPending(store *state.Store, regs []archive.SessionRegistration, reqs []state.Request, accept func(archive.SessionRegistration) bool) (blocking, waiting int, err error) {
 	requested := map[string]bool{}
 	for _, r := range reqs {
 		requested[r.ArchiveSessionID] = true
 	}
 	for _, r := range regs {
-		if !cfg.AcceptSession(r) {
+		if !accept(r) {
 			continue
 		}
-		_, _, cacheStatus, found, err := store.LoadPublished(r.ArchiveSessionID)
+		pending, idle, err := sessionPending(store, r, requested[r.ArchiveSessionID])
 		if err != nil {
 			return 0, 0, err
 		}
-		scanPending, err := store.ScanPending(r.ArchiveSessionID)
-		if err != nil {
-			return 0, 0, err
-		}
-		if !scanPending && !requested[r.ArchiveSessionID] && found && cacheStatus != state.CacheStatusRateLimited {
-			continue
-		}
-		idle, err := waitingForTranscript(store, r)
-		if err != nil {
-			return 0, 0, err
-		}
-		if idle {
+		switch {
+		case !pending:
+		case idle:
 			waiting++
-		} else {
+		default:
 			blocking++
 		}
 	}
 	return blocking, waiting, nil
+}
+
+// sessionPending reports whether one session has work outstanding, and if
+// so whether it is only waiting for its transcript (see
+// pendingSessionCounts). requested is whether a hook request for it is
+// queued.
+func sessionPending(store *state.Store, r archive.SessionRegistration, requested bool) (pending, idle bool, err error) {
+	_, _, cacheStatus, found, err := store.LoadPublished(r.ArchiveSessionID)
+	if err != nil {
+		return false, false, err
+	}
+	scanPending, err := store.ScanPending(r.ArchiveSessionID)
+	if err != nil {
+		return false, false, err
+	}
+	if !scanPending && !requested && found && cacheStatus != state.CacheStatusRateLimited {
+		return false, false, nil
+	}
+	idle, err = waitingForTranscript(store, r)
+	return err == nil, idle, err
 }
 
 // sessionsAdmittedInto counts the registrations that record cfg's
@@ -245,7 +262,7 @@ func carriedImportedHarnesses(committed, harnesses, stopImported []string) []str
 func applySetup(home, userHome, executable string, old config.Config, next *config.Config, stopImported []string, env Env) error {
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
-		return fmt.Errorf("another operation is running; retry setup when it finishes: %w", err)
+		return fmt.Errorf("%s holds the collector lock; retry setup when it finishes: %w", lockHolder(home), err)
 	}
 	defer unlock()
 	releaseHooks, err := local.NamedLock(home, "hooks.lock")
@@ -345,6 +362,11 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	for _, app := range next.Harnesses {
 		next.HookFiles[app] = files[app]
 	}
+	// Another installation's hooks in a file this one would install into
+	// mean every session would be captured twice; they are its to remove.
+	if problems := env.installation(home, userHome).otherInstallationProblems(files, next.Harnesses); len(problems) > 0 {
+		return &otherInstallationError{problems: problems}
+	}
 	changes, err := hooks.Plan(files, env.installation(home, userHome).hook(executable), next.Harnesses)
 	if err != nil {
 		return err
@@ -355,7 +377,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		if containsString(next.Harnesses, app) && previousFiles[app] == files[app] {
 			continue
 		}
-		removal, found, err := hooks.PlanRemovalOf(previousFiles, app)
+		removal, found, err := hooks.PlanRemovalOf(previousFiles, env.installation(home, userHome).owner(), app)
 		if err != nil {
 			return err
 		}
@@ -391,9 +413,13 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if job == jobAnotherInstallation {
 		return fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)
 	}
-	legacy, err := planLegacyMigration(userHome, env)
-	if err != nil {
-		return err
+	// The prototype's job is the account's, retired only by the account's
+	// default installation: a test installation must not change it.
+	var legacy *legacyJob
+	if env.installation(home, userHome).isDefault() {
+		if legacy, err = planLegacyMigration(userHome, env); err != nil {
+			return err
+		}
 	}
 	relabeled, err := planRelabel(home, userHome, env)
 	if err != nil {
@@ -446,11 +472,10 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 	// touched: a recovery that stops halfway would leave less to go on.
 	var changed []hooks.Change
 	for _, c := range journal.Changes {
-		b, err := os.ReadFile(c.Path)
-		if (os.IsNotExist(err) && !c.Existed) || (err == nil && string(b) == string(c.Before) && c.Existed) {
+		if c.Unapplied() {
 			continue
 		}
-		if err != nil || string(b) != string(c.After) {
+		if !c.Applied() {
 			return &recoveryBlockedError{home: home, cause: c.Path + " changed outside setup, and recovery never overwrites your edits"}
 		}
 		changed = append(changed, c)
@@ -464,17 +489,17 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 	state := env.jobState(journal.Plist)
 	if launchJobActive(state) {
 		if err := env.unloadLaunchAgent(journal.Plist); err != nil {
-			return err
+			return launchctlBlocked(home, "stop the background collector", err)
 		}
 	} else if state == "unknown" {
 		return &recoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to launchctl and rerun setup"}
 	}
 	if err := hooks.Rollback(changed); err != nil {
-		return err
+		return &recoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 	}
 	if journal.WasLoaded {
 		if err := env.loadLaunchAgent(journal.Plist); err != nil {
-			return err
+			return launchctlBlocked(home, "restart the background collector", err)
 		}
 	}
 	if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, env); err != nil {
@@ -492,6 +517,18 @@ const (
 	relabeledJobName = "background collector installed under the default label"
 )
 
+// otherInstallationError is a setup refused because another installation's
+// hooks are in a hook file it would install into (see
+// describeOtherInstallations). Rerunning setup stops there again until they
+// are gone, which only the user can decide.
+type otherInstallationError struct{ problems []string }
+
+func (e *otherInstallationError) Error() string { return strings.Join(e.problems, "\n") }
+
+func (e *otherInstallationError) guidance() string {
+	return "Nothing was installed; your answers are saved. Once the other installation's hooks are gone (or this installation has its own HOME), run agent-archive setup to continue."
+}
+
 // recoveryBlockedError is a recovery that cannot proceed without the user:
 // a file changed outside setup, or launchd cannot be asked. Rerunning setup
 // alone would stop at the same place, so it carries the way out.
@@ -502,6 +539,12 @@ type recoveryBlockedError struct {
 
 func (e *recoveryBlockedError) Error() string {
 	return "cannot recover the interrupted setup: " + e.cause
+}
+
+// launchctlBlocked is a recovery stopped because launchctl failed to do what
+// it was asked, which rerunning setup alone may not change either.
+func launchctlBlocked(home, action string, err error) error {
+	return &recoveryBlockedError{home: home, cause: fmt.Sprintf("launchctl could not %s (%v); once launchctl works again, rerun setup", action, err)}
 }
 
 func (e *recoveryBlockedError) guidance() string {
@@ -532,7 +575,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 	defer release()
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
-		return fmt.Errorf("another operation is running; retry when it finishes: %w", err)
+		return fmt.Errorf("%s holds the collector lock; retry when it finishes: %w", lockHolder(home), err)
 	}
 	defer unlock()
 	releaseHooks, err := local.NamedLock(home, "hooks.lock")
@@ -544,6 +587,17 @@ func abandonRecovery(out io.Writer, env Env) error {
 	err = local.Read(journalPath(home), &journal)
 	if os.IsNotExist(err) {
 		terminal.Println(out, "No interrupted setup to discard. Nothing was changed.")
+		return nil
+	}
+	if state.IsUndecodable(err) {
+		// Nothing in it can be trusted, so nothing in it is acted on; it is
+		// kept for anyone who wants to see what setup was doing.
+		aside, moveErr := moveAside(journalPath(home))
+		if moveErr != nil {
+			return moveErr
+		}
+		terminal.Printf(out, "The interrupted setup's record %s could not be read (%v). It was moved to %s, and every file was kept as it is now.\n", journalPath(home), err, aside)
+		terminal.Println(out, "Next: run agent-archive setup to review your settings; it reinstalls the hooks and starts the background collector again.")
 		return nil
 	}
 	if err != nil {
@@ -567,8 +621,11 @@ func recoverSetup(home string, env Env) error {
 	if os.IsNotExist(err) {
 		return nil
 	}
+	if state.IsUndecodable(err) {
+		return &recoveryBlockedError{home: home, cause: fmt.Sprintf("its record %s could not be read (%v), so nothing in it can be put back", journalPath(home), err)}
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("read %s: %w", journalPath(home), err)
 	}
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
