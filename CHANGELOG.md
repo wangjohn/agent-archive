@@ -62,6 +62,27 @@ is no tagged release yet: build from source (see the
 
 ### Changed
 
+- **Each installation owns only its own hooks.** A second or test
+  installation (`AGENT_ARCHIVE_HOME` set, same `HOME`) used to take over your
+  main installation's hooks, so capture silently stopped, and its uninstall
+  removed them all. Hooks now belong to the data directory their command runs
+  with: setup and uninstall touch only their own, setup refuses to install
+  beside another installation's hooks and names it with how to resolve it,
+  and `status` reports them (`other_installations`). Existing installs keep
+  working unchanged. Only the default installation retires the prototype's
+  job and hooks.
+- What a command was asked for goes to stdout, and why it did not do it (or
+  not all of it) to stderr with exit 1: a paused `sync` now exits 1, and
+  per-session sync failures go to stderr. `sync`, `pause`, `setup`, and
+  `uninstall` name the command holding the collector lock instead of
+  "another sync is already running".
+- Uninstall deletes a hook file setup created once nothing is left in it
+  (Cursor's `{"version": 1}` included), unless it is a symlink.
+- Help: `version --help` shows help instead of failing, `handoff --force` and
+  the `show` options have lines of their own, `list --skill-usage` states its
+  default, `list --complete` says it also excludes capture gaps, both
+  `--since` helps say which day they mean (UTC for `list`, local for
+  `backfill`), and the top-level help links the docs.
 - A second installation (a different `AGENT_ARCHIVE_HOME`) gets its own
   launchd label and carries its data directory in its hook commands, so it
   can never stop or replace your main installation's collector. Hooks follow
@@ -83,6 +104,26 @@ is no tagged release yet: build from source (see the
   Ctrl-C while the plan is being made stops cleanly (#42).
 
 ### Fixed
+
+- `uninstall --delete-local-data` always warned of 0 pending sessions; it now
+  counts them, and stops if one registers while you confirm.
+- A damaged or newer-version saved setup no longer blocks setup forever:
+  setup names it and offers to move it aside. A damaged recovery record is
+  named, and `setup --abandon-recovery` moves it aside; a launchctl failure
+  during recovery now points to `--abandon-recovery` too.
+- `status` no longer fails on one unreadable advisory file (collector status,
+  storage health, capture diagnostics, a session's records); it reports the
+  rest with a warning naming the file, and a damaged `capture-diagnostics.json`
+  now heals. Every error about a damaged `config.json` names it.
+- `show`, `list`, `feedback`, `pause`, `resume`, and `sync` before setup no
+  longer create the data directory. A Git checkout above the data directory
+  (a dotfiles repository at `~`) is named, with `AGENT_ARCHIVE_HOME` as the
+  way out.
+- Hook files: a key that appears twice inside `hooks` is refused (one copy's
+  handlers used to be dropped), a parse error says where and whether it is a
+  comment, a trailing comma, or a byte-order mark, a file whose first key
+  shares the brace's line gets indented members, and a failed write reports
+  one error, not two.
 
 - Metadata counts (parser 0.10.0, #44): a tool call's arguments no longer
   count as more tool calls, calls come out in a stable order,
@@ -107,6 +148,12 @@ is no tagged release yet: build from source (see the
   backfill reads Cursor's database (#42).
 
 ### Internal
+
+- `internal/cli` tests fail closed: `TestMain` gives them a temporary `HOME`
+  and stand-ins for launchctl and the Keychain that stop the test, and
+  `testEnv` fails every side-effecting call a test did not set up. The
+  configured store opens the Keychain through `Env`. Fuzz targets for hook
+  file edits and hook command parsing.
 
 - Lint (golangci-lint), `govulncheck`, Dependabot, SHA-pinned Actions, and
   issue and PR templates (#38).

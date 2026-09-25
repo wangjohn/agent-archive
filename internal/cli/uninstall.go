@@ -96,10 +96,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	previewPending := 0
 	if purge {
-		pending, unreadable, e := unpublishedSessions(home, previewCfg, previewFound)
-		if e != nil {
-			return e
-		}
+		pending, unreadable := unpublishedSessions(home, previewCfg, previewFound)
 		for _, problem := range unreadable {
 			terminal.Println(out, strings.Replace(problem, "status left it out", "it is deleted with the rest", 1))
 		}
@@ -127,10 +124,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		return err
 	}
 	if purge {
-		pending, _, e := unpublishedSessions(home, cfg, found)
-		if e != nil {
-			return e
-		}
+		pending, _ := unpublishedSessions(home, cfg, found)
 		if pending > previewPending {
 			return fmt.Errorf("new pending evidence appeared while confirming; rerun uninstall to review it")
 		}
@@ -284,7 +278,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 // A registration or request that cannot be read does not stop the purge,
 // which deletes it anyway: it is named in unreadable, and its session is not
 // counted.
-func unpublishedSessions(home string, cfg config.Config, found bool) (count int, unreadable []string, err error) {
+func unpublishedSessions(home string, cfg config.Config, found bool) (count int, unreadable []string) {
 	accept := cfg.AcceptSession
 	if !found {
 		accept = func(archive.SessionRegistration) bool { return true }
@@ -308,7 +302,7 @@ func unpublishedSessions(home string, cfg config.Config, found bool) (count int,
 			count++
 		}
 	}
-	return count, unreadable, nil
+	return count, unreadable
 }
 
 // installedApps is the apps whose hooks setup installed, per the committed

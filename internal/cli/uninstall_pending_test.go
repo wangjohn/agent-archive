@@ -75,8 +75,7 @@ func TestUninstallPurgeCountsPendingSessions(t *testing.T) {
 	}
 
 	// A second session arrives between the preview and the purge.
-	stdin := &onRead{r: strings.NewReader("y\ny\n")}
-	stdin.hook = func() { startSession(t, env, project, "sess-2") }
+	stdin := &onRead{r: strings.NewReader("y\ny\n"), hook: func() { startSession(t, env, project, "sess-2") }}
 	out.Reset()
 	errOut.Reset()
 	env.IsTerminal = func(any) bool { return true }
@@ -98,7 +97,7 @@ func TestUnpublishedSessionsWithoutConfigurationCountsAll(t *testing.T) {
 	startSession(t, env, project, "sess-1")
 	cfg := mustConfig(t, home)
 	must(t, os.Remove(filepath.Join(home, "config.json")))
-	if n, _, err := unpublishedSessions(home, cfg, false); err != nil || n != 1 {
-		t.Fatalf("unpublished = %d, %v", n, err)
+	if n, unreadable := unpublishedSessions(home, cfg, false); n != 1 || len(unreadable) != 0 {
+		t.Fatalf("unpublished = %d, %v", n, unreadable)
 	}
 }

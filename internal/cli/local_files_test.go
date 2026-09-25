@@ -51,7 +51,11 @@ var damagedFileCommands = []struct {
 // damage is the two shapes a file takes: bytes that are not JSON (a
 // truncated write), and JSON of another shape (a newer version's file).
 func TestDamagedLocalFilesAreNamedOrReadAround(t *testing.T) {
-	for _, damage := range []struct{ name, content string }{{"truncated", `{"version":1,"step":`}, {"other shape", `[1,2,3]`}} {
+	type damageKind struct {
+		name    string
+		content string
+	}
+	for _, damage := range []damageKind{{"truncated", `{"version":1,"step":`}, {"other shape", `[1,2,3]`}} {
 		for _, file := range damagedLocalFiles {
 			for _, command := range damagedFileCommands {
 				name := damage.name + "/" + file.name + "/" + strings.Join(command.args, " ")
