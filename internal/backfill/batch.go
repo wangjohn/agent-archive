@@ -97,7 +97,7 @@ func (p Plan) BatchFilters() BatchFilters {
 		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
 	}
 	for _, h := range f.Harnesses {
-		out.Harnesses = addUnique(out.Harnesses, canonicalHarness(h))
+		out.Harnesses = addUnique(out.Harnesses, archive.CanonicalHarness(h))
 	}
 	sort.Strings(out.Harnesses)
 	for _, dir := range p.projectFilter {

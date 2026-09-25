@@ -258,7 +258,7 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 			continue
 		}
 		needed := slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
-			return reg.Imported() && !undone[reg.ArchiveSessionID] && canonicalHarness(reg.Harness.Name) == app
+			return reg.Imported() && !undone[reg.ArchiveSessionID] && archive.CanonicalHarness(reg.Harness.Name) == app
 		})
 		if !needed {
 			p.RemoveApps = append(p.RemoveApps, app)
@@ -733,10 +733,7 @@ func (p UndoPlan) Remove(ctx context.Context, store *state.Store, bucket storage
 				continue
 			}
 		}
-		app := canonicalHarness(reg.Harness.Name)
-		if app == "" {
-			app = reg.Harness.Name
-		}
+		app := archive.CanonicalHarness(reg.Harness.Name)
 		// deferForWork is off: undo removes the session whatever a hook
 		// queued for it meanwhile. ForgetSession also drops the parent's
 		// subagent candidates that were never registered.

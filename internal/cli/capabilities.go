@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -107,7 +108,7 @@ func captureCapabilityProfile(name string) captureCapabilities {
 		SubagentLinkage: unavailable("A lifecycle event alone does not provide a verified child transcript and parent link.", "Validate child identity, parent identity, and transcript path for the installed version."),
 		AdapterFixtures: documented("Synthetic fixtures exercise the bounded adapter; they do not prove an installed version."),
 	}
-	switch canonicalHarness(name) {
+	switch archive.CanonicalHarness(name) {
 	case "codex":
 		profile.FreshStart = documented("SessionStart.source distinguishes startup/clear from resume/compact.")
 		profile.Transcript = documented("Hooks provide transcript_path; official documentation says its format is not stable.")

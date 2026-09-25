@@ -108,12 +108,12 @@ func skillRoots(options SkillOptions) []skillRoot {
 		}
 		roots = append(roots, skillRoot{path: path, scope: scope, project: project})
 	}
-	switch strings.ToLower(strings.TrimSpace(options.Harness)) {
+	switch archive.CanonicalHarness(options.Harness) {
 	case "codex":
 		addUser(".agents/skills", "user_agents")
 		addUser(".codex/skills", "user_codex_legacy")
 		addProject(".agents/skills", "project_agents")
-	case "claude", "claude-code":
+	case archive.HarnessClaude:
 		addUser(".claude/skills", "user_claude")
 		addProject(".claude/skills", "project_claude")
 	case "cursor":

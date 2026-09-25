@@ -81,7 +81,7 @@ func recordHookFailure(home, harness string, payload map[string]any) {
 	}
 	// The real clock: the injected one may be what failed.
 	_ = recordCaptureDiagnostic(home, captureDiagnostic{
-		Code: diagnosticHookFailed, Harness: canonicalHarness(harness),
+		Code: diagnosticHookFailed, Harness: archive.CanonicalHarness(harness),
 		ProjectRoot: project.Root, ObservedAt: time.Now(),
 	})
 }
@@ -103,7 +103,7 @@ const (
 // these (PreToolUse, PostToolUse, ...) is not an
 // archive-relevant event and is ignored here.
 func classifyHookEvent(harness, eventName string) hookEventKind {
-	switch strings.ToLower(strings.TrimSpace(harness)) {
+	switch archive.CanonicalHarness(harness) {
 	case "codex":
 		//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
 		switch eventName {
@@ -116,7 +116,7 @@ func classifyHookEvent(harness, eventName string) hookEventKind {
 		case "SubagentStop":
 			return hookEventSubagentStop
 		}
-	case "claude", "claude-code":
+	case "claude":
 		//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored
 		switch eventName {
 		case "SessionStart":
@@ -188,7 +188,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
 	case hookEventTurnStart:
 		registered := true
-		if canonicalHarness(harness) == "cursor" {
+		if archive.CanonicalHarness(harness) == "cursor" {
 			registered, err = hasRegistration(store, nativeSessionID)
 			if err != nil {
 				return err
@@ -223,7 +223,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 // startsCapture reports whether an event is one that can register a new
 // session: a start, or a Cursor first prompt (Cursor's app fires no start).
 func startsCapture(kind hookEventKind, harness string) bool {
-	return kind == hookEventStart || (kind == hookEventTurnStart && canonicalHarness(harness) == "cursor")
+	return kind == hookEventStart || (kind == hookEventTurnStart && archive.CanonicalHarness(harness) == "cursor")
 }
 
 // recordSetupInProgress explains a session start that setup's own transaction
@@ -266,7 +266,7 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 		return nil
 	}
 	return recordCaptureDiagnostic(home, captureDiagnostic{
-		Code: diagnosticSetupInProgress, Harness: canonicalHarness(harness),
+		Code: diagnosticSetupInProgress, Harness: archive.CanonicalHarness(harness),
 		ProjectRoot: project.Root, ObservedAt: now,
 	})
 }
@@ -283,7 +283,7 @@ func handleSessionActivity(store *state.Store, harness, nativeSessionID, eventNa
 	if err != nil {
 		return err
 	}
-	if !found || canonicalHarness(reg.Harness.Name) != canonicalHarness(harness) {
+	if !found || archive.CanonicalHarness(reg.Harness.Name) != archive.CanonicalHarness(harness) {
 		return nil
 	}
 	if eventName == "beforeSubmitPrompt" {
@@ -336,7 +336,7 @@ func cursorTranscriptPath(payload map[string]any, conversationID string) string 
 // treats as the quiet outcome of the race.
 func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistration, harness string, payload map[string]any) error {
 	// A chat read from Cursor's database never switches to a file.
-	if canonicalHarness(harness) != "cursor" || reg.TranscriptPath != "" || !reg.ReadsTranscriptFile() {
+	if archive.CanonicalHarness(harness) != "cursor" || reg.TranscriptPath != "" || !reg.ReadsTranscriptFile() {
 		return nil
 	}
 	path := cursorTranscriptPath(payload, reg.NativeSessionID)
@@ -362,7 +362,7 @@ func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistrat
 func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
 	reason := strings.ToLower(eventName)
 	transcriptPath, _ := payload["transcript_path"].(string)
-	isCursor := canonicalHarness(harness) == "cursor"
+	isCursor := archive.CanonicalHarness(harness) == "cursor"
 	if isCursor {
 		transcriptPath = cursorTranscriptPath(payload, nativeSessionID)
 	}
@@ -400,7 +400,7 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, harn
 			// subdirectory of the project it started in. Match on project
 			// identity: only a different harness or a different configured
 			// project is a conflict.
-			if canonicalHarness(existing.Harness.Name) != canonicalHarness(harness) {
+			if archive.CanonicalHarness(existing.Harness.Name) != archive.CanonicalHarness(harness) {
 				return errSessionIdentityConflict
 			}
 			if configured, ok := configuredProjectFor(cfg, root); ok && filepath.Clean(configured) != filepath.Clean(existing.ProjectRoot) {
@@ -439,13 +439,13 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, harn
 	// activation before asking whether this start is provably fresh.
 	if !cfg.Archive.Eligible(root, now) {
 		return recordCaptureDiagnostic(home, captureDiagnostic{
-			Code: diagnosticPreActivationStart, Harness: canonicalHarness(harness),
+			Code: diagnosticPreActivationStart, Harness: archive.CanonicalHarness(harness),
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
 	if !provesFreshSessionStart(harness, payload) {
 		return recordCaptureDiagnostic(home, captureDiagnostic{
-			Code: diagnosticUnknownSessionStart, Harness: canonicalHarness(harness),
+			Code: diagnosticUnknownSessionStart, Harness: archive.CanonicalHarness(harness),
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
@@ -541,13 +541,10 @@ func pathWithin(path, root string) bool {
 	return strings.HasPrefix(path, root)
 }
 
-func canonicalHarness(harness string) string {
-	harness = strings.ToLower(strings.TrimSpace(harness))
-	if harness == "claude-code" {
-		return "claude"
-	}
-	return harness
-}
+// canonicalHarness is archive.CanonicalHarness, for inspect.go's
+// harnessFlag. TODO(#55): once that PR, which edits inspect.go, has merged,
+// call archive.KnownHarness there and delete this.
+func canonicalHarness(harness string) string { return archive.CanonicalHarness(harness) }
 
 // provesFreshSessionStart reports whether this SessionStart is provably the
 // beginning of a conversation rather than the resumption of one that may
@@ -569,7 +566,7 @@ func canonicalHarness(harness string) string {
 // carries no source at all; for those a payload that names no transcript
 // proves nothing and is still declined.
 func provesFreshSessionStart(harness string, payload map[string]any) bool {
-	switch canonicalHarness(harness) {
+	switch archive.CanonicalHarness(harness) {
 	case "codex", "claude":
 		switch strings.ToLower(strings.TrimSpace(firstNonEmptyString(payload, "source"))) {
 		case "startup", "clear":
@@ -670,7 +667,7 @@ func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName s
 	if !registered {
 		return nil
 	}
-	if canonicalHarness(registration.Harness.Name) != canonicalHarness(harness) {
+	if archive.CanonicalHarness(registration.Harness.Name) != archive.CanonicalHarness(harness) {
 		return fmt.Errorf("session event does not match the accepted harness")
 	}
 	//lint:ignore LV1001 eventName is the hook_event_name a harness sends; any other name is expected and ignored

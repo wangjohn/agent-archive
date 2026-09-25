@@ -546,7 +546,7 @@ func harnessMatches(harnesses []string, harness string) bool {
 		return true
 	}
 	for _, h := range harnesses {
-		if canonicalHarness(h) == harness {
+		if archive.CanonicalHarness(h) == harness {
 			return true
 		}
 	}
