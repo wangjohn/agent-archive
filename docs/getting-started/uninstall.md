@@ -76,9 +76,10 @@ machine=0123456789abcdef0123456789abcdef
 aws s3api list-objects-v2 --bucket "$bucket" --prefix "${prefix}sessions/" \
   --query 'Contents[].Key' --output text | tr '\t' '\n' | grep '/metadata\.json$' |
 while read -r meta; do
-  owner=$(aws s3 cp "s3://$bucket/$meta" - | jq -r '.machine_id | strings')
+  owner=$(aws s3 cp "s3://$bucket/$meta" - </dev/null | jq -r '.machine_id | strings')
   if [ -n "$owner" ] && [ "$owner" = "$machine" ]; then
-    aws s3 rm "s3://$bucket/$meta" && aws s3 rm "s3://$bucket/${meta%metadata.json}" --recursive
+    aws s3 rm "s3://$bucket/$meta" </dev/null &&
+      aws s3 rm "s3://$bucket/${meta%metadata.json}" --recursive </dev/null
   fi
 done
 ```

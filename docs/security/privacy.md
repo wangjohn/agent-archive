@@ -162,18 +162,19 @@ prefix=agent-archive/          # your prefix with its trailing slash, or empty
 # For R2: export AWS_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
 
 # Every key under sessions/, then the source each metadata.json points at.
+# Inside a loop, each aws reads from </dev/null so it can't swallow the list.
 aws s3api list-objects-v2 --bucket "$bucket" --prefix "${prefix}sessions/" \
   --query 'Contents[].Key' --output text | tr '\t' '\n' | grep -v '^None$' | sort > keys.txt
 : > failed.txt
 grep '/metadata\.json$' keys.txt | while read -r meta; do
-  aws s3 cp "s3://$bucket/$meta" - | jq -er --arg p "$prefix" '.source_bundle.key | strings | $p + .' ||
+  aws s3 cp "s3://$bucket/$meta" - </dev/null | jq -er --arg p "$prefix" '.source_bundle.key | strings | $p + .' ||
     echo "$meta" >> failed.txt
 done | sort -u > current.txt
 
 # Sources no metadata points at: superseded copies, and leftovers of
 # interrupted deletions.
 grep '/source\.[0-9a-f]*\.jsonl\.gz$' keys.txt | comm -23 - current.txt > unreferenced.txt
-wc -l < unreferenced.txt failed.txt
+wc -l unreferenced.txt failed.txt   # sources to delete; metadata that could not be read
 ```
 
 Review `unreferenced.txt`. `failed.txt` must be empty: a metadata object
@@ -186,7 +187,7 @@ without failures. Then delete:
 if [ -s failed.txt ]; then
   echo "Some metadata could not be read (failed.txt); nothing deleted." >&2
 else
-  while read -r key; do aws s3 rm "s3://$bucket/$key"; done < unreferenced.txt
+  while read -r key; do aws s3 rm "s3://$bucket/$key" </dev/null; done < unreferenced.txt
 fi
 ```
 
@@ -196,11 +197,12 @@ as well, delete each one whole, metadata first:
 <!-- purge-recipe:old-sessions -->
 ```sh
 grep '/metadata\.json$' keys.txt | while read -r meta; do
-  version=$(aws s3 cp "s3://$bucket/$meta" - | jq -r '.filter_version | strings')
+  version=$(aws s3 cp "s3://$bucket/$meta" - </dev/null | jq -r '.filter_version | strings')
   case "$version" in
     '' | *[!0-9]*) echo "could not read $meta; skipped" >&2 ;;
     *) if [ "$version" -lt 10 ]; then
-         aws s3 rm "s3://$bucket/$meta" && aws s3 rm "s3://$bucket/${meta%metadata.json}" --recursive
+         aws s3 rm "s3://$bucket/$meta" </dev/null &&
+           aws s3 rm "s3://$bucket/${meta%metadata.json}" --recursive </dev/null
        fi ;;
   esac
 done

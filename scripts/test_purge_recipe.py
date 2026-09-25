@@ -23,7 +23,11 @@ DOCS = Path(__file__).resolve().parent.parent / 'docs'
 RECIPE_PAGES = [DOCS / 'security' / 'privacy.md', DOCS / 'getting-started' / 'uninstall.md']
 
 # A stand-in for the few AWS CLI calls the recipe makes, over $FAKE_S3/<bucket>/<key>.
+# It drains its stdin first, as a CLI may: a recipe loop that doesn't keep
+# aws off the list it is reading would then skip entries (and, in the
+# listing, take a skipped session's current source for unreferenced).
 FAKE_AWS = r'''#!/bin/sh
+cat > /dev/null
 root="$FAKE_S3"
 object() { b=${1#s3://}; printf '%s/%s' "$root" "$b"; }
 case "$1 $2" in
@@ -122,7 +126,8 @@ class PurgeRecipeTest(unittest.TestCase):
                    FAKE_S3=str(self.root / 's3'),
                    FAKE_S3_LOG=str(self.root / 'rm.log'),
                    FAKE_AGENT_ARCHIVE_LOG=str(self.root / 'agent-archive.log'))
-        return subprocess.run([shell, '-c', script], cwd=work, env=env, capture_output=True, text=True)
+        return subprocess.run([shell, '-c', script], cwd=work, env=env, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True)
 
     @staticmethod
     def keys(bucket):
