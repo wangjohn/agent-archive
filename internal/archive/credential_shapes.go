@@ -296,10 +296,6 @@ var credentialContextPatterns = func() []linePattern {
 		// URL query parameters whose names are not credential words on
 		// their own: `?key=`, `&sig=` (Azure SAS), `X-Amz-Signature=`.
 		{`(?i)[?&](?:key|sig|signature|x-amz-signature|x-goog-signature)=(?P<value>[^&#\s"'<>\\]+)`, []string{"key=", "sig=", "signature="}},
-		// A URL-encoded assignment, in a query string or form body nested
-		// in another (`?next=%2Flogin%3Fpassword%3DS3cret`, `password%3AS3cret`):
-		// the value runs to an encoded `&` or `,`, or what ends a URL.
-		{`(?i)` + credentialLead + credentialName + `(?:%22)?(?:%3D|%3A)(?:%20|\+)*(?P<value>(?:[^&%\s"'<>#\\]|%(?:[013-9a-f][0-9a-f]|2[0-57-9abd-f]))+)`, vocabularyNeedles},
 		// Incoming-webhook URLs, whose path is the secret.
 		{`(?i)\bhooks\.slack\.com/(?:services|workflows|triggers)/(?P<value>[A-Za-z0-9/_-]{8,})`, []string{"hooks.slack.com/"}},
 		{`(?i)\bdiscord(?:app)?\.com/api/webhooks/(?P<value>[0-9]+/[A-Za-z0-9_-]{8,})`, []string{"discord"}},
@@ -309,6 +305,15 @@ var credentialContextPatterns = func() []linePattern {
 	} {
 		patterns = append(patterns, linePattern{re: regexp.MustCompile(p.re), needles: p.needles})
 	}
+	// A URL-encoded assignment, in a query string or form body nested in
+	// another (`?next=%2Flogin%3Fpassword%3DS3cret`, `password%3AS3cret`):
+	// the value runs to an encoded `&` or `,`, or what ends a URL. Only
+	// lines holding a `%` are searched.
+	patterns = append(patterns, linePattern{
+		re:      regexp.MustCompile(`(?i)` + credentialLead + credentialName + `(?:%22)?(?:%3D|%3A)(?:%20|\+)*(?P<value>(?:[^&%\s"'<>#\\]|%(?:[013-9a-f][0-9a-f]|2[0-57-9abd-f]))+)`),
+		needles: vocabularyNeedles,
+		anyOf:   "%",
+	})
 	return patterns
 }()
 
