@@ -138,14 +138,31 @@ LaunchAgent runs) are not part of the user interface and may change.
 
 ## Fuzzing
 
-Redaction and parsing have fuzz targets (`go test -list Fuzz ./...`). Their
-seed corpora are checked in under `testdata/fuzz/`, and plain `go test` runs
-the seeds. To fuzz, run each target for a couple of minutes, with fast
-minimization so a failure is reported promptly:
+Redaction and parsing have fuzz targets in `internal/archive`
+(`go test -list Fuzz ./internal/archive`):
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzRedactSensitive` | any string | redacting twice changes nothing; valid UTF-8 stays valid |
+| `FuzzRedactCredentialTemplates` | a secret in each credential shape | the secret never survives |
+| `FuzzSanitizeValueIdempotent` | any string | the whole string sanitizer (JSON inside strings, instruction blocks, redaction, the cap) is idempotent |
+| `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character |
+| `FuzzFilterJSONLDropsSecrets` | a secret in typed input, credential-named arguments, and JSON strings, per adapter | the secret never survives |
+| `FuzzCursorText` | any Cursor text transcript | refiltering is a no-op; no hidden section is retained; the handoff finds no more prompts than the filter kept |
+| `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
+| `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |
+
+Their seeds come from the fixtures in `testdata/` and from
+`testdata/fuzz/<target>/`, and plain `go test` runs them. CI runs each target
+for 30 seconds on every pull request (the `fuzz` job in
+`.github/workflows/test.yml`). For a change to redaction or parsing, run the
+affected targets for a couple of minutes each, with fast minimization so a
+failure is reported promptly:
 
 ```sh
-go test ./internal/archive -run XXX -fuzz FuzzRedactSensitive -fuzztime 2m -fuzzminimizetime 2s
+go test ./internal/archive -run '^$' -fuzz '^FuzzFilterJSONL$' -fuzztime 2m -fuzzminimizetime 2s
 ```
 
 A failing input is written to `testdata/fuzz/<target>/`; keep it there as a
-seed once it is fixed.
+seed once it is fixed. Hook payload parsing lives in `internal/cli` and has
+no fuzz target yet.

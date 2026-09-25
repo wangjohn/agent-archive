@@ -1,0 +1,2 @@
+go test fuzz v1
+string("user: 000000000000000000000000\n\n000\n\nthinking:")
