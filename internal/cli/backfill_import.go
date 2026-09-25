@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"text/tabwriter"
 	"time"
 
@@ -27,8 +26,11 @@ import (
 // between writing the batch file and saving the configuration ("batch
 // saved"), after the commit ("committed"), after each registration hold
 // ("registered"), before the upload ("uploading"), and when undo holds its
-// locks and has rechecked its plan ("undoing"). A test returns an error from
-// it to stop the import there, as a crash would.
+// locks and has rechecked its plan ("undoing"), has marked the batch undone
+// but not saved the configuration ("undo marked"), has saved it but not
+// recorded the changes in the batch ("undo configured"), and has recorded
+// them but removed no session ("undo recorded"). A test returns an error
+// from it to stop the import or undo there, as a crash would.
 var backfillCheckpoint func(step string) error
 
 // backfillHoldSteps, when positive, caps the steps registration takes per
@@ -81,9 +83,10 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	}
 
 	// Ctrl-C from here on stops between registration holds, or before the
-	// next session uploads. After the first, a second one quits at once.
+	// next session uploads. A second one, or SIGTERM or SIGHUP, quits at
+	// once, after removing any copy of Cursor's database this process made.
 	stdout = &lockedWriter{w: stdout}
-	interrupt := newInterruption(env, stdout)
+	interrupt := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", func() {})
 	defer interrupt.release()
 
 	// Step 5: register, in short holds of hooks.lock.
@@ -187,43 +190,6 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	return nil
 }
 
-// interruption watches for Ctrl-C. The first one is recorded and stops the
-// watch at once, even in the middle of a long upload, so a second one ends
-// the process as usual.
-type interruption struct {
-	stop   func()
-	done   chan struct{}
-	exited chan struct{}
-	seen   atomic.Bool
-}
-
-func newInterruption(env Env, out io.Writer) *interruption {
-	signals, stop := env.interrupts()
-	i := &interruption{stop: releaseOnce(stop), done: make(chan struct{}), exited: make(chan struct{})}
-	go func() {
-		defer close(i.exited)
-		select {
-		case <-signals:
-			i.seen.Store(true)
-			i.stop()
-			terminal.Println(out, "Stopping after the current session; press Ctrl-C again to quit.")
-		case <-i.done:
-		}
-	}()
-	return i
-}
-
-// requested reports whether Ctrl-C has been pressed. It never blocks.
-func (i *interruption) requested() bool { return i.seen.Load() }
-
-// release ends the watch and waits for it, so nothing is written after
-// the command returns. It is called once.
-func (i *interruption) release() {
-	close(i.done)
-	<-i.exited
-	i.stop()
-}
-
 // lockedWriter serializes writes, so the interruption's message never
 // interleaves with the command's own output.
 type lockedWriter struct {
@@ -248,8 +214,9 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 
 // commitImport is step 4. With collector.lock held, it takes hooks.lock,
 // rereads the configuration, and checks that it is the one the plan was made
-// from. It then stamps the admission time and writes the batch file, then
-// the new projects, apps, and retention. The batch file is written first,
+// from. It then stamps the admission time and writes the batch file, which
+// records every configuration change (backfill.ConfigChanges), then the new
+// projects, apps, and retention. The batch file is written first,
 // so a crash in between leaves a batch that names projects it did not add,
 // never projects added without a record.
 func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) (batch backfill.Batch, admittedAt time.Time, added int, err error) {
@@ -283,11 +250,11 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
-	projects, apps := backfill.ApplyToConfig(&cfg, plan, admittedAt)
-	if plan.RetentionDays > 0 {
-		cfg.RetentionDays = plan.RetentionDays
+	changes, err := backfill.ApplyToConfig(&cfg, plan, admittedAt)
+	if err != nil {
+		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
-	batch.AddChanges(projects, apps)
+	batch.AddChanges(changes)
 	if err := backfill.SaveBatch(home, batch); err != nil {
 		return batch, admittedAt, 0, err
 	}
@@ -297,7 +264,7 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err := config.Save(home, cfg); err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("save config: %w", err)
 	}
-	return batch, admittedAt, len(projects), nil
+	return batch, admittedAt, len(changes.ProjectIDs), nil
 }
 
 func printRegistered(out io.Writer, batchID string, added int, result backfill.RegistrationResult) {
@@ -347,7 +314,7 @@ const uploadBusyGiveUp = 2 * time.Minute
 // session of the batch has work left or a pass makes no progress. Ctrl-C
 // ends the pass after the session in flight; what is left is uploaded by
 // the background collector.
-func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *interruption) int {
+func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *signalWatch) int {
 	sizes := map[string]int64{}
 	for _, c := range plan.Candidates {
 		size := c.Bytes
@@ -457,7 +424,7 @@ func (u *upload) refresh() error {
 	}
 	u.total, u.totalBytes, u.pending = 0, 0, map[string]int64{}
 	for _, reg := range regs {
-		if reg.ImportBatch != u.batch || reg.ParentSessionID != "" {
+		if !backfill.InBatch(reg, u.batch) || reg.ParentSessionID != "" {
 			continue
 		}
 		size := u.size(reg)
@@ -587,7 +554,7 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
 	registered, subagents, waiting := 0, 0, 0
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID {
+		if !backfill.InBatch(reg, b.ID) {
 			continue
 		}
 		if reg.ParentSessionID != "" {

@@ -33,6 +33,21 @@ type ProjectSummary struct {
 	Bytes      int64
 	FirstStart time.Time
 	LastStart  time.Time
+	// KeptOut are the folders inside a project the plan adds that the
+	// import adds as excluded projects, so the new project does not capture
+	// them (see nested.go). KeptOutUnchecked are those among them kept out
+	// whole without being looked in, because macOS protects them.
+	// NestedComplete is false when not every other folder inside could be
+	// looked in.
+	KeptOut          []string
+	KeptOutUnchecked []string
+	NestedComplete   bool
+}
+
+// CapturesSubfolders reports whether adding the project makes hooks capture
+// new sessions in folders under it that no nearer project owns.
+func (s ProjectSummary) CapturesSubfolders() bool {
+	return !s.Included && capturesSubfolders(s.Kind)
 }
 
 // Total is the number of sessions the project imports.
@@ -91,6 +106,10 @@ func (p Plan) Projects() []ProjectSummary {
 	out := make([]ProjectSummary, len(order))
 	for i, s := range order {
 		out[i] = *s
+		out[i].NestedComplete = true
+		if nested, ok := p.nested[s.Root]; ok {
+			out[i].KeptOut, out[i].KeptOutUnchecked, out[i].NestedComplete = nested.KeptOut, nested.Unchecked, nested.Complete
+		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if a, b := out[i].Total(), out[j].Total(); a != b {
@@ -314,8 +333,65 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 		}
 		terminal.Println(w, "  Every future session under your home folder that isn't in a nearer project")
 		terminal.Println(w, "  will be captured too.")
-	case ProjectKindRepository, ProjectKindTemporary, ProjectKindDirectory:
+	case ProjectKindTemporary, ProjectKindDirectory:
+		if s.CapturesSubfolders() {
+			p.renderSubfolderNote(w, s)
+		}
+	case ProjectKindRepository:
 		// No note under the row.
+	}
+}
+
+// maxKeptOutShown is how many kept-out folders a row lists by name.
+const maxKeptOutShown = 5
+
+// renderSubfolderNote says what adding a plain folder captures: every
+// future session in a folder under it that no nearer project owns, except
+// the folders the import keeps out, which it names.
+func (p Plan) renderSubfolderNote(w io.Writer, s ProjectSummary) {
+	terminal.Println(w, "  Every future session in a folder under it that isn't in a nearer project")
+	terminal.Println(w, "  will be captured too.")
+	if n := len(s.KeptOut); n > 0 {
+		switch {
+		case n == 1 && len(s.KeptOutUnchecked) > 0:
+			terminal.Println(w, "  One folder inside it, which macOS protects, is added as an excluded")
+			terminal.Println(w, "  project so it stays out of capture; setup can include it:")
+		case n == 1:
+			terminal.Println(w, "  One folder inside it, a repository or app folder, is added as an excluded")
+			terminal.Println(w, "  project so it stays out of capture; setup can include it:")
+		case len(s.KeptOutUnchecked) > 0:
+			terminal.Printf(w, "  %d folders inside it (repositories, app folders, or folders macOS\n", n)
+			terminal.Println(w, "  protects) are added as excluded projects so they stay out of capture;")
+			terminal.Println(w, "  setup can include them:")
+		default:
+			terminal.Printf(w, "  %d folders inside it, repositories or app folders, are added as excluded\n", n)
+			terminal.Println(w, "  projects so they stay out of capture; setup can include them:")
+		}
+		for i, folder := range s.KeptOut {
+			if i == maxKeptOutShown {
+				terminal.Printf(w, "    and %d more\n", n-maxKeptOutShown)
+				break
+			}
+			terminal.Printf(w, "    %s\n", p.display(folder))
+		}
+	}
+	if len(s.KeptOutUnchecked) > 0 {
+		names := make([]string, 0, len(s.KeptOutUnchecked))
+		for _, folder := range s.KeptOutUnchecked {
+			names = append(names, p.display(folder))
+		}
+		they := "it was"
+		if len(names) > 1 {
+			they = "they were"
+		}
+		terminal.Printf(w, "  macOS asks before an app reads %s,\n", joinAnd(names))
+		terminal.Printf(w, "  so %s not looked in and %s out of capture whole.\n", they, stayStays(len(names)))
+	}
+	if !s.NestedComplete {
+		terminal.Println(w, "  Not every folder inside it could be checked for repositories, so a")
+		terminal.Println(w, "  repository in it that was not found is captured too. To keep capture out")
+		terminal.Println(w, "  of this folder, exclude it later in agent-archive setup (Change apps and")
+		terminal.Println(w, "  projects), or import only the projects you want with --project.")
 	}
 }
 
@@ -590,11 +666,16 @@ type planJSON struct {
 	AppsWithoutHooks []string           `json:"apps_without_hooks"`
 	RetentionDays    int                `json:"retention_days"`
 	// ExpiresOn is empty when retention is off.
-	ExpiresOn             string `json:"expires_on"`
-	StorageChecked        bool   `json:"storage_checked"`
-	CursorDatabaseChecked bool   `json:"cursor_database_checked"`
+	ExpiresOn string `json:"expires_on"`
+	// StorageChecked is always false. This JSON is printed only by a dry
+	// run, which writes nothing, locally or remotely, and checking storage
+	// writes a test object; only an import checks it, before its prompt.
+	// The key is kept so scripts that read it keep working.
+	StorageChecked        bool `json:"storage_checked"`
+	CursorDatabaseChecked bool `json:"cursor_database_checked"`
 	// CursorDatabaseUncheckedReason is set when the database was not
-	// checked: locked, unreadable, unknown_format, or changed_during_read.
+	// checked: locked, unreadable, unknown_format, changed_during_read, or
+	// transcripts_unreadable (see CursorUncheckedReason).
 	CursorDatabaseUncheckedReason CursorUncheckedReason `json:"cursor_database_unchecked_reason,omitempty"`
 	// CursorDatabaseNewerFormat counts the database rows read although
 	// their format version is newer than this release knows.
@@ -637,11 +718,22 @@ type projectJSON struct {
 	Bytes          int64          `json:"bytes"`
 	FirstStartedAt time.Time      `json:"first_started_at"`
 	LastStartedAt  time.Time      `json:"last_started_at"`
+	// CapturesSubfolders is set when adding the project makes hooks capture
+	// new sessions in folders under it that no nearer project owns.
+	CapturesSubfolders bool `json:"captures_subfolders"`
+	// KeptOut are the folders inside it the import adds as excluded
+	// projects; KeptOutUnchecked are those among them kept out whole
+	// without being looked in, because macOS protects them; KeptOutComplete
+	// is false when not every other folder inside could be checked.
+	KeptOut          []string `json:"kept_out"`
+	KeptOutUnchecked []string `json:"kept_out_unchecked"`
+	KeptOutComplete  bool     `json:"kept_out_complete"`
 }
 
-// RenderJSON writes the plan with the spec's top-level keys. storageChecked
-// says whether storage access was verified before planning.
-func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
+// RenderJSON writes the plan with the spec's top-level keys, for
+// `backfill --dry-run --json`. It holds project roots, which are paths, but
+// never a transcript path, a native or archive session ID, or content.
+func RenderJSON(w io.Writer, p Plan) error {
 	out := planJSON{
 		Destination: p.Destination,
 		Filters: filtersJSON{
@@ -653,7 +745,7 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 		Skipped:          p.Skipped(),
 		AppsWithoutHooks: p.AppsWithoutHooks(),
 		RetentionDays:    p.RetentionDays,
-		StorageChecked:   storageChecked,
+		StorageChecked:   false,
 		// False when Cursor's database could not be read; see
 		// CursorDatabaseReader.
 		CursorDatabaseChecked:         p.CursorDatabaseChecked,
@@ -687,6 +779,7 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 			Root: s.Root, Kind: s.Kind, Status: status, Exists: s.Exists,
 			Sessions: sessions, Subagents: s.Subagents, Bytes: s.Bytes,
 			FirstStartedAt: s.FirstStart.UTC(), LastStartedAt: s.LastStart.UTC(),
+			CapturesSubfolders: s.CapturesSubfolders(), KeptOut: append([]string{}, s.KeptOut...), KeptOutUnchecked: append([]string{}, s.KeptOutUnchecked...), KeptOutComplete: s.NestedComplete,
 		})
 	}
 	encoder := json.NewEncoder(w)

@@ -126,10 +126,18 @@ func fileSize(env Environment, path string) (int64, bool) {
 	return info.Size(), true
 }
 
-// discoverClaude finds ~/.claude/projects/*/*.jsonl. The file stem is the
-// native session ID.
+// discoverClaude finds <dir>/projects/*/*.jsonl in each of Claude Code's
+// folders (~/.claude, and $CLAUDE_CONFIG_DIR). The file stem is the native
+// session ID; a session found in two folders is a duplicate_session.
 func discoverClaude(env Environment, u *unreadable) []*transcript {
-	root := filepath.Join(env.Home, ".claude", "projects")
+	var found []*transcript
+	for _, dir := range env.claudeDirs() {
+		found = append(found, discoverClaudeIn(env, filepath.Join(dir, "projects"), u)...)
+	}
+	return found
+}
+
+func discoverClaudeIn(env Environment, root string, u *unreadable) []*transcript {
 	var found []*transcript
 	for _, slug := range listStore(env, root, "claude", u) {
 		if !slug.dir {
@@ -150,12 +158,30 @@ func discoverClaude(env Environment, u *unreadable) []*transcript {
 	return found
 }
 
-// discoverCodex finds ~/.codex/sessions/**/rollout-*.jsonl and
-// ~/.codex/archived_sessions/rollout-*.jsonl. A file in both is taken from
-// sessions/.
+// discoverCodex finds <dir>/sessions/**/rollout-*.jsonl and
+// <dir>/archived_sessions/rollout-*.jsonl in each of Codex's folders
+// (~/.codex, and $CODEX_HOME). A file in both is taken from sessions/.
 func discoverCodex(env Environment, u *unreadable) []*transcript {
 	var found []*transcript
 	seen := map[string]bool{}
+	// Each folder is judged on its own; the plan then says whether any
+	// sessions folder, or only archived ones, could not be read.
+	storeUnread, sessionsUnread := false, false
+	for _, dir := range env.codexDirs() {
+		u.stores["codex"], u.codexArchivedOnly = false, false
+		found = append(found, discoverCodexIn(env, dir, seen, u)...)
+		if u.stores["codex"] {
+			storeUnread = true
+			sessionsUnread = sessionsUnread || !u.codexArchivedOnly
+		}
+	}
+	u.stores["codex"] = storeUnread
+	u.codexArchivedOnly = storeUnread && !sessionsUnread
+	return found
+}
+
+func discoverCodexIn(env Environment, codexDir string, seen map[string]bool, u *unreadable) []*transcript {
+	var found []*transcript
 	var walk func(dir string, entries []dirEntry)
 	walk = func(dir string, entries []dirEntry) {
 		for _, e := range entries {
@@ -175,10 +201,10 @@ func discoverCodex(env Environment, u *unreadable) []*transcript {
 			found = append(found, &transcript{harness: harnessCodex, path: path, size: size})
 		}
 	}
-	sessions := filepath.Join(env.Home, ".codex", "sessions")
+	sessions := filepath.Join(codexDir, "sessions")
 	walk(sessions, listStore(env, sessions, "codex", u))
 	sessionsRead := !u.stores["codex"]
-	archived := filepath.Join(env.Home, ".codex", "archived_sessions")
+	archived := filepath.Join(codexDir, "archived_sessions")
 	archivedEntries := listStore(env, archived, "codex", u)
 	u.codexArchivedOnly = sessionsRead && u.stores["codex"]
 	for _, e := range archivedEntries {

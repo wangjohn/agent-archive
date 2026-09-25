@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -20,8 +19,10 @@ import (
 )
 
 // runBackfillUndo implements `agent-archive backfill undo [IMPORT_ID] [--project
-// DIR] [--yes]`: it removes the sessions an import registered from the
-// bucket and from this Mac, and excludes the projects the import added.
+// DIR] [--yes] [--restore-retention]`: it removes the sessions an import
+// registered from the bucket and from this Mac, and excludes the projects the
+// import added. Retention the import raised goes back after confirmation, or
+// with --yes only when --restore-retention is given.
 //
 // setup.lock is held from before the plan until exit, so no setup or other
 // backfill changes the configuration while the plan is shown. collector.lock
@@ -36,11 +37,20 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	fs := newCommandFlags("backfill undo", stderr)
 	project := fs.String("project", "", "only undo this project's sessions")
 	yes := fs.Bool("yes", false, "skip the confirmation")
+	restoreRetention := fs.Bool("restore-retention", false, "with --yes, also put back the shorter retention from before the import")
 	// The ID may come before or after the flags.
 	id, ok := fs.parseWithArgument(args)
 	if !ok {
 		return 2
 	}
+	if *restoreRetention && *project != "" {
+		return fs.usageError("%s", "--restore-retention undoes a whole import's retention change; a --project undo leaves retention alone")
+	}
+	// Restoring a shorter retention deletes sessions that are not from the
+	// import (hook-captured ones, other imports'). A confirmed undo shows
+	// how many and asks; an unattended one (--yes) leaves retention as it
+	// is unless --restore-retention asks for it.
+	keepRetention := *yes && !*restoreRetention
 
 	home, err := env.readHome()
 	if err != nil {
@@ -74,18 +84,32 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		terminal.Println(stdout, "No imports to undo.")
 		return 0
 	}
-	bfEnv := env.backfillEnvironment(userHome)
+	bfEnv := env.backfillEnvironment(userHome, cfg)
 	plan, err := backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project)
 	if err != nil {
 		return fail("%v", err)
 	}
+	if keepRetention {
+		plan = plan.WithRetentionKept()
+	}
 	// Nothing to do needs no confirmation, so these come before the
 	// terminal requirement.
 	if plan.Empty() {
+		// An earlier run that stopped after changing the configuration left
+		// its changes unrecorded; recording them is all that is left.
+		if len(plan.Settled.Excluded) > 0 || plan.Settled.RetentionRestored {
+			batch.RecordUndone(plan.Settled)
+			if err := backfill.SaveBatch(home, *batch); err != nil {
+				return fail("%v", err)
+			}
+		}
 		if *project != "" {
 			terminal.Printf(stdout, "No sessions from %s are left in import %s. Nothing was changed.\n", plan.ProjectDisplay(), batch.ID)
 		} else {
 			terminal.Printf(stdout, "Import %s has nothing left to undo. Nothing was changed.\n", batch.ID)
+		}
+		if r := plan.RetentionKept; r != nil {
+			terminal.Printf(stdout, "Retention stays at %d days. To put back the %d days from before the import, run agent-archive backfill undo %s --restore-retention\n", r.To, r.From, batch.ID)
 		}
 		return 0
 	}
@@ -148,6 +172,9 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if plan, err = backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project); err != nil {
 		return fail("%v", err)
 	}
+	if keepRetention {
+		plan = plan.WithRetentionKept()
+	}
 	if plan.Grew(confirmed) {
 		return fail("the import changed while this was open; run undo again to review it. Nothing was changed.")
 	}
@@ -169,18 +196,24 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// session is removed: once the projects are excluded, nothing of theirs
 	// is published again, even if undo is interrupted, and an import undone
 	// in part is never continued. A rerun finishes the sessions.
-	excluded, err := commitUndo(home, batch, plan, fingerprint, now)
+	changes, err := commitUndo(home, batch, plan, fingerprint, now)
 	if err != nil {
 		return fail("%v", err)
 	}
-	if len(excluded) > 0 {
-		batch.ProjectsExcluded = append(batch.ProjectsExcluded, excluded...)
+	if err := checkpoint("undo configured"); err != nil {
+		return fail("%v", err)
+	}
+	if len(changes.Excluded) > 0 || changes.RetentionRestored {
+		batch.RecordUndone(changes)
 		if err := backfill.SaveBatch(home, *batch); err != nil {
-			return fail("%v. The configuration was already changed: %s excluded. Run undo again to remove the sessions.", err, countNoun(len(excluded), "project"))
+			return fail("%v. The configuration was already changed. Run undo again to remove the sessions.", err)
 		}
 	}
+	if err := checkpoint("undo recorded"); err != nil {
+		return fail("%v", err)
+	}
 	result := plan.Remove(context.Background(), store, bucket, now)
-	return reportUndo(stdout, stderr, *batch, plan, excluded, result)
+	return reportUndo(stdout, stderr, *batch, plan, changes, result)
 }
 
 // undoRefusal says why an undo cannot start now, or "". Like an import, it
@@ -221,49 +254,50 @@ func selectUndoBatch(home, id string) ([]backfill.Batch, *backfill.Batch, error)
 // commitUndo marks the batch undone and then writes the configuration
 // change, under hooks.lock, after checking that the configuration is still
 // the one the plan was made from. It returns the IDs of the projects it
-// excluded; the caller records them in the batch.
-func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fingerprint string, now time.Time) ([]string, error) {
+// excluded and whether it restored retention; the caller records them in the
+// batch.
+func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fingerprint string, now time.Time) (backfill.UndoChanges, error) {
 	markUndone := func() error {
 		batch.UndoneAt = &now
-		for _, id := range plan.KeptProjectIDs() {
-			if !slices.Contains(batch.ProjectsKept, id) {
-				batch.ProjectsKept = append(batch.ProjectsKept, id)
-			}
-		}
+		batch.RecordKept(plan.KeepProjects)
+		batch.RecordUndone(plan.Settled)
 		if err := backfill.SaveBatch(home, *batch); err != nil {
 			return fmt.Errorf("%w. Nothing was changed", err)
 		}
 		return nil
 	}
-	if len(plan.ExcludeProjects) == 0 && len(plan.RemoveApps) == 0 {
-		return nil, markUndone()
+	if len(plan.ExcludeProjects) == 0 && len(plan.RemoveApps) == 0 && plan.RestoreRetention == nil && len(plan.RemoveKeptOut) == 0 {
+		return backfill.UndoChanges{}, markUndone()
 	}
 	releaseHooks, err := local.NamedLockWait(home, "hooks.lock", backfillHooksWait)
 	if err != nil {
-		return nil, errors.New("capture hooks are busy; run undo again. Nothing was changed")
+		return backfill.UndoChanges{}, errors.New("capture hooks are busy; run undo again. Nothing was changed")
 	}
 	defer releaseHooks()
 	cfg, found, err := config.Load(home)
 	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
+		return backfill.UndoChanges{}, fmt.Errorf("load config: %w", err)
 	}
 	if !found {
-		return nil, errNotSetUp
+		return backfill.UndoChanges{}, errNotSetUp
 	}
 	if configFingerprint(cfg) != fingerprint {
-		return nil, errors.New("the configuration changed while this was open; run undo again. Nothing was changed")
+		return backfill.UndoChanges{}, errors.New("the configuration changed while this was open; run undo again. Nothing was changed")
 	}
 	if err := markUndone(); err != nil {
-		return nil, err
+		return backfill.UndoChanges{}, err
 	}
-	excluded := plan.ApplyToConfig(&cfg)
+	if err := checkpoint("undo marked"); err != nil {
+		return backfill.UndoChanges{}, err
+	}
+	changes := plan.ApplyToConfig(&cfg)
 	if err := config.Save(home, cfg); err != nil {
-		return nil, fmt.Errorf("save config: %w. The import is marked undone but nothing was removed; run undo again", err)
+		return backfill.UndoChanges{}, fmt.Errorf("save config: %w. The import is marked undone but nothing was removed; run undo again", err)
 	}
-	return excluded, nil
+	return changes, nil
 }
 
-func reportUndo(stdout, stderr io.Writer, batch backfill.Batch, plan backfill.UndoPlan, excluded []string, result backfill.UndoResult) int {
+func reportUndo(stdout, stderr io.Writer, batch backfill.Batch, plan backfill.UndoPlan, changes backfill.UndoChanges, result backfill.UndoResult) int {
 	subagents := map[string]bool{}
 	for _, s := range plan.Sessions {
 		if s.Registration.ParentSessionID != "" {
@@ -288,8 +322,11 @@ func reportUndo(stdout, stderr io.Writer, batch backfill.Batch, plan backfill.Un
 	if s, a := split(result.Forgotten); s+a > 0 {
 		parts = append(parts, "forgot "+backfill.SessionsAndSubagents(s, a)+" from a previous storage destination")
 	}
-	if len(excluded) > 0 {
-		parts = append(parts, "excluded "+countNoun(len(excluded), "project"))
+	if len(changes.Excluded) > 0 {
+		parts = append(parts, "excluded "+countNoun(len(changes.Excluded), "project"))
+	}
+	if changes.RetentionRestored && plan.RestoreRetention != nil {
+		parts = append(parts, fmt.Sprintf("restored retention to %d days", plan.RestoreRetention.From))
 	}
 	if len(parts) > 0 {
 		line := strings.Join(parts, ", ")

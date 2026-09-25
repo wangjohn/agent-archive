@@ -51,8 +51,9 @@ changes app settings.
   [Re-admission](#re-admission)).
 - Deduplicating content that Claude Code copies into forked sessions.
 - Linking Codex sub-threads to their parents.
-- Importing from other Macs, from backups, or from non-default store paths
-  such as `CLAUDE_CONFIG_DIR` and `CODEX_HOME`.
+- Importing from other Macs, from backups, or from store paths other than
+  the defaults and those `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and setup's
+  recorded hook files name (see [Discovery](#discovery)).
 - Installing hooks or changing app settings.
 - A "never delete" retention setting. Setup currently maps `0` days to 90.
 
@@ -80,7 +81,13 @@ in both cases. It exits `0` when the import completes, when there is nothing to
 import, or when the person declines; `2` on a usage error (an unknown flag or
 app, a bad date, `--json` without `--dry-run`); and `1` on any other failure.
 Ctrl-C during registration exits `1`, because the import is incomplete until a
-rerun; Ctrl-C during upload exits `0`, because the collector finishes it.
+rerun; Ctrl-C during upload exits `0`, because the collector finishes it. The
+first Ctrl-C, in planning, registration, or upload, prints that it is
+stopping. A second Ctrl-C, or SIGTERM or SIGHUP at any point, exits at once
+with the shell's status for the signal (130, 143, 129), after
+`cursorstore.RemoveOwnSnapshots` removes the database copies this process's
+Readers hold (the one-step backup can't be interrupted, and those Readers
+are never closed).
 
 The storage check (step 2 of [Registration and
 concurrency](#registration-and-concurrency)) writes, reads, and deletes one
@@ -133,8 +140,20 @@ Import 29 sessions from 6 projects? [y/N/edit]
 - **Scope sentence.** It names the bucket and says "every session found on
   this Mac". When filters are set, it says "sessions matching" and lists
   them instead.
-- **Answers.** The default is No. `edit` asks for a new retention period,
-  which applies to the whole archive, then shows the plan again.
+- **Answers.** The default is No. `edit` asks for a longer retention
+  period, which applies to the whole archive, then shows the plan again. It
+  only raises retention: a shorter period, or turning retention on while it
+  is off, would delete sessions already archived (hook-captured ones too),
+  so it keeps the current value and says to change it in setup.
+  `ApplyToConfig` refuses a shorter one as well. The batch records the value
+  it raised from (`retention`), and undo offers to put it back while
+  retention is still what the import set, showing first how many sessions
+  the shorter period then deletes (hook-captured and other imports' too;
+  the confirmation question names the count). `undo --yes` leaves retention
+  alone (`UndoPlan.WithRetentionKept`) unless `--restore-retention` is given,
+  and says how to restore it; the batch is not marked restored, so a later
+  `undo ID --restore-retention` still can. A `--project` undo leaves
+  retention alone.
 - **Deletion date.** All imports are captured at about the same time, so
   they expire together, and the plan shows that date.
 - **Rows.** Rows are sorted by total and then by path. Paths are never
@@ -151,10 +170,18 @@ registered sessions persist locally, and the next collector pass uploads them.
 
 `--dry-run --json` prints the same plan with these top-level keys:
 `destination`, `filters`, `projects` (each has `root`, `kind`, `status`,
-`exists`, per-app `sessions`, `subagents`, `bytes`, and first and last start),
+`exists`, per-app `sessions`, `subagents`, `bytes`, first and last start,
+`captures_subfolders`, `kept_out`, the folders inside it the import adds as
+excluded projects, `kept_out_unchecked`, those among them kept out whole
+without being looked in because macOS protects them, and
+`kept_out_complete`),
 `skipped` (a count for each reason), `apps_without_hooks`, `retention_days`,
-`expires_on`, and `storage_checked`, then `cursor_database_checked`,
-`cursor_database_unchecked_reason` (when not checked),
+`expires_on`, and `storage_checked` (always `false` in a dry run, which
+writes nothing; the storage check writes a test object), then
+`cursor_database_checked`,
+`cursor_database_unchecked_reason` (when not checked: `locked`,
+`unreadable`, `unknown_format`, `changed_during_read`, or
+`transcripts_unreadable`),
 `cursor_database_newer_format`, `cursor_subagents_not_imported`,
 `subagents_skipped`, `unreadable_folders`, and `unreadable_stores`.
 
@@ -202,6 +229,19 @@ asks `[y/N]`. On a yes:
   first covers apps without hooks. A republish alone is not a resume: parser
   upgrades and subagent links republish too.
 - `--project` limits the undo to one project.
+- **Shared projects.** A project the import added stays included while
+  another import still has sessions there; the batch records it in
+  `projects_kept`, and the imports it was kept for in `projects_kept_for`.
+  Only the undo of one of those imports takes it over, and the plan lists a
+  taken-over project apart from the ones the import added. A project any
+  undo has excluded (it is in some batch's `projects_excluded`) is never
+  excluded again by any undo: if it is included now, setup included it.
+- **Interrupted undo.** The batch is marked undone before the configuration
+  is saved, and what the save excluded and restored is recorded after it. A
+  run that stops in between leaves those unrecorded; its rerun (with
+  `undone_at` set) records a project of the import that is excluded now,
+  and a retention that is back at `from`, as done (`UndoPlan.Settled`),
+  even when nothing else is left to undo.
 
 ## Admission model
 
@@ -382,9 +422,19 @@ The file never holds native IDs or paths; added projects are stored as
 project IDs. Registrations point back through `ImportBatch`, and they are the
 source of truth: a crash can leave registrations the batch file doesn't list
 yet, so a rerun rebuilds the batch's session list from them before marking it
-complete, and undo selects sessions by `ImportBatch`. A rerun with the same
+complete, and undo selects sessions by `ImportBatch`. Only an import
+registration (`origin: import`) carrying the batch's ID belongs to it
+(`backfill.InBatch`, the one place that compares the field). A batch file
+whose `id` is missing or malformed (not `<date>-<n>`), differs from its file
+name, or that has no start time is reported as unreadable, like one that
+isn't JSON, so undo stops rather than select by an empty ID. A rerun with the same
 filters and destination continues an unfinished batch rather than starting a
-new one. `history`, `undo`, and `status` read these files, and
+new one. A relative `--since` or `--until` (an age such as `30d`) is recorded
+as typed too (`since_arg`, `until_arg`), and matches the same value on any
+later day; other values match by the local day they name. When the latest
+batch is interrupted and the run's options would start a new one, the plan
+says so and prints the command, with the batch's options, that finishes
+it. `history`, `undo`, and `status` read these files, and
 `uninstall --delete-local-data` removes them.
 
 ## Removal records
@@ -437,6 +487,42 @@ matching rule wins.
    under home that isn't in a nearer project. `/`, `/Users`, and anything else
    above home are skipped with `above_home`, which no flag overrides.
 8. **Anything else** becomes its own project, whether or not it still exists.
+
+A plain folder (rule 8), or a temporary directory with `--include-temp`,
+that the import adds owns every folder under it that no nearer project
+owns: hooks capture a new session in the nearest configured project that
+contains it. So the plan says, under the row, that every future session
+under it that isn't in a nearer project is captured too, and it looks
+inside the folder (at most 5,000 folders listed; symlinks, `.git`,
+`node_modules`, and virtual environments are not entered) for what must stay
+as it is: nested repositories and linked worktrees (a `.git` folder or
+file), and the desktop apps' workspace folders and temporary directories.
+It never looks inside a folder macOS protects with a privacy prompt (the
+home folder's Desktop, Documents, Downloads, and Library; iCloud Drive and
+other apps' containers inside Library; `/Volumes` and the other paths to
+removable and network volumes) unless the added folder is itself inside that
+one, where running a session already needed the access; the 5,000-folder
+limit applies either way. A protected folder it does not look in is kept out
+whole (`kept_out_unchecked` in the dry-run JSON), without reading it, so
+nothing in it is captured that was not before.
+The import adds each as an excluded project (`projects_kept_out` in the
+batch), so the nearest configured project for anything in them is excluded
+and hooks keep ignoring them, as before the import. The plan lists them, and
+says when not every folder could be checked: a repository not found is then
+captured too, and the plan says how to stop that (exclude the folder in
+setup, or import only chosen projects with `--project`). Undoing the import removes
+each such entry again once nothing included contains it (removing it then
+changes no capture); an import still in place keeps its entries, even while
+setup has the folder excluded, so including the folder again keeps them out.
+Home (rule 7) is not looked in: `--include-home` is the explicit
+choice to capture everything under home, and the plan warns about it. Nor
+is a folder whose nearest project above it is included and not itself
+looked in (home added by the same import, or a configured project): what is
+under it is captured with or without the folder, so keeping anything out
+would stop capture rather than keep it as it was. The look stops when the
+plan is cancelled. A
+later backfill skips a kept-out repository's sessions as
+`excluded_project`, until setup includes it.
 
 When rules 3 or 4 map a directory to a repository, rule 2 runs again on that
 repository, so a worktree outside its repository still honours the
@@ -512,6 +598,13 @@ being read at the same time, so a file that doesn't fit waits for room.
 | Native ID | File stem. Must be among the records' `sessionId` values; a forked file also carries its parent's ID. A conversation with no `sessionId` at all is `identity_mismatch`. | `session_meta.payload.id`. Must equal `session_id` (when present) and the UUID in the file name. | `<id>`, which is what hooks register |
 | Start | Earliest record (`transcript`) | `session_meta` timestamp, else earliest record (`transcript`) | File birth time (`file_created`). Records have no timestamps. |
 | Project | `cwd` | `payload.cwd` | Slug match, below |
+
+Claude Code's and Codex's folders are found as setup finds their hook files:
+besides `~/.claude` and `~/.codex`, backfill looks in the folders
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME` name in its environment, and in the
+folders of the hook files setup recorded (`hook_files`), so a shell without
+the variables still finds them. A session in two of these folders is a
+`duplicate_session`. Cursor has no such variable.
 
 - **Identity.** An ID mismatch is skipped with `identity_mismatch`.
   Acceptance must confirm that hooks register Codex sessions under
@@ -666,7 +759,9 @@ only a few milliseconds at a time.
    reload and held through registration (step 5), so no collector pass runs
    while candidates are half-written, and `pause`, which also takes it, waits
    until registration ends. Take `hooks.lock` briefly to write the batch file,
-   then the new projects, `ImportedHarnesses`, and any retention edit.
+   then the new projects, `ImportedHarnesses`, and any retention edit. The
+   batch file records every configuration change the import makes, so undo
+   can reverse it (a guard test diffs every configuration field).
 5. **Register** in batches of at most 50 sessions or 100 ms:
    - Take `hooks.lock` and reload the configuration. Skip anything no longer
      admitted. A session whose start is after `AdmittedAt` is skipped as
@@ -762,8 +857,11 @@ results the file lacks. Phase 2 still imports only chats that have no file:
    and each removes its copy when it ends; a copy that can't be removed
    fails the pass or the plan. Each snapshot directory holds an `flock`
    while its Reader uses it; directories older than an hour whose lock is
-   free (a killed process's) are swept at the start of a pass and on a
-   Reader's first read. With
+   free (a killed process's) are swept at the start of a pass, on a
+   Reader's first read, and at the start of every `backfill` command
+   (`history`, `undo`, and `--dry-run` included), through
+   `cursorstore.RemoveStaleSnapshots`. An unlocked directory whose lock file
+   is over a minute old is a killed process's and goes at once. With
    Cursor closed, the backup API would create `-wal` next to the source, so
    a chat is read in place as the listing is: `immutable=1`, then size,
    modification time, inode, header, and side files must be unchanged, and

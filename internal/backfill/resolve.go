@@ -53,7 +53,11 @@ func newResolver(env Environment, cfg config.Config, filters Filters) *resolver 
 		}
 	}
 	var worktreeStores []string
-	for _, store := range []string{filepath.Join(env.Home, ".codex", "worktrees"), filepath.Join(env.Home, ".cursor", "worktrees")} {
+	stores := []string{filepath.Join(env.Home, ".cursor", "worktrees")}
+	for _, dir := range env.codexDirs() {
+		stores = append(stores, filepath.Join(dir, "worktrees"))
+	}
+	for _, store := range stores {
 		worktreeStores = append(worktreeStores, uniquePaths(filepath.Clean(store), env.resolved(store))...)
 	}
 	return &resolver{

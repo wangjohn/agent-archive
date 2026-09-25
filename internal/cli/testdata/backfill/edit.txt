@@ -13,6 +13,8 @@ Not a repository:
 Claude desktop scratch chats                2      –       –      2  will be added
   Chats started without a folder. New ones will be captured too.
 ~/old-notes (folder no longer exists)       1      –       –      1  will be added
+  Every future session in a folder under it that isn't in a nearer project
+  will be captured too.
 
 Total: 12 sessions (plus 2 subagent transcripts), 8 KB,
        started 2026-09-17 to 2026-09-22.
@@ -32,6 +34,8 @@ If you continue:
   • Undo any time with `agent-archive backfill undo`.
 
 Import 12 sessions from 5 projects? [y/N/edit] Retention applies to every session in the archive, not only these.
+Here it can only be raised from 90 days, and undo puts 90 back.
+Shorten it in setup.
 Keep sessions for how many days? [90]: 
 Backfill imports every session found on this Mac into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
@@ -45,6 +49,8 @@ Not a repository:
 Claude desktop scratch chats                2      –       –      2  will be added
   Chats started without a folder. New ones will be captured too.
 ~/old-notes (folder no longer exists)       1      –       –      1  will be added
+  Every future session in a folder under it that isn't in a nearer project
+  will be captured too.
 
 Total: 12 sessions (plus 2 subagent transcripts), 8 KB,
        started 2026-09-17 to 2026-09-22.

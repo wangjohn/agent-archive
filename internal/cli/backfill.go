@@ -7,12 +7,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -41,11 +48,65 @@ func backfillDay(value string, now time.Time) (string, error) {
 	return t.In(now.Location()).Format("2006-01-02"), nil
 }
 
+// relativeTimeArg is a --since or --until value as typed when it is
+// relative to now (an age: 30d, 12h), which names a different local day
+// each day, or "" for a date, an RFC 3339 time, or nothing.
+func relativeTimeArg(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if _, err := time.Parse(time.RFC3339, value); err == nil {
+		return ""
+	}
+	if _, err := time.Parse("2006-01-02", value); err == nil {
+		return ""
+	}
+	return value
+}
+
+// printInterruptedImport points at the latest import when it was
+// interrupted and this run, with other options or another destination,
+// would not continue it: the run starts a new import, and the interrupted
+// one stays partial unless it is run again as it was.
+func printInterruptedImport(out io.Writer, home string, plan backfill.Plan, cfg config.Config) {
+	batches, err := backfill.LoadBatches(home)
+	if err != nil || len(batches) == 0 {
+		return
+	}
+	last := batches[len(batches)-1]
+	if last.CompletedAt != nil || last.UndoneAt != nil || last.Matches(plan.BatchFilters(), cfg.DestinationID()) {
+		return
+	}
+	if last.DestinationID != cfg.DestinationID() {
+		terminal.Printf(out, "Import %s was interrupted, for a storage destination no longer configured;\nthis run starts a new import.\n", last.ID)
+		return
+	}
+	flags, ok := last.Filters.Flags(plan, func(id string) (string, bool) {
+		for _, p := range cfg.Archive.Projects {
+			if p.ProjectID == id {
+				return p.Root, true
+			}
+		}
+		return "", false
+	})
+	if !ok {
+		terminal.Printf(out, "Import %s was interrupted; this run, with other options, starts a new import.\n", last.ID)
+		return
+	}
+	command := strings.TrimSpace("agent-archive backfill " + flags)
+	terminal.Printf(out, "Import %s was interrupted; this run, with other options, starts a new\nimport. To finish %s instead, run:\n  %s\n", last.ID, last.ID, command)
+}
+
 // runBackfillCommand implements `agent-archive backfill`: it finds the
 // sessions already on this Mac, shows the plan, and after confirmation
 // imports them (see docs/design/backfill.md). `--dry-run
 // [--json]` prints the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	// A copy of Cursor's database a killed backfill or collector left in the
+	// temporary folder goes first, whatever this command is (history, undo,
+	// and --dry-run included). A copy in use is never removed.
+	cursorstore.RemoveStaleSnapshots()
 	if len(args) > 0 && args[0] == "history" {
 		return runBackfillHistory(args[1:], stdout, stderr, env)
 	}
@@ -81,6 +142,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	}
 	filters := backfill.Filters{
 		Harnesses: harnesses, Projects: projects, Since: sinceDay, Until: untilDay,
+		SinceArg: relativeTimeArg(*since), UntilArg: relativeTimeArg(*until),
 		IncludeHome: *includeHome, IncludeTemp: *includeTemp, IncludeRemoved: *includeRemoved,
 	}
 	if err := filters.Validate(); err != nil {
@@ -130,9 +192,10 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	}
 	// Ctrl-C during planning cancels it, so the plan's copy of Cursor's
 	// database is removed on the way out instead of left in the temporary
-	// folder. A second Ctrl-C quits at once.
-	planCtx, stopPlanning := interruptibleContext(env)
-	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome), newArchiveState(home, cfg), cfg, filters)
+	// folder. A second Ctrl-C, SIGTERM, or SIGHUP quits at once, removing
+	// the copy first.
+	planCtx, stopPlanning := interruptibleContext(env, stderr)
+	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	if err != nil {
@@ -147,7 +210,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return 1
 	}
 	if *jsonOut {
-		if err := backfill.RenderJSON(stdout, plan, false); err != nil {
+		if err := backfill.RenderJSON(stdout, plan); err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 			return 1
 		}
@@ -158,12 +221,14 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
 		terminal.Println(stdout)
+		printInterruptedImport(stdout, home, plan, cfg)
 		terminal.Println(stdout, "Dry run: nothing was changed.")
 		return 0
 	}
 	if len(plan.Imported()) == 0 {
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
+		printInterruptedImport(stdout, home, plan, cfg)
 		if err := finishInterruptedBatch(env, stdout, home, plan, cfg); err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 			return 1
@@ -187,11 +252,12 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	terminal.Println(stdout)
 	backfill.RenderText(stdout, plan)
 	terminal.Println(stdout)
+	printInterruptedImport(stdout, home, plan, cfg)
 
-	// Step 3: confirm. edit changes the retention of the whole archive and
+	// Step 3: confirm. edit raises the retention of the whole archive and
 	// shows the plan again with the new deletion date.
 	if !*yes {
-		confirmed, err := confirmImport(newPrompter(stdin, stdout), stdout, &plan)
+		confirmed, err := confirmImport(newPrompter(stdin, stdout), stdout, &plan, cfg.RetentionDays)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v. Nothing was changed.\n", err)
 			return 1
@@ -204,36 +270,95 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	return importPlan(env, stdout, stderr, home, plan, configFingerprint(cfg), *background)
 }
 
-// interruptibleContext returns a context that the first Ctrl-C cancels. The
-// watch stops at that first one, so a second ends the process as usual. stop
-// ends the watch and waits for it; it is called once.
-func interruptibleContext(env Env) (context.Context, func()) {
+// interruptibleContext returns a context that the first Ctrl-C cancels,
+// saying on out that it is stopping. A second Ctrl-C, or SIGTERM or SIGHUP
+// at any point, ends the process at once, after removing this process's
+// copies of Cursor's database (see watchSignals). stop ends the watch and
+// waits for it; it is called once.
+func interruptibleContext(env Env, out io.Writer) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
-	signals, stopSignals := env.interrupts()
-	stopSignals = releaseOnce(stopSignals)
-	// A Ctrl-C already waiting cancels before planning starts.
-	select {
-	case <-signals:
-		stopSignals()
+	watch := watchSignals(env, out, "agent-archive: backfill: stopping; press Ctrl-C again to quit.", cancel)
+	return ctx, func() {
+		watch.release()
 		cancel()
+	}
+}
+
+// exitOnSignal ends the process on a signal that stops backfill at once: a
+// second Ctrl-C, or SIGTERM or SIGHUP. It first removes the copies of
+// Cursor's database this process made, which the Readers holding them would
+// otherwise never close: a copy of every chat left in the temporary folder
+// until a later sweep. The exit status is the shell's for the signal. A test
+// replaces it.
+var exitOnSignal = func(sig os.Signal) {
+	removeOwnSnapshots()
+	code := 1
+	if s, ok := sig.(syscall.Signal); ok {
+		code = 128 + int(s)
+	}
+	exitProcess(code)
+}
+
+// removeOwnSnapshots and exitProcess are what exitOnSignal calls; a test
+// replaces them to check their order and the exit status.
+var (
+	removeOwnSnapshots = cursorstore.RemoveOwnSnapshots
+	exitProcess        = os.Exit
+)
+
+// signalWatch watches, while backfill works, for the signals env.interrupts
+// delivers: Ctrl-C, SIGTERM, and SIGHUP. The first Ctrl-C calls onFirst and
+// says so on out, and the work stops at its next safe point. A second
+// Ctrl-C, or a SIGTERM or SIGHUP (sent by a closing terminal or a process
+// manager, which will not wait), calls exitOnSignal.
+type signalWatch struct {
+	stop   func()
+	done   chan struct{}
+	exited chan struct{}
+	seen   atomic.Bool
+}
+
+func watchSignals(env Env, out io.Writer, message string, onFirst func()) *signalWatch {
+	signals, stop := env.interrupts()
+	w := &signalWatch{stop: releaseOnce(stop), done: make(chan struct{}), exited: make(chan struct{})}
+	handle := func(sig os.Signal) {
+		if sig == os.Interrupt && w.seen.CompareAndSwap(false, true) {
+			onFirst()
+			terminal.Println(out, message)
+			return
+		}
+		w.seen.Store(true)
+		exitOnSignal(sig)
+	}
+	// A signal already waiting is handled before the work starts.
+	select {
+	case sig := <-signals:
+		handle(sig)
 	default:
 	}
-	done, exited := make(chan struct{}), make(chan struct{})
 	go func() {
-		defer close(exited)
-		select {
-		case <-signals:
-			stopSignals()
-			cancel()
-		case <-done:
+		defer close(w.exited)
+		for {
+			select {
+			case sig := <-signals:
+				handle(sig)
+			case <-w.done:
+				return
+			}
 		}
 	}()
-	return ctx, func() {
-		close(done)
-		<-exited
-		stopSignals()
-		cancel()
-	}
+	return w
+}
+
+// requested reports whether a stop was asked for. It never blocks.
+func (w *signalWatch) requested() bool { return w.seen.Load() }
+
+// release ends the watch and waits for it, so nothing is written after the
+// command returns. It is called once.
+func (w *signalWatch) release() {
+	close(w.done)
+	<-w.exited
+	w.stop()
 }
 
 // importRefusal says why an import cannot start now, or "".
@@ -259,9 +384,12 @@ func checkStorage(env Env, cfg config.Config) error {
 }
 
 // confirmImport asks `Import N sessions from M projects? [y/N/edit]`. The
-// default is No. edit asks for a new retention period, which it stores in
-// plan, and shows the plan again.
-func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan) (bool, error) {
+// default is No. edit asks for a longer retention period, which it stores
+// in plan, and shows the plan again. Retention applies to the whole archive,
+// so edit never goes below configured, the retention set now, and does
+// nothing while retention is off: either would delete sessions already
+// archived (backfill.ApplyToConfig refuses it too).
+func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured int) (bool, error) {
 	for {
 		answer, err := p.line(fmt.Sprintf("Import %s from %s? [y/N/edit] ", countNoun(len(plan.Imported()), "session"), countNoun(len(plan.Projects()), "project")))
 		if err != nil {
@@ -273,14 +401,22 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan) (bool, error
 		case "y", "yes":
 			return true, nil
 		case "e", "edit":
-			days := plan.RetentionDays
-			if days <= 0 {
-				days = defaultRetentionDays
+			if configured <= 0 {
+				terminal.Println(out, "Retention is off, so no session is deleted; there is nothing to keep longer.")
+				continue
 			}
-			terminal.Println(out, "Retention applies to every session in the archive, not only these.")
-			if plan.RetentionDays, err = p.retentionDays(days); err != nil {
+			terminal.Printf(out, "Retention applies to every session in the archive, not only these.\nHere it can only be raised from %d days, and undo puts %d back.\nShorten it in setup.\n", configured, configured)
+			days, err := p.retentionDays(plan.RetentionDays)
+			if err != nil {
 				return false, err
 			}
+			if days < configured {
+				// A shorter retention deletes sessions already archived,
+				// hook-captured ones too, which an import never does.
+				terminal.Printf(out, "Retention stays at %d days: a shorter period would delete sessions\nalready in the archive. Shorten it in setup.\n", plan.RetentionDays)
+				continue
+			}
+			plan.RetentionDays = days
 			terminal.Println(out)
 			backfill.RenderText(out, *plan)
 			terminal.Println(out)
@@ -311,7 +447,7 @@ func configFingerprint(cfg config.Config) string {
 // temporary directories, and the clock. Files are read from the real file
 // system, and Cursor's database is opened read-only to count the chats only
 // it holds.
-func (e Env) backfillEnvironment(userHome string) backfill.Environment {
+func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.Environment {
 	temps := e.BackfillTempDirs
 	if temps == nil {
 		temps = append([]string(nil), backfill.DefaultTempDirs...)
@@ -319,7 +455,37 @@ func (e Env) backfillEnvironment(userHome string) backfill.Environment {
 			temps = append(temps, strings.TrimSpace(tmp))
 		}
 	}
-	return backfill.Environment{Home: userHome, TempDirs: temps, Now: e.now, CursorDatabase: backfill.CursorDatabaseReader(userHome)}
+	claude, codex := e.appSessionDirs(userHome, cfg)
+	return backfill.Environment{
+		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
+		TempDirs: temps, Now: e.now, CursorDatabase: backfill.CursorDatabaseReader(userHome),
+	}
+}
+
+// appSessionDirs are the folders Claude Code and Codex keep their sessions
+// in, resolved as setup resolves their hook files (hooks.ResolveFiles): the
+// default ~/.claude and ~/.codex, the folders CLAUDE_CONFIG_DIR and
+// CODEX_HOME name in this command's environment, and those setup recorded
+// installing hooks into (config.HookFiles), which a shell without the
+// variables still finds. A session found in two of them is imported once.
+func (e Env) appSessionDirs(userHome string, cfg config.Config) (claude, codex []string) {
+	add := func(dirs []string, dir string) []string {
+		if dir == "" || !filepath.IsAbs(dir) || slices.Contains(dirs, filepath.Clean(dir)) {
+			return dirs
+		}
+		return append(dirs, filepath.Clean(dir))
+	}
+	claude = add(claude, filepath.Join(userHome, ".claude"))
+	codex = add(codex, filepath.Join(userHome, ".codex"))
+	for _, files := range []hooks.Files{e.hookFiles(userHome), cfg.HookFiles} {
+		if path := files["claude"]; path != "" {
+			claude = add(claude, filepath.Dir(path))
+		}
+		if path := files["codex"]; path != "" {
+			codex = add(codex, filepath.Dir(path))
+		}
+	}
+	return claude, codex
 }
 
 // archiveState answers backfill.ArchiveState from this machine's local store

@@ -30,19 +30,53 @@ type UndoPlan struct {
 	Project string
 	// Sessions are removed in this order: subagents before their parents.
 	Sessions []UndoSession
-	// ExcludeProjects are the projects the import added that are still
-	// included and no other import still has sessions in; undo marks them
-	// Included: false and keeps their entries.
+	// ExcludeProjects are the projects the import added (or took over, see
+	// TakenOver) that are still included and no other import still has
+	// sessions in; undo marks them Included: false and keeps their entries.
 	ExcludeProjects []archive.ProjectActivation
-	// KeepProjects are projects the import added that stay included because
-	// another import still has sessions there: excluding them would stop
-	// those sessions updating without the other import being undone. The
-	// batch records them (ProjectsKept), and the undo of the last import
+	// KeepProjects are projects the import added (or took over) that stay
+	// included because another import still has sessions there: excluding
+	// them would stop those sessions updating without the other import
+	// being undone. The batch records them (ProjectsKept) and the imports
+	// they are kept for (ProjectsKeptFor); the undo of the last of those
 	// with sessions there excludes them.
 	KeepProjects []KeptProject
 	// RemoveApps are apps the import added to ImportedHarnesses that no
 	// imported session left after the undo needs.
 	RemoveApps []string
+	// TakenOver names, for each project in ExcludeProjects or KeepProjects
+	// that the import did not add, the earlier imports whose undo kept it
+	// included for this import's sessions. The plan lists them apart.
+	TakenOver map[string][]string
+	// RemoveKeptOut are excluded projects an import added only to keep
+	// folders inside a plain folder it added out of capture (ProjectsKeptOut)
+	// that nothing included contains once this undo's exclusions are made.
+	// Removing them changes no capture: nothing configured and included is
+	// above them. Undo removes them from the configuration.
+	RemoveKeptOut []archive.ProjectActivation
+	// RestoreRetention is set when the import raised the archive-wide
+	// retention and it is still what the import set: undo puts the earlier
+	// value back. A --project undo leaves retention alone.
+	RestoreRetention *RetentionChange
+	// RetentionDeletes counts the sessions, in the current destination and
+	// not removed by this undo, that the restored (shorter) retention makes
+	// old enough to delete: the next collector pass deletes them.
+	RetentionDeletes int
+	// RetentionChangedSince is set when the import raised retention and it
+	// was changed again afterwards, so undo leaves it as it is.
+	RetentionChangedSince bool
+	// RetentionKept is set by WithRetentionKept: retention is still what the
+	// import set and could go back (RetentionDeletes counts what that would
+	// delete), but this undo leaves it. A later undo of the same import can
+	// still restore it.
+	RetentionKept *RetentionChange
+	// Settled is what an earlier run of this undo changed in the
+	// configuration but stopped before recording in the batch: projects it
+	// excluded, and the retention it put back. Nothing is left to change
+	// for them; the caller records them in the batch (Batch.RecordUndone),
+	// so a later undo never excludes such a project again once setup
+	// includes it, nor restores retention twice.
+	Settled UndoChanges
 	// HookCapturedStopping counts the hook-captured sessions in
 	// ExcludeProjects. Excluding the projects stops them uploading; they are
 	// not deleted.
@@ -98,6 +132,11 @@ type UndoSession struct {
 // admitted before b started or after it completed: it belongs to an earlier
 // import that had the same ID.
 func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []Batch, b Batch, project string) (UndoPlan, error) {
+	// Sessions are selected by the ID they carry (InBatch), so a batch
+	// without a valid one selects nothing it could prove is its own.
+	if !ValidBatchID(b.ID) {
+		return UndoPlan{}, fmt.Errorf("import %q has no valid import ID; nothing was changed", b.ID)
+	}
 	if project != "" {
 		if abs, err := filepath.Abs(project); err == nil {
 			project = abs
@@ -108,9 +147,10 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 		Batch:   b,
 		Project: project,
 		view: Plan{
-			GeneratedAt:  env.now(),
-			Home:         env.Home,
-			resolvedHome: env.resolved(env.Home),
+			GeneratedAt:   env.now(),
+			Home:          env.Home,
+			RetentionDays: cfg.RetentionDays,
+			resolvedHome:  env.resolved(env.Home),
 			Destination: Destination{
 				Provider: cfg.Storage.Provider,
 				Bucket:   cfg.Storage.Bucket,
@@ -145,13 +185,13 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	selected := map[string]bool{}
 	var parents, children []UndoSession
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID || reg.ParentSessionID != "" || !inProject(reg.ProjectRoot) {
+		if !InBatch(reg, b.ID) || reg.ParentSessionID != "" || !inProject(reg.ProjectRoot) {
 			continue
 		}
 		selected[reg.ArchiveSessionID] = true
 	}
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID {
+		if !InBatch(reg, b.ID) {
 			continue
 		}
 		// A subagent goes with its parent. One whose parent is no longer
@@ -177,7 +217,8 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	}
 	p.Sessions = slices.Concat(children, parents)
 
-	p.ExcludeProjects, p.KeepProjects = undoProjects(cfg, regs, batches, b, inProject)
+	p.ExcludeProjects, p.KeepProjects, p.TakenOver, p.Settled.Excluded = undoProjects(cfg, regs, batches, b, inProject)
+	p.RemoveKeptOut = keptOutToRemove(env, cfg, regs, batches, b, p.Sessions, p.ExcludeProjects)
 	excludedRoots := map[string]bool{}
 	for _, project := range p.ExcludeProjects {
 		excludedRoots[project.Root] = true
@@ -186,6 +227,23 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	for _, reg := range regs {
 		if !reg.Imported() && reg.ParentSessionID == "" && excludedRoots[reg.ProjectRoot] {
 			p.HookCapturedStopping++
+		}
+	}
+
+	if r := b.Retention; r != nil && !r.Restored && p.Project == "" {
+		switch {
+		case cfg.RetentionDays == r.To:
+			restore := *r
+			p.RestoreRetention = &restore
+			if p.RetentionDeletes, err = retentionDeletes(store, cfg, regs, p.Sessions, restore, env.now()); err != nil {
+				return UndoPlan{}, err
+			}
+		case b.UndoneAt != nil && cfg.RetentionDays == r.From:
+			// An earlier run of this undo put it back and stopped before
+			// recording so.
+			p.Settled.RetentionRestored = true
+		default:
+			p.RetentionChangedSince = true
 		}
 	}
 
@@ -209,6 +267,116 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	return p, nil
 }
 
+// keptOutToRemove returns the excluded projects b, or an import undone
+// already, added to keep a folder out of capture (ProjectsKeptOut) that are
+// no longer needed once exclude is excluded: recorded by no import still in
+// place, still excluded (setup did not include them), no
+// session registered in them, and no included project, other than those
+// being excluded, containing them. For such a folder the nearest configured
+// project, with or without the entry, is excluded or absent, so removing it
+// changes no capture; it only puts the configuration back.
+//
+// An import is still in place when it was never undone (b aside), or when
+// any session of it stays registered once removing are removed: a --project
+// undo marks the import undone but leaves its other projects' sessions, and
+// setup may include their folders again.
+func keptOutToRemove(env Environment, cfg config.Config, regs []archive.SessionRegistration, batches []Batch, b Batch, removing []UndoSession, exclude []archive.ProjectActivation) []archive.ProjectActivation {
+	removed := map[string]bool{}
+	for _, s := range removing {
+		removed[s.Registration.ArchiveSessionID] = true
+	}
+	inPlace := func(o Batch) bool {
+		if o.ID != b.ID && o.UndoneAt == nil {
+			return true
+		}
+		return slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
+			return InBatch(reg, o.ID) && !removed[reg.ArchiveSessionID]
+		})
+	}
+	// Only an entry of an import being undone, or undone already, goes: an
+	// import still in place keeps its entries even while setup has its
+	// folder excluded, so including the folder again keeps them out.
+	keptOut, live := map[string]bool{}, map[string]bool{}
+	for _, o := range append(slices.Clone(batches), b) {
+		for _, id := range o.ProjectsKeptOut {
+			if inPlace(o) {
+				live[id] = true
+			} else {
+				keptOut[id] = true
+			}
+		}
+	}
+	for id := range live {
+		delete(keptOut, id)
+	}
+	if len(keptOut) == 0 {
+		return nil
+	}
+	excluding := map[string]bool{}
+	for _, project := range exclude {
+		excluding[project.ProjectID] = true
+	}
+	var out []archive.ProjectActivation
+	for _, g := range cfg.Archive.Projects {
+		if !keptOut[g.ProjectID] || g.Included {
+			continue
+		}
+		if slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
+			return reg.ProjectID == g.ProjectID || reg.ProjectRoot == g.Root
+		}) {
+			continue
+		}
+		resolved := env.resolved(g.Root)
+		covered := slices.ContainsFunc(cfg.Archive.Projects, func(q archive.ProjectActivation) bool {
+			return q.ProjectID != g.ProjectID && q.Included && !excluding[q.ProjectID] &&
+				(pathWithin(g.Root, q.Root) || pathWithin(resolved, env.resolved(q.Root)))
+		})
+		if !covered {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+// retentionDeletes counts the sessions (not subagents) in cfg's destination,
+// other than those undo removes, that retention of r.From days deletes and
+// retention of r.To days does not: those restoring r.From costs. A session
+// ages as retention ages it: from its last capture, or its admission when it
+// has none (see retention.sweepSession). A capture is never earlier than the
+// admission, so only a session admitted over r.From days ago can be one; only
+// those have their published state read.
+func retentionDeletes(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, removing []UndoSession, r RetentionChange, now time.Time) (int, error) {
+	if r.From <= 0 || r.From >= r.To {
+		return 0, nil
+	}
+	removed := map[string]bool{}
+	for _, s := range removing {
+		removed[s.Registration.ArchiveSessionID] = true
+	}
+	from, to := time.Duration(r.From)*24*time.Hour, time.Duration(r.To)*24*time.Hour
+	n := 0
+	for _, reg := range regs {
+		if reg.ParentSessionID != "" || removed[reg.ArchiveSessionID] || !cfg.InCurrentDestination(reg) {
+			continue
+		}
+		ageFrom := reg.Admitted()
+		if ageFrom.IsZero() || now.Sub(ageFrom) < from {
+			continue
+		}
+		bundle, _, _, found, err := store.LoadPublished(reg.ArchiveSessionID)
+		if err != nil {
+			return 0, err
+		}
+		if found && !bundle.Capture.CapturedAt.IsZero() {
+			ageFrom = bundle.Capture.CapturedAt
+		}
+		if age := now.Sub(ageFrom); age >= from && age < to {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // sessionsOutsideBatch counts the sessions (not subagents) that carry b's ID
 // but were admitted before b started or after it completed. Every session
 // b's own run registers is admitted at or after StartedAt (the admission is
@@ -218,7 +386,7 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 func sessionsOutsideBatch(regs []archive.SessionRegistration, b Batch) int {
 	n := 0
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID || reg.ParentSessionID != "" || reg.AdmittedAt.IsZero() {
+		if !InBatch(reg, b.ID) || reg.ParentSessionID != "" || reg.AdmittedAt.IsZero() {
 			continue
 		}
 		if reg.AdmittedAt.Before(b.StartedAt) || b.CompletedAt != nil && reg.AdmittedAt.After(*b.CompletedAt) {
@@ -230,38 +398,75 @@ func sessionsOutsideBatch(regs []archive.SessionRegistration, b Batch) int {
 
 // undoProjects splits the projects undoing b could exclude into those it
 // excludes and those it keeps. The candidates are the included projects in
-// scope that b added and has not excluded already, and those an earlier undo
-// kept (ProjectsKept) that b has sessions in: b is one of the imports that
-// undo kept them for, so b's undo takes them over. A project setup included
-// again after b excluded it is never a candidate.
+// scope that b added, and those an earlier undo kept (ProjectsKept) for b
+// (ProjectsKeptFor) that b has sessions in: b's undo takes them over, and
+// takenOver names, for each, the imports whose undo kept it. A project any
+// undo has excluded (ProjectsExcluded of any batch) is never a candidate:
+// it is included only because setup included it again.
 //
 // A candidate stays included while another import has sessions there.
 // Excluding it would stop those sessions updating (the configuration no
 // longer accepts them), silently, as part of undoing an import they are not
 // in. Hook-captured sessions do not keep a project: the import added it, so
 // undoing the import is what stops them, as the plan says.
-func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches []Batch, b Batch, inProject func(string) bool) (exclude []archive.ProjectActivation, keep []KeptProject) {
+func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches []Batch, b Batch, inProject func(string) bool) (exclude []archive.ProjectActivation, keep []KeptProject, takenOver map[string][]string, settled []string) {
 	inside := func(reg archive.SessionRegistration, project archive.ProjectActivation) bool {
 		return reg.ProjectID == project.ProjectID || reg.ProjectRoot == project.Root
 	}
+	// A project any undo has excluded is included now only because setup
+	// included it again: it is the person's, whichever import added it.
+	excludedByUndo := map[string]bool{}
+	for _, o := range batches {
+		for _, id := range o.ProjectsExcluded {
+			excludedByUndo[id] = true
+		}
+	}
+	for _, id := range b.ProjectsExcluded {
+		excludedByUndo[id] = true
+	}
+	takenOver = map[string][]string{}
 	for _, project := range cfg.Archive.Projects {
-		if !project.Included || !inProject(project.Root) || slices.Contains(b.ProjectsExcluded, project.ProjectID) {
+		if !inProject(project.Root) || excludedByUndo[project.ProjectID] {
 			continue
 		}
 		candidate := slices.Contains(b.ProjectsAdded, project.ProjectID)
-		if !candidate && slices.ContainsFunc(batches, func(o Batch) bool {
-			return o.ID != b.ID && o.UndoneAt != nil && slices.Contains(o.ProjectsKept, project.ProjectID)
+		var from []string
+		if !candidate && slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
+			return InBatch(reg, b.ID) && reg.ParentSessionID == "" && inside(reg, project)
 		}) {
-			candidate = slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
-				return reg.ImportBatch == b.ID && reg.ParentSessionID == "" && inside(reg, project)
-			})
+			// b takes the project over from each earlier undo that kept it
+			// for b: one that names b among the imports it kept it for, or,
+			// written before those were recorded, names none.
+			for _, o := range batches {
+				if o.ID == b.ID || o.UndoneAt == nil || !slices.Contains(o.ProjectsKept, project.ProjectID) {
+					continue
+				}
+				if keptFor, recorded := o.ProjectsKeptFor[project.ProjectID]; recorded && !slices.Contains(keptFor, b.ID) {
+					continue
+				}
+				from = append(from, o.ID)
+			}
+			candidate = len(from) > 0
 		}
 		if !candidate {
 			continue
 		}
+		if !project.Included {
+			// Excluded already. After an earlier run of this undo, that run
+			// most likely excluded it and stopped before recording so
+			// (settled): recording it keeps a later undo from excluding it
+			// again once setup includes it. Otherwise there is nothing to do.
+			if b.UndoneAt != nil {
+				settled = append(settled, project.ProjectID)
+			}
+			continue
+		}
+		if len(from) > 0 {
+			takenOver[project.ProjectID] = from
+		}
 		kept := KeptProject{Project: project}
 		for _, reg := range regs {
-			if reg.Imported() && reg.ImportBatch != b.ID && reg.ParentSessionID == "" && inside(reg, project) {
+			if reg.Imported() && reg.ImportBatch != "" && !InBatch(reg, b.ID) && reg.ParentSessionID == "" && inside(reg, project) {
 				kept.Sessions++
 				kept.Imports = addUnique(kept.Imports, reg.ImportBatch)
 			}
@@ -273,17 +478,23 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 		sort.Strings(kept.Imports)
 		keep = append(keep, kept)
 	}
-	return exclude, keep
+	return exclude, keep, takenOver, settled
 }
 
-// KeptProjectIDs are the IDs of the projects the plan keeps included, which
-// the batch records as ProjectsKept.
-func (p UndoPlan) KeptProjectIDs() []string {
-	ids := make([]string, 0, len(p.KeepProjects))
-	for _, k := range p.KeepProjects {
-		ids = append(ids, k.Project.ProjectID)
+// RecordKept records in b the projects its undo keeps included, and the
+// imports it keeps each for (ProjectsKept, ProjectsKeptFor), so that only
+// those imports' undos take them over.
+func (b *Batch) RecordKept(kept []KeptProject) {
+	for _, k := range kept {
+		id := k.Project.ProjectID
+		b.ProjectsKept = addUnique(b.ProjectsKept, id)
+		if b.ProjectsKeptFor == nil {
+			b.ProjectsKeptFor = map[string][]string{}
+		}
+		imports := addUnique(append([]string(nil), b.ProjectsKeptFor[id]...), k.Imports...)
+		sort.Strings(imports)
+		b.ProjectsKeptFor[id] = imports
 	}
-	return ids
 }
 
 // resumedSinceImport reports whether the app ran an imported session again
@@ -345,9 +556,21 @@ func hasHookEvidence(evidence []archive.SupplementalEvidence) bool {
 	})
 }
 
+// WithRetentionKept returns the plan leaving retention as it is instead of
+// restoring the shorter value from before the import. `backfill undo --yes`
+// uses it unless --restore-retention is given: the shorter retention
+// deletes sessions that are not from the import (hook-captured ones, other
+// imports'), which an unattended run must not do silently.
+func (p UndoPlan) WithRetentionKept() UndoPlan {
+	if p.RestoreRetention != nil {
+		p.RetentionKept, p.RestoreRetention = p.RestoreRetention, nil
+	}
+	return p
+}
+
 // Empty reports whether nothing of the import is left to undo.
 func (p UndoPlan) Empty() bool {
-	return len(p.Sessions) == 0 && len(p.ExcludeProjects) == 0 && len(p.RemoveApps) == 0
+	return len(p.Sessions) == 0 && len(p.ExcludeProjects) == 0 && len(p.RemoveApps) == 0 && p.RestoreRetention == nil
 }
 
 // UndoCounts summarises an undo's sessions. Sessions and Subagents count
@@ -429,22 +652,58 @@ func (p UndoPlan) Grew(confirmed UndoPlan) bool {
 			return true
 		}
 	}
+	if p.RestoreRetention != nil && (confirmed.RestoreRetention == nil || p.RetentionDeletes > confirmed.RetentionDeletes) {
+		return true
+	}
 	return false
 }
 
-// ApplyToConfig excludes the plan's projects and removes its apps from cfg,
-// which the caller has just reloaded under the locks. It returns the IDs of
-// the projects it excluded.
-func (p UndoPlan) ApplyToConfig(cfg *config.Config) []string {
-	excluded := []string{}
+// UndoChanges is what UndoPlan.ApplyToConfig changed; the caller records it
+// in the batch once the configuration is saved.
+type UndoChanges struct {
+	// Excluded are the IDs of the projects excluded.
+	Excluded []string
+	// RetentionRestored is set when retention was put back to the value
+	// before the import.
+	RetentionRestored bool
+	// RemovedKeptOut are the IDs of the kept-out projects removed.
+	RemovedKeptOut []string
+}
+
+// ApplyToConfig excludes the plan's projects, removes its apps, and restores
+// the retention from before the import, in cfg, which the caller has just
+// reloaded under the locks. Retention is restored only while it is still
+// what the import set.
+func (p UndoPlan) ApplyToConfig(cfg *config.Config) UndoChanges {
+	changes := UndoChanges{Excluded: []string{}}
 	for i, project := range cfg.Archive.Projects {
 		if project.Included && slices.ContainsFunc(p.ExcludeProjects, func(e archive.ProjectActivation) bool { return e.ProjectID == project.ProjectID }) {
 			cfg.Archive.Projects[i].Included = false
-			excluded = append(excluded, project.ProjectID)
+			changes.Excluded = append(changes.Excluded, project.ProjectID)
 		}
 	}
 	cfg.ImportedHarnesses = slices.DeleteFunc(cfg.ImportedHarnesses, func(app string) bool { return slices.Contains(p.RemoveApps, app) })
-	return excluded
+	cfg.Archive.Projects = slices.DeleteFunc(cfg.Archive.Projects, func(project archive.ProjectActivation) bool {
+		remove := !project.Included && slices.ContainsFunc(p.RemoveKeptOut, func(g archive.ProjectActivation) bool { return g.ProjectID == project.ProjectID })
+		if remove {
+			changes.RemovedKeptOut = append(changes.RemovedKeptOut, project.ProjectID)
+		}
+		return remove
+	})
+	if r := p.RestoreRetention; r != nil && cfg.RetentionDays == r.To {
+		cfg.RetentionDays = r.From
+		changes.RetentionRestored = true
+	}
+	return changes
+}
+
+// RecordUndone records in b what an undo changed in the configuration, once
+// it is saved, so no later undo changes it again.
+func (b *Batch) RecordUndone(c UndoChanges) {
+	b.ProjectsExcluded = addUnique(b.ProjectsExcluded, c.Excluded...)
+	if c.RetentionRestored && b.Retention != nil {
+		b.Retention.Restored = true
+	}
 }
 
 // UndoResult is what Remove did.
@@ -505,49 +764,17 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 		scope += " in " + p.view.display(p.Project)
 	}
 	terminal.Printf(w, "Undo %s, started %s.\n\n", scope, p.Batch.StartedAt.In(p.view.GeneratedAt.Location()).Format("2006-01-02 15:04"))
-	if c.Sessions+c.Subagents > 0 {
-		terminal.Println(w, "If you continue:")
-	}
-	sessions := SessionsAndSubagents(c.Sessions, c.Subagents)
-	switch {
-	case c.Deleted > 0 && c.Forgotten == 0:
-		terminal.Printf(w, "  • %s %s deleted from\n    %s.\n", sessions, IsAre(c.Sessions+c.Subagents), p.view.destination())
-	case c.Deleted > 0:
-		terminal.Printf(w, "  • %s %s deleted from\n    %s.\n", CountNoun(c.Deleted, "session"), IsAre(c.Deleted), p.view.destination())
-		terminal.Printf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", CountNoun(c.Forgotten, "session"), IsAre(c.Forgotten))
-	case c.Forgotten > 0:
-		terminal.Printf(w, "  • %s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, IsAre(c.Sessions+c.Subagents))
-	}
-	if c.Resumed > 0 {
-		terminal.Printf(w, "    This includes %s resumed since the import, with %s newer content.\n", CountNoun(c.Resumed, "session"), theirIts(c.Resumed))
-	}
-	if n := c.ResumeUnknown; n > 0 {
-		terminal.Printf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", CountNoun(n, "Cursor chat")+" "+wasWere(n))
-	}
-	if n := len(p.ExcludeProjects); n > 0 {
-		if c.Sessions+c.Subagents == 0 {
+	// Every change is a bullet under one heading.
+	headed := false
+	bullet := func(format string, args ...any) {
+		if !headed {
+			headed = true
 			terminal.Println(w, "If you continue:")
 		}
-		terminal.Printf(w, "  • %s the import added %s excluded from capture; setup can\n    include %s again:\n", CountNoun(n, "project"), IsAre(n), themIt(n))
-		roots := make([]string, 0, n)
-		for _, project := range p.ExcludeProjects {
-			roots = append(roots, p.view.display(project.Root))
-		}
-		sort.Strings(roots)
-		for _, root := range roots {
-			terminal.Printf(w, "      %s\n", root)
-		}
-		if h := p.HookCapturedStopping; h > 0 {
-			where, verb, what := "these projects", "stop", "they are"
-			if n == 1 {
-				where = "this project"
-			}
-			if h == 1 {
-				verb, what = "stops", "it is"
-			}
-			terminal.Printf(w, "    %s in %s %s uploading; %s not deleted.\n", CountNoun(h, "hook-captured session"), where, verb, what)
-		}
+		terminal.Printf(w, "  • "+format, args...)
 	}
+	renderUndoSessions(w, p, c, bullet)
+	renderUndoExcluded(w, p, bullet)
 	if len(p.RemoveApps) > 0 {
 		names := make([]string, 0, len(p.RemoveApps))
 		for _, app := range p.RemoveApps {
@@ -557,37 +784,155 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 			}
 			names = append(names, name)
 		}
-		terminal.Printf(w, "  • %s imports without hooks are no longer published.\n", joinAnd(names))
+		bullet("%s imports without hooks are no longer published.\n", joinAnd(names))
 	}
-	if n := len(p.KeepProjects); n > 0 {
-		if c.Sessions+c.Subagents == 0 && len(p.ExcludeProjects) == 0 {
-			terminal.Println(w, "If you continue:")
-		}
-		terminal.Printf(w, "  • %s the import added %s included: other imports still have\n    sessions there, which excluding %s would stop updating:\n", CountNoun(n, "project"), stayStays(n), themIt(n))
-		kept := make([]string, 0, n)
-		for _, k := range p.KeepProjects {
-			imports := "import " + joinAnd(k.Imports)
-			if len(k.Imports) > 1 {
-				imports = "imports " + joinAnd(k.Imports)
-			}
-			kept = append(kept, fmt.Sprintf("%s (%s from %s)", p.view.display(k.Project.Root), CountNoun(k.Sessions, "session"), imports))
-		}
-		sort.Strings(kept)
-		for _, line := range kept {
-			terminal.Printf(w, "      %s\n", line)
-		}
-		terminal.Printf(w, "    Undoing the last of those imports excludes %s.\n", themIt(n))
+	renderUndoKept(w, p, bullet)
+	if n := len(p.RemoveKeptOut); n > 0 {
+		bullet("%s the import added as excluded, to keep folders inside a project\n    out of capture, %s removed from setup again; nothing there is captured\n    either way.\n", CountNoun(n, "project"), IsAre(n))
 	}
-	terminal.Println(w, "  • Hook-captured sessions and the apps' own files are not touched.")
+	switch r := p.RestoreRetention; {
+	case r != nil && p.RetentionDeletes > 0:
+		bullet("Retention goes back from %d to %d days, as it was before the import\n    raised it. The next collector pass then deletes %s older than\n    %d days from %s.\n", r.To, r.From, CountNoun(p.RetentionDeletes, "session"), r.From, p.view.destination())
+	case r != nil:
+		bullet("Retention goes back from %d to %d days, as it was before the import\n    raised it. No session is old enough for that to delete it now.\n", r.To, r.From)
+	case p.RetentionKept != nil:
+		r := p.RetentionKept
+		bullet("Retention stays at %d days: --yes does not shorten it. To put back\n    the %d days from before the import, which %s, run\n    agent-archive backfill undo %s --restore-retention\n", r.To, r.From, retentionDeletesPhrase(p.RetentionDeletes, r.From), p.Batch.ID)
+	case p.RetentionChangedSince:
+		bullet("Retention stays at %d days: it was changed after the import raised it.\n", p.view.RetentionDays)
+	}
+	bullet("Hook-captured sessions and the apps' own files are not touched.\n")
 	if c.Sessions+c.Subagents > 0 {
-		terminal.Println(w, "  • These sessions are not imported again unless you run\n    agent-archive backfill --include-removed.")
+		bullet("These sessions are not imported again unless you run\n    agent-archive backfill --include-removed.\n")
 	}
 }
 
-// UndoQuestion is the confirmation undo asks.
+// renderUndoSessions is RenderUndo's sessions: deleted, or forgotten from a
+// previous destination, and how many were resumed.
+func renderUndoSessions(w io.Writer, p UndoPlan, c UndoCounts, bullet func(string, ...any)) {
+	sessions := SessionsAndSubagents(c.Sessions, c.Subagents)
+	switch {
+	case c.Deleted > 0 && c.Forgotten == 0:
+		bullet("%s %s deleted from\n    %s.\n", sessions, IsAre(c.Sessions+c.Subagents), p.view.destination())
+	case c.Deleted > 0:
+		bullet("%s %s deleted from\n    %s.\n", CountNoun(c.Deleted, "session"), IsAre(c.Deleted), p.view.destination())
+		bullet("%s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", CountNoun(c.Forgotten, "session"), IsAre(c.Forgotten))
+	case c.Forgotten > 0:
+		bullet("%s from a previous storage destination %s forgotten on this Mac\n    only; nothing is deleted from that destination.\n", sessions, IsAre(c.Sessions+c.Subagents))
+	}
+	if c.Resumed > 0 {
+		terminal.Printf(w, "    This includes %s resumed since the import, with %s newer content.\n", CountNoun(c.Resumed, "session"), theirIts(c.Resumed))
+	}
+	if n := c.ResumeUnknown; n > 0 {
+		terminal.Printf(w, "    Whether %s resumed since the import could not be checked:\n    Cursor's database could not be read.\n", CountNoun(n, "Cursor chat")+" "+wasWere(n))
+	}
+}
+
+// renderUndoExcluded is RenderUndo's excluded projects: those the import
+// added, and apart from them those it took over from an earlier undo that
+// kept them for its sessions.
+func renderUndoExcluded(w io.Writer, p UndoPlan, bullet func(string, ...any)) {
+	n := len(p.ExcludeProjects)
+	if n == 0 {
+		return
+	}
+	var added, takenOver []string
+	for _, project := range p.ExcludeProjects {
+		if from, ok := p.TakenOver[project.ProjectID]; ok {
+			takenOver = append(takenOver, fmt.Sprintf("%s (left included by the undo of %s)", p.view.display(project.Root), importsNoun(from)))
+		} else {
+			added = append(added, p.view.display(project.Root))
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(takenOver)
+	if k := len(added); k > 0 {
+		bullet("%s the import added %s excluded from capture; setup can\n    include %s again:\n", CountNoun(k, "project"), IsAre(k), themIt(k))
+		for _, root := range added {
+			terminal.Printf(w, "      %s\n", root)
+		}
+	}
+	if k := len(takenOver); k > 0 {
+		bullet("%s an earlier undo left included for this import's sessions\n    %s excluded from capture; setup can include %s again:\n", CountNoun(k, "project"), IsAre(k), themIt(k))
+		for _, line := range takenOver {
+			terminal.Printf(w, "      %s\n", line)
+		}
+	}
+	if h := p.HookCapturedStopping; h > 0 {
+		where, verb, what := "these projects", "stop", "they are"
+		if n == 1 {
+			where = "this project"
+		}
+		if h == 1 {
+			verb, what = "stops", "it is"
+		}
+		terminal.Printf(w, "    %s in %s %s uploading; %s not deleted.\n", CountNoun(h, "hook-captured session"), where, verb, what)
+	}
+}
+
+// renderUndoKept is RenderUndo's kept projects, with the imports that keep
+// each and, for one taken over, whose undo kept it before.
+func renderUndoKept(w io.Writer, p UndoPlan, bullet func(string, ...any)) {
+	n := len(p.KeepProjects)
+	if n == 0 {
+		return
+	}
+	which := "the import added"
+	if slices.ContainsFunc(p.KeepProjects, func(k KeptProject) bool { _, ok := p.TakenOver[k.Project.ProjectID]; return ok }) {
+		which = "the import added or took over"
+	}
+	bullet("%s %s %s included: other imports still have\n    sessions there, which excluding %s would stop updating:\n", CountNoun(n, "project"), which, stayStays(n), themIt(n))
+	kept := make([]string, 0, n)
+	for _, k := range p.KeepProjects {
+		line := fmt.Sprintf("%s (%s from %s", p.view.display(k.Project.Root), CountNoun(k.Sessions, "session"), importsNoun(k.Imports))
+		if from, ok := p.TakenOver[k.Project.ProjectID]; ok {
+			line += "; left included by the undo of " + importsNoun(from)
+		}
+		kept = append(kept, line+")")
+	}
+	sort.Strings(kept)
+	for _, line := range kept {
+		terminal.Printf(w, "      %s\n", line)
+	}
+	terminal.Printf(w, "    Undoing the last of those imports excludes %s.\n", themIt(n))
+}
+
+// importsNoun names import IDs: "import A", or "imports A and B".
+func importsNoun(ids []string) string {
+	if len(ids) == 1 {
+		return "import " + ids[0]
+	}
+	return "imports " + joinAnd(ids)
+}
+
+// retentionDeletesPhrase says what restoring a retention of from days
+// deletes.
+func retentionDeletesPhrase(n, from int) string {
+	if n == 0 {
+		return "deletes no session now"
+	}
+	return fmt.Sprintf("deletes %s older than %d days", CountNoun(n, "session"), from)
+}
+
+// UndoQuestion is the confirmation undo asks. When restoring retention
+// deletes sessions the undo does not name (they are not from the import),
+// the question says how many, so the confirmation covers them too.
 func UndoQuestion(p UndoPlan) string {
 	c := p.Counts()
+	retention := ""
+	if r := p.RestoreRetention; r != nil && p.RetentionDeletes > 0 {
+		retention = fmt.Sprintf(" Restoring retention to %d days also deletes %s older than that.", r.From, CountNoun(p.RetentionDeletes, "other session"))
+	}
 	if c.Sessions+c.Subagents == 0 {
+		if len(p.ExcludeProjects) == 0 && p.RestoreRetention != nil {
+			if retention != "" {
+				return fmt.Sprintf("Restore retention to %d days? That deletes %s older than that. This cannot be undone.", p.RestoreRetention.From, CountNoun(p.RetentionDeletes, "session"))
+			}
+			return fmt.Sprintf("Restore retention to %d days?", p.RestoreRetention.From)
+		}
+		if retention != "" {
+			return fmt.Sprintf("Exclude %s?%s This cannot be undone.", CountNoun(len(p.ExcludeProjects), "project"), retention)
+		}
 		return fmt.Sprintf("Exclude %s?", CountNoun(len(p.ExcludeProjects), "project"))
 	}
 	// Sessions are named when there are any; otherwise only subagents are
@@ -598,11 +943,11 @@ func UndoQuestion(p UndoPlan) string {
 	}
 	switch {
 	case c.Deleted == 0:
-		return fmt.Sprintf("Forget %s? This cannot be undone.", forgotten)
+		return fmt.Sprintf("Forget %s?%s This cannot be undone.", forgotten, retention)
 	case c.Forgotten == 0:
-		return fmt.Sprintf("Delete %s from the archive? This cannot be undone.", deleted)
+		return fmt.Sprintf("Delete %s from the archive?%s This cannot be undone.", deleted, retention)
 	}
-	return fmt.Sprintf("Delete %s from the archive and forget %s from a previous destination? This cannot be undone.", deleted, forgotten)
+	return fmt.Sprintf("Delete %s from the archive and forget %s from a previous destination?%s This cannot be undone.", deleted, forgotten, retention)
 }
 
 // SessionsAndSubagents counts sessions and subagent transcripts together,
