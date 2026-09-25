@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,7 +51,23 @@ func (f *deniedReadS3) serve(t *testing.T) *httptest.Server {
 				deny(w, r)
 				return
 			}
-			writeListResponse(w, f.objects, query.Get("prefix"))
+			// Like S3: keys in ascending order, at most max-keys of them.
+			prefix := query.Get("prefix")
+			var keys []string
+			for k := range f.objects {
+				if strings.HasPrefix(k, prefix) {
+					keys = append(keys, k)
+				}
+			}
+			sort.Strings(keys)
+			if limit, err := strconv.Atoi(query.Get("max-keys")); err == nil && limit < len(keys) {
+				keys = keys[:limit]
+			}
+			listed := map[string][]byte{}
+			for _, k := range keys {
+				listed[k] = f.objects[k]
+			}
+			writeListResponse(w, listed, prefix)
 			return
 		}
 		//lint:ignore LV1001 r.Method is an arbitrary request method; the cases are net/http's own constants
@@ -108,6 +125,9 @@ func TestS3DeniedReadIsNotFoundOnlyWhenAListingConfirmsAbsence(t *testing.T) {
 		{name: "missing key, only a longer key shares its prefix", objects: map[string]string{key + ".bak": "x"}, listAllowed: true, wantMissing: true},
 		{name: "missing key, listing denied too", listAllowed: false, wantMissing: false},
 		{name: "present key whose read is denied", objects: map[string]string{key: "{}"}, unreadable: []string{key}, listAllowed: true, wantMissing: false},
+		// The one-result listing still finds the key itself: it sorts
+		// before every longer key it prefixes.
+		{name: "present unreadable key beside longer keys", objects: map[string]string{key: "{}", key + ".bak": "x", key + "~": "x"}, unreadable: []string{key}, listAllowed: true, wantMissing: false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
