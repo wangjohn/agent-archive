@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/capture"
 )
 
 // damagedLocalFiles are the local files a command reads, relative to the data
@@ -152,15 +154,15 @@ func TestDamagedCaptureDiagnosticsHeal(t *testing.T) {
 	must(t, err)
 	home, _, _ := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, project))
 	for _, damage := range []string{"{truncated", `{"not":"a list"}`} {
-		must(t, os.WriteFile(captureDiagnosticsPath(home), []byte(damage), 0o600))
-		must(t, recordCaptureDiagnostic(home, captureDiagnostic{Code: diagnosticUnknownSessionStart, Harness: "claude", ProjectRoot: project, ObservedAt: time.Now()}))
-		diagnostics, err := readCaptureDiagnostics(home)
+		must(t, os.WriteFile(capture.DiagnosticsPath(home), []byte(damage), 0o600))
+		must(t, capture.RecordDiagnostic(home, capture.Diagnostic{Code: capture.DiagnosticUnknownSessionStart, Harness: "claude", ProjectRoot: project, ObservedAt: time.Now()}))
+		diagnostics, err := capture.ReadDiagnostics(home)
 		if err != nil || len(diagnostics) != 1 {
 			t.Fatalf("after a diagnostic over %q: %v %v", damage, diagnostics, err)
 		}
-		must(t, os.WriteFile(captureDiagnosticsPath(home), []byte(damage), 0o600))
-		must(t, pruneCaptureDiagnostics(home, nil))
-		if _, err := readCaptureDiagnostics(home); err != nil {
+		must(t, os.WriteFile(capture.DiagnosticsPath(home), []byte(damage), 0o600))
+		must(t, capture.PruneDiagnostics(home, nil))
+		if _, err := capture.ReadDiagnostics(home); err != nil {
 			t.Fatalf("after a prune over %q: %v", damage, err)
 		}
 	}

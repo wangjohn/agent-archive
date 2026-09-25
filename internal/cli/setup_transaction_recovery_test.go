@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 // U-22: when launchctl fails while an interrupted setup is being recovered,
@@ -26,7 +27,7 @@ func TestRecoveryBlockedByLaunchctlAdvertisesAbandon(t *testing.T) {
 			home, userHome := t.TempDir(), t.TempDir()
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 			plist := env.installation(home, userHome).collectorPlist()
-			must(t, local.Write(journalPath(home), setupJournal{Plist: plist, WasLoaded: true}))
+			must(t, local.Write(setupjournal.JournalPath(home), setupjournal.Journal{Plist: plist, WasLoaded: true}))
 			state := "missing"
 			if failure == "stop" {
 				state = "loaded"
@@ -35,7 +36,7 @@ func TestRecoveryBlockedByLaunchctlAdvertisesAbandon(t *testing.T) {
 			env.LoadLaunchAgent = func(string) error { return errors.New("Bootstrap failed: 5: Input/output error") }
 			env.UnloadLaunchAgent = func(string) error { return errors.New("Boot-out failed: 5: Input/output error") }
 			output := setupRun(t, env, "", 1)
-			if !strings.Contains(output, "agent-archive setup --abandon-recovery") || !strings.Contains(output, "launchctl could not") || !strings.Contains(output, journalPath(home)) {
+			if !strings.Contains(output, "agent-archive setup --abandon-recovery") || !strings.Contains(output, "launchctl could not") || !strings.Contains(output, setupjournal.JournalPath(home)) {
 				t.Fatalf("output:\n%s", output)
 			}
 		})
@@ -46,19 +47,19 @@ func TestUnreadableRecoveryRecordHasAWayOut(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	must(t, os.WriteFile(journalPath(home), []byte(`{"changes":[`), 0o600))
+	must(t, os.WriteFile(setupjournal.JournalPath(home), []byte(`{"changes":[`), 0o600))
 	output := setupRun(t, env, "", 1)
-	if !strings.Contains(output, "--abandon-recovery") || !strings.Contains(output, journalPath(home)) {
+	if !strings.Contains(output, "--abandon-recovery") || !strings.Contains(output, setupjournal.JournalPath(home)) {
 		t.Fatalf("setup:\n%s", output)
 	}
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"setup", "--abandon-recovery"}, nil, &out, &errOut, env); code != 0 || !strings.Contains(out.String(), "moved to") {
 		t.Fatalf("abandon: exit %d\n%s%s", code, &out, &errOut)
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		t.Fatal("the record is still there")
 	}
-	if aside, _ := filepath.Glob(journalPath(home) + ".*" + movedAsideSuffix); len(aside) != 1 {
+	if aside, _ := filepath.Glob(setupjournal.JournalPath(home) + ".*" + movedAsideSuffix); len(aside) != 1 {
 		t.Fatalf("moved aside: %v", aside)
 	}
 }
@@ -74,8 +75,8 @@ func interruptedSetupWithExternalEdit(t *testing.T) (home, userHome, settings st
 	if err != nil {
 		t.Fatal(err)
 	}
-	journal := setupJournal{Changes: []hooks.Change{{Path: settings, Before: []byte("{}\n"), After: installed, Existed: true, Mode: 0600}}, Plist: env.installation(home, userHome).collectorPlist()}
-	if err := local.Write(journalPath(home), journal); err != nil {
+	journal := setupjournal.Journal{Changes: []hooks.Change{{Path: settings, Before: []byte("{}\n"), After: installed, Existed: true, Mode: 0600}}, Plist: env.installation(home, userHome).collectorPlist()}
+	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
 	edited := bytes.Replace(installed, []byte("{"), []byte("{\n  \"theme\": \"dark\","), 1)
@@ -99,7 +100,7 @@ func TestInterruptedSetupHasAWayOut(t *testing.T) {
 	}
 	for _, args := range [][]string{{"setup"}, {"uninstall"}, {"pause"}} {
 		code, output := run("y\n", args...)
-		if code != 1 || !strings.Contains(output, journalPath(home)) || !strings.Contains(output, "agent-archive setup --abandon-recovery") {
+		if code != 1 || !strings.Contains(output, setupjournal.JournalPath(home)) || !strings.Contains(output, "agent-archive setup --abandon-recovery") {
 			t.Fatalf("%v: exit %d, output:\n%s", args, code, output)
 		}
 	}
@@ -110,7 +111,7 @@ func TestInterruptedSetupHasAWayOut(t *testing.T) {
 	if code != 0 || !strings.Contains(output, settings) {
 		t.Fatalf("abandon: exit %d\n%s", code, output)
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		t.Fatal("the journal is still there")
 	}
 	if b, _ := os.ReadFile(settings); !bytes.Equal(b, edited) {
@@ -136,11 +137,11 @@ func TestRecoveryStopsOnAnEditedRetiredJob(t *testing.T) {
 	if err := local.WriteBytes(old, append(plist, []byte("<!-- edited -->")...)); err != nil {
 		t.Fatal(err)
 	}
-	journal := setupJournal{
-		Relabeled: &legacyJob{Change: hooks.Change{Path: old, Before: plist, Existed: true, Mode: 0644}, WasLoaded: true},
+	journal := setupjournal.Journal{
+		Relabeled: &setupjournal.LegacyJob{Change: hooks.Change{Path: old, Before: plist, Existed: true, Mode: 0644}, WasLoaded: true},
 		Plist:     env.installation(home, userHome).collectorPlist(),
 	}
-	if err := local.Write(journalPath(home), journal); err != nil {
+	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
 	env.UnloadLaunchAgent = func(p string) error { t.Fatalf("unloaded %s", p); return nil }

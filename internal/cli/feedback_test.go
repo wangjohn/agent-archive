@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -19,7 +20,7 @@ func TestFeedbackFileIsFilteredBeforeRequestPersistence(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": project}, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": project}, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -81,7 +82,7 @@ func TestFeedbackRejectsSessionExcludedByCurrentSetup(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": project}, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": project}, now); err != nil {
 		t.Fatal(err)
 	}
 	store, err := state.Open(home)
@@ -122,7 +123,7 @@ func TestFeedbackWhilePausedSaysWhen(t *testing.T) {
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	env := testEnv(t, home, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
 	start := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": project, "transcript_path": writeTestTranscript(t, "t.jsonl", "")}
-	if err := handleHookEvent(home, "claude", start, env.now()); err != nil {
+	if err := capture.HandleEvent(home, "claude", start, env.now()); err != nil {
 		t.Fatal(err)
 	}
 	regs, _ := state.OpenReadOnly(home).LoadRegistrations()

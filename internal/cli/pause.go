@@ -6,6 +6,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -27,7 +28,7 @@ func runPauseCommand(stdout, stderr io.Writer, env Env, paused bool) int {
 	if err != nil {
 		return fail("resolve the data directory: %v", err)
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		return fail("no settings changed: %s", recoveryPending(home))
 	}
 	if _, found, err := config.Load(home); err != nil {
@@ -46,7 +47,7 @@ func runPauseCommand(stdout, stderr io.Writer, env Env, paused bool) int {
 	}
 	defer releaseHooks()
 	// Again under the locks: setup or uninstall may have finished meanwhile.
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		return fail("no settings changed: %s", recoveryPending(home))
 	}
 	cfg, found, err := config.Load(home)

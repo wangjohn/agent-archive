@@ -11,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 // detectHarnesses best-effort-detects installed applications by checking
@@ -33,12 +34,6 @@ func detectHarnesses(files hooks.Files) []string {
 var runLaunchctl = func(ctx context.Context, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, "launchctl", args...).CombinedOutput()
 }
-
-// jobAnotherInstallation is the job state of a label launchd has loaded
-// from a plist other than the one asked about: the job belongs to another
-// installation (the user's real one, seen from a sandboxed HOME, say), and
-// nothing here may stop or replace it.
-const jobAnotherInstallation = "another_installation"
 
 // loadLaunchAgent loads a just-installed LaunchAgent so scheduled
 // collection starts immediately rather than waiting for the next login.
@@ -65,7 +60,7 @@ func unloadLaunchAgent(plistPath string) error {
 	case "loaded", "running":
 	case "missing":
 		return nil
-	case jobAnotherInstallation:
+	case setupjournal.JobAnotherInstallation:
 		return fmt.Errorf("launchd's %s job was not loaded from %s; it belongs to another installation and was left running", launchLabel(plistPath), plistPath)
 	default:
 		return fmt.Errorf("cannot confirm which plist launchd's %s job was loaded from; it was left as it is", launchLabel(plistPath))
@@ -94,6 +89,19 @@ func (e Env) jobState(plist string) string {
 	return launchdJobState(plist)
 }
 
+// launchd is e's launchd as internal/setupjournal drives it: the same
+// jobState, loadLaunchAgent, and unloadLaunchAgent every command uses, so a
+// test's stand-ins (and TestMain's failing launchctl) apply there too.
+func (e Env) launchd() setupjournal.Launchd { return envLaunchd{e} }
+
+type envLaunchd struct{ env Env }
+
+func (l envLaunchd) JobState(plist string) string { return l.env.jobState(plist) }
+
+func (l envLaunchd) Load(plist string) error { return l.env.loadLaunchAgent(plist) }
+
+func (l envLaunchd) Unload(plist string) error { return l.env.unloadLaunchAgent(plist) }
+
 // launchdJobState asks launchd about the job plist defines, by its label.
 func launchdJobState(plist string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -104,8 +112,8 @@ func launchdJobState(plist string) string {
 
 // parseJobState reads `launchctl print` output for the job plist defines:
 // missing, loaded, or running when launchd loaded the label from plist
-// itself; jobAnotherInstallation when it loaded it from another file; and
-// unknown when launchctl fails or names no file to compare.
+// itself; setupjournal.JobAnotherInstallation when it loaded it from another
+// file; and unknown when launchctl fails or names no file to compare.
 func parseJobState(output string, err error, plist string) string {
 	if err != nil {
 		if strings.Contains(output, "Could not find service") {
@@ -124,7 +132,7 @@ func parseJobState(output string, err error, plist string) string {
 	case loadedFrom == "":
 		return "unknown"
 	case !local.SameLocation(loadedFrom, plist):
-		return jobAnotherInstallation
+		return setupjournal.JobAnotherInstallation
 	case strings.Contains(output, "state = running"):
 		return "running"
 	}

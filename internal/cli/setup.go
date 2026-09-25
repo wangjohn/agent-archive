@@ -14,9 +14,11 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -115,9 +117,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if opts.yes {
 		if err := setupWithoutQuestions(opts, stdin, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "Setup incomplete: %v\n", err)
-			var blocked *recoveryBlockedError
+			var blocked *setupjournal.RecoveryBlockedError
 			if errors.As(err, &blocked) {
-				terminal.Println(stderr, blocked.guidance())
+				terminal.Println(stderr, blocked.Guidance())
 			}
 			var other *otherInstallationError
 			if errors.As(err, &other) {
@@ -135,9 +137,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	if err := setup(stdin, stdout, stderr, env); err != nil {
 		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
-		var blocked *recoveryBlockedError
+		var blocked *setupjournal.RecoveryBlockedError
 		if errors.As(err, &blocked) {
-			terminal.Println(stderr, blocked.guidance())
+			terminal.Println(stderr, blocked.Guidance())
 			return 1
 		}
 		var other *otherInstallationError
@@ -438,7 +440,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	}
 	// The configuration is committed; a diagnostic for a project that
 	// was just excluded is stale local state, not a reason to fail.
-	if e := pruneCaptureDiagnostics(home, cfg.Archive.Projects); e != nil {
+	if e := capture.PruneDiagnostics(home, cfg.Archive.Projects); e != nil {
 		terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
 	}
 	printNextSteps(p, cfg.Harnesses, paused)
