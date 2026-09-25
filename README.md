@@ -27,22 +27,24 @@ R2 or Amazon S3 bucket. There is no account, hosted service, or telemetry.
 2. **Create a private bucket** and an access key for it: a few clicks in
    Cloudflare R2 or AWS ([how](docs/getting-started/bucket.md)).
 
-3. **Run setup** from inside a project you want archived:
+3. **Run setup** from inside a project you want archived (or from anywhere,
+   and pick from the projects your apps have sessions in):
 
    ```sh
    cd ~/code/my-project
    agent-archive setup
    ```
 
-4. **Approve the hooks** if an app asks (in Codex: `/hooks`), then start a
-   **new** session. Sessions already open aren't captured.
+4. **Follow setup's last lines:** approve the hooks in Codex (`/hooks`),
+   then start a **new** session. Sessions already open aren't captured.
 
 5. **Check it:** once that session has run for a minute or two,
    `agent-archive status` should say `Ready`; anything else comes with a
    `Next:` step. Optionally, `agent-archive backfill` imports the sessions
    already on this Mac.
 
-To add a second Mac, install and run setup there with the same bucket
+To add a second Mac, install and run setup there with the same bucket, or
+script it with [`agent-archive setup --yes`](docs/getting-started/setup.md#set-up-without-questions)
 ([multiple Macs](docs/guides/multiple-macs.md)).
 
 ## Commands
