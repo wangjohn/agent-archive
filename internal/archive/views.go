@@ -296,13 +296,7 @@ func compactionsObservable(bundle SourceBundle) bool {
 // never the raw recorded name.
 func (b SourceBundle) harness() string { return canonicalHarnessName(b.Capture.Harness.Name) }
 
-func canonicalHarnessName(name string) string {
-	name = strings.ToLower(strings.TrimSpace(name))
-	if name == "claude-code" {
-		return "claude"
-	}
-	return name
-}
+func canonicalHarnessName(name string) string { return CanonicalHarness(name) }
 
 // nestedMessageID returns the id of the record's nested message object
 // (Claude's message.id), which streamed records of one response share.
