@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -63,8 +64,16 @@ func OpenMetadataCache(home string) (*MetadataCache, error) {
 			return nil, err
 		}
 	}
+	// A listing killed between creating a temporary file and renaming it
+	// leaves the file behind; nothing else would ever remove it. Best
+	// effort, like every other write to this cache.
+	_ = local.RemoveStaleTemps(dir, staleCacheTempAge)
 	return &MetadataCache{dir: dir}, nil
 }
+
+// staleCacheTempAge is how old a temporary file in the cache must be before
+// OpenMetadataCache removes it: far longer than any write takes.
+const staleCacheTempAge = time.Hour
 
 type metadataCacheEntry struct {
 	Key      string          `json:"key"`
