@@ -30,6 +30,13 @@ var collectorAWSFiles = []string{"AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE
 // carries a user name or password in its URL is not recorded.
 var collectorAWSEndpoints = []string{"AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL_STS", "AWS_ENDPOINT_URL_SSO", "AWS_ENDPOINT_URL_SSO_OIDC"}
 
+// collectorProxies are the proxy variables Go's HTTP client reads, in both
+// spellings: a network that only lets traffic out through a proxy needs
+// them for every S3 request and credential exchange. A proxy URL with a
+// user name or password in it is not recorded (see
+// collectorEnvironmentLeftOut).
+var collectorProxies = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
+
 // launchdPath is the PATH launchd gives a job whose plist sets none.
 const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -39,8 +46,9 @@ const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 // shell's environment.
 //
 // For S3 it records the AWS file variables that are set, as absolute paths,
-// the endpoint overrides that are set, and always a PATH: this shell's
-// usable entries followed by launchd's own. PATH is recorded for every S3 profile, not only one that uses
+// the endpoint overrides and proxy settings that are set, and always a
+// PATH: this shell's usable entries followed by launchd's own. PATH is
+// recorded for every S3 profile, not only one that uses
 // credential_process today, because the SDK can reach a credential_process
 // through a source_profile chain, the command it runs (aws-vault, 1Password's
 // op, granted) runs helpers of its own through PATH, and a profile can gain a
@@ -57,16 +65,43 @@ func (e Env) collectorEnvironment(storage credentials.Config) map[string]string 
 			environment[name] = e.absolutePath(strings.TrimSpace(value))
 		}
 	}
-	for _, name := range collectorAWSEndpoints {
+	for _, name := range slices.Concat(collectorAWSEndpoints, collectorProxies) {
 		value, _ := e.lookupEnv(name)
-		value = strings.TrimSpace(value)
-		if endpoint, err := url.Parse(value); value != "" && err == nil && endpoint.User == nil {
+		if value = strings.TrimSpace(value); value != "" && !carriesCredentials(value) {
 			environment[name] = value
 		}
 	}
 	shellPath, _ := e.lookupEnv("PATH")
 	environment["PATH"] = collectorPath(shellPath)
 	return environment
+}
+
+// collectorEnvironmentLeftOut names the endpoint and proxy variables set in
+// this shell that collectorEnvironment does not record because their URL
+// carries a user name or password: the collector runs without them, so
+// setup says so.
+func (e Env) collectorEnvironmentLeftOut(storage credentials.Config) []string {
+	if storage.Provider != credentials.ProviderS3 {
+		return nil
+	}
+	var left []string
+	for _, name := range slices.Concat(collectorAWSEndpoints, collectorProxies) {
+		if value, _ := e.lookupEnv(name); carriesCredentials(strings.TrimSpace(value)) {
+			left = append(left, name)
+		}
+	}
+	return left
+}
+
+// carriesCredentials reports whether an endpoint or proxy setting holds a
+// user name or password: a URL's user information, or an @ in a bare
+// host:port, which Go's proxy handling reads the same way.
+func carriesCredentials(value string) bool {
+	if strings.Contains(value, "@") {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	return err == nil && parsed.User != nil
 }
 
 // collectorPath is shellPath's usable entries, without repeats, followed by
@@ -256,5 +291,8 @@ func (e Env) awsFilesDrift(storage credentials.Config, environment map[string]st
 func warnCollectorEnvironment(p *prompter, storage credentials.Config, userHome string, env Env) {
 	for _, problem := range collectorEnvironmentProblems(storage, env.collectorEnvironment(storage), userHome) {
 		p.warn(problem, "Scheduled uploads will fail until it can; agent-archive sync from this shell still works. Run setup from a shell where the profile works without aliases or shell functions.")
+	}
+	if left := env.collectorEnvironmentLeftOut(storage); len(left) > 0 {
+		p.warn(strings.Join(left, ", ")+" holds a user name or password, so the background collector runs without it.", "If the network needs it, scheduled uploads will fail while agent-archive sync from this shell still works. Use a proxy or endpoint that needs no credentials in its URL.")
 	}
 }
