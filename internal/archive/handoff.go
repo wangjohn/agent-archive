@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -118,6 +119,9 @@ type HandoffPlanItem struct {
 	// Status is copied verbatim from the harness's plan tool.
 	//lint:ignore LV1001 the harnesses' plan-status vocabulary is external and open
 	Status string `json:"status,omitempty"`
+	// id is the item's ID in the harness's plan tool (Cursor's todo_write
+	// writes one), by which a later partial update (merge: true) finds it.
+	id string
 }
 
 // HandoffExchange is one human prompt and everything the agent did before
@@ -202,7 +206,9 @@ const (
 
 // BuildHandoff arranges a filtered bundle for handoff without any budget.
 // metadata is optional; when present it supplies lifecycle state and models a
-// hook reported.
+// hook reported. Every string in the result is display text (see
+// displayText), so the Markdown and the JSON forms carry no bare carriage
+// return or terminal control sequence.
 func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) (Handoff, error) {
 	view, err := ParseNormalized(bundle)
 	if err != nil {
@@ -279,7 +285,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 		// A Cursor text transcript: role sections, no records to walk.
 		h.Exchanges, h.LeftOff = textTranscriptExchanges(bundle.NativeText, opts)
 		h.ToolResultsUnavailable = false
-		return h, nil
+		return displayHandoff(h), nil
 	}
 	events := handoffEvents(view)
 	files := fileSet{}
@@ -346,20 +352,21 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 		for _, file := range touchedFiles(name, call.Input, raw) {
 			files.add(relativeTo(file, root))
 		}
-		if plan := planItems(name, call.Input); plan != nil {
+		if plan := planItems(name, call.Input, h.Plan); plan != nil {
 			h.Plan = plan
 		}
 		current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: tool})
 	}
 	flush()
 	h.FilesTouched = files.list
-	return h, nil
+	return displayHandoff(h), nil
 }
 
 // textTranscriptExchanges reads the role sections of a filtered text
-// transcript: a "user:" section starts an exchange, an "assistant:" section is
-// agent text, and a "tool:" section is tool output. Continuation lines belong
-// to the section above them.
+// transcript with the parser FilterText used (parseTextSections): a "user:"
+// section starts an exchange, an "assistant:" section is agent text, and a
+// "tool:" section is tool output. Continuation lines belong to the section
+// above them.
 func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]HandoffExchange, string) {
 	exchanges := []HandoffExchange{}
 	current := &HandoffExchange{}
@@ -393,18 +400,16 @@ func textTranscriptExchanges(texts []TextTranscript, opts HandoffOptions) ([]Han
 		role, body = "", body[:0]
 	}
 	for _, transcript := range texts {
-		for line := range strings.SplitSeq(transcript.Content, "\n") {
-			if header, rest, ok := textRoleHeader(line); ok && visibleTextRoles[header] {
-				flushSection()
-				role = header
-				body = append(body, strings.TrimSpace(rest))
+		parsed, _ := parseTextSections(transcript.Content)
+		for _, section := range parsed.sections {
+			if !visibleTextRoles[section.role] {
 				continue
 			}
-			if role != "" {
-				body = append(body, line)
-			}
+			role = section.role
+			body = append(body, strings.TrimSpace(section.header))
+			body = append(body, section.lines[1:]...)
+			flushSection()
 		}
-		flushSection()
 	}
 	if current.Prompt != "" || len(current.Steps) > 0 {
 		exchanges = append(exchanges, *current)
@@ -759,9 +764,52 @@ func (s *fileSet) add(file string) {
 
 // planItems reads a plan-writing call: Claude's TodoWrite {todos: [{content,
 // status}]}, Codex's update_plan {plan: [{step, status}]}, and Cursor's
-// todo_write. It returns nil for any other call, and for a plan call whose
-// item list it cannot find.
-func planItems(name string, input map[string]any) []HandoffPlanItem {
+// todo_write {todos: [{id, content, status}], merge}. It returns the plan
+// after the call, or nil for any other call and for a plan call whose item
+// list it cannot find.
+//
+// A call replaces the plan (previous), except a Cursor todo_write with
+// merge: true, which sends only the items that changed: each is matched to
+// the previous item with the same id and updates its text and status (an
+// empty field leaves the previous one), and an item with a new id, or none,
+// is added at the end. Filter 10's handoff took such a call as the whole
+// plan, so it showed only the last item changed.
+func planItems(name string, input map[string]any, previous []HandoffPlanItem) []HandoffPlanItem {
+	items := replacementPlanItems(name, input)
+	if items == nil {
+		return nil
+	}
+	if merge, _ := input["merge"].(bool); !merge {
+		return slices.DeleteFunc(items, func(item HandoffPlanItem) bool { return item.Text == "" })
+	}
+	merged := slices.Clone(previous)
+	for _, item := range items {
+		index := -1
+		if item.id != "" {
+			index = slices.IndexFunc(merged, func(prior HandoffPlanItem) bool { return prior.id == item.id })
+		}
+		if index < 0 {
+			if item.Text != "" {
+				merged = append(merged, item)
+			}
+			continue
+		}
+		if item.Text != "" {
+			merged[index].Text = item.Text
+		}
+		if item.Status != "" {
+			merged[index].Status = item.Status
+		}
+	}
+	if merged == nil {
+		merged = []HandoffPlanItem{}
+	}
+	return merged
+}
+
+// replacementPlanItems reads the item list of a plan-writing call as a whole
+// plan (see planItems).
+func replacementPlanItems(name string, input map[string]any) []HandoffPlanItem {
 	if !planToolNames[strings.ToLower(name)] {
 		return nil
 	}
@@ -785,11 +833,19 @@ func planItems(name string, input map[string]any) []HandoffPlanItem {
 		if !ok {
 			continue
 		}
-		text := firstString(entry, "content", "step", "description", "title", "text")
-		if text == "" {
+		item := HandoffPlanItem{Text: firstString(entry, "content", "step", "description", "title", "text"), Status: firstString(entry, "status")}
+		switch id := entry["id"].(type) {
+		case string:
+			item.id = id
+		case float64, json.Number:
+			item.id = fmt.Sprint(id)
+		}
+		// An item with no text is kept only for its id: a merge may update
+		// the status of an item it names by id alone.
+		if item.Text == "" && item.id == "" {
 			continue
 		}
-		items = append(items, HandoffPlanItem{Text: text, Status: firstString(entry, "status")})
+		items = append(items, item)
 	}
 	return items
 }

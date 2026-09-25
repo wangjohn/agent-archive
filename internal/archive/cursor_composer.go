@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -784,6 +785,20 @@ func cursorArgumentObject(raw any) (map[string]any, bool) {
 // level.key, among the omitted keys; the sanitizer's own "record without
 // allowed fields" gap would misdescribe it, since it is no record.
 func (f *cursorComposerFilter) toolOutput(raw any, level, key string) (string, bool) {
+	original := ""
+	if text, isString := raw.(string); isString && isNestedJSON(text) {
+		// Filter 11: a result stored as a JSON string (the common case) is
+		// the structure it encodes, and goes through the structured branch
+		// below. Filter 10 kept it as text, so a base64 image, a cookie, or a
+		// token in it survived that the same result stored as an object lost.
+		// A result the sanitizer leaves as it was keeps its own text.
+		decoder := json.NewDecoder(strings.NewReader(text))
+		decoder.UseNumber()
+		var decoded any
+		if decoder.Decode(&decoded) == nil {
+			raw, original = decoded, text
+		}
+	}
 	switch value := raw.(type) {
 	case nil:
 		return "", false
@@ -791,6 +806,9 @@ func (f *cursorComposerFilter) toolOutput(raw any, level, key string) (string, b
 		return value, value != ""
 	case map[string]any, []any:
 		if !nonEmptyValue(value) {
+			if original != "" {
+				return original, true
+			}
 			encoded, _ := json.Marshal(value)
 			return string(encoded), true
 		}
@@ -808,6 +826,9 @@ func (f *cursorComposerFilter) toolOutput(raw any, level, key string) (string, b
 	if !keep {
 		f.omit(level, key)
 		return "", false
+	}
+	if original != "" && reflect.DeepEqual(safe, raw) && !jsonHasDuplicateKeys(original) {
+		return original, true
 	}
 	encoded, err := json.Marshal(safe)
 	if err != nil {

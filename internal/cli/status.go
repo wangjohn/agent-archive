@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -149,12 +150,15 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	if *jsonOut {
-		encoder := json.NewEncoder(stdout)
+		var encoded bytes.Buffer
+		encoder := json.NewEncoder(&encoded)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(view); err != nil {
 			terminal.Println(stderr, err)
 			return 1
 		}
+		// Errors and names in the view can come from the bucket.
+		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
 		return 0
 	}
 	terminal.Printf(stdout, "Agent Archive — %s\n\n", view.State)

@@ -173,7 +173,7 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	render := func(h archive.Handoff) []byte {
 		if *format == "json" {
 			data, _ := json.MarshalIndent(h, "", "  ")
-			return append(data, '\n')
+			return append(archive.DisplayJSON(data), '\n')
 		}
 		return archive.RenderHandoffMarkdown(h, archive.HandoffRenderOptions{Preamble: !*noPreamble})
 	}

@@ -5,6 +5,155 @@ rules, as a whole, are in [privacy](privacy.md); version numbers and bump
 rules are in [versions](../reference/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 11
+
+Filter 11 closes the shapes next to ones filter 9 and 10 fixed, from the
+second staff review (P-20 to P-26, A-20). Adapter version 0.11.0 and parser
+version 0.11.0 go with it. Every format changes.
+
+- **JSON inside a string is filtered as JSON.** Codex writes a function
+  call's arguments as a JSON string, so the tool-argument deny list never saw
+  their keys: a Codex `browser_type` call kept the password it typed, which
+  the same call from Claude Code dropped. Any string that holds a JSON object
+  or array is now decoded and filtered as a tool-argument subtree (every key
+  name kept, the deny list applied, every string redacted, binary blocks
+  dropped, JSON strings inside it decoded in turn), wherever it sits: Codex
+  arguments, custom tool input, and outputs; tool results an MCP server
+  returned as JSON text; Cursor JSONL; and Cursor database results stored as
+  strings, which kept their base64 images and cookies (P-25). A string the
+  filter changes is stored re-encoded (compact, keys sorted, no HTML
+  escaping); one it does not change keeps its bytes. A command-line array
+  (`["mysql", "-pS3cret"]`) has its secret values redacted by position.
+- **Typing tools by any common name, and secret labels.** Typed input is
+  dropped for any tool whose name holds a typing word (`type`, `fill`,
+  `form`, `input`, `press`, `select`, `keys`, `stdin`, …), which covers
+  `browser_fill_form`, chrome-devtools `fill_form`, `select_option`, and
+  Codex's `write_stdin`. For every tool, a `value` or `text` beside a label
+  that says it is a password, PIN, one-time code, card number, CVV, or
+  similar (`{"name": "Password", "value": …}`, `{"type": "password"}`,
+  `{"name": "DB_PASSWORD", "value": …}`) is dropped (P-21), and so is one
+  beside a label naming a credential as a key would, such as a HAR header
+  or cookie (`{"name": "Authorization", "value": …}`); a `[name, value]`
+  pair whose name is a credential (`["X-Api-Key", …]`) loses its value.
+- **One credential vocabulary.** Argument names and the text patterns now
+  use one word list (P-24). Arguments named `X-Api-Key`, `passwd`, `pass`,
+  `private_key`, or `auth` are dropped; `max_tokens` is no longer dropped
+  (the rule matches words, and a plural is another word; `secrets`,
+  `passwords`, and `creds` are words of their own). In text a name may be
+  written with spaces (`API Key: …`, `Secret Key = …`), may end in `value`
+  (`CLIENT_SECRET_VALUE`), and may be followed by a full-width `＝`;
+  `AUTH_KEY` and `Ocp-Apim-Subscription-Key` are names too.
+- **Structures and entries in text.** A credential name whose value is an
+  object or array (`"secret": {"value": …}`, `"passwords": [ … ]`, in
+  JSON, Python, JavaScript, or JSON escaped in a string, over several lines)
+  has every string value in it redacted, keeping keys and descriptive
+  values such as `type`. So does a YAML mapping or sequence under a
+  credential key (`secrets:` then `db: …`, `password:` then `value: …`,
+  `passwords:` then `- …`), at any depth, keeping its keys and comments. A
+  URL-encoded assignment in a nested query string or form body
+  (`password%3D…`, `api_token%3A…`) has its value redacted up to an encoded
+  `&` or `,`. A YAML entry whose `name:` is a credential has its
+  sibling `value:` redacted (a Kubernetes `env` list), as does a one-line
+  `{"name": "Authorization", "value": …}`. Structured data already dropped
+  these whole.
+- **Files shown with line numbers.** Agents read most files through a tool
+  that numbers the lines (the Claude Code Read tool, `cat -n`). The YAML
+  block and next-line rule, the entry rule, and the private key rule read
+  such lines after their numbers.
+- **More credential shapes** (P-22): command-line flags that carry a secret
+  for particular programs (`curl -u user:secret`, `mysql -psecret`,
+  `sshpass -p`, `docker login -p`, `redis-cli -a`, `sqlcmd -P`, `keytool
+  -storepass`, macOS `security -p`/`-w`, `openssl pass:`, `aws configure
+  set`, `npm config set`, fish `set -gx`, and more); `.netrc` passwords;
+  Cookie and Set-Cookie headers; `DB_PASS`, `REDIS_PASS`, `PGPASS`,
+  `dbPass`; `private_key_id`; Azure `AccountKey=`, `SharedAccessKey=`, and
+  SAS `sig=`; XML `<password>…</password>` and `<add key="ApiKey"
+  value="…"/>`; `api_key<TAB>value`; `?key=`; PGP private key blocks; and
+  the prefixed tokens of Stripe, GitLab, Google, Hugging Face, npm, PyPI,
+  SendGrid, Shopify, DigitalOcean, Vault, Databricks, Linear, Grafana,
+  Postman, New Relic, Sentry, Atlassian, Figma, Doppler, age, Mailgun,
+  Telegram, and Azure AD; Slack, Discord, and Teams webhook URLs; and a bare
+  `Bearer` token.
+- **The whole value** (P-23). An unquoted value runs to the end of its line
+  instead of the first space, `,`, `;`, or quote, so `password: correct
+  horse battery staple` and `DB_PASSWORD=Xk9;mP2vQ7zR` are redacted whole. It
+  stops earlier at the closing quote of a string it sits in, at whitespace
+  followed by shell punctuation, a comment, a flag, or another assignment,
+  at `, ` or `; `, and in a URL query at the next `&`. A YAML block value
+  (`password: |`) and a value on the line below its key are redacted whole.
+  URL userinfo ends at the last `@` before the host, and a password holding
+  `/` is covered.
+- **A PEM BEGIN line without an END line** takes only the base64 body that
+  follows it (P-26). Filter 10 took everything to the end of the string, so
+  source code that named the BEGIN line lost the rest of the file. A key
+  between BEGIN and END lines is taken when its lines are key body, read
+  through the decoration a display adds (line numbers from the Claude Code
+  Read tool, `cat -n`, or `grep -n`; diff, quote, and comment markers;
+  string quotes in source code), or, failing that, when it holds a base64
+  run of 48 characters or more (unless another BEGIN line, such as a
+  certificate's, is between); code between two constants that name the
+  armor lines is kept. A key cut short keeps no line with a 48-character
+  base64 run (`cat -A`, `grep -rn` output) and no body written on its
+  BEGIN line. A key split between two strings (a file read in two parts,
+  a tool result in chunks) has the body above its END line redacted in the
+  second string too. Certificates and public keys are kept.
+- **A flag at the start of a later line** (`mysql \` then `--password x`)
+  is redacted; filter 10's flag pattern matched only at the start of the
+  string or after a space.
+- **Cursor text headers in one case** (A-20). A role header is a role and a
+  colon at column 0, in the case of the transcript's first header: lower
+  case (`user:`) or capitalized (`User:`). A line in the other case is
+  content, so `Analysis: …` in a lower-case transcript hides nothing and a
+  YAML `user:` line in a capitalized one starts no turn. (The real Cursor
+  format is not pinned by a fixture; accepting both cases keeps capture
+  going whichever it is.) When the transcript separates sections with blank
+  lines, a visible role line that does not follow one is content, so YAML
+  in tool output cannot start a Person turn. A hidden role line always hides what
+  follows (fail closed), and the gap now counts the hidden sections and
+  lines. A header-shaped line inside a retained section is indented by one
+  space, so the handoff reads the retained text back exactly as it was
+  filtered.
+
+Known trade-offs, chosen toward the secret:
+- An environment prefix before a command loses the command with the value:
+  `TOKEN=abc npm test` becomes `TOKEN=[REDACTED]`.
+- A value labelled as a secret is dropped even when it is not one (a
+  `{"name": "token_type", "value": "Bearer"}` pair).
+- A key or tool name that merely contains a vocabulary word loses its value
+  (`password_policy` as a tool argument, `auth_mode`), as filter 10's
+  substring rule did.
+- A space-separated `-p value` after a program the filter does not know is
+  kept, since `-p` is a port or a flag to most programs.
+- A Cursor text transcript whose first header is neither lower case nor
+  capitalized (`USER:`) is refused as a capture gap rather than guessed at;
+  one without blank lines between sections is read as before.
+- A string holding JSON is filtered as a record is, wherever it sits, so a
+  pasted chat log in a prompt loses its system and reasoning messages
+  (`{"role": "system", …}`, with a `hidden_instruction_omitted` gap) and
+  its credential-named keys. JSON text that names a key twice is stored
+  re-encoded from the last value of each key, which is all the filter
+  reads.
+- Every string value inside a credential-named structure is redacted
+  whatever it is (`"token": {"expires": "[REDACTED]"}`), except under a
+  descriptive key (`type`, `kind`, `name`, `description`, `provider`, …).
+- Benign text is pinned by `TestFilterV11LeavesBenignTextUnchanged`: code
+  that names a password, prose, hashes, UUIDs, git SHAs, `ssh -p 22`,
+  `mkdir -p`, and URLs with an `@` in the path are left alone.
+
+The patterns run line by line, and only on lines holding a word every
+match needs (a credential word, a program name, a token prefix), which
+keeps filtering a large transcript within about twice filter 10's time
+(filter 11 as first written was about eight times slower). A fuzz target
+checks that the whole redaction, gated this way, equals the same redaction
+run over the whole string with no gate
+(`FuzzGatedRedactionMatchesWhole`), and a test proves from each parsed
+pattern that every match holds one of its needles
+(`TestPatternNeedlesAreRequired`).
+
+Snapshots filtered before the upgrade stay in the bucket until the session
+expires; see [after a filter upgrade](privacy.md#after-a-filter-upgrade) to
+delete them.
+
 ## Source filter version 10
 
 Filter 10 fixes two things. Adapter version 0.10.0 goes with it.

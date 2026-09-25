@@ -1,0 +1,2 @@
+go test fuzz v1
+string("passwd :0 0")

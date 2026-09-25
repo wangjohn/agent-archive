@@ -1174,7 +1174,7 @@ func TestRunRecordsSupersededSourceOnRepublish(t *testing.T) {
 // dropped just because it isn't JSONL.
 func TestRunFallsBackToCursorTextWhenJSONLIsUnrecognized(t *testing.T) {
 	dir := t.TempDir()
-	textTranscript := "User: hello\nAssistant: hi there\n"
+	textTranscript := "user: hello\nassistant: hi there\n"
 	path := writeTranscript(t, dir, "cursor.txt", textTranscript)
 	local := newTestStore(t)
 	reg := registration(t, path)

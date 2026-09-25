@@ -62,7 +62,7 @@ func fixtureBundles(t *testing.T) map[string]SourceBundle {
 		}
 		out[name] = bundle
 	}
-	text, err := (CursorAdapter{}).FilterText(strings.NewReader("User: hello\nAssistant: hi there\n"), captured)
+	text, err := (CursorAdapter{}).FilterText(strings.NewReader("user: hello\nassistant: hi there\n"), captured)
 	if err != nil {
 		t.Fatal(err)
 	}

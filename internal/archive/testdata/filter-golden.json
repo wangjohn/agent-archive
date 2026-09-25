@@ -23,6 +23,9 @@
   "claude-streamed-usage.jsonl": {
     "sha256": "c47f017c5ab6f0c0a97999830892d5845534cc92d0efe97cc7a9026544dc5ba0"
   },
+  "claude-synthetic-model.jsonl": {
+    "sha256": "bbbb278c31c2da015b59f9babac4a551f00eecddd1f0795f7d148f16fc79c832"
+  },
   "claude-task-notification.jsonl": {
     "sha256": "88bdd7fc1c42f171f4cf4f22920e7fd7e00bebe909a1efa5085649cc218ae8ad"
   },

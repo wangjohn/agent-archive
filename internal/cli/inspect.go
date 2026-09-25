@@ -170,7 +170,10 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	terminal.Println(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
 	for _, m := range sessions {
-		terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", m.SessionID, m.Harness.Name, formatTimeOrNever(m.CapturedAt), sessionOrigin(m), m.Parser.Status, listOrDash(modelNames(m)), listOrDash(skillNames(m)))
+		// Every cell but the fixed ones comes from bucket metadata, so it
+		// passes through archive.DisplayLine: no escape sequences reach the
+		// terminal, and no tab or newline breaks the table.
+		terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(m.SessionID), archive.DisplayLine(m.Harness.Name), formatTimeOrNever(m.CapturedAt), sessionOrigin(m), archive.DisplayLine(string(m.Parser.Status)), listOrDash(modelNames(m)), listOrDash(skillNames(m)))
 	}
 	if err := tw.Flush(); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -221,7 +224,7 @@ func warnSkippedSidecar(stderr io.Writer, command string) func(reader.SkippedSid
 		return nil
 	}
 	return func(s reader.SkippedSidecar) {
-		terminal.Printf(stderr, "agent-archive: %s: warning: skipped a session whose metadata could not be read: %v\n", command, s.Err)
+		terminal.Printf(stderr, "agent-archive: %s: warning: skipped a session whose metadata could not be read: %s\n", command, archive.DisplayLine(s.Err.Error()))
 	}
 }
 
@@ -394,13 +397,16 @@ func locateMetadataKey(ctx context.Context, store storage.ObjectStore, harness, 
 	return "", fmt.Errorf("session %q exists under more than one harness (%s); pass --harness", sessionID, strings.Join(harnesses, ", "))
 }
 
+// printJSON prints value as indented JSON. Its strings come from bucket
+// metadata, so the text goes through archive.DisplayJSON: a C1 control or
+// bidi override is printed as a \u escape, never raw to the terminal.
 func printJSON(stdout, stderr io.Writer, value any) int {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: encode output: %v\n", err)
 		return 1
 	}
-	terminal.Println(stdout, string(data))
+	terminal.Println(stdout, string(archive.DisplayJSON(data)))
 	return 0
 }
 
@@ -474,5 +480,9 @@ func listOrDash(names []string) string {
 	if len(names) == 0 {
 		return "-"
 	}
-	return strings.Join(names, ",")
+	display := make([]string, len(names))
+	for i, name := range names {
+		display[i] = archive.DisplayLine(name)
+	}
+	return strings.Join(display, ",")
 }
