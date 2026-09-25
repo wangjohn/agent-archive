@@ -200,11 +200,17 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if err != nil {
 		return fail("%v", err)
 	}
+	if err := checkpoint("undo configured"); err != nil {
+		return fail("%v", err)
+	}
 	if len(changes.Excluded) > 0 || changes.RetentionRestored {
 		batch.RecordUndone(changes)
 		if err := backfill.SaveBatch(home, *batch); err != nil {
 			return fail("%v. The configuration was already changed. Run undo again to remove the sessions.", err)
 		}
+	}
+	if err := checkpoint("undo recorded"); err != nil {
+		return fail("%v", err)
 	}
 	result := plan.Remove(context.Background(), store, bucket, now)
 	return reportUndo(stdout, stderr, *batch, plan, changes, result)
@@ -279,6 +285,9 @@ func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fing
 		return backfill.UndoChanges{}, errors.New("the configuration changed while this was open; run undo again. Nothing was changed")
 	}
 	if err := markUndone(); err != nil {
+		return backfill.UndoChanges{}, err
+	}
+	if err := checkpoint("undo marked"); err != nil {
 		return backfill.UndoChanges{}, err
 	}
 	changes := plan.ApplyToConfig(&cfg)

@@ -26,8 +26,11 @@ import (
 // between writing the batch file and saving the configuration ("batch
 // saved"), after the commit ("committed"), after each registration hold
 // ("registered"), before the upload ("uploading"), and when undo holds its
-// locks and has rechecked its plan ("undoing"). A test returns an error from
-// it to stop the import there, as a crash would.
+// locks and has rechecked its plan ("undoing"), has marked the batch undone
+// but not saved the configuration ("undo marked"), has saved it but not
+// recorded the changes in the batch ("undo configured"), and has recorded
+// them but removed no session ("undo recorded"). A test returns an error
+// from it to stop the import or undo there, as a crash would.
 var backfillCheckpoint func(step string) error
 
 // backfillHoldSteps, when positive, caps the steps registration takes per
