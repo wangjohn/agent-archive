@@ -486,9 +486,11 @@ file), and the desktop apps' workspace folders and temporary directories.
 The import adds each as an excluded project (`projects_kept_out` in the
 batch), so the nearest configured project for anything in them is excluded
 and hooks keep ignoring them, as before the import. The plan lists them, and
-says when not every folder could be checked. Undo removes each such entry
-again once nothing included contains it (removing it then changes no
-capture). Home (rule 7) is not looked in: `--include-home` is the explicit
+says when not every folder could be checked. Undoing the import removes
+each such entry again once nothing included contains it (removing it then
+changes no capture); an import still in place keeps its entries, even while
+setup has the folder excluded, so including the folder again keeps them out.
+Home (rule 7) is not looked in: `--include-home` is the explicit
 choice to capture everything under home, and the plan warns about it. A
 later backfill skips a kept-out repository's sessions as
 `excluded_project`, until setup includes it.

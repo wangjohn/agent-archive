@@ -199,6 +199,22 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 		t.Fatalf("plan:\n%s", out.String())
 	}
 
+	// Regression (PR #53 review): undoing another import never removes the
+	// entries of an import still in place, even while setup has the folder
+	// excluded: including the folder again must keep them out.
+	c := f.batch("2026-09-24-1", fixedNow.Add(-30*time.Minute))
+	f.cfg.Archive.Projects[0].Included = false
+	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
+		t.Fatalf("undoing another import removed a live import's kept-out entry: %v %v", plan.RemoveKeptOut, err)
+	}
+	undoneAt := fixedNow
+	a.UndoneAt = &undoneAt
+	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 1 {
+		t.Fatalf("an undone import's kept-out entry stayed: %v %v", plan.RemoveKeptOut, err)
+	}
+	a.UndoneAt = nil
+	f.cfg.Archive.Projects[0].Included = true
+
 	// A kept-out entry setup has since included is the person's.
 	f.cfg.Archive.Projects[1].Included = true
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
