@@ -562,8 +562,7 @@ func redactKeyTails(s string) (string, bool) {
 // lines after a BEGIN line. The first body line's decoration is kept.
 func keyTailStart(s string, floor, endAt int) int {
 	floor = max(floor, endAt-maxPEMFallbackBytes)
-	type lineSpan struct{ start, end int }
-	var lines []lineSpan
+	var lines []valueSpan
 	endLineStart := -1
 	for pos := floor; pos >= 0 && pos <= endAt; {
 		lineEnd, next := pemLineEnd(s, pos)
@@ -571,7 +570,7 @@ func keyTailStart(s string, floor, endAt int) int {
 			endLineStart = pos
 			break
 		}
-		lines = append(lines, lineSpan{pos, lineEnd})
+		lines = append(lines, valueSpan{pos, lineEnd})
 		pos = next
 	}
 	if endLineStart < 0 {
@@ -1007,7 +1006,7 @@ func yamlStructureSpans(s string, pos int, numbered bool, threshold int) ([]valu
 			if first {
 				sequenceAtKey, first = width == threshold && isYAMLSequenceItem(trimmed), false
 			}
-			if width < threshold || (width == threshold && !(sequenceAtKey && isYAMLSequenceItem(trimmed))) {
+			if width < threshold || (width == threshold && (!sequenceAtKey || !isYAMLSequenceItem(trimmed))) {
 				break
 			}
 			if at, length := yamlLineValue(trimmed); length > 0 {

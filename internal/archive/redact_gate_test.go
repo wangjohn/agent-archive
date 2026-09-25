@@ -114,7 +114,10 @@ func TestPatternNeedlesAreRequired(t *testing.T) {
 		}
 	}
 	// And the checker itself rejects needles a pattern does not require.
-	for _, bad := range []struct{ re, needle string }{
+	for _, bad := range []struct {
+		re     string
+		needle string
+	}{
 		{`(?i)pass(?:word)?|pwd`, "pass"},
 		{`a[bc]d`, "abd"},
 		{`secret\s*=`, "secret="},
@@ -162,8 +165,10 @@ func requires(re *syntax.Regexp, needles []string) bool {
 // every match starts or ends with (a set holding "" says nothing); ok is
 // whether every match holds a needle.
 type regexpInfo struct {
-	exact, prefix, suffix []string
-	ok                    bool
+	exact  []string
+	prefix []string
+	suffix []string
+	ok     bool
 }
 
 func exactInfo(set, needles []string) regexpInfo {
@@ -264,8 +269,9 @@ func analyze(re *syntax.Regexp, needles []string) regexpInfo {
 			acc = concatInfo(acc, analyze(sub, needles), needles)
 		}
 		return acc
+	case syntax.OpNoMatch, syntax.OpAnyCharNotNL, syntax.OpAnyChar, syntax.OpStar:
+		return unknown
 	default:
-		// OpStar, OpAnyChar, and the rest: nothing is known.
 		return unknown
 	}
 }
@@ -283,17 +289,18 @@ func concatInfo(a, b regexpInfo, needles []string) regexpInfo {
 	if joined := cross(a.suffix, b.prefix); joined != nil && holdsNeedle(joined, needles) {
 		ok = true
 	}
-	info := regexpInfo{prefix: a.prefix, suffix: b.suffix, ok: ok}
+	prefix, suffix := a.prefix, b.suffix
 	if a.exact != nil {
-		if prefix := cross(a.exact, b.prefix); prefix != nil {
-			info.prefix = prefix
+		if joined := cross(a.exact, b.prefix); joined != nil {
+			prefix = joined
 		}
 	}
 	if b.exact != nil {
-		if suffix := cross(a.suffix, b.exact); suffix != nil {
-			info.suffix = suffix
+		if joined := cross(a.suffix, b.exact); joined != nil {
+			suffix = joined
 		}
 	}
+	info := regexpInfo{prefix: prefix, suffix: suffix, ok: ok}
 	info.ok = info.ok || holdsNeedle(info.prefix, needles) || holdsNeedle(info.suffix, needles)
 	return info
 }
