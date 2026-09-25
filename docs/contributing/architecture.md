@@ -54,7 +54,7 @@ flowchart LR
 | `config` | `config.json`: the one record of how this Mac is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
 | `hooks` | Planning, installing, and removing hook entries and the LaunchAgent. |
-| `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. No command-line, network, launchctl, or Keychain dependencies (enforced by depguard and `TestCaptureImportBoundary`). |
+| `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. It imports nothing from the command line, even transitively, and does not itself import anything that runs a program, opens the Keychain, or uses the network (`credentials` and `storage` come in only through `config`, for their types); depguard and `TestCaptureImportBoundary` enforce this. |
 | `setupjournal` | Setup's transaction (`setup-transaction.json`): writing the journal before any hook file or the LaunchAgent changes, rolling a failed setup back, recovering an interrupted one without overwriting later edits, and retiring the prototype's job and collectors installed under earlier labels. launchd is reached only through the `Launchd` its caller passes (cli's `Env`). Every command and the hook check whether a journal is pending. |
 | `evidence` | Skill inventories and snapshots, as privacy-filtered evidence. |
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |

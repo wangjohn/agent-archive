@@ -83,6 +83,8 @@ linters:
               desc: a hook runs no other program
             - pkg: os/signal
               desc: cli owns process signals
+            - pkg: net$
+              desc: a hook never touches the network
             - pkg: net/http
               desc: a hook never touches the network
             - pkg: github.com/wangjohn/agent-archive/internal/credentials

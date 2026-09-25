@@ -351,4 +351,7 @@ can list them, inspect them, and hand one to another agent.
   drives launchd only through an interface cli's `Env` provides; cli keeps
   the prompts and the plan. Neither package may import the command-line
   layer (depguard, plus a test per package), and both have fail-closed
-  tests of their own. No behavior change.
+  tests of their own; a guard test keeps capture's tests from importing
+  anything that runs a program, opens the Keychain, or uses the network.
+  Tests that run the go command keep its module and build caches instead
+  of downloading every module. No behavior change.
