@@ -351,4 +351,5 @@ can list them, inspect them, and hand one to another agent.
   drives launchd only through an interface cli's `Env` provides; cli keeps
   the prompts and the plan. Neither package may import the command-line
   layer (depguard, plus a test per package), and both have fail-closed
-  tests of their own. No behavior change.
+  tests of their own. `status` and `uninstall` are split into named steps
+  and off the function-length exceptions. No behavior change.
