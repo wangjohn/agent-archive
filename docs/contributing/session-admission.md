@@ -13,8 +13,11 @@ imported registration has `origin: import` and two times:
 - `admitted_at` is when backfill took ownership. A hook registration sets it
   to its own start.
 
-Every boundary check uses `Admitted()`, which is `admitted_at`, or
-`session_started_at` for a registration older than that field:
+Every boundary check uses `archive.SessionRegistration.Admitted()`
+(`internal/archive/types.go`), which is `admitted_at`, or
+`session_started_at` for a registration older than that field.
+`AcceptSession` and `InCurrentDestination` are methods of `config.Config`
+(`internal/config/config.go`):
 
 | Check | Uses |
 |---|---|
@@ -25,9 +28,15 @@ Every boundary check uses `Admitted()`, which is `admitted_at`, or
 | Fresh-start eligibility for hooks, metadata `started_at`, subagent ordering, handoff | `session_started_at` |
 | App hook verification, `HookObserved`, skill inventory | hook-registered sessions only |
 
-A guard test fails if code compares `session_started_at` with `ActivatedAt`
-or `DestinationSince` outside `Admitted()`, and a second one if code compares
-an admission with `DestinationSince` outside `InCurrentDestination`. A hook
-that later resumes an imported session continues it: the registration keeps
-its start, admission, destination ID, and origin. Retention and undo leave a removal record when they forget a
-session, so backfill does not import it again.
+Two guard tests in `internal/archive/admission_guard_test.go` read the
+source. `TestNoBoundaryComparesSessionStartedAtOutsideAdmitted` fails if code
+compares `session_started_at` with `ActivatedAt` or `DestinationSince`
+outside `Admitted()`, and
+`TestNoDestinationTimeComparisonOutsideInCurrentDestination` fails if code
+compares an admission with `DestinationSince` outside
+`InCurrentDestination`.
+
+A hook that later resumes an imported session continues it: the
+registration keeps its start, admission, destination ID, and origin.
+Retention and undo leave a removal record when they forget a session, so
+backfill does not import it again (unless `--include-removed`).

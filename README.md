@@ -39,7 +39,8 @@ no account, hosted service, or telemetry.
   read the bucket can read your sessions. Use narrow credentials
   ([bucket permissions](docs/security/bucket-permissions.md)).
 - **On your Mac,** it edits the `hooks` entry of each app's settings file,
-  adds one LaunchAgent, and keeps its state in `~/.local/share/agent-archive`
+  adds one LaunchAgent, and keeps its state in `~/.local/share/agent-archive`.
+  R2 secrets are in the Keychain
   ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-mac)).
 
 Details, and where the protections stop: [privacy](docs/security/privacy.md).

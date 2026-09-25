@@ -29,14 +29,18 @@ For included projects, skipped starts (including a declined Cursor first prompt)
 `agent-archive backfill` registers sessions the hooks never saw, after you
 confirm a plan ([backfill](../guides/backfill.md)). An imported session keeps
 its true start time, from the transcript (or, for a Cursor file with no
-timestamps, the file's creation time), and also records when backfill took it
-over (`admitted_at`). The checks that decide whether it is captured and kept
-(project activation, the storage destination, and retention's age before a
-first capture) count from the takeover, so an old session imported today is
-not refused as older than its project's activation, nor expired at once. A
-hook that later resumes an imported session continues it. A session that
-retention or undo removed leaves a removal record, so backfill does not import
-it again.
+timestamps, the file's creation time), and also records its admission
+(`admitted_at`): when backfill took it over. The checks that decide whether
+it is captured and kept count from the admission, not the start: whether its
+project was included yet, which storage destination it belongs to, and its
+age under retention before its first capture. So an old session imported
+today is not refused as older than its project's inclusion, nor expired at
+once. The [glossary](glossary.md) defines admission, destination, and
+retention.
+
+A hook that later resumes an imported session continues it. A session that
+retention or `backfill undo` removed leaves a removal record, so a later
+backfill does not import it again unless you pass `--include-removed`.
 
 How admission is implemented, check by check, and the guard tests that keep
 it so, are in [session admission](../contributing/session-admission.md).
