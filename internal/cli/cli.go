@@ -318,6 +318,17 @@ var openKeychain = func() (credentials.CredentialStore, error) {
 	return store, nil
 }
 
+// notSetUp reports whether this Mac has no saved configuration. It reads
+// only, and says nothing when the data directory cannot be read.
+func notSetUp(env Env) bool {
+	home, err := env.readHome()
+	if err != nil {
+		return false
+	}
+	_, found, err := config.Load(home)
+	return err == nil && !found
+}
+
 const usage = `Agent Archive — archive coding-agent sessions to your private storage.
 
 Get started
@@ -363,6 +374,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		stdin = strings.NewReader("")
 	}
 	if len(args) == 0 {
+		if notSetUp(env) {
+			terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
+			terminal.Println(stdout)
+		}
 		terminal.Print(stdout, usage)
 		return 0
 	}
