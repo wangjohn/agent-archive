@@ -302,7 +302,7 @@ func (p *pass) fail(id string, err error) {
 }
 
 // scan gives one session its turn in the pass: skip it if nothing about it
-// changed, otherwise scan it (processSession) and account for the outcome.
+// changed, otherwise scan it (sessionScan.run) and account for the outcome.
 func (p *pass) scan(reg archive.SessionRegistration) {
 	id := reg.ArchiveSessionID
 	p.result.Scanned++

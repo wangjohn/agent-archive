@@ -276,7 +276,7 @@ func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, ada
 
 // CaptureGapCursorChatRewritten marks a Cursor database chat whose messages
 // changed after an earlier snapshot of it was taken, so a later snapshot
-// replaced one that did not lead to it (see processSession). A chat has at
+// replaced one that did not lead to it (see sessionScan.guard). A chat has at
 // most one: its detail counts the rewrites, and its observation time is the
 // last one's.
 const CaptureGapCursorChatRewritten = "cursor_chat_rewritten"
