@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // handoffTranscript is a Codex session with a prompt, a tool call whose
@@ -28,7 +29,7 @@ type handoffFixture struct {
 	env     Env
 	home    string
 	project string
-	mem     *storage.MemoryStore
+	mem     *storagetest.MemoryStore
 	id      string
 }
 
@@ -55,7 +56,7 @@ func newHandoffFixture(t *testing.T, sync bool) handoffFixture {
 	if err := os.WriteFile(transcript, []byte(strings.ReplaceAll(handoffTranscript, "PROJECT", project)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mem := storage.NewMemoryStore()
+	mem := storagetest.NewMemoryStore()
 	env := testEnv(t, home, now)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
 	env.WorkingDir = func() (string, error) { return project, nil }

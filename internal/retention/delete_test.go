@@ -6,13 +6,13 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // deleteRecordingStore records the keys deleted, in order, and fails the
 // delete of failKey.
 type deleteRecordingStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	failKey string
 	deleted []string
 }
@@ -34,7 +34,7 @@ func TestDeleteWholeSession(t *testing.T) {
 	sources := []string{"sessions/claude/session-1/sources/a.json", "sessions/claude/session-1/sources/b.json"}
 	other := "sessions/claude/session-2/metadata.json"
 	seed := func(failKey string) *deleteRecordingStore {
-		store := &deleteRecordingStore{MemoryStore: storage.NewMemoryStore(), failKey: failKey}
+		store := &deleteRecordingStore{MemoryStore: storagetest.NewMemoryStore(), failKey: failKey}
 		for _, key := range append([]string{metadata, other}, sources...) {
 			if err := store.Put(ctx, key, []byte("x")); err != nil {
 				t.Fatal(err)

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // A copy of Cursor's database that a killed backfill left behind is swept
@@ -37,7 +37,7 @@ func TestEveryPassSweepsStaleCursorSnapshots(t *testing.T) {
 	}
 
 	local := newTestStore(t)
-	if _, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "machine"}); err != nil {
+	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "machine"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(stale); !errors.Is(err, fs.ErrNotExist) {

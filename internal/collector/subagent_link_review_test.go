@@ -11,7 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func linkedSessionEvidenceCount(req state.Request, childID string) int {
@@ -61,7 +61,7 @@ func TestRepeatedParentLinkNotificationDoesNotGrowTheRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	for pass := range 5 {
 		now := at.Add(time.Duration(pass) * time.Hour)
 		if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil {
@@ -91,7 +91,7 @@ func TestChildLinkDoesNotExtendParentRetentionBasis(t *testing.T) {
 	if err := local.SaveRegistration(parent); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	first := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return first }}); err != nil {
 		t.Fatal(err)
@@ -149,7 +149,7 @@ func TestBlockedParentIsNotRenotifiedUntilItRecovers(t *testing.T) {
 	if err := local.SaveRegistration(parent); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	run := func(now time.Time) {
 		t.Helper()
 		if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }}); err != nil {

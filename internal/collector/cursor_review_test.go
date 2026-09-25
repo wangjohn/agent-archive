@@ -10,7 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // TestCursorSQLiteRememberedFailureWithRequest: a hook request on a chat
@@ -28,7 +28,7 @@ func TestCursorSQLiteRememberedFailureWithRequest(t *testing.T) {
 	if err := local.SaveRegistration(bad); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	at := time.Date(2026, 1, 1, 2, 0, 0, 0, time.UTC)
 	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 	if result, copies := run(t, local, remote, opts, passes); !errors.Is(result.Errors[bad.ArchiveSessionID], archive.ErrUnsafeSourceFormat) || copies != 1 {
@@ -120,7 +120,7 @@ func TestCursorSQLiteChatNewerThanTheSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock(), cursorPass: pass}
-	if _, err := processSession(context.Background(), local, storage.NewMemoryStore(), reg, mustRequest(t, local, reg.ArchiveSessionID), opts.now(), opts); err == nil {
+	if _, err := processSession(context.Background(), local, storagetest.NewMemoryStore(), reg, mustRequest(t, local, reg.ArchiveSessionID), opts.now(), opts); err == nil {
 		t.Fatal("no error")
 	}
 	if _, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); blocked {

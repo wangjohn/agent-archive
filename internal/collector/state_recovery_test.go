@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // A well-formed file of an unexpected shape, as a newer version might leave
@@ -21,7 +22,7 @@ func TestWrongShapeStateFileIsReportedNotQuarantined(t *testing.T) {
 	if err := os.WriteFile(registrationPath(local, "newer"), []byte(`{"archive_session_id":["not","a","string"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"})
+	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "m"})
 	if err != nil || result.Errors["newer"] == nil || errors.Is(result.Errors["newer"], state.ErrQuarantined) {
 		t.Fatalf("%#v %v %v", result, err, result.Errors)
 	}
@@ -36,7 +37,7 @@ func TestSecondQuarantineKeepsTheFirst(t *testing.T) {
 	local := newTestStore(t)
 	for range 2 {
 		corruptFile(t, requestPath(local, "orphan"))
-		if _, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
+		if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -58,7 +59,7 @@ func TestUnreadableRegistrationCountsAsPending(t *testing.T) {
 	if err := os.Chmod(registrationPath(local, "session-1"), 0); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"})
+	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "m"})
 	if err != nil || result.Errors["session-1"] == nil {
 		t.Fatalf("%#v %v %v", result, err, result.Errors)
 	}
@@ -106,7 +107,7 @@ func TestParserUpgradeRepublishesSourceThisBuildBuildsDifferently(t *testing.T) 
 	for _, oldSourceGone := range []bool{false, true} {
 		t.Run(map[bool]string{false: "old source present", true: "old source missing"}[oldSourceGone], func(t *testing.T) {
 			local := newTestStore(t)
-			store := storage.NewMemoryStore()
+			store := storagetest.NewMemoryStore()
 			path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
 			if err := local.SaveRegistration(registration(t, path)); err != nil {
 				t.Fatal(err)
@@ -147,7 +148,7 @@ func TestParserUpgradeRepublishesSourceThisBuildBuildsDifferently(t *testing.T) 
 
 // sourceReadCounter counts reads (Get or Stat) of one object.
 type sourceReadCounter struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	key   string
 	reads int
 }
@@ -176,7 +177,7 @@ func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
 	for _, damage := range []string{"missing", "different"} {
 		t.Run(damage, func(t *testing.T) {
 			local := newTestStore(t)
-			memory := storage.NewMemoryStore()
+			memory := storagetest.NewMemoryStore()
 			path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
 			if err := local.SaveRegistration(registration(t, path)); err != nil {
 				t.Fatal(err)
@@ -250,7 +251,7 @@ func TestUnverifiableRecordedSourceIsReportedOnceAndNotRetried(t *testing.T) {
 // record is dropped once the session publishes again.
 func TestUnderivableMetadataIsRecordedUntilTheNextPublication(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n")
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
@@ -291,7 +292,7 @@ func TestUnderivableMetadataIsRecordedUntilTheNextPublication(t *testing.T) {
 
 // blockingPutStore holds every Put until the pass's context ends.
 type blockingPutStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	started chan struct{}
 }
 
@@ -308,7 +309,7 @@ func (s *blockingPutStore) Put(ctx context.Context, key string, data []byte) err
 // publication stays pending for the next pass.
 func TestSessionCutOffByPassDeadlineIsNotAFailure(t *testing.T) {
 	local := newTestStore(t)
-	store := &blockingPutStore{MemoryStore: storage.NewMemoryStore(), started: make(chan struct{}, 1)}
+	store := &blockingPutStore{MemoryStore: storagetest.NewMemoryStore(), started: make(chan struct{}, 1)}
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n"))); err != nil {
 		t.Fatal(err)
 	}

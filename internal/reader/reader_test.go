@@ -9,13 +9,13 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
-func fixture(t *testing.T) (archive.Metadata, archive.SourceBundle, *storage.MemoryStore) {
+func fixture(t *testing.T) (archive.Metadata, archive.SourceBundle, *storagetest.MemoryStore) {
 	t.Helper()
 	ctx := context.Background()
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	filtered, err := archive.CodexAdapter{}.FilterJSONL(strings.NewReader(`{"type":"turn_context","model":"gpt-test"}` + "\n" + `{"type":"response_item","id":"m1","payload":{"type":"message","role":"assistant","content":"visible"}}`))
 	if err != nil {
 		t.Fatal(err)

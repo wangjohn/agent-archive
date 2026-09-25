@@ -1,14 +1,20 @@
-package storage
+// Package storagetest is an in-memory storage.ObjectStore for tests. It is
+// test code only: production code stores through storage's S3 client, and
+// depguard (.golangci.yml) keeps this package out of it.
+package storagetest
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-// MemoryStore is a concurrency-safe in-memory ObjectStore for tests and local
-// dry runs. It intentionally returns copies so callers cannot mutate stored
+// MemoryStore is a concurrency-safe in-memory storage.ObjectStore for tests. It intentionally returns copies so callers cannot mutate stored
 // bytes after a successful Put.
 type MemoryStore struct {
 	mu      sync.RWMutex
@@ -44,7 +50,7 @@ func (s *MemoryStore) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
-// Get returns a copy of the object's bytes, or ErrNotFound.
+// Get returns a copy of the object's bytes, or storage.ErrNotFound.
 func (s *MemoryStore) Get(ctx context.Context, key string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -53,29 +59,29 @@ func (s *MemoryStore) Get(ctx context.Context, key string) ([]byte, error) {
 	defer s.mu.RUnlock()
 	obj, ok := s.objects[key]
 	if !ok {
-		return nil, ErrNotFound
+		return nil, storage.ErrNotFound
 	}
 	return append([]byte(nil), obj.data...), nil
 }
 
 // Stat describes an object, with the SHA-256 of its bytes.
-func (s *MemoryStore) Stat(ctx context.Context, key string) (ObjectInfo, error) {
+func (s *MemoryStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
 	if err := ctx.Err(); err != nil {
-		return ObjectInfo{}, err
+		return storage.ObjectInfo{}, err
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	obj, ok := s.objects[key]
 	if !ok {
-		return ObjectInfo{}, ErrNotFound
+		return storage.ObjectInfo{}, storage.ErrNotFound
 	}
-	return ObjectInfo{Size: int64(len(obj.data)), SHA256: sha256Hex(obj.data)}, nil
+	return storage.ObjectInfo{Size: int64(len(obj.data)), SHA256: storage.SHA256Hex(obj.data)}, nil
 }
 
 // List returns the objects under prefix, sorted by key, without their
 // bodies. A prefix matches whole path components: "a" lists "a" and "a/b"
 // but not "ab". An empty prefix lists everything.
-func (s *MemoryStore) List(ctx context.Context, prefix string) ([]Object, error) {
+func (s *MemoryStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -88,10 +94,10 @@ func (s *MemoryStore) List(ctx context.Context, prefix string) ([]Object, error)
 		}
 	}
 	sort.Strings(keys)
-	objects := make([]Object, 0, len(keys))
+	objects := make([]storage.Object, 0, len(keys))
 	for _, key := range keys {
 		obj := s.objects[key]
-		objects = append(objects, Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
+		objects = append(objects, storage.Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
 	}
 	return objects, nil
 }
@@ -115,6 +121,13 @@ func hasPrefixKey(key, prefix string) bool {
 }
 
 var (
-	_ ObjectStore   = (*MemoryStore)(nil)
-	_ ObjectStatter = (*MemoryStore)(nil)
+	_ storage.ObjectStore   = (*MemoryStore)(nil)
+	_ storage.ObjectStatter = (*MemoryStore)(nil)
 )
+
+// md5Hex is the ETag an S3-compatible store reports for a single-part,
+// non-KMS object. It is an identity for ETag comparison, not a security hash.
+func md5Hex(data []byte) string {
+	sum := md5.Sum(data) //nolint:gosec
+	return hex.EncodeToString(sum[:])
+}

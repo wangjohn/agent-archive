@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 const grownTranscript = codexTranscript + "\n" + `{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}` + "\n"
@@ -106,7 +107,7 @@ func assertRepublishedSuperseding(t *testing.T, local *state.Store, store storag
 // really replaced, rather than failing after the upload on every pass.
 func TestPublishAfterSourceSchemaBumpSupersedesUploadedKey(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	firstKey := publishThenGrow(t, local, store, t0)
 	editPublishedState(t, local, olderSourceSchema)
@@ -117,7 +118,7 @@ func TestPublishAfterSourceSchemaBumpSupersedesUploadedKey(t *testing.T) {
 // cached metadata, which names exactly the uploaded object.
 func TestPublishWithOlderStateReadsSupersededKeyFromCachedMetadata(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	firstKey := publishThenGrow(t, local, store, t0)
 	editPublishedState(t, local, func(state map[string]any) {
@@ -131,7 +132,7 @@ func TestPublishWithOlderStateReadsSupersededKeyFromCachedMetadata(t *testing.T)
 // completes, and nothing is guessed into the superseded ledger.
 func TestPublishWithUnknownPreviousSourceStillCompletes(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishThenGrow(t, local, store, t0)
 	editPublishedState(t, local, func(state map[string]any) {
@@ -147,7 +148,7 @@ func TestPublishWithUnknownPreviousSourceStillCompletes(t *testing.T) {
 // on and publishes current metadata.
 func TestParserUpgradeOverUnreproducibleBundleDoesNotFailSession(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
@@ -173,7 +174,7 @@ func TestParserUpgradeOverUnreproducibleBundleDoesNotFailSession(t *testing.T) {
 // the next one until that date: it defers by at most one interval.
 func TestFutureLastPublicationDefersByAtMostOneInterval(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
@@ -200,7 +201,7 @@ func TestFutureLastPublicationDefersByAtMostOneInterval(t *testing.T) {
 // one interval from now, durably, so it publishes once that has passed.
 func TestPendingReadyAtInTheFutureIsCapped(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n")
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
@@ -244,7 +245,7 @@ func corruptFile(t *testing.T, path string) {
 // reported, every other session is published, and the pass completes.
 func TestCorruptStateFilesAreQuarantinedPerSession(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"))); err != nil {
 		t.Fatal(err)
@@ -310,7 +311,7 @@ func TestUnreadableRequestHoldsOnlyItsSession(t *testing.T) {
 		t.Skip("root reads unreadable files")
 	}
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n"))); err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +335,7 @@ func TestUnreadableRequestHoldsOnlyItsSession(t *testing.T) {
 // pass goes on to the others and still records its status.
 func TestMidPassLocalFailureIsPerSession(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"))); err != nil {
 		t.Fatal(err)
@@ -366,7 +367,7 @@ func TestMidPassLocalFailureIsPerSession(t *testing.T) {
 // its work pending, instead of failing every remaining session.
 func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript+"\n"))); err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +390,7 @@ func TestExpiredPassContextLeavesSessionsPending(t *testing.T) {
 // instead of blocking the pass on an open that waits for a writer.
 func TestFIFOTranscriptFailsWithoutBlockingThePass(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	if err := local.SaveRegistration(registration(t, writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"))); err != nil {
 		t.Fatal(err)
@@ -474,7 +475,7 @@ func TestRunRemovesStaleWriteTemporaries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
+	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{stale, nested} {

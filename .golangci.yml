@@ -38,6 +38,14 @@ linters:
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/state/statetest
               desc: test helpers only; production code saves through state.Published
+        # The in-memory object store stands in for S3 and R2 in tests; nothing
+        # in production may store to it (sessions would never leave the Mac).
+        storagetest-only-in-tests:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/storage/storagetest
+              desc: test helpers only; production code stores through storage's S3 client
         # Retention deletes; the collector publishes. Retention's whole-session
         # delete lives in retention itself, so it never needs the collector.
         retention-does-not-import-collector:

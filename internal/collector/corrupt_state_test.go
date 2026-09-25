@@ -12,12 +12,12 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // putCountingStore counts uploads.
 type putCountingStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	mu   sync.Mutex
 	puts int
 }
@@ -48,7 +48,7 @@ func TestCorruptCollectorOwnedStateIsMovedAsideAndTheSessionRecovers(t *testing.
 	for _, dir := range []string{"published", "pending", "superseded"} {
 		t.Run(dir, func(t *testing.T) {
 			local := newTestStore(t)
-			remote := &putCountingStore{MemoryStore: storage.NewMemoryStore()}
+			remote := &putCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 			path := claudeSession(t, local, claudePromptLine+"\n")
 			at := time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)
 			if r := runAt(t, local, remote, at); len(r.Published) != 1 {
@@ -106,7 +106,7 @@ func TestCorruptCollectorOwnedStateIsMovedAsideAndTheSessionRecovers(t *testing.
 // uploaded again on the next pass.
 func TestUnreadableLedgerDoesNotReuploadEveryPass(t *testing.T) {
 	local := newTestStore(t)
-	remote := &putCountingStore{MemoryStore: storage.NewMemoryStore()}
+	remote := &putCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	path := claudeSession(t, local, claudePromptLine+"\n")
 	at := time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)
 	runAt(t, local, remote, at)
@@ -142,7 +142,7 @@ func TestUnreadableLedgerDoesNotReuploadEveryPass(t *testing.T) {
 // the scan then rewrites; it never fails the session.
 func TestCorruptScanJournalIsRewritten(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	claudeSession(t, local, claudePromptLine+"\n")
 	at := time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)
 	runAt(t, local, remote, at)

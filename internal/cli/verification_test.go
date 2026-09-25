@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // publishSyntheticSessions registers n codex sessions for project and
@@ -56,7 +57,7 @@ func publishSyntheticSessions(t *testing.T, home, project string, remote storage
 
 // removeRemoteSource deletes a published session's source object, leaving
 // its metadata pointer in place.
-func removeRemoteSource(t *testing.T, remote *storage.MemoryStore, id string) archive.Metadata {
+func removeRemoteSource(t *testing.T, remote *storagetest.MemoryStore, id string) archive.Metadata {
 	t.Helper()
 	key, err := archive.MetadataObjectKey("codex", id)
 	if err != nil {
@@ -75,7 +76,7 @@ func removeRemoteSource(t *testing.T, remote *storage.MemoryStore, id string) ar
 func TestReadBackFailureBacksOffAndDoesNotFailSync(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC().Truncate(time.Second)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	cfg, store := publishSyntheticSessions(t, home, project, remote, at, 1)
 	metadata := removeRemoteSource(t, remote, "s0")
 	source, err := archive.BuildCompressedSource(func() archive.SourceBundle {
@@ -147,7 +148,7 @@ func TestReadBackFailureBacksOffAndDoesNotFailSync(t *testing.T) {
 func TestReadBackMismatchIsDistinctFromTransientFailure(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	cfg, store := publishSyntheticSessions(t, home, project, remote, at, 1)
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
 	// Another machine's identity invalidates the record and the remote
@@ -175,7 +176,7 @@ func TestReadBackMismatchIsDistinctFromTransientFailure(t *testing.T) {
 func TestReadBackCapsAttemptsPerPassOldestFirst(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	total := maxVerificationsPerPass + 2
 	cfg, store := publishSyntheticSessions(t, home, project, remote, at, total)
 	for i := range total {
@@ -234,7 +235,7 @@ func TestAuthenticationStalenessSkipsPausedAndProbeRefreshesFirst(t *testing.T) 
 		t.Fatal(err)
 	}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	if _, err := runOnePass(env, true); err != nil {
 		t.Fatal(err)
@@ -307,7 +308,7 @@ func TestStatusRequiresRecordedReadbackAndInvalidatesConfiguration(t *testing.T)
 	if err := store.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
@@ -359,7 +360,7 @@ func TestBackgroundChecksStorageWithoutSessionsAndStatusDoesNotProbe(t *testing.
 		t.Fatal(err)
 	}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	if _, err := runOnePass(env, true); err != nil {
 		t.Fatal(err)

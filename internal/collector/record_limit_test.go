@@ -12,7 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 const claudePromptLine = `{"type":"user","uuid":"p1","sessionId":"native-claude","timestamp":"2026-09-22T12:00:00Z","message":{"role":"user","content":"Run the tests."}}`
@@ -35,7 +35,7 @@ func withCollectorRecordLimit(t *testing.T, limit int64) {
 // dropped tool output stay out of the published bundle.
 func TestFiveMegabyteToolResultRecordPublishes(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	claudeSession(t, local, claudePromptLine+"\n"+toolResultLine("r1", 5<<20)+"\n")
 	result := runAt(t, local, remote, time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC))
 	if len(result.Published) != 1 || len(result.Errors) != 0 {
@@ -69,7 +69,7 @@ func TestRecordOverTheLimitBlocksOnceAndClearsWhenTheFileChanges(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			withCollectorRecordLimit(t, 4096)
 			local := newTestStore(t)
-			remote := storage.NewMemoryStore()
+			remote := storagetest.NewMemoryStore()
 			path := claudeSession(t, local, tc.content)
 			at := time.Date(2026, 9, 22, 13, 0, 0, 0, time.UTC)
 			if err := local.SaveRequest("session-1", "stop", at); err != nil {

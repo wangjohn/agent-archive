@@ -11,12 +11,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // relativeKeyStore rejects absolute keys on every operation, mirroring the
 // S3 store's prefix composition, so a probe that passes a pre-prefixed key
 // fails the same way it would against a configured bucket.
-type relativeKeyStore struct{ *storage.MemoryStore }
+type relativeKeyStore struct{ *storagetest.MemoryStore }
 
 func (s relativeKeyStore) Put(ctx context.Context, key string, data []byte) error {
 	if err := requireRelativeKey(key); err != nil {
@@ -72,7 +73,7 @@ func TestScheduledProbeContinuesToPublication(t *testing.T) {
 	if err := localStore.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := relativeKeyStore{storage.NewMemoryStore()}
+	remote := relativeKeyStore{storagetest.NewMemoryStore()}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	result, err := runOnePass(env, true)

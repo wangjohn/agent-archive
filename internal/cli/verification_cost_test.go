@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // A pass with nothing to read back decodes no session's published state:
@@ -15,7 +15,7 @@ import (
 func TestReadBackOfVerifiedSessionsDecodesNothing(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	total := maxVerificationsPerPass + 3
 	cfg, store := publishSyntheticSessions(t, home, project, remote, at, total)
 	now := at.Add(time.Hour)

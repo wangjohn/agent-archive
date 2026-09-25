@@ -84,7 +84,7 @@ In Go tests, everything goes through injection:
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).
-- Storage tests use `storage.NewMemoryStore()`.
+- Storage tests use `storagetest.NewMemoryStore()` (`internal/storage/storagetest`, test code only: depguard keeps it out of production code, as it does `state/statetest`).
 
 ## Running the binary by hand in a sandbox
 

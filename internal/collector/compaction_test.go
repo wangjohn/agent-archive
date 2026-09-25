@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // compactionFixtureLines returns the synthetic Claude Code session in
@@ -45,7 +45,7 @@ func claudeSession(t *testing.T, local *state.Store, content string) string {
 // any other new activity, with the new counts.
 func TestAppendedCompactionPublishesNormally(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	lines := compactionFixtureLines(t)
 	path := claudeSession(t, local, strings.Join(lines[:2], "\n")+"\n")
 	t0 := time.Date(2026, 9, 22, 12, 0, 30, 0, time.UTC)
@@ -84,7 +84,7 @@ func TestAppendedCompactionPublishesNormally(t *testing.T) {
 // the file, and the session is recorded as a gap rather than overwritten.
 func TestCompactionThatRewroteTheTranscriptIsRecordedAsAGap(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	lines := compactionFixtureLines(t)
 	path := claudeSession(t, local, strings.Join(lines[:2], "\n")+"\n")
 	t0 := time.Date(2026, 9, 22, 12, 0, 30, 0, time.UTC)

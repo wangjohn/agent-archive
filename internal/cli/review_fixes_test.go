@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -94,7 +95,7 @@ func TestFailedScheduledUpdateBlocksDestinationSwitchUntilRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cloud := storage.NewMemoryStore()
+	cloud := storagetest.NewMemoryStore()
 	opts := collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	run := func(store storage.ObjectStore, fail bool) {
 		t.Helper()
@@ -194,7 +195,7 @@ func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
 				if choice == "prefix" {
 					fixed = cfg.Storage.Prefix == "allowed/"
 				}
-				return settingsProbeStore{storage.NewMemoryStore(), !fixed}, nil
+				return settingsProbeStore{storagetest.NewMemoryStore(), !fixed}, nil
 			}
 			value := "eu-west-1"
 			if choice == "prefix" {

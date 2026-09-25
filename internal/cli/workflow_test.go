@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func writeCodexTranscript(t *testing.T, dir string) string {
@@ -198,11 +199,11 @@ func TestSyncRunsRetentionSweepAndDeletesExpiredSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var mem *storage.MemoryStore
+	var mem *storagetest.MemoryStore
 	env := testEnv(t, home, now)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
 		if mem == nil {
-			mem = storage.NewMemoryStore()
+			mem = storagetest.NewMemoryStore()
 		}
 		return mem, nil
 	}
@@ -289,11 +290,11 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var mem *storage.MemoryStore
+	var mem *storagetest.MemoryStore
 	env := testEnv(t, home, now)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
 		if mem == nil {
-			mem = storage.NewMemoryStore()
+			mem = storagetest.NewMemoryStore()
 		}
 		return mem, nil
 	}

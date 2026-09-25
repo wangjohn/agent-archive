@@ -9,7 +9,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
@@ -42,7 +42,7 @@ func TestRunMaterializesAndPublishesSeparateClaudeSubagent(t *testing.T) {
 	if err := local.SaveRequest("parent", "subagent-link", stopAt, link); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	now := stopAt.Add(time.Minute)
 	result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
 	if err != nil {

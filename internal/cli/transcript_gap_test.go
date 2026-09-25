@@ -9,6 +9,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // publishedThroughSync sets up a project, registers and publishes one Codex
@@ -19,7 +20,7 @@ func publishedThroughSync(t *testing.T, now time.Time) (Env, string, string, sto
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
 	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
-	bucket := storage.NewMemoryStore()
+	bucket := storagetest.NewMemoryStore()
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
 	path := writeCodexTranscript(t, project)
 	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now); err != nil {

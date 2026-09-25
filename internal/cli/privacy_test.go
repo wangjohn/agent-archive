@@ -12,10 +12,11 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 type privateTestStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	calls int
 }
 
@@ -33,7 +34,7 @@ func (s *privateTestStore) InspectPrivacy(ctx context.Context) storage.PrivacyRe
 func TestPrivacyEvidenceIsScopedAndExpires(t *testing.T) {
 	cfg := config.Config{Storage: credentialsTestConfig()}
 	at := time.Now().UTC()
-	remote := &privateTestStore{MemoryStore: storage.NewMemoryStore()}
+	remote := &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}
 	cfg.BucketPrivacy = inspectBucketPrivacy(cfg, remote, at)
 	if remote.calls != 1 {
 		t.Fatal("inspection not called")
@@ -66,7 +67,7 @@ func TestSetupReviewReadsPrivacyWithEnvClock(t *testing.T) {
 	// clock; only the wall clock would call it stale.
 	at := time.Now().UTC().Add(-48 * time.Hour)
 	cfg := config.Config{Storage: credentialsTestConfig(), RetentionDays: defaultRetentionDays}
-	cfg.BucketPrivacy = inspectBucketPrivacy(cfg, &privateTestStore{MemoryStore: storage.NewMemoryStore()}, at)
+	cfg.BucketPrivacy = inspectBucketPrivacy(cfg, &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}, at)
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader(""), &out)
 	p.now = func() time.Time { return at }
@@ -80,7 +81,7 @@ func TestCollectionRefreshesBucketPrivacyEvidence(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
-	remote := &privateTestStore{MemoryStore: storage.NewMemoryStore()}
+	remote := &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}
 	stale := inspectBucketPrivacy(cfg, remote, at.Add(-bucketPrivacyRefreshAfter-time.Minute))
 	remote.calls = 0
 	cfg.BucketPrivacy = stale
@@ -122,7 +123,7 @@ func TestSetupToleratesBackgroundPrivacyRefresh(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
-	remote := &privateTestStore{MemoryStore: storage.NewMemoryStore()}
+	remote := &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	setupRun(t, env, s3SetupInput("synthetic", "us-east-1", "profile", true, false, false, project), 0)
 	// While the wizard is open, a collector tick refreshes the evidence on disk.
@@ -146,7 +147,7 @@ func TestSetupPersistsPrivacyAndStatusNeverInspects(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
-	remote := &privateTestStore{MemoryStore: storage.NewMemoryStore()}
+	remote := &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	output := setupRun(t, env, s3SetupInput("synthetic", "us-east-1", "profile", true, false, false, project), 0)
 	if !strings.Contains(output, "native public access blocked") {

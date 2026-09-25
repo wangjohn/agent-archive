@@ -10,7 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
@@ -95,7 +95,7 @@ func TestCollectorRepairsParentLinkAfterNotificationFailure(t *testing.T) {
 	}
 	// Child source cannot be republished in this pass. The durable publication
 	// must still repair its parent notification before any live transcript read.
-	_, err = Run(context.Background(), local, storage.NewMemoryStore(), Options{MachineID: "machine", Now: func() time.Time { return at.Add(time.Minute) }, AcceptSession: func(reg archive.SessionRegistration) bool { return reg.ArchiveSessionID == "child" }})
+	_, err = Run(context.Background(), local, storagetest.NewMemoryStore(), Options{MachineID: "machine", Now: func() time.Time { return at.Add(time.Minute) }, AcceptSession: func(reg archive.SessionRegistration) bool { return reg.ArchiveSessionID == "child" }})
 	if err != nil {
 		t.Fatal(err)
 	}

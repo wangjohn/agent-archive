@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 type countedPublications struct {
@@ -32,7 +33,7 @@ func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &countedPublications{ObjectStore: storage.NewMemoryStore()}
+	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)
@@ -79,7 +80,7 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &metadataFailStore{MemoryStore: storage.NewMemoryStore()}
+	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
@@ -124,7 +125,7 @@ func TestMetadataUpgradePreservesNewerDeclinedCandidate(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	opts := Options{MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil || len(result.Errors) != 0 {
@@ -200,20 +201,20 @@ func putMetadata(t *testing.T, remote storage.ObjectStore, reg archive.SessionRe
 }
 
 func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
-	cases := map[string]func(t *testing.T, remote *storage.MemoryStore, reg archive.SessionRegistration, published archive.Metadata){
-		"missing remote metadata": func(t *testing.T, remote *storage.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
+	cases := map[string]func(t *testing.T, remote *storagetest.MemoryStore, reg archive.SessionRegistration, published archive.Metadata){
+		"missing remote metadata": func(t *testing.T, remote *storagetest.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
 			t.Helper()
 			key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
 			if err := remote.Delete(context.Background(), key); err != nil {
 				t.Fatal(err)
 			}
 		},
-		"metadata from another machine": func(t *testing.T, remote *storage.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
+		"metadata from another machine": func(t *testing.T, remote *storagetest.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
 			t.Helper()
 			published.MachineID = "elsewhere"
 			putMetadata(t, remote, reg, published)
 		},
-		"metadata for a different source": func(t *testing.T, remote *storage.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
+		"metadata for a different source": func(t *testing.T, remote *storagetest.MemoryStore, reg archive.SessionRegistration, published archive.Metadata) {
 			t.Helper()
 			published.SourceBundle.SHA256 = "0000000000000000000000000000000000000000000000000000000000000000"
 			putMetadata(t, remote, reg, published)
@@ -224,7 +225,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 			local := newTestStore(t)
 			dir := t.TempDir()
 			reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
-			remote := storage.NewMemoryStore()
+			remote := storagetest.NewMemoryStore()
 			now := reg.RegisteredAt.Add(time.Hour)
 			opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 			before := publishOnce(t, local, remote, reg, &opts)
@@ -256,7 +257,7 @@ func TestLegacyMetadataMigrationFailureNeverBlocksCapture(t *testing.T) {
 func TestLegacyFailedParseMigratesOnceWithoutRebuilding(t *testing.T) {
 	local := newTestStore(t)
 	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
-	remote := &countedGets{ObjectStore: storage.NewMemoryStore()}
+	remote := &countedGets{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	published := publishOnce(t, local, remote, reg, &opts)
@@ -297,7 +298,7 @@ func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
 	local := newTestStore(t)
 	dir := t.TempDir()
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
-	remote := &countedPublications{ObjectStore: storage.NewMemoryStore()}
+	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{MachineID: "machine", ParserVersion: "one", MinUploadInterval: 3 * time.Minute, Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
@@ -336,7 +337,7 @@ func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 	local := newTestStore(t)
 	dir := t.TempDir()
 	reg := registration(t, writeTranscript(t, dir, "s.jsonl", codexTranscript))
-	remote := &countedPublications{ObjectStore: storage.NewMemoryStore()}
+	remote := &countedPublications{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	before := publishOnce(t, local, remote, reg, &opts)
@@ -391,7 +392,7 @@ func TestBlockedSessionWithoutPublicationSkipsRegeneration(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := &countedGets{ObjectStore: storage.NewMemoryStore()}
+	remote := &countedGets{ObjectStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
 	opts := Options{MachineID: "machine", ParserVersion: "one", MaxTranscriptBytes: 8, Now: func() time.Time { return now }}
 	result, err := Run(context.Background(), local, remote, opts)

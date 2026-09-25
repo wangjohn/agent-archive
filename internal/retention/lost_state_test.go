@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func corruptFile(t *testing.T, local *state.Store, rel string) {
@@ -35,7 +36,7 @@ func sessionObjects(t *testing.T, store storage.ObjectStore, id string) int {
 // It now deletes them like a published session's.
 func TestSessionWhosePublishedStateWasLostIsStillDeletedFromTheBucket(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", dir, t0)
@@ -68,7 +69,7 @@ func TestSessionWhosePublishedStateWasLostIsStillDeletedFromTheBucket(t *testing
 // which is aged from its capture and deleted the same way.
 func TestSessionWhoseRegistrationWasLostIsStillExpired(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", dir, t0)
@@ -102,7 +103,7 @@ func TestSessionWhoseRegistrationWasLostIsStillExpired(t *testing.T) {
 // the storage service's deletes nothing of it either.
 func TestOrphanIsKeptWhileTheClockIsAhead(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "orphan", t.TempDir(), t0)
 	corruptFile(t, local, "registrations/orphan.json")
@@ -131,7 +132,7 @@ func TestUnreadableRegistrationIsNotAnOrphan(t *testing.T) {
 		t.Skip("root reads a file whatever its mode")
 	}
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", t.TempDir(), t0)
 	path := filepath.Join(local.Home(), "registrations", "s1.json")
@@ -155,7 +156,7 @@ func TestUnreadableRegistrationIsNotAnOrphan(t *testing.T) {
 // gets to it: a hook registering the native session again reuses its ID.
 func TestOrphanRegisteredAgainIsKept(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", t.TempDir(), t0)
 	if forgotten, err := local.ForgetOrphan("s1"); err != nil || forgotten {
@@ -170,7 +171,7 @@ func TestOrphanRegisteredAgainIsKept(t *testing.T) {
 // source bundles: it runs after every collector pass, over every session.
 func TestSweepWithNothingToDeleteDecodesNoPublishedState(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	for _, id := range []string{"s1", "s2", "s3"} {

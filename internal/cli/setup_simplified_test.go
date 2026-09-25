@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestShortSetupAndReviewEdits(t *testing.T) {
@@ -37,7 +38,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 			env.WorkingDir = func() (string, error) { return project, nil }
 			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{"personal", "us-west-2"}}, nil }
 			probes := 0
-			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { probes++; return storage.NewMemoryStore(), nil }
+			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { probes++; return storagetest.NewMemoryStore(), nil }
 			out := setupRun(t, env, "\n\ns3\ntest-bucket\n\n"+tc.edits, 0)
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {

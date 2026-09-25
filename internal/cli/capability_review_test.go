@@ -12,7 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestSetupShowsVersionsBeforeActivationAndDiscoversOnce(t *testing.T) {
@@ -59,7 +59,7 @@ func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) 
 	if err := localStore.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	result, err := collector.Run(context.Background(), localStore, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) > 0 {
 		t.Fatalf("%+v %v", result, err)
@@ -118,7 +118,7 @@ func TestStatusAttributesClaudeRecordVersionToVerifiedCapture(t *testing.T) {
 	if err := localStore.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	result, err := collector.Run(context.Background(), localStore, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return at }})
 	if err != nil || len(result.Errors) > 0 {
 		t.Fatalf("%+v %v", result, err)

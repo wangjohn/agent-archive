@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 const codexTranscript = `{"type":"turn_context","model":"gpt-test"}
@@ -79,7 +80,7 @@ func fetchBundle(t *testing.T, store storage.ObjectStore, metadata archive.Metad
 }
 
 type metadataFailStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	failMetadata bool
 }
 
@@ -97,7 +98,7 @@ func TestRunPublishesNewSession(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
@@ -123,7 +124,7 @@ func TestRunSkipsUnchangedSessionAndReusesCapturedAt(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	first := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return first }}); err != nil {
@@ -155,7 +156,7 @@ func TestRunRateLimitsRepublishAndReusesFirstDetectedCapturedAt(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
@@ -220,7 +221,7 @@ func TestRunLeavesRequestPendingOnScanErrorAndIsolatesOtherSessions(t *testing.T
 		t.Fatal(err)
 	}
 
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +248,7 @@ func TestRunFoldsHookEvidenceAndCompletesRequest(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
@@ -287,7 +288,7 @@ func TestRunUnsafeTranscriptNeverPublishes(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
@@ -308,7 +309,7 @@ func TestRunSurvivesRestartAcrossRateLimitedPass(t *testing.T) {
 	root := t.TempDir()
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	local1, err := state.Open(root)
@@ -365,7 +366,7 @@ func TestRunRetriesPersistedBytesAndDoesNotAcknowledgeNewerRequest(t *testing.T)
 	if err := local1.SaveRequest("session-1", "stop", t0, firstEvidence); err != nil {
 		t.Fatal(err)
 	}
-	store := &metadataFailStore{MemoryStore: storage.NewMemoryStore(), failMetadata: true}
+	store := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore(), failMetadata: true}
 	result, err := Run(context.Background(), local1, store, Options{MachineID: "m", Now: func() time.Time { return t0 }, Retry: storage.RetryPolicy{MaxAttempts: 1}})
 	if err != nil {
 		t.Fatal(err)
@@ -423,7 +424,7 @@ func TestStopRequestFlushesRateLimitAndPreservesEarlierHookEvidence(t *testing.T
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	e0 := archive.SupplementalEvidence{Kind: archive.EvidenceKindFinalResponse, ObservedAt: t0, Provenance: "hook", Payload: map[string]any{"turn_id": "first"}}
 	if err := local.SaveRequest("session-1", "stop", t0, e0); err != nil {
@@ -461,7 +462,7 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if err := local.SaveEvidence("session-1", "sessionstart", t0, lifecycleEvidence(t0, "SessionStart")); err != nil {
 		t.Fatal(err)
@@ -514,7 +515,7 @@ func TestStopAfterPromptEvidenceFlushesImmediately(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
@@ -561,7 +562,7 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
@@ -640,7 +641,7 @@ func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
 	if err := store.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	cloud := storage.NewMemoryStore()
+	cloud := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
@@ -691,7 +692,7 @@ func TestStableSupplementalObservationDoesNotRepublish(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	now := t0
 	provider := func(_ archive.SessionRegistration, observedAt time.Time) ([]archive.SupplementalEvidence, error) {
@@ -734,7 +735,7 @@ func TestRunUpgradesAndCompletesLegacyTokenlessRequest(t *testing.T) {
 	if err := local.Write(requestPath(store, "session-1"), state.Request{ArchiveSessionID: "session-1", Reasons: []string{"stop"}, RequestedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), store, storage.NewMemoryStore(), Options{MachineID: "m", Now: func() time.Time { return now }})
+	result, err := Run(context.Background(), store, storagetest.NewMemoryStore(), Options{MachineID: "m", Now: func() time.Time { return now }})
 	if err != nil || len(result.Published) != 1 {
 		t.Fatalf("legacy request was not processed: result=%#v err=%v", result, err)
 	}
@@ -764,7 +765,7 @@ func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m"})
 	if err != nil {
 		t.Fatal(err)
@@ -788,7 +789,7 @@ func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	limit := int64(len(codexTranscript) + 16)
 	options := Options{MachineID: "m", Now: func() time.Time { return t0 }, MaxTranscriptBytes: limit}
@@ -926,7 +927,7 @@ func TestRunIgnoresIncompleteFinalJSONLRecord(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
@@ -1002,7 +1003,7 @@ func TestRunComposesWithLocalLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run(context.Background(), localStore, storage.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
+	if _, err := Run(context.Background(), localStore, storagetest.NewMemoryStore(), Options{MachineID: "m"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1063,7 +1064,7 @@ func TestRunDeclinesPublishWhenSkillUseRequiredAndAbsent(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }, RequireSkillUse: true})
@@ -1102,7 +1103,7 @@ func TestRunDeclinedCandidateIsNotSpuriouslyRateLimitedOnLaterChange(t *testing.
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }, RequireSkillUse: true}); err != nil {
@@ -1137,7 +1138,7 @@ func TestRunRecordsSupersededSourceOnRepublish(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if _, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
@@ -1182,7 +1183,7 @@ func TestRunFallsBackToCursorTextWhenJSONLIsUnrecognized(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 
 	result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})

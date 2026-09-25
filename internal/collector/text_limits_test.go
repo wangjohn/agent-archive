@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // cursorTextTranscript is a synthetic plain-text Cursor transcript with the
@@ -38,7 +38,7 @@ func cursorTextSession(t *testing.T, local *state.Store, content string) string 
 func TestCursorTextOverTheLimitBlocksOnceAndClearsOnChange(t *testing.T) {
 	withCollectorRecordLimit(t, 4096)
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	path := cursorTextSession(t, local, cursorTextTranscript(40, 200))
 	at := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 	result := runAt(t, local, remote, at)
@@ -72,7 +72,7 @@ func TestCursorTextOverTheLimitBlocksOnceAndClearsOnChange(t *testing.T) {
 // a rewrite.
 func TestCursorTextAppendExtendsAndTruncationIsARewrite(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	content := cursorTextTranscript(100, 1000)
 	if len(content) <= 64*1024 {
 		t.Fatalf("test transcript is only %d bytes", len(content))
@@ -119,7 +119,7 @@ func TestCursorTextAppendExtendsAndTruncationIsARewrite(t *testing.T) {
 // file: it is a rewrite, not new activity.
 func TestCursorTextMidSectionEditIsARewrite(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	content := cursorTextTranscript(100, 1000)
 	path := cursorTextSession(t, local, content)
 	at := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)

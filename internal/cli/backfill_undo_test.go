@@ -22,12 +22,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // deleteRecordingStore is the memory bucket, recording the order of deletes. A
 // delete of a key containing failOn fails.
 type deleteRecordingStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	mu      sync.Mutex
 	deletes []string
 	failOn  string

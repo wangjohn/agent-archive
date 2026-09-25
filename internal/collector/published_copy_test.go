@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // One scan both refreshes a session's metadata for a new parser and
@@ -17,7 +17,7 @@ import (
 // one it supersedes. From a stale copy it would find no reference at all.
 func TestParserUpgradeAndPublicationInOneScanOverLegacyState(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	firstKey := publishThenGrow(t, local, store, t0)
 	editPublishedState(t, local, func(state map[string]any) {

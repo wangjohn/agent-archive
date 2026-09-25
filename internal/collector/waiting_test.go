@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // With several publications held for the interval, NextReadyAt is the
@@ -14,7 +14,7 @@ func TestRunReportsEarliestDueTimeAmongWaitingSessions(t *testing.T) {
 	for _, laterFirst := range []bool{false, true} {
 		dir := t.TempDir()
 		local := newTestStore(t)
-		store := storage.NewMemoryStore()
+		store := storagetest.NewMemoryStore()
 		t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 		opts := func(at time.Time) Options {
 			return Options{MachineID: "m", Now: func() time.Time { return at }, MinUploadInterval: 3 * time.Minute}
