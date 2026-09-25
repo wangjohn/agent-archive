@@ -64,11 +64,27 @@ func TestSetupGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	configFile, credentialsFile, binDir := awsFixture(t, "vault-helper")
+	caBundle := filepath.Join(filepath.Dir(configFile), "corporate-ca.pem")
+	if err := os.WriteFile(caBundle, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A directory any account can write to is left out of the collector's
+	// PATH, as is one that does not exist.
+	shared := filepath.Join(t.TempDir(), "shared-bin")
+	if err := os.Mkdir(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.LookupEnv = shellEnvironment(map[string]string{
 		"AWS_CONFIG_FILE":             configFile,
 		"AWS_SHARED_CREDENTIALS_FILE": credentialsFile,
-		"PATH":                        binDir + ":relative/bin:/usr/bin:" + binDir,
+		"AWS_CA_BUNDLE":               caBundle,
+		"AWS_ENDPOINT_URL_S3":         "https://s3.internal.example",
+		"AWS_ENDPOINT_URL_STS":        "https://user:endpoint-password@sts.internal.example",
+		"PATH":                        binDir + ":relative/bin:" + shared + ":/no/such/dir:/usr/bin:" + binDir,
 		"AWS_ACCESS_KEY_ID":           "AKIASHELLKEYNEVERSAVED",
 		"AWS_SECRET_ACCESS_KEY":       "shell-secret-never-saved",
 		"AWS_SESSION_TOKEN":           "shell-token-never-saved",
@@ -82,6 +98,8 @@ func TestSetupGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 		"AGENT_ARCHIVE_HOME":          home,
 		"AWS_CONFIG_FILE":             configFile,
 		"AWS_SHARED_CREDENTIALS_FILE": credentialsFile,
+		"AWS_CA_BUNDLE":               caBundle,
+		"AWS_ENDPOINT_URL_S3":         "https://s3.internal.example",
 		"PATH":                        binDir + ":/usr/bin:/bin:/usr/sbin:/sbin",
 	}
 	if len(environment) != len(want) {
@@ -92,7 +110,7 @@ func TestSetupGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 			t.Errorf("collector %s = %q, want %q", name, environment[name], value)
 		}
 	}
-	for _, secret := range []string{"AKIASHELLKEYNEVERSAVED", "shell-secret-never-saved", "shell-token-never-saved", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
+	for _, secret := range []string{"AKIASHELLKEYNEVERSAVED", "shell-secret-never-saved", "shell-token-never-saved", "endpoint-password", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} {
 		if strings.Contains(plist, secret) {
 			t.Fatalf("the LaunchAgent carries %s", secret)
 		}

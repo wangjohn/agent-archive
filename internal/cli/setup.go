@@ -930,7 +930,7 @@ func (e Env) temporaryExecutableProblem(exe string) string {
 	}
 	for _, path := range paths {
 		for dir := filepath.Dir(path); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-			if strings.HasPrefix(filepath.Base(dir), "go-build") {
+			if isGoBuildDir(filepath.Base(dir)) {
 				return exe + " is a temporary build (from go run or go test) that Go deletes when it exits, so the hooks and background collector would stop working."
 			}
 		}
@@ -951,4 +951,12 @@ func (e Env) temporaryExecutableProblem(exe string) string {
 		}
 	}
 	return ""
+}
+
+// isGoBuildDir reports whether name is a directory Go builds a go run or go
+// test binary in: go-build followed by digits, and nothing else, so a
+// directory like go-builder is not mistaken for one.
+func isGoBuildDir(name string) bool {
+	digits, ok := strings.CutPrefix(name, "go-build")
+	return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
 }

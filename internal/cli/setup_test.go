@@ -533,3 +533,28 @@ func TestSetupRefusesATemporaryExecutable(t *testing.T) {
 		})
 	}
 }
+
+// Only Go's own build directories (go-build and digits) count as temporary
+// builds: a binary under a directory merely named like one is set up.
+func TestSetupAcceptsADirectoryNamedLikeGoBuild(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]bool{"go-build3829104": true, "go-build1": true, "go-build": false, "go-builder": false, "go-build12x": false} {
+		if got := isGoBuildDir(name); got != want {
+			t.Errorf("isGoBuildDir(%q) = %v, want %v", name, got, want)
+		}
+	}
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	executable := filepath.Join(t.TempDir(), "src", "go-builder", "bin", "agent-archive")
+	if err := os.MkdirAll(filepath.Dir(executable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.Executable = func() (string, error) { return executable, nil }
+	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()), 0)
+	if cfg, _, _ := config.Load(home); cfg.InstalledExecutable != executable {
+		t.Fatalf("installed %q, want %q", cfg.InstalledExecutable, executable)
+	}
+}

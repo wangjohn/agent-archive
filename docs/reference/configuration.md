@@ -39,9 +39,19 @@ consistent with each other.
 | `AGENT_ARCHIVE_HOME` | Data directory instead of `~/.local/share/agent-archive`. It must not be inside a Git checkout. A non-default directory gets its own launchd label (`com.agent-archive.collector.<hash>`), and setup writes it into the hook commands, since apps run hooks without your shell's environment. Each installation changes only the hooks that carry its own directory; setup refuses to install beside another installation's hooks, so give a second or test installation its own `HOME` too (or `CLAUDE_CONFIG_DIR` and `CODEX_HOME`). |
 | `CLAUDE_CONFIG_DIR` | Claude Code's configuration directory, where setup installs hooks (`settings.json`). Read when setup runs; recorded in `hook_files`. |
 | `CODEX_HOME` | Codex's home, where setup installs hooks (`hooks.json`). Read when setup runs; recorded in `hook_files`. |
-| `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` | Where the AWS SDK finds profiles, as for the AWS CLI. The background collector runs under launchd, which passes it none of your shell's environment, so for S3 setup writes the ones set in its shell (as absolute paths) into the collector's LaunchAgent, along with that shell's `PATH` (its absolute entries, then launchd's `/usr/bin:/bin:/usr/sbin:/sbin`), so a `credential_process` such as `aws-vault`, 1Password's `op`, or `granted` in `/opt/homebrew/bin` runs there too. Change either and run setup again; `status` warns when the collector's files are gone, its `PATH` no longer finds the profile's `credential_process`, or your shell's files differ from the collector's. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` are never copied: the profile supplies credentials. |
+| `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` | Where the AWS SDK finds profiles, as for the AWS CLI. The background collector runs under launchd, which passes it none of your shell's environment, so for S3 setup writes the ones set in its shell (as absolute paths) into the collector's LaunchAgent, along with that shell's `PATH`, so a `credential_process` such as `aws-vault`, 1Password's `op`, or `granted` in `/opt/homebrew/bin` runs there too. The `PATH` keeps the shell's entries that are existing directories not writable by every account, then launchd's `/usr/bin:/bin:/usr/sbin:/sbin`. Change either and run setup again; `status` warns when the collector's files are gone, its `PATH` no longer finds the profile's `credential_process`, or your shell's files differ from the collector's. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` are never copied: the profile supplies credentials. |
+| `AWS_CA_BUNDLE`, `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL_SSO`, `AWS_ENDPOINT_URL_SSO_OIDC` | A CA bundle (for a network that inspects TLS) and endpoint overrides, as for the AWS CLI. For S3, setup copies the ones set in its shell into the collector's LaunchAgent, like the files above (an endpoint URL with a user name or password in it is not copied). |
 | `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` | Set by the app for commands it runs; `handoff --latest` skips that session. |
 | `NO_COLOR` | Disables colored output. |
 | `AGENT_ARCHIVE_VERSION`, `AGENT_ARCHIVE_INSTALL_DIR` | `install.sh` only: the release and directory to install. |
+
+Nothing else from your shell reaches the background collector. An S3 profile
+that works only with other variables set, such as `HTTPS_PROXY` or `NO_PROXY`,
+or a `credential_process` helper's own settings (`AWS_VAULT_BACKEND`,
+`OP_ACCOUNT`), passes setup's storage check but fails in the background, and
+`status` cannot tell why; it shows the collector's last error. Put those
+settings where the helper reads them without the shell (the AWS profile
+itself, or the helper's own configuration file), or run
+`agent-archive sync` from your shell.
 
 Cursor's hook file is always `~/.cursor/hooks.json`.

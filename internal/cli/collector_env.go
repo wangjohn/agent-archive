@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,14 +14,21 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
 
-// collectorAWSFiles are the AWS SDK variables that name the files an S3
-// profile is read from. Setup reads profiles through them and runs its
-// storage check with them, so the collector's LaunchAgent records them.
+// collectorAWSFiles are the AWS SDK variables that name files an S3 pass
+// reads: the profile's config and credentials files, and the CA bundle a
+// TLS-inspecting network needs. Setup reads profiles through them and runs
+// its storage check with them, so the collector's LaunchAgent records them.
 // Credential variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
 // AWS_SESSION_TOKEN) are never recorded: the plist is not a place for
 // secrets, and the configured profile, not the shell, is what supplies
 // credentials.
-var collectorAWSFiles = []string{"AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"}
+var collectorAWSFiles = []string{"AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CA_BUNDLE"}
+
+// collectorAWSEndpoints are the endpoint overrides for the services an S3
+// pass can call: S3 itself, and STS, SSO and SSO OIDC while the profile's
+// credentials are resolved. They are addresses, not secrets; one that
+// carries a user name or password in its URL is not recorded.
+var collectorAWSEndpoints = []string{"AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3", "AWS_ENDPOINT_URL_STS", "AWS_ENDPOINT_URL_SSO", "AWS_ENDPOINT_URL_SSO_OIDC"}
 
 // launchdPath is the PATH launchd gives a job whose plist sets none.
 const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -31,8 +39,8 @@ const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 // shell's environment.
 //
 // For S3 it records the AWS file variables that are set, as absolute paths,
-// and always a PATH: this shell's absolute entries followed by launchd's
-// own. PATH is recorded for every S3 profile, not only one that uses
+// the endpoint overrides that are set, and always a PATH: this shell's
+// usable entries followed by launchd's own. PATH is recorded for every S3 profile, not only one that uses
 // credential_process today, because the SDK can reach a credential_process
 // through a source_profile chain, the command it runs (aws-vault, 1Password's
 // op, granted) runs helpers of its own through PATH, and a profile can gain a
@@ -49,19 +57,39 @@ func (e Env) collectorEnvironment(storage credentials.Config) map[string]string 
 			environment[name] = e.absolutePath(strings.TrimSpace(value))
 		}
 	}
+	for _, name := range collectorAWSEndpoints {
+		value, _ := e.lookupEnv(name)
+		value = strings.TrimSpace(value)
+		if endpoint, err := url.Parse(value); value != "" && err == nil && endpoint.User == nil {
+			environment[name] = value
+		}
+	}
 	shellPath, _ := e.lookupEnv("PATH")
 	environment["PATH"] = collectorPath(shellPath)
 	return environment
 }
 
-// collectorPath is shellPath's absolute entries, without repeats, followed
-// by those of launchd's default PATH it lacks. A relative entry would be
-// resolved against the collector's working directory, not setup's.
+// collectorPath is shellPath's usable entries, without repeats, followed by
+// those of launchd's default PATH it lacks. An entry is left out when it is
+// relative (it would be resolved against the collector's working
+// directory, not setup's), is not a directory, or is writable by every
+// account: the LaunchAgent runs every minute, so a program another account
+// planted there would run as this one.
 func collectorPath(shellPath string) string {
 	var entries []string
-	for _, entry := range append(filepath.SplitList(shellPath), filepath.SplitList(launchdPath)...) {
-		if filepath.IsAbs(entry) && !slices.Contains(entries, filepath.Clean(entry)) {
-			entries = append(entries, filepath.Clean(entry))
+	for _, entry := range filepath.SplitList(shellPath) {
+		entry = filepath.Clean(entry)
+		if !filepath.IsAbs(entry) || slices.Contains(entries, entry) {
+			continue
+		}
+		if info, err := os.Stat(entry); err != nil || !info.IsDir() || info.Mode().Perm()&0o002 != 0 {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	for _, entry := range filepath.SplitList(launchdPath) {
+		if !slices.Contains(entries, entry) {
+			entries = append(entries, entry)
 		}
 	}
 	return strings.Join(entries, string(filepath.ListSeparator))

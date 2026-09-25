@@ -206,13 +206,14 @@ can list them, inspect them, and hand one to another agent.
   `AWS_CONFIG_FILE`, or one whose `credential_process` (`aws-vault`, `op`,
   `granted`) lives in `/opt/homebrew/bin`, passed setup and then never
   uploaded in the background; only a manual `sync` worked. Setup now writes
-  `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` and your `PATH` into the
-  LaunchAgent (never AWS keys or tokens), warns at its review when a
+  `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CA_BUNDLE`, the
+  `AWS_ENDPOINT_URL` overrides and your `PATH` into the LaunchAgent (never
+  AWS keys or tokens, nor `PATH` directories every account can write to), warns at its review when a
   `credential_process` is not a program the collector can find, and `status`
   reports when the collector's environment no longer loads the profile. Run
   `agent-archive setup` again to update an existing installation.
 - Setup refuses to install a temporary `agent-archive`, such as the one
-  `go run` builds and deletes when it exits, which left every hook and the
+  `go run` builds (in a `go-build` directory) and deletes when it exits, which left every hook and the
   collector pointing at a file that was gone.
 - After a plain `agent-archive uninstall`, setup sets up again instead of
   asking what to change in an installation that was no longer running.
