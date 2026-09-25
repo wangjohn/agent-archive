@@ -116,7 +116,7 @@ func retireLegacyJob(job *legacyJob, env Env) error {
 }
 
 // restoreLegacyJob puts back a job setup retired: the legacy upload job, or
-// the collector an earlier release installed under the default label. name
+// a collector an earlier release installed under another label. name
 // says which in errors, and home is the data directory whose interrupted
 // setup is being recovered.
 func restoreLegacyJob(home string, job *legacyJob, name string, env Env) error {

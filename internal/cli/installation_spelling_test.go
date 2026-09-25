@@ -141,8 +141,8 @@ func TestSetupRetiresTheJobOfAnotherCaseSpelling(t *testing.T) {
 	if err := local.WriteBytes(old, plist); err != nil {
 		t.Fatal(err)
 	}
-	if got := env.installation(home, userHome).previousCollectorPlist(); got != old {
-		t.Fatalf("previousCollectorPlist = %q, want %q", got, old)
+	if got := env.installation(home, userHome).previousCollectorPlists(); len(got) != 1 || got[0] != old {
+		t.Fatalf("previousCollectorPlists = %q, want %q", got, old)
 	}
 	states := map[string]string{old: "loaded"}
 	var unloaded []string

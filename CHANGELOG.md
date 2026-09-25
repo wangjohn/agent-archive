@@ -289,8 +289,9 @@ can list them, inspect them, and hand one to another agent.
   answers; before, it asked every question first.
 - Another spelling of the data directory (another case of its name on a
   case-insensitive volume) is the same installation: it no longer gets a
-  background job of its own. Setup retires, and uninstall removes, the job
-  an earlier release installed for such a spelling.
+  background job of its own. Setup retires, and uninstall removes, every job
+  an earlier release installed for the directory under another label (one
+  for each spelling setup ran with, and the default label), not just one.
 - Uninstalling an installation whose data directory is already gone no
   longer creates an empty one.
 - A copy of Cursor's database left by a killed backfill is removed by the
