@@ -62,6 +62,27 @@ func TestCollectorOwnedFilesAreMovedAsideOnlyInAPass(t *testing.T) {
 	}
 }
 
+// A pending publication holds bytes not yet uploaded. Only one whose bytes
+// are no longer JSON at all is moved aside; one that is JSON of another shape
+// (written by a newer version, then downgraded) is reported and left where
+// it is, so the version that wrote it can still upload it.
+func TestPendingOfAnotherShapeIsNeverMovedAside(t *testing.T) {
+	pass := newTestStore(t).ForCollectorPass()
+	path := pass.pendingPath("session-1")
+	if err := os.WriteFile(path, []byte(`{"source_key":7,"source_bytes":"AAAA"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := pass.LoadPending("session-1"); err == nil || errors.Is(err, ErrQuarantined) {
+		t.Fatalf("err = %v, want a reported error that moved nothing", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("a pending publication of another shape was moved: %v", err)
+	}
+	if pass.LostPublication("session-1") {
+		t.Fatal("reported as lost")
+	}
+}
+
 // The native-session index is derived from the registrations: an entry that
 // no longer decodes is recovered from the registration naming the native
 // session, so the session keeps its archive ID instead of getting a second.
