@@ -97,7 +97,7 @@ func sweep(t *testing.T, local *state.Store, store storage.ObjectStore, at time.
 	t.Helper()
 	opts.Now = func() time.Time { return at }
 	opts.SessionMaxAge = retentionWindow
-	result, err := Sweep(context.Background(), local, store, opts)
+	result, err := Sweep(context.Background(), local, store, agreeing(opts))
 	if err != nil {
 		t.Fatal(err)
 	}

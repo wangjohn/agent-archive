@@ -99,7 +99,7 @@ func TestSweepRespectsGracePeriodBeforeDeletingSupersededSource(t *testing.T) {
 
 	// Sweep soon after supersession: still within the grace period.
 	soon := supersededAt.Add(time.Hour)
-	result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return soon }, GracePeriod: 24 * time.Hour})
+	result, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return soon }, GracePeriod: 24 * time.Hour}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestSweepRespectsGracePeriodBeforeDeletingSupersededSource(t *testing.T) {
 
 	// The predecessor survives indefinitely, even after its grace period.
 	later := supersededAt.Add(25 * time.Hour)
-	result, err = Sweep(context.Background(), local, store, Options{Now: func() time.Time { return later }, GracePeriod: 24 * time.Hour})
+	result, err = Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return later }, GracePeriod: 24 * time.Hour}))
 	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 0 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
@@ -122,7 +122,7 @@ func TestSweepRespectsGracePeriodBeforeDeletingSupersededSource(t *testing.T) {
 	// A third publication makes the first source eligible, but retains second.
 	secondKey := fetchMetadata(t, store, "s1").SourceBundle.Key
 	publishThird(t, local, store, "s1", dir, later)
-	result, err = Sweep(context.Background(), local, store, Options{Now: func() time.Time { return later.Add(25 * time.Hour) }})
+	result, err = Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return later.Add(25 * time.Hour) }}))
 	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 1 {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
@@ -144,7 +144,7 @@ func TestSweepNeverDeletesTheCurrentSource(t *testing.T) {
 	currentMeta := fetchMetadata(t, store, "s1")
 
 	far := t0.Add(365 * 24 * time.Hour)
-	if _, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return far }, GracePeriod: time.Hour}); err != nil {
+	if _, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return far }, GracePeriod: time.Hour})); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Get(context.Background(), currentMeta.SourceBundle.Key); err != nil {
@@ -167,7 +167,7 @@ func TestSweepDeletesWholeSessionPastRetentionWindow(t *testing.T) {
 	meta := fetchMetadata(t, store, "s1")
 
 	past := t0.Add(91 * 24 * time.Hour)
-	result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return past }, SessionMaxAge: 90 * 24 * time.Hour})
+	result, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return past }, SessionMaxAge: 90 * 24 * time.Hour}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestSweepWithinRetentionWindowLeavesSessionAlone(t *testing.T) {
 	}
 
 	soon := t0.Add(time.Hour)
-	result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return soon }, SessionMaxAge: 90 * 24 * time.Hour})
+	result, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return soon }, SessionMaxAge: 90 * 24 * time.Hour}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestSweepIsolatesOneSessionsFailure(t *testing.T) {
 	publishThird(t, local, memStore, "b", dir, t0.Add(time.Hour))
 	store := failingDeleteStore{ObjectStore: memStore, failKey: firstKeyA}
 	later := t0.Add(10*time.Minute + 25*time.Hour)
-	result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return later }, GracePeriod: 24 * time.Hour})
+	result, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return later }, GracePeriod: 24 * time.Hour}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +282,7 @@ func TestSweepFailsClosedWithUnreadableCurrentMetadata(t *testing.T) {
 	if err := store.Put(context.Background(), key, []byte(`{}`)); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return at.Add(48 * time.Hour) }})
+	result, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return at.Add(48 * time.Hour) }}))
 	if err != nil || result.Errors["s1"] == nil || result.DeletedSnapshots != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -308,7 +308,7 @@ func TestWholeSessionDeletionFailureNeverLeavesDanglingPointer(t *testing.T) {
 			}
 			store := failingDeleteStore{ObjectStore: mem, failKey: failKey}
 			opts := Options{Now: func() time.Time { return at.Add(100 * 24 * time.Hour) }, SessionMaxAge: 90 * 24 * time.Hour}
-			result, err := Sweep(context.Background(), local, store, opts)
+			result, err := Sweep(context.Background(), local, store, agreeing(opts))
 			if err != nil || result.Errors["s1"] == nil {
 				t.Fatalf("%#v %v", result, err)
 			}
@@ -319,7 +319,7 @@ func TestWholeSessionDeletionFailureNeverLeavesDanglingPointer(t *testing.T) {
 			} else if failMetadata {
 				t.Fatal("metadata deleted despite failure")
 			}
-			result, err = Sweep(context.Background(), local, mem, opts)
+			result, err = Sweep(context.Background(), local, mem, agreeing(opts))
 			if err != nil || len(result.Errors) != 0 || len(result.DeletedSessions) != 1 {
 				t.Fatalf("retry: %#v %v", result, err)
 			}
@@ -356,7 +356,7 @@ func TestRetentionProtectsNewerRemoteCaptureAndClockRollbackPredecessor(t *testi
 			t.Fatal(err)
 		}
 	}
-	result, err := Sweep(context.Background(), local, remote, Options{Now: func() time.Time { return at.Add(48 * time.Hour) }})
+	result, err := Sweep(context.Background(), local, remote, agreeing(Options{Now: func() time.Time { return at.Add(48 * time.Hour) }}))
 	if err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -374,7 +374,7 @@ func TestRetentionProtectsNewerRemoteCaptureAndClockRollbackPredecessor(t *testi
 	if err := remote.Put(context.Background(), key, data); err != nil {
 		t.Fatal(err)
 	}
-	result, err = Sweep(context.Background(), local, remote, Options{Now: func() time.Time { return at.Add(100 * 24 * time.Hour) }, SessionMaxAge: 90 * 24 * time.Hour})
+	result, err = Sweep(context.Background(), local, remote, agreeing(Options{Now: func() time.Time { return at.Add(100 * 24 * time.Hour) }, SessionMaxAge: 90 * 24 * time.Hour}))
 	if err != nil || len(result.Errors) != 0 || len(result.DeletedSessions) != 0 {
 		t.Fatalf("deleted newer remote evidence: %#v %v", result, err)
 	}
@@ -432,7 +432,7 @@ func TestSweepKeepsTruePredecessorAfterContentReversion(t *testing.T) {
 	}
 	pointCurrentAt(t, store, "s1", c)
 
-	result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return t3.Add(25 * time.Hour) }, GracePeriod: 24 * time.Hour})
+	result, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return t3.Add(25 * time.Hour) }, GracePeriod: 24 * time.Hour}))
 	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -479,7 +479,7 @@ func TestSweepSkipsRemoteReadWhenNothingIsExpirable(t *testing.T) {
 		{Now: func() time.Time { return supersededAt.Add(400 * 24 * time.Hour) }, GracePeriod: 24 * time.Hour},
 		{Now: func() time.Time { return supersededAt.Add(30 * 24 * time.Hour) }, GracePeriod: 24 * time.Hour, SessionMaxAge: 90 * 24 * time.Hour},
 	} {
-		result, err := Sweep(context.Background(), local, store, opts)
+		result, err := Sweep(context.Background(), local, store, agreeing(opts))
 		if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 0 || len(result.DeletedSessions) != 0 {
 			t.Fatalf("%#v %v", result, err)
 		}
@@ -491,7 +491,7 @@ func TestSweepSkipsRemoteReadWhenNothingIsExpirable(t *testing.T) {
 	// A second superseded snapshot past its grace period is deletable, so
 	// the sweep must read the current pointer and act.
 	publishThird(t, local, mem, "s1", dir, supersededAt.Add(time.Hour))
-	result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return supersededAt.Add(30 * time.Hour) }, GracePeriod: 24 * time.Hour})
+	result, err := Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return supersededAt.Add(30 * time.Hour) }, GracePeriod: 24 * time.Hour}))
 	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -504,7 +504,7 @@ func TestSweepSkipsRemoteReadWhenNothingIsExpirable(t *testing.T) {
 
 	// Locally expired session: the remote read is required to confirm.
 	store.gets = 0
-	result, err = Sweep(context.Background(), local, store, Options{Now: func() time.Time { return supersededAt.Add(100 * 24 * time.Hour) }, SessionMaxAge: 90 * 24 * time.Hour})
+	result, err = Sweep(context.Background(), local, store, agreeing(Options{Now: func() time.Time { return supersededAt.Add(100 * 24 * time.Hour) }, SessionMaxAge: 90 * 24 * time.Hour}))
 	if err != nil || len(result.Errors) != 0 || len(result.DeletedSessions) != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}

@@ -64,6 +64,28 @@ func (s *Store) LoadSuperseded(archiveSessionID string) ([]SupersededSource, err
 	return out, nil
 }
 
+// ClampSuperseded moves every entry of a session's ledger that claims to have
+// been superseded after at back to at, keeping the ledger's order. Such a
+// time was stamped by a clock running ahead; left alone, it would keep its
+// object from ever reaching the grace period until that date came round.
+func (s *Store) ClampSuperseded(archiveSessionID string, at time.Time) error {
+	existing, err := s.LoadSuperseded(archiveSessionID)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for i := range existing {
+		if existing[i].SupersededAt.After(at) {
+			existing[i].SupersededAt = at.UTC()
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return local.Write(s.supersededPath(archiveSessionID), existing)
+}
+
 // RemoveSuperseded drops one entry from a session's ledger, after its
 // object has actually been deleted from storage.
 func (s *Store) RemoveSuperseded(archiveSessionID, key string) error {
