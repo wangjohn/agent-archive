@@ -79,6 +79,17 @@ func TestPublishedSummaryOfOlderStateDecodesInFull(t *testing.T) {
 	if err != nil || !found || !head.Published || !head.CapturedAt.Equal(at) || head.Status != CacheStatusPublished {
 		t.Fatalf("%#v %v %v", head, found, err)
 	}
+	if _, ok := readLeadingSummary(store.publishedPath("session-1")); ok {
+		t.Fatal("a reader outside a collector pass rewrote the file")
+	}
+	// A collector pass, the file's writer, migrates it once, so later reads
+	// need not decode it in full.
+	if _, _, err := store.ForCollectorPass().LoadPublishedSummary("session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if migrated, ok := readLeadingSummary(store.publishedPath("session-1")); !ok || !reflect.DeepEqual(migrated, head) {
+		t.Fatalf("not migrated: %#v %v", migrated, ok)
+	}
 }
 
 // A clamp belongs to the capture it was recorded for: a later capture drops

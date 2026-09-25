@@ -404,6 +404,12 @@ func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary Published
 	if err != nil || !p.found {
 		return PublishedSummary{}, false, err
 	}
+	// State from before the summary existed is rewritten with one, once, by
+	// the collector pass that owns it; until then every read would decode it
+	// in full. A failed rewrite only leaves that cost for the next read.
+	if s.collectorPass {
+		_ = p.write(p.state)
+	}
 	return p.Summary(), true, nil
 }
 

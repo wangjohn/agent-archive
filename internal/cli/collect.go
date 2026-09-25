@@ -293,7 +293,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	// by age until it is fixed, which status must say. A hold for one pass
 	// after a long gap (the Mac was off) clears itself and says nothing.
 	if held := sweepResult.Held; held != nil && !errors.Is(held, retention.ErrClockJumped) {
-		recordPreflightError(localStore, fmt.Errorf("retention: %w", held))
+		addStatusProblem(localStore, fmt.Sprintf("retention: %v", held))
 	}
 	if verifyErr != nil {
 		recordPreflightError(localStore, verifyErr)
@@ -346,6 +346,21 @@ func recordRetentionErrors(localStore *state.Store, result *collector.Result, sw
 		return
 	}
 	status.LastError = fmt.Sprintf("%d session(s) failed to scan, publish, or clean up", len(result.Errors))
+	_ = localStore.SaveStatus(status)
+}
+
+// addStatusProblem adds problem to Status.LastError, after whatever the pass
+// already recorded there, rather than replacing it. Best effort, like
+// recordPreflightError.
+func addStatusProblem(localStore *state.Store, problem string) {
+	status, err := localStore.LoadStatus()
+	if err != nil {
+		return
+	}
+	if status.LastError != "" {
+		problem = status.LastError + "; " + problem
+	}
+	status.LastError = problem
 	_ = localStore.SaveStatus(status)
 }
 
