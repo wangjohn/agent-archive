@@ -77,7 +77,7 @@ func verificationRetryDelay(attempts int) time.Duration {
 	return verificationBackoff[attempts-1]
 }
 
-// verificationSummary reports what one verifyPublications pass did.
+// verificationSummary reports what one verifyPublicationsWithin pass did.
 type verificationSummary struct {
 	Attempted  int
 	Verified   int
@@ -185,10 +185,25 @@ func storageFailureState(err error) string {
 	return "storage_unavailable"
 }
 
-// verifyPublicationsWithin is verifyPublications within ctx: a collector
-// pass passes its own deadline, so read-back gets what is left of the pass's
-// budget rather than time of its own on top. Read-backs ctx leaves no time
-// for are deferred to the next pass, like those over the per-pass cap.
+// verifyPublicationsWithin verifies only new publications or evidence
+// invalidated by configuration changes. Status reads this local result; it
+// never downloads conversation content.
+//
+// A failed read-back is recorded with a retry time and never surfaces as a
+// pass error: the publication itself succeeded, so `sync` still exits 0 and
+// Status.LastError stays free for genuine collection failures. Status reports
+// the pending or failed verification from the record instead.
+//
+// Local state that cannot be read fails only its own session's read-back:
+// an unreadable registration is skipped (the collector pass has already
+// reported it), and a session whose published state or verification record
+// cannot be read is left out and returned as an error once every other
+// session has been handled.
+//
+// It runs within ctx: a collector pass passes its own deadline, so read-back
+// gets what is left of the pass's budget rather than time of its own on top.
+// Read-backs ctx leaves no time for are deferred to the next pass, like those
+// over the per-pass cap.
 func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Config, env Env, store *state.Store, remote storage.ObjectStore) (verificationSummary, error) {
 	var summary verificationSummary
 	regs, _, err := store.ScanRegistrations()

@@ -123,7 +123,8 @@ type ListOptions struct {
 	Skipped func(SkippedSidecar)
 }
 
-// ListMetadataWithOptions is ListMetadata with an optional local cache. A
+// ListMetadataWithOptions reads only metadata sidecars and applies filters
+// without downloading transcript bundles, with an optional local cache. A
 // harness filter narrows the listing to that harness's own prefix, keys which
 // are not sidecars are skipped before any download, and sidecars are read with
 // bounded concurrency. Results are ordered newest capture first.
@@ -275,7 +276,7 @@ func readListedSidecar(ctx context.Context, store storage.ObjectStore, object st
 }
 
 // ReadMetadata reads and validates one metadata sidecar by its object key.
-// Like ListMetadata it downloads no transcript bundle.
+// Like ListMetadataWithOptions it downloads no transcript bundle.
 func ReadMetadata(ctx context.Context, store storage.ObjectStore, key string) (archive.Metadata, error) {
 	data, err := store.Get(ctx, key)
 	if err != nil {

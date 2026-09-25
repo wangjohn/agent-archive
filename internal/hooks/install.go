@@ -172,8 +172,14 @@ func apply(changes []Change, writeTarget func(path string) (string, error)) erro
 	return nil
 }
 
-// PlanRemovalOf is PlanRemoval for one harness; found is false when its file
-// holds nothing of hook's installation.
+// PlanRemovalOf prepares the inverse of Plan for one harness, for uninstall:
+// a Change whose After is the current file with only hook's installation's
+// handlers (and the prototype's) stripped (see Remove). found is false, and
+// there is no Change, when the harness's hook file is missing or holds
+// nothing of hook's installation, so an unrelated configuration, or one only
+// another installation's hooks are in, is never rewritten or reformatted.
+// Apply the result with Apply, which keeps its refuse-on-concurrent-edit and
+// rollback behavior.
 func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found bool, err error) {
 	path, err := files.path(harness)
 	if err != nil {
