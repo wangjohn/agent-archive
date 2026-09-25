@@ -63,6 +63,52 @@ linters:
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/collector
               desc: retention deletes through its own DeleteWholeSession
+        # The hook runtime runs on the user's turn. internal/cli owns flags,
+        # prompts, terminal output and the exit code; capture does none of
+        # them, and nothing a hook must never do: run a program (launchctl),
+        # open the Keychain or a bucket, or use the network.
+        # TestCaptureImportBoundary checks the same on every platform.
+        capture-is-not-the-command-line:
+          files:
+            - "**/internal/capture/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: cli adapts capture, never the other way round
+            - pkg: github.com/wangjohn/agent-archive/internal/terminal
+              desc: a hook never writes to a terminal; return an error to cli
+            - pkg: golang.org/x/term
+              desc: a hook never prompts
+            - pkg: os/exec
+              desc: a hook runs no other program
+            - pkg: os/signal
+              desc: cli owns process signals
+            - pkg: net/http
+              desc: a hook never touches the network
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: a hook never opens credentials
+            - pkg: github.com/wangjohn/agent-archive/internal/storage
+              desc: a hook never touches the bucket; the collector publishes
+            - pkg: github.com/wangjohn/agent-archive/internal/collector
+              desc: a hook only records; the collector publishes
+            - pkg: github.com/wangjohn/agent-archive/internal/hooks
+              desc: a hook does not install hooks
+        # setup's transaction record is read by every command and by the hook,
+        # so it stays free of the command-line layer.
+        # TestSetupJournalImportBoundary checks the same on every platform.
+        setupjournal-is-not-the-command-line:
+          files:
+            - "**/internal/setupjournal/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: cli drives the journal, never the other way round
+            - pkg: github.com/wangjohn/agent-archive/internal/capture
+              desc: the hook reads the journal; the journal knows nothing of hooks
+            - pkg: github.com/wangjohn/agent-archive/internal/terminal
+              desc: return errors; cli renders them
+            - pkg: golang.org/x/term
+              desc: prompts belong to cli
     revive:
       rules:
         - name: exported
