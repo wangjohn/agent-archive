@@ -43,6 +43,35 @@ and prefix in place of `my-archive-bucket` and `agent-archive`:
 }
 ```
 
+What each statement is for:
+
+- **`ArchiveObjects`** covers every read, upload, and delete, all under the
+  prefix.
+- **`ListArchivePrefix`** lets `list` enumerate sessions and retention find
+  old sources. The condition limits listing to keys under the prefix, so
+  these credentials can't learn the names of anything else in the bucket.
+- **Telling "missing" from "denied".** Before a session's first upload,
+  and in `show`, agent-archive reads a key that may not exist yet and must
+  learn that it is missing. S3 answers a read of a missing key with 404
+  only when the caller may list the bucket, and otherwise with 403. A
+  `GetObject` request carries no `s3:prefix`, so under this policy S3 may
+  well answer 403. agent-archive handles either answer: when a read is
+  refused with 403, it asks one `ListObjectsV2` with the key itself as the
+  prefix (which the condition allows) and treats the key as missing only if
+  that listing succeeds without it. Any other refusal stays an error.
+  Setup's connection test checks this end to end: it reads its deleted test
+  object back and fails, pointing here, unless that read comes back "not
+  found".
+
+> **Not yet tested on AWS.** agent-archive's handling of both answers is
+> tested against simulated S3 responses, and its end-to-end runs used a
+> local S3-compatible server with full access. This policy itself has not
+> yet been applied to a real AWS bucket. If setup's connection test fails
+> with "a missing object must read as not found", tell us in an issue. You
+> can drop the `Condition` from `ListArchivePrefix` as a workaround; the
+> credentials can then list every key name in the bucket (names only, not
+> contents).
+
 The third statement is optional. Without it, setup and `status` report the
 bucket's privacy as `not_verified` instead of checking it; nothing else
 changes. With it, agent-archive reports `verified_private` only when all four

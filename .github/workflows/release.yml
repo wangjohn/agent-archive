@@ -66,6 +66,7 @@ jobs:
           go test -race ./...
           python3 scripts/test_release_signing.py
           python3 scripts/test_install.py
+          python3 scripts/test_purge_recipe.py
 
       - name: Build
         run: ./scripts/build-release.sh

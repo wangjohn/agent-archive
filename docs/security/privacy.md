@@ -26,30 +26,74 @@ of the filter is in the [filter changelog](filter-changelog.md).
   include, and only for sessions that start after a project is included
   (or that you import with `backfill`, after reviewing the plan). Nothing is
   sent anywhere but your bucket: there is no hosted service and no
-  telemetry.
+  telemetry. The one thing uploaded from outside your projects is the
+  [skill evidence](#what-is-uploaded) from your user-level skill folders.
+- **Who can change the archive.** Anyone who can write to your prefix
+  controls what `list`, `show`, and `handoff` return. A handoff is a prompt
+  for a coding agent, so a planted or altered session is text another agent
+  will read: readers check each source's SHA-256 against its metadata,
+  which catches corruption but not someone who can write both. Give write
+  access only to Macs you trust, and treat a handoff from a shared bucket
+  like any other text you paste into an agent (see
+  [handoff](../guides/handoff.md#what-the-receiving-agent-is-told)).
+- **The recorded agent runs as you.** The coding agent whose session is
+  being archived runs with your account's permissions. It can read and
+  change agent-archive's local state and configuration, the apps' hook
+  files, and your AWS profiles, and it can run `agent-archive` itself
+  (`pause`, `uninstall`). So the archive is a convenience record of what
+  the agent reported, not a tamper-proof audit log of what it did; and
+  anything the agent read (a file in a cloned repository, a web page) is in
+  the transcript as it was, including text written to mislead the next
+  agent that reads it.
 
 Security problems, including a way around the filter, are reported as
 [SECURITY.md](../../SECURITY.md) describes.
 
 ## What is uploaded
 
-For each captured session, two kinds of object (see
-[bucket layout](../reference/bucket-layout.md)):
+For each captured session, two objects (see
+[bucket layout](../reference/bucket-layout.md)): the source bundle, which
+holds the filtered transcript, skill evidence, and hook observations, and
+the metadata sidecar.
 
-- **The filtered transcript** (source bundle): your prompts; the agent's
+- **The filtered transcript**: your prompts; the agent's
   replies; tool calls with their arguments (Edit bodies, shell commands,
   search patterns, file paths) and tool results, each string capped at
   64 KB; working directories (which usually contain your username); Git
   branch names; model names; token counts; timestamps; the app's own session
   and message IDs; summaries the app wrote when compacting a conversation;
   and final messages hooks reported.
-- **Skill evidence**: the names, hashes, and filtered bodies (up to 16 KB
-  each) of the skills installed in the app's skill folders, and which scope
-  they came from.
-- **Metadata**: the machine ID of the Mac that captured it, a project ID (a
-  hash of the project's path, not the path itself), the app and its
-  version, capture times, counts, models, skills used, and the capture gaps
-  the filter recorded (the names of omitted fields, never their values).
+- **Skill evidence**: for every hook-captured session, the name, SHA-256,
+  and filtered body (the first 16 KB) of each `SKILL.md` installed in that
+  app's skill folders, and which folder it came from. These are your
+  **user-level** folders, whatever the project, plus the project's own:
+
+  | App | User-level folders | Project folder |
+  | --- | --- | --- |
+  | Claude Code | `~/.claude/skills` | `<project>/.claude/skills` |
+  | Codex | `~/.agents/skills`, `~/.codex/skills` | `<project>/.agents/skills` |
+  | Cursor | `~/.cursor/skills` | `<project>/.cursor/skills` |
+
+  Only each folder's immediate `<skill>/SKILL.md` files are read (up to 256
+  per folder), never other files in them. In a user-level folder a
+  symlinked skill is followed wherever it points, as long as the file it
+  reaches is named `SKILL.md`; a project's `SKILL.md` that resolves outside
+  the project is skipped. There is no setting to turn this off: keep
+  a skill you don't want uploaded out of these folders. Sessions imported
+  with `backfill` carry no skill evidence.
+- **Metadata**: the machine ID of the Mac that captured it (random, made at
+  setup), a project ID (a hash of the project's path, not the path itself),
+  the app and its version, the app's own session ID, capture times, counts,
+  models, skills used, and the capture gaps the filter recorded (the names
+  of omitted fields, never their values).
+- **Hook observations**: for each hook event, its name, the app's turn and
+  message IDs, the model and model settings the hook reported, and, for a
+  stop hook, the agent's final message (filtered like the transcript).
+
+agent-archive adds nothing else about your Mac: no hostname, username, or
+IP address, beyond what already appears in the transcript (a working
+directory usually contains your username). Your storage provider sees each
+connection, as it would for any upload.
 
 Feedback you attach with `agent-archive feedback` is filtered the same way
 and uploaded with the session.
@@ -80,6 +124,94 @@ Recognizable secrets inside kept text are replaced with `[REDACTED]` (see
 [value-level redaction](#value-level-redaction)). Each omission and
 redaction is recorded as a capture gap on the session, so a reader knows
 something was removed.
+
+## After a filter upgrade
+
+A new filter version (see the [filter changelog](filter-changelog.md))
+applies to what is uploaded from then on. It does not clean what is already
+in the bucket:
+
+- **Sessions whose transcript is still on the capturing Mac** are refiltered
+  and republished automatically on that Mac's next passes. The copy made
+  with the old filter becomes the session's previous source, and retention
+  always keeps a session's immediate predecessor, so for a session that
+  doesn't change again the old copy stays until the whole session expires
+  (90 days after its last capture by default).
+- **Sessions whose transcript is gone** (deleted, or on a Mac that no longer
+  runs agent-archive) are never refiltered: their current copy stays as the
+  old filter made it until the session expires.
+- **Sessions in an earlier destination** (after you changed storage) are
+  not touched at all.
+
+`show` prints a session's `filter_version`. To remove the older copies now,
+delete from the bucket the source objects no session's metadata points at.
+Pause every Mac that uploads to the bucket first, so no publication is in
+flight: a new source is uploaded before the metadata that points at it.
+This needs the [AWS CLI](https://aws.amazon.com/cli/) and `jq`, and
+credentials that can list, read, and delete under the prefix:
+
+First, list what would be deleted:
+
+<!-- purge-recipe:list (scripts/test_purge_recipe.py runs the three blocks below) -->
+```sh
+agent-archive pause            # on every Mac that uploads to this bucket
+
+bucket=my-archive-bucket       # your bucket
+prefix=agent-archive/          # your prefix with its trailing slash, or empty
+# export AWS_PROFILE=...       # a profile that can list, read, and delete
+# For R2: export AWS_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+
+# Every key under sessions/, then the source each metadata.json points at.
+aws s3api list-objects-v2 --bucket "$bucket" --prefix "${prefix}sessions/" \
+  --query 'Contents[].Key' --output text | tr '\t' '\n' | grep -v '^None$' | sort > keys.txt
+: > failed.txt
+grep '/metadata\.json$' keys.txt | while read -r meta; do
+  aws s3 cp "s3://$bucket/$meta" - | jq -er --arg p "$prefix" '.source_bundle.key | strings | $p + .' ||
+    echo "$meta" >> failed.txt
+done | sort -u > current.txt
+
+# Sources no metadata points at: superseded copies, and leftovers of
+# interrupted deletions.
+grep '/source\.[0-9a-f]*\.jsonl\.gz$' keys.txt | comm -23 - current.txt > unreferenced.txt
+wc -l < unreferenced.txt failed.txt
+```
+
+Review `unreferenced.txt`. `failed.txt` must be empty: a metadata object
+that could not be read would make every source beside it look unreferenced,
+so the next block refuses to delete anything until the listing is run again
+without failures. Then delete:
+
+<!-- purge-recipe:delete -->
+```sh
+if [ -s failed.txt ]; then
+  echo "Some metadata could not be read (failed.txt); nothing deleted." >&2
+else
+  while read -r key; do aws s3 rm "s3://$bucket/$key"; done < unreferenced.txt
+fi
+```
+
+To remove sessions whose current copy predates a filter version (here 10)
+as well, delete each one whole, metadata first:
+
+<!-- purge-recipe:old-sessions -->
+```sh
+grep '/metadata\.json$' keys.txt | while read -r meta; do
+  version=$(aws s3 cp "s3://$bucket/$meta" - | jq -r '.filter_version | strings')
+  case "$version" in
+    '' | *[!0-9]*) echo "could not read $meta; skipped" >&2 ;;
+    *) if [ "$version" -lt 10 ]; then
+         aws s3 rm "s3://$bucket/$meta" && aws s3 rm "s3://$bucket/${meta%metadata.json}" --recursive
+       fi ;;
+  esac
+done
+```
+
+When you are done, run `agent-archive resume` on every Mac you paused.
+
+A session deleted this way is gone from `list`; if its transcript is still
+on the capturing Mac and changes again, that Mac publishes it anew. On an S3
+bucket with versioning turned on, a delete only hides the object: remove
+the noncurrent versions too, or add a lifecycle rule that expires them.
 
 ## What changes on your Mac
 

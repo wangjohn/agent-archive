@@ -34,9 +34,79 @@ files agent-archive creates are removed (see
 is kept and reported. The lock files go last, while uninstall still holds
 them, so nothing can start work in a half-deleted directory.
 
-Neither mode reads or deletes anything in the bucket. To delete archived
-sessions, delete `sessions/` (under your prefix) in the bucket yourself, or
-lower retention first and let the collector remove them.
+Neither mode reads or deletes anything in the bucket; see
+[delete the archive](#delete-the-archive-in-the-bucket).
+
+## Remove the binary
+
+Uninstall keeps the `agent-archive` executable, so you can still read the
+archive or set it up again. To remove it too, after uninstalling:
+
+```sh
+rm "$(command -v agent-archive)"    # add sudo if it is in /usr/local/bin and not yours
+```
+
+## Delete the archive in the bucket
+
+**Only the Mac that captured a session ever deletes it**, through retention
+or `backfill undo`, and only while that Mac runs agent-archive and isn't
+paused. The sessions of a Mac you uninstall, wipe, retire, or pause for good
+stay in the bucket indefinitely, and nothing else cleans them up.
+
+To delete everything under your prefix now (with the AWS CLI, and
+credentials that can list and delete there):
+
+```sh
+aws s3 rm "s3://my-archive-bucket/agent-archive/sessions/" --recursive
+aws s3 rm "s3://my-archive-bucket/agent-archive/.setup-test/" --recursive   # an interrupted setup's test object
+# For R2, add to each command: --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+```
+
+Use your own bucket and prefix. Pause or uninstall every Mac that uploads
+there first, or they will publish their sessions again. To delete only one
+Mac's sessions, find its machine ID first (`jq -r .machine_id config.json`
+in that Mac's data directory, or the `machine_id` that `show` prints for one
+of its sessions), then, with that Mac paused or uninstalled:
+
+<!-- purge-recipe:machine (scripts/test_purge_recipe.py runs this block) -->
+```sh
+bucket=my-archive-bucket
+prefix=agent-archive/          # your prefix with its trailing slash, or empty
+machine=0123456789abcdef0123456789abcdef
+aws s3api list-objects-v2 --bucket "$bucket" --prefix "${prefix}sessions/" \
+  --query 'Contents[].Key' --output text | tr '\t' '\n' | grep '/metadata\.json$' |
+while read -r meta; do
+  owner=$(aws s3 cp "s3://$bucket/$meta" - | jq -r '.machine_id | strings')
+  if [ -n "$owner" ] && [ "$owner" = "$machine" ]; then
+    aws s3 rm "s3://$bucket/$meta" && aws s3 rm "s3://$bucket/${meta%metadata.json}" --recursive
+  fi
+done
+```
+
+### A lifecycle rule as a backstop
+
+A bucket lifecycle rule deletes objects by age whatever happens to your
+Macs. Make it comfortably longer than the longest retention any Mac uses
+(90 days by default), so it only removes what no Mac is left to delete; a
+rule shorter than retention would delete sessions agent-archive still keeps.
+It needs an administrator's credentials, not the archive's:
+
+```sh
+# Replaces the bucket's whole lifecycle configuration: merge any rules it already has.
+aws s3api put-bucket-lifecycle-configuration --bucket my-archive-bucket \
+  --lifecycle-configuration '{"Rules": [{"ID": "agent-archive-backstop", "Status": "Enabled",
+    "Filter": {"Prefix": "agent-archive/"}, "Expiration": {"Days": 180}}]}'
+```
+
+For R2, add a rule for the prefix under the bucket's **Settings → Object
+lifecycle rules** in the Cloudflare dashboard, or see Cloudflare's
+[object lifecycles](https://developers.cloudflare.com/r2/buckets/object-lifecycles/)
+page for the API.
+
+Objects expire one by one, by their own age. A session whose metadata was
+refreshed later than its source (after a parser upgrade) can be left, for a
+while, with metadata whose source is gone: `list` still shows it and `show
+--normalized` reports the source missing, until the metadata expires too.
 
 ## When uninstall refuses
 
