@@ -105,6 +105,17 @@ func redactSensitive(value string) (string, bool) {
 	return value, redacted
 }
 
+// RedactText returns text with every credential the filter recognizes in a
+// string replaced by [REDACTED], and nothing else changed: there is no
+// length cap, so a digest of the result covers all of the text. A producer
+// that records a digest beside something it uploads filtered hashes this,
+// never the original, so the digest cannot confirm a guess at a redacted
+// secret.
+func RedactText(text string) string {
+	out, _ := redactSensitive(text)
+	return out
+}
+
 // maxRedactPasses bounds redactSensitive's passes. Every pass is complete,
 // so the result is redacted however many ran.
 const maxRedactPasses = 4
@@ -134,6 +145,7 @@ func redactOnce(value string, prepare func(string) needleText) (string, bool) {
 	for _, pattern := range credentialContextPatterns {
 		apply(redactMatches(pattern, text, true))
 	}
+	apply(redactPgpassLines(text))
 	apply(redactYAMLBlockValues(text))
 	apply(redactCredentialEntryValues(text))
 	apply(redactCredentialStructures(text))

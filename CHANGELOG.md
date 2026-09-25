@@ -41,9 +41,11 @@ The first release, `v0.1.0`, will be cut from this section.
   content, and unknown fields are never uploaded. Credentials are redacted
   by name (`DB_PASSWORD=`, `"api_key":`, `--token`, form fields labelled
   password or PIN) and by shape (AWS, GitHub, Slack, Stripe, GitLab, Google,
-  Hugging Face, and npm tokens; private keys, also base64-encoded as in a
-  kubeconfig; Docker registry logins; JWTs; passwords in URLs, `curl -u`,
-  and `.netrc`). See the
+  Hugging Face, npm, Groq, and xAI tokens; private keys, also
+  base64-encoded as in a kubeconfig; Docker registry logins; JWTs; access
+  key IDs; wallet seed phrases; passwords in URLs, `curl -u`, `.netrc`, and
+  `.pgpass`). Skill hashes are of the redacted text, so they can't confirm a
+  guessed secret. See the
   [filter changelog](docs/security/filter-changelog.md).
 - Hook files are edited in place: only agent-archive's own `hooks` entries
   change, and a file that can't be edited safely is left alone.

@@ -51,6 +51,8 @@ func TestCredentialShapeNeedles(t *testing.T) {
 		"ke" + "y-" + d(32),
 		d(9) + ":AA" + a(33),
 		"abc" + "8Q~" + a(32),
+		"gs" + "k_" + a(52),
+		"xa" + "i-" + a(80),
 		"LS0tLS1" + "CRUdJTi" + a(24),
 	}
 	if len(samples) != len(credentialShapeTable) {
