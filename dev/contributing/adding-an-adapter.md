@@ -11,7 +11,7 @@ first.
 
 Before writing code, collect real, synthetic-content transcripts and hook
 payloads from the app, and record what you observed, for which version, in
-[capture capabilities](../reference/capture-capabilities.md). Support stays
+[capture capabilities](../../docs/reference/capture-capabilities.md). Support stays
 `unverified` until a session from an observed version is published end to
 end. Don't infer a field from documentation alone.
 
@@ -34,7 +34,7 @@ end. Don't infer a field from documentation alone.
   turns, prompts, and tool calls in the new records, with fixtures and
   golden output in `testdata/handoff/`.
 - This is a filter change: bump `FilterVersion` and `adapterVersion` and
-  document it (see [versions](../reference/versions.md)).
+  document it (see [versions](../maintainers/versions.md)).
 
 ## 3. Hooks and setup (`internal/hooks`, `internal/cli`)
 
@@ -44,7 +44,7 @@ end. Don't infer a field from documentation alone.
   (session ID, transcript path, working directory, start provenance), and
   its status lines. A hook must stay fast, silent, and offline.
 - Session eligibility: decide how a never-seen session proves it started
-  fresh (see [session eligibility](../reference/session-eligibility.md)); if
+  fresh (see [session eligibility](../../docs/reference/session-eligibility.md)); if
   the app can't say, don't guess.
 
 ## 4. The rest
@@ -54,7 +54,7 @@ end. Don't infer a field from documentation alone.
 - `internal/reader`: add the app to `Harnesses`, the key segments listings
   probe.
 - `schemas/` and docs: the app name in enums, the README's supported apps,
-  and [privacy](../security/privacy.md) for anything new that is uploaded.
+  and [privacy](../../docs/security/privacy.md) for anything new that is uploaded.
 
 ## Tests to write
 

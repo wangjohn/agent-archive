@@ -79,4 +79,4 @@ of it.
 Everything printed has passed the same [privacy filter](../security/privacy.md)
 as the archive. Cursor transcripts record no tool results, so a Cursor
 handoff says so and shows none. `--format json` prints the same content as
-JSON. The format is specified in the [handoff design](../design/handoff.md).
+JSON. The format is specified in the [handoff design](../../dev/specs/handoff.md).

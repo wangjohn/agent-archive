@@ -4,7 +4,7 @@ Status: implemented. Phase 1 merged in #17–#23 and #28 (destination IDs), and 
 (Cursor database chats) in #29–#31; Cursor subagent chats are not imported yet.
 Written 2026-09-23 against `main` at `50087bf` (filter 6, adapter 0.6.0,
 parser 0.9.0, source bundle schema 2). How to use it:
-[backfill guide](../guides/backfill.md). The native stores were
+[backfill guide](../../docs/guides/backfill.md). The native stores were
 probed on a working Mac for their layout and field names only, never their
 content. Phase 1 imports transcript files. Phase 2 adds Cursor chats that exist
 only in Cursor's SQLite database.
@@ -12,7 +12,7 @@ only in Cursor's SQLite database.
 ## Problem
 
 The archive captures only sessions that start after their project is activated
-([session eligibility](../reference/session-eligibility.md)). Earlier
+([session eligibility](../../docs/reference/session-eligibility.md)). Earlier
 sessions are invisible to `list`, `show`, `handoff`, and retros. So are
 sessions the hooks declined: resumed old conversations, projects that weren't
 included yet, and apps without hooks. That history is still on disk, for now.

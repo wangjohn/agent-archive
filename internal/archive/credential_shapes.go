@@ -94,7 +94,7 @@ var credentialName = credentialNamePattern() + credentialSuffix
 // capture the value as "value" so only it is replaced; the assignment also
 // captures "name". Their assignment form is deliberately broad and is a
 // known false-positive class: ordinary code such as `token = parse(x)`
-// matches it. See docs/security/privacy.md.
+// matches it. See dev/specs/privacy-filter.md.
 var (
 	credentialAssignment = regexp.MustCompile(`(?i)` + credentialLead + credentialQuote + `(?P<name>` + credentialName + `)` + credentialQuote + credentialSeparator + credentialScheme + `(?P<value>` + credentialValue + `)`)
 	credentialFlag       = regexp.MustCompile(`(?im)(?:^|[ \t])-{1,2}` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`)

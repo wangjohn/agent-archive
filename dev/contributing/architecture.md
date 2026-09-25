@@ -1,7 +1,7 @@
 # Architecture
 
 agent-archive is one Go binary, `cmd/agent-archive`, with everything else in
-`internal/`. The design rationale is in the [archive design](../design/archive-spec.md);
+`internal/`. The design rationale is in the [archive design](../specs/archive.md);
 this page is the map.
 
 ```mermaid
@@ -49,7 +49,7 @@ flowchart LR
 | --- | --- |
 | `archive` | The privacy filter and adapters (one per app), source bundles, metadata derivation, the normalized view, and handoff rendering. No filesystem, network, or CLI dependencies, so it is fully testable on fixtures. |
 | `collector` | The scan, build, publish loop; change detection; subagent capture. |
-| `state` | Per-session local state: registrations, requests, published and pending publications, change detection, removal records, and the per-session locks (`Store`; see [local state](../reference/local-state.md)). `state/statetest` has test helpers. |
+| `state` | Per-session local state: registrations, requests, published and pending publications, change detection, removal records, and the per-session locks (`Store`; see [local state](../../docs/reference/local-state.md)). `state/statetest` has test helpers. |
 | `retention` | Deleting superseded snapshots and expired sessions, with the remote metadata as the source of truth. |
 | `storage` | The object-store contract and the S3/R2 implementation; checksums, read-back, bucket privacy inspection. Keys are relative to the configured prefix. `storage/storagetest` has the in-memory store tests use. |
 | `credentials` | Resolving storage credentials: AWS profiles, and R2 secrets in the Keychain (cgo, Security.framework). |
@@ -91,7 +91,7 @@ flowchart TD
 
 - Nothing leaves the Mac except what an adapter's filter kept. Unknown keys
   are dropped and named, never passed through. See
-  [privacy](../security/privacy.md) and [versions](../reference/versions.md).
+  [privacy](../../docs/security/privacy.md) and [versions](../maintainers/versions.md).
 - The bucket's `metadata.json` is the live pointer. A source is uploaded
   before the metadata that points at it, and deleted only after it is no
   longer pointed at.

@@ -1,8 +1,8 @@
-# Filter changelog
+# Privacy filter changelog
 
 What each version of the source filter changed, newest first. The current
-rules, as a whole, are in [privacy](privacy.md); version numbers and bump
-rules are in [versions](../reference/versions.md). Each archived session
+rules, as a whole, are in the [filter specification](privacy-filter.md);
+version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
 ## Source filter version 12
@@ -209,7 +209,7 @@ pattern that every match holds one of its needles
 (`TestPatternNeedlesAreRequired`).
 
 Snapshots filtered before the upgrade stay in the bucket until the session
-expires; see [after a filter upgrade](privacy.md#after-a-filter-upgrade) to
+expires; see [after a filter upgrade](../../docs/security/privacy.md#after-a-filter-upgrade) to
 delete them.
 
 ## Source filter version 10
@@ -255,7 +255,7 @@ to stop. Adapter version 0.9.0 goes with it.
   the value is replaced now, and a quoted value keeps its quotes:
   `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`,
   `Authorization: Bearer [REDACTED]`. Filter 8 replaced the name as well. See
-  [Value-level redaction](privacy.md#value-level-redaction) for the full rule and its
+  [Value-level redaction](privacy-filter.md#value-level-redaction) for the full rule and its
   false positives.
 - **Images, documents, and other binary blocks are dropped.** A pasted
   screenshot or PDF, or an image a tool read, arrives as a content block
@@ -446,7 +446,7 @@ whose text is a model-written summary of the conversation so far.
   `isMeta`; any other value under those names is omitted).
 - **Kept, unlike an `isMeta` record:** the summary's text. It is model output
   describing the session, which is what a handoff to another agent needs. It
-  passes every value rule in [privacy](privacy.md#filter-rules) (injected-instruction stripping, credential
+  passes every value rule in [privacy](privacy-filter.md#rules) (injected-instruction stripping, credential
   redaction, the 64 KB cap) like any other message.
 
 The shape is taken from Claude Code's behavior; no transcript on the

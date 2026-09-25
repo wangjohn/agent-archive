@@ -16,7 +16,7 @@ affects.
 | Configuration | `config.SchemaVersion` | `config.json` `schema_version` | 1 | `config.json` changes incompatibly. |
 
 The per-version filter changes are in the
-[filter changelog](../security/filter-changelog.md).
+[filter changelog](../specs/privacy-filter-changelog.md).
 
 ## What a bump does
 
@@ -33,8 +33,9 @@ is re-uploaded unless it changed.
 
 - **Any change to filtered output** — a key kept or dropped, a redaction
   pattern, a new block type — bumps `FilterVersion` and adds a section to the
-  [filter changelog](../security/filter-changelog.md) and, if the baseline
-  changes, to [privacy](../security/privacy.md). Regenerate the goldens
+  [filter changelog](../specs/privacy-filter-changelog.md), updates the
+  [filter specification](../specs/privacy-filter.md), and, if what users
+  should know changes, [privacy](../../docs/security/privacy.md). Regenerate the goldens
   ([how](../contributing/testing.md#fixtures-and-goldens)) and review the
   diff: every changed line is a privacy decision.
   Bump `adapterVersion` in the same change.

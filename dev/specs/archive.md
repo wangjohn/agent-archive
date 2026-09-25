@@ -1,6 +1,6 @@
 # Private agent-run archive: product and engineering specification
 
-Status: design reference. This specification was written before the implementation, which now covers most of it; where they differ, the code and the [reference documentation](../README.md) describe current behavior. Remaining gaps are tracked in the [capture capabilities](../reference/capture-capabilities.md) record.
+Status: design reference. This specification was written before the implementation, which now covers most of it; where they differ, the code and the [reference documentation](../../docs/README.md) describe current behavior. Remaining gaps are tracked in the [capture capabilities](../../docs/reference/capture-capabilities.md) record.
 
 ## Product purpose
 

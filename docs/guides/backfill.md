@@ -77,7 +77,7 @@ may have made; a copy a killed backfill leaves is removed by the next
 
 The rules for which sessions are eligible are in
 [session eligibility](../reference/session-eligibility.md); the full design
-is in the [backfill design](../design/backfill.md).
+is in the [backfill design](../../dev/specs/backfill.md).
 
 ## Undo
 

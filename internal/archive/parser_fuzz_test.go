@@ -14,7 +14,7 @@ import (
 // The parser fuzz targets. Each is seeded from testdata/ (checked-in seeds
 // for failures found so far live in testdata/fuzz/<target>/), and plain `go
 // test` runs the seeds. CI runs each target briefly (.github/workflows/test.yml);
-// docs/contributing/testing.md says how to run one for longer.
+// dev/contributing/testing.md says how to run one for longer.
 
 // fuzzAdapters are the JSONL adapters, indexed by a fuzzed byte.
 var fuzzAdapters = []Adapter{ClaudeAdapter{}, CodexAdapter{}, CursorAdapter{}}

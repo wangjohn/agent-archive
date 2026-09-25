@@ -6,7 +6,7 @@ package archive
 // code the filter writes is listed). A reader must still accept a code not
 // listed here: an older or newer writer may use others. Codes are
 // archive-authored and never carry transcript content; see
-// docs/agent-archive-privacy.md for what each one means.
+// dev/specs/privacy-filter.md for what each one means.
 var CaptureGapCodes = []string{
 	// Source filter (every format).
 	"binary_content_omitted",

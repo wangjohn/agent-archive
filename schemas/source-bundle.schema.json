@@ -301,7 +301,7 @@
       }
     },
     "gap_code": {
-      "description": "An archive-authored reason. The enum lists every code this version writes (internal/archive CaptureGapCodes; docs/agent-archive-privacy.md says what each means). A reader must accept any other lowercase code, which an older or newer writer may use.",
+      "description": "An archive-authored reason. The enum lists every code this version writes (internal/archive CaptureGapCodes; dev/specs/privacy-filter.md says what each means). A reader must accept any other lowercase code, which an older or newer writer may use.",
       "anyOf": [
         {
           "enum": [

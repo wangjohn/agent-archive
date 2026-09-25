@@ -27,7 +27,7 @@ contributions are held to a few firm rules; everything else is ordinary Go.
 What CI blocks on (tests, vet, golangci-lint, the release and installer
 scripts, and the shared [Levenshtein](https://github.com/wangjohn/levenshtein)
 checks), and the commands to run the same locally, are on the
-[testing](docs/contributing/testing.md) page.
+[testing](dev/contributing/testing.md) page.
 
 ## Never test against your real Mac
 
@@ -36,7 +36,7 @@ directory, your apps' real settings, the real LaunchAgent, your Keychain,
 Cursor's real database, or a real bucket while developing. In Go tests, use
 the injected `Env` and in-memory store the existing tests use. By hand, use
 `AGENT_ARCHIVE_HOME` plus a temporary `HOME` and a stub `launchctl` on
-`PATH`: [testing](docs/contributing/testing.md) has the full recipe, and
+`PATH`: [testing](dev/contributing/testing.md) has the full recipe, and
 explains why the stub matters even with a sandboxed `HOME`.
 
 ## Privacy-sensitive changes
@@ -44,10 +44,10 @@ explains why the stub matters even with a sandboxed `HOME`.
 Anything that changes what leaves the Mac is a privacy change:
 
 - Bump `archive.FilterVersion` and the adapter version, add a section to the
-  [filter changelog](docs/security/filter-changelog.md), and update
+  [filter changelog](dev/specs/privacy-filter-changelog.md), and update
   [privacy](docs/security/privacy.md) if what is uploaded or dropped
   changes.
-- Regenerate the goldens ([how](docs/contributing/testing.md#fixtures-and-goldens))
+- Regenerate the goldens ([how](dev/contributing/testing.md#fixtures-and-goldens))
   and review every changed line in the PR.
 - Add fixtures for new shapes, with synthetic content only. Never commit a
   real transcript, even a "harmless" one.
@@ -56,7 +56,7 @@ Anything that changes what leaves the Mac is a privacy change:
   seed.
 
 Changes to derived metadata bump `DefaultParserVersion`; schema changes
-update `schemas/`. The rules are in [versions](docs/reference/versions.md).
+update `schemas/`. The rules are in [versions](dev/maintainers/versions.md).
 
 ## Pull requests
 
@@ -74,9 +74,9 @@ update `schemas/`. The rules are in [versions](docs/reference/versions.md).
 
 ## Where things are
 
-The [architecture](docs/contributing/architecture.md) page maps the
+The [architecture](dev/contributing/architecture.md) page maps the
 packages. Supporting a new coding agent is described in
-[adding an adapter](docs/contributing/adding-an-adapter.md). The hidden
+[adding an adapter](dev/contributing/adding-an-adapter.md). The hidden
 `_hook` and `_collect` commands are what app hooks and the LaunchAgent run;
 `scripts/measure-hook.py` measures hook latency. Maintainers: see
-[releasing](docs/maintainers/releasing.md).
+[releasing](dev/maintainers/releasing.md).

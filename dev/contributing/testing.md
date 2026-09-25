@@ -24,7 +24,7 @@ line tools on macOS; elsewhere a stub is built. `go test ./...` also checks the 
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
 template that the CLI does not accept, and `TestCLIReferenceIsCurrent` on a
-stale [CLI reference](../reference/cli.md).
+stale [CLI reference](../../docs/reference/cli.md).
 
 Performance tests check what a pass costs on every run (published-state
 decodes and local writes, counted, not timed). Their wall-clock targets run
@@ -159,7 +159,7 @@ unset CLAUDE_CONFIG_DIR CODEX_HOME AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE
   AWS profile in the sandbox's `~/.aws/config` at it with
   `endpoint_url = http://127.0.0.1:9000`.
 - To exercise the pipeline without setup, write `config.json` by hand (see
-  [configuration](../reference/configuration.md)) and feed `agent-archive
+  [configuration](../../docs/reference/configuration.md)) and feed `agent-archive
   _hook --harness <app>` a JSON payload on stdin with a copied transcript path, then
   run `agent-archive sync`. Never register a real transcript path.
 - `scripts/measure-hook.py BINARY` measures hook latency in its own temporary
@@ -175,7 +175,7 @@ LaunchAgent runs) are not part of the user interface and may change.
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
   (`testdata/handoff/`), backfill plans (`internal/cli/testdata/backfill/`,
-  `internal/backfill/testdata/`) and the [CLI reference](../reference/cli.md)
+  `internal/backfill/testdata/`) and the [CLI reference](../../docs/reference/cli.md)
   have goldens of their own.
 - One flag rewrites every golden file:
 
@@ -185,7 +185,7 @@ LaunchAgent runs) are not part of the user interface and may change.
   ```
 
   Review the diff line by line: a change to the archive's goldens is a
-  privacy change (see [versions](../reference/versions.md)). The flag is
+  privacy change (see [versions](../maintainers/versions.md)). The flag is
   defined once, in `internal/testutil/golden` (`golden.Check`,
   `golden.Update`), which every package with tests imports, so no package
   rejects it (`TestEveryTestedPackageKnowsUpdate`). A new golden test uses

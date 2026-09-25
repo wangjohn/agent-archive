@@ -19,7 +19,7 @@ The tag name reaches scripts only through the `VERSION` environment
 variable, never expanded into a script's text.
 
 Update [CHANGELOG.md](../../CHANGELOG.md) before tagging; the release notes
-point at it and at the [install guide](../getting-started/install.md).
+point at it and at the [install guide](../../docs/getting-started/install.md).
 
 ## Before the first release
 
@@ -75,4 +75,4 @@ development only; they report `dev-<commit>` from `--version`.
 ## Versions
 
 A release that changes what is filtered or how metadata is derived must
-already carry the matching version bumps; see [versions](../reference/versions.md).
+already carry the matching version bumps; see [versions](versions.md).

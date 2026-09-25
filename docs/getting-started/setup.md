@@ -193,7 +193,7 @@ from this installation's own plist; a job loaded from any other plist is left
 running and reported. These keep a second or test installation from stopping
 or replacing the default one. They do not stop it from loading its own job
 into your real launchd: stub `launchctl` in tests (see
-[testing](../contributing/testing.md)).
+[testing](../../dev/contributing/testing.md)).
 
 ## After setup
 
