@@ -199,7 +199,7 @@ Tests call `t.Parallel()` unless they cannot share the process: a test that
 assigns a package variable (`stubLaunchctl`, `collectSoftDeadline`,
 `hookDiagnosticsWait`), calls `t.Setenv` or `os.Chdir`, reads a process-wide
 counter (`state.PublishedStateLoads`), removes this process's Cursor
-snapshots, orders goroutines with real sleeps, or needs work to finish
+snapshots or checks what a sweep of the shared snapshot folder did, orders goroutines with real sleeps, or needs work to finish
 within a production time bound that a busy parallel run can exceed (a
 hook's one-second lock wait, a version command's output deadline) stays
 sequential, with a comment saying why when it is not obvious. Go runs every sequential test
