@@ -1,14 +1,25 @@
 # CLI reference
 
-<!-- Generated from the commands' own help and flag sets by
-     go test ./internal/cli -run TestCLIReferenceIsCurrent -update
-     Do not edit by hand. -->
+<!-- Generated from the commands' own help and flag sets. Do not edit by
+     hand; after changing a command's help or flags, regenerate it with
+     go test ./internal/cli -run TestCLIReferenceIsCurrent -update -->
 
-Every public command, its help as `agent-archive help COMMAND` prints it,
-and the flags its parser accepts. The hidden commands `_hook` and
+Every public command of `agent-archive`: its help, exactly as
+`agent-archive help COMMAND` (or `agent-archive COMMAND --help`) prints it,
+the flags its parser accepts, and a link to the guide that walks through it.
+New to agent-archive? Start with [install](../getting-started/install.md) and
+[setup](../getting-started/setup.md); the [glossary](glossary.md) explains
+terms such as capture, collector, and retention.
+
+Every command also accepts `--help` and `-h`. Help never activates
+hooks, reads credentials, or changes state. The hidden commands `_hook` and
 `_collect` (what app hooks and the LaunchAgent run) are not part of the
-interface and are left out. Help never activates hooks, reads credentials,
-or changes state.
+interface and are left out.
+
+This page is generated from the CLI itself, and `go test ./...` fails when it
+is stale. After changing a command's help or flags, regenerate it with
+`go test ./internal/cli -run TestCLIReferenceIsCurrent -update` (see
+[fixtures and goldens](../contributing/testing.md#fixtures-and-goldens)).
 
 ## Commands
 
@@ -55,6 +66,8 @@ Docs: https://github.com/wangjohn/agent-archive/tree/main/docs
 
 ## agent-archive setup
 
+Guide: [Set up capture](../getting-started/setup.md).
+
 ```text
 Usage: agent-archive setup [--abandon-recovery]
 
@@ -74,6 +87,8 @@ Example: agent-archive setup
 
 ## agent-archive status
 
+Guide: [Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md).
+
 ```text
 Usage: agent-archive status [--json]
 
@@ -92,6 +107,8 @@ Example: agent-archive status --json
 
 ## agent-archive sync
 
+Guide: [Everyday commands](../guides/troubleshooting.md#everyday-commands).
+
 ```text
 Usage: agent-archive sync
 
@@ -103,6 +120,8 @@ Example: agent-archive sync
 No flags.
 
 ## agent-archive pause
+
+Guide: [Everyday commands](../guides/troubleshooting.md#everyday-commands).
 
 ```text
 Usage: agent-archive pause
@@ -118,6 +137,8 @@ No flags.
 
 ## agent-archive resume
 
+Guide: [Everyday commands](../guides/troubleshooting.md#everyday-commands).
+
 ```text
 Usage: agent-archive resume
 
@@ -130,6 +151,8 @@ Example: agent-archive resume
 No flags.
 
 ## agent-archive list
+
+Guide: [Inspect the archive](../guides/list-and-show.md); `--json` in [JSON output](json-output.md).
 
 ```text
 Usage: agent-archive list [options]
@@ -182,6 +205,8 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 
 ## agent-archive show
 
+Guide: [Inspect the archive](../guides/list-and-show.md).
+
 ```text
 Usage: agent-archive show SESSION_ID [--harness NAME] [--normalized] [--json]
 
@@ -203,6 +228,8 @@ Example: agent-archive show SESSION_ID --normalized
 
 ## agent-archive feedback
 
+Guide: [Feedback](../guides/list-and-show.md#feedback).
+
 ```text
 Usage: agent-archive feedback SESSION_ID --file PATH
 
@@ -217,6 +244,8 @@ Example: agent-archive feedback SESSION_ID --file /private/path/feedback.txt
 | `--file` | a value | — |
 
 ## agent-archive backfill
+
+Guide: [Import existing sessions](../guides/backfill.md).
 
 ```text
 Usage: agent-archive backfill [options]
@@ -264,6 +293,8 @@ Example: agent-archive backfill --dry-run --since 30d
 
 ## agent-archive backfill history
 
+Guide: [Import existing sessions](../guides/backfill.md).
+
 ```text
 Usage: agent-archive backfill history
 
@@ -276,6 +307,8 @@ Example: agent-archive backfill history
 No flags.
 
 ## agent-archive backfill undo
+
+Guide: [Undo an import](../guides/backfill.md#undo).
 
 ```text
 Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
@@ -303,6 +336,8 @@ Example: agent-archive backfill undo --project ~/src/old-experiment
 | `--yes` | no value | — |
 
 ## agent-archive handoff
+
+Guide: [Continue a session in another agent](../guides/handoff.md).
 
 ```text
 Usage: agent-archive handoff SESSION_ID|--latest|--file PATH [options]
@@ -350,6 +385,8 @@ Example: codex "$(agent-archive handoff --latest --harness claude)"
 
 ## agent-archive uninstall
 
+Guide: [Uninstall](../getting-started/uninstall.md).
+
 ```text
 Usage: agent-archive uninstall [--delete-local-data] [--yes]
 
@@ -368,6 +405,8 @@ Example: agent-archive uninstall
 | `--yes` | no value | — |
 
 ## agent-archive version
+
+Guide: [Install](../getting-started/install.md).
 
 ```text
 Usage: agent-archive version

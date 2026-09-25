@@ -68,6 +68,26 @@ func referenceCommandOrder(t *testing.T) []string {
 	return order
 }
 
+// commandGuides is the guide that explains each public command with
+// examples, linked under its reference entry. A command without one fails
+// TestCLIReferenceIsCurrent, so a new command arrives with a guide.
+var commandGuides = map[string]string{
+	"setup":            "[Set up capture](../getting-started/setup.md)",
+	"status":           "[Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md)",
+	"sync":             "[Everyday commands](../guides/troubleshooting.md#everyday-commands)",
+	"pause":            "[Everyday commands](../guides/troubleshooting.md#everyday-commands)",
+	"resume":           "[Everyday commands](../guides/troubleshooting.md#everyday-commands)",
+	"list":             "[Inspect the archive](../guides/list-and-show.md); `--json` in [JSON output](json-output.md)",
+	"show":             "[Inspect the archive](../guides/list-and-show.md)",
+	"feedback":         "[Feedback](../guides/list-and-show.md#feedback)",
+	"backfill":         "[Import existing sessions](../guides/backfill.md)",
+	"backfill history": "[Import existing sessions](../guides/backfill.md)",
+	"backfill undo":    "[Undo an import](../guides/backfill.md#undo)",
+	"handoff":          "[Continue a session in another agent](../guides/handoff.md)",
+	"uninstall":        "[Uninstall](../getting-started/uninstall.md)",
+	"version":          "[Install](../getting-started/install.md)",
+}
+
 // renderCLIReference renders docs/reference/cli.md from the help each
 // command prints and the flags each command's flag set defines.
 func renderCLIReference(t *testing.T) []byte {
@@ -76,15 +96,26 @@ func renderCLIReference(t *testing.T) []byte {
 	var b strings.Builder
 	b.WriteString(`# CLI reference
 
-<!-- Generated from the commands' own help and flag sets by
-     go test ./internal/cli -run TestCLIReferenceIsCurrent -update
-     Do not edit by hand. -->
+<!-- Generated from the commands' own help and flag sets. Do not edit by
+     hand; after changing a command's help or flags, regenerate it with
+     go test ./internal/cli -run TestCLIReferenceIsCurrent -update -->
 
-Every public command, its help as ` + "`agent-archive help COMMAND`" + ` prints it,
-and the flags its parser accepts. The hidden commands ` + "`_hook`" + ` and
+Every public command of ` + "`agent-archive`" + `: its help, exactly as
+` + "`agent-archive help COMMAND`" + ` (or ` + "`agent-archive COMMAND --help`" + `) prints it,
+the flags its parser accepts, and a link to the guide that walks through it.
+New to agent-archive? Start with [install](../getting-started/install.md) and
+[setup](../getting-started/setup.md); the [glossary](glossary.md) explains
+terms such as capture, collector, and retention.
+
+Every command also accepts ` + "`--help`" + ` and ` + "`-h`" + `. Help never activates
+hooks, reads credentials, or changes state. The hidden commands ` + "`_hook`" + ` and
 ` + "`_collect`" + ` (what app hooks and the LaunchAgent run) are not part of the
-interface and are left out. Help never activates hooks, reads credentials,
-or changes state.
+interface and are left out.
+
+This page is generated from the CLI itself, and ` + "`go test ./...`" + ` fails when it
+is stale. After changing a command's help or flags, regenerate it with
+` + "`go test ./internal/cli -run TestCLIReferenceIsCurrent -update`" + ` (see
+[fixtures and goldens](../contributing/testing.md#fixtures-and-goldens)).
 
 ## Commands
 
@@ -100,7 +131,11 @@ or changes state.
 | 128 + signal | ` + "`backfill`" + ` stopped at once by a second Ctrl-C (130), SIGHUP (129), or SIGTERM (143). |
 `)
 	for _, command := range referenceCommandOrder(t) {
-		fmt.Fprintf(&b, "\n## agent-archive %s\n\n```text\n%s```\n", command, commandHelp[command])
+		guide, ok := commandGuides[command]
+		if !ok {
+			t.Errorf("%s has no guide in commandGuides", command)
+		}
+		fmt.Fprintf(&b, "\n## agent-archive %s\n\nGuide: %s.\n\n```text\n%s```\n", command, guide, commandHelp[command])
 		set, ok := sets[command]
 		if !ok {
 			continue
