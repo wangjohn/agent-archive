@@ -98,12 +98,31 @@ func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("setup", stderr)
 	abandon := fs.Bool("abandon-recovery", false, "keep every file as it is now and discard an interrupted setup")
-	if !fs.parseFlagsOnly(args) {
+	opts, parsed := setupFlags(fs, args)
+	if !parsed {
 		return 2
 	}
 	if *abandon {
 		if err := abandonRecovery(stdout, env); err != nil {
 			terminal.Printf(stderr, "agent-archive: setup: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	if opts.given() && !opts.yes {
+		return fs.usageError("--provider, --project, and the other answers apply without questions; add --yes, or run agent-archive setup alone to be asked")
+	}
+	if opts.yes {
+		if err := setupWithoutQuestions(opts, stdin, stdout, stderr, env); err != nil {
+			terminal.Printf(stderr, "Setup incomplete: %v\n", err)
+			var blocked *recoveryBlockedError
+			if errors.As(err, &blocked) {
+				terminal.Println(stderr, blocked.guidance())
+			}
+			var other *otherInstallationError
+			if errors.As(err, &other) {
+				terminal.Println(stderr, other.guidance())
+			}
 			return 1
 		}
 		return 0
@@ -403,20 +422,27 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
 			return err
 		}
-		if err = recordApplicationDiscoveries(home, discoveries, discoveredAt); err != nil {
-			terminal.Printf(out, "Warning: installed application versions could not be recorded: %v\n", err)
-		}
-		if err = os.Remove(savedPath); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		// The configuration is committed; a diagnostic for a project that
-		// was just excluded is stale local state, not a reason to fail.
-		if e := pruneCaptureDiagnostics(home, draft.Config.Archive.Projects); e != nil {
-			terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
-		}
-		printNextSteps(p, draft.Config.Harnesses, existing.Paused)
-		return nil
+		return finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt)
 	}
+}
+
+// finishSetup follows a committed setup: it records the apps' versions,
+// removes the saved draft, drops diagnostics of excluded projects, and says
+// what to do next.
+func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, paused bool, discoveries map[string]applicationDiscovery, discoveredAt time.Time) error {
+	if err := recordApplicationDiscoveries(home, discoveries, discoveredAt); err != nil {
+		terminal.Printf(p.out, "Warning: installed application versions could not be recorded: %v\n", err)
+	}
+	if err := os.Remove(draftPath(home)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// The configuration is committed; a diagnostic for a project that
+	// was just excluded is stale local state, not a reason to fail.
+	if e := pruneCaptureDiagnostics(home, cfg.Archive.Projects); e != nil {
+		terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
+	}
+	printNextSteps(p, cfg.Harnesses, paused)
+	return nil
 }
 
 // verifyStorage checks that setup can write, read, and delete in the
@@ -860,28 +886,9 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 		terminal.Println(p.out, "Add project directories, one per line. Enter a blank line when finished.")
 	}
 	include := func(root string) {
-		if root == "~" || strings.HasPrefix(root, "~/") {
-			h, e := os.UserHomeDir()
-			if home != "" {
-				h, e = home, nil
-			}
-			if e != nil {
-				terminal.Println(p.out, "Your home directory is unknown; enter the full path.")
-				return
-			}
-			root = filepath.Join(h, strings.TrimPrefix(strings.TrimPrefix(root, "~"), "/"))
-		}
-		root, err := filepath.Abs(root)
-		if err == nil {
-			root, err = filepath.EvalSymlinks(root)
-		}
+		root, err := projectDir(root, home)
 		if err != nil {
-			terminal.Println(p.out, "That directory does not exist. Enter an existing project path.")
-			return
-		}
-		info, err := os.Stat(root)
-		if err != nil || !info.IsDir() {
-			terminal.Println(p.out, "Enter a directory, not a file.")
+			terminal.Println(p.out, err.Error()+". Enter an existing project directory.")
 			return
 		}
 		if seen[root] {
@@ -926,6 +933,32 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 		}
 		include(answer)
 	}
+}
+
+// projectDir resolves a project directory as typed: ~ is home (the
+// process's when home is ""), and the result is absolute with symlinks
+// resolved, as hooks match projects.
+func projectDir(path, home string) (string, error) {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home == "" {
+			var err error
+			if home, err = os.UserHomeDir(); err != nil {
+				return "", errors.New("your home directory is unknown; use the full path")
+			}
+		}
+		path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+	}
+	root, err := filepath.Abs(path)
+	if err == nil {
+		root, err = filepath.EvalSymlinks(root)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s does not exist", path)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", path)
+	}
+	return root, nil
 }
 
 // parseNumbers reads a list of numbers such as "1 3", "1,3", or "2-4". ok is
