@@ -21,7 +21,13 @@ The first release, `v0.1.0`, will be cut from this section.
   projects your apps already have sessions in, accepts the R2 bucket URL the
   Cloudflare dashboard shows, and ends with what each app needs next.
   `setup --yes` takes its answers as flags, to script a second Mac. R2
-  secrets are kept in the macOS Keychain; S3 uses an AWS profile.
+  secrets are kept in the macOS Keychain; S3 uses an AWS profile, and the
+  collector runs with the AWS settings files, CA bundle, endpoint overrides
+  and `PATH` setup verified it with (never AWS keys or tokens), so a
+  `credential_process` like `aws-vault` or `op` works in the background
+  too; `status` says when they stop working. Setup refuses a temporary
+  binary, such as the one `go run` deletes on exit, and after a plain
+  `uninstall` it sets up again with your saved answers.
 - `agent-archive` with no arguments says when setup hasn't run yet.
 - **`status`**: storage, collector, hook, and per-app capture health, with a
   `Next:` line whenever something needs you. `--json` for scripts.
@@ -64,5 +70,10 @@ The first release, `v0.1.0`, will be cut from this section.
   access is disabled in the Cloudflare dashboard.
 - Sessions are not encrypted by agent-archive; anyone who can read the
   bucket can read them.
+- The background collector gets no other shell settings: an S3 profile
+  that needs `HTTPS_PROXY`, `NO_PROXY`, or a `credential_process` helper's
+  own variables (`AWS_VAULT_BACKEND`, `OP_ACCOUNT`) works for `sync` but not
+  in the background. See
+  [configuration](docs/reference/configuration.md#environment-variables).
 
 [Unreleased]: https://github.com/wangjohn/agent-archive/commits/main

@@ -482,3 +482,103 @@ func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
 		})
 	}
 }
+
+// A plain uninstall keeps the configuration with archiving disabled. Setup
+// afterwards is setting up again, with the saved answers as defaults, not a
+// change to an installation that is running.
+//
+// Regression: after uninstall, setup opened with "Agent Archive is already
+// set up. What would you like to change?".
+func TestSetupAfterUninstallSetsUpAgain(t *testing.T) {
+	t.Parallel()
+	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()))
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env); code != 0 {
+		t.Fatalf("uninstall: exit %d\n%s", code, &errOut)
+	}
+	// Every question keeps its saved answer.
+	output := setupRun(t, env, strings.Repeat("\n", 20), 0)
+	if strings.Contains(output, "already set up") || strings.Contains(output, "Save these changes?") {
+		t.Fatalf("setup after uninstall offered to change a running installation:\n%s", output)
+	}
+	if !strings.Contains(output, "Start archiving?") {
+		t.Fatalf("setup after uninstall did not ask to start archiving:\n%s", output)
+	}
+	if cfg, _, _ := config.Load(home); !cfg.Archive.Enabled || cfg.Storage.Bucket != "test-bucket" {
+		t.Fatalf("not set up again: %+v", cfg)
+	}
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); err != nil {
+		t.Fatalf("collector not reinstalled: %v", err)
+	}
+}
+
+// Setup refuses to write an executable that is about to disappear into the
+// hooks and the LaunchAgent: a go run build, which Go deletes on exit, or
+// one in the temporary folder.
+//
+// Regression: go run ./cmd/agent-archive setup installed a go-build path,
+// and capture stopped as soon as setup exited.
+func TestSetupRefusesATemporaryExecutable(t *testing.T) {
+	t.Parallel()
+	for name, place := range map[string]func(t *testing.T, env *Env) string{
+		"go-build": func(t *testing.T, _ *Env) string {
+			t.Helper()
+			return filepath.Join(t.TempDir(), "go-build3829104", "b001", "exe", "agent-archive")
+		},
+		"temporary folder": func(t *testing.T, env *Env) string {
+			t.Helper()
+			temp := t.TempDir()
+			env.TempDir = func() string { return temp + string(filepath.Separator) }
+			return filepath.Join(temp, "downloads", "agent-archive")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			home, userHome := t.TempDir(), t.TempDir()
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			executable := place(t, &env)
+			if err := os.MkdirAll(filepath.Dir(executable), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			env.Executable = func() (string, error) { return executable, nil }
+			output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()), 1)
+			if !strings.Contains(output, executable) || !strings.Contains(output, "Nothing was changed") || strings.Contains(output, "Step 1") {
+				t.Fatalf("setup did not refuse before asking anything:\n%s", output)
+			}
+			if _, found, _ := config.Load(home); found {
+				t.Fatal("setup saved a configuration")
+			}
+			if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !os.IsNotExist(err) {
+				t.Fatal("setup installed the LaunchAgent")
+			}
+		})
+	}
+}
+
+// Only Go's own build directories (go-build and digits) count as temporary
+// builds: a binary under a directory merely named like one is set up.
+func TestSetupAcceptsADirectoryNamedLikeGoBuild(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]bool{"go-build3829104": true, "go-build1": true, "go-build": false, "go-builder": false, "go-build12x": false} {
+		if got := isGoBuildDir(name); got != want {
+			t.Errorf("isGoBuildDir(%q) = %v, want %v", name, got, want)
+		}
+	}
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	executable := filepath.Join(t.TempDir(), "src", "go-builder", "bin", "agent-archive")
+	if err := os.MkdirAll(filepath.Dir(executable), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.Executable = func() (string, error) { return executable, nil }
+	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()), 0)
+	if cfg, _, _ := config.Load(home); cfg.InstalledExecutable != executable {
+		t.Fatalf("installed %q, want %q", cfg.InstalledExecutable, executable)
+	}
+}

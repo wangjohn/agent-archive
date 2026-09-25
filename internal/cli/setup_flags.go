@@ -175,6 +175,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	}
 	terminal.Printf(out, "Apps: %s. Projects: %d. Storage: %s bucket %s.\n", appList(cfg.Harnesses), includedProjects(cfg.Archive.Projects), providerName(cfg.Storage.Provider), cfg.Storage.Bucket)
 	printReviewPrivacy(p, cfg)
+	warnCollectorEnvironment(p, cfg.Storage, userHome, env)
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
 		if len(draft.StagedRefs) > 0 {
 			return fmt.Errorf("%w; the new R2 key is kept with the unfinished setup: run agent-archive setup to finish or discard it", err)

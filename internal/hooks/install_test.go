@@ -13,7 +13,7 @@ import (
 // so the reader must agree with the writer, including XML-escaped paths.
 func TestLaunchAgentProgramReadsWhatLaunchAgentWrites(t *testing.T) {
 	for _, executable := range []string{"/Applications/agent-archive", "/Users/someone/Tools & Bin/agent-archive <v2>"} {
-		plist, err := LaunchAgent(executable, "/Users/someone/.local/share/agent-archive", LaunchLabel)
+		plist, err := LaunchAgent(executable, "/Users/someone/.local/share/agent-archive", LaunchLabel, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func TestConcurrentEditPreserved(t *testing.T) {
 }
 
 func TestLaunchAgentEscapesPaths(t *testing.T) {
-	b, e := LaunchAgent("/a & b/agent-archive", "/private/data", LaunchLabel)
+	b, e := LaunchAgent("/a & b/agent-archive", "/private/data", LaunchLabel, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -83,6 +83,39 @@ func TestLaunchAgentEscapesPaths(t *testing.T) {
 	}
 	if strings.Contains(string(b), "sync") {
 		t.Fatal("public sync used for scheduled internal mode")
+	}
+}
+
+// status compares what the collector runs with to what setup verified, so
+// the environment LaunchAgent writes must read back exactly, escaped values
+// included, alongside the data directory.
+func TestLaunchAgentEnvironmentReadsWhatLaunchAgentWrites(t *testing.T) {
+	environment := map[string]string{
+		"AWS_CONFIG_FILE": "/Users/someone/AWS & co/config",
+		"PATH":            "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+	}
+	plist, err := LaunchAgent("/bin/agent-archive", "/private/data", LaunchLabel, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := LaunchAgentEnvironment(plist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"AGENT_ARCHIVE_HOME": "/private/data", "AWS_CONFIG_FILE": environment["AWS_CONFIG_FILE"], "PATH": environment["PATH"]}
+	if len(got) != len(want) {
+		t.Fatalf("environment %v, want %v", got, want)
+	}
+	for name, value := range want {
+		if got[name] != value {
+			t.Fatalf("%s = %q, want %q", name, got[name], value)
+		}
+	}
+	if home, err := LaunchAgentDataHome(plist); err != nil || home != "/private/data" {
+		t.Fatalf("data home %q (err %v)", home, err)
+	}
+	if _, err := LaunchAgent("/bin/agent-archive", "/private/data", LaunchLabel, map[string]string{"AGENT_ARCHIVE_HOME": "/elsewhere"}); err == nil {
+		t.Fatal("LaunchAgent let the environment replace the data directory")
 	}
 }
 
@@ -382,7 +415,7 @@ func TestCollectorLabelKeepsTheDefaultAndSeparatesOthers(t *testing.T) {
 	if a == LaunchLabel || a == b || !strings.HasPrefix(a, LaunchLabel+".") || a != CollectorLabel("/tmp/a/", def) {
 		t.Fatalf("labels %s and %s", a, b)
 	}
-	plist, err := LaunchAgent("/bin/agent-archive", "/tmp/a & b", a)
+	plist, err := LaunchAgent("/bin/agent-archive", "/tmp/a & b", a, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -133,7 +133,7 @@ func TestRecoveryStopsOnAnEditedRetiredJob(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-	plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", home, hooks.LaunchLabel)
+	plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", home, hooks.LaunchLabel, nil)
 	if err := local.WriteBytes(old, append(plist, []byte("<!-- edited -->")...)); err != nil {
 		t.Fatal(err)
 	}

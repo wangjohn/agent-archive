@@ -191,6 +191,10 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	if err != nil {
 		return err
 	}
+	// After uninstall the configuration stays, with archiving disabled:
+	// its answers are the defaults, but this is setting up again, not a
+	// change to a running installation.
+	installed := found && existing.Archive.Enabled
 	terminal.Println(out, "Checking installed applications...")
 	discoveries := env.discoverApplications(userHome)
 	discoveredAt := env.now()
@@ -258,7 +262,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 				return e
 			}
 		}
-	} else if found {
+	} else if installed {
 		choice, e := p.menu("Agent Archive is already set up. What would you like to change?", "capture",
 			option{"capture", "Apps and projects"},
 			option{"storage", "Storage (bucket and credentials)"},
@@ -396,7 +400,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		// Review what will be committed, not what a draft may have saved.
 		draft.Config.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
-		showSetupReview(p, draft.Config, existing, found, reviewed)
+		showSetupReview(p, draft.Config, existing, installed, reviewed)
 		terminal.Println(out, "\n"+p.style.bold("Before you confirm"))
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
 			return err
@@ -406,7 +410,8 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		reviewHookFiles(p, draft.Config.Harnesses, env.hookFiles(userHome), env.installedHookFiles(userHome, existing), existing.Harnesses, len(existing.HookFiles) > 0)
 		printReviewNotes(p, draft.Config, reviewed)
-		action, e := reviewAction(p, found)
+		warnCollectorEnvironment(p, draft.Config.Storage, userHome, env)
+		action, e := reviewAction(p, installed)
 		if e != nil {
 			return e
 		}
@@ -1175,7 +1180,7 @@ func (e Env) temporaryExecutableProblem(exe string) string {
 	}
 	for _, path := range paths {
 		for dir := filepath.Dir(path); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-			if strings.HasPrefix(filepath.Base(dir), "go-build") {
+			if isGoBuildDir(filepath.Base(dir)) {
 				return exe + " is a temporary build (from go run or go test) that Go deletes when it exits, so the hooks and background collector would stop working."
 			}
 		}
@@ -1196,4 +1201,12 @@ func (e Env) temporaryExecutableProblem(exe string) string {
 		}
 	}
 	return ""
+}
+
+// isGoBuildDir reports whether name is a directory Go builds a go run or go
+// test binary in: go-build followed by digits, and nothing else, so a
+// directory like go-builder is not mistaken for one.
+func isGoBuildDir(name string) bool {
+	digits, ok := strings.CutPrefix(name, "go-build")
+	return ok && digits != "" && strings.Trim(digits, "0123456789") == ""
 }

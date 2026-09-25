@@ -167,7 +167,7 @@ func TestBackgroundAloneBrokenWhenTheLaunchAgentRunsAMissingFile(t *testing.T) {
 	t.Parallel()
 	home, userHome, env, _ := installedWithBinary(t)
 	stale := filepath.Join(t.TempDir(), "old", "agent-archive")
-	plist, err := hooks.LaunchAgent(stale, home, launchLabel(env.installation(home, userHome).collectorPlist()))
+	plist, err := hooks.LaunchAgent(stale, home, launchLabel(env.installation(home, userHome).collectorPlist()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

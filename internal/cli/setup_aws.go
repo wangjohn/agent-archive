@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,9 +29,9 @@ func (e Env) awsProfiles() ([]AWSProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	configPath := firstNonEmpty(os.Getenv("AWS_CONFIG_FILE"), filepath.Join(home, ".aws", "config"))
-	credentialsPath := firstNonEmpty(os.Getenv("AWS_SHARED_CREDENTIALS_FILE"), filepath.Join(home, ".aws", "credentials"))
-	return readAWSProfiles(configPath, credentialsPath)
+	// The same files the collector's LaunchAgent is given (see
+	// collectorEnvironment).
+	return readAWSProfiles(awsFiles(home, e.lookupEnv))
 }
 
 func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {

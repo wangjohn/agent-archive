@@ -793,10 +793,13 @@ func readInstalledApps(view *statusView, cfg config.Config, home, userHome strin
 // statusBackground is the background collector as status found it: its
 // LaunchAgent's plist, and the program the LaunchAgent runs when that
 // program is no longer usable (problem says why; both "" otherwise).
+// environmentProblems say why the environment the LaunchAgent sets cannot
+// load the configured S3 profile.
 type statusBackground struct {
-	plist   string
-	program string
-	problem string
+	plist               string
+	program             string
+	problem             string
+	environmentProblems []string
 }
 
 // readBackground reads the background collector's launchd state, and what
@@ -807,10 +810,20 @@ func readBackground(view *statusView, cfg config.Config, home, userHome string, 
 	// launchd reports a job whose program is gone as loaded (it only fails
 	// when it fires), so read the program the LaunchAgent actually runs.
 	backgroundProgram, backgroundProblem := "", ""
+	var environmentProblems []string
 	if cfg.Archive.Enabled {
 		if data, err := os.ReadFile(plist); err == nil {
 			if program, err := hooks.LaunchAgentProgram(data); err == nil {
 				backgroundProgram, backgroundProblem = program, executableProblem(program)
+			}
+			// The collector has only the environment its plist sets, which
+			// may no longer match the files and programs the profile needs.
+			if environment, err := hooks.LaunchAgentEnvironment(data); err == nil {
+				environmentProblems = collectorEnvironmentProblems(cfg.Storage, environment, userHome)
+				view.Warnings = append(view.Warnings, environmentProblems...)
+				if drift := env.awsFilesDrift(cfg.Storage, environment, userHome); drift != "" {
+					view.Warnings = append(view.Warnings, drift)
+				}
 			}
 		}
 	}
@@ -818,7 +831,7 @@ func readBackground(view *statusView, cfg config.Config, home, userHome string, 
 		view.Background = backgroundBroken
 		view.Warnings = append(view.Warnings, fmt.Sprintf("The background collector's LaunchAgent runs %s, which is %s, so scheduled collection has stopped.", backgroundProgram, backgroundProblem))
 	}
-	return statusBackground{plist: plist, program: backgroundProgram, problem: backgroundProblem}
+	return statusBackground{plist: plist, program: backgroundProgram, problem: backgroundProblem, environmentProblems: environmentProblems}
 }
 
 // chooseNextStep sets the overall state and the one next step status
@@ -855,6 +868,10 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		if action := credentials.RecoveryActionForMessage(view.Collector.LastError); action != "" {
 			view.Next = action
 		}
+	}
+	if len(background.environmentProblems) > 0 {
+		view.State = "Needs attention"
+		view.Next = "The background collector cannot load your AWS profile (see the warning above). Run agent-archive setup again from a shell where the profile works, so the collector gets that shell's AWS settings files and PATH."
 	}
 	if cfg.Paused {
 		view.State = "Paused"

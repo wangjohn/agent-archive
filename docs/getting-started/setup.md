@@ -46,7 +46,9 @@ outside an included project is captured.
   on a terminal and stored in the macOS Keychain.
 - **S3:** enter the bucket and choose an existing AWS profile. Setup offers
   the profiles in your AWS settings and uses the profile's region when it has
-  one; it asks for a region only when one is missing.
+  one; it asks for a region only when one is missing. The profiles come
+  from `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` when your shell
+  sets them.
 
 Setup checks the connection with one temporary synthetic object
 (`.setup-test/<random>.json`), which it deletes again. That proves the
@@ -80,8 +82,15 @@ Filtering is best effort, so archived text can still contain sensitive
 information. Read [what leaves your Mac](../security/privacy.md) before
 enabling.
 
+Run setup from the `agent-archive` you will keep using. Setup refuses a
+binary in a temporary folder, including the one `go run` builds and deletes
+when it exits, since every hook and the collector would run a path that is
+gone; build one with `go build` or use the installer.
+
 Setup saves non-secret choices after each completed step. If it is
-interrupted, run it again to continue or start over. Reconfiguration lets you
+interrupted, run it again to continue or start over. After a plain
+`agent-archive uninstall`, setup sets up again with your saved answers as
+the defaults. Reconfiguration lets you
 edit capture, storage, or retention separately, and keeps the machine
 identity, existing project activation times, paused state, and unrelated
 hooks.
@@ -139,7 +148,17 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   anything that is not plain JSON (a comment, a trailing comma, a byte-order
   mark), or a key that appears twice inside `hooks`.
 - **A LaunchAgent**, `~/Library/LaunchAgents/com.agent-archive.collector.plist`,
-  which runs the collector every 60 seconds.
+  which runs the collector every 60 seconds. launchd gives it none of your
+  shell's environment, so for S3 the plist also carries what setup's storage
+  check ran with: `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`,
+  `AWS_CA_BUNDLE` and the `AWS_ENDPOINT_URL` overrides when set, and your
+  shell's `PATH` (without directories every account can write to), which a profile's `credential_process`
+  (`aws-vault`, `op`, `granted`) is found through. Never your shell's AWS
+  keys or tokens. If that command is not a program on your `PATH` (an alias
+  or shell function), the review warns that background uploads will fail.
+  Run setup again after moving your AWS files or the helper; `status` warns
+  when they no longer match
+  ([configuration](../reference/configuration.md#environment-variables)).
 - **Local state** in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`;
   see [local state](../reference/local-state.md)), private to your account.
   It holds registrations, frozen uploads, and caches; transcripts are read in

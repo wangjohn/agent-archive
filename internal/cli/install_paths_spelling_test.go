@@ -140,7 +140,7 @@ func TestSetupRetiresTheJobOfAnotherCaseSpelling(t *testing.T) {
 		t.Fatal("the other-case spelling kept its own label; the test no longer covers the migration")
 	}
 	old := filepath.Join(userHome, "Library", "LaunchAgents", oldLabel+".plist")
-	plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", home, oldLabel)
+	plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", home, oldLabel, nil)
 	if err := local.WriteBytes(old, plist); err != nil {
 		t.Fatal(err)
 	}

@@ -64,6 +64,16 @@ published, and read-back-verified evidence.
   runs an `agent-archive` executable that has since been moved, deleted, or
   made non-executable. Rerun `agent-archive setup` from the binary's new
   location.
+- **The background collector cannot load your AWS profile** (S3): the
+  collector runs with the AWS files and `PATH` setup recorded in its
+  LaunchAgent, and one of them no longer works: an `AWS_CONFIG_FILE` that
+  moved, or a `credential_process` helper that is no longer on that `PATH`
+  (a LaunchAgent from an earlier build has only launchd's
+  `/usr/bin:/bin:/usr/sbin:/sbin`). `agent-archive sync` from your shell
+  may still work. Run `agent-archive setup` again from a shell where the
+  profile works. A warning that your shell's AWS settings files differ from
+  the collector's means `sync` here and the collector read different
+  profiles.
 - **Capture** distinguishes waiting for a session, observed hooks, local
   capture, and published sources with verified checksums. Configuration
   alone never establishes capture.
