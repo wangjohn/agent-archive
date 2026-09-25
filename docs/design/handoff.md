@@ -329,10 +329,21 @@ Markdown syntax (`#`, `>`, list markers, fences) escaped; file names, tool
 names, and commands are single-line code spans; and tool output is fenced.
 None of it can add a heading of its own to the handoff.
 
-One case remains, inherent to Cursor's plain-text transcripts: a line of
-tool output that starts at column 0 with `user:` reads as a role header
-there, so it starts a Person turn. Only an indented one is known to be
-content (see the privacy doc's known misses).
+Every string passes one helper, `displayText`, before either output is
+made (`BuildHandoff` applies it to the whole handoff by reflection, and
+`RenderHandoffMarkdown` again, whoever built its input): a lone `\r`, which
+CommonMark reads as a line ending, becomes `\n`, so the block quote and the
+fences cover every line; C0 and C1 control characters (every terminal escape
+sequence's introducer) and bidirectional overrides are removed. A test fills
+every string field by reflection and checks both outputs.
+
+One case remains, inherent to Cursor's plain-text transcripts: in a
+transcript whose sections are not separated by blank lines, a line of tool
+output that starts at column 0 with a lower-case `user:` reads as a role
+header, so it starts a Person turn. When sections are blank-line separated,
+as Cursor writes them, only a `user:` line after a blank line does. The
+handoff reads the retained text with the same parser the filter used (see
+the privacy doc's known misses).
 
 ### Workspace section
 

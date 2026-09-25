@@ -5,6 +5,94 @@ rules, as a whole, are in [privacy](privacy.md); version numbers and bump
 rules are in [versions](../reference/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 11
+
+Filter 11 closes the shapes next to ones filter 9 and 10 fixed, from the
+second staff review (P-20 to P-26, A-20). Adapter version 0.11.0 and parser
+version 0.11.0 go with it. Every format changes.
+
+- **JSON inside a string is filtered as JSON.** Codex writes a function
+  call's arguments as a JSON string, so the tool-argument deny list never saw
+  their keys: a Codex `browser_type` call kept the password it typed, which
+  the same call from Claude Code dropped. Any string that holds a JSON object
+  or array is now decoded and filtered as a tool-argument subtree (every key
+  name kept, the deny list applied, every string redacted, binary blocks
+  dropped, JSON strings inside it decoded in turn), wherever it sits: Codex
+  arguments, custom tool input, and outputs; tool results an MCP server
+  returned as JSON text; Cursor JSONL; and Cursor database results stored as
+  strings, which kept their base64 images and cookies (P-25). A string the
+  filter changes is stored re-encoded (compact, keys sorted, no HTML
+  escaping); one it does not change keeps its bytes. A command-line array
+  (`["mysql", "-pS3cret"]`) has its secret values redacted by position.
+- **Typing tools by any common name, and secret labels.** Typed input is
+  dropped for any tool whose name holds a typing word (`type`, `fill`,
+  `form`, `input`, `press`, `select`, `keys`, `stdin`, …), which covers
+  `browser_fill_form`, chrome-devtools `fill_form`, `select_option`, and
+  Codex's `write_stdin`. For every tool, a `value` or `text` beside a label
+  that says it is a password, PIN, one-time code, card number, CVV, or
+  similar (`{"name": "Password", "value": …}`, `{"type": "password"}`,
+  `{"name": "DB_PASSWORD", "value": …}`) is dropped (P-21).
+- **One credential vocabulary.** Argument names and the text patterns now
+  use one word list (P-24). Arguments named `X-Api-Key`, `passwd`, `pass`,
+  `private_key`, or `auth` are dropped; `max_tokens` is no longer dropped
+  (the rule matches words, and a plural is another word).
+- **More credential shapes** (P-22): command-line flags that carry a secret
+  for particular programs (`curl -u user:secret`, `mysql -psecret`,
+  `sshpass -p`, `docker login -p`, `redis-cli -a`, `sqlcmd -P`, `keytool
+  -storepass`, macOS `security -p`/`-w`, `openssl pass:`, `aws configure
+  set`, `npm config set`, fish `set -gx`, and more); `.netrc` passwords;
+  Cookie and Set-Cookie headers; `DB_PASS`, `REDIS_PASS`, `PGPASS`,
+  `dbPass`; `private_key_id`; Azure `AccountKey=`, `SharedAccessKey=`, and
+  SAS `sig=`; XML `<password>…</password>` and `<add key="ApiKey"
+  value="…"/>`; `api_key<TAB>value`; `?key=`; PGP private key blocks; and
+  the prefixed tokens of Stripe, GitLab, Google, Hugging Face, npm, PyPI,
+  SendGrid, Shopify, DigitalOcean, Vault, Databricks, Linear, Grafana,
+  Postman, New Relic, Sentry, Atlassian, Figma, Doppler, age, Mailgun,
+  Telegram, and Azure AD; Slack, Discord, and Teams webhook URLs; and a bare
+  `Bearer` token.
+- **The whole value** (P-23). An unquoted value runs to the end of its line
+  instead of the first space, `,`, `;`, or quote, so `password: correct
+  horse battery staple` and `DB_PASSWORD=Xk9;mP2vQ7zR` are redacted whole. It
+  stops earlier at the closing quote of a string it sits in, at whitespace
+  followed by shell punctuation, a comment, a flag, or another assignment,
+  at `, ` or `; `, and in a URL query at the next `&`. A YAML block value
+  (`password: |`) and a value on the line below its key are redacted whole.
+  URL userinfo ends at the last `@` before the host, and a password holding
+  `/` is covered.
+- **A PEM BEGIN line without an END line** takes only the base64 body that
+  follows it (P-26). Filter 10 took everything to the end of the string, so
+  source code that named the BEGIN line lost the rest of the file.
+- **Cursor text headers as Cursor writes them** (A-20). A role header is a
+  lower-case role and a colon at column 0; `User:` or `Analysis: …` is
+  content. When the transcript separates sections with blank lines, a
+  visible role line that does not follow one is content, so YAML in tool
+  output cannot start a Person turn. A hidden role line always hides what
+  follows (fail closed), and the gap now counts the hidden sections and
+  lines. A header-shaped line inside a retained section is indented by one
+  space, so the handoff reads the retained text back exactly as it was
+  filtered.
+
+Known trade-offs, chosen toward the secret:
+- An environment prefix before a command loses the command with the value:
+  `TOKEN=abc npm test` becomes `TOKEN=[REDACTED]`.
+- A value labelled as a secret is dropped even when it is not one (a
+  `{"name": "token_type", "value": "Bearer"}` pair).
+- A key or tool name that merely contains a vocabulary word loses its value
+  (`password_policy` as a tool argument, `auth_mode`), as filter 10's
+  substring rule did.
+- A space-separated `-p value` after a program the filter does not know is
+  kept, since `-p` is a port or a flag to most programs.
+- Cursor text transcripts whose headers are not lower case are refused as a
+  capture gap rather than guessed at; one without blank lines between
+  sections is read as before.
+- Benign text is pinned by `TestFilterV11LeavesBenignTextUnchanged`: code
+  that names a password, prose, hashes, UUIDs, git SHAs, `ssh -p 22`,
+  `mkdir -p`, and URLs with an `@` in the path are left alone.
+
+Snapshots filtered before the upgrade stay in the bucket until the session
+expires; see [after a filter upgrade](privacy.md#after-a-filter-upgrade) to
+delete them.
+
 ## Source filter version 10
 
 Filter 10 fixes two things. Adapter version 0.10.0 goes with it.

@@ -248,47 +248,82 @@ of a tool-argument subtree. In both cases the argument's key name is recorded
 in a `sensitive_or_hidden_field_omitted` gap (`omitted tool argument keys: …`,
 sorted, capped at 64, names only) and the value is never retained.
 
-- **Typed or submitted text.** An argument named `text`, `value`, or `values`
-  is dropped when the tool's name (`name` or `tool_name` beside the argument
-  subtree, compared case-insensitively) is `type`, `form_input`, `computer`,
-  `key`, `enter_verification_code`, or `autofill_credential`; ends with `_`
-  followed by one of those (an MCP tool such as `mcp__browser__computer`); or
-  ends with `_type`, `_input`, or `_fill`. These tools send their text outward
-  into a browser field, a terminal, or a device, and a login form's contents
-  are exactly what a transcript must not keep. `Edit`, `Write`, and other tools
-  keep their `text`/`value` arguments.
-- **Credential-named arguments.** For every tool, an argument whose lowercase
-  key contains `password`, `secret`, `token`, `credential`, `api_key`,
-  `apikey`, `cookie`, or `authorization` is dropped. This is a substring rule,
-  broader than `blockedKeys`, and it knowingly catches budgets such as
-  `max_tokens`. An argument object whose members were all dropped is pruned
-  with them.
+- **Typed or submitted text.** An argument named `text`, `value`, `values`,
+  `keys`, or `chars` is dropped when the tool's name (`name` or `tool_name`
+  beside the argument subtree), split into words at `_`, `-`, `.`, and
+  camelCase, holds one of `type`, `typing`, `fill`, `form`, `input`,
+  `keyboard`, `key`, `keys`, `press`, `select`, `paste`, `autofill`,
+  `credential`, `verification`, `otp`, `password`, `computer`, or `stdin`
+  (filter 11; filter 10 matched a few whole names and missed every
+  `fill_form` tool). So Playwright's `browser_type`, `browser_fill_form`, and
+  `browser_select_option`, chrome-devtools' `fill` and `fill_form`, a
+  computer-use tool, and Codex's `write_stdin` all lose what they typed.
+  `Edit`, `Write`, and other tools keep their `text`/`value` arguments.
+- **A value labelled as a secret** (filter 11). For every tool, `text`,
+  `value`, `values`, `keys`, or `chars` is dropped when a key beside it
+  (`name`, `label`, `element`, `placeholder`, `field`, `selector`, `id`,
+  `key`, `type`, `autocomplete`, `aria_label`, `for`) says the value is a
+  password, passcode, PIN, one-time code, secret, token, card number, CVV,
+  security or verification code, SSN, or IBAN: a form field
+  `{"name": "Password", "value": …}`, an input `{"type": "password", …}`,
+  or an environment entry `{"name": "DB_PASSWORD", "value": …}`.
+- **Credential-named arguments.** For every tool, an argument whose key
+  names a credential is dropped. The key is split into words the same way,
+  and it names a credential when its words hold a term of the credential
+  vocabulary, the one list the value-level patterns below use too
+  (`api key`, `access key`, `private key`, `secret`, `password`, `passwd`,
+  `pass`, `passphrase`, `token`, `authorization`, `bearer`, `credential(s)`,
+  `cookie(s)`, `auth`, `account key`, `shared access key`, and a few more;
+  `pwd` only after another word). So `X-Api-Key`, `passwd`, `pass`,
+  `private_key`, `auth`, and `password_confirmation` are dropped, while
+  budgets such as `max_tokens` (a plural is another word) are kept. An
+  argument object whose members were all dropped is pruned with them.
 
-Codex `custom_tool_call.input` and `function_call.arguments` are JSON encoded
-as one string, so the deny list cannot see their keys; the string still passes
-every value-level redaction below.
+A string that holds a JSON object or array (Codex's
+`function_call.arguments` and `custom_tool_call.input`, a tool result an MCP
+server returned as JSON text, a Cursor result stored as a string) is decoded
+and filtered as the object it is (filter 11), with the rules of an argument
+subtree: every key name kept, the deny list applied, every string redacted,
+binary blocks dropped, and JSON strings inside it decoded in turn. A string
+the filter changes is stored re-encoded (compact, keys sorted); one it
+leaves alone keeps its bytes. Filter 10 saw such strings only as text, so a
+Codex `browser_type` call kept the password it typed. An array of strings
+that is a command line (`["mysql", "-pS3cret"]`) has its secret values
+redacted by position, like the command-line shapes below.
 
 ### Value-level redaction
 
 Every retained string, at every depth, passes these patterns. A match is
 replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
 
-- Credential assignments (filter 9). The name ends in `api_key`,
-  `access_key`, `private_key`, `encryption_key`, `signing_key`,
-  `master_key`, `secret`, `password`, `passwd`, `passphrase`, `token`,
-  `authorization`, `bearer`, or `credential(s)` (`_`, `-`, `.`, or nothing
-  between the parts of a two-word trigger), in any case, with anything glued
-  on before it; or in `pwd` or npm's `_auth` after a separator (`MYSQL_PWD`,
+- Credential assignments (filter 9). The name ends in a term of the
+  credential vocabulary (filter 11: `api_key`, `access_key`, `private_key`,
+  `private_key_id`, `encryption_key`, `signing_key`, `master_key`,
+  `account_key`, `shared_access_key`, `shared_access_signature`, `secret`,
+  `password`, `passwd`, `passphrase`, `pgpass`, `token`, `authorization`,
+  `bearer`, `credential(s)`, `cookie(s)`, `dockerconfigjson`), with `_`,
+  `-`, `.`, or nothing between the parts of a two-word term, in any case,
+  with anything glued on before it; or in `pass` alone or after a separator
+  or a camelCase boundary (`DB_PASS`, `redis.pass`, `dbPass`, but not
+  `bypass`); or in `pwd` or npm's `_auth` after a separator (`MYSQL_PWD`,
   `DB_PWD`, `:_auth`), since a bare `PWD` or `OLDPWD` is the shell's working
   directory. The trigger may be followed by `key` or `access_key`, then
   `base`, then a number. So `DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY`,
   `OPENAI_API_KEY`, `SECRET_KEY_BASE`, `DB_PASSWORD_1`, `accessToken`,
   `PGPASSWORD`, `spring.datasource.password`, and `x-api-key` all match. The
   name may be quoted (`"…"`, `'…'`, or escaped inside a string, `\"…\"`);
-  the separator is `=`, `:`, `:=`, or `=>`; a `--name value` command-line
-  flag counts too. The value, quoted up to its closing quote (plus anything
-  glued on after it, as a shell reads it; filter 10) or unquoted up to
-  whitespace, `,`, `;`, or a quote, is replaced and the rest is kept:
+  the separator is `=`, `:`, `:=`, `=>`, a full-width colon, or a tab; a
+  `--name value` (or `-name value`) command-line flag counts too. A quoted
+  value is taken up to its closing quote (plus anything glued on after it,
+  as a shell reads it; filter 10). An unquoted value runs to the end of its
+  line (filter 11; filter 10 stopped at whitespace, `,`, `;`, or a quote, so
+  `password: correct horse battery staple` kept three words), stopping
+  earlier only at the closing quote of a string the assignment sits in, at
+  whitespace followed by shell punctuation, a comment, a flag, or another
+  `name=` assignment, at `, ` or `; `, and in a URL query at the next `&`.
+  A Cookie header's value runs to the end of the line. A value that is only
+  `true`, `false`, `null`, `nil`, `none`, or `undefined` is not a secret and
+  is kept. The value is replaced and the rest is kept:
   `DB_PASSWORD=[REDACTED]`, `"password": "[REDACTED]"`. An HTTP scheme
   before the value stays: `Authorization: Bearer [REDACTED]`. A single token
   in brackets or braces is a value too (`password=[hunter2]`,
@@ -296,16 +331,49 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   (`password=[REDACTED]realsecret` loses `realsecret`, and a glued bracket
   group goes whole). A value may begin with `=` unless whitespace follows
   it; the extra `=` signs stay (`PASSWORD==[REDACTED]`).
-- AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials)
-  and Anthropic/OpenAI style `sk-` keys.
-- PEM private key blocks: `-----BEGIN … PRIVATE KEY-----` through the next
-  `-----END … -----`, or to the end of the string when the END line is missing.
+- YAML values on the lines below their key (filter 11): a block scalar
+  (`password: |` or `>-` and its indented lines) and an indented scalar on
+  the next line (`password:` then `  S3cret`) become one `[REDACTED]` line.
+  A key whose indented lines are a mapping or a list is a structure, and its
+  members are checked on their own.
+- Command lines whose secret is a flag's value only for particular programs
+  (filter 11): `curl -u user:secret` (and `--user`, `-U`, `--proxy-user`;
+  the user name stays), `mysql -psecret`, `sshpass -p`, `docker|podman|helm
+  … login -p`, `az login -p`, `redis-cli -a`, `mongosh -p`, `sqlcmd -P`,
+  `ldapsearch -w`, `zip -P`, `7z -p`, `ssh-keygen -N`, `keytool
+  -storepass`, `openssl -k` and `pass:secret`, macOS `security … -p`/`-w`,
+  `gh secret set --body`, `aws configure set NAME value`, `npm|yarn|git
+  config set NAME value`, fish `set -gx NAME value`, `setenv NAME value`,
+  and PowerShell `ConvertTo-SecureString "…"`. `ssh -p 22` and `mkdir -p`
+  are left alone.
+- `.netrc` passwords (`machine … login … password secret`, or a `password
+  secret` line), XML elements and attributes (`<password>…</password>`,
+  `<add key="ApiKey" value="…"/>`), and URL query parameters whose names are
+  not credential words (`?key=`, `&sig=`, `X-Amz-Signature=`) (filter 11).
+- AWS access key IDs (`AKIA…`, and `ASIA…` for temporary STS credentials),
+  Anthropic/OpenAI style `sk-` keys, and, since filter 11, the prefixed
+  tokens of Stripe (`sk_live_`, `rk_live_`, `whsec_`), GitLab (`glpat-` and
+  its siblings), Google (`AIza…`, `GOCSPX-`, `ya29.`), Hugging Face (`hf_`),
+  npm (`npm_`), PyPI, SendGrid, Shopify, DigitalOcean, HashiCorp Vault,
+  Databricks, Linear, Grafana, Postman, New Relic, Sentry, Atlassian, Figma,
+  Doppler, age, Mailgun, Telegram bots, and Azure AD client secrets; Slack,
+  Discord, and Teams incoming-webhook URLs (the path after the host); and a
+  `Bearer` token outside a header.
+- PEM and PGP private key blocks: `-----BEGIN … PRIVATE KEY-----` (or
+  `PRIVATE KEY BLOCK-----`) through the next `-----END … -----` when
+  everything between is key body; when the END line is missing (a key cut
+  off by a truncated record), through the base64 lines that follow the
+  BEGIN line (filter 11; filter 10 took everything to the end of the string,
+  so source code that names the BEGIN line lost the rest of the file).
   Certificates and public keys are not redacted.
 - JWTs: three base64url segments, the first beginning with `eyJ`.
 - URL userinfo: in `scheme://user:pass@host` (or `scheme://user@host`) the
-  userinfo is replaced and the scheme and host are kept.
+  userinfo is replaced and the scheme and host are kept. The userinfo ends
+  at the last `@` of the authority, and a password holding `/`, `?`, or `#`
+  runs to the `@` a host follows (filter 11), unless the part after the
+  colon is a port.
 - GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`) and
-  Slack tokens (`xox[baprs]-`).
+  Slack tokens (`xox[abposre]-`, `xapp-`).
 
 Known false positives. The assignment pattern cannot tell a credential from
 code or a path: `token = parse(x)`, `nextToken := lexer.Next()`,
@@ -326,8 +394,11 @@ name with no value.
 
 Known misses.
 
-- An unquoted value stops at a quote, so a quote inside an unquoted
-  password leaves the rest of the password.
+- An unquoted value runs to the end of its line (filter 11), so an
+  environment prefix before a command loses the command too:
+  `TOKEN=abc npm test` becomes `TOKEN=[REDACTED]`. This errs toward the
+  secret. A space-separated `-p value` with no program the filter knows
+  (`tool -p secret`) is not recognized.
 - In JSON escaped more than once inside a string (`\\\"password\\\":…`),
   the value ends at the first escaped quote of any depth, so the tail of a
   value after an escaped quote inside it (`\\\"ab\\\\\\\"cd\\\"`: `cd`) is
@@ -349,19 +420,28 @@ Known misses.
   `DATABASE_URL`, `DSN`, `CONNECTION_STRING`) is not redacted by this
   pattern; its value is redacted only if it has a recognizable shape
   (`AKIA…`/`ASIA…`, URL userinfo).
-- A credential in prose (`the password is hunter2`) or on the line after
-  its YAML key is not recognized.
+- A credential in prose (`the password is hunter2`), a Markdown table row
+  (`| password | hunter2 |`), or a leetspeak name (`p4ssword=`) is not
+  recognized. A YAML value on the lines below its key is (filter 11), unless
+  its first line reads as a mapping entry (`correct horse: battery`).
 - Text glued after a closing quote is taken with the value (filter 10) only
   up to a closing `]`, `}`, or `)`, which usually closes the structure
   around the value (`{"password":"abc"}`, `f(PASSWORD="abc")`) and must stay.
   So in the rare `PASSWORD="abc")realsecret`, `realsecret` is kept.
-- A Cursor plain-text transcript has no structure beyond its role headers,
-  so a line in tool output that itself starts at column 0 with `user:`,
-  `assistant:`, `tool:`, or a hidden role (`system:`, `thinking:`, …) reads
-  as a header, exactly as Cursor's own format would: it starts a section
-  (a Person turn in the handoff) or hides what follows. Filter 10 stopped
-  treating indented role words this way; a column-0 one cannot be told
-  apart. Cursor's JSONL transcripts and database chats are not affected.
+- A Cursor plain-text transcript has no structure beyond its role headers.
+  Since filter 11 a header is written as Cursor writes it, a lower-case role
+  and a colon at column 0 (`user:`, not `User:`; capitalized prose such as
+  `Analysis: …` is content), and when the transcript separates its sections
+  with blank lines, as Cursor does, a `user:`, `assistant:`, or `tool:` line
+  that does not follow a blank line is content too. What remains: in a
+  transcript without blank lines between sections, a column-0 `user:` line
+  in tool output still starts a section; in any transcript, one that follows
+  a blank line does; and a column-0 hidden role (`system:`, `thinking:`, …)
+  always hides what follows, so nothing that might be a hidden section is
+  kept (the `hidden_instruction_omitted` gap counts the sections and lines
+  hidden). A transcript whose first line is not a lower-case header is
+  refused as a capture gap. Cursor's JSONL transcripts and database chats
+  are not affected.
 
 Redaction is best effort in both directions: a legitimate value that looks like
 a credential is redacted, and a tool argument that happens to contain one of
