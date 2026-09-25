@@ -1,4 +1,4 @@
-package cli
+package setupjournal
 
 import (
 	"bytes"

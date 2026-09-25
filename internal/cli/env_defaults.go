@@ -34,12 +34,6 @@ var runLaunchctl = func(ctx context.Context, args ...string) ([]byte, error) {
 	return exec.CommandContext(ctx, "launchctl", args...).CombinedOutput()
 }
 
-// jobAnotherInstallation is the job state of a label launchd has loaded
-// from a plist other than the one asked about: the job belongs to another
-// installation (the user's real one, seen from a sandboxed HOME, say), and
-// nothing here may stop or replace it.
-const jobAnotherInstallation = "another_installation"
-
 // loadLaunchAgent loads a just-installed LaunchAgent so scheduled
 // collection starts immediately rather than waiting for the next login.
 // It shells out to launchctl (checked against a real launchd in live
