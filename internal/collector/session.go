@@ -134,9 +134,12 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if err != nil || outcome != outcomePublished || s.rewritten == nil {
 		return outcome, err
 	}
-	// Held back or declined instead, the next pass that reads the
-	// transcript reaches the same gap through the guard, since the snapshot
-	// it compares with is then filtered by the current rules.
+	// Held back by the upload interval instead, the snapshot publishes when
+	// it is due, and the next pass that reads the transcript reaches the
+	// same gap through the guard, since the snapshot it compares with is
+	// then filtered by the current rules. Declined instead, the scan settles
+	// on the declined snapshot, and the gap is recorded through the guard
+	// once the transcript changes again.
 	_, err = s.block(state.BlockedReasonTranscriptRewritten, s.rewritten, &read.observed)
 	return outcome, err
 }

@@ -132,6 +132,19 @@ func (s *sessionScan) refilterRewritten(read sourceRead, snapshot, candidate arc
 		// Filtered the same way now, the two compare record for record, and
 		// the transcript holds everything the snapshot did after all (a
 		// file restored since its rewrite gap was recorded).
+		//
+		// Known limitation: refiltering the snapshot starts from what the
+		// earlier filter wrote, and the candidate from the raw transcript.
+		// Where the new rules change a record's output (a new redaction
+		// label, a field the new adapter keeps), a restored transcript does
+		// not compare equal: the snapshot is republished, the gap stands,
+		// and later passes compare the same way, so the transcript's new
+		// records are not captured. No retained evidence is lost. A looser
+		// check (record counts, file size) cannot tell a restored file from
+		// one compacted and then grown, and would publish the latter over
+		// the richer snapshot, the loss this exists to prevent.
+		// TestFilterUpgradeKeepsTheSnapshotOfARestoredTranscriptItCannotMatch
+		// pins it.
 		return candidate, false, nil
 	}
 	s.rewritten = &candidate

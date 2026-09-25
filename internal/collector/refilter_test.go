@@ -317,3 +317,59 @@ func TestFilterUpgradePublishesARestoredTranscript(t *testing.T) {
 		t.Fatal("the gap outlived a restored transcript")
 	}
 }
+
+// The known limitation of refiltering (see refilterRewritten): a restored
+// transcript is recognized only when refiltering the snapshot reproduces
+// what the current filter makes of the raw transcript. Where an upgrade
+// changes a record's output, the restored transcript reads as rewritten:
+// the snapshot is kept and republished, the gap stands, and records added
+// to the transcript later are not captured. Nothing retained is lost.
+func TestFilterUpgradeKeepsTheSnapshotOfARestoredTranscriptItCannotMatch(t *testing.T) {
+	t.Parallel()
+	store, cloud := newTestStore(t), storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	dir := publishCodexSession(t, store, cloud, t0)
+
+	writeTranscript(t, dir, "codex.jsonl", truncatedCodexTranscript)
+	t1 := t0.Add(time.Hour)
+	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }}); err != nil {
+		t.Fatal(err)
+	}
+
+	// What the earlier filter wrote for the assistant message differs from
+	// what the current one makes of the raw transcript.
+	const olderOutput = "visible, as an earlier filter wrote it"
+	editRetainedRecords(t, store, func(records []map[string]any) []map[string]any {
+		for _, record := range records {
+			if payload, ok := record["payload"].(map[string]any); ok {
+				payload["content"] = olderOutput
+			}
+		}
+		return records
+	})
+	simulateFilterUpgrade(t, store)
+	restored := codexTranscript + "\n" + `{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`
+	writeTranscript(t, dir, "codex.jsonl", restored)
+	t2 := t1.Add(time.Hour)
+	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t2 }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("the refiltered snapshot should be published: result=%#v err=%v", result, err)
+	}
+	if text := recordsText(publishedSnapshot(t, cloud)); !strings.Contains(text, olderOutput) || strings.Contains(text, "more") {
+		t.Fatalf("published %q, want the refiltered snapshot", text)
+	}
+	if _, blocked, _ := store.LoadBlocked("session-1"); !blocked {
+		t.Fatal("the restored transcript was recognized; update refilterRewritten's note on the limitation")
+	}
+
+	// Later records do not end the gap either.
+	writeTranscript(t, dir, "codex.jsonl", restored+"\n"+`{"type":"response_item","id":"m3","payload":{"type":"message","role":"assistant","content":"later"}}`)
+	t3 := t2.Add(time.Hour)
+	result, err = Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t3 }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
+		t.Fatalf("records added after the gap were published: result=%#v err=%v", result, err)
+	}
+	if _, blocked, _ := store.LoadBlocked("session-1"); !blocked {
+		t.Fatal("the gap ended; update refilterRewritten's note on the limitation")
+	}
+}
