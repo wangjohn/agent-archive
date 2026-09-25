@@ -2,10 +2,13 @@
 // hidden `_hook` and `_collect` entry points a real installation's hooks
 // and LaunchAgent invoke, and the user-facing
 // setup/status/sync/pause/resume/uninstall, read-only list/show, and
-// handoff commands. It is the only package that touches process-level state
-// (args, stdio, the real clock, the real home directory) directly; every
-// other package in this module stays free of that so it can be tested
-// without a real environment.
+// handoff commands. Process-level state (args, stdio, the clock, the home
+// directory, launchctl, the Keychain) reaches commands through Env, so a test
+// can substitute every piece of it; a nil Env field means the real thing.
+// A few lower packages still read the process directly: local resolves the
+// data directory from AGENT_ARCHIVE_HOME and $HOME, credentials reads the AWS
+// configuration files and the Keychain, and cursorstore asks getconf for the
+// user's temporary directory.
 package cli
 
 import (
@@ -147,7 +150,7 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
-	return openConfiguredStore(cfg)
+	return openConfiguredStore(cfg, e.keychain)
 }
 
 func (e Env) executable() (string, error) {
@@ -227,7 +230,19 @@ func (e Env) keychain() (credentials.CredentialStore, error) {
 	if e.Keychain != nil {
 		return e.Keychain()
 	}
-	return credentials.NewKeychainStore(credentials.KeychainService)
+	return openKeychain()
+}
+
+// openKeychain opens the login Keychain's agent-archive items: Env.Keychain's
+// default. The package's tests replace it with one that fails the test, so a
+// test that forgets to set Env.Keychain can never reach the real Keychain.
+var openKeychain = func() (credentials.CredentialStore, error) {
+	store, err := credentials.NewKeychainStore(credentials.KeychainService)
+	if err != nil {
+		// Never a non-nil interface holding a nil store.
+		return nil, err
+	}
+	return store, nil
 }
 
 const usage = `Agent Archive — archive coding-agent sessions to your private storage.

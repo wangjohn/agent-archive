@@ -339,16 +339,20 @@ func recordPreflightError(localStore *state.Store, preflightErr error) {
 	_ = localStore.SaveStatus(status)
 }
 
-// openConfiguredStore resolves cfg.Storage into a live ObjectStore. A
-// Keychain being unavailable (a non-darwin build, or cgo disabled) is only
-// fatal if the configured provider is R2 and therefore actually needs it;
-// storage.NewConfiguredStore surfaces that.
-func openConfiguredStore(cfg config.Config) (storage.ObjectStore, error) {
-	keychain, keychainErr := credentials.NewKeychainStore(credentials.KeychainService)
-	if keychainErr != nil && cfg.Storage.Provider == credentials.ProviderR2 {
-		return nil, fmt.Errorf("keychain unavailable: %w", keychainErr)
+// openConfiguredStore resolves cfg.Storage into a live ObjectStore. Only R2
+// keeps its secret in the Keychain, so only R2 opens it (through keychain,
+// Env.keychain), and a Keychain that is unavailable (a non-darwin build, or
+// cgo disabled) fails only an R2 configuration.
+func openConfiguredStore(cfg config.Config, keychain func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
+	var store credentials.CredentialStore
+	// Spelled as storage.NewConfiguredStore reads it.
+	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderR2) {
+		var err error
+		if store, err = keychain(); err != nil {
+			return nil, fmt.Errorf("keychain unavailable: %w", err)
+		}
 	}
-	return storage.NewConfiguredStore(context.Background(), cfg.Storage, keychain)
+	return storage.NewConfiguredStore(context.Background(), cfg.Storage, store)
 }
 
 // skillObserver shares bounded observations within a pass: user-scope skill

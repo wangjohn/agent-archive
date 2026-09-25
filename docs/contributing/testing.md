@@ -24,8 +24,16 @@ In Go tests, everything goes through injection:
 
 - `internal/cli` tests build an `Env` (see `testEnv` in `cli_test.go`) with a
   temporary data directory, temporary user and account homes, a fixed clock,
-  no environment variables, and an in-memory bucket. Replace `runLaunchctl`
-  with `stubLaunchctl` for anything that would load or stop a job.
+  no environment variables, and an in-memory bucket. Its launchd, Keychain,
+  and executable fields fail the test unless the test sets them. Replace
+  `runLaunchctl` with `stubLaunchctl` for anything that would load or stop a
+  job.
+- Isolation in `internal/cli` fails closed. Its `TestMain` points `$HOME` at a
+  temporary folder, unsets `AGENT_ARCHIVE_HOME`, `CLAUDE_CONFIG_DIR`,
+  `CODEX_HOME` and the AWS configuration variables, and replaces the real
+  `launchctl` and Keychain with stand-ins that stop the test (see
+  `isolation_test.go`). A test that leaves an `Env` field unset can therefore
+  never reach your real apps, launchd, or Keychain.
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).

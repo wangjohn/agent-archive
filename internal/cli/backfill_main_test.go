@@ -16,7 +16,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	cursorstore.SnapshotTempDirForTesting = dir
+	restore := isolateProcessForTesting() // see isolation_test.go
 	code := m.Run()
+	restore()
 	// A folder left behind holds only this run's copies; the run's result
 	// stands either way.
 	_ = os.RemoveAll(dir)
