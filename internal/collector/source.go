@@ -44,13 +44,15 @@ func (s sourceState) matches(signature state.ScanSignature) bool {
 // SourceKind says it lives.
 type sourceReader interface {
 	// Signature observes the source's current state without reading its
-	// content, for unchangedSinceLastScan. ok is false when it can't be
-	// observed (missing, unreadable), which is never "unchanged".
-	Signature(ctx context.Context) (observed sourceState, ok bool)
+	// content, for unchangedSinceLastScan. An error means it can't be
+	// observed, which is never "unchanged" except for a source recorded as
+	// missing that still is: that error wraps os.ErrNotExist.
+	Signature(ctx context.Context) (observed sourceState, err error)
 	// Filter reads the whole source and filters it with adapter, returning
-	// the state of exactly what it read. A source over maxBytes is
-	// errTranscriptTooLarge, one record over recordLimit errRecordTooLarge,
-	// and a missing source wraps os.ErrNotExist.
+	// the state of exactly what it read. A source over the size limits (see
+	// Options.MaxTranscriptBytes) is errTranscriptTooLarge, one record over
+	// recordLimit errRecordTooLarge, and a missing source wraps
+	// os.ErrNotExist.
 	Filter(ctx context.Context, adapter archive.Adapter, maxBytes int64) (archive.FilteredTranscript, sourceState, error)
 }
 
@@ -75,12 +77,15 @@ type fileReader struct {
 	reg archive.SessionRegistration
 }
 
-func (r fileReader) Signature(context.Context) (sourceState, bool) {
+func (r fileReader) Signature(context.Context) (sourceState, error) {
 	info, err := os.Stat(r.reg.TranscriptPath)
-	if err != nil || !info.Mode().IsRegular() {
-		return sourceState{}, false
+	if err != nil {
+		return sourceState{}, err
 	}
-	return sourceState{file: statTranscript(info)}, true
+	if !info.Mode().IsRegular() {
+		return sourceState{}, errNotRegularFile
+	}
+	return sourceState{file: statTranscript(info)}, nil
 }
 
 func (r fileReader) Filter(_ context.Context, adapter archive.Adapter, maxBytes int64) (archive.FilteredTranscript, sourceState, error) {
@@ -101,12 +106,12 @@ type cursorSQLiteReader struct {
 // changes constantly, so its stat says nothing about one chat (spec, phase 2
 // decision 7), and a snapshot of the whole database would cost every pass a
 // copy of it.
-func (r cursorSQLiteReader) Signature(ctx context.Context) (sourceState, bool) {
+func (r cursorSQLiteReader) Signature(ctx context.Context) (sourceState, error) {
 	sig, err := cursorstore.ReadSignature(ctx, r.dbPath, r.reg.SourceKey)
 	if err != nil {
-		return sourceState{}, false
+		return sourceState{}, err
 	}
-	return sourceState{kind: archive.SourceKindCursorSQLite, cursor: sig}, true
+	return sourceState{kind: archive.SourceKindCursorSQLite, cursor: sig}, nil
 }
 
 // filterCursorComposer filters one chat read from Cursor's database with the
@@ -128,7 +133,10 @@ func filterCursorComposer(adapter archive.Adapter, c cursorstore.Composer, maxBy
 	if errors.Is(err, archive.ErrRecordTooLarge) {
 		return archive.FilteredTranscript{}, errRecordTooLarge
 	}
-	return filtered, err
+	if err != nil {
+		return filtered, err
+	}
+	return filtered, checkFilteredSize(filtered, maxBytes)
 }
 
 // CursorChatSize is the size of a chat as read from Cursor's database: its
@@ -142,7 +150,7 @@ func CursorChatSize(c cursorstore.Composer) int64 {
 }
 
 // checkCursorChatSize is errRecordTooLarge for a row over recordLimit and
-// errTranscriptTooLarge for a chat over maxBytes.
+// errTranscriptTooLarge for a chat over maxRawBytes(maxBytes) before filtering.
 func checkCursorChatSize(c cursorstore.Composer, maxBytes int64) error {
 	if int64(len(c.Composer)) > recordLimit {
 		return errRecordTooLarge
@@ -152,8 +160,8 @@ func checkCursorChatSize(c cursorstore.Composer, maxBytes int64) error {
 			return errRecordTooLarge
 		}
 	}
-	if CursorChatSize(c) > maxBytes {
-		return fmt.Errorf("%w of %d bytes", errTranscriptTooLarge, maxBytes)
+	if raw := maxRawBytes(maxBytes); CursorChatSize(c) > raw {
+		return fmt.Errorf("%w of %d bytes before filtering", errTranscriptTooLarge, raw)
 	}
 	return nil
 }
@@ -246,8 +254,9 @@ func openCursorPass(registrations []archive.SessionRegistration, opts *Options) 
 // the failure costs one in-place signature read per pass rather than a copy
 // of the database. A failure to read at all (a lock, a changed file) is
 // left to be retried. The size limits in force are recorded too, so raising
-// one reads the chat again.
-func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error) error {
+// one reads the chat again, and so is the gap (blocked) a size limit
+// recorded, for status.
+func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, adapter archive.Adapter, observed sourceState, opts Options, failure error, blocked state.BlockedReason) error {
 	if observed.kind != archive.SourceKindCursorSQLite {
 		return nil
 	}
@@ -261,6 +270,7 @@ func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, ada
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
 		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
 		Failed: true, FailedError: message, FailedMaxBytes: opts.maxTranscriptBytes(), FailedRecordLimit: recordLimit,
+		Blocked: blocked,
 	})
 }
 

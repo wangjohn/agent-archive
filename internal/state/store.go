@@ -703,9 +703,16 @@ type ScanSignature struct {
 	Failed      bool   `json:"failed,omitempty"`
 	FailedError string `json:"failed_error,omitempty"`
 	// FailedMaxBytes and FailedRecordLimit are the size limits the failed
-	// read ran under; the failure stands only while they do.
+	// read, or the size-limit gap (Blocked), ran under; the failure or gap
+	// stands only while they do.
 	FailedMaxBytes    int64 `json:"failed_max_bytes,omitempty"`
 	FailedRecordLimit int64 `json:"failed_record_limit,omitempty"`
+	// Blocked marks a scan that ended in a recorded capture gap (see
+	// CacheStatusBlocked) at this source state, so an unchanged source is
+	// skipped rather than read again to reach the same gap. For
+	// BlockedReasonTranscriptMissing the state is the source's absence: the
+	// signature holds while the source is still missing.
+	Blocked BlockedReason `json:"blocked,omitempty"`
 }
 
 // CursorSignature is the Cursor chat state the signature was recorded at.

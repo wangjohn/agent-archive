@@ -12,21 +12,11 @@ import (
 // blockThenRemember is block for a size limit, which for a Cursor chat also
 // remembers the state it was reached at (see rememberFailedRead).
 func (s *sessionScan) blockThenRemember(reason state.BlockedReason, read sourceRead) (sessionOutcome, error) {
-	outcome, err := s.block(reason, nil)
+	outcome, err := s.block(reason, nil, &read.observed)
 	if err != nil {
 		return outcome, err
 	}
-	return outcome, rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, nil)
-}
-
-// blockSession is sessionScan.block for one session outside a scan.
-func blockSession(local *state.Store, id string, req state.Request, reason state.BlockedReason, candidate *archive.SourceBundle) (sessionOutcome, error) {
-	published, err := local.LoadPublishedState(id)
-	if err != nil {
-		return outcomeSkipped, fmt.Errorf("load published cache: %w", err)
-	}
-	scan := &sessionScan{local: local, reg: archive.SessionRegistration{ArchiveSessionID: id}, req: req, published: published}
-	return scan.block(reason, candidate)
+	return outcome, rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, nil, reason)
 }
 
 // block records a terminal capture gap for the session and completes its
@@ -34,8 +24,11 @@ func blockSession(local *state.Store, id string, req state.Request, reason state
 // pending. candidate, when known, becomes the cached comparison bundle so an
 // unchanged transcript is skipped on the next pass; otherwise the previously
 // cached bundle (or the last published one) is kept. The last published
-// snapshot is retained untouched either way.
-func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.SourceBundle) (sessionOutcome, error) {
+// snapshot is retained untouched either way. observed is the source state the
+// gap was reached at, which the next pass compares against to skip the
+// session while it stands (nil: not known, so it is scanned again).
+func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.SourceBundle, observed *sourceState) (sessionOutcome, error) {
+	s.gap = reason
 	cached, _, _, haveCached := s.published.Cached()
 	lastPublished, lastPublishedAt, _ := s.published.LastPublished()
 	bundle := lastPublished
@@ -60,10 +53,12 @@ func (s *sessionScan) block(reason state.BlockedReason, candidate *archive.Sourc
 			return outcomeSkipped, fmt.Errorf("cache blocked session: %w", err)
 		}
 	}
-	// A recorded gap is re-evaluated on every pass, never skipped on a stat:
-	// the condition that caused it (a deleted file above all) can end without
-	// the transcript itself changing.
-	if err := s.local.RemoveScanSignature(s.id()); err != nil {
+	// The gap stands until the source changes from the state it was reached
+	// at, a missing transcript's absence included (one that comes back is
+	// read at once): until then each pass skips it on a stat, rather than
+	// decoding its published state and journaling a scan to reach the same
+	// gap again.
+	if err := s.recordBlockedSignature(reason, observed); err != nil {
 		return outcomeSkipped, err
 	}
 	return outcomeSkipped, s.completeRequest("complete blocked request")

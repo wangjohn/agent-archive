@@ -78,8 +78,10 @@ func LastActivity(ctx context.Context, reg archive.SessionRegistration, cursorDa
 
 // FilterTranscriptFile filters one native transcript file that has no
 // registration, for a harness named by the caller. startedAt stands in for
-// the fresh-start proof a Cursor text transcript otherwise needs. Nothing is
-// registered, written, or uploaded.
+// the fresh-start proof a Cursor text transcript otherwise needs. A
+// transcript over any of the collector's size limits is an error wrapping
+// archive.ErrRecordTooLarge, as for FilterCursorChat. Nothing is registered,
+// written, or uploaded.
 func FilterTranscriptFile(harness, path string, startedAt time.Time) (archive.FilteredTranscript, archive.Adapter, error) {
 	adapter, err := archive.NewAdapter(harness)
 	if err != nil {
@@ -87,6 +89,9 @@ func FilterTranscriptFile(harness, path string, startedAt time.Time) (archive.Fi
 	}
 	reg := archive.SessionRegistration{Harness: archive.Harness{Name: adapter.Name()}, TranscriptPath: path, SessionStartedAt: startedAt}
 	filtered, _, err := filterTranscript(adapter, reg, DefaultMaxTranscriptBytes)
+	if errors.Is(err, errRecordTooLarge) || errors.Is(err, errTranscriptTooLarge) {
+		return archive.FilteredTranscript{}, nil, fmt.Errorf("%w: %w", archive.ErrRecordTooLarge, err)
+	}
 	if err != nil {
 		return archive.FilteredTranscript{}, nil, err
 	}

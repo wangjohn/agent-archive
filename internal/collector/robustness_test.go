@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -334,12 +335,27 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 			t.Fatal("a recorded gap was skipped")
 		}
 	})
-	t.Run("subagent", func(t *testing.T) {
+	t.Run("subagent owing its parent a link", func(t *testing.T) {
 		local := newTestStore(t)
 		reg := settledSession(t, local, codexTranscript)
 		reg.ParentSessionID = "parent"
 		if check(t, local, reg, opts) {
-			t.Fatal("a subagent was skipped")
+			t.Fatal("a subagent that still owes its parent a link was skipped")
+		}
+	})
+	t.Run("subagent its parent links", func(t *testing.T) {
+		local := newTestStore(t)
+		reg := settledSession(t, local, codexTranscript)
+		reg.ParentSessionID = "parent"
+		parent := archive.SourceBundle{
+			ArchiveSessionID: "parent", Capture: archive.SourceCapture{Harness: archive.Harness{Name: "codex"}},
+			LinkedSessions: []archive.LinkedSessionReference{{SessionID: reg.ArchiveSessionID, Status: archive.LinkedSessionPublished}},
+		}
+		if err := statetest.SavePublished(local, "parent", parent, time.Time{}, state.CacheStatusPublished); err != nil {
+			t.Fatal(err)
+		}
+		if !check(t, local, reg, opts) {
+			t.Fatal("a settled subagent its parent already links was read again")
 		}
 	})
 	t.Run("cursor text is never trusted to a stat", func(t *testing.T) {
@@ -701,37 +717,5 @@ func TestHookEvidenceHeldBeforeFirstCapturePublishesWhenFileAppears(t *testing.T
 	}
 	if file := readPublishedStateFile(t, local, reg.ArchiveSessionID); file.Status != state.CacheStatusPublished || len(file.DeferredHookEvidence) != 0 {
 		t.Fatalf("status=%q held=%d", file.Status, len(file.DeferredHookEvidence))
-	}
-}
-
-// A recorded gap stays on the full path for as long as it lasts. The
-// "unchanged" exit is reachable for a rewritten transcript that then sits
-// untouched, and it must not leave a signature behind, or the gap would be
-// skipped on a stat from the second pass on.
-func TestUnchangedRewrittenTranscriptLeavesNoSignature(t *testing.T) {
-	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
-	reg := settledSession(t, local, codexTranscript)
-	rewritten := strings.Replace(codexTranscript, "visible", "VISIBLE", 1)
-	if err := os.WriteFile(reg.TranscriptPath, []byte(rewritten), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	moved := mtime(t, reg.TranscriptPath).Add(time.Second)
-	if err := os.Chtimes(reg.TranscriptPath, moved, moved); err != nil {
-		t.Fatal(err)
-	}
-	runAt(t, local, remote, time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC))
-	if reason, blocked, _ := local.LoadBlocked(reg.ArchiveSessionID); !blocked || reason != state.BlockedReasonTranscriptRewritten {
-		t.Fatalf("reason=%q blocked=%t", reason, blocked)
-	}
-	// Untouched since the rewrite: the full path runs and ends "unchanged".
-	if result := runAt(t, local, remote, time.Date(2026, 1, 3, 1, 0, 0, 0, time.UTC)); len(result.Errors) != 0 {
-		t.Fatalf("result=%#v", result)
-	}
-	if _, found, _ := local.LoadScanSignature(reg.ArchiveSessionID); found {
-		t.Fatal("a still-blocked session was signed as settled")
-	}
-	if unchanged, _ := unchangedSinceLastScan(context.Background(), local, reg, Options{MachineID: "m"}); unchanged {
-		t.Fatal("a recorded gap would be skipped on a stat")
 	}
 }

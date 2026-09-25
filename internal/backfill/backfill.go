@@ -74,7 +74,7 @@ const (
 	// SkipUnsafeFormat means the transcript is in a format the privacy filter
 	// cannot read safely, so nothing of it is kept.
 	SkipUnsafeFormat SkipReason = "unsafe_format"
-	// SkipTooLarge means the transcript is over the 64 MiB size limit.
+	// SkipTooLarge means the transcript is over the collector's size limits.
 	SkipTooLarge SkipReason = "too_large"
 	// SkipStartUnknown means the session's start time could not be
 	// determined (no record timestamp, or no createdAt for a Cursor chat).

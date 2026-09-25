@@ -13,7 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
-// One scan of one session (processSession) goes through these steps, each
+// One scan of one session (sessionScan.run) goes through these steps, each
 // a method of sessionScan below:
 //
 //	resume   A pending publication (bytes frozen before its first upload) is
@@ -69,19 +69,12 @@ type sessionScan struct {
 	// warnings are failures that did not stop the scan or change its
 	// outcome, reported with the session once it ends.
 	warnings []error
+	// gap is the capture gap the scan ended in, if it did (see block).
+	gap state.BlockedReason
 }
 
 // warn records a failure that does not end the scan.
 func (s *sessionScan) warn(err error) { s.warnings = append(s.warnings, err) }
-
-// processSession scans one session: see sessionScan for its steps.
-func processSession(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, req state.Request, now time.Time, opts Options) (sessionOutcome, error) {
-	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
-	if err != nil {
-		return outcomeSkipped, fmt.Errorf("load published cache: %w", err)
-	}
-	return newSessionScan(ctx, local, store, reg, req, published, now, opts).run()
-}
 
 func newSessionScan(ctx context.Context, local *state.Store, remote storage.ObjectStore, reg archive.SessionRegistration, req state.Request, published *state.Published, now time.Time, opts Options) *sessionScan {
 	return &sessionScan{ctx: ctx, local: local, remote: remote, opts: opts, now: now, reg: reg, req: req, published: published}
@@ -172,9 +165,10 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if !available {
 		// Not an error: a Cursor desktop chat is registered at its first
 		// prompt, before Cursor names its transcript, and a later hook fills
-		// the path in. Until then there is nothing to read. The session is
-		// retried every pass (unchangedSinceLastScan never skips it), any
-		// hook request stays queued, and nothing is recorded as a failure.
+		// the path in. Until then there is nothing to read. Any hook request
+		// stays queued, so the session is scanned again each pass while one
+		// is (otherwise unchangedSinceLastScan skips it until the path
+		// arrives), and nothing is recorded as a failure.
 		return read, false, nil
 	}
 	if read.adapter, err = archive.NewAdapter(s.reg.Harness.Name); err != nil {
@@ -220,13 +214,15 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 		// sessions for far longer than any of them keep their logs, so
 		// this is the ordinary end state of every archived session, not a
 		// failure: record it as a capture gap once, keep the last
-		// published snapshot, and let a returning file clear it.
-		return s.block(state.BlockedReasonTranscriptMissing, nil)
+		// published snapshot, and let a returning file clear it. Until it
+		// returns, each pass skips the session on a stat that finds it
+		// still missing.
+		return s.block(state.BlockedReasonTranscriptMissing, nil, missingSource(s.reg))
 	}
 	// Unsafe format: never upload; the last published snapshot, if any,
 	// remains untouched and readable.
 	err = fmt.Errorf("filter transcript: %w", err)
-	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err); rememberErr != nil {
+	if rememberErr := rememberFailedRead(s.local, s.reg, read.adapter, read.observed, s.opts, err, ""); rememberErr != nil {
 		return outcomeSkipped, errors.Join(err, rememberErr)
 	}
 	return outcomeSkipped, err
@@ -342,12 +338,13 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 	if err := s.completeRequest("complete unchanged request"); err != nil {
 		return true, err
 	}
-	if status == state.CacheStatusBlocked {
-		// Unchanged since a rewrite was recorded: still a gap, and a gap is
-		// re-evaluated on every pass rather than skipped on a stat.
-		return true, nil
+	if reason, blocked := s.published.Blocked(); status == state.CacheStatusBlocked && blocked {
+		// Unchanged since a rewrite was recorded: still the same gap, at
+		// this same transcript, which the next pass skips until it changes.
+		s.gap = reason
+		return true, s.recordBlockedSignature(reason, &read.observed)
 	}
-	return true, recordScanSignature(s.local, s.reg, read.observed, *candidate, s.opts)
+	return true, s.recordScanSignature(read.observed, *candidate)
 }
 
 // guard checks that candidate still extends the evidence already retained.
@@ -369,7 +366,7 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 		// than what the file now holds, and nothing the collector can do will
 		// change that. Record the gap so later passes are no-ops until the
 		// transcript changes again, rather than an error on every pass.
-		_, err := s.block(state.BlockedReasonTranscriptRewritten, &candidate)
+		_, err := s.block(state.BlockedReasonTranscriptRewritten, &candidate, &read.observed)
 		return candidate, true, err
 	}
 	// Cursor rewrites finished messages in its database as a matter of course
@@ -405,7 +402,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 		if err := s.completeRequest("complete declined request"); err != nil {
 			return outcomeSkipped, err
 		}
-		return outcomeSkipped, recordScanSignature(s.local, s.reg, read.observed, candidate, s.opts)
+		return outcomeSkipped, s.recordScanSignature(read.observed, candidate)
 	}
 
 	readyAt := publicationReadyAt(s.now, lastPublishedAt, s.req, s.opts)
@@ -428,7 +425,7 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 	if err != nil || outcome != outcomePublished {
 		return outcome, err
 	}
-	return outcome, recordScanSignature(s.local, s.reg, read.observed, candidate, s.opts)
+	return outcome, s.recordScanSignature(read.observed, candidate)
 }
 
 // renderedPublication is a candidate bundle rendered for upload.

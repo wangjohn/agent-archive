@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
@@ -288,7 +289,7 @@ func TestIdentityAndClassification(t *testing.T) {
 		tr.write(filepath.Join("home", rel), content)
 	}
 	big := tr.write(filepath.Join("home", claudeFile("s", "big")), claudeTranscript("big", repo, start))
-	if err := os.Truncate(big, archive.MaxRecordBytes+1); err != nil {
+	if err := os.Truncate(big, collector.DefaultMaxRawTranscriptBytes+1); err != nil {
 		t.Fatal(err)
 	}
 	p := plan(t, tr.env(), nil, config.Config{}, Filters{})

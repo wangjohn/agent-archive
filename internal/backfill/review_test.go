@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -154,7 +155,7 @@ func TestFilesChangingMidScan(t *testing.T) {
 			}
 			return f, err
 		case grows:
-			if err := os.Truncate(path, archive.MaxRecordBytes+1); err != nil {
+			if err := os.Truncate(path, collector.DefaultMaxRawTranscriptBytes+1); err != nil {
 				return nil, err
 			}
 		}
@@ -248,7 +249,7 @@ func TestSubagentChecks(t *testing.T) {
 	tr.write(filepath.Join(dir, "agent-ok1.jsonl"), subagentTranscript("parent", "ok1", start.Add(time.Minute)))
 	tr.write(filepath.Join(dir, "agent-bad.jsonl"), `{"type":"file-history-snapshot","snapshot":{}}`+"\n")
 	big := tr.write(filepath.Join(dir, "agent-big.jsonl"), subagentTranscript("parent", "big", start))
-	if err := os.Truncate(big, archive.MaxRecordBytes+1); err != nil {
+	if err := os.Truncate(big, collector.DefaultMaxRawTranscriptBytes+1); err != nil {
 		t.Fatal(err)
 	}
 	// Each of these reads cleanly, but the collector would refuse to

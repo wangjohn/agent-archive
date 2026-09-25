@@ -197,25 +197,15 @@ func rejectSubagentCandidate(local *state.Store, candidate state.SubagentCandida
 	return fmt.Errorf("%s", code)
 }
 
-// Retry link notification from durable publication state even when the child
-// has no new content or its live transcript has gone away. The notification
-// stays urgent so a repaired link reaches the parent on the next pass rather
-// than waiting out the upload debounce; SaveRequest drops evidence the pending
+// announceSubagent tells a published subagent's parent that it is published,
+// from the subagent's durable publication state, even when it has no new
+// content or its live transcript has gone away. The notification stays
+// urgent so a repaired link reaches the parent on the next pass rather than
+// waiting out the upload debounce; SaveRequest drops evidence the pending
 // request already carries, so retrying a parent that never publishes is a
-// no-op instead of an unbounded append.
-func markPublishedSubagent(local *state.Store, reg archive.SessionRegistration) error {
-	if reg.ParentSessionID == "" {
-		return nil
-	}
-	published, err := local.LoadPublishedState(reg.ArchiveSessionID)
-	if err != nil {
-		return err
-	}
-	return announceSubagent(local, reg, published)
-}
-
-// announceSubagent is markPublishedSubagent for a subagent whose published
-// state the caller has already loaded.
+// no-op instead of an unbounded append. The parent is read only as far as
+// its summary: decoding its whole bundle once for each of its subagents, on
+// every pass, was most of the cost of a pass.
 func announceSubagent(local *state.Store, reg archive.SessionRegistration, child *state.Published) error {
 	if reg.ParentSessionID == "" {
 		return nil
@@ -227,11 +217,11 @@ func announceSubagent(local *state.Store, reg archive.SessionRegistration, child
 	if _, found, err := local.LoadRegistration(reg.ParentSessionID); err != nil || !found {
 		return err
 	}
-	parent, _, parentStatus, found, err := local.LoadPublished(reg.ParentSessionID)
+	parent, found, err := local.LoadPublishedSummary(reg.ParentSessionID)
 	if err != nil {
 		return err
 	}
-	if found && parentStatus == state.CacheStatusBlocked {
+	if found && parent.Status == state.CacheStatusBlocked {
 		// A blocked parent cannot republish, and blocking acknowledges its
 		// request, so a notification written now would be written and
 		// discarded again on every pass for as long as the gap lasts. The link
@@ -239,12 +229,8 @@ func announceSubagent(local *state.Store, reg archive.SessionRegistration, child
 		// still lacks it.
 		return nil
 	}
-	if found {
-		for _, link := range parent.LinkedSessions {
-			if link.SessionID == reg.ArchiveSessionID && link.Status == archive.LinkedSessionPublished {
-				return nil
-			}
-		}
+	if found && parent.LinksPublished(reg.ArchiveSessionID) {
+		return nil
 	}
 	evidence, err := archive.NewLinkedSessionEvidence(reg.ArchiveSessionID, archive.LinkedSessionPublished, publishedAt)
 	if err != nil {
