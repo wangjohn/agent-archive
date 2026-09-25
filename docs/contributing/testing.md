@@ -1,5 +1,8 @@
 # Testing
 
+What CI checks, run locally from the repository root (the
+[Levenshtein checks](#levenshtein-checks) below run too):
+
 ```sh
 go test -race ./...
 go vet ./...
@@ -9,15 +12,19 @@ go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./...     # only the exceptions l
 python3 scripts/test_release_signing.py
 python3 scripts/test_install.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
+VERSION=dev ./scripts/build-release.sh                   # the release build (CI runs it on a release tag)
 ```
 
 CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
 1.27.1 exactly (go.mod's `toolchain` line), and golangci-lint on macOS: the
 first run blocks, and revive's doc-comment rule runs only on code a pull
 request adds or changes. The Keychain code needs cgo and Xcode's command
-line tools on macOS; elsewhere a stub is built. `go test ./...` also runs
-`internal/doclinks`, which fails on a broken relative link or `#anchor` in
-any Markdown file.
+line tools on macOS; elsewhere a stub is built. `go test ./...` also checks the docs:
+`internal/doclinks` fails on a broken relative link or `#anchor` in any
+Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
+`agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
+template that the CLI does not accept, and `TestCLIReferenceIsCurrent` on a
+stale [CLI reference](../reference/cli.md).
 
 Performance tests check what a pass costs on every run (published-state
 decodes and local writes, counted, not timed). Their wall-clock targets run
@@ -150,7 +157,8 @@ LaunchAgent runs) are not part of the user interface and may change.
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
   (`testdata/handoff/`), backfill plans (`internal/cli/testdata/backfill/`,
-  `internal/backfill/testdata/`) have goldens of their own.
+  `internal/backfill/testdata/`) and the [CLI reference](../reference/cli.md)
+  have goldens of their own.
 - One flag rewrites every golden file:
 
   ```sh

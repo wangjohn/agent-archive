@@ -26,31 +26,21 @@ For included projects, skipped starts (including a declined Cursor first prompt)
 
 ## Imported sessions
 
-`agent-archive backfill` registers sessions the hooks never saw, after the
-person confirms a plan ([backfill spec](../design/backfill.md)). An
-imported registration has `origin: import` and two times:
+`agent-archive backfill` registers sessions the hooks never saw, after you
+confirm a plan ([backfill](../guides/backfill.md)). An imported session keeps
+its true start time, from the transcript (or, for a Cursor file with no
+timestamps, the file's creation time), and also records its admission
+(`admitted_at`): when backfill took it over. The checks that decide whether
+it is captured and kept count from the admission, not the start: whether its
+project was included yet, which storage destination it belongs to, and its
+age under retention before its first capture. So an old session imported
+today is not refused as older than its project's inclusion, nor expired at
+once. The [glossary](glossary.md) defines admission, destination, and
+retention.
 
-- `session_started_at` is the true start, from the transcript
-  (`started_at_source: transcript`) or, for a Cursor file with no timestamps,
-  the file's birth time (`file_created`).
-- `admitted_at` is when backfill took ownership. A hook registration sets it
-  to its own start.
+A hook that later resumes an imported session continues it. A session that
+retention or `backfill undo` removed leaves a removal record, so a later
+backfill does not import it again unless you pass `--include-removed`.
 
-Every boundary check uses `Admitted()`, which is `admitted_at`, or
-`session_started_at` for a registration older than that field:
-
-| Check | Uses |
-|---|---|
-| Project activation in `AcceptSession` | `Admitted()` |
-| Storage destination in `AcceptSession`, and retention's current-bucket check (`InCurrentDestination`) | The registration's `destination_id`, set at registration by hooks and backfill; `Admitted()` against `DestinationSince` for a registration without one |
-| Retention age before a first capture | `Admitted()` |
-| App selection | `Harnesses`, plus `ImportedHarnesses` for imports |
-| Fresh-start eligibility for hooks, metadata `started_at`, subagent ordering, handoff | `session_started_at` |
-| App hook verification, `HookObserved`, skill inventory | hook-registered sessions only |
-
-A guard test fails if code compares `session_started_at` with `ActivatedAt`
-or `DestinationSince` outside `Admitted()`, and a second one if code compares
-an admission with `DestinationSince` outside `InCurrentDestination`. A hook
-that later resumes an imported session continues it: the registration keeps
-its start, admission, destination ID, and origin. Retention and undo leave a removal record when they forget a
-session, so backfill does not import it again.
+How admission is implemented, check by check, and the guard tests that keep
+it so, are in [session admission](../contributing/session-admission.md).

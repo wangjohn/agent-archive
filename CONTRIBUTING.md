@@ -24,27 +24,10 @@ contributions are held to a few firm rules; everything else is ordinary Go.
   tests also run there.
 - [golangci-lint v2.14.0](https://golangci-lint.run/) for lint.
 
-What CI blocks on, and how to run the same locally:
-
-```sh
-go test -race ./...
-go vet ./...
-golangci-lint run --disable=revive                                         # the blocking lint run
-golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
-python3 scripts/test_release_signing.py && python3 scripts/test_install.py && python3 scripts/test_purge_recipe.py
-VERSION=dev ./scripts/build-release.sh
-```
-
-plus the shared [Levenshtein](https://github.com/wangjohn/levenshtein)
-checks (Go lint and vet, HTTP and SQL rules, modules, `govulncheck`, and
-workflow lint and security), which the `verify` job in
-[`levenshtein.yml`](.github/workflows/levenshtein.yml) runs at a pinned
-commit. The [testing](docs/contributing/testing.md#levenshtein-checks) page
-shows how to run them, and a faster native loop for their Go lint.
-
-`go test ./...` includes a check that every relative link in the Markdown
-docs resolves. The Python scripts test the release gate, the installer, and
-the bucket purge recipes in the docs.
+What CI blocks on (tests, vet, golangci-lint, the release and installer
+scripts, and the shared [Levenshtein](https://github.com/wangjohn/levenshtein)
+checks), and the commands to run the same locally, are on the
+[testing](docs/contributing/testing.md) page.
 
 ## Never test against your real Mac
 
