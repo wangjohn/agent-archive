@@ -818,6 +818,7 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 // that can't be trusted unchanged on a stat (a Cursor text transcript), is
 // captured when it was read.
 func TestFilterUpgradeWithNewEvidenceIsCapturedNow(t *testing.T) {
+	t.Parallel()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	t1 := t0.Add(20 * 24 * time.Hour)
 	type provider = func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error)
@@ -832,18 +833,21 @@ func TestFilterUpgradeWithNewEvidenceIsCapturedNow(t *testing.T) {
 		upgrade func(t *testing.T, store *state.Store) provider
 	}{
 		{"a request with hook evidence", nil, func(t *testing.T, store *state.Store) provider {
+			t.Helper()
 			if err := store.SaveRequest("session-1", "stop", t1, lifecycleEvidence(t1, "Stop")); err != nil {
 				t.Fatal(err)
 			}
 			return nil
 		}},
 		{"a changed skill observation", inventory("one"), func(t *testing.T, store *state.Store) provider {
+			t.Helper()
 			if err := store.SaveRequest("session-1", "stop", t1); err != nil {
 				t.Fatal(err)
 			}
 			return inventory("two")
 		}},
 		{"a Cursor text transcript", nil, func(t *testing.T, store *state.Store) provider {
+			t.Helper()
 			signature, _, err := store.LoadScanSignature("session-1")
 			if err != nil {
 				t.Fatal(err)
