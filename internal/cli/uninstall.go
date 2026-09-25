@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -43,7 +44,10 @@ func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Write
 }
 
 func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
-	home, err := env.home()
+	// Resolved without creating it: the data directory of a stale
+	// installation (a test one whose temporary folder is gone) may no
+	// longer exist, and uninstalling it must not bring it back.
+	home, err := env.readHome()
 	if err != nil {
 		return err
 	}
@@ -54,6 +58,11 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	if err = checkRemovableHome(home, userHome); err != nil {
 		return err
 	}
+	// The locks below need the directory, so a missing one is created for
+	// the length of the uninstall and removed again at the end, with any
+	// parents created with it. This defer runs after the locks' own.
+	created := missingDirs(home)
+	defer removeCreatedDirs(home, created)
 	if err = os.MkdirAll(home, 0700); err != nil {
 		return err
 	}
@@ -376,6 +385,39 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 // keeps a hook, collector, or setup from acting on a half-deleted directory,
 // and unlinking before release means a later opener gets its own inode.
 var uninstallLockFiles = []string{"hooks.lock", "collector.lock", "setup.lock"}
+
+// missingDirs is dir and each of its parents that does not exist, deepest
+// first: what os.MkdirAll(dir) would create.
+func missingDirs(dir string) []string {
+	var missing []string
+	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(d); !errors.Is(err, fs.ErrNotExist) {
+			return missing
+		}
+		missing = append(missing, d)
+		if filepath.Dir(d) == d {
+			return missing
+		}
+	}
+}
+
+// removeCreatedDirs removes what uninstall created in a data directory that
+// did not exist (its lock files, then created, deepest first), each only if
+// nothing else has appeared in it: an installation whose directory was
+// already gone is left without one.
+func removeCreatedDirs(home string, created []string) {
+	if len(created) == 0 {
+		return
+	}
+	removeLockFiles(home)
+	_ = os.Remove(filepath.Join(home, collectorLockRecordName))
+	for _, dir := range created {
+		// A purge has already removed an emptied data directory itself.
+		if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return
+		}
+	}
+}
 
 func removeLockFiles(home string) {
 	for _, name := range uninstallLockFiles {
