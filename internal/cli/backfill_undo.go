@@ -19,8 +19,10 @@ import (
 )
 
 // runBackfillUndo implements `agent-archive backfill undo [IMPORT_ID] [--project
-// DIR] [--yes]`: it removes the sessions an import registered from the
-// bucket and from this Mac, and excludes the projects the import added.
+// DIR] [--yes] [--restore-retention]`: it removes the sessions an import
+// registered from the bucket and from this Mac, and excludes the projects the
+// import added. Retention the import raised goes back after confirmation, or
+// with --yes only when --restore-retention is given.
 //
 // setup.lock is held from before the plan until exit, so no setup or other
 // backfill changes the configuration while the plan is shown. collector.lock
@@ -35,11 +37,20 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	fs := newCommandFlags("backfill undo", stderr)
 	project := fs.String("project", "", "only undo this project's sessions")
 	yes := fs.Bool("yes", false, "skip the confirmation")
+	restoreRetention := fs.Bool("restore-retention", false, "with --yes, also put back the shorter retention from before the import")
 	// The ID may come before or after the flags.
 	id, ok := fs.parseWithArgument(args)
 	if !ok {
 		return 2
 	}
+	if *restoreRetention && *project != "" {
+		return fs.usageError("%s", "--restore-retention undoes a whole import's retention change; a --project undo leaves retention alone")
+	}
+	// Restoring a shorter retention deletes sessions that are not from the
+	// import (hook-captured ones, other imports'). A confirmed undo shows
+	// how many and asks; an unattended one (--yes) leaves retention as it
+	// is unless --restore-retention asks for it.
+	keepRetention := *yes && !*restoreRetention
 
 	home, err := env.readHome()
 	if err != nil {
@@ -78,6 +89,9 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if err != nil {
 		return fail("%v", err)
 	}
+	if keepRetention {
+		plan.KeepRetention()
+	}
 	// Nothing to do needs no confirmation, so these come before the
 	// terminal requirement.
 	if plan.Empty() {
@@ -93,6 +107,9 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			terminal.Printf(stdout, "No sessions from %s are left in import %s. Nothing was changed.\n", plan.ProjectDisplay(), batch.ID)
 		} else {
 			terminal.Printf(stdout, "Import %s has nothing left to undo. Nothing was changed.\n", batch.ID)
+		}
+		if r := plan.RetentionKept; r != nil {
+			terminal.Printf(stdout, "Retention stays at %d days. To put back the %d days from before the import, run agent-archive backfill undo %s --restore-retention\n", r.To, r.From, batch.ID)
 		}
 		return 0
 	}
@@ -154,6 +171,9 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	confirmed := plan
 	if plan, err = backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project); err != nil {
 		return fail("%v", err)
+	}
+	if keepRetention {
+		plan.KeepRetention()
 	}
 	if plan.Grew(confirmed) {
 		return fail("the import changed while this was open; run undo again to review it. Nothing was changed.")

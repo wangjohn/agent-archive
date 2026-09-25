@@ -58,8 +58,8 @@ may have made; a copy a killed backfill leaves is removed by the next
 - Retention applies to imports from the day they are imported, so a whole
   import expires on one day. Choose `edit` at the prompt to keep them longer.
   Retention applies to the whole archive, so `edit` only raises it; shorten
-  it in setup. Undoing the import puts the earlier retention back, and the
-  undo plan says how many older sessions that then deletes.
+  it in setup. Undoing the import can put the earlier retention back; see
+  [undo](#undo).
 - Claude Code deletes its own transcripts after 30 days by default. To keep
   more history for backfill, set `"cleanupPeriodDays"` in
   `~/.claude/settings.json`.
@@ -87,7 +87,16 @@ plan names:
   included, whichever import added it.
 
 Sessions captured by hooks in an excluded project stop uploading; they are not
-deleted. Undo refuses, and changes nothing, when it cannot tell its sessions
+deleted.
+
+If the import raised retention (`edit` at the prompt), undo offers to put the
+shorter retention back. That applies to the whole archive, so the next
+collector pass deletes every session older than it, hook-captured sessions
+and other imports' included. The undo plan says how many, and the question
+you answer names them. With `--yes` undo leaves retention as it is and prints
+the command that restores it: `agent-archive backfill undo ID --yes
+--restore-retention`. A `--project` undo never changes retention, and neither
+does undo when retention was changed after the import. Undo refuses, and changes nothing, when it cannot tell its sessions
 from another import's (an earlier import whose file is missing had the same
 ID).
 

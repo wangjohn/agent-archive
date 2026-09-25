@@ -142,8 +142,10 @@ can list them, inspect them, and hand one to another agent.
   stay out of capture as before; the plan lists them. Undo removes them
   again.
 - Backfill: the import prompt's `edit` only raises retention (shorten it in
-  setup), and undoing the import puts the earlier retention back, after
-  saying how many older sessions that deletes.
+  setup). Undoing the import offers to put the earlier retention back,
+  after saying how many older sessions (not only imported ones) that
+  deletes; `undo --yes` leaves retention alone unless you add
+  `--restore-retention`.
 - Backfill reads Claude Code and Codex sessions from where
   `CLAUDE_CONFIG_DIR` and `CODEX_HOME` point, as setup's hooks do. An import
   interrupted with a relative `--since 30d` is finished by the same option

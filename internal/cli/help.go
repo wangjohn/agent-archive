@@ -140,6 +140,7 @@ Example: codex "$(agent-archive handoff --latest --harness claude)"
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history
        agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
+                                [--restore-retention]
 
 Import the Claude Code, Codex, and Cursor sessions already on this Mac that
 the archive has not captured. First shows each project with its session count
@@ -172,13 +173,20 @@ uploaded, interrupted, or undone). Reads this Mac's records only.
 Example: agent-archive backfill history
 `,
 	"backfill undo": `Usage: agent-archive backfill undo [IMPORT_ID] [--project DIR] [--yes]
+                                [--restore-retention]
 
 Remove the latest import, or the import IMPORT_ID from backfill history: its
 sessions are deleted from the bucket and this Mac, and the projects it added
 are excluded from capture. Shows what it will do and asks first.
-Hook-captured sessions and the apps' own files are never touched.
-  --project DIR         Only this project's sessions from the import
-  --yes                 Skip the confirmation (required without a terminal)
+Hook-captured sessions and the apps' own files are never touched. If the
+import raised retention, undo offers to put the shorter retention back,
+saying how many sessions (from anywhere, not only the import) that deletes.
+  --project DIR         Only this project's sessions from the import;
+                        retention is left alone
+  --yes                 Skip the confirmation (required without a terminal);
+                        retention is left as it is
+  --restore-retention   With --yes, also put back the retention from before
+                        the import, deleting sessions older than it
 Example: agent-archive backfill undo --project ~/src/old-experiment
 `,
 	"version": `Usage: agent-archive version

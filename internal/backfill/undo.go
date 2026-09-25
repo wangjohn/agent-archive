@@ -65,6 +65,11 @@ type UndoPlan struct {
 	// RetentionChangedSince is set when the import raised retention and it
 	// was changed again afterwards, so undo leaves it as it is.
 	RetentionChangedSince bool
+	// RetentionKept is set by KeepRetention: retention is still what the
+	// import set and could go back (RetentionDeletes counts what that would
+	// delete), but this undo leaves it. A later undo of the same import can
+	// still restore it.
+	RetentionKept *RetentionChange
 	// Settled is what an earlier run of this undo changed in the
 	// configuration but stopped before recording in the batch: projects it
 	// excluded, and the retention it put back. Nothing is left to change
@@ -534,6 +539,18 @@ func hasHookEvidence(evidence []archive.SupplementalEvidence) bool {
 	})
 }
 
+// KeepRetention makes the plan leave retention as it is instead of
+// restoring the shorter value from before the import. `backfill undo --yes`
+// does this unless --restore-retention is given: the shorter retention
+// deletes sessions that are not from the import (hook-captured ones, other
+// imports'), which an unattended run must not do silently.
+func (p *UndoPlan) KeepRetention() {
+	if p.RestoreRetention == nil {
+		return
+	}
+	p.RetentionKept, p.RestoreRetention = p.RestoreRetention, nil
+}
+
 // Empty reports whether nothing of the import is left to undo.
 func (p UndoPlan) Empty() bool {
 	return len(p.Sessions) == 0 && len(p.ExcludeProjects) == 0 && len(p.RemoveApps) == 0 && p.RestoreRetention == nil
@@ -761,6 +778,9 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 		bullet("Retention goes back from %d to %d days, as it was before the import\n    raised it. The next collector pass then deletes %s older than\n    %d days from %s.\n", r.To, r.From, CountNoun(p.RetentionDeletes, "session"), r.From, p.view.destination())
 	case r != nil:
 		bullet("Retention goes back from %d to %d days, as it was before the import\n    raised it. No session is old enough for that to delete it now.\n", r.To, r.From)
+	case p.RetentionKept != nil:
+		r := p.RetentionKept
+		bullet("Retention stays at %d days: --yes does not shorten it. To put back\n    the %d days from before the import, which %s, run\n    agent-archive backfill undo %s --restore-retention\n", r.To, r.From, retentionDeletesPhrase(p.RetentionDeletes, r.From), p.Batch.ID)
 	case p.RetentionChangedSince:
 		bullet("Retention stays at %d days: it was changed after the import raised it.\n", p.view.RetentionDays)
 	}
@@ -868,12 +888,33 @@ func importsNoun(ids []string) string {
 	return "imports " + joinAnd(ids)
 }
 
-// UndoQuestion is the confirmation undo asks.
+// retentionDeletesPhrase says what restoring a retention of from days
+// deletes.
+func retentionDeletesPhrase(n, from int) string {
+	if n == 0 {
+		return "deletes no session now"
+	}
+	return fmt.Sprintf("deletes %s older than %d days", CountNoun(n, "session"), from)
+}
+
+// UndoQuestion is the confirmation undo asks. When restoring retention
+// deletes sessions the undo does not name (they are not from the import),
+// the question says how many, so the confirmation covers them too.
 func UndoQuestion(p UndoPlan) string {
 	c := p.Counts()
+	retention := ""
+	if r := p.RestoreRetention; r != nil && p.RetentionDeletes > 0 {
+		retention = fmt.Sprintf(" Restoring retention to %d days also deletes %s older than that.", r.From, CountNoun(p.RetentionDeletes, "other session"))
+	}
 	if c.Sessions+c.Subagents == 0 {
 		if len(p.ExcludeProjects) == 0 && p.RestoreRetention != nil {
+			if retention != "" {
+				return fmt.Sprintf("Restore retention to %d days? That deletes %s older than that. This cannot be undone.", p.RestoreRetention.From, CountNoun(p.RetentionDeletes, "session"))
+			}
 			return fmt.Sprintf("Restore retention to %d days?", p.RestoreRetention.From)
+		}
+		if retention != "" {
+			return fmt.Sprintf("Exclude %s?%s This cannot be undone.", CountNoun(len(p.ExcludeProjects), "project"), retention)
 		}
 		return fmt.Sprintf("Exclude %s?", CountNoun(len(p.ExcludeProjects), "project"))
 	}
@@ -885,11 +926,11 @@ func UndoQuestion(p UndoPlan) string {
 	}
 	switch {
 	case c.Deleted == 0:
-		return fmt.Sprintf("Forget %s? This cannot be undone.", forgotten)
+		return fmt.Sprintf("Forget %s?%s This cannot be undone.", forgotten, retention)
 	case c.Forgotten == 0:
-		return fmt.Sprintf("Delete %s from the archive? This cannot be undone.", deleted)
+		return fmt.Sprintf("Delete %s from the archive?%s This cannot be undone.", deleted, retention)
 	}
-	return fmt.Sprintf("Delete %s from the archive and forget %s from a previous destination? This cannot be undone.", deleted, forgotten)
+	return fmt.Sprintf("Delete %s from the archive and forget %s from a previous destination?%s This cannot be undone.", deleted, forgotten, retention)
 }
 
 // SessionsAndSubagents counts sessions and subagent transcripts together,

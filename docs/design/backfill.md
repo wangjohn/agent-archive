@@ -146,9 +146,14 @@ Import 29 sessions from 6 projects? [y/N/edit]
   is off, would delete sessions already archived (hook-captured ones too),
   so it keeps the current value and says to change it in setup.
   `ApplyToConfig` refuses a shorter one as well. The batch records the value
-  it raised from (`retention`), and undo puts it back while retention is
-  still what the import set, showing first how many sessions the shorter
-  period then deletes. A `--project` undo leaves retention alone.
+  it raised from (`retention`), and undo offers to put it back while
+  retention is still what the import set, showing first how many sessions
+  the shorter period then deletes (hook-captured and other imports' too;
+  the confirmation question names the count). `undo --yes` leaves retention
+  alone (`UndoPlan.KeepRetention`) unless `--restore-retention` is given,
+  and says how to restore it; the batch is not marked restored, so a later
+  `undo ID --restore-retention` still can. A `--project` undo leaves
+  retention alone.
 - **Deletion date.** All imports are captured at about the same time, so
   they expire together, and the plan shows that date.
 - **Rows.** Rows are sorted by total and then by path. Paths are never
