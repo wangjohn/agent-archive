@@ -20,6 +20,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -770,7 +771,10 @@ func TestUninstallDeleteLocalDataRemovesImports(t *testing.T) {
 }
 
 // A hook that fires while backfill registers sessions gets hooks.lock within
-// its one-second wait: registration holds the real flock only briefly.
+// its one-second wait: registration holds the real flock only briefly. A
+// hook that waited out that second fails with local.ErrBusy, so the errors
+// are the check; the hook's total time also counts its own disk writes,
+// which a loaded machine can stretch past a second without any wait.
 func TestBackfillHookDuringRegistration(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
@@ -796,7 +800,6 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 		wg        sync.WaitGroup
 		mu        sync.Mutex
 		during    int
-		slowest   time.Duration
 		hookErrs  []error
 		finished  = make(chan struct{})
 		startOnce sync.Once
@@ -811,17 +814,14 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 				return
 			case <-time.After(25 * time.Millisecond):
 			}
-			at := time.Now()
 			err := capture.HandleEvent(home, "claude", map[string]any{
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": fmt.Sprintf("hook-%d", i), "cwd": project,
 				"transcript_path": filepath.Join(project, fmt.Sprintf("hook-%d.jsonl", i)),
 			}, time.Now())
-			took := time.Since(at)
 			mu.Lock()
 			if err != nil {
 				hookErrs = append(hookErrs, err)
 			}
-			slowest = max(slowest, took)
 			select {
 			case <-finished:
 			default:
@@ -846,13 +846,15 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 	if len(result.Sessions) != len(candidates) {
 		t.Fatalf("registered %d of %d", len(result.Sessions), len(candidates))
 	}
+	for _, err := range hookErrs {
+		if errors.Is(err, local.ErrBusy) {
+			t.Fatalf("a hook waited out its second for hooks.lock: %v", err)
+		}
+	}
 	if len(hookErrs) > 0 {
 		t.Fatalf("hooks failed during registration: %v", hookErrs)
 	}
 	if during == 0 {
 		t.Fatal("no hook ran while registration was in progress")
-	}
-	if slowest >= time.Second {
-		t.Fatalf("a hook waited %s", slowest)
 	}
 }

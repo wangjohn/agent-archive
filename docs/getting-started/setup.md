@@ -151,7 +151,8 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   which runs the collector every 60 seconds. launchd gives it none of your
   shell's environment, so for S3 the plist also carries what setup's storage
   check ran with: `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`,
-  `AWS_CA_BUNDLE` and the `AWS_ENDPOINT_URL` overrides when set, and your
+  `AWS_CA_BUNDLE`, the `AWS_ENDPOINT_URL` overrides and the proxy
+  variables when set (a proxy URL with a password is left out), and your
   shell's `PATH` (without directories every account can write to), which a profile's `credential_process`
   (`aws-vault`, `op`, `granted`) is found through. Never your shell's AWS
   keys or tokens. If that command is not a program on your `PATH` (an alias
