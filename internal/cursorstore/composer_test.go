@@ -121,7 +121,7 @@ func TestReadComposerLive(t *testing.T) {
 	dir := filepath.Dir(path)
 
 	var copies []string
-	afterSnapshot = func(copyPath string) {
+	hooks := readerHooks{afterSnapshot: func(copyPath string) {
 		copies = append(copies, copyPath)
 		info, err := os.Stat(copyPath)
 		if err != nil {
@@ -142,8 +142,7 @@ func TestReadComposerLive(t *testing.T) {
 		if filepath.Dir(filepath.Dir(copyPath)) != root || !strings.HasPrefix(filepath.Base(filepath.Dir(copyPath)), snapshotPrefix) {
 			t.Errorf("snapshot at %s, want under %s", copyPath, root)
 		}
-	}
-	defer func() { afterSnapshot = nil }()
+	}}
 
 	read := func() (Composer, Signature) {
 		t.Helper()
@@ -151,7 +150,7 @@ func TestReadComposerLive(t *testing.T) {
 		if _, ok := before["state.vscdb-wal"]; !ok {
 			t.Fatal("the writer has no -wal file")
 		}
-		c, sig, err := ReadComposer(context.Background(), path, "c")
+		c, sig, err := readComposerWith(context.Background(), path, "c", hooks)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -478,21 +477,20 @@ func TestReadComposerErrors(t *testing.T) {
 					if !running {
 						continue
 					}
-					afterSnapshot = func(copyPath string) {
+					panicking := readerHooks{afterSnapshot: func(copyPath string) {
 						if _, err := os.Stat(copyPath); err != nil {
 							t.Errorf("no snapshot: %v", err)
 						}
 						panic("reading the snapshot failed")
-					}
+					}}
 					func() {
 						defer func() {
 							if recover() == nil {
 								t.Error("no panic")
 							}
 						}()
-						_, _, _ = ReadComposer(context.Background(), path, tc.id) // expected to panic
+						_, _, _ = readComposerWith(context.Background(), path, tc.id, panicking) // expected to panic
 					}()
-					afterSnapshot = nil
 				} else {
 					c, sig, err := ReadComposer(context.Background(), path, tc.id)
 					if !tc.check(err) || c.Composer != nil || sig != (Signature{}) {
@@ -601,14 +599,12 @@ func TestBackupRetriesWhileBusy(t *testing.T) {
 	path := StateDatabase(t.TempDir())
 	w := startWriter(t, path)
 	w.put(chatRows())
-	defer func() { backupRetried = nil }()
-
 	// The lock outlasts the read's deadline.
 	w.do(writerCommand{Op: writerExclusive})
 	retries := 0
-	backupRetried = func() { retries++ }
+	counting := readerHooks{backupRetried: func() { retries++ }}
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
-	_, _, err := ReadComposer(ctx, path, "c")
+	_, _, err := readComposerWith(ctx, path, "c", counting)
 	cancel()
 	if !isReason(Locked)(err) || retries == 0 {
 		t.Fatalf("err %v after %d retries", err, retries)
@@ -618,14 +614,14 @@ func TestBackupRetriesWhileBusy(t *testing.T) {
 	// The lock is released after the first busy step.
 	retries = 0
 	released := make(chan struct{})
-	backupRetried = func() {
+	releasing := readerHooks{backupRetried: func() {
 		retries++
 		if retries == 1 {
 			w.do(writerCommand{Op: writerNormal})
 			close(released)
 		}
-	}
-	c, _, err := ReadComposer(context.Background(), path, "c")
+	}}
+	c, _, err := readComposerWith(context.Background(), path, "c", releasing)
 	if err != nil {
 		t.Fatal(err)
 	}

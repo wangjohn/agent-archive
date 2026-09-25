@@ -214,7 +214,7 @@ func TestSyncRunsRetentionSweepAndDeletesExpiredSession(t *testing.T) {
 
 	// Two days later, well past the 1-day retention window.
 	later := now.Add(48 * time.Hour)
-	storageClockFollows(t, func() time.Time { return later })
+	storageClockFollows(t, &env, func() time.Time { return later })
 	env2 := env
 	env2.Now = func() time.Time { return later }
 	stdout.Reset()
@@ -306,7 +306,7 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 	// Two days later, well past the 1-day retention window, but every
 	// delete this pass attempts now fails.
 	later := now.Add(48 * time.Hour)
-	storageClockFollows(t, func() time.Time { return later })
+	storageClockFollows(t, &env, func() time.Time { return later })
 	env2 := env
 	env2.Now = func() time.Time { return later }
 	env2.OpenStore = func(config.Config) (storage.ObjectStore, error) {

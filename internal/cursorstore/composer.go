@@ -75,7 +75,9 @@ type Reader struct {
 	// snapErr is why the one snapshot attempt failed. It is not retried:
 	// every later chat read through this Reader, for the rest of the pass,
 	// fails with it without trying to copy the database again.
-	snapErr   error
+	snapErr error
+	// hooks are test observation points; production Readers have none.
+	hooks     readerHooks
 	snapshots int
 	swept     bool
 }
@@ -237,9 +239,13 @@ func (r *Reader) readCopy(ctx context.Context, read func(context.Context, *sql.D
 	return nil
 }
 
-// afterSnapshot, when set by a test, runs once the copy is written and
-// before it is read.
-var afterSnapshot func(copyPath string)
+// readerHooks let a test watch a Reader at work.
+type readerHooks struct {
+	// afterSnapshot runs once the copy is written and before it is read.
+	afterSnapshot func(copyPath string)
+	// backupRetried runs before each busy retry of the backup.
+	backupRetried func()
+}
 
 // snapshot copies the live database src into a new private directory under
 // SnapshotRoot. The directory is recorded before anything is written into
@@ -272,13 +278,13 @@ func (r *Reader) snapshot(ctx context.Context, src source) error {
 	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
 	defer cancel()
 	r.snapshots++
-	if err := backup(ctx, dsn(src.path, true), copyPath); err != nil {
+	if err := backup(ctx, dsn(src.path, true), copyPath, r.hooks.backupRetried); err != nil {
 		_ = r.Close()
 		return notChecked(err)
 	}
 	r.copyPath = copyPath
-	if afterSnapshot != nil {
-		afterSnapshot(copyPath)
+	if r.hooks.afterSnapshot != nil {
+		r.hooks.afterSnapshot(copyPath)
 	}
 	return nil
 }
@@ -291,9 +297,6 @@ type backuper interface {
 // backupRetry is how long backup waits before retrying a busy source.
 const backupRetry = 25 * time.Millisecond
 
-// backupRetried, when set by a test, runs before each busy retry.
-var backupRetried func()
-
 // errBackupIncomplete is a Step(-1) that reports pages left to copy, which
 // it should never do.
 var errBackupIncomplete = errors.New("the Cursor database backup stopped before the last page")
@@ -301,8 +304,8 @@ var errBackupIncomplete = errors.New("the Cursor database backup stopped before 
 // backup copies the database srcDSN opens into the file at dst with SQLite's
 // online backup API, in one Step(-1) so the copy is one read transaction's
 // state. That step can't be interrupted; SQLITE_BUSY and SQLITE_LOCKED are
-// retried until ctx ends.
-func backup(ctx context.Context, srcDSN, dst string) error {
+// retried until ctx ends; retried, when set, runs before each retry.
+func backup(ctx context.Context, srcDSN, dst string, retried func()) error {
 	db, err := sql.Open("sqlite", srcDSN)
 	if err != nil {
 		return err
@@ -337,8 +340,8 @@ func backup(ctx context.Context, srcDSN, dst string) error {
 			case !busy(stepErr):
 				return stepErr
 			}
-			if backupRetried != nil {
-				backupRetried()
+			if retried != nil {
+				retried()
 			}
 			select {
 			case <-ctx.Done():

@@ -28,6 +28,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -80,6 +81,11 @@ func describeVersion(version string, info *debug.BuildInfo) string {
 // substitute a temporary home directory, a fixed clock, and an in-memory
 // object store. A nil field defaults to the real thing.
 type Env struct {
+	// sweepClock, set only by tests, adjusts the retention sweep's clock
+	// checks (retention.Options.ServerClock and PreviousScanAt). A test that
+	// moves Now months ahead moves only this Mac's clock; the sweep rightly
+	// refuses to delete by it unless the storage clock moves too.
+	sweepClock  func(*retention.Options)
 	AWSProfiles func() ([]AWSProfile, error)
 	WorkingDir  func() (string, error)
 	// JobState reports loaded, running, missing, or unknown without changing launchd.

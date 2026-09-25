@@ -219,10 +219,6 @@ func (o Options) cursorDatabase() string {
 	return cursorstore.StateDatabase(home)
 }
 
-// afterCursorPass, when set by a test, runs as a pass ends with how many
-// snapshots of Cursor's database the pass took.
-var afterCursorPass func(snapshots int)
-
 // openCursorPass gives the pass one Reader for Cursor's database when any
 // session is read from it (Run has already swept snapshots a killed pass
 // left behind).
@@ -236,8 +232,8 @@ func openCursorPass(registrations []archive.SessionRegistration, opts *Options) 
 			opts.cursorPass = reader
 			return func() error {
 				err := reader.Close()
-				if afterCursorPass != nil {
-					afterCursorPass(reader.Snapshots())
+				if opts.afterCursorPass != nil {
+					opts.afterCursorPass(reader.Snapshots())
 				}
 				return err
 			}

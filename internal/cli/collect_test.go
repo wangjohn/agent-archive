@@ -99,7 +99,7 @@ func TestCollectPassSweepsDespiteUnreadableRegistration(t *testing.T) {
 	}
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, _ := collectFixture(t, now)
-	storageClockFollows(t, func() time.Time { return env.Now() })
+	storageClockFollows(t, &env, func() time.Time { return env.Now() })
 	cfg, _, err := config.Load(home)
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 	}
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, _ := collectFixture(t, now)
-	storageClockFollows(t, func() time.Time { return env.Now() })
+	storageClockFollows(t, &env, func() time.Time { return env.Now() })
 	cfg, _, err := config.Load(home)
 	if err != nil {
 		t.Fatal(err)

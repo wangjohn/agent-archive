@@ -562,9 +562,8 @@ func TestCursorDatabaseReaderChangedDuringRead(t *testing.T) {
 			home := t.TempDir()
 			path := CursorStateDatabase(home)
 			writeCursorDB(t, path, true, map[string]any{"composerData:a": composerJSON("a", 1, nil)})
-			cursorAfterRead = func(p string) { change(t, p) }
-			defer func() { cursorAfterRead = nil }()
-			if res := readCursor(t, home); res.Checked || res.Reason != CursorUncheckedChangedDuringRead {
+			res := readCursorDatabase(context.Background(), path, cursorstore.Options{AfterImmutableRead: func(p string) { change(t, p) }})
+			if res.Checked || res.Reason != CursorUncheckedChangedDuringRead {
 				t.Fatalf("checked %v, reason %q", res.Checked, res.Reason)
 			}
 		})

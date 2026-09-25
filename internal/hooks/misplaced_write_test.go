@@ -17,15 +17,13 @@ func TestApplyTakesBackAMisplacedWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	stray := filepath.Join(home, "elsewhere", "deeper", "hooks.json")
-	previous := writeTarget
-	t.Cleanup(func() { writeTarget = previous })
-	writeTarget = func(path string) (string, error) {
+	writeTarget := func(path string) (string, error) {
 		if path == plan[1].Path {
 			return stray, nil
 		}
 		return resolveTarget(path)
 	}
-	if err := Apply(plan); err == nil || !strings.Contains(err.Error(), "does not read back") {
+	if err := apply(plan, writeTarget); err == nil || !strings.Contains(err.Error(), "does not read back") {
 		t.Fatalf("Apply: %v", err)
 	}
 	for _, path := range []string{stray, filepath.Join(home, "elsewhere"), plan[0].Path, plan[1].Path} {
@@ -44,10 +42,8 @@ func TestApplyRestoresAFileAMisplacedWriteReplaced(t *testing.T) {
 	}
 	other := filepath.Join(home, "other.json")
 	must(t, os.WriteFile(other, []byte("mine"), 0644))
-	previous := writeTarget
-	t.Cleanup(func() { writeTarget = previous })
-	writeTarget = func(string) (string, error) { return other, nil }
-	if err := Apply(plan); err == nil {
+	writeTarget := func(string) (string, error) { return other, nil }
+	if err := apply(plan, writeTarget); err == nil {
 		t.Fatal("a misplaced write succeeded")
 	}
 	if b, _ := os.ReadFile(other); string(b) != "mine" {
@@ -67,10 +63,8 @@ func TestApplyRefusesToOverwriteATargetItCannotRead(t *testing.T) {
 	other := filepath.Join(home, "other.json")
 	must(t, os.WriteFile(other, []byte("mine"), 0200))
 	t.Cleanup(func() { _ = os.Chmod(other, 0600) })
-	previous := writeTarget
-	t.Cleanup(func() { writeTarget = previous })
-	writeTarget = func(string) (string, error) { return other, nil }
-	if err := Apply(plan); err == nil {
+	writeTarget := func(string) (string, error) { return other, nil }
+	if err := apply(plan, writeTarget); err == nil {
 		t.Fatal("a write over an unreadable file succeeded")
 	}
 	must(t, os.Chmod(other, 0600))

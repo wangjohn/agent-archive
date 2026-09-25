@@ -122,7 +122,11 @@ var ErrChanged = errors.New("changed while it was being updated")
 
 // Apply rolls back already written files on failure. It refuses a configuration
 // changed since the plan was prepared, rather than overwriting concurrent edits.
-func Apply(changes []Change) error {
+func Apply(changes []Change) error { return apply(changes, resolveTarget) }
+
+// apply is Apply writing each change where writeTarget says: resolveTarget,
+// or a stand-in a test gives to point a write somewhere else.
+func apply(changes []Change, writeTarget func(path string) (string, error)) error {
 	applied := []Change{}
 	for _, c := range changes {
 		current, err := os.ReadFile(c.Path)
@@ -282,10 +286,6 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	}
 	return writeFile(target, data, mode)
 }
-
-// writeTarget is where Apply writes a change to path: resolveTarget,
-// replaceable so a test can make a write land in the wrong place.
-var writeTarget = resolveTarget
 
 // priorFile is what was at a path before Apply wrote it, so a write that
 // must be taken back can be: the old content, or its absence together with

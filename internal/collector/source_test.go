@@ -115,8 +115,6 @@ func cursorRegistration(id, composerID string) archive.SessionRegistration {
 func countSnapshots(t *testing.T) *[]int {
 	t.Helper()
 	var passes []int
-	afterCursorPass = func(n int) { passes = append(passes, n) }
-	t.Cleanup(func() { afterCursorPass = nil })
 	return &passes
 }
 
@@ -125,6 +123,7 @@ func countSnapshots(t *testing.T) *[]int {
 func run(t *testing.T, local *state.Store, remote storage.ObjectStore, opts Options, passes *[]int) (Result, int) {
 	t.Helper()
 	before := len(*passes)
+	opts.afterCursorPass = func(n int) { *passes = append(*passes, n) }
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil {
 		t.Fatal(err)
