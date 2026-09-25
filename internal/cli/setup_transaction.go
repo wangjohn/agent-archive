@@ -23,13 +23,25 @@ import (
 
 type setupJournal struct {
 	Legacy *legacyJob `json:"legacy,omitempty"`
-	// Relabeled is the collector an earlier release installed for this
-	// data directory under another label (see previousCollectorPlist);
-	// setup retires it in favor of the directory's own label.
-	Relabeled *legacyJob     `json:"relabeled,omitempty"`
-	Changes   []hooks.Change `json:"changes"`
-	Plist     string         `json:"plist"`
-	WasLoaded bool           `json:"was_loaded"`
+	// Relabeled and MoreRelabeled are the collectors earlier releases
+	// installed for this data directory under other labels (see
+	// previousCollectorPlists); setup retires them in favor of the
+	// directory's own label. The first stays in Relabeled, where releases
+	// that retired at most one recorded it, so either reads the other's
+	// journal of one.
+	Relabeled     *legacyJob     `json:"relabeled,omitempty"`
+	MoreRelabeled []*legacyJob   `json:"more_relabeled,omitempty"`
+	Changes       []hooks.Change `json:"changes"`
+	Plist         string         `json:"plist"`
+	WasLoaded     bool           `json:"was_loaded"`
+}
+
+// relabeled lists every collector the journal retires under another label.
+func (j setupJournal) relabeled() []*legacyJob {
+	if j.Relabeled == nil {
+		return j.MoreRelabeled
+	}
+	return append([]*legacyJob{j.Relabeled}, j.MoreRelabeled...)
 }
 
 func journalPath(home string) string { return filepath.Join(home, "setup-transaction.json") }
@@ -378,7 +390,12 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err != nil {
 		return err
 	}
-	journal := setupJournal{Legacy: legacy, Relabeled: relabeled, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
+	var firstRelabeled *legacyJob
+	var moreRelabeled []*legacyJob
+	if len(relabeled) > 0 {
+		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
+	}
+	journal := setupJournal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
 	if err = local.Write(journalPath(home), journal); err != nil {
 		return err
 	}
@@ -399,8 +416,10 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err = retireLegacyJob(journal.Legacy, env); err != nil {
 		return fail(err)
 	}
-	if err = retireLegacyJob(journal.Relabeled, env); err != nil {
-		return fail(fmt.Errorf("retire the collector installed under the default label: %w", err))
+	for _, job := range journal.relabeled() {
+		if err = retireLegacyJob(job, env); err != nil {
+			return fail(fmt.Errorf("retire the %s: %w", relabeledJobName, err))
+		}
 	}
 	if err = env.loadLaunchAgent(plistPath); err != nil {
 		return fail(fmt.Errorf("start background collector: %w", err))
@@ -436,8 +455,10 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 	if err := checkLegacyJob(home, journal.Legacy, legacyJobName); err != nil {
 		return err
 	}
-	if err := checkLegacyJob(home, journal.Relabeled, relabeledJobName); err != nil {
-		return err
+	for _, job := range journal.relabeled() {
+		if err := checkLegacyJob(home, job, relabeledJobName); err != nil {
+			return err
+		}
 	}
 	state := env.jobState(journal.Plist)
 	if launchJobActive(state) {
@@ -458,8 +479,10 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 	if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, env); err != nil {
 		return err
 	}
-	if err := restoreLegacyJob(home, journal.Relabeled, relabeledJobName, env); err != nil {
-		return err
+	for _, job := range journal.relabeled() {
+		if err := restoreLegacyJob(home, job, relabeledJobName, env); err != nil {
+			return err
+		}
 	}
 	return os.Remove(journalPath(home))
 }
@@ -467,7 +490,7 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 // Names of the jobs a setup journal can retire, as recovery errors call them.
 const (
 	legacyJobName    = "legacy upload job"
-	relabeledJobName = "background collector installed under the default label"
+	relabeledJobName = "background collector installed under an earlier label"
 )
 
 // otherInstallationError is a setup refused because another installation's
@@ -593,31 +616,30 @@ func recoverSetup(home string, env Env) error {
 	return restoreSetup(home, journal, env)
 }
 
-// planRelabel prepares retiring the collector an earlier release installed
-// for home under another label (previousCollectorPlist), or returns nil
-// when there is none.
-func planRelabel(home, userHome string, env Env) (*legacyJob, error) {
-	path := env.installation(home, userHome).previousCollectorPlist()
-	if path == "" {
-		return nil, nil
+// planRelabel prepares retiring every collector earlier releases installed
+// for home under other labels (previousCollectorPlists).
+func planRelabel(home, userHome string, env Env) ([]*legacyJob, error) {
+	var jobs []*legacyJob
+	for _, path := range env.installation(home, userHome).previousCollectorPlists() {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		state := env.jobState(path)
+		if state == "unknown" {
+			return nil, fmt.Errorf("cannot determine the state of %s; restore access to launchctl and retry", path)
+		}
+		if state == jobAnotherInstallation {
+			// launchd runs that label from another plist: not this one's to retire.
+			continue
+		}
+		jobs = append(jobs, &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)})
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	state := env.jobState(path)
-	if state == "unknown" {
-		return nil, fmt.Errorf("cannot determine the state of %s; restore access to launchctl and retry", path)
-	}
-	if state == jobAnotherInstallation {
-		// launchd runs that label from another plist: not this one's to retire.
-		return nil, nil
-	}
-	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)}, nil
+	return jobs, nil
 }
 
 func withoutBucketPrivacy(cfg config.Config) config.Config {

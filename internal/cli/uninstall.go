@@ -147,12 +147,9 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	for _, problem := range in.otherInstallationProblems(env.installedHookFiles(userHome, cfg), allHarnesses) {
 		skipped = append(skipped, "Kept: "+problem)
 	}
-	// The collector for this data directory, and one an earlier release
-	// installed for it under the default label. Never another directory's.
-	plists := []string{env.installation(home, userHome).collectorPlist()}
-	if previous := env.installation(home, userHome).previousCollectorPlist(); previous != "" {
-		plists = append(plists, previous)
-	}
+	// The collector for this data directory, and any an earlier release
+	// installed for it under another label. Never another directory's.
+	plists := append([]string{in.collectorPlist()}, in.previousCollectorPlists()...)
 	// A plist whose label launchd runs from another plist stays: removing
 	// it would leave this installation with nothing to reinstall from.
 	kept := map[string]bool{}

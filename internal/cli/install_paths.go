@@ -134,30 +134,33 @@ func launchLabel(plist string) string {
 	return strings.TrimSuffix(filepath.Base(plist), ".plist")
 }
 
-// previousCollectorPlist is the LaunchAgent an earlier release installed for
-// this data directory under a label other than its own: "" unless that
-// plist exists and runs the collector for this data directory. There are
-// two such labels. The default one, which releases before labels were
-// derived from the directory gave a non-default data directory. And the
-// label derived from the directory as spelled (its symlinks resolved but
-// not its case), which releases before CanonicalPath gave a directory
-// spelled in another case than it is listed in, the default directory
-// included. A plist for any other directory is never returned, so another
-// installation's is never touched.
-func (in installation) previousCollectorPlist() string {
-	var labels []string
-	if !in.isDefault() {
-		labels = append(labels, hooks.LaunchLabel)
+// previousCollectorPlists are the LaunchAgents earlier releases installed
+// for this data directory under labels other than its own: every collector
+// plist (a label hooks.CollectorLabel can produce) that runs the collector
+// for this data directory. Earlier releases used two other labels. The
+// default one, which releases before labels were derived from the directory
+// gave a non-default data directory. And the label derived from the
+// directory as spelled (its symlinks resolved but not its case), which
+// releases before CanonicalPath gave a directory spelled in another case
+// than it is listed in, the default directory included; setup run with two
+// such spellings left one job for each. A plist for any other directory is
+// never returned, so another installation's is never touched, and stopping
+// the job one defines still needs launchd to have loaded it from that very
+// file (unloadLaunchAgent).
+func (in installation) previousCollectorPlists() []string {
+	dir := filepath.Join(in.userHome, "Library", "LaunchAgents")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
 	}
-	spelled := filepath.Clean(in.home)
-	if resolved, err := local.ResolveExistingSymlinks(in.home); err == nil {
-		spelled = resolved
-	}
-	if label := hooks.CollectorLabel(spelled, ""); label != in.label() {
-		labels = append(labels, label)
-	}
-	for _, label := range labels {
-		path := filepath.Join(in.userHome, "Library", "LaunchAgents", label+".plist")
+	own := in.label()
+	var found []string
+	for _, entry := range entries {
+		label, ok := strings.CutSuffix(entry.Name(), ".plist")
+		if !ok || label == own || !isCollectorLabel(label) {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -166,19 +169,29 @@ func (in installation) previousCollectorPlist() string {
 		if err != nil || dataHome == "" || !local.SameLocation(dataHome, in.home) {
 			continue
 		}
-		return path
+		found = append(found, path)
 	}
-	return ""
+	return found
+}
+
+// isCollectorLabel reports whether label is one hooks.CollectorLabel
+// produces: the default label, or it followed by 12 hex digits.
+func isCollectorLabel(label string) bool {
+	if label == hooks.LaunchLabel {
+		return true
+	}
+	suffix, ok := strings.CutPrefix(label, hooks.LaunchLabel+".")
+	return ok && len(suffix) == 12 && strings.Trim(suffix, "0123456789abcdef") == ""
 }
 
 // installedCollectorPlist is the LaunchAgent status reports on: the one for
 // this installation's own label, or else one an earlier release installed
-// for it under the default label.
+// for it under another label.
 func (in installation) installedCollectorPlist() string {
 	current := in.collectorPlist()
 	if _, err := os.Stat(current); err != nil {
-		if previous := in.previousCollectorPlist(); previous != "" {
-			return previous
+		if previous := in.previousCollectorPlists(); len(previous) > 0 {
+			return previous[0]
 		}
 	}
 	return current
