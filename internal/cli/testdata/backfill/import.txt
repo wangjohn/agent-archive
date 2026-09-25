@@ -34,6 +34,7 @@ If you continue:
   • Undo any time with `agent-archive backfill undo`.
 
 Import 12 sessions from 5 projects? [y/N/edit] Added 4 projects. Registered 12 sessions and 2 subagent transcripts as import 2026-09-23-1.
+Uploading: 11 of 12 sessions, 7 KB of 8 KB
 Uploading: 12 of 12 sessions, 8 KB of 8 KB
 Uploaded 12 sessions (8 KB).
 See them with `agent-archive list --imported`.

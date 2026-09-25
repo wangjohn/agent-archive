@@ -51,6 +51,22 @@ R2 credentials are not here: they are in the macOS Keychain under the service
 | `forgotten/<hash>.json` | A record of each session retention or undo removed, so backfill doesn't import it again. |
 | `status.json` | The collector's last pass: scan and publish times, counts, errors. |
 
+**Pending sessions.** A session is *pending* when these files say the
+bucket doesn't have all of it yet: a request is queued, a scan was started
+and never finished (`pending-scans/`), a publication is built and not yet
+accepted by storage, in flight or waiting for the upload interval
+(`pending/`), the last candidate built is waiting for that interval
+(`published/` says `rate_limited`), or nothing was ever captured for it.
+A recorded capture gap or a policy decline is not pending: nothing more can
+be done until the transcript changes. Every count uses this one definition
+(`state.Store.Outstanding`): `status`'s pending count and its imported
+"waiting to upload", `backfill`'s upload progress and history, the
+destination check in `setup`, the warning in `uninstall`, and the collector
+and retention (which never expires a session with pending work, other than
+a chat that never received its transcript). A session only waiting for its
+transcript is pending but doesn't hold `setup` at the current destination,
+since no sync can publish it.
+
 **Quarantine.** A session file a pass can't parse at all (truncated, empty,
 not JSON) is re-read under its lock, then renamed
 `<name>.json.<UTC time>.corrupt` and reported for that session only, so it

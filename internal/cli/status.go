@@ -434,23 +434,28 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Warnings = append(view.Warnings, fmt.Sprintf("Local state of session %s could not be read (%v); status left that session out.", id, err))
 		}
 	}
-	requested := map[string]bool{}
-	for _, r := range reqs {
-		requested[r.ArchiveSessionID] = true
-	}
-	queued := 0
+	queued := state.QueuedRequests(reqs)
+	// What each session still owes, read once: the pending count and the
+	// import counts below both come from it (state.Outstanding).
+	owed := map[string]state.Outstanding{}
+	pending := 0
 	for _, reg := range regs {
-		if !cfg.AcceptSession(reg) {
+		accepted := cfg.AcceptSession(reg)
+		if !accepted && !reg.Imported() {
 			continue
 		}
-		if pending, _, err := sessionPending(store, reg, requested[reg.ArchiveSessionID]); err != nil {
+		o, err := store.Outstanding(reg, queued[reg.ArchiveSessionID])
+		if err != nil {
 			skip(reg.ArchiveSessionID, err)
-		} else if pending {
-			queued++
+			continue
+		}
+		owed[reg.ArchiveSessionID] = o
+		if accepted && o.Pending() {
+			pending++
 		}
 	}
-	if queued > view.Collector.PendingCount {
-		view.Collector.PendingCount = queued
+	if pending > view.Collector.PendingCount {
+		view.Collector.PendingCount = pending
 	}
 	var readable []archive.SessionRegistration
 	for _, reg := range regs {
@@ -459,10 +464,7 @@ func readStatus(env Env) (view statusView, err error) {
 		}
 	}
 	regs = readable
-	view.ImportedSessions, view.ImportedPending, view.ImportedWithIssues, err = importedSessionCounts(store, cfg, regs, view.Collector.SessionIssues)
-	if err != nil {
-		view.Warnings = append(view.Warnings, fmt.Sprintf("Imported sessions could not all be counted: %v.", err))
-	}
+	view.ImportedSessions, view.ImportedPending, view.ImportedWithIssues = importedSessionCounts(cfg, regs, owed, view.Collector.SessionIssues)
 	// One unreadable import file must not hide the rest of status.
 	batches, err := backfill.LoadBatches(home)
 	if err != nil {
@@ -836,55 +838,44 @@ func collectorLockHeld(home string) bool {
 }
 
 // importedSessionCounts counts the sessions backfill imported, leaving out
-// their subagents, and how many of those the collector still has to upload:
-// ones it still publishes that have no publication yet (a recorded gap or a
-// declined capture aside) or have one in flight. withIssues counts those
-// with a recorded capture gap or a failed last scan: status leaves imports
-// out of each app's own gaps and issues, so they are reported here.
-func importedSessionCounts(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, issues map[string]string) (imported, pending, withIssues int, err error) {
+// their subagents, and how many of those are pending (state.Outstanding)
+// under cfg, the same definition as status's own pending count. withIssues
+// counts those with a recorded capture gap or a failed last scan: status
+// leaves imports out of each app's own gaps and issues, so they are
+// reported here. owed holds every import's Outstanding.
+func importedSessionCounts(cfg config.Config, regs []archive.SessionRegistration, owed map[string]state.Outstanding, issues map[string]string) (imported, pending, withIssues int) {
 	for _, reg := range regs {
 		if !reg.Imported() || reg.ParentSessionID != "" {
 			continue
 		}
 		imported++
-		_, _, cacheStatus, _, err := store.LoadPublished(reg.ArchiveSessionID)
-		if err != nil {
-			return 0, 0, 0, err
-		}
-		if cacheStatus == state.CacheStatusBlocked || issues[reg.ArchiveSessionID] != "" {
+		o := owed[reg.ArchiveSessionID]
+		if o.Blocked || issues[reg.ArchiveSessionID] != "" {
 			withIssues++
 		}
-		waiting, err := importPending(store, cfg, reg)
-		if err != nil {
-			return 0, 0, 0, err
-		}
-		if waiting {
+		if cfg.AcceptSession(reg) && o.Pending() {
 			pending++
 		}
 	}
-	return imported, pending, withIssues, nil
+	return imported, pending, withIssues
 }
 
-// importPending reports whether the collector still has to upload an
-// imported session: one it still publishes that has no publication yet (a
-// recorded gap or a declined capture aside), or has one in flight.
+// importPending reports whether an imported session is pending under cfg:
+// the one definition state.Outstanding gives, for a caller that has not
+// listed the queued requests.
 func importPending(store *state.Store, cfg config.Config, reg archive.SessionRegistration) (bool, error) {
 	if !cfg.AcceptSession(reg) {
 		return false, nil
 	}
-	_, _, cacheStatus, _, err := store.LoadPublished(reg.ArchiveSessionID)
+	_, requested, err := store.LoadRequest(reg.ArchiveSessionID)
 	if err != nil {
 		return false, err
 	}
-	_, _, published, err := store.LoadLastPublished(reg.ArchiveSessionID)
+	owed, err := store.Outstanding(reg, requested)
 	if err != nil {
 		return false, err
 	}
-	inFlight, err := store.HasPending(reg.ArchiveSessionID)
-	if err != nil {
-		return false, err
-	}
-	return inFlight || (!published && cacheStatus != state.CacheStatusBlocked && cacheStatus != state.CacheStatusDeclined), nil
+	return owed.Pending(), nil
 }
 
 const (

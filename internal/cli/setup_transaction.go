@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -72,20 +71,19 @@ func destinationEqual(a, b credentials.Config) bool {
 	return config.DestinationID(a) == config.DestinationID(b)
 }
 
-// pendingSessions counts every accepted session with work outstanding, a
-// session waiting for its transcript included: status reports it as pending,
-// because from the user's side it is.
+// pendingSessions counts every accepted session state.Outstanding reports
+// as pending, a session waiting for its transcript included: status reports
+// it as pending, because from the user's side it is.
 func pendingSessions(home string, cfg config.Config) (int, error) {
 	blocking, waiting, err := pendingSessionCounts(home, cfg)
 	return blocking + waiting, err
 }
 
 // pendingSessionCounts splits the pending sessions in two. waiting counts
-// registrations with no transcript path that have never published and have
-// no publication in flight: a Cursor chat whose transcript never arrived
-// (transcripts turned off, for example). Nothing of such a session can be
-// published anywhere until a path arrives, so its queued request is not work
-// a sync could finish. blocking counts everything else.
+// those only waiting for their transcript (state.Outstanding's
+// WaitingForTranscript): nothing of such a session can be published
+// anywhere until a path arrives, so its queued request is not work a sync
+// could finish. blocking counts everything else.
 func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int, err error) {
 	store := state.OpenReadOnly(home)
 	regs, err := store.LoadRegistrations()
@@ -96,53 +94,24 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 	if err != nil {
 		return 0, 0, err
 	}
-	return countPending(store, regs, reqs, cfg.AcceptSession)
-}
-
-// countPending is pendingSessionCounts over registrations and requests
-// already loaded, counting the registrations accept admits.
-func countPending(store *state.Store, regs []archive.SessionRegistration, reqs []state.Request, accept func(archive.SessionRegistration) bool) (blocking, waiting int, err error) {
-	requested := map[string]bool{}
-	for _, r := range reqs {
-		requested[r.ArchiveSessionID] = true
-	}
+	queued := state.QueuedRequests(reqs)
 	for _, r := range regs {
-		if !accept(r) {
+		if !cfg.AcceptSession(r) {
 			continue
 		}
-		pending, idle, err := sessionPending(store, r, requested[r.ArchiveSessionID])
+		owed, err := store.Outstanding(r, queued[r.ArchiveSessionID])
 		if err != nil {
 			return 0, 0, err
 		}
 		switch {
-		case !pending:
-		case idle:
-			waiting++
-		default:
+		case !owed.Pending():
+		case owed.SyncCanFinish():
 			blocking++
+		default:
+			waiting++
 		}
 	}
 	return blocking, waiting, nil
-}
-
-// sessionPending reports whether one session has work outstanding, and if
-// so whether it is only waiting for its transcript (see
-// pendingSessionCounts). requested is whether a hook request for it is
-// queued.
-func sessionPending(store *state.Store, r archive.SessionRegistration, requested bool) (pending, idle bool, err error) {
-	_, _, cacheStatus, found, err := store.LoadPublished(r.ArchiveSessionID)
-	if err != nil {
-		return false, false, err
-	}
-	scanPending, err := store.ScanPending(r.ArchiveSessionID)
-	if err != nil {
-		return false, false, err
-	}
-	if !scanPending && !requested && found && cacheStatus != state.CacheStatusRateLimited {
-		return false, false, nil
-	}
-	idle, err = waitingForTranscript(store, r)
-	return err == nil, idle, err
 }
 
 // sessionsAdmittedInto counts the registrations that record cfg's
@@ -162,22 +131,6 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 		}
 	}
 	return count, nil
-}
-
-// waitingForTranscript reports whether a registration has no transcript path,
-// has never published, and has no publication in flight. A Cursor database
-// chat has no transcript path by design and never waits for one: it is
-// read from the database, so a sync can publish it and it is pending.
-func waitingForTranscript(store *state.Store, r archive.SessionRegistration) (bool, error) {
-	if r.TranscriptPath != "" || !r.ReadsTranscriptFile() {
-		return false, nil
-	}
-	_, _, published, err := store.LoadLastPublished(r.ArchiveSessionID)
-	if err != nil || published {
-		return false, err
-	}
-	pending, err := store.HasPending(r.ArchiveSessionID)
-	return !pending, err
 }
 
 func reviewChanges(home string, old, next config.Config, p *prompter, env Env) error {
