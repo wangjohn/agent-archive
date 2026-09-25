@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -268,7 +267,7 @@ func sweepSession(ctx context.Context, local *state.Store, store storage.ObjectS
 	// and the unfinished-work deferral; remote metadata can only make
 	// capturedAt later, so it can only withdraw expiry, never grant it.
 	if locallyExpired && !capturedAt.IsZero() && now.Sub(capturedAt) >= opts.SessionMaxAge {
-		if err := collector.DeleteWholeSession(ctx, store, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
+		if err := DeleteWholeSession(ctx, store, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
 			return fmt.Errorf("delete session: %w", err)
 		}
 		// The remote deletion takes network time and is not done under the
