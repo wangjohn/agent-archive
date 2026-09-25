@@ -92,6 +92,26 @@ func TestStructuredCredentialLabelsAndPairs(t *testing.T) {
 			t.Errorf("%s: secret survived: %s", data, s)
 		}
 	}
+	// JSON text that names a key twice decodes to the last value only, so
+	// the earlier one was never sanitized: the text is re-encoded from what
+	// was, never kept byte for byte.
+	for _, in := range []string{
+		`{"note":"` + secret + `","note":"ok"}`,
+		`[{"a":{"b":"` + secret + `","b":1}}]`,
+	} {
+		state := sanitizeState{addGap: func(string, int, string) {}}
+		if out, _ := sanitizeValue(in, &state); strings.Contains(out.(string), secret) {
+			t.Errorf("%s: the duplicate key's first value survived: %v", in, out)
+		}
+	}
+	for in, want := range map[string]bool{
+		`{"a":1,"a":2}`: true, `{"a":{"b":1},"c":[{"b":2,"b":3}]}`: true, `[{"a":1},{"a":2}]`: false,
+		`{"a":{"a":1}}`: false, `{"a":[1,{"b":2}],"b":3}`: false, `"x"`: false,
+	} {
+		if got := jsonHasDuplicateKeys(in); got != want {
+			t.Errorf("jsonHasDuplicateKeys(%s) = %v", in, got)
+		}
+	}
 	// A label that is not a credential keeps its value.
 	state := sanitizeState{addGap: func(string, int, string) {}}
 	keep := `{"headers":[{"name":"Accept","value":"application/json"}],"pair":["Content-Type","text/plain"]}`

@@ -827,7 +827,7 @@ func (f *cursorComposerFilter) toolOutput(raw any, level, key string) (string, b
 		f.omit(level, key)
 		return "", false
 	}
-	if original != "" && reflect.DeepEqual(safe, raw) {
+	if original != "" && reflect.DeepEqual(safe, raw) && !jsonHasDuplicateKeys(original) {
 		return original, true
 	}
 	encoded, err := json.Marshal(safe)

@@ -114,6 +114,12 @@ Known trade-offs, chosen toward the secret:
 - A Cursor text transcript whose first header is neither lower case nor
   capitalized (`USER:`) is refused as a capture gap rather than guessed at;
   one without blank lines between sections is read as before.
+- A string holding JSON is filtered as a record is, wherever it sits, so a
+  pasted chat log in a prompt loses its system and reasoning messages
+  (`{"role": "system", …}`, with a `hidden_instruction_omitted` gap) and
+  its credential-named keys. JSON text that names a key twice is stored
+  re-encoded from the last value of each key, which is all the filter
+  reads.
 - Every string value inside a credential-named structure is redacted
   whatever it is (`"token": {"expires": "[REDACTED]"}`), except under a
   descriptive key (`type`, `kind`, `name`, `description`, `provider`, …).

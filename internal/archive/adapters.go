@@ -1174,7 +1174,7 @@ func sanitizeNestedJSON(v string, state *sanitizeState) (out string, ok bool) {
 	if !keep {
 		return emptyJSONContainer(trimmed[0]), true
 	}
-	if reflect.DeepEqual(safe, decoded) {
+	if reflect.DeepEqual(safe, decoded) && !jsonHasDuplicateKeys(trimmed) {
 		return v, true
 	}
 	var encoded bytes.Buffer
@@ -1184,6 +1184,50 @@ func sanitizeNestedJSON(v string, state *sanitizeState) (out string, ok bool) {
 		return emptyJSONContainer(trimmed[0]), true
 	}
 	return strings.TrimSuffix(encoded.String(), "\n"), true
+}
+
+// jsonHasDuplicateKeys reports whether an object anywhere in the JSON text s
+// names a key twice. Decoding keeps only the last, so the text holds a value
+// the sanitizer never saw (`{"text": "S3cret", "text": ""}`), and must not
+// be kept byte for byte even when the decoded value needs no change.
+func jsonHasDuplicateKeys(s string) bool {
+	type frame struct {
+		keys      map[string]bool
+		expectKey bool
+	}
+	decoder := json.NewDecoder(strings.NewReader(s))
+	decoder.UseNumber()
+	var stack []*frame // nil frames are arrays
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		top := len(stack) - 1
+		if delim, ok := token.(json.Delim); ok {
+			switch delim {
+			case '{':
+				stack = append(stack, &frame{keys: map[string]bool{}, expectKey: true})
+				continue
+			case '[':
+				stack = append(stack, nil)
+				continue
+			default:
+				stack = stack[:top]
+			}
+		} else if top >= 0 && stack[top] != nil && stack[top].expectKey {
+			key, _ := token.(string)
+			if stack[top].keys[key] {
+				return true
+			}
+			stack[top].keys[key], stack[top].expectKey = true, false
+			continue
+		}
+		// A value ended; in an object, a key comes next.
+		if top = len(stack) - 1; top >= 0 && stack[top] != nil {
+			stack[top].expectKey = true
+		}
+	}
 }
 
 // maxSanitizeStringPasses bounds how often sanitizeValue repeats the string
