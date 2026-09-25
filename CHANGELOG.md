@@ -349,4 +349,7 @@ can list them, inspect them, and hand one to another agent.
   still always exits 0. Where setup's transaction record lives is
   `internal/setupjournal`. Neither may import the command-line layer
   (depguard, plus a test per package), and capture's tests fail closed in a
-  `TestMain` of their own. No behavior change.
+  `TestMain` of their own; a guard test keeps them from importing anything
+  that runs a program, opens the Keychain, or uses the network. Tests that
+  run the go command keep its module and build caches instead of
+  downloading every module. No behavior change.
