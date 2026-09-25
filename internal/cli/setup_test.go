@@ -279,7 +279,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	path := filepath.Join(home, "config.json")
 	c := hooks.Change{Path: path, Before: []byte("before"), After: []byte("after"), Existed: true, Mode: 0600}
-	journal := setupJournal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
+	journal := setupjournal.Journal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
 	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}

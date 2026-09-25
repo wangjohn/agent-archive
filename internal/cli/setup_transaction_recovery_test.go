@@ -27,7 +27,7 @@ func TestRecoveryBlockedByLaunchctlAdvertisesAbandon(t *testing.T) {
 			home, userHome := t.TempDir(), t.TempDir()
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 			plist := env.installation(home, userHome).collectorPlist()
-			must(t, local.Write(setupjournal.JournalPath(home), setupJournal{Plist: plist, WasLoaded: true}))
+			must(t, local.Write(setupjournal.JournalPath(home), setupjournal.Journal{Plist: plist, WasLoaded: true}))
 			state := "missing"
 			if failure == "stop" {
 				state = "loaded"
@@ -75,7 +75,7 @@ func interruptedSetupWithExternalEdit(t *testing.T) (home, userHome, settings st
 	if err != nil {
 		t.Fatal(err)
 	}
-	journal := setupJournal{Changes: []hooks.Change{{Path: settings, Before: []byte("{}\n"), After: installed, Existed: true, Mode: 0600}}, Plist: env.installation(home, userHome).collectorPlist()}
+	journal := setupjournal.Journal{Changes: []hooks.Change{{Path: settings, Before: []byte("{}\n"), After: installed, Existed: true, Mode: 0600}}, Plist: env.installation(home, userHome).collectorPlist()}
 	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
@@ -137,8 +137,8 @@ func TestRecoveryStopsOnAnEditedRetiredJob(t *testing.T) {
 	if err := local.WriteBytes(old, append(plist, []byte("<!-- edited -->")...)); err != nil {
 		t.Fatal(err)
 	}
-	journal := setupJournal{
-		Relabeled: &legacyJob{Change: hooks.Change{Path: old, Before: plist, Existed: true, Mode: 0644}, WasLoaded: true},
+	journal := setupjournal.Journal{
+		Relabeled: &setupjournal.LegacyJob{Change: hooks.Change{Path: old, Before: plist, Existed: true, Mode: 0644}, WasLoaded: true},
 		Plist:     env.installation(home, userHome).collectorPlist(),
 	}
 	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {

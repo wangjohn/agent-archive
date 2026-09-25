@@ -159,12 +159,12 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		if state == "unknown" {
 			return fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
 		}
-		if state == jobAnotherInstallation {
+		if state == setupjournal.JobAnotherInstallation {
 			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchLabel(plist), plist)
 			kept[plist] = true
 			continue
 		}
-		if launchJobActive(state) {
+		if setupjournal.JobActive(state) {
 			if err = env.unloadLaunchAgent(plist); err != nil {
 				return fmt.Errorf("stop collector: %w", err)
 			}

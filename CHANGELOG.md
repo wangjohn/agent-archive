@@ -346,10 +346,12 @@ can list them, inspect them, and hand one to another agent.
 - The hook runtime moved out of `internal/cli` into `internal/capture`
   (event classification, session admission, lifecycle evidence, subagent
   links, capture diagnostics); the `_hook` command is a thin adapter that
-  still always exits 0. Where setup's transaction record lives is
-  `internal/setupjournal`. Neither may import the command-line layer
-  (depguard, plus a test per package), and capture's tests fail closed in a
-  `TestMain` of their own; a guard test keeps them from importing anything
-  that runs a program, opens the Keychain, or uses the network. Tests that
-  run the go command keep its module and build caches instead of
-  downloading every module. No behavior change.
+  still always exits 0. Setup's journal, rollback, and recovery (and the
+  retirement of earlier jobs) moved into `internal/setupjournal`, which
+  drives launchd only through an interface cli's `Env` provides; cli keeps
+  the prompts and the plan. Neither package may import the command-line
+  layer (depguard, plus a test per package), and both have fail-closed
+  tests of their own; a guard test keeps capture's tests from importing
+  anything that runs a program, opens the Keychain, or uses the network.
+  Tests that run the go command keep its module and build caches instead
+  of downloading every module. No behavior change.

@@ -156,7 +156,7 @@ func TestStatusJSONAndTextUseObservedEvidence(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := local.Write(setupjournal.JournalPath(home), setupJournal{}); err != nil {
+	if err := local.Write(setupjournal.JournalPath(home), setupjournal.Journal{}); err != nil {
 		t.Fatal(err)
 	}
 	view, err = readStatus(env)
@@ -232,7 +232,7 @@ func TestStatusJSONOmitsUnsetTimes(t *testing.T) {
 func TestStatusReportsJournalWithoutConfiguration(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	if err := local.Write(setupjournal.JournalPath(home), setupJournal{}); err != nil {
+	if err := local.Write(setupjournal.JournalPath(home), setupjournal.Journal{}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := readStatus(testEnv(t, home, time.Now()))
