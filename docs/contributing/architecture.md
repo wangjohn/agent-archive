@@ -55,7 +55,7 @@ flowchart LR
 | `local` | The data directory, atomic durable writes, and file locks. |
 | `hooks` | Planning, installing, and removing hook entries and the LaunchAgent. |
 | `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. No command-line, network, launchctl, or Keychain dependencies (enforced by depguard and `TestCaptureImportBoundary`). |
-| `setupjournal` | Setup's transaction record (`setup-transaction.json`): where it lives and whether one is pending, which every command and the hook check. |
+| `setupjournal` | Setup's transaction (`setup-transaction.json`): writing the journal before any hook file or the LaunchAgent changes, rolling a failed setup back, recovering an interrupted one without overwriting later edits, and retiring the prototype's job and collectors installed under earlier labels. launchd is reached only through the `Launchd` its caller passes (cli's `Env`). Every command and the hook check whether a journal is pending. |
 | `evidence` | Skill inventories and snapshots, as privacy-filtered evidence. |
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |
 | `backfill` | Discovery, the import plan, registration, and undo. |
@@ -75,6 +75,7 @@ flowchart TD
   cli --> capture & setupjournal & backfill & collector & retention & reader & hooks & evidence
   cli --> config & state & storage & credentials & cursorstore & terminal
   capture --> setupjournal & config & state
+  setupjournal --> hooks & state
   backfill --> collector & retention & config & state & storage & cursorstore & terminal
   retention --> reader & state & storage
   collector --> state & storage & cursorstore

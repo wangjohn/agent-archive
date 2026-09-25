@@ -96,6 +96,11 @@ In Go tests, everything goes through injection:
   folder of the run's own (`internal/testutil/isolation`). Its tests call
   `capture.HandleEvent` directly; tests that go through a command (`_hook`,
   `status`, `sync`, `setup`) stay in `internal/cli`.
+- `internal/setupjournal` (setup's journal, rollback and recovery) reaches
+  launchd only through the `Launchd` it is passed, so its tests pass a
+  `fakeLaunchd` and cannot reach launchctl; its `TestMain` isolates the
+  process as `internal/capture`'s does. Tests that run `setup` itself stay
+  in `internal/cli`.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in
