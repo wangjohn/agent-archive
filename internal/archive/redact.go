@@ -110,24 +110,30 @@ func redactSensitive(value string) (string, bool) {
 const maxRedactPasses = 4
 
 // redactSensitiveOnce is one pass of every pattern (see redactSensitive).
+// The line-based patterns read the text through a needleText (see
+// linePattern), prepared again only when a step changed the text.
 func redactSensitiveOnce(value string) (string, bool) {
 	redacted := false
+	text := newNeedleText(value)
 	apply := func(out string, hit bool) {
 		if hit {
 			value, redacted = out, true
+			if text.s != value {
+				text = newNeedleText(value)
+			}
 		}
 	}
 	apply(redactPrivateKeyBlocks(value))
 	apply(redactURLUserinfo(value))
-	if credentialShape.MatchString(value) {
-		value, redacted = credentialShape.ReplaceAllString(value, redactedMarker), true
-	}
+	apply(redactMatches(credentialShape, text, false))
 	for _, pattern := range credentialContextPatterns {
-		apply(redactCredentialValues(pattern, value))
+		apply(redactMatches(pattern, text, true))
 	}
-	apply(redactYAMLBlockValues(value))
-	apply(redactAssignments(value))
-	apply(redactCredentialValues(credentialFlag, value))
+	apply(redactYAMLBlockValues(text))
+	apply(redactCredentialEntryValues(text))
+	apply(redactCredentialStructures(text))
+	apply(redactAssignments(text))
+	apply(redactMatches(linePattern{credentialFlag, vocabularyNeedles, "-"}, text, true))
 	return value, redacted
 }
 
@@ -137,17 +143,29 @@ type valueSpan struct {
 	end   int
 }
 
-// redactCredentialValues replaces the "value" group of every match of pattern
-// with [REDACTED], keeping a quoted value's quotes, and reports whether
-// anything was replaced. A pattern may name several alternative groups
-// "value"; the one that matched is replaced.
-func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool) {
-	matches := pattern.FindAllStringSubmatchIndex(value, -1)
+// redactMatches replaces, in t.s, the "value" group of every match of
+// pattern with [REDACTED], keeping a quoted value's quotes, or with values
+// false the whole match, and reports whether anything was replaced. A
+// pattern may name several alternative groups "value"; the one that matched
+// is replaced.
+func redactMatches(pattern linePattern, t needleText, values bool) (string, bool) {
+	matches := lineMatches(pattern, t)
 	if matches == nil {
-		return value, false
+		return t.s, false
+	}
+	if !values {
+		var out strings.Builder
+		last := 0
+		for _, match := range matches {
+			out.WriteString(t.s[last:match[0]])
+			out.WriteString(redactedMarker)
+			last = match[1]
+		}
+		out.WriteString(t.s[last:])
+		return out.String(), true
 	}
 	var groups []int
-	for i, name := range pattern.SubexpNames() {
+	for i, name := range pattern.re.SubexpNames() {
 		if name == "value" {
 			groups = append(groups, i)
 		}
@@ -161,7 +179,7 @@ func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool)
 			}
 		}
 	}
-	return redactSpans(value, spans), len(spans) > 0
+	return redactSpans(t.s, spans), len(spans) > 0
 }
 
 // redactAssignments redacts the value of every credential assignment
@@ -169,16 +187,45 @@ func redactCredentialValues(pattern *regexp.Regexp, value string) (string, bool)
 // unquoted one runs to the end of its line (see unquotedValueEnd), and one
 // in a URL query to the next parameter. A value that is only a boolean or
 // null, or a YAML block indicator, is not a secret and is left alone.
-func redactAssignments(s string) (string, bool) {
+//
+// An assignment and its value never cross a line break, so the search runs
+// line by line, on the lines holding a credential word (see linePattern).
+func redactAssignments(t needleText) (string, bool) {
+	s := t.s
+	present, gated := t.presentNeedles(vocabularyNeedles)
+	if gated && len(present) == 0 {
+		return s, false
+	}
+	var spans []valueSpan
+	for lineStart := 0; lineStart <= len(s); {
+		lineEnd := strings.IndexByte(s[lineStart:], '\n')
+		if lineEnd < 0 {
+			lineEnd = len(s)
+		} else {
+			lineEnd += lineStart
+		}
+		if lineHasNeedle(t.lower[lineStart:lineEnd], present, gated) && strings.ContainsAny(s[lineStart:lineEnd], assignmentSeparators) {
+			spans = appendAssignmentSpans(spans, s, lineStart, lineEnd)
+		}
+		lineStart = lineEnd + 1
+	}
+	if len(spans) == 0 {
+		return s, false
+	}
+	return redactSpans(s, spans), true
+}
+
+// appendAssignmentSpans appends the value span of every credential
+// assignment in the line s[lineStart:lineEnd].
+func appendAssignmentSpans(spans []valueSpan, s string, lineStart, lineEnd int) []valueSpan {
 	nameGroup := credentialAssignment.SubexpIndex("name")
 	valueGroup := credentialAssignment.SubexpIndex("value")
-	var spans []valueSpan
-	for pos := 0; pos < len(s); {
-		match := credentialAssignment.FindStringSubmatchIndex(s[pos:])
+	for pos := lineStart; pos < lineEnd; {
+		match := credentialAssignment.FindStringSubmatchIndex(s[pos:lineEnd])
 		if match == nil {
 			break
 		}
-		if match[0] == 0 && pos > 0 && isNameByte(s[pos-1]) {
+		if match[0] == 0 && pos > lineStart && isNameByte(s[pos-1]) {
 			// The slice's start stood in for credentialLead's `^`, in the
 			// middle of a name.
 			pos++
@@ -196,10 +243,7 @@ func redactAssignments(s string) (string, bool) {
 		// it, so a credential in the next parameter is still found.
 		pos = end
 	}
-	if len(spans) == 0 {
-		return s, false
-	}
-	return redactSpans(s, spans), true
+	return spans
 }
 
 // assignmentValueEnd returns where the value of one credential assignment

@@ -51,18 +51,21 @@ var credentialVocabulary = []credentialTerm{
 	{words: "api key"}, {words: "access key"}, {words: "private key"}, {words: "private key id"},
 	{words: "encryption key"}, {words: "signing key"}, {words: "master key"}, {words: "account key"},
 	{words: "shared access key"}, {words: "shared access signature"}, {words: "dockerconfigjson"},
-	{words: "secret"}, {words: "password"}, {words: "passwd"}, {words: "passphrase"},
-	{words: "token"}, {words: "authorization"}, {words: "bearer"}, {words: "credential"},
-	{words: "credentials"}, {words: "cookie"}, {words: "cookies"}, {words: "pgpass"},
+	{words: "auth key"}, {words: "subscription key"},
+	{words: "secret"}, {words: "secrets"}, {words: "password"}, {words: "passwords"}, {words: "passwd"},
+	{words: "passphrase"}, {words: "token"}, {words: "authorization"}, {words: "bearer"},
+	{words: "credential"}, {words: "credentials"}, {words: "cookie"}, {words: "cookies"}, {words: "pgpass"},
 	{words: "pass", form: termStandalone},
+	{words: "creds", form: termStandalone},
 	{words: "pwd", form: termSeparated},
 	{words: "auth", form: termKeyOnly},
 }
 
 // termPattern is a term's words as a case-insensitive regexp fragment, the
-// words joined by an optional separator.
+// words joined by an optional separator. In text the separator may be a
+// space too, as a person writes the name (`API Key: …`, `Access Token =`).
 func termPattern(term credentialTerm) string {
-	return strings.Join(strings.Fields(term.words), `[_.-]?`)
+	return strings.Join(strings.Fields(term.words), `[_. -]?`)
 }
 
 // camelTermPattern is a term as it follows a camelCase boundary: a lower
@@ -70,7 +73,7 @@ func termPattern(term credentialTerm) string {
 // the rest in either case (`dbPass`, `dbPwd`, but not `OLDPWD` or `BYPASS`).
 func camelTermPattern(term credentialTerm) string {
 	first, rest := term.words[:1], term.words[1:]
-	return `(?-i:[a-z0-9]` + strings.ToUpper(first) + `)` + strings.ReplaceAll(rest, " ", `[_.-]?`)
+	return `(?-i:[a-z0-9]` + strings.ToUpper(first) + `)` + strings.ReplaceAll(rest, " ", `[_. -]?`)
 }
 
 // credentialNamePattern builds the text pattern for a credential name from
@@ -111,7 +114,8 @@ var credentialKeyName = regexp.MustCompile(`(?i)^` + credentialName + `$`)
 // `tokenValue`), or when the whole key is a credential name as the text
 // pattern reads one (`apikey`, `pgpassword`). `pwd` counts only after
 // another word (`db_pwd`, not a working directory's `pwd`); plurals are
-// different words, so `max_tokens` and `input_tokens` are not credentials.
+// different words, so `max_tokens` and `input_tokens` are not credentials
+// (`secrets`, `passwords`, and `creds` are terms of their own).
 func isCredentialKey(key string) bool {
 	if credentialKeyName.MatchString(key) {
 		return true
@@ -200,11 +204,20 @@ var sensitiveLabelKeys = map[string]bool{
 	"type": true, "autocomplete": true, "for": true,
 }
 
+// hintLabelKeys are the label keys that hint at a kind of input rather than
+// name it (`"type": "token_count"`); only sensitiveLabel reads them.
+var hintLabelKeys = map[string]bool{"type": true, "autocomplete": true}
+
 // hasSensitiveLabel reports whether an object carries a label that marks
-// its value as a typed secret (see sensitiveLabel).
+// its value as a typed secret (see sensitiveLabel), or, except for a `type`
+// or `autocomplete` hint, one that names a credential as a key would
+// (isCredentialKey): an HTTP header or cookie listed as `{"name":
+// "Authorization", "value": …}` in a HAR file or a browser tool's network
+// log, or `{"key": "X-Api-Key", "value": …}`.
 func hasSensitiveLabel(in map[string]any) bool {
 	for key, value := range in {
-		if !sensitiveLabelKeys[strings.ToLower(key)] {
+		lower := strings.ToLower(key)
+		if !sensitiveLabelKeys[lower] {
 			continue
 		}
 		label, ok := value.(string)
@@ -212,6 +225,9 @@ func hasSensitiveLabel(in map[string]any) bool {
 			continue
 		}
 		if sensitiveLabel.MatchString(strings.Join(splitNameWords(label), " ")) {
+			return true
+		}
+		if !hintLabelKeys[lower] && isCredentialKey(label) {
 			return true
 		}
 	}

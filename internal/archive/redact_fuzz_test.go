@@ -60,6 +60,32 @@ var credentialTemplates = []string{
 	"export TOKEN='abc'%s && make",
 	`API_KEY='x'"y"%s`,
 	"mysql --password 'x'%s -u root",
+	// Filter 11: program flags, context shapes, whole values, structures,
+	// entries, and files shown with line numbers.
+	"curl -u admin:%s https://x.test",
+	"mysql -uroot -p%s db",
+	"sshpass -p %s ssh host",
+	"docker login -u me -p %s registry.test",
+	"machine api.test login me password %s",
+	"Cookie: theme=dark; sid=%s",
+	"DB_PASS=%s",
+	"<password>%s</password>",
+	`<add key="ApiKey" value="%s"/>`,
+	"https://api.test/v1?key=%s&x=1",
+	// A password of digits then a slash reads as a port and a path.
+	"postgres://me:p%s@db.test/app",
+	"password: correct horse %s",
+	"password: |\n  %s\nnext: 1",
+	"  12→  password: |\n  13→    %s",
+	"     3\tdb_password:\n     4\t  %s",
+	"- name: DB_PASSWORD\n  value: %s",
+	"  7→  - name: API_TOKEN\n  8→    value: \"%s\"",
+	`{"secret": {"value": "%s"}}`,
+	`"passwords": ["%s"]`,
+	"     1\t{\n     2\t  \"credentials\": {\"github\": \"%s\"}\n     3\t}",
+	`{"name": "Authorization", "value": "%s"}`,
+	"API Key: %s",
+	"PASSWORD＝%s",
 }
 
 // plainSecret is the shape of a secret the templates are fuzzed with: long

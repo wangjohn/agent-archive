@@ -51,8 +51,12 @@ can list them, inspect them, and hand one to another agent.
   `docker login -p`, `.netrc`, cookies, `DB_PASS=`, Azure keys, XML, PGP
   keys, and the token prefixes of Stripe, GitLab, Google, Hugging Face, npm,
   and more. Unquoted values are redacted to the end of the line, YAML block
-  values whole, and URL passwords holding `@` or `/` whole. A PEM BEGIN line
-  with no END no longer swallows the rest of a file. Sessions whose
+  values whole, and URL passwords holding `@` or `/` whole; so are the
+  string values of a credential-named object or array
+  (`"secret": {"value": …}`) and the `value:` of a Kubernetes `env` entry
+  named like a credential, also in a file an agent read through a tool that
+  numbers its lines. A PEM BEGIN line with no END no longer swallows the
+  rest of a file. Sessions whose
   transcripts are still on your Mac are refiltered automatically; earlier
   snapshots stay in your bucket until they expire, unless you
   [delete them](docs/security/privacy.md#after-a-filter-upgrade). See the

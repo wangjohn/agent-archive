@@ -31,11 +31,30 @@ version 0.11.0 go with it. Every format changes.
   Codex's `write_stdin`. For every tool, a `value` or `text` beside a label
   that says it is a password, PIN, one-time code, card number, CVV, or
   similar (`{"name": "Password", "value": …}`, `{"type": "password"}`,
-  `{"name": "DB_PASSWORD", "value": …}`) is dropped (P-21).
+  `{"name": "DB_PASSWORD", "value": …}`) is dropped (P-21), and so is one
+  beside a label naming a credential as a key would, such as a HAR header
+  or cookie (`{"name": "Authorization", "value": …}`); a `[name, value]`
+  pair whose name is a credential (`["X-Api-Key", …]`) loses its value.
 - **One credential vocabulary.** Argument names and the text patterns now
   use one word list (P-24). Arguments named `X-Api-Key`, `passwd`, `pass`,
   `private_key`, or `auth` are dropped; `max_tokens` is no longer dropped
-  (the rule matches words, and a plural is another word).
+  (the rule matches words, and a plural is another word; `secrets`,
+  `passwords`, and `creds` are words of their own). In text a name may be
+  written with spaces (`API Key: …`, `Secret Key = …`), may end in `value`
+  (`CLIENT_SECRET_VALUE`), and may be followed by a full-width `＝`;
+  `AUTH_KEY` and `Ocp-Apim-Subscription-Key` are names too.
+- **Structures and entries in text.** A credential name whose value is an
+  object or array (`"secret": {"value": …}`, `"passwords": [ … ]`, in
+  JSON, Python, JavaScript, or JSON escaped in a string, over several lines)
+  has every string value in it redacted, keeping keys and descriptive
+  values such as `type`. A YAML entry whose `name:` is a credential has its
+  sibling `value:` redacted (a Kubernetes `env` list), as does a one-line
+  `{"name": "Authorization", "value": …}`. Structured data already dropped
+  these whole.
+- **Files shown with line numbers.** Agents read most files through a tool
+  that numbers the lines (the Claude Code Read tool, `cat -n`). The YAML
+  block and next-line rule, the entry rule, and the private key rule read
+  such lines after their numbers.
 - **More credential shapes** (P-22): command-line flags that carry a secret
   for particular programs (`curl -u user:secret`, `mysql -psecret`,
   `sshpass -p`, `docker login -p`, `redis-cli -a`, `sqlcmd -P`, `keytool
@@ -95,9 +114,18 @@ Known trade-offs, chosen toward the secret:
 - A Cursor text transcript whose first header is neither lower case nor
   capitalized (`USER:`) is refused as a capture gap rather than guessed at;
   one without blank lines between sections is read as before.
+- Every string value inside a credential-named structure is redacted
+  whatever it is (`"token": {"expires": "[REDACTED]"}`), except under a
+  descriptive key (`type`, `kind`, `name`, `description`, `provider`, …).
 - Benign text is pinned by `TestFilterV11LeavesBenignTextUnchanged`: code
   that names a password, prose, hashes, UUIDs, git SHAs, `ssh -p 22`,
   `mkdir -p`, and URLs with an `@` in the path are left alone.
+
+The patterns run line by line, and only on lines holding a word every
+match needs (a credential word, a program name, a token prefix), which
+keeps filtering a large transcript within about twice filter 10's time
+(filter 11 as first written was about eight times slower). A test and a fuzz
+target check that this never finds less than matching the whole string.
 
 Snapshots filtered before the upgrade stay in the bucket until the session
 expires; see [after a filter upgrade](privacy.md#after-a-filter-upgrade) to

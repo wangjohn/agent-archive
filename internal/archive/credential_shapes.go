@@ -15,9 +15,10 @@ import (
 // credential was there.
 const (
 	// credentialSuffix may follow the word: `key` or `access_key`, then
-	// `base` (SECRET_KEY, AWS_SECRET_ACCESS_KEY, SECRET_KEY_BASE), then a
-	// number (DB_PASSWORD_1, PASSWORD2, API_KEY_2).
-	credentialSuffix = `(?:[_.-]?(?:access[_.-]?)?key(?:[_.-]?base)?)?(?:[_.-]?[0-9]+)?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
+	// `base` (SECRET_KEY, AWS_SECRET_ACCESS_KEY, SECRET_KEY_BASE, and as a
+	// person writes it, `Secret Key`), then a number (DB_PASSWORD_1,
+	// PASSWORD2, API_KEY_2), then `value` (SECRET_VALUE, tokenValue).
+	credentialSuffix = `(?:[_. -]?(?:access[_. -]?)?key(?:[_.-]?base)?)?(?:[_.-]?[0-9]+)?(?:[_.-]?value)?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialLead is what may precede a name: the start of the string or a
 	// character that cannot be part of one. It keeps a match from starting in
 	// the middle of an identifier.
@@ -26,12 +27,12 @@ const (
 	// or JSON escaped inside a string once or more (`\"password\"`,
 	// `\\\"password\\\"`).
 	credentialQuote = `(?:\\*["'])?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
-	// credentialSeparator is `=`, `:`, `:=`, `=>`, or a full-width colon,
-	// with spaces or tabs around it but not newlines, so a YAML key with its
+	// credentialSeparator is `=`, `:`, `:=`, `=>`, or a full-width colon or
+	// equals sign, with spaces or tabs around it but not newlines, so a YAML key with its
 	// value on the next line does not swallow the line after it (see
 	// redactYAMLBlockValues for that shape); or a tab alone, as in a
 	// tab-separated `api_key<TAB>value` listing.
-	credentialSeparator = `(?:[ \t]*(?::=|=>|=|:|：)[ \t]*|[ \t]*\t[ \t]*)` //nolint:gosec // G101: regex fragment naming credential words, not a credential
+	credentialSeparator = `(?:[ \t]*(?::=|=>|=|:|：|＝)[ \t]*|[ \t]*\t[ \t]*)` //nolint:gosec // G101: regex fragment naming credential words, not a credential
 	// credentialScheme is an HTTP authorization scheme kept before the value
 	// (`Authorization: Bearer [REDACTED]`).
 	credentialScheme = `(?:(?:bearer|basic|digest|token)[ \t]+)?` //nolint:gosec // G101: regex fragment naming credential words, not a credential
@@ -101,43 +102,78 @@ var (
 	credentialArgvFlag = regexp.MustCompile(`(?i)^-{1,2}` + credentialName + `$`)
 )
 
-// credentialShape matches credentials recognizable by their own structure
-// rather than by an assignment around them: a JWT (three base64url
-// segments, the first beginning with `eyJ`) and the prefixed tokens of
-// common services. Each needs enough characters after its prefix that a
-// word or identifier which merely starts the same way is left alone. PEM
-// private keys are matched by redactPrivateKeyBlocks.
-var credentialShape = regexp.MustCompile(strings.Join([]string{
-	`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`,
+// credentialShapeTable lists the credentials recognizable by their own
+// structure rather than by an assignment around them: a JWT (three
+// base64url segments, the first beginning with `eyJ`) and the prefixed
+// tokens of common services. Each needs enough characters after its prefix
+// that a word or identifier which merely starts the same way is left alone.
+// Each lists its needles: lower-case literals one of which every match
+// holds (see linePattern); TestCredentialShapeNeedles checks each is in its
+// pattern. PEM private keys are matched by redactPrivateKeyBlocks.
+var credentialShapeTable = []struct {
+	pattern string
+	needles []string
+}{
+	{`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`, []string{"eyj"}},
 	// GitHub.
-	`\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b`, `\bgithub_pat_[A-Za-z0-9_]{20,}\b`,
+	{`\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b`, []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_"}},
+	{`\bgithub_pat_[A-Za-z0-9_]{20,}\b`, []string{"github_pat_"}},
 	// Slack.
-	`\bxox[abposre]-[A-Za-z0-9-]{10,}`, `\bxapp-[0-9]+-[A-Za-z0-9-]{10,}`,
+	{`\bxox[abposre]-[A-Za-z0-9-]{10,}`, []string{"xox"}},
+	{`\bxapp-[0-9]+-[A-Za-z0-9-]{10,}`, []string{"xapp-"}},
 	// AWS access key IDs, and temporary STS keys.
-	`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`,
+	{`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`, []string{"akia", "asia"}},
 	// Anthropic (`sk-ant-…`) and OpenAI (`sk-…`, `sk-proj-…`).
-	`\bsk-[A-Za-z0-9_-]{12,}`,
+	{`\bsk-[A-Za-z0-9_-]{12,}`, []string{"sk-"}},
 	// Stripe secret and restricted keys, and webhook signing secrets.
-	`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}`, `\bwhsec_[A-Za-z0-9]{20,}`,
+	{`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}`, []string{"_live_", "_test_"}},
+	{`\bwhsec_[A-Za-z0-9]{20,}`, []string{"whsec_"}},
 	// GitLab personal, deploy, runner, trigger, and other tokens.
-	`\bgl(?:pat|dt|rt|ptt|cbt|soat|oas|imt|ft|agent|ffct)-[A-Za-z0-9_-]{20,}`,
+	{`\bgl(?:pat|dt|rt|ptt|cbt|soat|oas|imt|ft|agent|ffct)-[A-Za-z0-9_-]{20,}`, []string{"glpat-", "gldt-", "glrt-", "glptt-", "glcbt-", "glsoat-", "gloas-", "glimt-", "glft-", "glagent-", "glffct-"}},
 	// Google API keys, OAuth client secrets, and OAuth access tokens.
-	`\bAIza[0-9A-Za-z_-]{30,}`, `\bGOCSPX-[A-Za-z0-9_-]{20,}`, `\bya29\.[0-9A-Za-z_-]{20,}`,
+	{`\bAIza[0-9A-Za-z_-]{30,}`, []string{"aiza"}},
+	{`\bGOCSPX-[A-Za-z0-9_-]{20,}`, []string{"gocspx-"}},
+	{`\bya29\.[0-9A-Za-z_-]{20,}`, []string{"ya29."}},
 	// Hugging Face, npm, PyPI.
-	`\bhf_[A-Za-z0-9]{30,}`, `\bapi_org_[A-Za-z0-9]{30,}`, `\bnpm_[A-Za-z0-9]{36,}`, `\bpypi-AgE[A-Za-z0-9_-]{50,}`,
+	{`\bhf_[A-Za-z0-9]{30,}`, []string{"hf_"}},
+	{`\bapi_org_[A-Za-z0-9]{30,}`, []string{"api_org_"}},
+	{`\bnpm_[A-Za-z0-9]{36,}`, []string{"npm_"}},
+	{`\bpypi-AgE[A-Za-z0-9_-]{50,}`, []string{"pypi-age"}},
 	// SendGrid, Shopify, DigitalOcean, HashiCorp Vault, Databricks, Linear.
-	`\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}`, `\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}`,
-	`\bdo[por]_v1_[a-f0-9]{64}`, `\bhv[sbr]\.[A-Za-z0-9_-]{24,}`, `\bdapi[a-f0-9]{32}`,
-	`\blin_(?:api|oauth)_[A-Za-z0-9]{32,}`,
+	{`\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}`, []string{"sg."}},
+	{`\bshp(?:at|ca|pa|ss)_[a-fA-F0-9]{32}`, []string{"shpat_", "shpca_", "shppa_", "shpss_"}},
+	{`\bdo[por]_v1_[a-f0-9]{64}`, []string{"_v1_"}},
+	{`\bhv[sbr]\.[A-Za-z0-9_-]{24,}`, []string{"hvs.", "hvb.", "hvr."}},
+	{`\bdapi[a-f0-9]{32}`, []string{"dapi"}},
+	{`\blin_(?:api|oauth)_[A-Za-z0-9]{32,}`, []string{"lin_api_", "lin_oauth_"}},
 	// Grafana, Postman, New Relic, Sentry, Atlassian, Figma, Doppler.
-	`\bglsa_[A-Za-z0-9_]{32,}`, `\bglc_[A-Za-z0-9+/=_-]{32,}`, `\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}`,
-	`\bNRAK-[A-Z0-9]{27}`, `\bsntr[ysu]_[A-Za-z0-9+/=_-]{30,}`, `\bATATT3[A-Za-z0-9_=-]{30,}`,
-	`\bfigd_[A-Za-z0-9_-]{30,}`, `\bdp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{30,}`,
+	{`\bglsa_[A-Za-z0-9_]{32,}`, []string{"glsa_"}},
+	{`\bglc_[A-Za-z0-9+/=_-]{32,}`, []string{"glc_"}},
+	{`\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}`, []string{"pmak-"}},
+	{`\bNRAK-[A-Z0-9]{27}`, []string{"nrak-"}},
+	{`\bsntr[ysu]_[A-Za-z0-9+/=_-]{30,}`, []string{"sntry_", "sntrs_", "sntru_"}},
+	{`\bATATT3[A-Za-z0-9_=-]{30,}`, []string{"atatt3"}},
+	{`\bfigd_[A-Za-z0-9_-]{30,}`, []string{"figd_"}},
+	{`\bdp\.(?:pt|st|sa|ct|scim|audit)\.[A-Za-z0-9]{30,}`, []string{"dp."}},
 	// age secret keys, Mailgun keys, Telegram bot tokens, Azure AD client
 	// secrets.
-	`\b(?i:age-secret-key-1)[0-9A-Za-z]{40,}`, `\bkey-[0-9a-f]{32}\b`, `\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b`,
-	`\b[A-Za-z0-9_~.-]{3}[78]Q~[A-Za-z0-9_~.-]{31,34}`,
-}, "|"))
+	{`\b(?i:age-secret-key-1)[0-9A-Za-z]{40,}`, []string{"age-secret-key-1"}},
+	{`\bkey-[0-9a-f]{32}\b`, []string{"key-"}},
+	{`\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b`, []string{":aa"}},
+	{`\b[A-Za-z0-9_~.-]{3}[78]Q~[A-Za-z0-9_~.-]{31,34}`, []string{"7q~", "8q~"}},
+}
+
+// credentialShape is credentialShapeTable as one pattern, gated by all of
+// its needles.
+var credentialShape = func() linePattern {
+	patterns := make([]string, len(credentialShapeTable))
+	var needles []string
+	for i, shape := range credentialShapeTable {
+		patterns[i] = shape.pattern
+		needles = append(needles, shape.needles...)
+	}
+	return linePattern{re: regexp.MustCompile(strings.Join(patterns, "|")), needles: needles}
+}()
 
 // commandSecretFlag describes a command-line flag that carries a secret for
 // particular programs only: `-p` is a password to mysql (glued, `-pS3cret`)
@@ -218,50 +254,63 @@ func (c commandSecretFlag) isProgram(arg string) bool {
 
 // credentialContextPatterns are the credential shapes recognized by the
 // text around the value rather than by a name and separator. Each captures
-// the secret as "value", so only it is replaced.
-var credentialContextPatterns = func() []*regexp.Regexp {
-	patterns := make([]*regexp.Regexp, 0, len(commandSecretFlags)+16)
+// the secret as "value", so only it is replaced, and each lists the needles
+// that gate the lines it is run on (see linePattern).
+var credentialContextPatterns = func() []linePattern {
+	patterns := make([]linePattern, 0, len(commandSecretFlags)+16)
 	for _, flag := range commandSecretFlags {
-		patterns = append(patterns, regexp.MustCompile(flag.pattern()))
+		needles := make([]string, len(flag.programs))
+		for i, program := range flag.programs {
+			needles[i] = strings.ToLower(program)
+		}
+		patterns = append(patterns, linePattern{re: regexp.MustCompile(flag.pattern()), needles: needles})
 	}
-	for _, p := range []string{
+	for _, p := range []struct {
+		re      string
+		needles []string
+	}{
 		// .netrc: `machine host login user password secret`, on one line or
 		// as a `password secret` line of its own.
 		// A value starting with a separator belongs to an assignment
 		// (`passwd : x`), which credentialAssignment reads.
-		`(?m)\b(?:machine|default)\b[^\n]*?[ \t](?:password|passwd)[ \t]+(?P<value>[^\s:=][^\s]*)`,
-		`(?m)^[ \t]*(?:password|passwd)[ \t]+(?P<value>[^\s:=][^\s]*)[ \t]*\r?$`,
+		{`(?m)\b(?:machine|default)\b[^\n]*?[ \t](?:password|passwd)[ \t]+(?P<value>[^\s:=][^\s]*)`, []string{"pass"}},
+		{`(?m)^[ \t]*(?:password|passwd)[ \t]+(?P<value>[^\s:=][^\s]*)[ \t]*\r?$`, []string{"pass"}},
 		// openssl `-pass pass:secret`, `-passin pass:secret`.
-		`(?:^|[\s'"=])pass:(?P<value>[^\s'"]+)`,
+		{`(?:^|[\s'"=])pass:(?P<value>[^\s'"]+)`, []string{"pass:"}},
 		// `aws configure set aws_secret_access_key X`, `npm config set
 		// //registry/:_authToken X`, `git config user.password X`.
-		`(?i)\b(?:config(?:ure)?[ \t]+set|git[ \t]+config)[ \t]+(?:-{1,2}[a-z][a-z-]*[ \t]+)*[^\s=]*?` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`,
+		{`(?i)\b(?:config(?:ure)?[ \t]+set|git[ \t]+config)[ \t]+(?:-{1,2}[a-z][a-z-]*[ \t]+)*[^\s=]*?` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`, vocabularyNeedles},
 		// fish `set -gx TOKEN value`, csh and launchctl `setenv TOKEN value`.
-		`(?i)(?:^|[\s;(])(?:set[ \t]+(?:-[a-z]+[ \t]+)+|setenv[ \t]+)` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`,
+		{`(?i)(?:^|[\s;(])(?:set[ \t]+(?:-[a-z]+[ \t]+)+|setenv[ \t]+)` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`, vocabularyNeedles},
 		// PowerShell `ConvertTo-SecureString "secret" -AsPlainText`.
-		`(?i)\bConvertTo-SecureString[ \t]+(?:-String[ \t]+)?(?P<value>` + credentialFlagValue + `)`,
+		{`(?i)\bConvertTo-SecureString[ \t]+(?:-String[ \t]+)?(?P<value>` + credentialFlagValue + `)`, []string{"convertto-securestring"}},
 		// XML: `<password>secret</password>`, and `<add key="ApiKey"
 		// value="secret"/>` (also `name=`).
-		`(?i)<` + credentialName + `(?:[ \t][^<>\n]*)?>(?P<value>[^<\n]+)</`,
-		`(?i)<[a-z][^<>\n]*?\b(?:key|name)[ \t]*=[ \t]*["']` + credentialName + `["'][^<>\n]*?\bvalue[ \t]*=[ \t]*(?P<value>"[^"\n]*"|'[^'\n]*')`,
+		{`(?i)<` + credentialName + `(?:[ \t][^<>\n]*)?>(?P<value>[^<\n]+)</`, vocabularyNeedles},
+		{`(?i)<[a-z][^<>\n]*?\b(?:key|name)[ \t]*=[ \t]*["']` + credentialName + `["'][^<>\n]*?\bvalue[ \t]*=[ \t]*(?P<value>"[^"\n]*"|'[^'\n]*')`, vocabularyNeedles},
+		// A name/value pair on one line whose name is a credential, in JSON
+		// or Python outside a whole JSON string (a HAR header, a Kubernetes
+		// env entry in a log line): `{"name": "Authorization", "value": …}`.
+		{`(?i)["']?\b(?:name|key)["']?[ \t]*:[ \t]*["']` + credentialName + `["'][ \t]*,[ \t]*["']?value["']?[ \t]*:[ \t]*(?P<value>"(?:[^"\\\n]|\\.)*"|'[^'\n]*')`, vocabularyNeedles},
 		// URL query parameters whose names are not credential words on
 		// their own: `?key=`, `&sig=` (Azure SAS), `X-Amz-Signature=`.
-		`(?i)[?&](?:key|sig|signature|x-amz-signature|x-goog-signature)=(?P<value>[^&#\s"'<>\\]+)`,
+		{`(?i)[?&](?:key|sig|signature|x-amz-signature|x-goog-signature)=(?P<value>[^&#\s"'<>\\]+)`, []string{"key=", "sig=", "signature="}},
 		// Incoming-webhook URLs, whose path is the secret.
-		`(?i)\bhooks\.slack\.com/(?:services|workflows|triggers)/(?P<value>[A-Za-z0-9/_-]{8,})`,
-		`(?i)\bdiscord(?:app)?\.com/api/webhooks/(?P<value>[0-9]+/[A-Za-z0-9_-]{8,})`,
-		`(?i)\.webhook\.office\.com/webhookb2/(?P<value>[A-Za-z0-9@/_.-]{8,})`,
+		{`(?i)\bhooks\.slack\.com/(?:services|workflows|triggers)/(?P<value>[A-Za-z0-9/_-]{8,})`, []string{"hooks.slack.com/"}},
+		{`(?i)\bdiscord(?:app)?\.com/api/webhooks/(?P<value>[0-9]+/[A-Za-z0-9_-]{8,})`, []string{"discord"}},
+		{`(?i)\.webhook\.office\.com/webhookb2/(?P<value>[A-Za-z0-9@/_.-]{8,})`, []string{".webhook.office.com/"}},
 		// A bearer token outside an Authorization header.
-		`(?:^|[^A-Za-z0-9_])(?i:bearer)[ \t]+(?P<value>[A-Za-z0-9._~+/-]{20,}=*)`,
+		{`(?:^|[^A-Za-z0-9_])(?i:bearer)[ \t]+(?P<value>[A-Za-z0-9._~+/-]{20,}=*)`, []string{"bearer"}},
 	} {
-		patterns = append(patterns, regexp.MustCompile(p))
+		patterns = append(patterns, linePattern{re: regexp.MustCompile(p.re), needles: p.needles})
 	}
 	return patterns
 }()
 
 // redactArgv returns a copy of an argument vector with its secret values
 // replaced (`["mysql", "-uroot", "-pS3cret"]`, `["curl", "-u", "me:S3cret",
-// …]`, `["gh", "auth", "login", "--token", "abc"]`), which the text patterns
+// …]`, `["gh", "auth", "login", "--token", "abc"]`), and the value of a
+// credential-named pair (`["X-Api-Key", "abc"]`), which the text patterns
 // see only one element at a time, and reports whether anything was
 // replaced. An array holding anything but strings is not an argument
 // vector, and is returned as it is.
@@ -276,6 +325,12 @@ func redactArgv(items []any) ([]any, bool) {
 			return items, false
 		}
 		argv[i] = s
+	}
+	// A [name, value] pair whose name is a credential: a header list
+	// (`[["X-Api-Key", "…"]]`, Python requests and fetch both accept one).
+	if len(argv) == 2 && argv[1] != "" && argv[1] != redactedMarker &&
+		!strings.ContainsAny(argv[0], " \t\n") && isCredentialKey(argv[0]) {
+		return []any{argv[0], redactedMarker}, true
 	}
 	changed := false
 	set := func(i int, value string) {
@@ -564,6 +619,9 @@ var urlScheme = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://`)
 // (`postgres://u:p@ss@db`, `postgres://u:pa/ss@db`) kept the rest of itself.
 // See userinfoEnd for how the end is found.
 func redactURLUserinfo(s string) (string, bool) {
+	if !strings.Contains(s, "://") {
+		return s, false
+	}
 	matches := urlScheme.FindAllStringIndex(s, -1)
 	if matches == nil {
 		return s, false
@@ -654,12 +712,33 @@ func isHostStart(rest string) bool {
 	return true
 }
 
+// lineNumberPrefix matches the line number a display of a file puts before
+// each line: `cat -n`'s `     2<TAB>` and the Claude Code Read tool's
+// `     2→`. Agents see most files through one, so the line-based rules
+// below read a line after it.
+var lineNumberPrefix = regexp.MustCompile(`^[ \t]*[0-9]+(?:→|\t)`)
+
+// displayedLine splits one line of s, starting at pos, into its line-number
+// prefix (when numbered is true and the line has one) and the rest. ok is
+// false when numbered is true but the line has no prefix: it is not a line
+// of the same display.
+func displayedLine(line string, numbered bool) (prefix int, ok bool) {
+	if !numbered {
+		return 0, true
+	}
+	loc := lineNumberPrefix.FindStringIndex(line)
+	if loc == nil {
+		return 0, false
+	}
+	return loc[1], true
+}
+
 // yamlCredentialKey matches a YAML key line whose value is not on the line:
 // a block scalar (`password: |`, `token: >-`) or a value on the lines below
-// (`password:` then an indented `S3cret`). Group 1 is the line's indentation
-// and any sequence dash, which set the column the value must be indented
-// past.
-var yamlCredentialKey = regexp.MustCompile(`(?im)^([ \t]*(?:-[ \t]+)?)` + credentialQuote + credentialName + credentialQuote + `[ \t]*:[ \t]*(?P<indicator>[|>][0-9+-]*)?[ \t]*(?:#[^\n]*)?\r?$`)
+// (`password:` then an indented `S3cret`), possibly after a line number
+// (lineNumberPrefix). The "indent" group is the line's indentation and any
+// sequence dash, which set the column the value must be indented past.
+var yamlCredentialKey = regexp.MustCompile(`(?im)^(?P<number>[ \t]*[0-9]+(?:→|\t))?(?P<indent>[ \t]*(?:-[ \t]+)?)` + credentialQuote + credentialName + credentialQuote + `[ \t]*:[ \t]*(?P<indicator>[|>][0-9+-]*)?[ \t]*(?:#[^\n]*)?\r?$`)
 
 // yamlStructure matches the start of a line that is YAML structure rather
 // than a scalar: a mapping entry, a sequence item, a comment, a flow
@@ -673,13 +752,17 @@ var yamlStructure = regexp.MustCompile(`^(?:-(?:[ \t]|$)|#|\{|\[|&|\*|\?[ \t]|(?
 // the key's own line, so it kept both (and replaced a `|` indicator with
 // the marker). A key whose indented lines are a mapping or a sequence
 // (`credentials:` then `user: …`) is a structure; its members are checked
-// on their own.
-func redactYAMLBlockValues(s string) (string, bool) {
-	matches := yamlCredentialKey.FindAllStringSubmatchIndex(s, -1)
+// on their own. In a file shown with line numbers, each line is read after
+// its number, and the numbers of the value's lines go with it.
+func redactYAMLBlockValues(t needleText) (string, bool) {
+	s := t.s
+	matches := lineMatches(linePattern{yamlCredentialKey, vocabularyNeedles, ":"}, t)
 	if matches == nil {
 		return s, false
 	}
 	indicatorGroup := yamlCredentialKey.SubexpIndex("indicator")
+	numberGroup := yamlCredentialKey.SubexpIndex("number")
+	indentGroup := yamlCredentialKey.SubexpIndex("indent")
 	var out strings.Builder
 	last, hit := 0, false
 	for _, match := range matches {
@@ -687,7 +770,8 @@ func redactYAMLBlockValues(s string) (string, bool) {
 		if match[0] < last || lineEnd >= len(s) || s[lineEnd] != '\n' {
 			continue
 		}
-		threshold := match[3] - match[2]
+		numbered := match[2*numberGroup] >= 0
+		threshold := match[2*indentGroup+1] - match[2*indentGroup]
 		blockIndicator := match[2*indicatorGroup] >= 0
 		start, end, indent := lineEnd+1, -1, ""
 		for pos := start; pos < len(s); {
@@ -697,14 +781,18 @@ func redactYAMLBlockValues(s string) (string, bool) {
 				lineStop = pos + next
 			}
 			line := strings.TrimSuffix(s[pos:lineStop], "\r")
-			if strings.TrimSpace(line) != "" {
-				trimmed := strings.TrimLeft(line, " \t")
-				width := len(line) - len(trimmed)
+			prefix, sameDisplay := displayedLine(line, numbered)
+			if !sameDisplay {
+				break
+			}
+			if content := line[prefix:]; strings.TrimSpace(content) != "" {
+				trimmed := strings.TrimLeft(content, " \t")
+				width := len(content) - len(trimmed)
 				if width <= threshold || (end < 0 && !blockIndicator && yamlStructure.MatchString(trimmed)) {
 					break
 				}
 				if end < 0 {
-					indent = line[:width]
+					indent = line[:prefix+width]
 				}
 				end = pos + len(line)
 			}
@@ -725,4 +813,276 @@ func redactYAMLBlockValues(s string) (string, bool) {
 	}
 	out.WriteString(s[last:])
 	return out.String(), true
+}
+
+// credentialNameEntry matches a YAML entry whose name is a credential and
+// whose value is on a sibling line: `- name: DB_PASSWORD` then `  value: …`,
+// a Kubernetes or Compose environment entry, a Helm values list, or a HAR
+// header written as YAML (also `key:`), possibly after a line number. It is
+// the text form of the structured rule that drops a value labelled as a
+// credential (hasSensitiveLabel). The "indent" group sets the column of the
+// entry's other keys.
+var credentialNameEntry = regexp.MustCompile(`(?im)^(?P<number>[ \t]*[0-9]+(?:→|\t))?(?P<indent>[ \t]*(?:-[ \t]+)?)(?:name|key)[ \t]*:[ \t]*["']?` + credentialName + `["']?[ \t]*\r?$`)
+
+// entryValueKey matches the `value:` key of such an entry and what follows
+// it on the line.
+var entryValueKey = regexp.MustCompile(`^value[ \t]*:[ \t]*`)
+
+// maxEntryLines bounds how many lines after a credentialNameEntry are
+// searched for its `value:` key.
+const maxEntryLines = 8
+
+// redactCredentialEntryValues redacts the `value:` of every YAML entry whose
+// `name:` is a credential (credentialNameEntry): the rest of its line, or a
+// quoted value's contents. Filter 11 as first written redacted such a value
+// only in structured data, so a Kubernetes manifest an agent read kept every
+// literal environment secret.
+func redactCredentialEntryValues(t needleText) (string, bool) {
+	s := t.s
+	matches := lineMatches(linePattern{credentialNameEntry, vocabularyNeedles, ":"}, t)
+	if matches == nil {
+		return s, false
+	}
+	numberGroup := credentialNameEntry.SubexpIndex("number")
+	indentGroup := credentialNameEntry.SubexpIndex("indent")
+	var spans []valueSpan
+	for _, match := range matches {
+		lineEnd := match[1]
+		if lineEnd >= len(s) || s[lineEnd] != '\n' {
+			continue
+		}
+		numbered := match[2*numberGroup] >= 0
+		column := match[2*indentGroup+1] - match[2*indentGroup]
+		if span, ok := entryValueSpan(s, lineEnd+1, numbered, column); ok {
+			spans = append(spans, span)
+		}
+	}
+	if len(spans) == 0 {
+		return s, false
+	}
+	return redactSpans(s, spans), true
+}
+
+// entryValueSpan finds the value of the `value:` key at column among the
+// lines from pos on, before the entry ends (a line indented less, or a new
+// sequence item at the column).
+func entryValueSpan(s string, pos int, numbered bool, column int) (valueSpan, bool) {
+	for range maxEntryLines {
+		if pos >= len(s) {
+			break
+		}
+		lineStop := len(s)
+		if next := strings.IndexByte(s[pos:], '\n'); next >= 0 {
+			lineStop = pos + next
+		}
+		line := strings.TrimSuffix(s[pos:lineStop], "\r")
+		prefix, sameDisplay := displayedLine(line, numbered)
+		if !sameDisplay {
+			break
+		}
+		content := line[prefix:]
+		trimmed := strings.TrimLeft(content, " \t")
+		width := len(content) - len(trimmed)
+		switch {
+		case trimmed == "":
+		case width < column || (width == column && strings.HasPrefix(trimmed, "-")):
+			return valueSpan{}, false
+		case width == column:
+			if loc := entryValueKey.FindStringIndex(trimmed); loc != nil {
+				start := pos + prefix + width + loc[1]
+				end := pos + len(line)
+				value := s[start:end]
+				if quoted := quotedPrefix.FindString(value); quoted != "" {
+					end = start + len(quoted)
+				} else {
+					end = start + len(strings.TrimRight(value, " \t"))
+				}
+				if end <= start || isNonSecretValue(s[start:end]) {
+					return valueSpan{}, false
+				}
+				return valueSpan{start, end}, true
+			}
+		}
+		pos = lineStop + 1
+	}
+	return valueSpan{}, false
+}
+
+// credentialStructureStart matches a credential name whose value is an
+// object or array: `"secret": {"value": "…"}`, `"passwords": ["…"]`,
+// `'credentials': {…}`, `apiKey: {value: "…"}`, possibly in JSON escaped
+// inside a string. The match ends just past the opening bracket; the
+// "quote" group is the name's opening quote with the backslashes that
+// escape it.
+var credentialStructureStart = regexp.MustCompile(`(?i)` + credentialLead + `(?P<quote>\\*["'])?` + credentialName + credentialQuote + `[ \t]*(?::|=>|=|：)[ \t]*[{\[]`)
+
+// maxStructureBytes bounds how far a credential structure is read.
+const maxStructureBytes = 64 * 1024
+
+// redactCredentialStructures redacts every string value inside an object or
+// array whose name is a credential (credentialStructureStart), keeping its
+// keys, brackets, numbers, and layout: `"secret": {"value": "[REDACTED]"}`.
+// Structured data drops such a value whole (isCredentialKey); in text, where
+// the structure is part of a larger file (a JSON file shown with line
+// numbers, a log line, an edit), filter 11 as first written kept it, since a
+// bracket holding a quote is not a value (credentialBracketedValue).
+func redactCredentialStructures(t needleText) (string, bool) {
+	s := t.s
+	matches := lineMatches(linePattern{credentialStructureStart, vocabularyNeedles, "{["}, t)
+	if matches == nil {
+		return s, false
+	}
+	quoteGroup := credentialStructureStart.SubexpIndex("quote")
+	var spans []valueSpan
+	last := 0
+	for _, match := range matches {
+		if match[0] < last {
+			continue
+		}
+		escapes := 0
+		if match[2*quoteGroup] >= 0 {
+			escapes = match[2*quoteGroup+1] - match[2*quoteGroup] - 1
+		}
+		found, end := structureStringValues(s, match[1]-1, escapes)
+		spans = append(spans, found...)
+		last = end
+	}
+	if len(spans) == 0 {
+		return s, false
+	}
+	var out strings.Builder
+	prev := 0
+	for _, span := range spans {
+		out.WriteString(s[prev:span.start])
+		out.WriteString(redactedMarker)
+		prev = span.end
+	}
+	out.WriteString(s[prev:])
+	return out.String(), true
+}
+
+// structureStringValues reads the object or array whose opening bracket is
+// at open and returns the contents of its string values (strings not
+// followed by `:`, which are keys) that are not already [REDACTED] and do
+// not belong to a descriptiveStructureKeys key, and
+// where the structure ends. escapes is how many backslashes escape each
+// quote (0 for plain JSON, 1 for JSON inside a JSON string). A string left
+// open takes the rest of its line.
+func structureStringValues(s string, open, escapes int) ([]valueSpan, int) {
+	var spans []valueSpan
+	limit := min(len(s), open+maxStructureBytes)
+	depth, lastKey := 0, ""
+	for i := open; i < limit; {
+		switch c := s[i]; c {
+		case '{', '[':
+			depth++
+			i++
+			if c == '{' {
+				lastKey = ""
+			}
+		case '}', ']':
+			depth--
+			i++
+			if c == '}' {
+				lastKey = ""
+			}
+			if depth <= 0 {
+				return spans, i
+			}
+		default:
+			quote, width := structureQuoteAt(s, i, escapes)
+			if width == 0 {
+				i++
+				continue
+			}
+			start := i + width
+			end, next := structureStringEnd(s, start, limit, quote, escapes)
+			if end < 0 {
+				lineEnd := strings.IndexAny(s[start:limit], "\r\n")
+				if lineEnd < 0 {
+					lineEnd = limit - start
+				}
+				if content := s[start : start+lineEnd]; content != "" && content != redactedMarker {
+					spans = append(spans, valueSpan{start, start + lineEnd})
+				}
+				return spans, start + lineEnd
+			}
+			key := false
+			for j := next; j < limit; j++ {
+				if s[j] != ' ' && s[j] != '\t' {
+					key = s[j] == ':'
+					break
+				}
+			}
+			switch content := s[start:end]; {
+			case key:
+				lastKey = strings.ToLower(content)
+			case content != "" && content != redactedMarker && !descriptiveStructureKeys[lastKey]:
+				spans = append(spans, valueSpan{start, end})
+			}
+			i = next
+		}
+	}
+	return spans, limit
+}
+
+// descriptiveStructureKeys are keys inside a credential structure whose
+// value describes the credential rather than being it (`"credentials":
+// {"type": "service_account", …}`); their string values are kept.
+var descriptiveStructureKeys = map[string]bool{
+	"type": true, "kind": true, "name": true, "description": true, "provider": true,
+	"scheme": true, "alg": true, "algorithm": true, "format": true, "encoding": true,
+}
+
+// structureQuoteAt returns the quote character and the width of the quote
+// (with its escaping backslashes) that opens a string at i, or width 0.
+// With no escapes, either quote opens a string; with escapes, only exactly
+// that many backslashes before a double quote do.
+func structureQuoteAt(s string, i, escapes int) (byte, int) {
+	if escapes == 0 {
+		if s[i] == '"' || s[i] == '\'' {
+			return s[i], 1
+		}
+		return 0, 0
+	}
+	if s[i] != '\\' || (i > 0 && s[i-1] == '\\') {
+		return 0, 0
+	}
+	run := 0
+	for i+run < len(s) && s[i+run] == '\\' {
+		run++
+	}
+	if run == escapes && i+run < len(s) && s[i+run] == '"' {
+		return '"', run + 1
+	}
+	return 0, 0
+}
+
+// structureStringEnd returns where the contents of a string opened by quote
+// end and where the text after its closing quote starts, or -1 when the
+// string does not close before limit or the end of its line.
+func structureStringEnd(s string, start, limit int, quote byte, escapes int) (end, next int) {
+	for j := start; j < limit; {
+		c := s[j]
+		switch {
+		case c == '\n' || c == '\r':
+			return -1, -1
+		case escapes == 0 && c == '\\':
+			j += 2
+		case escapes == 0 && c == quote:
+			return j, j + 1
+		case escapes > 0 && c == '\\':
+			run := 0
+			for j+run < limit && s[j+run] == '\\' {
+				run++
+			}
+			if run == escapes && j+run < limit && s[j+run] == '"' {
+				return j, j + run + 1
+			}
+			j += run + 1
+		default:
+			j++
+		}
+	}
+	return -1, -1
 }

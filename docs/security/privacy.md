@@ -266,17 +266,23 @@ sorted, capped at 64, names only) and the value is never retained.
   password, passcode, PIN, one-time code, secret, token, card number, CVV,
   security or verification code, SSN, or IBAN: a form field
   `{"name": "Password", "value": …}`, an input `{"type": "password", …}`,
-  or an environment entry `{"name": "DB_PASSWORD", "value": …}`.
+  or an environment entry `{"name": "DB_PASSWORD", "value": …}`; or when
+  such a label (not `type` or `autocomplete`) names a credential as an
+  argument key would (below), as a HAR header or cookie does
+  (`{"name": "Authorization", "value": …}`). A two-string array whose first
+  string names a credential (`["X-Api-Key", …]`, a header list) loses its
+  second.
 - **Credential-named arguments.** For every tool, an argument whose key
   names a credential is dropped. The key is split into words the same way,
   and it names a credential when its words hold a term of the credential
   vocabulary, the one list the value-level patterns below use too
-  (`api key`, `access key`, `private key`, `secret`, `password`, `passwd`,
-  `pass`, `passphrase`, `token`, `authorization`, `bearer`, `credential(s)`,
-  `cookie(s)`, `auth`, `account key`, `shared access key`, and a few more;
-  `pwd` only after another word). So `X-Api-Key`, `passwd`, `pass`,
-  `private_key`, `auth`, and `password_confirmation` are dropped, while
-  budgets such as `max_tokens` (a plural is another word) are kept. An
+  (`api key`, `access key`, `private key`, `secret(s)`, `password(s)`,
+  `passwd`, `pass`, `passphrase`, `token`, `authorization`, `bearer`,
+  `credential(s)`, `creds`, `cookie(s)`, `auth`, `auth key`, `account key`,
+  `shared access key`, `subscription key`, and a few more; `pwd` only after
+  another word). So `X-Api-Key`, `passwd`, `pass`, `private_key`, `auth`,
+  `secrets`, and `password_confirmation` are dropped, while budgets such as
+  `max_tokens` (a plural is another word) are kept. An
   argument object whose members were all dropped is pruned with them.
 
 A string that holds a JSON object or array (Codex's
@@ -299,20 +305,22 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
 - Credential assignments (filter 9). The name ends in a term of the
   credential vocabulary (filter 11: `api_key`, `access_key`, `private_key`,
   `private_key_id`, `encryption_key`, `signing_key`, `master_key`,
-  `account_key`, `shared_access_key`, `shared_access_signature`, `secret`,
-  `password`, `passwd`, `passphrase`, `pgpass`, `token`, `authorization`,
-  `bearer`, `credential(s)`, `cookie(s)`, `dockerconfigjson`), with `_`,
-  `-`, `.`, or nothing between the parts of a two-word term, in any case,
-  with anything glued on before it; or in `pass` alone or after a separator
+  `account_key`, `shared_access_key`, `shared_access_signature`, `auth_key`,
+  `subscription_key`, `secret(s)`, `password(s)`, `passwd`, `passphrase`,
+  `pgpass`, `token`, `authorization`, `bearer`, `credential(s)`,
+  `cookie(s)`, `dockerconfigjson`), with `_`, `-`, `.`, a space, or nothing
+  between the parts of a two-word term (`API Key: …`), in any case,
+  with anything glued on before it; or in `pass` or `creds` alone or after a separator
   or a camelCase boundary (`DB_PASS`, `redis.pass`, `dbPass`, but not
   `bypass`); or in `pwd` or npm's `_auth` after a separator (`MYSQL_PWD`,
   `DB_PWD`, `:_auth`), since a bare `PWD` or `OLDPWD` is the shell's working
-  directory. The trigger may be followed by `key` or `access_key`, then
-  `base`, then a number. So `DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY`,
+  directory. The trigger may be followed by `key` or `access_key` (`Secret
+  Key` too), then `base`, then a number, then `value`. So `DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY`,
   `OPENAI_API_KEY`, `SECRET_KEY_BASE`, `DB_PASSWORD_1`, `accessToken`,
   `PGPASSWORD`, `spring.datasource.password`, and `x-api-key` all match. The
   name may be quoted (`"…"`, `'…'`, or escaped inside a string, `\"…\"`);
-  the separator is `=`, `:`, `:=`, `=>`, a full-width colon, or a tab; a
+  the separator is `=`, `:`, `:=`, `=>`, a full-width colon or equals sign,
+  or a tab; a
   `--name value` (or `-name value`) command-line flag counts too. A quoted
   value is taken up to its closing quote (plus anything glued on after it,
   as a shell reads it; filter 10). An unquoted value runs to the end of its
@@ -336,6 +344,19 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   the next line (`password:` then `  S3cret`) become one `[REDACTED]` line.
   A key whose indented lines are a mapping or a list is a structure, and its
   members are checked on their own.
+- Structures and entries (filter 11): every string value inside an object
+  or array whose name is a credential (`"secret": {"value": …}`,
+  `"passwords": [ … ]`, in JSON, Python, JavaScript, or JSON escaped inside
+  a string, across lines) is redacted, keeping keys, numbers, and the value
+  of a descriptive key (`type`, `kind`, `name`, `description`, `provider`,
+  `scheme`, `alg`, `format`, `encoding`); and the sibling `value:` of a YAML
+  entry whose `name:` (or `key:`) is a credential (`- name: DB_PASSWORD`
+  then `value: …`, a Kubernetes `env` list), or the `"value"` after a
+  credential `"name"` on one line (`{"name": "Authorization", "value":
+  …}`).
+- Files shown with line numbers (filter 11): the Claude Code Read tool,
+  `cat -n`, and `grep -n` number each line. The YAML, entry, and private
+  key rules read a line after its number.
 - Command lines whose secret is a flag's value only for particular programs
   (filter 11): `curl -u user:secret` (and `--user`, `-U`, `--proxy-user`;
   the user name stays), `mysql -psecret`, `sshpass -p`, `docker|podman|helm
@@ -361,7 +382,9 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   `Bearer` token outside a header.
 - PEM and PGP private key blocks: `-----BEGIN … PRIVATE KEY-----` (or
   `PRIVATE KEY BLOCK-----`) through the next `-----END … -----` when
-  everything between is key body; when the END line is missing (a key cut
+  everything between is key body (each line possibly numbered, marked as a
+  diff, quote, or comment, or quoted as a string in source code), or holds a
+  base64 run of 48 characters or more; when the END line is missing (a key cut
   off by a truncated record), through the base64 lines that follow the
   BEGIN line (filter 11; filter 10 took everything to the end of the string,
   so source code that names the BEGIN line lost the rest of the file).
@@ -405,9 +428,11 @@ Known misses.
   kept. JSON escaped once (`\"password\":\"ab\\\"cd\"`) is handled.
 - A value that is an object or array holding whitespace, a comma, a colon,
   or a quote (`"credentials": {"type": …}`, `password: [required, min 8]`)
-  is a structure and is not replaced as text: in parsed records its members
-  are checked by name, but in free text a secret inside it is caught only by
-  its own name or shape.
+  is a structure and is not replaced as text. Its string values are
+  redacted (above), but an unquoted value inside it (a YAML flow mapping
+  `{user: me, pass: x}` aside from its own credential names, a number such
+  as a PIN) is caught only by its own name or shape, as is a secret in a
+  YAML mapping under a credential key (`secrets:` then `github: …`).
 - For the same reason, an unquoted value that begins with `[` or `{` but is
   not a single closed token is kept whole: `password=[Kx9!q2Lm`,
   `password={secret`, `password=[admin:hunter2]`, `password=[a b]realsecret`.
@@ -421,8 +446,11 @@ Known misses.
   pattern; its value is redacted only if it has a recognizable shape
   (`AKIA…`/`ASIA…`, URL userinfo).
 - A credential in prose (`the password is hunter2`), a Markdown table row
-  (`| password | hunter2 |`), or a leetspeak name (`p4ssword=`) is not
-  recognized. A YAML value on the lines below its key is (filter 11), unless
+  (`| password | hunter2 |`), a name spelled with full-width letters or a
+  zero-width space, or a leetspeak name (`p4ssword=`) is not recognized;
+  nor is a secret piped into a command (`echo … | docker login
+  --password-stdin`, `sudo -S`), a form label in another language (`Mot de
+  passe`), or a URL-encoded assignment (`password%3D…`). A YAML value on the lines below its key is (filter 11), unless
   its first line reads as a mapping entry (`correct horse: battery`).
 - Text glued after a closing quote is taken with the value (filter 10) only
   up to a closing `]`, `}`, or `)`, which usually closes the structure

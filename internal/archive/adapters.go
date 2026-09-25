@@ -1212,7 +1212,9 @@ func sanitizeStringOnce(v string, state *sanitizeState) (string, bool) {
 		state.addGap("binary_content_omitted", state.record, "base64 data URL omitted")
 		v = base64DataURL.ReplaceAllString(v, "data:${1}${2};base64,[OMITTED]")
 	}
-	if redacted, hit := redactSensitive(v); hit {
+	// One redaction pass: sanitizeValue repeats this function until the
+	// string is stable, which repeats the redaction as redactSensitive would.
+	if redacted, hit := redactSensitiveOnce(v); hit {
 		state.addGap("sensitive_content_redacted", state.record, "content redacted")
 		v = redacted
 	}
