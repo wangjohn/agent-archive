@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -38,12 +39,49 @@ func CheckClock(cfg config.Config, p Plan, admittedAt time.Time) error {
 	return nil
 }
 
+// RetentionChange is an import's change to the archive-wide retention: From
+// before the import, To after it. An import only ever raises retention (see
+// ApplyToConfig); undo puts From back while the retention is still To.
+type RetentionChange struct {
+	From int `json:"from"`
+	To   int `json:"to"`
+	// Restored is set once an undo has put From back.
+	Restored bool `json:"restored,omitempty"`
+}
+
+// ConfigChanges is everything ApplyToConfig changed in the configuration.
+// The batch records all of it (Batch.AddChanges), so undo can reverse it;
+// TestImportConfigChangesAreRecordedAndUndone holds every configuration
+// field an import changes to that.
+type ConfigChanges struct {
+	// ProjectIDs are the projects added, included.
+	ProjectIDs []string
+	// Apps are the apps added to ImportedHarnesses.
+	Apps []string
+	// Retention is set when the plan raised the archive-wide retention.
+	Retention *RetentionChange
+}
+
+// ErrRetentionShortened means a plan would lower the archive-wide retention,
+// or turn it on while it is off. An import never does: retention applies to
+// every session in the archive, and a shorter one deletes sessions already
+// archived, hook-captured ones too. Setup is where it is shortened.
+var ErrRetentionShortened = errors.New("an import only raises retention; shorten it in setup")
+
 // ApplyToConfig adds what the plan needs to cfg: every project it imports
-// into that is not configured yet, included and activated at admittedAt, and
-// every app it imports that has no hooks to ImportedHarnesses. It returns the
-// added projects' IDs and the added apps.
-func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (projectIDs, apps []string) {
-	projectIDs, apps = []string{}, []string{}
+// into that is not configured yet, included and activated at admittedAt,
+// every app it imports that has no hooks to ImportedHarnesses, and the
+// plan's retention when it is longer than cfg's. It returns what it changed.
+// cfg is left as it was when it returns an error.
+func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (ConfigChanges, error) {
+	changes := ConfigChanges{ProjectIDs: []string{}, Apps: []string{}}
+	if p.RetentionDays > 0 && p.RetentionDays != cfg.RetentionDays {
+		if cfg.RetentionDays <= 0 || p.RetentionDays < cfg.RetentionDays {
+			return ConfigChanges{}, fmt.Errorf("%w (from %d to %d days)", ErrRetentionShortened, cfg.RetentionDays, p.RetentionDays)
+		}
+		changes.Retention = &RetentionChange{From: cfg.RetentionDays, To: p.RetentionDays}
+		cfg.RetentionDays = p.RetentionDays
+	}
 	for _, c := range p.Imported() {
 		if c.ProjectIncluded || slices.ContainsFunc(cfg.Archive.Projects, func(existing archive.ProjectActivation) bool { return existing.Root == c.ProjectRoot }) {
 			continue
@@ -52,13 +90,13 @@ func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (projectIDs
 		cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{
 			ProjectID: id, Root: c.ProjectRoot, ActivatedAt: admittedAt.UTC(), Included: true,
 		})
-		projectIDs = append(projectIDs, id)
+		changes.ProjectIDs = append(changes.ProjectIDs, id)
 	}
 	for _, app := range p.AppsWithoutHooks() {
 		if !slices.Contains(cfg.ImportedHarnesses, app) {
 			cfg.ImportedHarnesses = append(cfg.ImportedHarnesses, app)
-			apps = append(apps, app)
+			changes.Apps = append(changes.Apps, app)
 		}
 	}
-	return projectIDs, apps
+	return changes, nil
 }

@@ -133,8 +133,15 @@ Import 29 sessions from 6 projects? [y/N/edit]
 - **Scope sentence.** It names the bucket and says "every session found on
   this Mac". When filters are set, it says "sessions matching" and lists
   them instead.
-- **Answers.** The default is No. `edit` asks for a new retention period,
-  which applies to the whole archive, then shows the plan again.
+- **Answers.** The default is No. `edit` asks for a longer retention
+  period, which applies to the whole archive, then shows the plan again. It
+  only raises retention: a shorter period, or turning retention on while it
+  is off, would delete sessions already archived (hook-captured ones too),
+  so it keeps the current value and says to change it in setup.
+  `ApplyToConfig` refuses a shorter one as well. The batch records the value
+  it raised from (`retention`), and undo puts it back while retention is
+  still what the import set, showing first how many sessions the shorter
+  period then deletes. A `--project` undo leaves retention alone.
 - **Deletion date.** All imports are captured at about the same time, so
   they expire together, and the plan shows that date.
 - **Rows.** Rows are sorted by total and then by path. Paths are never
@@ -678,7 +685,9 @@ only a few milliseconds at a time.
    reload and held through registration (step 5), so no collector pass runs
    while candidates are half-written, and `pause`, which also takes it, waits
    until registration ends. Take `hooks.lock` briefly to write the batch file,
-   then the new projects, `ImportedHarnesses`, and any retention edit.
+   then the new projects, `ImportedHarnesses`, and any retention edit. The
+   batch file records every configuration change the import makes, so undo
+   can reverse it (a guard test diffs every configuration field).
 5. **Register** in batches of at most 50 sessions or 100 ms:
    - Take `hooks.lock` and reload the configuration. Skip anything no longer
      admitted. A session whose start is after `AdmittedAt` is skipped as

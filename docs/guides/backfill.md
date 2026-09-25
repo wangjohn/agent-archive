@@ -41,6 +41,9 @@ background collector upload what is registered.
   selects from the start of the day it falls on.
 - Retention applies to imports from the day they are imported, so a whole
   import expires on one day. Choose `edit` at the prompt to keep them longer.
+  Retention applies to the whole archive, so `edit` only raises it; shorten
+  it in setup. Undoing the import puts the earlier retention back, and the
+  undo plan says how many older sessions that then deletes.
 - Claude Code deletes its own transcripts after 30 days by default. To keep
   more history for backfill, set `"cleanupPeriodDays"` in
   `~/.claude/settings.json`.

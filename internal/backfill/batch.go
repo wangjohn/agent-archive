@@ -42,6 +42,9 @@ type Batch struct {
 	// Subagents are the archive session IDs given to the imported sessions'
 	// subagent transcripts. Each registers when the collector validates it.
 	Subagents []string `json:"subagents"`
+	// Retention is set when the import raised the archive-wide retention
+	// (the prompt's edit): undo restores the earlier value.
+	Retention *RetentionChange `json:"retention,omitempty"`
 	// UndoneAt is when `backfill undo` last started removing the import. It
 	// is written before anything is removed, so an import undone even in
 	// part is never continued; history says whether anything of it is left.
@@ -291,10 +294,18 @@ func OpenBatch(home string, store *state.Store, filters BatchFilters, destinatio
 	}, nil
 }
 
-// AddChanges records the projects and apps a run added to the configuration.
-func (b *Batch) AddChanges(projectIDs, apps []string) {
-	b.ProjectsAdded = addUnique(b.ProjectsAdded, projectIDs...)
-	b.AppsAdded = addUnique(b.AppsAdded, apps...)
+// AddChanges records what a run changed in the configuration. A continued
+// import keeps the retention it first changed from.
+func (b *Batch) AddChanges(c ConfigChanges) {
+	b.ProjectsAdded = addUnique(b.ProjectsAdded, c.ProjectIDs...)
+	b.AppsAdded = addUnique(b.AppsAdded, c.Apps...)
+	if c.Retention != nil {
+		change := *c.Retention
+		if b.Retention != nil {
+			change.From = b.Retention.From
+		}
+		b.Retention = &change
+	}
 }
 
 // AddSessions records sessions and subagents a run registered.

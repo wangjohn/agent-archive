@@ -48,6 +48,17 @@ type UndoPlan struct {
 	// that the import did not add, the earlier imports whose undo kept it
 	// included for this import's sessions. The plan lists them apart.
 	TakenOver map[string][]string
+	// RestoreRetention is set when the import raised the archive-wide
+	// retention and it is still what the import set: undo puts the earlier
+	// value back. A --project undo leaves retention alone.
+	RestoreRetention *RetentionChange
+	// RetentionDeletes counts the sessions, in the current destination and
+	// not removed by this undo, that the restored (shorter) retention makes
+	// old enough to delete: the next collector pass deletes them.
+	RetentionDeletes int
+	// RetentionChangedSince is set when the import raised retention and it
+	// was changed again afterwards, so undo leaves it as it is.
+	RetentionChangedSince bool
 	// HookCapturedStopping counts the hook-captured sessions in
 	// ExcludeProjects. Excluding the projects stops them uploading; they are
 	// not deleted.
@@ -118,9 +129,10 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 		Batch:   b,
 		Project: project,
 		view: Plan{
-			GeneratedAt:  env.now(),
-			Home:         env.Home,
-			resolvedHome: env.resolved(env.Home),
+			GeneratedAt:   env.now(),
+			Home:          env.Home,
+			RetentionDays: cfg.RetentionDays,
+			resolvedHome:  env.resolved(env.Home),
 			Destination: Destination{
 				Provider: cfg.Storage.Provider,
 				Bucket:   cfg.Storage.Bucket,
@@ -199,6 +211,18 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 		}
 	}
 
+	if r := b.Retention; r != nil && !r.Restored && p.Project == "" {
+		if cfg.RetentionDays == r.To {
+			restore := *r
+			p.RestoreRetention = &restore
+			if p.RetentionDeletes, err = retentionDeletes(store, cfg, regs, p.Sessions, restore, env.now()); err != nil {
+				return UndoPlan{}, err
+			}
+		} else {
+			p.RetentionChangedSince = true
+		}
+	}
+
 	// An app the import added stays while any imported session of it is
 	// left: another import's, or this one's outside --project.
 	undone := map[string]bool{}
@@ -217,6 +241,45 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 		}
 	}
 	return p, nil
+}
+
+// retentionDeletes counts the sessions (not subagents) in cfg's destination,
+// other than those undo removes, that retention of r.From days deletes and
+// retention of r.To days does not: those restoring r.From costs. A session
+// ages as retention ages it: from its last capture, or its admission when it
+// has none (see retention.sweepSession). A capture is never earlier than the
+// admission, so only a session admitted over r.From days ago can be one; only
+// those have their published state read.
+func retentionDeletes(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, removing []UndoSession, r RetentionChange, now time.Time) (int, error) {
+	if r.From <= 0 || r.From >= r.To {
+		return 0, nil
+	}
+	removed := map[string]bool{}
+	for _, s := range removing {
+		removed[s.Registration.ArchiveSessionID] = true
+	}
+	from, to := time.Duration(r.From)*24*time.Hour, time.Duration(r.To)*24*time.Hour
+	n := 0
+	for _, reg := range regs {
+		if reg.ParentSessionID != "" || removed[reg.ArchiveSessionID] || !cfg.InCurrentDestination(reg) {
+			continue
+		}
+		ageFrom := reg.Admitted()
+		if ageFrom.IsZero() || now.Sub(ageFrom) < from {
+			continue
+		}
+		bundle, _, _, found, err := store.LoadPublished(reg.ArchiveSessionID)
+		if err != nil {
+			return 0, err
+		}
+		if found && !bundle.Capture.CapturedAt.IsZero() {
+			ageFrom = bundle.Capture.CapturedAt
+		}
+		if age := now.Sub(ageFrom); age >= from && age < to {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // sessionsOutsideBatch counts the sessions (not subagents) that carry b's ID
@@ -386,7 +449,7 @@ func hasHookEvidence(evidence []archive.SupplementalEvidence) bool {
 
 // Empty reports whether nothing of the import is left to undo.
 func (p UndoPlan) Empty() bool {
-	return len(p.Sessions) == 0 && len(p.ExcludeProjects) == 0 && len(p.RemoveApps) == 0
+	return len(p.Sessions) == 0 && len(p.ExcludeProjects) == 0 && len(p.RemoveApps) == 0 && p.RestoreRetention == nil
 }
 
 // UndoCounts summarises an undo's sessions. Sessions and Subagents count
@@ -468,22 +531,49 @@ func (p UndoPlan) Grew(confirmed UndoPlan) bool {
 			return true
 		}
 	}
+	if p.RestoreRetention != nil && (confirmed.RestoreRetention == nil || p.RetentionDeletes > confirmed.RetentionDeletes) {
+		return true
+	}
 	return false
 }
 
-// ApplyToConfig excludes the plan's projects and removes its apps from cfg,
-// which the caller has just reloaded under the locks. It returns the IDs of
-// the projects it excluded.
-func (p UndoPlan) ApplyToConfig(cfg *config.Config) []string {
-	excluded := []string{}
+// UndoChanges is what UndoPlan.ApplyToConfig changed; the caller records it
+// in the batch once the configuration is saved.
+type UndoChanges struct {
+	// Excluded are the IDs of the projects excluded.
+	Excluded []string
+	// RetentionRestored is set when retention was put back to the value
+	// before the import.
+	RetentionRestored bool
+}
+
+// ApplyToConfig excludes the plan's projects, removes its apps, and restores
+// the retention from before the import, in cfg, which the caller has just
+// reloaded under the locks. Retention is restored only while it is still
+// what the import set.
+func (p UndoPlan) ApplyToConfig(cfg *config.Config) UndoChanges {
+	changes := UndoChanges{Excluded: []string{}}
 	for i, project := range cfg.Archive.Projects {
 		if project.Included && slices.ContainsFunc(p.ExcludeProjects, func(e archive.ProjectActivation) bool { return e.ProjectID == project.ProjectID }) {
 			cfg.Archive.Projects[i].Included = false
-			excluded = append(excluded, project.ProjectID)
+			changes.Excluded = append(changes.Excluded, project.ProjectID)
 		}
 	}
 	cfg.ImportedHarnesses = slices.DeleteFunc(cfg.ImportedHarnesses, func(app string) bool { return slices.Contains(p.RemoveApps, app) })
-	return excluded
+	if r := p.RestoreRetention; r != nil && cfg.RetentionDays == r.To {
+		cfg.RetentionDays = r.From
+		changes.RetentionRestored = true
+	}
+	return changes
+}
+
+// RecordUndone records in b what an undo changed in the configuration, once
+// it is saved, so no later undo changes it again.
+func (b *Batch) RecordUndone(c UndoChanges) {
+	b.ProjectsExcluded = addUnique(b.ProjectsExcluded, c.Excluded...)
+	if c.RetentionRestored && b.Retention != nil {
+		b.Retention.Restored = true
+	}
 }
 
 // UndoResult is what Remove did.
@@ -636,6 +726,19 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 		}
 		terminal.Printf(w, "    Undoing the last of those imports excludes %s.\n", themIt(n))
 	}
+	if r := p.RestoreRetention; r != nil {
+		if c.Sessions+c.Subagents == 0 && len(p.ExcludeProjects) == 0 && len(p.KeepProjects) == 0 {
+			terminal.Println(w, "If you continue:")
+		}
+		terminal.Printf(w, "  • Retention goes back from %d to %d days, as it was before the import\n    raised it. ", r.To, r.From)
+		if n := p.RetentionDeletes; n > 0 {
+			terminal.Printf(w, "The next collector pass then deletes %s older than\n    %d days from %s.\n", CountNoun(n, "session"), r.From, p.view.destination())
+		} else {
+			terminal.Println(w, "No session is old enough for that to delete it now.")
+		}
+	} else if p.RetentionChangedSince {
+		terminal.Printf(w, "  • Retention stays at %d days: it was changed after the import raised it.\n", p.view.RetentionDays)
+	}
 	terminal.Println(w, "  • Hook-captured sessions and the apps' own files are not touched.")
 	if c.Sessions+c.Subagents > 0 {
 		terminal.Println(w, "  • These sessions are not imported again unless you run\n    agent-archive backfill --include-removed.")
@@ -654,6 +757,9 @@ func importsNoun(ids []string) string {
 func UndoQuestion(p UndoPlan) string {
 	c := p.Counts()
 	if c.Sessions+c.Subagents == 0 {
+		if len(p.ExcludeProjects) == 0 && p.RestoreRetention != nil {
+			return fmt.Sprintf("Restore retention to %d days?", p.RestoreRetention.From)
+		}
 		return fmt.Sprintf("Exclude %s?", CountNoun(len(p.ExcludeProjects), "project"))
 	}
 	// Sessions are named when there are any; otherwise only subagents are

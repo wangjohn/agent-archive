@@ -91,16 +91,19 @@ func TestApplyToConfigAndClock(t *testing.T) {
 		t.Fatalf("admission at the plan's time: %v", err)
 	}
 
-	projects, apps := ApplyToConfig(&cfg, p, admitted)
-	if len(projects) != 1 || projects[0] != archive.ProjectID("/work/new") || strings.Join(apps, ",") != "codex" {
-		t.Fatalf("added %v, %v", projects, apps)
+	changes, err := ApplyToConfig(&cfg, p, admitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projects, apps := changes.ProjectIDs, changes.Apps; len(projects) != 1 || projects[0] != archive.ProjectID("/work/new") || strings.Join(apps, ",") != "codex" || changes.Retention != nil {
+		t.Fatalf("added %+v", changes)
 	}
 	added := cfg.Archive.Projects[1]
 	if added.Root != "/work/new" || !added.Included || !added.ActivatedAt.Equal(admitted) {
 		t.Fatalf("%+v", added)
 	}
-	if again, apps := ApplyToConfig(&cfg, p, admitted); len(again) != 0 || len(apps) != 0 || len(cfg.Archive.Projects) != 2 {
-		t.Fatalf("applied twice: %v %v %+v", again, apps, cfg.Archive.Projects)
+	if again, err := ApplyToConfig(&cfg, p, admitted); err != nil || len(again.ProjectIDs) != 0 || len(again.Apps) != 0 || len(cfg.Archive.Projects) != 2 {
+		t.Fatalf("applied twice: %+v %v %+v", again, err, cfg.Archive.Projects)
 	}
 }
 

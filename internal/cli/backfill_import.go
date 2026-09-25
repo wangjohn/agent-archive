@@ -248,8 +248,9 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 
 // commitImport is step 4. With collector.lock held, it takes hooks.lock,
 // rereads the configuration, and checks that it is the one the plan was made
-// from. It then stamps the admission time and writes the batch file, then
-// the new projects, apps, and retention. The batch file is written first,
+// from. It then stamps the admission time and writes the batch file, which
+// records every configuration change (backfill.ConfigChanges), then the new
+// projects, apps, and retention. The batch file is written first,
 // so a crash in between leaves a batch that names projects it did not add,
 // never projects added without a record.
 func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) (batch backfill.Batch, admittedAt time.Time, added int, err error) {
@@ -283,11 +284,11 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
-	projects, apps := backfill.ApplyToConfig(&cfg, plan, admittedAt)
-	if plan.RetentionDays > 0 {
-		cfg.RetentionDays = plan.RetentionDays
+	changes, err := backfill.ApplyToConfig(&cfg, plan, admittedAt)
+	if err != nil {
+		return batch, admittedAt, 0, fmt.Errorf("%w. Nothing was changed", err)
 	}
-	batch.AddChanges(projects, apps)
+	batch.AddChanges(changes)
 	if err := backfill.SaveBatch(home, batch); err != nil {
 		return batch, admittedAt, 0, err
 	}
@@ -297,7 +298,7 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err := config.Save(home, cfg); err != nil {
 		return batch, admittedAt, 0, fmt.Errorf("save config: %w", err)
 	}
-	return batch, admittedAt, len(projects), nil
+	return batch, admittedAt, len(changes.ProjectIDs), nil
 }
 
 func printRegistered(out io.Writer, batchID string, added int, result backfill.RegistrationResult) {

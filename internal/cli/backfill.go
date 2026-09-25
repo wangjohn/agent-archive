@@ -188,10 +188,10 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	backfill.RenderText(stdout, plan)
 	terminal.Println(stdout)
 
-	// Step 3: confirm. edit changes the retention of the whole archive and
+	// Step 3: confirm. edit raises the retention of the whole archive and
 	// shows the plan again with the new deletion date.
 	if !*yes {
-		confirmed, err := confirmImport(newPrompter(stdin, stdout), stdout, &plan)
+		confirmed, err := confirmImport(newPrompter(stdin, stdout), stdout, &plan, cfg.RetentionDays)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v. Nothing was changed.\n", err)
 			return 1
@@ -259,9 +259,12 @@ func checkStorage(env Env, cfg config.Config) error {
 }
 
 // confirmImport asks `Import N sessions from M projects? [y/N/edit]`. The
-// default is No. edit asks for a new retention period, which it stores in
-// plan, and shows the plan again.
-func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan) (bool, error) {
+// default is No. edit asks for a longer retention period, which it stores
+// in plan, and shows the plan again. Retention applies to the whole archive,
+// so edit never goes below configured, the retention set now, and does
+// nothing while retention is off: either would delete sessions already
+// archived (backfill.ApplyToConfig refuses it too).
+func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured int) (bool, error) {
 	for {
 		answer, err := p.line(fmt.Sprintf("Import %s from %s? [y/N/edit] ", countNoun(len(plan.Imported()), "session"), countNoun(len(plan.Projects()), "project")))
 		if err != nil {
@@ -273,14 +276,22 @@ func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan) (bool, error
 		case "y", "yes":
 			return true, nil
 		case "e", "edit":
-			days := plan.RetentionDays
-			if days <= 0 {
-				days = defaultRetentionDays
+			if configured <= 0 {
+				terminal.Println(out, "Retention is off, so no session is deleted; there is nothing to keep longer.")
+				continue
 			}
-			terminal.Println(out, "Retention applies to every session in the archive, not only these.")
-			if plan.RetentionDays, err = p.retentionDays(days); err != nil {
+			terminal.Printf(out, "Retention applies to every session in the archive, not only these.\nHere it can only be raised from %d days, and undo puts %d back.\nShorten it in setup.\n", configured, configured)
+			days, err := p.retentionDays(plan.RetentionDays)
+			if err != nil {
 				return false, err
 			}
+			if days < configured {
+				// A shorter retention deletes sessions already archived,
+				// hook-captured ones too, which an import never does.
+				terminal.Printf(out, "Retention stays at %d days: a shorter period would delete sessions\nalready in the archive. Shorten it in setup.\n", plan.RetentionDays)
+				continue
+			}
+			plan.RetentionDays = days
 			terminal.Println(out)
 			backfill.RenderText(out, *plan)
 			terminal.Println(out)

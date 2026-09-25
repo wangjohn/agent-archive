@@ -32,6 +32,8 @@ If you continue:
   • Undo any time with `agent-archive backfill undo`.
 
 Import 12 sessions from 5 projects? [y/N/edit] Retention applies to every session in the archive, not only these.
+Here it can only be raised from 90 days, and undo puts 90 back.
+Shorten it in setup.
 Keep sessions for how many days? [90]: 
 Backfill imports every session found on this Mac into
 s3 / personal-agent-archive / agent-archive/. Nothing has been uploaded yet.
