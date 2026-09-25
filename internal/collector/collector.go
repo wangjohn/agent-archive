@@ -167,6 +167,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
 	local.RemoveStaleTemps()
+	// A copy of Cursor's database a killed collector or backfill left
+	// behind goes on every pass, whether or not this one reads Cursor.
+	cursorstore.RemoveStaleSnapshots()
 	p := &pass{
 		ctx:    ctx,
 		local:  local,

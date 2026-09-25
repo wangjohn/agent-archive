@@ -224,14 +224,14 @@ func (o Options) cursorDatabase() string {
 var afterCursorPass func(snapshots int)
 
 // openCursorPass gives the pass one Reader for Cursor's database when any
-// session is read from it, and sweeps snapshots a killed pass left behind.
+// session is read from it (Run has already swept snapshots a killed pass
+// left behind).
 // The returned function removes the pass's snapshot, and says if it could
 // not: a copy of every Cursor chat left in the temporary directory is worth
 // a failed pass (the next sweep removes it once it is stale).
 func openCursorPass(registrations []archive.SessionRegistration, opts *Options) func() error {
 	for _, reg := range registrations {
 		if reg.SourceKind == archive.SourceKindCursorSQLite {
-			cursorstore.RemoveStaleSnapshots()
 			reader := cursorstore.NewReader(opts.cursorDatabase())
 			opts.cursorPass = reader
 			return func() error {
