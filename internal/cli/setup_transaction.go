@@ -338,28 +338,28 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if job == "unknown" {
 		return fmt.Errorf("cannot determine the background job's state; restore access to launchctl and retry")
 	}
-	if job == jobAnotherInstallation {
+	if job == setupjournal.JobAnotherInstallation {
 		return fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)
 	}
 	// The prototype's job is the account's, retired only by the account's
 	// default installation: a test installation must not change it.
-	var legacy *legacyJob
+	var legacy *setupjournal.LegacyJob
 	if env.installation(home, userHome).isDefault() {
-		if legacy, err = planLegacyMigration(userHome, env); err != nil {
+		if legacy, err = setupjournal.PlanLegacyMigration(userHome, env.launchd()); err != nil {
 			return err
 		}
 	}
-	relabeled, err := planRelabel(env.installation(home, userHome).previousCollectorPlists(), env)
+	relabeled, err := setupjournal.PlanRelabel(env.installation(home, userHome).previousCollectorPlists(), env.launchd())
 	if err != nil {
 		return err
 	}
-	var firstRelabeled *legacyJob
-	var moreRelabeled []*legacyJob
+	var firstRelabeled *setupjournal.LegacyJob
+	var moreRelabeled []*setupjournal.LegacyJob
 	if len(relabeled) > 0 {
 		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
 	}
-	journal := setupJournal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
-	return commitSetup(home, journal, env)
+	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: plistPath, WasLoaded: setupjournal.JobActive(job)}
+	return setupjournal.Commit(home, journal, env.launchd())
 }
 
 // otherInstallationError is a setup refused because another installation's
@@ -384,7 +384,7 @@ func recoveryPending(home string) string {
 // abandonRecovery discards an interrupted setup's record without touching
 // any file it lists: hook files, the LaunchAgent, and settings all stay as
 // they are now, which is the way out when recovery refuses to overwrite a
-// file edited since (see restoreSetup). Setup afterwards reviews and
+// file edited since (see setupjournal.Restore). Setup afterwards reviews and
 // reinstalls from there.
 func abandonRecovery(out io.Writer, env Env) error {
 	home, err := env.home()
@@ -406,7 +406,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 		return err
 	}
 	defer releaseHooks()
-	var journal setupJournal
+	var journal setupjournal.Journal
 	err = local.Read(setupjournal.JournalPath(home), &journal)
 	if os.IsNotExist(err) {
 		terminal.Println(out, "No interrupted setup to discard. Nothing was changed.")
@@ -439,7 +439,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 }
 
 func recoverSetup(home string, env Env) error {
-	return recoverJournal(home, env, func() (func(), error) { return lockCollector(home, "setup", env.now()) })
+	return setupjournal.Recover(home, env.launchd(), func() (func(), error) { return lockCollector(home, "setup", env.now()) })
 }
 
 func withoutBucketPrivacy(cfg config.Config) config.Config {

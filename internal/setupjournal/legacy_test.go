@@ -1,16 +1,13 @@
 package setupjournal
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 const legacyPlist = `<?xml version="1.0"?><plist><dict><key>Label</key><string>com.agent-skills.skill-runs-upload</string><key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>/private/runtime/skill_runs.py</string><string>--home</string><string>/private/records</string><string>upload</string></array></dict></plist>`
@@ -18,7 +15,7 @@ const legacyPlist = `<?xml version="1.0"?><plist><dict><key>Label</key><string>c
 func TestLegacyMigrationRejectsUnownedJob(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	path := filepath.Join(home, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
+	path := filepath.Join(home, "Library", "LaunchAgents", LegacyLaunchLabel+".plist")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +23,7 @@ func TestLegacyMigrationRejectsUnownedJob(t *testing.T) {
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := planLegacyMigration(home, Env{JobState: func(string) string { return "loaded" }}); err == nil {
+	if _, err := PlanLegacyMigration(home, fakeLaunchd{state: func(string) string { return "loaded" }}); err == nil {
 		t.Fatal("accepted unowned job")
 	}
 	after, _ := os.ReadFile(path)
@@ -40,10 +37,9 @@ func TestLegacyMigrationRejectsUnownedJob(t *testing.T) {
 // TestFirstSetupRefusesAnUnknownJobState.)
 func TestLegacyMigrationWithoutALegacyJobNeedsNoLaunchctl(t *testing.T) {
 	t.Parallel()
-	home, userHome := t.TempDir(), t.TempDir()
-	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	env.JobState = func(string) string { return "unknown" }
-	if job, err := planLegacyMigration(userHome, env); err != nil || job != nil {
+	userHome := t.TempDir()
+	launchd := fakeLaunchd{state: func(string) string { return "unknown" }}
+	if job, err := PlanLegacyMigration(userHome, launchd); err != nil || job != nil {
 		t.Fatalf("no legacy plist must not need launchctl: job=%+v err=%v", job, err)
 	}
 }
@@ -55,19 +51,20 @@ func TestLegacyMigrationWithoutALegacyJobNeedsNoLaunchctl(t *testing.T) {
 func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
-	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	legacyPath := filepath.Join(userHome, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
-	plistPath := env.installation(home, userHome).collectorPlist()
+	legacyPath := filepath.Join(userHome, "Library", "LaunchAgents", LegacyLaunchLabel+".plist")
+	plistPath := filepath.Join(userHome, "Library", "LaunchAgents", "com.agent-archive.collector.plist")
 	states := map[string]string{}
 	var loaded []string
-	env.JobState = func(p string) string {
-		if s := states[p]; s != "" {
-			return s
-		}
-		return "missing"
+	launchd := fakeLaunchd{
+		state: func(p string) string {
+			if s := states[p]; s != "" {
+				return s
+			}
+			return "missing"
+		},
+		load:   func(p string) error { states[p] = "loaded"; loaded = append(loaded, p); return nil },
+		unload: func(p string) error { states[p] = "missing"; return nil },
 	}
-	env.LoadLaunchAgent = func(p string) error { states[p] = "loaded"; loaded = append(loaded, p); return nil }
-	env.UnloadLaunchAgent = func(p string) error { states[p] = "missing"; return nil }
 	// Simulated crash state: legacy plist already removed and unloaded, the
 	// new plist and config written but the collector never started.
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0700); err != nil {
@@ -80,15 +77,15 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("new config"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	journal := setupJournal{
-		Legacy:  &legacyJob{Change: hooks.Change{Path: legacyPath, Before: []byte(legacyPlist), Existed: true, Mode: 0600}, WasLoaded: true},
+	journal := Journal{
+		Legacy:  &LegacyJob{Change: hooks.Change{Path: legacyPath, Before: []byte(legacyPlist), Existed: true, Mode: 0600}, WasLoaded: true},
 		Changes: []hooks.Change{{Path: plistPath, After: []byte("new plist"), Mode: 0600}, {Path: configPath, After: []byte("new config"), Mode: 0600}},
 		Plist:   plistPath,
 	}
-	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
+	if err := local.Write(JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverSetup(home, env); err != nil {
+	if err := Recover(home, launchd, noLock); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(legacyPath); err != nil || string(data) != legacyPlist {
@@ -102,11 +99,11 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 			t.Fatalf("%s left behind: %v", p, err)
 		}
 	}
-	if setupjournal.TransactionPending(home) {
+	if TransactionPending(home) {
 		t.Fatal("journal not removed")
 	}
 	// Recovery is idempotent once the journal is gone.
-	if err := recoverSetup(home, env); err != nil {
+	if err := Recover(home, launchd, noLock); err != nil {
 		t.Fatal(err)
 	}
 }

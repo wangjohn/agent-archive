@@ -109,6 +109,12 @@ linters:
               desc: return errors; cli renders them
             - pkg: golang.org/x/term
               desc: prompts belong to cli
+            - pkg: os/exec
+              desc: launchd is driven only through the Launchd the caller passes
+            - pkg: os/signal
+              desc: cli owns process signals
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: the journal never opens credentials
     revive:
       rules:
         - name: exported

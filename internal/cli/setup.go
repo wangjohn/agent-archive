@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -116,9 +117,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	if err := setup(stdin, stdout, stderr, env); err != nil {
 		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
-		var blocked *recoveryBlockedError
+		var blocked *setupjournal.RecoveryBlockedError
 		if errors.As(err, &blocked) {
-			terminal.Println(stderr, blocked.guidance())
+			terminal.Println(stderr, blocked.Guidance())
 			return 1
 		}
 		var other *otherInstallationError
