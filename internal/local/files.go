@@ -50,7 +50,7 @@ func resolveHome(create bool) (string, error) {
 	}
 	for p := path; ; p = filepath.Dir(p) {
 		if _, e = os.Stat(filepath.Join(p, ".git")); e == nil {
-			return "", errors.New("archive storage must be outside Git checkouts")
+			return "", fmt.Errorf("the archive's data directory %s would be inside the Git checkout %s, and archive storage must stay outside Git checkouts; set AGENT_ARCHIVE_HOME to a directory outside %s", path, p, p)
 		}
 		if filepath.Dir(p) == p {
 			break

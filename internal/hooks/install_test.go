@@ -105,7 +105,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removal, err := PlanRemoval(testFiles(home), []string{"claude", "codex", "cursor"})
+	removal, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude", "codex", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,11 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{claudePath, filepath.Join(home, ".codex", "hooks.json"), cursorPath} {
+	// Setup created the Codex file, so removing our hooks removes it.
+	if _, err := os.Stat(filepath.Join(home, ".codex", "hooks.json")); !os.IsNotExist(err) {
+		t.Fatalf("the hook file setup created is still there: %v", err)
+	}
+	for _, path := range []string{claudePath, cursorPath} {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)
@@ -138,7 +142,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 	}
 
 	// A second removal finds nothing of ours and plans no rewrite at all.
-	again, err := PlanRemoval(testFiles(home), []string{"claude", "codex", "cursor"})
+	again, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude", "codex", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +157,7 @@ func TestPlanRemovalSkipsMissingAndUnrelatedFiles(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Dir(path), 0700))
 	unrelated := []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
 	must(t, os.WriteFile(path, unrelated, 0600))
-	plan, err := PlanRemoval(testFiles(home), []string{"codex", "claude", "cursor"})
+	plan, err := PlanRemoval(testFiles(home), Hook{}, []string{"codex", "claude", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +250,7 @@ func TestHookFilesAreWrittenThroughSymlinks(t *testing.T) {
 	if err := Apply(plan); err != nil {
 		t.Fatal(err)
 	}
-	removal, err := PlanRemoval(testFiles(home), []string{"claude"})
+	removal, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude"})
 	if err != nil || len(removal) != 1 {
 		t.Fatalf("removal %d changes, err %v", len(removal), err)
 	}

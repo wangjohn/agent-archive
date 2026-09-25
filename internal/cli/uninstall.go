@@ -12,10 +12,12 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -68,7 +70,8 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	// Fail before prompting when the settings are unreadable; they are
 	// loaded again below, once the collector lock is held too.
-	if _, _, err = config.Load(home); err != nil {
+	previewCfg, previewFound, err := config.Load(home)
+	if err != nil {
 		return err
 	}
 	terminal.Println(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
@@ -93,9 +96,9 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	previewPending := 0
 	if purge {
-		pending, e := pendingSessions(home, config.Config{})
-		if e != nil {
-			return e
+		pending, unreadable := unpublishedSessions(home, previewCfg, previewFound)
+		for _, problem := range unreadable {
+			terminal.Println(out, strings.Replace(problem, "status left it out", "it is deleted with the rest", 1))
 		}
 		previewPending = pending
 		terminal.Printf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
@@ -105,7 +108,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	unlock, err := lockCollector(home, "uninstall", env.now())
 	if err != nil {
-		return fmt.Errorf("another operation is finishing; retry uninstall: %w", err)
+		return fmt.Errorf("%s holds the collector lock; retry uninstall when it finishes: %w", lockHolder(home), err)
 	}
 	unlock = releaseOnce(unlock)
 	defer unlock()
@@ -121,17 +124,19 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		return err
 	}
 	if purge {
-		pending, e := pendingSessions(home, config.Config{})
-		if e != nil {
-			return e
-		}
+		pending, _ := unpublishedSessions(home, cfg, found)
 		if pending > previewPending {
 			return fmt.Errorf("new pending evidence appeared while confirming; rerun uninstall to review it")
 		}
 	}
-	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), legacyHookFiles(userHome), installedApps(cfg, found))
+	in := env.installation(home, userHome)
+	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), legacyHookFiles(userHome), in.owner(), installedApps(cfg, found))
 	if err != nil {
 		return err
+	}
+	// Another installation's hooks stay; say so, so nobody expects them gone.
+	for _, problem := range in.otherInstallationProblems(env.installedHookFiles(userHome, cfg), allHarnesses) {
+		skipped = append(skipped, "Kept: "+problem)
 	}
 	// The collector for this data directory, and one an earlier release
 	// installed for it under the default label. Never another directory's.
@@ -195,14 +200,20 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 				refs[old.R2CredentialRef] = true
 			}
 		}
-		var draft setupDraft
-		if e := local.Read(filepath.Join(home, "setup-draft.json"), &draft); e == nil && draft.CredentialRef != "" {
+		draft, _, problem, e := readDraft(home)
+		if e != nil {
+			return fmt.Errorf("read the saved setup %s: %w", draftPath(home), e)
+		}
+		if problem != "" {
+			// It is deleted with the rest; only the Keychain items it may
+			// name are out of reach.
+			terminal.Printf(out, "The saved setup in %s cannot be read (%s), so a Keychain item it staged, if any, is not deleted. Look for items of service %q in Keychain Access.\n", draftPath(home), problem, credentials.KeychainService)
+		}
+		if draft.CredentialRef != "" {
 			refs[draft.CredentialRef] = true
-			for _, ref := range draft.StagedRefs {
-				refs[ref] = true
-			}
-		} else if e != nil && !os.IsNotExist(e) {
-			return e
+		}
+		for _, ref := range draft.StagedRefs {
+			refs[ref] = true
 		}
 		// A Keychain that cannot delete an item must not strand the rest of
 		// the purge: hooks and the LaunchAgent are already gone, so local
@@ -257,6 +268,43 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	return nil
 }
 
+// unpublishedSessions counts the sessions whose evidence a purge would
+// delete before it was uploaded: what status reports as pending, under the
+// configuration uninstall loaded. Without a configuration nothing says which
+// sessions would have been uploaded, so every one with work outstanding
+// counts. (A zero configuration would admit none: every registration records
+// a destination it does not have.)
+//
+// A registration or request that cannot be read does not stop the purge,
+// which deletes it anyway: it is named in unreadable, and its session is not
+// counted.
+func unpublishedSessions(home string, cfg config.Config, found bool) (count int, unreadable []string) {
+	accept := cfg.AcceptSession
+	if !found {
+		accept = func(archive.SessionRegistration) bool { return true }
+	}
+	store := state.OpenReadOnly(home)
+	regs, reqs, unreadable := statusState(home, store)
+	requested := map[string]bool{}
+	for _, r := range reqs {
+		requested[r.ArchiveSessionID] = true
+	}
+	for _, reg := range regs {
+		if !accept(reg) {
+			continue
+		}
+		pending, _, err := sessionPending(store, reg, requested[reg.ArchiveSessionID])
+		if err != nil {
+			unreadable = append(unreadable, fmt.Sprintf("Local state of session %s could not be read (%v).", reg.ArchiveSessionID, err))
+			continue
+		}
+		if pending {
+			count++
+		}
+	}
+	return count, unreadable
+}
+
 // installedApps is the apps whose hooks setup installed, per the committed
 // configuration. An empty list in a configuration means every app (see
 // config.Config.Harnesses); with no configuration at all, none is known.
@@ -267,20 +315,21 @@ func installedApps(cfg config.Config, found bool) []string {
 	return cfg.Harnesses
 }
 
-// planUninstallHooks plans removing our handlers from every app's hook file
-// (files), and from its legacy path too when that differs, where an earlier
-// release may have left them. An installed app's file must be readable, or
+// planUninstallHooks plans removing owner's handlers (see hooks.Hook) from
+// every app's hook file (files), and from its legacy path too when that
+// differs, where an earlier release may have left them. Another
+// installation's handlers are never removed. An installed app's file must be readable, or
 // its hooks would stay behind. Any other file is only checked for
 // leftovers, so one that cannot be parsed (the user's own, half-edited
 // ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
 // than blocking the collector's removal.
-func planUninstallHooks(files, legacy hooks.Files, installed []string) (changes []hooks.Change, skipped []string, err error) {
+func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed []string) (changes []hooks.Change, skipped []string, err error) {
 	for _, app := range allHarnesses {
 		for i, set := range []hooks.Files{files, legacy} {
 			if i == 1 && legacy[app] == files[app] {
 				continue
 			}
-			change, found, err := hooks.PlanRemovalOf(set, app)
+			change, found, err := hooks.PlanRemovalOf(set, owner, app)
 			if err != nil {
 				if containsString(installed, app) && i == 0 {
 					return nil, nil, err
@@ -402,7 +451,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" {
 			continue
 		}
-		if !known[name] && !strings.HasPrefix(name, ".pending-") {
+		if !known[name] && !strings.HasPrefix(name, ".pending-") && !isMovedAside(name, known) {
 			leftover = append(leftover, name)
 			continue
 		}

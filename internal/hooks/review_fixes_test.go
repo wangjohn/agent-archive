@@ -68,7 +68,7 @@ func TestCRLFFileKeepsItsLineEndings(t *testing.T) {
 	if strings.Count(string(merged), "\n") != strings.Count(string(merged), "\r\n") {
 		t.Fatalf("bare LF in a CRLF file:\n%q", merged)
 	}
-	removed, _, err := Remove(merged, "claude")
+	removed, _, err := Remove(merged, "claude", Hook{})
 	if err != nil || string(removed) != original {
 		t.Fatalf("round trip: %v\n%q", err, removed)
 	}

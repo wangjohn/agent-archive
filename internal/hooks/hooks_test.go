@@ -152,7 +152,7 @@ func TestMergeAndRemoveKeepTheUsersFile(t *testing.T) {
 			if err := json.Unmarshal(merged, &parsed); err != nil {
 				t.Fatalf("merge produced invalid JSON: %v\n%s", err, merged)
 			}
-			removed, changed, err := Remove(merged, "claude")
+			removed, changed, err := Remove(merged, "claude", Hook{})
 			if err != nil || !changed {
 				t.Fatalf("remove: changed=%v err=%v", changed, err)
 			}

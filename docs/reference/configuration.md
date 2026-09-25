@@ -36,7 +36,7 @@ consistent with each other.
 
 | Variable | Effect |
 | --- | --- |
-| `AGENT_ARCHIVE_HOME` | Data directory instead of `~/.local/share/agent-archive`. It must not be inside a Git checkout. A non-default directory gets its own launchd label (`com.agent-archive.collector.<hash>`), and setup writes it into the hook commands, since apps run hooks without your shell's environment. Use it for a second or test installation. |
+| `AGENT_ARCHIVE_HOME` | Data directory instead of `~/.local/share/agent-archive`. It must not be inside a Git checkout. A non-default directory gets its own launchd label (`com.agent-archive.collector.<hash>`), and setup writes it into the hook commands, since apps run hooks without your shell's environment. Each installation changes only the hooks that carry its own directory; setup refuses to install beside another installation's hooks, so give a second or test installation its own `HOME` too (or `CLAUDE_CONFIG_DIR` and `CODEX_HOME`). |
 | `CLAUDE_CONFIG_DIR` | Claude Code's configuration directory, where setup installs hooks (`settings.json`). Read when setup runs; recorded in `hook_files`. |
 | `CODEX_HOME` | Codex's home, where setup installs hooks (`hooks.json`). Read when setup runs; recorded in `hook_files`. |
 | `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` | Where the AWS SDK finds profiles, as for the AWS CLI. |

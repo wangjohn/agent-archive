@@ -46,7 +46,7 @@ func runFeedbackCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Printf(stderr, "agent-archive: feedback: %v\n", err)
 		return 1
 	}
-	home, err := env.home()
+	home, err := env.readHome()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: feedback: resolve home: %v\n", err)
 		return 1
