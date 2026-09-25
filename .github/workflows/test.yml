@@ -59,8 +59,9 @@ jobs:
               echo "::endgroup::"
             done
           done
-          # Every package's targets: internal/archive has eight, internal/hooks two.
-          test "$found" -ge 10
+          # Guard against a listing that silently finds nothing: internal/archive
+          # has nine targets and internal/hooks two.
+          test "$found" -ge 11
 
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is

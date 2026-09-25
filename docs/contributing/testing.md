@@ -159,6 +159,7 @@ Redaction, parsing and hook-file editing have fuzz targets
 | `FuzzCursorText` | any Cursor text transcript | refiltering is a no-op; no hidden section is retained; the handoff finds no more prompts than the filter kept |
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
 | `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |
+| `FuzzLineMatchesCoverWholeString` | any text | running each credential pattern line by line, only on lines with its needles, finds everything matching the whole string finds |
 
 In `internal/hooks`:
 
