@@ -19,34 +19,57 @@ works for an installed application version.
   lifecycle hooks. Agent Archive reads the macOS bundle version rather than
   substituting the separately versioned Agent CLI: <https://cursor.com/docs/hooks>.
 
-Cursor fresh-start capture is `documented`, and on the desktop app 3.21.13 its
-shape was observed from Cursor's Hooks output. A new Agent chat fires no
-`sessionStart`: its first hook is `beforeSubmitPrompt`, with `transcript_path`
-null, followed by `afterAgentResponse` and `stop`, which name
-`~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl`. A resumed
-chat's first `beforeSubmitPrompt` already names its existing, non-empty
-transcript, and `sessionEnd` can fire mid-turn. Every payload carries
-`conversation_id`, `session_id` (the same value), `cursor_version`,
-`workspace_roots`, `composer_mode`, `model`, `model_id`, and `model_params`;
-hook runs took 10–24 ms.
+## Tested app versions
 
-Agent Archive therefore registers a never-seen Cursor conversation at its first
-`beforeSubmitPrompt` (and at `sessionStart`, should a version fire it) when
-`transcript_path` is null, absent, or names a missing or empty file; a
-transcript that already has bytes is a resume and is declined with a capture
-diagnostic. The transcript path is recorded later, from `beforeSubmitPrompt`,
-`afterAgentResponse`, or `stop`, only when it is absolute and named
-`<conversation_id>.jsonl`, and it is never replaced once set; until then, and
-while the named file still holds no bytes, the collector treats the chat as
-waiting, not failed. `cursor_version` is not evidence either way. For a Codex
-or Claude `SessionStart` with no `source`, an empty or absent transcript file
-is still the fallback proof, and a payload that names no transcript still
-proves nothing. Not observed on 3.21.13: `sessionStart` and the subagent
-events, and whether the transcript already holds the turn when
-`afterAgentResponse` names it (a late write is read on the next pass). The
-name rule relies on `session_id` equalling `conversation_id`, as it did.
-Support stays `unverified` until a session from an observed version is
-published and read back.
+| App | Version | How it was checked |
+| --- | --- | --- |
+| Claude Code | 2.1.x | Adapter built and checked against transcripts from this version. |
+| Codex CLI | 0.155 | Adapter built and checked against transcripts from this version. |
+| Cursor (desktop) | 3.21.13 | Hook payloads observed live; on 2026-09-23 (main `2a7a8fb`) a new chat registered at its first prompt, was published and read back, and `status` reported `verified_by_capture` for 3.21.13. A resumed chat was declined. |
+
+Support is reported per Mac: `status --json` says `verified_by_capture` for
+an installed version only once a session from that version has been
+published and read back on that Mac, and `unverified` until then. A version
+not in this table isn't assumed to work or to fail.
+
+## Cursor 3.21.13 observations
+
+This is the one place these observations are recorded; the
+[eligibility rules](session-eligibility.md#cursor) that depend on them link
+here. Cursor fresh-start capture is `documented`, and on the desktop app
+3.21.13 its shape was observed from Cursor's Hooks output:
+
+- A new Agent chat fires no `sessionStart`: its first hook is
+  `beforeSubmitPrompt`, with `transcript_path` null, followed by
+  `afterAgentResponse` and `stop`, which name
+  `~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl`.
+- A resumed chat's first `beforeSubmitPrompt` already names its existing,
+  non-empty transcript, and `sessionEnd` can fire mid-turn.
+- Every payload carries `conversation_id`, `session_id` (the same value),
+  `cursor_version`, `workspace_roots`, `composer_mode`, `model`,
+  `model_id`, and `model_params`. Hook runs took 10–24 ms.
+- Live read-back: on 2026-09-23 a new 3.21.13 chat was published a minute
+  after its first prompt, its counts matched the transcript, read-back
+  verified it, and `status` reported `verified_by_capture` for 3.21.13.
+
+Not observed on 3.21.13, and kept fail-closed:
+
+- `sessionStart`. The rule for it is kept for a version that fires one.
+- `subagentStart` and `subagentStop`.
+- A version where `session_id` and `conversation_id` differ. The transcript
+  path is adopted only when its file name is the registered `session_id`,
+  so such a version would never have its transcript adopted, and the chat
+  would wait.
+- Whether the transcript already holds the turn's records when
+  `afterAgentResponse` names it. The collector re-reads on every pass, so a
+  late write is picked up by the next one.
+
+`cursor_version` is not evidence either way. For a Codex or Claude
+`SessionStart` with no `source`, an empty or absent transcript file is still
+the fallback proof, and a payload that names no transcript still proves
+nothing.
+
+## Capability states and subagents
 
 `documented` means the vendor exposes the named evidence. `unavailable` means
 the payload is insufficient for the archive claim. Installed-version support

@@ -11,9 +11,9 @@ consistent with each other.
 | Field | Meaning |
 | --- | --- |
 | `schema_version` | Shape of this file. Currently `1`. |
-| `machine_id` | This Mac's random identity, written into every session it captures. Kept across reconfiguration. |
+| `machine_id` | This Mac's random identity, written into every session it captures. Kept across reconfiguration, and copied with the data directory by Migration Assistant or a backup restore; see [multiple Macs](../guides/multiple-macs.md#migration-assistant-and-time-machine). |
 | `storage.Provider` | `s3` or `r2`. |
-| `storage.Bucket`, `storage.Prefix` | The bucket and the folder inside it. Every object key is under the prefix; see [bucket layout](bucket-layout.md). |
+| `storage.Bucket`, `storage.Prefix` | The bucket and the folder inside it (`agent-archive/` unless changed in setup). Every object key is under the prefix; see [bucket layout](bucket-layout.md). |
 | `storage.Region` | S3 region (from the AWS profile when it has one). |
 | `storage.AWSProfile` | S3 only: the named AWS profile credentials are loaded from. No other credential source is used. |
 | `storage.R2AccountID`, `storage.R2Endpoint` | R2 only: the account or S3-compatible endpoint. |
@@ -25,7 +25,7 @@ consistent with each other.
 | `declined_harnesses` | Apps you declined when setup offered them; setup doesn't offer them again. |
 | `hook_files` | Per app, the hook file setup installed into, resolved from `CLAUDE_CONFIG_DIR` and `CODEX_HOME` at setup time. |
 | `installed_executable` | The `agent-archive` path written into the hooks and the LaunchAgent. |
-| `retention_days` | Whole-session retention in days (90 by default). |
+| `retention_days` | Whole-session retention in days: 90 by default, 1 to 36,500. There is no "keep forever". |
 | `require_skill_use` | When `true`, only sessions that used a skill are captured. Default `false`: all sessions. |
 | `paused` | Set by `pause`, cleared by `resume`. |
 | `destination_since`, `previous_destinations` | When the current storage destination was configured, and the ones it replaced. Sessions stay with the destination they were published to. |

@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -30,10 +31,49 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// Version is the released version string. main overrides it via
-// -ldflags "-X .../cli.Version=..." at build time (see the Distribution PR);
-// it stays "dev" for a local build.
+// Version is the released version string. scripts/build-release.sh sets it
+// with -ldflags "-X .../cli.Version=..."; it stays "dev" for a local build,
+// which --version then reports with its commit (see versionString).
 var Version = "dev"
+
+// versionString is what --version prints: Version, or for a "dev" build the
+// commit it was built from, so a bug report from a source build says which
+// code it ran.
+func versionString() string {
+	info, _ := debug.ReadBuildInfo()
+	return describeVersion(Version, info)
+}
+
+// describeVersion returns version unchanged unless it is "dev" and info
+// records a VCS revision; then it is "dev-<first 12 hex of the commit>", with
+// "-dirty" when the working tree had uncommitted changes.
+func describeVersion(version string, info *debug.BuildInfo) string {
+	if version != "dev" || info == nil {
+		return version
+	}
+	var revision string
+	var modified bool
+	for _, setting := range info.Settings {
+		//lint:ignore LV1001 build setting keys are arbitrary text; only these two matter
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if revision == "" {
+		return version
+	}
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	version += "-" + revision
+	if modified {
+		version += "-dirty"
+	}
+	return version
+}
 
 // Env carries the process-level dependencies a command needs, so tests can
 // substitute a temporary home directory, a fixed clock, and an in-memory
@@ -302,7 +342,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		terminal.Print(stdout, usage)
 		return 0
 	case "-v", "--version", "version":
-		terminal.Println(stdout, Version)
+		terminal.Println(stdout, versionString())
 		return 0
 	case "_hook":
 		return runHookCommand(args[1:], stdin, stderr, env)

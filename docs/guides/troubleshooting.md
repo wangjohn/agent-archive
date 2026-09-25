@@ -124,6 +124,15 @@ behalf.
 
 ## Upgrading from an earlier build
 
+These notes are for builds from before the first release; a new install
+can skip them.
+
+- A source bundle written by an early build as a single JSON document
+  (schema 1) is not read: `show --normalized` and `handoff` report
+  "unsupported source schema version 1" for it.
+- Setup retires the old `com.agent-skills.skill-runs-upload` job of the
+  prototype this tool grew out of, only when its label and command match
+  that prototype, and keeps the prototype's private records.
 - With `AGENT_ARCHIVE_HOME` set to a non-default directory, hooks carry it in
   their command and the collector gets its own launchd label. Until you rerun
   `agent-archive setup`, `status` reports those hooks as `missing or

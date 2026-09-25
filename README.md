@@ -22,6 +22,13 @@ no account, hosted service, or telemetry.
   their arguments and results (commands, file paths, edit bodies), working
   directories (which usually contain your username), Git branch names,
   models, and token counts. Only projects you include are captured.
+- **Your installed skills, with every session:** the text (up to 16 KB
+  each, filtered) of each `SKILL.md` in the app's user-level skill folders
+  (`~/.claude/skills`, `~/.agents/skills`, `~/.codex/skills`,
+  `~/.cursor/skills`) as well as the project's own, whatever the project.
+  There is no switch to turn this off.
+- **Identifiers:** a random machine ID made at setup, a hash of the project
+  path, the app's version, and its session IDs.
 - **Kept out:** hidden reasoning, system and injected instructions, images
   and other binary content, and every field the filter doesn't know.
 - **Redacted, best effort:** recognizable credentials (`DB_PASSWORD=…`,
@@ -63,6 +70,8 @@ sudo mv ./dist/agent-archive-darwin-$(uname -m | sed 's/x86_64/amd64/') /usr/loc
 # or, without sudo, any directory on your PATH (with Homebrew on Apple Silicon: /opt/homebrew/bin)
 
 agent-archive setup          # choose apps and projects, connect a private bucket
+# Approve the new hooks in each app if it asks (in Codex: /hooks). Until you
+# do, the app doesn't run them and nothing is captured.
 agent-archive status         # check capture, then start a new agent session
 agent-archive backfill       # optional: import sessions already on this Mac
 ```
@@ -71,31 +80,47 @@ You need an existing private R2 or S3 bucket. See
 [install](docs/getting-started/install.md) and
 [setup](docs/getting-started/setup.md).
 
-A `status` run, from a sandboxed test installation:
+What `status` looks like once a first session is published and verified
+(an example: the layout is the real one, the values are made up):
 
 ```text
-Agent Archive — Needs attention
+Agent Archive — Ready
 
-Storage:       s3 / test-bucket / agent-archive/
-Access:        confirmed 2026-01-02T00:00:00Z by the collector's last successful storage access
-Bucket privacy not verified.
-  Checked: never; inspection_unavailable.
+Storage:       s3 / my-archive-bucket / agent-archive/
+Access:        confirmed 2026-09-21T12:00:00Z by the collector's last successful storage access
+Bucket privacy: native public access blocked at the last check.
+  Checked: 2026-09-21T11:58:00Z; all_bucket_public_access_blocks_enabled.
   Review: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-Authentication: verified (checked 2026-01-02T00:00:00Z; manual_sync)
+Authentication: verified (checked 2026-09-21T12:00:00Z; background_collector)
 Background:    loaded
 Projects:      1 included
 Pending:       0 session(s)
-Last scan:     2026-01-02T00:00:00Z
-Last publish:  2026-01-02T00:00:00Z
+Last scan:     2026-09-21T12:00:00Z
+Last publish:  2026-09-21T11:57:00Z
+Codex: published; source verified (1 session(s)); hooks installed
+  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.
+  Installed version: 0.155.0; support verified_by_capture.
+  Project /Users/you/code/my-project: verified_at_recorded_time.
+  Read-back verified: 2026-09-21T11:58:00Z; evidence is for that publication.
+
+Next: Keep working. Run agent-archive list to inspect archived sessions.
 ```
 
-and `list`:
+Anything but `Ready` comes with a `Next:` line saying what to do;
+[troubleshooting](docs/guides/troubleshooting.md#reading-status) explains
+each line. And `list`:
 
 ```text
 SESSION                           HARNESS  CAPTURED              ORIGIN  PARSER   MODELS    SKILLS USED
-d0a8124edb786e5686a068deca82e04f  codex    2026-01-02T00:00:00Z  hook    partial  gpt-test  -
+d0a8124edb786e5686a068deca82e04f  codex    2026-09-21T11:57:00Z  hook    partial  gpt-5     -
 1 session(s).
 ```
+
+`HARNESS` is the app; `ORIGIN` is `hook` for a session captured as it ran
+and `import` for one `backfill` brought in; `PARSER` says how far the
+derived counts can be trusted (`complete`, `partial`, or `failed`). The
+[glossary](docs/reference/glossary.md) defines these and the other terms
+agent-archive uses.
 
 ## Commands
 
@@ -120,17 +145,19 @@ something failed, and 2 for a usage error.
   capture is macOS-only (launchd, Keychain).
 - Storage: Cloudflare R2, Amazon S3.
 - Apps: Claude Code, Codex, and Cursor. Versions the adapters were built
-  and checked against: Claude Code 2.1.x, Codex CLI 0.155, Cursor 3.21.13.
-  Other versions are
-  reported as `unverified` rather than assumed to work; see
-  [capture capabilities](docs/reference/capture-capabilities.md).
+  and checked against: Claude Code 2.1.x, Codex CLI 0.155, Cursor 3.21.13
+  ([tested versions](docs/reference/capture-capabilities.md#tested-app-versions)).
+  Other versions are reported as `unverified` rather than assumed to work.
+- Not supported: Linux and Windows. Linux builds exist so the tests run
+  in CI, but capture depends on launchd and the Keychain.
 
 ## Documentation
 
 The [documentation index](docs/README.md) lists every guide and reference
 page. Start with [install](docs/getting-started/install.md),
 [privacy](docs/security/privacy.md), and
-[troubleshooting](docs/guides/troubleshooting.md).
+[troubleshooting](docs/guides/troubleshooting.md); the
+[glossary](docs/reference/glossary.md) defines the terms.
 
 ## Contributing and security
 
