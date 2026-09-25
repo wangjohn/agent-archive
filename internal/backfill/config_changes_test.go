@@ -194,6 +194,14 @@ func TestUndoRestoresRetentionAndCountsWhatItDeletes(t *testing.T) {
 		t.Fatalf("plan:\n%s", out.String())
 	}
 
+	// Applied under the locks, it restores only while retention is still
+	// what the import set.
+	changed := f.cfg
+	changed.RetentionDays = 200
+	if c := plan.ApplyToConfig(&changed); c.RetentionRestored || changed.RetentionDays != 200 {
+		t.Fatalf("restored over a retention changed since: %+v, %d", c, changed.RetentionDays)
+	}
+
 	// A --project undo leaves retention alone.
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{b}, b, "/work/p"); err != nil || plan.RestoreRetention != nil {
 		t.Fatalf("--project: %+v %v", plan.RestoreRetention, err)
