@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,21 +80,4 @@ func TestVerifyAccessCleanupFailureReportsFullObjectKey(t *testing.T) {
 	if strings.Contains(err.Error(), "relative to the configured prefix") {
 		t.Fatalf("S3 store should report the full key without a note: %v", err)
 	}
-}
-
-func TestVerifyAccessWithoutObjectKeyerNotesRelativeKey(t *testing.T) {
-	store := failingDeleteStore{NewMemoryStore()}
-	err := VerifyAccess(context.Background(), store)
-	if err == nil {
-		t.Fatal("expected cleanup failure")
-	}
-	if !strings.Contains(err.Error(), `.setup-test/`) || !strings.Contains(err.Error(), "relative to the configured prefix") {
-		t.Fatalf("cleanup error should name the relative key and note the prefix: %v", err)
-	}
-}
-
-type failingDeleteStore struct{ *MemoryStore }
-
-func (failingDeleteStore) Delete(context.Context, string) error {
-	return errors.New("delete denied")
 }

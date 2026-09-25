@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -10,25 +12,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 )
-
-func TestVerifyAccessUsesUniqueObjectAndCleansUp(t *testing.T) {
-	store := NewMemoryStore()
-	if err := VerifyAccess(context.Background(), store); err != nil {
-		t.Fatal(err)
-	}
-	objects, err := store.List(context.Background(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(objects) != 0 {
-		t.Fatalf("setup object was not removed: %#v", objects)
-	}
-}
 
 func TestPrefixRejectsEscapes(t *testing.T) {
 	for _, test := range []struct {
@@ -40,26 +27,6 @@ func TestPrefixRejectsEscapes(t *testing.T) {
 		if _, err := Prefix(test.prefix, test.key); err == nil {
 			t.Errorf("Prefix(%q, %q) accepted an unsafe path", test.prefix, test.key)
 		}
-	}
-}
-
-func TestSourceFirstPublicationReusesVerifiedSource(t *testing.T) {
-	store := NewMemoryStore()
-	source := []byte(`{"schema_version":1}`)
-	metadata := []byte(`{"source":"source.abc"}`)
-	key := "sessions/codex/id/source." + SHA256Hex(source) + ".jsonl.gz"
-	if err := PutSourceThenMetadata(context.Background(), store, key, "sessions/codex/id/metadata.json", source, metadata, RetryPolicy{MaxAttempts: 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Put(context.Background(), "sessions/codex/id/metadata.json", []byte("old")); err != nil {
-		t.Fatal(err)
-	}
-	if err := PutSourceThenMetadata(context.Background(), store, key, "sessions/codex/id/metadata.json", source, metadata, RetryPolicy{MaxAttempts: 1}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := store.Get(context.Background(), "sessions/codex/id/metadata.json")
-	if err != nil || string(got) != string(metadata) {
-		t.Fatalf("metadata = %q, err = %v", got, err)
 	}
 }
 
@@ -94,55 +61,6 @@ func TestS3StoreFakeHTTPRoundTrip(t *testing.T) {
 	}
 	if _, err := store.Get(context.Background(), "sessions/id/source"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing Get error = %v", err)
-	}
-}
-
-// MemoryStore stands in for S3 and R2 in reader tests, so its ETag must
-// behave like theirs for a single-part object: the bare MD5 of the bytes.
-func TestMemoryStoreListsAnMD5ETag(t *testing.T) {
-	store := NewMemoryStore()
-	ctx := context.Background()
-	if err := store.Put(ctx, "sessions/a/metadata.json", []byte(`{"v":1}`)); err != nil {
-		t.Fatal(err)
-	}
-	items, err := store.List(ctx, "sessions/")
-	if err != nil || len(items) != 1 || items[0].ETag != md5Hex([]byte(`{"v":1}`)) {
-		t.Fatalf("List = %#v, %v", items, err)
-	}
-	if err := store.Put(ctx, "sessions/a/metadata.json", []byte(`{"v":2}`)); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := store.List(ctx, "sessions/")
-	if after[0].ETag == items[0].ETag || after[0].ETag != md5Hex([]byte(`{"v":2}`)) {
-		t.Fatalf("ETag did not follow the content: %q then %q", items[0].ETag, after[0].ETag)
-	}
-}
-
-type flakyStore struct {
-	*MemoryStore
-	mu       sync.Mutex
-	failPuts int
-}
-
-func (s *flakyStore) Put(ctx context.Context, key string, data []byte) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.failPuts > 0 {
-		s.failPuts--
-		return io.ErrUnexpectedEOF
-	}
-	return s.MemoryStore.Put(ctx, key, data)
-}
-
-func TestSourcePublicationRetriesAndPublishesMetadataLast(t *testing.T) {
-	store := &flakyStore{MemoryStore: NewMemoryStore(), failPuts: 2}
-	err := PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), RetryPolicy{MaxAttempts: 3, InitialWait: time.Nanosecond, MaxWait: time.Nanosecond})
-	if err != nil {
-		t.Fatal(err)
-	}
-	objects, err := store.List(context.Background(), "")
-	if err != nil || len(objects) != 2 {
-		t.Fatalf("objects = %#v, err = %v", objects, err)
 	}
 }
 
@@ -202,4 +120,11 @@ func writeListResponse(w http.ResponseWriter, objects map[string][]byte, prefix 
 	}
 	w.Header().Set("Content-Type", "application/xml")
 	_ = xml.NewEncoder(w).Encode(out)
+}
+
+// md5Hex is the ETag an S3-compatible store reports for a single-part,
+// non-KMS object. It is an identity for ETag comparison, not a security hash.
+func md5Hex(data []byte) string {
+	sum := md5.Sum(data)
+	return hex.EncodeToString(sum[:])
 }

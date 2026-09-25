@@ -5,6 +5,7 @@ go test -race ./...
 go vet ./...
 golangci-lint run --disable=revive                       # v2.14.0; the blocking lint run
 golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
+go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./...     # only the exceptions listed in test.yml
 python3 scripts/test_release_signing.py
 python3 scripts/test_install.py
 python3 scripts/test_purge_recipe.py                     # runs the bucket purge recipes in the docs
@@ -84,7 +85,7 @@ In Go tests, everything goes through injection:
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).
-- Storage tests use `storage.NewMemoryStore()`.
+- Storage tests use `storagetest.NewMemoryStore()` (`internal/storage/storagetest`, test code only: depguard keeps it out of production code, as it does `state/statetest`).
 
 ## Running the binary by hand in a sandbox
 

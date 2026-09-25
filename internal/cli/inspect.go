@@ -69,7 +69,7 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, bool, error) {
 }
 
 // runListCommand implements `agent-archive list`. It reads only metadata
-// sidecars (reader.ListMetadata downloads no source bundle) and prints only
+// sidecars (reader.ListMetadataWithOptions downloads no source bundle) and prints only
 // metadata fields, so its output can never contain transcript content. It
 // reuses unchanged sidecars from the local metadata cache unless --no-cache.
 func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {

@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // A scheduled pass that meets a corrupt state file still publishes the rest,
@@ -65,7 +66,7 @@ func TestCollectPassReportsQuarantinedStateAndTrimsErrorLog(t *testing.T) {
 
 // collectFixture sets up one hook-registered codex session and an Env whose
 // passes all publish to the same in-memory bucket.
-func collectFixture(t *testing.T, now time.Time) (home string, env Env, remote *storage.MemoryStore) {
+func collectFixture(t *testing.T, now time.Time) (home string, env Env, remote *storagetest.MemoryStore) {
 	t.Helper()
 	home = t.TempDir()
 	dir := t.TempDir()
@@ -74,7 +75,7 @@ func collectFixture(t *testing.T, now time.Time) (home string, env Env, remote *
 	if err := handleHookEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	remote = storage.NewMemoryStore()
+	remote = storagetest.NewMemoryStore()
 	env = testEnv(t, home, now)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	return home, env, remote
@@ -98,7 +99,7 @@ func TestCollectPassSweepsDespiteUnreadableRegistration(t *testing.T) {
 	}
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, _ := collectFixture(t, now)
-	storageClockFollows(t, func() time.Time { return env.Now() })
+	storageClockFollows(t, &env, func() time.Time { return env.Now() })
 	cfg, _, err := config.Load(home)
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +201,7 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 	}
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, _ := collectFixture(t, now)
-	storageClockFollows(t, func() time.Time { return env.Now() })
+	storageClockFollows(t, &env, func() time.Time { return env.Now() })
 	cfg, _, err := config.Load(home)
 	if err != nil {
 		t.Fatal(err)

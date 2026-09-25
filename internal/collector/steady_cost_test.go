@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // passCost is the work one pass did that a settled session must not cost:
@@ -71,7 +72,7 @@ func snapshotMtimes(t *testing.T, root string) map[string]time.Time {
 // and a returning transcript is read at once.
 func TestMissingTranscriptsCostNothingPerPass(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	const sessions = 20
 	for i := range sessions {
@@ -144,7 +145,7 @@ func TestSettledSubagentsCostNothingPerPass(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	now := stopAt.Add(time.Minute)
 	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
 	// Settle: children publish, the parent picks up their links.
@@ -176,7 +177,7 @@ func TestSettledSubagentsCostNothingPerPass(t *testing.T) {
 // again as soon as it changes.
 func TestGapsAreSkippedOnlyWhileTheTranscriptIsUntouched(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	reg := settledSession(t, local, codexTranscript)
 	rewritten := strings.Replace(codexTranscript, "visible", "VISIBLE", 1)
 	if err := os.WriteFile(reg.TranscriptPath, []byte(rewritten), 0o600); err != nil {
@@ -215,7 +216,7 @@ func TestGapsAreSkippedOnlyWhileTheTranscriptIsUntouched(t *testing.T) {
 // it lasts.
 func TestSizeLimitGapIsSkippedUntilTheLimitChanges(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	path := writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript)
 	reg := registration(t, path)
 	if err := local.SaveRegistration(reg); err != nil {

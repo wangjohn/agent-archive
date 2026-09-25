@@ -10,7 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 var (
@@ -32,7 +32,7 @@ func TestImportWithOldStartIsNotExpiredBeforeItPublishes(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
 	// A first upload that fails leaves a pending publication.
-	flaky := &flakyStore{ObjectStore: storage.NewMemoryStore(), down: true}
+	flaky := &flakyStore{ObjectStore: storagetest.NewMemoryStore(), down: true}
 	if err := local.SaveRegistration(importedRegistration("upload", writeTranscript(t, dir, "upload.jsonl", codexTranscript))); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestImportWithOldStartIsNotExpiredBeforeItPublishes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	store := &recordingStore{ObjectStore: storagetest.NewMemoryStore()}
 	if result := sweep(t, local, store, importedAt.Add(24*time.Hour), Options{}); len(result.PrunedSessions)+len(result.DeletedSessions) != 0 || len(result.Errors) != 0 {
 		t.Fatalf("an import was expired by its start: %#v", result)
 	}
@@ -82,7 +82,7 @@ func TestImportAfterDestinationChangeIsDeletedFromCurrentBucket(t *testing.T) {
 	local := newTestStore(t)
 	cfg := config.Config{DestinationSince: importedAt.Add(-24 * time.Hour)}
 
-	previous := storage.NewMemoryStore()
+	previous := storagetest.NewMemoryStore()
 	earlier := registration("earlier", writeTranscript(t, dir, "earlier.jsonl", codexTranscript))
 	earlier.SessionStartedAt = cfg.DestinationSince.Add(-time.Hour)
 	earlier.RegisteredAt = earlier.SessionStartedAt
@@ -91,7 +91,7 @@ func TestImportAfterDestinationChangeIsDeletedFromCurrentBucket(t *testing.T) {
 	}
 	collect(t, local, previous, earlier.SessionStartedAt.Add(time.Minute))
 
-	current := storage.NewMemoryStore()
+	current := storagetest.NewMemoryStore()
 	if err := local.SaveRegistration(importedRegistration("imported", writeTranscript(t, dir, "imported.jsonl", codexTranscript))); err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestRetentionExpiryLeavesRemovalRecords(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	for _, id := range []string{"deleted", "kept"} {
 		if err := local.SaveRegistration(registration(id, writeTranscript(t, dir, id+".jsonl", codexTranscript))); err != nil {
 			t.Fatal(err)
@@ -170,7 +170,7 @@ func TestRetentionRetriesExpiryWhenTheRemovalRecordFails(t *testing.T) {
 	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	past := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC).Add(retentionWindow + time.Hour)
 	if result := sweep(t, local, store, past, Options{}); len(result.Errors) != 1 || len(result.PrunedSessions) != 0 {
 		t.Fatalf("result=%#v", result)

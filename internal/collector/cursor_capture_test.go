@@ -11,7 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // rewriteGaps counts the cursor_chat_rewritten gaps in gaps and returns the
@@ -42,7 +42,7 @@ func TestCursorSQLiteRewrittenChatRepublishes(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock()}
 	if result, _ := run(t, local, remote, opts, passes); len(result.Published) != 1 {
 		t.Fatalf("first capture: %+v", result)
@@ -142,7 +142,7 @@ func TestCursorSQLiteMetadataRegeneration(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	opts := Options{MachineID: "m", CursorDatabase: db.path, Now: advancingClock(), ParserVersion: "one"}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Published) != 1 {
 		t.Fatalf("%+v %v", result, err)

@@ -20,6 +20,7 @@ import (
 // and home's Desktop, Documents, Downloads and Library, with iCloud Drive
 // and other apps' containers as locations of their own inside Library.
 func TestProtectedOutside(t *testing.T) {
+	t.Parallel()
 	protected := privacyProtectedFolders(Environment{Home: "/Users/me", EvalSymlinks: func(p string) (string, error) { return p, nil }})
 	for _, tc := range []struct {
 		path string

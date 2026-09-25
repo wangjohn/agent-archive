@@ -479,7 +479,7 @@ adapter 0.6.0 / parser 0.9.0 (C4 took filter 5 / parser 0.8.0 first).
   prompt and the last 3 exchanges' results, and lists elisions in order.
   A budget smaller than the prompts alone still emits and warns.
 - **Parity**: the same fixture rendered via local source and via an
-  archive round trip through `storage.NewMemoryStore` is byte-identical apart
+  archive round trip through `storagetest.NewMemoryStore` is byte-identical apart
   from the `source:` header field.
 - **Selection**: `--latest` prefers local over archive; subdirectory cwd
   matches its project; subagent registrations are skipped; `--harness`

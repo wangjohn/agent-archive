@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // The size limit applied to the raw transcript, before the filter dropped
@@ -26,7 +26,7 @@ func TestSizeLimitAppliesToTheFilteredTranscript(t *testing.T) {
 		return b.String()
 	}
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	content := transcript(5)
 	if len(content) <= limit || len(content) > limit*rawSizeFactor {
 		t.Fatalf("test precondition: raw size %d", len(content))
@@ -56,7 +56,7 @@ func TestSizeLimitAppliesToTheFilteredTranscript(t *testing.T) {
 // retained text past the limit is the same gap.
 func TestFilteredTranscriptOverTheLimitIsAGap(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	var b strings.Builder
 	b.WriteString(claudePromptLine + "\n")
 	for i := range 8 {

@@ -94,6 +94,24 @@ jobs:
           version: v2.14.0
           install-mode: goinstall
           args: --disable=revive
+      # Production code only tests reach belongs in a _test.go file (or a
+      # test-only package); deadcode finds it. Listed exceptions: the test
+      # helper packages, a cgo probe (test files cannot use cgo), and a load
+      # counter other packages' cost tests read.
+      - name: No unreachable production code
+        run: |
+          go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./... > "$RUNNER_TEMP/deadcode.txt"
+          # grep exits 1 when every line is an exception; 2 is a real failure.
+          status=0
+          grep -v -E '^internal/(state/statetest|storage/storagetest)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$' "$RUNNER_TEMP/deadcode.txt" > "$RUNNER_TEMP/unexpected.txt" || status=$?
+          if [ "$status" -gt 1 ]; then
+            exit "$status"
+          fi
+          if [ -s "$RUNNER_TEMP/unexpected.txt" ]; then
+            cat "$RUNNER_TEMP/unexpected.txt"
+            echo "Move test-only code to a _test.go file, or delete it." >&2
+            exit 1
+          fi
       # Doc comments are required on exported identifiers that a change adds
       # or touches; existing gaps do not fail the build.
       - name: Doc comments on new exported identifiers

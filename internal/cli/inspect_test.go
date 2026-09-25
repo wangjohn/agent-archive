@@ -12,13 +12,14 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // publishedFixture registers one Codex session through the hook path and
 // publishes it with `sync` into a single in-memory store that the returned
 // Env keeps handing back, so `list`/`show` read what `sync` wrote. It
 // returns the archive session ID `list`/`show` address the session by.
-func publishedFixture(t *testing.T) (Env, *storage.MemoryStore, string) {
+func publishedFixture(t *testing.T) (Env, *storagetest.MemoryStore, string) {
 	t.Helper()
 	home := t.TempDir()
 	dir := t.TempDir()
@@ -29,7 +30,7 @@ func publishedFixture(t *testing.T) (Env, *storage.MemoryStore, string) {
 	if err := handleHookEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	mem := storage.NewMemoryStore()
+	mem := storagetest.NewMemoryStore()
 	env := testEnv(t, home, now)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
 	var stdout, stderr bytes.Buffer
@@ -398,7 +399,7 @@ func TestParseSince(t *testing.T) {
 }
 
 // readSingleMetadata returns the one metadata sidecar publishedFixture wrote.
-func readSingleMetadata(t *testing.T, mem *storage.MemoryStore) (archive.Metadata, error) {
+func readSingleMetadata(t *testing.T, mem *storagetest.MemoryStore) (archive.Metadata, error) {
 	t.Helper()
 	objects, err := mem.List(context.Background(), "sessions")
 	if err != nil {

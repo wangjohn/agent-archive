@@ -15,6 +15,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // cursorDesktopPayload is a Cursor desktop hook payload in the shape observed
@@ -79,7 +80,7 @@ func TestCursorDesktopChatRegistersAtFirstPromptAndPublishes(t *testing.T) {
 	}
 
 	// A collection pass while the path is still unknown is waiting, not failing.
-	mem := storage.NewMemoryStore()
+	mem := storagetest.NewMemoryStore()
 	env := testEnv(t, home, first.Add(time.Second))
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
 	var stdout, stderr bytes.Buffer

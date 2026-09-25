@@ -101,6 +101,7 @@ func composerGoldenOf(t *testing.T, name string) []byte {
 // -update-composer-golden, which is itself a statement that the filter's
 // output changed on purpose (and needs a FilterVersion bump).
 func TestCursorComposerGolden(t *testing.T) {
+	t.Parallel()
 	names, err := filepath.Glob(filepath.Join("testdata", "cursor-composer", "*.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -155,6 +156,7 @@ func filterComposerFixture(t *testing.T) (FilteredTranscript, []map[string]any) 
 // and timestamps, and nothing of the context Cursor attached, the reasoning,
 // secrets, injected instructions, or the chat's own settings.
 func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
+	t.Parallel()
 	filtered, records := filterComposerFixture(t)
 	encoded := string(bytes.Join(filtered.Records, []byte("\n")))
 	for _, leaked := range []string{
@@ -259,6 +261,7 @@ func TestCursorComposerKeepsTheConversationAndDropsContext(t *testing.T) {
 }
 
 func TestCursorComposerReportsWhatItCouldNotKeep(t *testing.T) {
+	t.Parallel()
 	filtered, _ := filterComposerFixture(t)
 	want := map[string]string{
 		"cursor_bubble_missing":           "1 of 7 messages have no message row",
@@ -320,6 +323,7 @@ func TestCursorComposerReportsWhatItCouldNotKeep(t *testing.T) {
 // The chat starts at createdAt and ends when its last message completed, even
 // though the last header is not the latest-updated field in the chat.
 func TestCursorComposerTimestampsAndIdentity(t *testing.T) {
+	t.Parallel()
 	filtered, _ := filterComposerFixture(t)
 	start := time.UnixMilli(1790000000000).UTC()
 	if !filtered.NativeStartAt.Equal(start) || !filtered.FirstEventAt.Equal(start) || !filtered.NativeStartComplete {
@@ -347,6 +351,7 @@ func oneMessageChat(headerType int, row string) CursorComposer {
 // other _v on the chat or on any message, older or newer, refuses the whole
 // chat as an unsafe format.
 func TestCursorComposerRefusesUnknownVersions(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"unknown-composer-version.json", "unknown-bubble-version.json"} {
 		_, err := (CursorAdapter{}).FilterComposer(loadComposerFixture(t, name))
 		if !errors.Is(err, ErrUnsafeSourceFormat) || !IsFilterError(err) {
@@ -379,6 +384,7 @@ func TestCursorComposerRefusesUnknownVersions(t *testing.T) {
 // A chat with headers and an inline conversation too has the conversation
 // reported rather than silently dropped.
 func TestCursorComposerReportsAnInlineConversationBesideHeaders(t *testing.T) {
+	t.Parallel()
 	c := oneMessageChat(1, `{"_v":3,"bubbleId":"b1","type":1,"text":"hello"}`)
 	c.Composer = json.RawMessage(`{"_v":18,"composerId":"c","fullConversationHeadersOnly":[{"bubbleId":"b1","type":1}],"conversation":[{"bubbleId":"old","type":1,"text":"INLINE-SENTINEL"}]}`)
 	filtered, err := (CursorAdapter{}).FilterComposer(c)
@@ -401,6 +407,7 @@ func TestCursorComposerReportsAnInlineConversationBesideHeaders(t *testing.T) {
 // A chat without messages yields no records at all, not a lone session
 // record, so the import plan classifies it as empty.
 func TestCursorComposerEmptyChatHasNoRecords(t *testing.T) {
+	t.Parallel()
 	for _, composer := range []string{
 		`{"_v":18,"composerId":"c","createdAt":1790000000000}`,
 		`{"_v":18,"composerId":"c","createdAt":1790000000000,"fullConversationHeadersOnly":[]}`,
@@ -454,6 +461,7 @@ func liveChat(status string, generating []string, messages ...liveMessage) Curso
 // A finished chat is emitted whole even though none of its assistant
 // messages has completedAtMs, and completedAtMs is not what decides it.
 func TestCursorComposerFinishedChatWithoutCompletionTimes(t *testing.T) {
+	t.Parallel()
 	for _, status := range []string{"completed", "none", ""} {
 		filtered, err := (CursorAdapter{}).FilterComposer(liveChat(status, nil,
 			liveMessage{"u1", 1, "Run the tests.", ""},
@@ -476,6 +484,7 @@ func TestCursorComposerFinishedChatWithoutCompletionTimes(t *testing.T) {
 // cancelled, or none), or, as a backstop, when it is the last message of a
 // chat whose status is not a settled one. Output stops there.
 func TestCursorComposerInFlightMessages(t *testing.T) {
+	t.Parallel()
 	user := liveMessage{"u1", 1, "Run the tests.", ""}
 	cases := []struct {
 		name    string
@@ -517,6 +526,7 @@ func TestCursorComposerInFlightMessages(t *testing.T) {
 // Successive snapshots of chats in use filter to record sequences each of
 // which is a prefix of the next, so the collector's append-only check holds.
 func TestCursorComposerSnapshotsAreAppendOnly(t *testing.T) {
+	t.Parallel()
 	user1 := liveMessage{"u1", 1, "Run the tests.", ""}
 	user2 := liveMessage{"u2", 1, "Thanks.", ""}
 	sequences := map[string][]CursorComposer{
@@ -572,6 +582,7 @@ func TestCursorComposerSnapshotsAreAppendOnly(t *testing.T) {
 
 // A row whose bubbleId is some other message's is treated as missing.
 func TestCursorComposerRowForAnotherMessageIsMissing(t *testing.T) {
+	t.Parallel()
 	filtered, err := (CursorAdapter{}).FilterComposer(oneMessageChat(1, `{"_v":3,"bubbleId":"other","type":1,"text":"MISMATCH-SENTINEL"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -586,6 +597,7 @@ func TestCursorComposerRowForAnotherMessageIsMissing(t *testing.T) {
 // any depth, is dropped and named; an empty argument object is dropped
 // silently.
 func TestCursorComposerToolArguments(t *testing.T) {
+	t.Parallel()
 	input := func(t *testing.T, tool string) (map[string]any, FilteredTranscript) {
 		t.Helper()
 		filtered, err := (CursorAdapter{}).FilterComposer(oneMessageChat(2, `{"_v":3,"bubbleId":"b1","type":2,"completedAtMs":1790000001000,"toolFormerData":`+tool+`}`))
@@ -626,6 +638,7 @@ func TestCursorComposerToolArguments(t *testing.T) {
 // Malformed input and a message list that does not match the headers are
 // refused with a FilterError, never filtered partially.
 func TestCursorComposerRefusesMalformedInput(t *testing.T) {
+	t.Parallel()
 	headers := `{"_v":18,"composerId":"c","fullConversationHeadersOnly":[{"bubbleId":"b1","type":1}]}`
 	cases := map[string]CursorComposer{
 		"composer not JSON":   {Composer: json.RawMessage(`{"_v":18,`)},
@@ -652,6 +665,7 @@ func TestCursorComposerRefusesMalformedInput(t *testing.T) {
 // the specific gap and the held-back tail counted; nothing after it is
 // emitted, and the chat ends at the last message that was.
 func TestCursorComposerUnusableRowStopsOutput(t *testing.T) {
+	t.Parallel()
 	user := liveMessage{"u1", 1, "Run the tests.", ""}
 	cases := map[string]struct {
 		row  json.RawMessage
@@ -684,6 +698,7 @@ func TestCursorComposerUnusableRowStopsOutput(t *testing.T) {
 // A row that is missing mid-chat and appears later leaves the output
 // append-only: u1, (a1 missing), u2 and then u1, a1, u2.
 func TestCursorComposerMissingRowThenPresentIsAppendOnly(t *testing.T) {
+	t.Parallel()
 	messages := []liveMessage{{"u1", 1, "Run the tests.", ""}, {"a1", 2, "Done.", ""}, {"u2", 1, "Thanks.", ""}}
 	before := liveChat("completed", nil, messages...)
 	before.Bubbles[1].Value = nil
@@ -727,6 +742,7 @@ func toolMessage(t *testing.T, tool string) ([]any, FilteredTranscript) {
 // An empty rawArgs object does not hide params (S1), and nothing is lost
 // when both are empty.
 func TestCursorComposerEmptyRawArgsFallsBackToParams(t *testing.T) {
+	t.Parallel()
 	content, filtered := toolMessage(t, `{"toolCallId":"t1","status":"completed","name":"web_search","rawArgs":"{}","params":"{\"searchTerm\":\"widget parser\"}","result":"ok"}`)
 	input, _ := content[0].(map[string]any)["input"].(map[string]any)
 	if input["searchTerm"] != "widget parser" || hasGap(filtered.Gaps, "cursor_tool_argument_omitted") {
@@ -745,6 +761,7 @@ func TestCursorComposerEmptyRawArgsFallsBackToParams(t *testing.T) {
 // An error that is not a string (S2) is kept as text like a string one: the
 // error is the content, is_error is set, and the result beside it is named.
 func TestCursorComposerStructuredToolError(t *testing.T) {
+	t.Parallel()
 	content, filtered := toolMessage(t, `{"toolCallId":"t1","status":"error","name":"read_file_v2","params":"{\"path\":\"a.go\"}","result":"RESULT-BESIDE-ERROR-SENTINEL","error":{"message":"file not found","code":2}}`)
 	result := content[1].(map[string]any)
 	if result["content"] != `{"code":2,"message":"file not found"}` || result["is_error"] != true || result["tool_use_id"] != "t1" {
@@ -763,6 +780,7 @@ func TestCursorComposerStructuredToolError(t *testing.T) {
 // Nested JSON deep inside arrays is named by the nearest argument key, and
 // the arrays it leaves empty are removed rather than kept as [[]].
 func TestCursorComposerNestedJSONInArrays(t *testing.T) {
+	t.Parallel()
 	content, filtered := toolMessage(t, `{"toolCallId":"t1","status":"completed","name":"x","params":{"keep":"yes","matrix":[["{\"a\":\"NESTED-SENTINEL\"}"]],"rows":[["ok","[1,2]"]],"empty":[]}}`)
 	input := content[0].(map[string]any)["input"].(map[string]any)
 	if _, kept := input["matrix"]; kept {
@@ -782,6 +800,7 @@ func TestCursorComposerNestedJSONInArrays(t *testing.T) {
 // A typed-input tool's text and a credential-named argument are dropped by
 // the shared tool filter, exactly as in a JSONL transcript.
 func TestCursorComposerToolArgumentsUseTheSharedDenyList(t *testing.T) {
+	t.Parallel()
 	c := CursorComposer{
 		Composer: json.RawMessage(`{"_v":18,"composerId":"c","fullConversationHeadersOnly":[{"bubbleId":"b1","type":2}]}`),
 		Bubbles:  []CursorBubble{{ID: "b1", Value: json.RawMessage(`{"_v":3,"bubbleId":"b1","type":2,"completedAtMs":1790000001000,"toolFormerData":{"toolCallId":"t1","name":"mcp__browser__type","status":"error","params":{"selector":"#login","text":"TYPED-SENTINEL","apiToken":"ARG-SENTINEL"},"result":"failed"}}`)}},
@@ -803,6 +822,7 @@ func TestCursorComposerToolArgumentsUseTheSharedDenyList(t *testing.T) {
 // assistant messages are turns, the tool call links to its result, and token
 // counts are summed.
 func TestCursorComposerRecordsParse(t *testing.T) {
+	t.Parallel()
 	filtered, _ := filterComposerFixture(t)
 	reg := registration()
 	reg.Harness = Harness{Name: "cursor"}

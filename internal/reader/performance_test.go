@@ -14,12 +14,13 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // countingStore records every List prefix and Get key, the most Gets it saw
 // in flight at once, and can fail or slow chosen reads.
 type countingStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	delay     time.Duration
 	failGet   map[string]error
 	swapGet   map[string][]byte // Get returns these bytes instead: the object changed after the listing
@@ -34,7 +35,7 @@ type countingStore struct {
 }
 
 func newCountingStore() *countingStore {
-	return &countingStore{MemoryStore: storage.NewMemoryStore(), failGet: map[string]error{}, swapGet: map[string][]byte{}}
+	return &countingStore{MemoryStore: storagetest.NewMemoryStore(), failGet: map[string]error{}, swapGet: map[string][]byte{}}
 }
 
 func (s *countingStore) List(ctx context.Context, prefix string) ([]storage.Object, error) {

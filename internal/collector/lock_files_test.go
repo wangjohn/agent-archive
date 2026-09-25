@@ -10,7 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func lockFiles(t *testing.T, home string) []string {
@@ -83,7 +83,7 @@ func TestPassSweepsOrphanedLockFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
-	runAt(t, store, storage.NewMemoryStore(), time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))
+	runAt(t, store, storagetest.NewMemoryStore(), time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))
 	if got := lockFiles(t, home); len(got) != 2 || got[0] != "held.lock" || got[1] != "session-1.lock" {
 		t.Fatalf("lock files left = %v", got)
 	}

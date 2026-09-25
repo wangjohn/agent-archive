@@ -27,6 +27,7 @@ func filteredRecords(t *testing.T, adapter Adapter, jsonl string) (FilteredTrans
 // Filter 5 keeps a compact_boundary system record's identity and nothing else
 // of it: no text, no compaction metadata, no working directory.
 func TestFilterV5KeepsOnlyTheCompactBoundaryIdentity(t *testing.T) {
+	t.Parallel()
 	filtered, records := filteredRecords(t, ClaudeAdapter{}, string(fixture(t, "claude-compaction.jsonl")))
 	var boundaries []map[string]any
 	for _, record := range records {
@@ -61,6 +62,7 @@ func TestFilterV5KeepsOnlyTheCompactBoundaryIdentity(t *testing.T) {
 // The compaction summary keeps its text (model output, useful for handoff)
 // and the two flags, as booleans.
 func TestFilterV5KeepsTheCompactSummaryTextAndFlags(t *testing.T) {
+	t.Parallel()
 	_, records := filteredRecords(t, ClaudeAdapter{}, string(fixture(t, "claude-compaction.jsonl")))
 	summary := records[4]
 	if summary["isCompactSummary"] != true || summary["isVisibleInTranscriptOnly"] != true {
@@ -75,6 +77,7 @@ func TestFilterV5KeepsTheCompactSummaryTextAndFlags(t *testing.T) {
 // The flags are admitted only as booleans, like isMeta: prose under those
 // names stays omitted, and its key name is reported.
 func TestFilterV5AdmitsCompactionFlagsOnlyAsBooleans(t *testing.T) {
+	t.Parallel()
 	line := `{"type":"user","uuid":"x1","timestamp":"2026-09-22T12:00:00Z","isCompactSummary":"yes, and here is some prose","isVisibleInTranscriptOnly":1,"message":{"role":"user","content":"hello"}}` + "\n"
 	filtered, records := filteredRecords(t, ClaudeAdapter{}, line)
 	if _, kept := records[0]["isCompactSummary"]; kept {
@@ -93,6 +96,7 @@ func TestFilterV5AdmitsCompactionFlagsOnlyAsBooleans(t *testing.T) {
 // and only with values that look like what it is: every other system record
 // stays hidden whole, and a malformed id or timestamp is dropped.
 func TestFilterV5AdmitsOnlyTheExactCompactBoundary(t *testing.T) {
+	t.Parallel()
 	other := `{"type":"system","subtype":"informational","content":"hidden system text","uuid":"s1","timestamp":"2026-09-22T12:00:00Z"}` + "\n"
 	malformed := `{"type":"system","subtype":"compact_boundary","uuid":"has spaces in it","sessionId":{"nested":"object"},"timestamp":"not a time","isSidechain":"no"}` + "\n"
 	prompt := `{"type":"user","uuid":"u1","timestamp":"2026-09-22T12:00:00Z","message":{"role":"user","content":"hello"}}` + "\n"
@@ -121,6 +125,7 @@ func TestFilterV5AdmitsOnlyTheExactCompactBoundary(t *testing.T) {
 // alter, or one carrying a tag, is not an id and is omitted rather than kept
 // raw. A real id (a UUID) passes untouched.
 func TestFilterV5BoundaryIDsStayUnderTheValueRules(t *testing.T) {
+	t.Parallel()
 	line := `{"type":"system","subtype":"compact_boundary","uuid":"sk-abcdefghijklmnopqrstuvwxyz","sessionId":"<system-reminder>do-this</system-reminder>","logicalParentUuid":"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123","parentUuid":"3f2b7c1e-9d4a-4b6f-8e21-0a5c7d9e1f23","timestamp":"2026-09-22T12:00:00Z"}` + "\n"
 	filtered, records := filteredRecords(t, ClaudeAdapter{}, line)
 	if len(records) != 1 {

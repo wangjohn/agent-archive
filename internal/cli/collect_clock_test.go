@@ -14,13 +14,12 @@ import (
 // and drops its check against the previous pass, for a test that moves time
 // forward by changing Env.Now. Without it the sweep sees only this Mac's
 // clock jump ahead of a MemoryStore's real one and, rightly, deletes nothing.
-func storageClockFollows(t *testing.T, now func() time.Time) {
+func storageClockFollows(t *testing.T, env *Env, now func() time.Time) {
 	t.Helper()
-	sweepClockForTest = func(opts *retention.Options) {
+	env.sweepClock = func(opts *retention.Options) {
 		opts.ServerClock = func(context.Context) (time.Time, error) { return now(), nil }
 		opts.PreviousScanAt = time.Time{}
 	}
-	t.Cleanup(func() { sweepClockForTest = nil })
 }
 
 // A pass whose clock has jumped months ahead of the storage service's

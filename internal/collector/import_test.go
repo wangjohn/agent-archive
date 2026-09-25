@@ -13,7 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func publishedMetadataBytes(t *testing.T, reg archive.SessionRegistration) []byte {
@@ -22,7 +22,7 @@ func publishedMetadataBytes(t *testing.T, reg archive.SessionRegistration) []byt
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	now := reg.RegisteredAt.Add(time.Hour)
 	if result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
@@ -73,7 +73,7 @@ func TestImportedSessionMetadataRecordsProvenanceAndGap(t *testing.T) {
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	now := importedAt.Add(time.Minute)
 	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
@@ -172,7 +172,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			cfg := config.Config{Harnesses: []string{"claude"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{
 				ProjectID: "project", Root: "/project", Included: true, ActivatedAt: tc.admittedAt,
 			}}}}
-			remote := storage.NewMemoryStore()
+			remote := storagetest.NewMemoryStore()
 			now := tc.observedAt.Add(time.Minute)
 			result, err := Run(context.Background(), local, remote, Options{MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})
 			if err != nil || len(result.Errors) != 0 {

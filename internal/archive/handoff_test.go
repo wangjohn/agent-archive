@@ -74,6 +74,7 @@ func TestHandoffGolden(t *testing.T) {
 }
 
 func TestHandoffClaudeContent(t *testing.T) {
+	t.Parallel()
 	h, err := BuildHandoff(handoffBundle(t, "claude"), nil, HandoffOptions{Source: "local"})
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +119,7 @@ func TestHandoffClaudeContent(t *testing.T) {
 }
 
 func TestHandoffCodexContent(t *testing.T) {
+	t.Parallel()
 	h, err := BuildHandoff(handoffBundle(t, "codex"), nil, HandoffOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -150,6 +152,7 @@ func TestHandoffCodexContent(t *testing.T) {
 }
 
 func TestHandoffCursorContent(t *testing.T) {
+	t.Parallel()
 	h, err := BuildHandoff(handoffBundle(t, "cursor"), nil, HandoffOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -185,6 +188,7 @@ func bigHandoff(n int) Handoff {
 }
 
 func TestFitHandoffAppliesStepsInOrderAndKeepsRecentExchanges(t *testing.T) {
+	t.Parallel()
 	h := bigHandoff(40)
 	full := markdownSize(h)
 	fit, ok := FitHandoff(h, 200_000, markdownSize)
@@ -219,6 +223,7 @@ func TestFitHandoffAppliesStepsInOrderAndKeepsRecentExchanges(t *testing.T) {
 }
 
 func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
+	t.Parallel()
 	fit, _ := FitHandoff(bigHandoff(40), 40_000, markdownSize)
 	var kinds []HandoffElisionKind
 	for _, e := range fit.Elisions {
@@ -242,6 +247,7 @@ func TestFitHandoffRunsEveryStepUnderPressure(t *testing.T) {
 }
 
 func TestFitHandoffReportsWhenItCannotFit(t *testing.T) {
+	t.Parallel()
 	fit, ok := FitHandoff(bigHandoff(5), 1_000, markdownSize)
 	if ok {
 		t.Fatalf("fit reported success at %d bytes", markdownSize(fit))
@@ -252,6 +258,7 @@ func TestFitHandoffReportsWhenItCannotFit(t *testing.T) {
 }
 
 func TestFitHandoffWithinBudgetIsUnchanged(t *testing.T) {
+	t.Parallel()
 	h := bigHandoff(2)
 	fit, ok := FitHandoff(h, 0, markdownSize)
 	if !ok || len(fit.Elisions) != 0 || markdownSize(fit) != markdownSize(h) {
@@ -265,6 +272,7 @@ func TestFitHandoffWithinBudgetIsUnchanged(t *testing.T) {
 
 // The footer names the saved full record only when something was trimmed.
 func TestHandoffFooterNamesFullRecordOnlyWhenTrimmed(t *testing.T) {
+	t.Parallel()
 	h := bigHandoff(10)
 	h.FullRecordPath = "/data/handoffs/x.md"
 	if strings.Contains(string(RenderHandoffMarkdown(h, HandoffRenderOptions{})), "Full record") {
@@ -277,6 +285,7 @@ func TestHandoffFooterNamesFullRecordOnlyWhenTrimmed(t *testing.T) {
 }
 
 func TestTrimResultKeepsHeadAndTail(t *testing.T) {
+	t.Parallel()
 	var lines []string
 	for i := 1; i <= 50; i++ {
 		lines = append(lines, fmt.Sprintf("line %d", i))
@@ -298,6 +307,7 @@ func TestTrimResultKeepsHeadAndTail(t *testing.T) {
 }
 
 func TestCodeFenceOutrunsBackticksInContent(t *testing.T) {
+	t.Parallel()
 	if got := codeFence("plain"); got != "```" {
 		t.Fatalf("got %q", got)
 	}
@@ -307,6 +317,7 @@ func TestCodeFenceOutrunsBackticksInContent(t *testing.T) {
 }
 
 func TestHandoffJSONRoundTrips(t *testing.T) {
+	t.Parallel()
 	h, err := BuildHandoff(handoffBundle(t, "codex"), nil, HandoffOptions{Source: "archive"})
 	if err != nil {
 		t.Fatal(err)
@@ -330,6 +341,7 @@ func TestHandoffJSONRoundTrips(t *testing.T) {
 // One long autonomous exchange is still trimmed: only its last
 // handoffKeptSteps steps are protected.
 func TestFitHandoffTrimsASingleLongExchange(t *testing.T) {
+	t.Parallel()
 	h := bigHandoff(1)
 	for i := range 60 {
 		h.Exchanges[0].Steps = append(h.Exchanges[0].Steps, HandoffStep{Kind: HandoffStepTool, Tool: &HandoffToolCall{Name: "Read", Summary: strconv.Itoa(i), Result: strings.Repeat("r", 1500)}})
@@ -351,6 +363,7 @@ func TestFitHandoffTrimsASingleLongExchange(t *testing.T) {
 }
 
 func TestProtectedStart(t *testing.T) {
+	t.Parallel()
 	ex := func(n int) HandoffExchange { return HandoffExchange{Steps: make([]HandoffStep, n)} }
 	got := protectedStart([]HandoffExchange{ex(5), ex(5), ex(4), ex(30), ex(2)}, 3, 20)
 	want := []int{5, 5, 4, 12, 0}
@@ -383,6 +396,7 @@ func toolSteps(h Handoff) []*HandoffToolCall {
 // Calls and results without ids in one record are paired by position, each
 // with its own raw item and its own output — not all with the first.
 func TestHandoffPairsUnidentifiedCallsInOneRecordByPosition(t *testing.T) {
+	t.Parallel()
 	bundle := testBundle("cursor",
 		map[string]any{"role": "user", "message": map[string]any{"content": "go"}},
 		map[string]any{"role": "assistant", "message": map[string]any{"content": []any{
@@ -410,6 +424,7 @@ func TestHandoffPairsUnidentifiedCallsInOneRecordByPosition(t *testing.T) {
 // The directory is where the session started; a later `cd` recorded in cwd
 // must not make paths relative to a subdirectory.
 func TestHandoffUsesTheStartingDirectory(t *testing.T) {
+	t.Parallel()
 	record := func(cwd string, content any) map[string]any {
 		return map[string]any{"type": "assistant", "cwd": cwd, "message": map[string]any{"role": "assistant", "content": content}}
 	}
@@ -430,6 +445,7 @@ func TestHandoffUsesTheStartingDirectory(t *testing.T) {
 // A plan call whose items cannot be read leaves the earlier plan; an explicit
 // empty list clears it.
 func TestHandoffPlanSurvivesAnUnreadablePlanCall(t *testing.T) {
+	t.Parallel()
 	plan := func(id string, input map[string]any) map[string]any {
 		return map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": id, "name": "TodoWrite", "input": input}}}}
 	}
@@ -454,6 +470,7 @@ func TestHandoffPlanSurvivesAnUnreadablePlanCall(t *testing.T) {
 // With no timestamps in the records, times come only from the caller or from
 // published metadata — never from the moment the bundle was built.
 func TestHandoffDoesNotInventActivityTimes(t *testing.T) {
+	t.Parallel()
 	bundle := testBundle("cursor", map[string]any{"role": "user", "message": map[string]any{"content": "hello"}})
 	h, err := BuildHandoff(bundle, nil, HandoffOptions{})
 	if err != nil {
@@ -475,6 +492,7 @@ func TestHandoffDoesNotInventActivityTimes(t *testing.T) {
 }
 
 func TestCleanPromptRestoresSlashCommands(t *testing.T) {
+	t.Parallel()
 	for in, want := range map[string]string{
 		"<command-message>review-pr</command-message>\n<command-name>/review-pr</command-name>\n<command-args>12</command-args>": "/review-pr 12",
 		"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>":           "/model",
@@ -490,6 +508,7 @@ func TestCleanPromptRestoresSlashCommands(t *testing.T) {
 // A Cursor text transcript has role sections instead of records; it still
 // renders its exchanges.
 func TestHandoffRendersCursorTextTranscripts(t *testing.T) {
+	t.Parallel()
 	filtered, err := CursorAdapter{}.FilterText(strings.NewReader("user: Tighten the intro.\nassistant: Reading it.\ntool: intro.md: 3 lines\nassistant: Done; the first sentence is shorter.\nuser: thanks\n"), time.Date(2026, 9, 22, 9, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
@@ -518,6 +537,7 @@ func TestHandoffRendersCursorTextTranscripts(t *testing.T) {
 // Fitting a large session takes a handful of measurements per step, not one
 // per exchange.
 func TestFitHandoffMeasuresLogarithmically(t *testing.T) {
+	t.Parallel()
 	h := bigHandoff(512)
 	calls := 0
 	fit, ok := FitHandoff(h, 2_000_000, func(x Handoff) int { calls++; return markdownSize(x) })
@@ -538,6 +558,7 @@ func TestFitHandoffMeasuresLogarithmically(t *testing.T) {
 // A compaction summary is shown where it happened: after /compact the agent
 // worked from it, not from the turns before it.
 func TestHandoffShowsCompactionSummaries(t *testing.T) {
+	t.Parallel()
 	filtered, err := ClaudeAdapter{}.FilterJSONL(bytes.NewReader(fixture(t, "claude-compaction.jsonl")))
 	if err != nil {
 		t.Fatal(err)

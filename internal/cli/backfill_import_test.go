@@ -22,6 +22,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // The import the fixture produces: the date of backfillNow, first of the day.
@@ -30,10 +31,10 @@ const firstImport = "2026-09-23-1"
 // newImportFixture is newBackfillFixture with an in-memory bucket, and
 // subagent transcripts carrying their agent identity, as real ones do, so the
 // collector registers them.
-func newImportFixture(t *testing.T) (*backfillFixture, *storage.MemoryStore) {
+func newImportFixture(t *testing.T) (*backfillFixture, *storagetest.MemoryStore) {
 	t.Helper()
 	f := newBackfillFixture(t)
-	bucket := storage.NewMemoryStore()
+	bucket := storagetest.NewMemoryStore()
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
 	for _, agent := range []string{"a1", "a2"} {
 		f.write(t, filepath.Join(".claude", "projects", "slug-c-aa-2", "c-aa-2", "subagents", "agent-"+agent+".jsonl"),
@@ -61,7 +62,7 @@ func (f *backfillFixture) command(t *testing.T, args ...string) (string, string,
 }
 
 // bucketSnapshot lists every object and its bytes.
-func bucketSnapshot(t *testing.T, bucket *storage.MemoryStore) string {
+func bucketSnapshot(t *testing.T, bucket *storagetest.MemoryStore) string {
 	t.Helper()
 	objects, err := bucket.List(context.Background(), "")
 	if err != nil {
@@ -86,12 +87,12 @@ type unchanged struct {
 	bucket string
 }
 
-func snapshotAll(t *testing.T, f *backfillFixture, bucket *storage.MemoryStore) unchanged {
+func snapshotAll(t *testing.T, f *backfillFixture, bucket *storagetest.MemoryStore) unchanged {
 	t.Helper()
 	return unchanged{snapshotTree(t, f.data), bucketSnapshot(t, bucket)}
 }
 
-func (u unchanged) check(t *testing.T, f *backfillFixture, bucket *storage.MemoryStore) {
+func (u unchanged) check(t *testing.T, f *backfillFixture, bucket *storagetest.MemoryStore) {
 	t.Helper()
 	if after := snapshotTree(t, f.data); after != u.data {
 		t.Fatalf("data directory changed:\n%s\n---\n%s", u.data, after)

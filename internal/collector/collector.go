@@ -74,6 +74,9 @@ type Options struct {
 
 	// cursorPass is the pass's Reader of Cursor's database, set by Run.
 	cursorPass *cursorstore.Reader
+	// afterCursorPass, set by a test, runs as a pass ends with how many
+	// snapshots of Cursor's database the pass took.
+	afterCursorPass func(snapshots int)
 }
 
 // Progress reports one session a pass has processed.

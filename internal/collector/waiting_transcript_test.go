@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // A Cursor desktop chat is registered at its first prompt, before Cursor names
@@ -24,7 +24,7 @@ func TestRegistrationWithoutTranscriptPathIsWaitingNotFailed(t *testing.T) {
 	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", now); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	for pass := range 2 {
 		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
 		if err != nil {
@@ -69,7 +69,7 @@ func TestRegistrationWithEmptyTranscriptIsWaitingNotFailed(t *testing.T) {
 	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", now); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	for pass := range 2 {
 		result, err := Run(context.Background(), local, store, Options{MachineID: "m", Now: func() time.Time { return now }})
 		if err != nil {

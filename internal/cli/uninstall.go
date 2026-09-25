@@ -447,18 +447,17 @@ func checkRemovableHome(home, userHome string) error {
 }
 
 // localStateEntries is every top-level entry agent-archive creates under its
-// data directory: internal/config's config.json, state.Store's
-// per-session directories and removal records (forgotten/), backfill's
-// import batches (imports/), the lineage
-// ledger, local.Lock's lock file, the collector status file, the
-// LaunchAgent's log files, `list`'s disposable metadata cache
-// (reader.OpenMetadataCache), and the untrimmed handoffs `handoff` saves.
-// Keep it in sync with those packages; an entry missing here is left behind
-// by uninstall (and reported), never silently deleted.
+// data directory besides state.Store's own (state.OwnedEntries, which
+// removeLocalState adds): internal/config's config.json and setup's files,
+// backfill's import batches (imports/), local.Lock's lock file and its
+// record, the collector's advisory files, the LaunchAgent's log files,
+// `list`'s disposable metadata cache (reader.OpenMetadataCache), and the
+// untrimmed handoffs `handoff` saves. Keep it in sync with those packages;
+// an entry missing here is left behind by uninstall (and reported), never
+// silently deleted.
 var localStateEntries = []string{
-	"config.json", "setup-draft.json", "setup-transaction.json",
-	"registrations", "requests", "request-locks", "published", "pending", "sessions", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
-	"status.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
+	"config.json", "setup-draft.json", "setup-transaction.json", "imports",
+	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir,
 }
@@ -478,7 +477,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 		return nil, err
 	}
 	known := map[string]bool{}
-	for _, name := range localStateEntries {
+	for _, name := range append(state.OwnedEntries(), localStateEntries...) {
 		known[name] = true
 	}
 	for _, entry := range entries {

@@ -41,6 +41,7 @@ func cursorTextSession(exchanges, bodyBytes int) string {
 // 64 KB. A 5 MB transcript is now retained whole, with redaction applied to
 // the sections that need it and no truncation.
 func TestCursorTextRetainsAFiveMegabyteTranscriptInFull(t *testing.T) {
+	t.Parallel()
 	const exchanges = 2600
 	input := cursorTextSession(exchanges, 2000)
 	if len(input) < 5<<20 {
@@ -72,6 +73,7 @@ func TestCursorTextRetainsAFiveMegabyteTranscriptInFull(t *testing.T) {
 // The 64 KB cap now applies per section: an oversize section is truncated and
 // reported, and the sections around it are intact and in order.
 func TestCursorTextTruncatesOnlyTheOversizeSection(t *testing.T) {
+	t.Parallel()
 	big := "assistant: long answer\n" + strings.Repeat("b", 100*1024)
 	input := "user: first\n" + big + "\ntool: after\nuser: second\nassistant: done\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart)
@@ -91,6 +93,7 @@ func TestCursorTextTruncatesOnlyTheOversizeSection(t *testing.T) {
 // and their continuation lines are omitted, and the gap is recorded once
 // however many hidden sections there were.
 func TestCursorTextKeepsLineStructureAndOmitsHiddenSections(t *testing.T) {
+	t.Parallel()
 	input := "user: hello\nsecond line\nsystem: hidden one\nhidden continuation\nassistant: ok\n  indented line\nthinking: hidden two\ntool: result\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart)
 	if err != nil {
@@ -121,6 +124,7 @@ func TestCursorTextOverTheRecordLimit(t *testing.T) {
 // filter 6 a transcript over 64 KB lost everything after its first 64 KB, so
 // a handoff could not say where the session left off.
 func TestHandoffOfALargeCursorTextTranscriptReachesTheEnd(t *testing.T) {
+	t.Parallel()
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(cursorTextSession(200, 1000)), textStart)
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +157,7 @@ func TestHandoffOfALargeCursorTextTranscriptReachesTheEnd(t *testing.T) {
 // hidden_instruction_omitted details, the redaction, and the structure gap
 // are all reported.
 func TestCursorTextSanitizesContinuationLinesAndOmitsHiddenTail(t *testing.T) {
+	t.Parallel()
 	input := strings.Join([]string{
 		"user: hello",
 		"  token=synthetic-continuation-secret",
@@ -195,6 +200,7 @@ func TestCursorTextSanitizesContinuationLinesAndOmitsHiddenTail(t *testing.T) {
 // An injected block that never closes drops the rest of its own section, as
 // it does for a JSONL string, and no more: the sections after it are kept.
 func TestCursorTextUnclosedInjectedBlockDropsOnlyItsSection(t *testing.T) {
+	t.Parallel()
 	input := "user: a\nassistant: b <system-reminder>\nnever closed\nuser: c\nassistant: d\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart)
 	if err != nil {
@@ -207,6 +213,7 @@ func TestCursorTextUnclosedInjectedBlockDropsOnlyItsSection(t *testing.T) {
 
 // A transcript of only hidden sections retains nothing and is refused.
 func TestCursorTextOnlyHiddenSectionsIsNotRetainable(t *testing.T) {
+	t.Parallel()
 	_, err := (CursorAdapter{}).FilterText(strings.NewReader("system: secret\nmore secret\n"), textStart)
 	var ferr *FilterError
 	if !errors.As(err, &ferr) {

@@ -15,6 +15,7 @@ import (
 // message ID) is that chat's unsafe_format; the database's other chats are
 // still imported, and the database counts as checked.
 func TestCursorDatabaseChatFormatErrorIsThatChats(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	uri := map[string]any{"uri": "file://" + site}
@@ -41,6 +42,7 @@ func TestCursorDatabaseChatFormatErrorIsThatChats(t *testing.T) {
 // unsafe_format, reported and not read, rather than imported under the key's
 // ID or without its workspace.
 func TestCursorDatabaseMalformedIDFieldsAreThatChatsUnsafeFormat(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	uri := map[string]any{"uri": "file://" + site}
@@ -64,6 +66,7 @@ func TestCursorDatabaseMalformedIDFieldsAreThatChatsUnsafeFormat(t *testing.T) {
 // A failure of the database itself while a chat is read (Cursor held a lock
 // past the timeout) leaves the whole database unchecked, with that reason.
 func TestCursorDatabaseReadFailureUnchecksTheDatabase(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	chats := []CursorDatabaseChat{{ID: "a", Folder: site, CreatedAt: time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)}, {ID: "b", Folder: site, CreatedAt: time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)}}
@@ -89,6 +92,7 @@ func TestCursorDatabaseReadFailureUnchecksTheDatabase(t *testing.T) {
 // kept, whichever comes first, so a stray row can't make the real chat an
 // identity_mismatch.
 func TestCursorDatabaseDuplicatePrefersTheMatchingKey(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	at := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
@@ -108,6 +112,7 @@ func TestCursorDatabaseDuplicatePrefersTheMatchingKey(t *testing.T) {
 // Ctrl-C while the plan reads chats cancels its context: planning stops with
 // the cancellation, and the plan's copy of the database is still removed.
 func TestCursorDatabaseSnapshotClosedWhenPlanningIsCancelled(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	site := tr.repo("home/site")
 	at := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
@@ -138,6 +143,7 @@ func TestCursorDatabaseSnapshotClosedWhenPlanningIsCancelled(t *testing.T) {
 // The plan's copy of the database that can't be removed fails the plan,
 // rather than being left silently in the temporary folder.
 func TestCursorDatabaseCloseErrorIsReported(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	env := tr.env()
 	failed := errors.New("remove the Cursor database snapshot")

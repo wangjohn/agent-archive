@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 const retentionWindow = 90 * 24 * time.Hour
@@ -120,7 +121,7 @@ func registered(t *testing.T, local *state.Store) int {
 func TestExpiryWaitsForPendingPublicationThenProceeds(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := &flakyStore{ObjectStore: storage.NewMemoryStore()}
+	store := &flakyStore{ObjectStore: storagetest.NewMemoryStore()}
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	path := writeTranscript(t, dir, "s1.jsonl", codexTranscript)
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
@@ -174,7 +175,7 @@ func TestExpiryWaitsForPendingPublicationThenProceeds(t *testing.T) {
 func TestExpiryWaitsForPendingRequestThenProceeds(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	path := writeTranscript(t, dir, "s1.jsonl", codexTranscript)
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
@@ -207,7 +208,7 @@ func TestExpiryWaitsForPendingRequestThenProceeds(t *testing.T) {
 func TestUnpublishableSessionExpiresDespiteOutstandingWork(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	path := writeTranscript(t, dir, "s1.jsonl", codexTranscript)
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
@@ -234,7 +235,7 @@ func TestUnpublishableSessionExpiresDespiteOutstandingWork(t *testing.T) {
 func TestSweepExpiresEveryRegistrationThisMachineOwns(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	for _, id := range []string{"kept", "excluded"} {
 		if err := local.SaveRegistration(registration(id, writeTranscript(t, dir, id+".jsonl", codexTranscript))); err != nil {
@@ -256,7 +257,7 @@ func TestSweepExpiresEveryRegistrationThisMachineOwns(t *testing.T) {
 func TestPreviousDestinationSessionIsPrunedLocallyWithoutTouchingTheBucket(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	previous := storage.NewMemoryStore()
+	previous := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if err := local.SaveRegistration(registration("old", writeTranscript(t, dir, "old.jsonl", codexTranscript))); err != nil {
 		t.Fatal(err)
@@ -266,7 +267,7 @@ func TestPreviousDestinationSessionIsPrunedLocallyWithoutTouchingTheBucket(t *te
 		t.Fatal(err)
 	}
 
-	current := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	current := &recordingStore{ObjectStore: storagetest.NewMemoryStore()}
 	fromPrevious := func(archive.SessionRegistration) bool { return false }
 
 	// Within the window: kept, and the bucket is not consulted either.
@@ -308,7 +309,7 @@ func TestNeverPublishedRegistrationExpiresLocallyWithoutTouchingTheBucket(t *tes
 	if err := local.SaveRegistration(registration("gap", filepath.Join(t.TempDir(), "gone.jsonl"))); err != nil {
 		t.Fatal(err)
 	}
-	if result := collect(t, local, storage.NewMemoryStore(), t0); len(result.Errors) != 0 {
+	if result := collect(t, local, storagetest.NewMemoryStore(), t0); len(result.Errors) != 0 {
 		t.Fatalf("collect: %#v", result)
 	}
 	if _, blocked, _ := local.LoadBlocked("gap"); !blocked {
@@ -319,7 +320,7 @@ func TestNeverPublishedRegistrationExpiresLocallyWithoutTouchingTheBucket(t *tes
 		t.Fatal(err)
 	}
 
-	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	store := &recordingStore{ObjectStore: storagetest.NewMemoryStore()}
 	if result := sweep(t, local, store, t0.Add(89*24*time.Hour), Options{}); len(result.PrunedSessions) != 0 || len(result.DeletedSessions) != 0 || len(result.Errors) != 0 {
 		t.Fatalf("expired too early: %#v", result)
 	}
@@ -345,7 +346,7 @@ func TestNeverPublishedRegistrationExpiresLocallyWithoutTouchingTheBucket(t *tes
 // it defers a published one's, and only when the collector will do the work.
 func TestNeverPublishedRegistrationWaitsForPublishableWork(t *testing.T) {
 	local := newTestStore(t)
-	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	store := &recordingStore{ObjectStore: storagetest.NewMemoryStore()}
 	if err := local.SaveRegistration(registration("s1", filepath.Join(t.TempDir(), "missing.jsonl"))); err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +378,7 @@ func TestSweepIsolatesUnreadableStateFiles(t *testing.T) {
 	}
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	for _, id := range []string{"s1", "s2"} {
 		if err := local.SaveRegistration(registration(id, writeTranscript(t, dir, id+".jsonl", codexTranscript))); err != nil {

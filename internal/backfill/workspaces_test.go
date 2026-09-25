@@ -14,6 +14,7 @@ import (
 // project, like Claude desktop's scratch chats, unless a repository inside
 // one claims the session first.
 func TestCodexDesktopWorkspaces(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	codexDocs := tr.mkdir("home/Documents/Codex")
 	first := tr.mkdir("home/Documents/Codex/2026-09-20/plan-trip")

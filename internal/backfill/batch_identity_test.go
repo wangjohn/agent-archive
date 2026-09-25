@@ -52,6 +52,7 @@ func TestLoadBatchesRejectsInvalidBatchFiles(t *testing.T) {
 }
 
 func TestValidBatchID(t *testing.T) {
+	t.Parallel()
 	for _, id := range []string{"2026-09-23-1", "2026-09-23-12"} {
 		if !ValidBatchID(id) {
 			t.Errorf("ValidBatchID(%q) = false", id)
@@ -67,6 +68,7 @@ func TestValidBatchID(t *testing.T) {
 // Regression: 2026-09 review B-23. PlanUndo refuses a batch without a valid
 // ID outright, whatever the registrations carry.
 func TestPlanUndoRefusesBatchWithoutID(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	f.include("/p")
 	f.register("hook-session", "/p", "", fixedNow.UTC())
@@ -83,6 +85,7 @@ func TestPlanUndoRefusesBatchWithoutID(t *testing.T) {
 // import registration carrying its ID. Hook registrations, including one
 // carrying an import ID, and other imports' sessions are never selected.
 func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
+	t.Parallel()
 	rng := rand.New(rand.NewPCG(1, 2))
 	ids := []string{"2026-09-23-1", "2026-09-23-2", "2026-09-22-1"}
 	for round := range 20 {
@@ -140,6 +143,7 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 // ID at all), as a switch tag, as a map index, or as an argument to a
 // membership or comparison function.
 func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
+	t.Parallel()
 	// file -> why it reads the recorded ID.
 	recordedAllowed := map[string]string{
 		"internal/backfill/batch.go": "lists the IDs in use, so a new import picks another",
@@ -239,6 +243,7 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 
 // InBatch needs an import registration and a non-empty, equal ID.
 func TestInBatch(t *testing.T) {
+	t.Parallel()
 	imported := archive.SessionRegistration{Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("2026-09-23-1")}
 	hook := archive.SessionRegistration{Origin: archive.SessionOriginHook, ImportBatch: archive.NewImportBatch("2026-09-23-1")}
 	unbatched := archive.SessionRegistration{Origin: archive.SessionOriginImport}
@@ -263,6 +268,7 @@ func TestInBatch(t *testing.T) {
 // whatever day it names now; otherwise the days are compared, as for a
 // batch that recorded no value.
 func TestBatchFiltersMatchRelativeBoundsAsTyped(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		a    BatchFilters
 		b    BatchFilters

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // largeTranscript is a codex transcript of n assistant messages of about 2 KiB
@@ -43,7 +43,7 @@ func benchmarkScan(b *testing.B, records int, prepare func(b *testing.B, local *
 	if err := local.SaveRegistration(reg); err != nil {
 		b.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	opts := Options{MachineID: "m", Now: func() time.Time { return now }}
 	if result, err := Run(context.Background(), local, store, opts); err != nil || len(result.Published) != 1 {

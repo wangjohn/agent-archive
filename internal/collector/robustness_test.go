@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func readPublishedStateFile(t *testing.T, store *state.Store, id string) publishedFile {
@@ -67,7 +68,7 @@ func mtime(t *testing.T, path string) time.Time {
 func TestMissingTranscriptBlocksOnceKeepsSnapshotAndRecovers(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	reg := registration(t, path)
 	if err := local.SaveRegistration(reg); err != nil {
@@ -150,7 +151,7 @@ func TestMissingTranscriptBlocksOnceKeepsSnapshotAndRecovers(t *testing.T) {
 func TestMissingTranscriptBeforeFirstCaptureRecoversWhenFileAppears(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	path := filepath.Join(dir, "later.jsonl")
 	reg := registration(t, path)
 	if err := local.SaveRegistration(reg); err != nil {
@@ -178,7 +179,7 @@ func TestMissingTranscriptBeforeFirstCaptureRecoversWhenFileAppears(t *testing.T
 func TestPublishedCacheStoresTheBundleOnce(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	reg := registration(t, path)
 	if err := local.SaveRegistration(reg); err != nil {
@@ -249,7 +250,7 @@ func settledSession(t *testing.T, local *state.Store, content string) archive.Se
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
-	runAt(t, local, storage.NewMemoryStore(), time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))
+	runAt(t, local, storagetest.NewMemoryStore(), time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))
 	return reg
 }
 
@@ -394,7 +395,7 @@ func TestUnchangedCheckSaysYesOnlyWhenNothingIsOwed(t *testing.T) {
 // and recorded as the gap it is.
 func TestSameLengthRewriteIsDetected(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	reg := settledSession(t, local, codexTranscript)
 	original := mtime(t, reg.TranscriptPath)
 	rewritten := strings.Replace(codexTranscript, "visible", "VISIBLE", 1)
@@ -483,7 +484,7 @@ func TestUnchangedSessionsCostNoWritesAndStayFast(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	content := largeCodexTranscript(size)
 	for i := range sessions {
@@ -617,7 +618,7 @@ func evidenceKinds(evidence []archive.SupplementalEvidence) []string {
 func TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
 	reg := registration(t, path)
 	if err := local.SaveRegistration(reg); err != nil {
@@ -696,7 +697,7 @@ func TestHookEvidenceHeldWhileTranscriptMissingPublishesOnReturn(t *testing.T) {
 func TestHookEvidenceHeldBeforeFirstCapturePublishesWhenFileAppears(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	reg := registration(t, filepath.Join(dir, "codex.jsonl"))
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)

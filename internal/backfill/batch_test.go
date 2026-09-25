@@ -17,6 +17,7 @@ import (
 // Batches are numbered per local day. An interrupted batch is continued by
 // a run with the same filters and destination, and by no other.
 func TestOpenBatch(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	store := state.OpenReadOnly(home)
 	filters := Plan{Filters: Filters{Harnesses: []string{"claude-code"}, IncludeTemp: true}, projectFilter: []string{"/work/repo"}}.BatchFilters()
@@ -61,6 +62,7 @@ func TestOpenBatch(t *testing.T) {
 // New projects are added included, activated at the import, in the plan's
 // spelling; apps without hooks are added to ImportedHarnesses.
 func TestApplyToConfigAndClock(t *testing.T) {
+	t.Parallel()
 	admitted := fixedNow.UTC()
 	cfg := config.Config{Harnesses: []string{"claude"}, Archive: archive.Config{Projects: []archive.ProjectActivation{
 		{ProjectID: archive.ProjectID("/work/in"), Root: "/work/in", Included: true, ActivatedAt: admitted.Add(-time.Hour)},
@@ -111,6 +113,7 @@ func TestApplyToConfigAndClock(t *testing.T) {
 // confirmed for. If the configured destination is a different one by the
 // time a session is registered, the session is not admitted.
 func TestRegistrationRecordsTheConfirmedDestination(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	admitted := fixedNow.UTC()
 	bucketA := credentials.Config{Provider: "s3", Bucket: "a"}
@@ -150,6 +153,7 @@ func TestRegistrationRecordsTheConfirmedDestination(t *testing.T) {
 // that is gone, a session registered meanwhile, and a project no longer
 // admitted.
 func TestRegistrationSkipsChanges(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	admitted := fixedNow.UTC()
 	cfg := config.Config{Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{
@@ -250,6 +254,7 @@ func TestRegistrationSkipsChanges(t *testing.T) {
 // Reconcile rebuilds a batch's sessions from the registrations carrying its
 // ID, and its subagents from their imported candidates.
 func TestBatchReconcile(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	store, err := state.Open(home)
 	if err != nil {
@@ -292,6 +297,7 @@ func TestBatchReconcile(t *testing.T) {
 // The same --project folder typed through a symlink records the same
 // filters, so either spelling continues the batch.
 func TestBatchFiltersResolveProjects(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	repo := tr.repo("home/repo")
 	if err := os.Symlink(tr.home, tr.path("alias")); err != nil {

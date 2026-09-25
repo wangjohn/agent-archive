@@ -12,6 +12,7 @@ import (
 // a few more credential words. Each secret is redacted and the text around
 // it kept.
 func TestRedactsCredentialStructuresAndEntries(t *testing.T) {
+	t.Parallel()
 	const secret = "Zq8WvK3pLmN5xR2t"
 	cases := []struct {
 		name string
@@ -89,6 +90,7 @@ func TestRedactsCredentialStructuresAndEntries(t *testing.T) {
 // (`{"name": "Authorization", "value": …}`) or as a pair, and the plural
 // credential words, drop their value in a tool's arguments or a JSON string.
 func TestStructuredCredentialLabelsAndPairs(t *testing.T) {
+	t.Parallel()
 	const secret = "Zq8WvK3pLmN5xR2t"
 	for _, in := range []any{
 		map[string]any{"headers": []any{map[string]any{"name": "Authorization", "value": "Basic " + secret}}},

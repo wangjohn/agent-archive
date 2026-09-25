@@ -12,6 +12,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // hookDuringDeleteStore runs a hook on the first remote delete: the moment
@@ -47,7 +48,7 @@ func finalResponse(t *testing.T, at time.Time) archive.SupplementalEvidence {
 func TestHookRequestWrittenMidExpiryIsKeptAndPublished(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	memory := storage.NewMemoryStore()
+	memory := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	if err := local.SaveRegistration(registration("s1", writeTranscript(t, dir, "s1.jsonl", codexTranscript))); err != nil {
 		t.Fatal(err)
@@ -110,7 +111,7 @@ func TestConcurrentHookRequestIsNeverLostToExpiry(t *testing.T) {
 	for round := range rounds {
 		dir := t.TempDir()
 		local := newTestStore(t)
-		memory := storage.NewMemoryStore()
+		memory := storagetest.NewMemoryStore()
 		id := fmt.Sprintf("s%02d", round)
 		if err := local.SaveRegistration(registration(id, writeTranscript(t, dir, id+".jsonl", codexTranscript))); err != nil {
 			t.Fatal(err)
@@ -178,7 +179,7 @@ func TestQueuedRequestDoesNotKeepATranscriptlessSessionPastRetention(t *testing.
 			t.Fatal(err)
 		}
 	}
-	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	store := &recordingStore{ObjectStore: storagetest.NewMemoryStore()}
 
 	// Inside the window nothing expires, request or not.
 	if result := sweep(t, local, store, t0.Add(retentionWindow-time.Hour), Options{}); len(result.PrunedSessions) != 0 || len(result.Errors) != 0 {
@@ -219,7 +220,7 @@ func TestQueuedRequestKeepsACursorDatabaseSessionPastRetention(t *testing.T) {
 	if err := local.SaveRequest(reg.ArchiveSessionID, "stop", t0.Add(time.Minute), finalResponse(t, t0.Add(time.Minute))); err != nil {
 		t.Fatal(err)
 	}
-	store := &recordingStore{ObjectStore: storage.NewMemoryStore()}
+	store := &recordingStore{ObjectStore: storagetest.NewMemoryStore()}
 	result := sweep(t, local, store, t0.Add(retentionWindow+time.Hour), Options{})
 	if len(result.Errors) != 0 || len(result.PrunedSessions) != 0 || len(result.DeletedSessions) != 0 {
 		t.Fatalf("result=%#v, want nothing expired", result)

@@ -48,6 +48,7 @@ func watchDocuments(env Environment) (*documentsWatch, Environment) {
 // never looks inside Documents; a session in a Codex workspace still maps
 // to the workspace folder.
 func TestPlanLooksInDocumentsOnlyWhenInUse(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	tr.mkdir("home/Documents/Codex/2026-09-20/plan-trip")
 	project := tr.repo("home/work/project")

@@ -10,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // noEnv is an empty process environment.
@@ -28,7 +29,7 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// CLAUDE_CODE_SESSION_ID would change what `handoff --latest` skips.
 		LookupEnv: func(string) (string, bool) { return "", false },
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
-			return storage.NewMemoryStore(), nil
+			return storagetest.NewMemoryStore(), nil
 		},
 		// Everything below would otherwise reach this Mac itself. Reads get
 		// a harmless answer; anything that would change the Mac fails the

@@ -105,10 +105,6 @@ const maxComposerVersion = 18
 // not every message row, and holds its lock only briefly.
 const cursorComposerQuery = `SELECT key, value FROM cursorDiskKV WHERE key >= 'composerData:' AND key < 'composerData;'`
 
-// cursorAfterRead, when set by a test, runs after an immutable read and
-// before its check that the file did not change.
-var cursorAfterRead func(path string)
-
 // CursorDatabaseReader returns the Environment.CursorDatabase reader for the
 // state.vscdb under home. A missing database is checked with no chats (Cursor
 // is not installed). One that can't be read safely is not checked, with a
@@ -120,7 +116,7 @@ var cursorAfterRead func(path string)
 func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResult, error) {
 	path := CursorStateDatabase(home)
 	return func(ctx context.Context) (CursorDatabaseResult, error) {
-		res := readCursorDatabase(ctx, path)
+		res := readCursorDatabase(ctx, path, cursorstore.Options{})
 		if err := ctx.Err(); err != nil {
 			return CursorDatabaseResult{}, err
 		}
@@ -146,9 +142,9 @@ func unchecked(reason CursorUncheckedReason) CursorDatabaseResult {
 // readCursorDatabase reads path through cursorstore.Read, which neither
 // writes it nor creates anything beside it (see cursorstore's resolve for
 // how it opens a database with Cursor running and closed).
-func readCursorDatabase(ctx context.Context, path string) CursorDatabaseResult {
+func readCursorDatabase(ctx context.Context, path string, opts cursorstore.Options) CursorDatabaseResult {
 	var res CursorDatabaseResult
-	err := cursorstore.Read(ctx, path, cursorstore.Options{AfterImmutableRead: cursorAfterRead}, func(ctx context.Context, db *sql.DB) error {
+	err := cursorstore.Read(ctx, path, opts, func(ctx context.Context, db *sql.DB) error {
 		var err error
 		res, err = queryCursorDatabase(ctx, db)
 		return err

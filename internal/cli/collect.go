@@ -53,12 +53,6 @@ var (
 	sweepTimeout        = 5 * time.Minute
 )
 
-// sweepClockForTest, when a test sets it, adjusts the retention sweep's
-// clock checks (retention.Options.ServerClock and PreviousScanAt). A test
-// that moves Env.Now months ahead moves only this Mac's clock; the sweep
-// rightly refuses to delete by it unless the storage clock moves too.
-var sweepClockForTest func(*retention.Options)
-
 // runCollectCommand implements the hidden `_collect` entry point
 // install.LaunchAgent schedules every 60 seconds. Unlike `sync`, it never
 // reports "already running" as a problem: a scheduled tick finding the
@@ -279,8 +273,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		SessionMaxAge:  time.Duration(cfg.RetentionDays) * 24 * time.Hour,
 		PreviousScanAt: previousScanAt,
 	}
-	if sweepClockForTest != nil {
-		sweepClockForTest(&sweepOptions)
+	if env.sweepClock != nil {
+		env.sweepClock(&sweepOptions)
 	}
 	sweepResult, sweepErr := retention.Sweep(sweepCtx, localStore, objectStore, sweepOptions)
 	if sweepErr != nil {

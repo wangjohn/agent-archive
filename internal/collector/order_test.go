@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // Sessions with a pending request are processed first, oldest start first,
@@ -44,7 +44,7 @@ func TestRunOrderProgressAndStop(t *testing.T) {
 	}
 
 	stopAfter = 2
-	if _, err := Run(context.Background(), local, storage.NewMemoryStore(), opts); err != nil {
+	if _, err := Run(context.Background(), local, storagetest.NewMemoryStore(), opts); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"a:true", "c:true"}; !slices.Equal(order, want) {
@@ -71,7 +71,7 @@ func TestRunOrderProgressAndStop(t *testing.T) {
 			}
 		}
 	}
-	if _, err := Run(context.Background(), local2, storage.NewMemoryStore(), opts); err != nil {
+	if _, err := Run(context.Background(), local2, storagetest.NewMemoryStore(), opts); err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"a:true", "c:true", "b:true", "d:true", "e:true"}; !slices.Equal(order, want) {

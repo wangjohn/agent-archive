@@ -11,6 +11,7 @@ import (
 // with no top-level timestamp beside the conversation. Treating those as
 // missing provenance would permanently reject every live child transcript.
 func TestUntimestampedClaudeBookkeepingRecordsKeepStartProvenanceComplete(t *testing.T) {
+	t.Parallel()
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "claude-bookkeeping-records.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +29,7 @@ func TestUntimestampedClaudeBookkeepingRecordsKeepStartProvenanceComplete(t *tes
 
 // A conversational record without a timestamp is still missing provenance.
 func TestUntimestampedMessageRecordStillBreaksStartProvenance(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"summary","summary":"recap"}` + "\n" +
 		`{"type":"assistant","uuid":"a","timestamp":"2026-09-17T18:00:00Z","message":{"role":"assistant","content":"first"}}` + "\n" +
 		`{"type":"assistant","uuid":"b","message":{"role":"assistant","content":"untimestamped"}}` + "\n"
@@ -44,6 +46,7 @@ func TestUntimestampedMessageRecordStillBreaksStartProvenance(t *testing.T) {
 // not become a globally retained native-record field: sanitizeObject recurses
 // and keeps strings verbatim, so a native `detail` would leak free text.
 func TestNativeDetailFieldIsNotRetainedButCaptureGapEvidenceKeepsIt(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"assistant","uuid":"a","timestamp":"2026-09-17T18:00:00Z","detail":"native free text","message":{"role":"assistant","content":[{"type":"text","text":"visible","detail":"nested free text"}]}}` + "\n"
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
 	if err != nil {
@@ -74,6 +77,7 @@ func TestNativeDetailFieldIsNotRetainedButCaptureGapEvidenceKeepsIt(t *testing.T
 // transcript. The child is archived as its own session, so the parent must
 // not count those messages, turns, and tool calls a second time.
 func TestParentCountsExcludeInlinedSidechainRecords(t *testing.T) {
+	t.Parallel()
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "claude-parent-with-sidechain.jsonl")))
 	if err != nil {
 		t.Fatal(err)

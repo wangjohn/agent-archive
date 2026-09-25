@@ -35,6 +35,7 @@ func summaryFor(t *testing.T, p Plan, root string) ProjectSummary {
 // folders. Symlinks, configured projects, projects the same import adds,
 // and dependency folders are not looked into.
 func TestPlanKeepsNestedRepositoriesOutOfAnAddedFolder(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	code := tr.mkdir("home/code")
 	tr.write("home/"+claudeFile("s", "parent"), claudeTranscript("parent", code, fixedNow.Add(-48*time.Hour)))
@@ -111,6 +112,7 @@ func TestPlanKeepsNestedRepositoriesOutOfAnAddedFolder(t *testing.T) {
 // directories inside an added folder are kept out too, and a temporary
 // directory added with --include-temp keeps its repositories out.
 func TestPlanKeepsAppFoldersAndTempDirsOut(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	docs := tr.mkdir("home/Documents")
 	codexWorkspaces := tr.mkdir("home/Documents/Codex/2026-09-20/w")
@@ -134,6 +136,7 @@ func TestPlanKeepsAppFoldersAndTempDirsOut(t *testing.T) {
 // hide sessions the person asked for. Without it they are kept out. The
 // look stops when the plan is cancelled.
 func TestPlanKeepsNothingOutUnderAnIncludedHome(t *testing.T) {
+	t.Parallel()
 	tr := newTree(t)
 	home := tr.path("home")
 	code := tr.mkdir("home/code")
@@ -184,6 +187,7 @@ func TestPlanSaysWhenNestedCheckIsIncomplete(t *testing.T) {
 // entries it added, once nothing included contains them; while another
 // import's sessions keep the folder included, they stay.
 func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	env := Environment{Home: f.home, Now: func() time.Time { return fixedNow }}
 	code := "/work/code"

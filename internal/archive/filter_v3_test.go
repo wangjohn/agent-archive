@@ -72,6 +72,7 @@ func gapDetail(gaps []CaptureGap, code string) string {
 // joined to the call it answered. Filter 3 keeps the whole argument subtree
 // and the linkage keys, without relaxing value sanitization.
 func TestFilterV3RetainsClaudeToolArgumentsAndResultLinkage(t *testing.T) {
+	t.Parallel()
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "claude-tool-evidence.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +160,7 @@ func TestFilterV3RetainsClaudeToolArgumentsAndResultLinkage(t *testing.T) {
 // Retaining argument names must not retain a blocked key, an unbounded value,
 // or a credential: the tool-argument subtree only widens the key allowlist.
 func TestFilterV3ToolArgumentSubtreeKeepsValuePolicy(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("a", 70*1024)
 	input := `{"type":"assistant","uuid":"a","timestamp":"2026-09-20T10:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":` +
 		`{"file_path":"/w/config.go","old_string":"","new_string":"const key = \"sk-synthetic-not-a-real-key-value\"","password":"hunter2-synthetic","note":"` + long + `"}}]}}`
@@ -186,6 +188,7 @@ func TestFilterV3ToolArgumentSubtreeKeepsValuePolicy(t *testing.T) {
 }
 
 func TestFilterV3RetainsCodexToolCallsAndTokenUsage(t *testing.T) {
+	t.Parallel()
 	filtered, err := (CodexAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "codex-tool-and-usage.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +248,7 @@ func TestFilterV3RetainsCodexToolCallsAndTokenUsage(t *testing.T) {
 }
 
 func TestFilterV3RetainsCursorNestedMessagesAndTurnEnded(t *testing.T) {
+	t.Parallel()
 	filtered, err := (CursorAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "cursor-turn.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -269,6 +273,7 @@ func TestFilterV3RetainsCursorNestedMessagesAndTurnEnded(t *testing.T) {
 // capped, so a reader can see what this filter version could not keep without
 // the gap list growing with the transcript.
 func TestFilterV3ReportsOmittedKeyNamesOnceAndCapsThem(t *testing.T) {
+	t.Parallel()
 	var builder strings.Builder
 	builder.WriteString(`{"type":"assistant","uuid":"a","timestamp":"2026-09-20T10:00:00Z","message":{"role":"assistant","content":"visible"}`)
 	for i := range maxOmittedKeyNames + 20 {
@@ -305,6 +310,7 @@ func TestFilterV3ReportsOmittedKeyNamesOnceAndCapsThem(t *testing.T) {
 // closing tag has not been written yet. Everything from the opening tag on is
 // dropped rather than partly retained.
 func TestFilterV3DropsUnterminatedInstructionBlocks(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"user","uuid":"u","timestamp":"2026-09-20T10:00:00Z","message":{"role":"user","content":"Fix the parser.\n<system-reminder>\nmemory: never"}}`
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
 	if err != nil {
@@ -324,6 +330,7 @@ func TestFilterV3DropsUnterminatedInstructionBlocks(t *testing.T) {
 // content behind, and the record is recorded as omitted rather than retained
 // as an empty message.
 func TestFilterV3DropsMessagesThatAreOnlyInjectedInstructions(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"user","uuid":"u","timestamp":"2026-09-20T10:00:00Z","message":{"role":"user","content":"<system-reminder>only memory</system-reminder>"}}`
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
 	if err != nil {
@@ -344,6 +351,7 @@ func TestFilterV3DropsMessagesThatAreOnlyInjectedInstructions(t *testing.T) {
 // adapter 0.11.0 superseded the filter-3 to filter-10 values this test pinned
 // before.)
 func TestFilterVersionIsDeclaredInCaptureProvenance(t *testing.T) {
+	t.Parallel()
 	if FilterVersion != "11" || adapterVersion != "0.11.0" {
 		t.Fatalf("FilterVersion=%q adapterVersion=%q", FilterVersion, adapterVersion)
 	}
@@ -365,6 +373,7 @@ func TestFilterVersionIsDeclaredInCaptureProvenance(t *testing.T) {
 // A numbers-only subtree admits objects and arrays so the recursion can prune
 // them; prose reaching it through either must still be omitted.
 func TestFilterV3NumericSubtreeOmitsNonNumericValues(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"assistant","uuid":"a","timestamp":"2026-09-20T10:00:00Z","message":{"role":"assistant","content":"ok","usage":{"input_tokens":12,"service_tier":"standard","notes":["free text","more free text"],"breakdown":{"label":"free text","cached":7}}}}`
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(strings.NewReader(input))
 	if err != nil {

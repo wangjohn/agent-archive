@@ -10,6 +10,7 @@ import (
 // origin.kind is "task-notification". It is not a prompt; the person's own
 // prompt carries origin.kind "human" and still is one.
 func TestParserV09TaskNotificationIsNotAPrompt(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "claude", "claude-task-notification.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	kinds := turnKinds(view)
@@ -21,6 +22,7 @@ func TestParserV09TaskNotificationIsNotAPrompt(t *testing.T) {
 // Filter 6 keeps origin only as its kind string and promptSource only as a
 // string; every other origin member is omitted and reported by name.
 func TestFilterV6RetainsOnlyOriginKindAndPromptSource(t *testing.T) {
+	t.Parallel()
 	filtered, err := ClaudeAdapter{}.FilterJSONL(bytes.NewReader(fixture(t, "claude-task-notification.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +47,7 @@ func TestFilterV6RetainsOnlyOriginKindAndPromptSource(t *testing.T) {
 
 // A non-object origin, or one without a string kind, is omitted whole.
 func TestFilterV6DropsMalformedOrigin(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"user","uuid":"u1","origin":"human","message":{"role":"user","content":"hi"}}
 {"type":"user","uuid":"u2","origin":{"kind":7},"promptSource":{"x":1},"message":{"role":"user","content":"hi"}}
 `
@@ -63,6 +66,7 @@ func TestFilterV6DropsMalformedOrigin(t *testing.T) {
 // input_text blocks. Its size must be measured, not reported as zero, and
 // the injected <recommended_plugins> catalog must not become a prompt.
 func TestParserV09CodexListOutputAndInjectedPlugins(t *testing.T) {
+	t.Parallel()
 	view, metadata := parsedFixture(t, "codex", "codex-list-output.jsonl")
 	countIs(t, "turns", metadata.Counts.Turns, 1)
 	countIs(t, "tool calls", metadata.Counts.ToolCalls, 2)
@@ -83,6 +87,7 @@ func TestParserV09CodexListOutputAndInjectedPlugins(t *testing.T) {
 // has never seen — a queued or remote prompt in some later version — stays a
 // prompt rather than being silently dropped.
 func TestParserV09UnknownOriginKindStaysAPrompt(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"user","uuid":"u1","timestamp":"2026-09-22T18:40:00Z","origin":{"kind":"queued-prompt"},"message":{"role":"user","content":"Also update the docs."}}
 {"type":"user","uuid":"u2","timestamp":"2026-09-22T18:41:00Z","origin":{"kind":"Task-Notification"},"message":{"role":"user","content":"<task-notification>done</task-notification>"}}
 `

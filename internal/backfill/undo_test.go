@@ -9,6 +9,7 @@ import (
 // The question names what happens to each session: deleted from the bucket,
 // or only forgotten when its objects are in a previous destination.
 func TestUndoQuestion(t *testing.T) {
+	t.Parallel()
 	session := func(id, parent string, current bool) UndoSession {
 		return UndoSession{Registration: archive.SessionRegistration{ArchiveSessionID: id, ParentSessionID: parent}, InCurrentDestination: current}
 	}

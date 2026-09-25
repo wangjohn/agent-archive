@@ -8,6 +8,7 @@ import (
 )
 
 func TestSessionRegistrationSourceKind(t *testing.T) {
+	t.Parallel()
 	base := SessionRegistration{
 		ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", ProjectRoot: "/p",
 		Harness: Harness{Name: "cursor"}, SessionStartedAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),

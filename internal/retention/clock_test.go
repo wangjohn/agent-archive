@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // agreeing gives opts a storage clock that reads exactly what its Now does,
@@ -26,7 +27,7 @@ func agreeing(opts Options) Options {
 
 // probeCountingStore counts the clock probes a sweep writes.
 type probeCountingStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	mu      sync.Mutex
 	probes  int
 	failPut bool
@@ -61,7 +62,7 @@ func objectCount(t *testing.T, store storage.ObjectStore) int {
 // locally, and the sweep says why.
 func TestClockAheadOfStorageDeletesNothing(t *testing.T) {
 	local := newTestStore(t)
-	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
+	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	dir := t.TempDir()
 	now := time.Now().UTC()
 	for _, id := range []string{"s1", "s2", "s3"} {
@@ -101,7 +102,7 @@ func TestClockAheadOfStorageDeletesNothing(t *testing.T) {
 // check holds deletion only while the clocks disagree.
 func TestClockThatAgreesWithStorageExpiresAsBefore(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Now().UTC().Add(-100 * 24 * time.Hour)
 	publishTwice(t, local, store, "s1", t.TempDir(), t0)
 	// Now is the wallNow time here, as is the MemoryStore's clock: the default
@@ -119,7 +120,7 @@ func TestClockThatAgreesWithStorageExpiresAsBefore(t *testing.T) {
 // direction, so it is let through.
 func TestClockBehindStorageStillDeletes(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", t.TempDir(), t0)
 	at := t0.Add(100 * 24 * time.Hour)
@@ -134,7 +135,7 @@ func TestClockBehindStorageStillDeletes(t *testing.T) {
 // account of age: the check fails closed.
 func TestUnreadableStorageClockHoldsDeletion(t *testing.T) {
 	local := newTestStore(t)
-	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
+	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", t.TempDir(), t0)
 	store.failPut = true
@@ -150,7 +151,7 @@ func TestUnreadableStorageClockHoldsDeletion(t *testing.T) {
 // the same sweep proceeds.
 func TestClockFarPastThePreviousPassWaitsOnePass(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", t.TempDir(), t0)
 	at := t0.Add(100 * 24 * time.Hour)
@@ -169,7 +170,7 @@ func TestClockFarPastThePreviousPassWaitsOnePass(t *testing.T) {
 // Superseded snapshots are deleted by age too, so the same check guards them.
 func TestClockAheadKeepsSupersededSnapshots(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	now := time.Now().UTC()
 	dir := t.TempDir()
 	first := publishTwice(t, local, store, "s1", dir, now)
@@ -191,7 +192,7 @@ func TestClockAheadKeepsSupersededSnapshots(t *testing.T) {
 // that has not happened.
 func TestCaptureStampedByAClockAheadIsClampedOnceTheClockIsRight(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	right := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	// Captured while the clock read sixty days ahead.
 	publishTwice(t, local, store, "s1", t.TempDir(), right.Add(60*24*time.Hour))
@@ -219,7 +220,7 @@ func TestCaptureStampedByAClockAheadIsClampedOnceTheClockIsRight(t *testing.T) {
 // clock was corrected.
 func TestFutureCaptureIsNotClampedByAClockBehindStorage(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	captured := time.Date(2026, 6, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", t.TempDir(), captured)
 	behind := captured.Add(-365 * 24 * time.Hour)
@@ -236,7 +237,7 @@ func TestFutureCaptureIsNotClampedByAClockBehindStorage(t *testing.T) {
 // The ledger's supersession times get the same clamp.
 func TestSupersessionStampedByAClockAheadIsClamped(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	right := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	dir := t.TempDir()
 	ahead := right.Add(60 * 24 * time.Hour)
@@ -265,7 +266,7 @@ func TestSupersessionStampedByAClockAheadIsClamped(t *testing.T) {
 
 // The probe leaves nothing in the bucket and reads the service's time.
 func TestProbeServerClockLeavesNothingBehind(t *testing.T) {
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	before := time.Now().Add(-time.Second)
 	at, err := ProbeServerClock(context.Background(), store)
 	if err != nil || at.Before(before) || at.After(time.Now().Add(time.Second)) {
@@ -282,7 +283,7 @@ func TestProbeServerClockLeavesNothingBehind(t *testing.T) {
 // a large import expired at once).
 func TestSweepPastItsDeadlineLeavesTheRestForTheNextSweep(t *testing.T) {
 	local := newTestStore(t)
-	mem := storage.NewMemoryStore()
+	mem := storagetest.NewMemoryStore()
 	dir := t.TempDir()
 	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	const sessions = 12
@@ -307,7 +308,7 @@ func TestSweepPastItsDeadlineLeavesTheRestForTheNextSweep(t *testing.T) {
 
 // slowStore delays every call, and gives up when its context ends.
 type slowStore struct {
-	*storage.MemoryStore
+	*storagetest.MemoryStore
 	d time.Duration
 }
 
@@ -345,7 +346,7 @@ func (s slowStore) List(ctx context.Context, p string) ([]storage.Object, error)
 // write, a listing, and a delete, and sweeps run after every pass.
 func TestSweepWithNothingDueDoesNotProbe(t *testing.T) {
 	local := newTestStore(t)
-	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
+	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := time.Now().UTC()
 	publishTwice(t, local, store, "s1", t.TempDir(), now.Add(-time.Hour))
 	for range 3 {
@@ -365,7 +366,7 @@ func TestSweepWithNothingDueDoesNotProbe(t *testing.T) {
 // and the deletions it held go ahead.
 func TestHeldClockIsNotProbedEveryPass(t *testing.T) {
 	local := newTestStore(t)
-	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
+	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	wallNow := time.Now().UTC()
 	publishTwice(t, local, store, "s1", t.TempDir(), wallNow.Add(-100*24*time.Hour))
 	ahead := wallNow.Add(365 * 24 * time.Hour)
@@ -396,7 +397,7 @@ func TestHeldClockIsNotProbedEveryPass(t *testing.T) {
 // again on each.
 func TestFailedProbeIsNotRetriedEveryPass(t *testing.T) {
 	local := newTestStore(t)
-	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore(), failPut: true}
+	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore(), failPut: true}
 	wallNow := time.Now().UTC()
 	publishTwice(t, local, store, "s1", t.TempDir(), wallNow.Add(-100*24*time.Hour))
 	for pass := range 5 {
@@ -416,7 +417,7 @@ func TestFailedProbeIsNotRetriedEveryPass(t *testing.T) {
 // again, and a jump inside that window is too small to matter.
 func TestAgreeingReadingDoesNotCoverALaterJump(t *testing.T) {
 	local := newTestStore(t)
-	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
+	store := &probeCountingStore{MemoryStore: storagetest.NewMemoryStore()}
 	dir := t.TempDir()
 	wallNow := time.Now().UTC()
 	publishTwice(t, local, store, "old", dir, wallNow.Add(-100*24*time.Hour))

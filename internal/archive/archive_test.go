@@ -31,6 +31,7 @@ func registration() SessionRegistration {
 }
 
 func TestCodexAdapterFiltersPrivateFieldsAndUnknownRecords(t *testing.T) {
+	t.Parallel()
 	filtered, err := (CodexAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "codex-safe-and-sensitive.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +54,7 @@ func TestCodexAdapterFiltersPrivateFieldsAndUnknownRecords(t *testing.T) {
 }
 
 func TestAdaptersRetainVisibleSiblingBlocksAndDeriveModelToolMetadata(t *testing.T) {
+	t.Parallel()
 	filtered, err := (CodexAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "codex-function-call.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +97,7 @@ func TestAdaptersRetainVisibleSiblingBlocksAndDeriveModelToolMetadata(t *testing
 }
 
 func TestExcludedRecordsDoNotChangeBoundaryOrHash(t *testing.T) {
+	t.Parallel()
 	first, err := (CodexAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "codex-known-plus-unknown.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +132,7 @@ func TestExcludedRecordsDoNotChangeBoundaryOrHash(t *testing.T) {
 }
 
 func TestSourceBundleIsDeterministicAndGzipTimestampIsFixed(t *testing.T) {
+	t.Parallel()
 	filtered, err := (CodexAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "codex-safe-and-sensitive.jsonl")))
 	if err != nil {
 		t.Fatal(err)
@@ -199,6 +203,7 @@ func registrationBundle(t *testing.T) SourceBundle {
 }
 
 func TestMetadataParserFailureLeavesMinimalSourceFirstMetadata(t *testing.T) {
+	t.Parallel()
 	bundle := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "archive", NativeSessionID: "native", ProjectID: "project", Capture: SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", AdapterVersion: "0.1.0", SourceFormat: "codex-jsonl", FilterVersion: FilterVersion, CapturedAt: time.Date(2026, 9, 17, 18, 25, 0, 0, time.UTC)}, NativeRecords: []map[string]any{{"role": "system", "content": "must not be normalized"}}}
 	metadata, err := BuildMetadata(bundle, "machine", time.Date(2026, 9, 17, 18, 0, 0, 0, time.UTC), time.Date(2026, 9, 17, 18, 26, 0, 0, time.UTC), SourceReference{Key: "sessions/codex/archive/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 1}, ParserInfo{})
 	if !IsParseError(err) {
@@ -210,6 +215,7 @@ func TestMetadataParserFailureLeavesMinimalSourceFirstMetadata(t *testing.T) {
 }
 
 func TestConfigEligibilityRequiresExplicitActivation(t *testing.T) {
+	t.Parallel()
 	activation := time.Date(2026, 9, 17, 18, 0, 0, 0, time.UTC)
 	config := Config{Enabled: true, Projects: []ProjectActivation{{ProjectID: "p", Root: "/work/widget", Included: true, ActivatedAt: activation}}}
 	if config.Eligible("/work/widget", activation.Add(-time.Second)) {
@@ -221,6 +227,7 @@ func TestConfigEligibilityRequiresExplicitActivation(t *testing.T) {
 }
 
 func TestSchemasAreValidJSON(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"../../schemas/source-bundle.schema.json", "../../schemas/metadata.schema.json"} {
 		contents, err := os.ReadFile(name)
 		if err != nil {
@@ -243,6 +250,7 @@ func hasGap(gaps []CaptureGap, code string) bool {
 }
 
 func TestCursorTextFailsClosedAndTypelessJSONLWorks(t *testing.T) {
+	t.Parallel()
 	if _, err := (CursorAdapter{}).FilterText(strings.NewReader("system: hidden\nunknown raw"), time.Now()); !IsFilterError(err) {
 		t.Fatalf("err=%v", err)
 	}
@@ -253,6 +261,7 @@ func TestCursorTextFailsClosedAndTypelessJSONLWorks(t *testing.T) {
 }
 
 func TestCursorTextRetainsMultilineMessageBodies(t *testing.T) {
+	t.Parallel()
 	input := "user: hello\nassistant: Let me help.\nHere is more detail on a second line.\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), time.Now())
 	if err != nil {
@@ -264,6 +273,7 @@ func TestCursorTextRetainsMultilineMessageBodies(t *testing.T) {
 }
 
 func TestCursorTextOmitsHiddenSectionContinuationLines(t *testing.T) {
+	t.Parallel()
 	input := "user: hello\nsystem: hidden instructions\nmore hidden continuation\nassistant: ok\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), time.Now())
 	if err != nil {
@@ -275,6 +285,7 @@ func TestCursorTextOmitsHiddenSectionContinuationLines(t *testing.T) {
 }
 
 func TestCursorTextMetadataLeavesStructuredCountsUnknown(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader("user: hello\nassistant: hi\n"), now)
 	if err != nil {
@@ -299,6 +310,7 @@ func TestCursorTextMetadataLeavesStructuredCountsUnknown(t *testing.T) {
 }
 
 func TestLifecycleDerivationIsOrderedConservativeAndDeterministic(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	event := func(at time.Time, name string, fields map[string]any) SupplementalEvidence {
 		payload := map[string]any{"event_name": name}
@@ -359,6 +371,7 @@ func TestLifecycleDerivationIsOrderedConservativeAndDeterministic(t *testing.T) 
 }
 
 func TestMetadataPinsSemanticConventionAndOldMetadataStillLoads(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "cursor"}, AdapterName: "cursor", AdapterVersion: "1", SourceFormat: "jsonl", FilterVersion: FilterVersion, CapturedAt: now}, NativeRecords: []map[string]any{{"role": "assistant", "model": "gpt-x", "reasoning_effort": "high", "content": "done"}}}
 	ref := SourceReference{Key: "sessions/cursor/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64), CompressedBytes: 1}
@@ -389,6 +402,7 @@ func TestMetadataPinsSemanticConventionAndOldMetadataStillLoads(t *testing.T) {
 }
 
 func TestPreciseNativeSkillReadInference(t *testing.T) {
+	t.Parallel()
 	bundle := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "1", SourceFormat: "x", FilterVersion: FilterVersion, CapturedAt: time.Now()}, NativeRecords: []map[string]any{{"type": "tool_use", "name": "Read", "input": map[string]any{"file_path": "/skills/review-pr/SKILL.md"}}, {"type": "function_call", "command": "cat /skills/create/SKILL.md"}, {"type": "message", "role": "user", "content": "echo SKILL.md"}}}
 	m, err := BuildMetadata(bundle, "m", time.Now(), time.Now(), SourceReference{Key: "sessions/claude/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
 	if err != nil {
@@ -406,6 +420,7 @@ func TestPreciseNativeSkillReadInference(t *testing.T) {
 // SKILL.md read was silently missed. See the codex-function-call.jsonl
 // fixture for the real record shape this models.
 func TestCodexFunctionCallArgumentsSkillReadInference(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	bundle := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", AdapterVersion: "1", SourceFormat: "x", FilterVersion: FilterVersion, CapturedAt: now}, NativeRecords: []map[string]any{
 		// A leading turn_context record, as every real Codex transcript has:
@@ -428,6 +443,7 @@ func TestCodexFunctionCallArgumentsSkillReadInference(t *testing.T) {
 }
 
 func TestNativeAndSupplementalSkillUseDedupeByName(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	b := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "1", SourceFormat: "x", FilterVersion: FilterVersion, CapturedAt: now},
 		NativeRecords:        []map[string]any{{"type": "tool_use", "name": "Read", "input": map[string]any{"file_path": "/skills/review/SKILL.md"}}},
@@ -444,6 +460,7 @@ func TestNativeAndSupplementalSkillUseDedupeByName(t *testing.T) {
 }
 
 func TestEligibleSkillWithoutUseCoverageRemainsPartial(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	b := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", AdapterVersion: "1", SourceFormat: "x", FilterVersion: FilterVersion, CapturedAt: now}, SupplementalEvidence: []SupplementalEvidence{{Kind: EvidenceKindSkillInventory, ObservedAt: now, Provenance: "fs", Payload: map[string]any{"coverage": "eligible", "skills": []any{map[string]any{"name": "review", "sha256": "aaa"}}}}}}
 	ref := SourceReference{Key: "sessions/codex/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}
@@ -457,6 +474,7 @@ func TestEligibleSkillWithoutUseCoverageRemainsPartial(t *testing.T) {
 }
 
 func TestModelSummaryTracksTurnCount(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	b := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "cursor"}, AdapterName: "cursor", AdapterVersion: "1", SourceFormat: "x", FilterVersion: FilterVersion, CapturedAt: now}, NativeRecords: []map[string]any{
 		{"role": "assistant", "model": "gpt-x", "content": "one"},
@@ -481,6 +499,7 @@ func TestModelSummaryTracksTurnCount(t *testing.T) {
 }
 
 func TestHookModelAndAssistantOnlyFinalReconciliation(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	bundle := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "cursor"}, AdapterName: "cursor", AdapterVersion: "1", SourceFormat: "x", FilterVersion: FilterVersion, CapturedAt: now}, NativeRecords: []map[string]any{{"role": "user", "id": "u", "turn_id": "t", "content": "q"}, {"role": "assistant", "id": "a", "turn_id": "t", "content": "a"}}, SupplementalEvidence: []SupplementalEvidence{{Kind: EvidenceKindLifecycleHook, ObservedAt: now, Provenance: "hook", Payload: map[string]any{"model_id": "canonical", "model": "label", "model_params": []any{map[string]any{"id": "effort", "value": "high"}}}}, {Kind: EvidenceKindFinalResponse, ObservedAt: now, Provenance: "hook", Payload: map[string]any{"turn_id": "t"}}, {Kind: EvidenceKindExplicitFeedback, ObservedAt: now, Provenance: "hook", Payload: map[string]any{"text": "ok"}}}}
 	m, err := BuildMetadata(bundle, "m", now, now, SourceReference{Key: "sessions/cursor/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
@@ -497,6 +516,7 @@ func TestHookModelAndAssistantOnlyFinalReconciliation(t *testing.T) {
 }
 
 func TestSameNameDifferentHashInventoryMetadataIsDeterministic(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	b := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "codex"}, AdapterName: "codex", AdapterVersion: "1", SourceFormat: "x", FilterVersion: FilterVersion, CapturedAt: now}, SupplementalEvidence: []SupplementalEvidence{{Kind: EvidenceKindSkillInventory, ObservedAt: now, Provenance: "fs", Payload: map[string]any{"coverage": "installed_only", "skills": []any{map[string]any{"name": "same", "sha256": "bbb"}, map[string]any{"name": "same", "sha256": "aaa"}}}}}}
 	ref := SourceReference{Key: "sessions/codex/a/source." + strings.Repeat("a", 64) + ".jsonl.gz", SHA256: strings.Repeat("a", 64)}
@@ -519,6 +539,7 @@ func TestSameNameDifferentHashInventoryMetadataIsDeterministic(t *testing.T) {
 }
 
 func TestMergeSupplementalEvidenceRetainsChangedInventoryHistory(t *testing.T) {
+	t.Parallel()
 	first := time.Date(2026, 9, 20, 1, 0, 0, 0, time.UTC)
 	later := first.Add(time.Hour)
 	payload := map[string]any{"coverage": "installed_only", "scope": "user", "skills": []any{map[string]any{"name": "review", "sha256": "abc"}}}
@@ -542,6 +563,7 @@ func TestMergeSupplementalEvidenceRetainsChangedInventoryHistory(t *testing.T) {
 }
 
 func TestDeriveSkillsKeepsInventoryHistoryWithoutClaimingUse(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 20, 1, 0, 0, 0, time.UTC)
 	bundle := SourceBundle{
 		SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p",
@@ -561,6 +583,7 @@ func TestDeriveSkillsKeepsInventoryHistoryWithoutClaimingUse(t *testing.T) {
 }
 
 func TestMergeSupplementalEvidenceDeduplicatesRetriesButKeepsIntentionalFeedback(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	retried := SupplementalEvidence{Kind: EvidenceKindFinalResponse, ObservedAt: now, Provenance: "hook:codex:stop", Payload: map[string]any{"turn_id": "t1", "text": "done"}}
 	one := SupplementalEvidence{Kind: EvidenceKindExplicitFeedback, ObservedAt: now, Provenance: "user:agent-archive-feedback-file", Payload: map[string]any{"event_id": "one", "text": "same"}}
@@ -572,6 +595,7 @@ func TestMergeSupplementalEvidenceDeduplicatesRetriesButKeepsIntentionalFeedback
 }
 
 func TestMergeSupplementalEvidenceRetainsHistoricalSkillVersions(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	previous := []SupplementalEvidence{
 		{Kind: EvidenceKindSkillInventory, ObservedAt: now, Provenance: "filesystem:codex", Payload: map[string]any{"coverage": "installed_only", "scope": "project", "skills": []any{map[string]any{"name": "old"}}}},
@@ -591,6 +615,7 @@ func TestMergeSupplementalEvidenceRetainsHistoricalSkillVersions(t *testing.T) {
 }
 
 func TestClaudeMultipleToolUseEntriesHaveResponseAttribution(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	b := SourceBundle{SchemaVersion: SourceSchemaVersion, ArchiveSessionID: "a", NativeSessionID: "n", ProjectID: "p", Capture: SourceCapture{Harness: Harness{Name: "claude"}, AdapterName: "claude", AdapterVersion: "1", SourceFormat: "x", FilterVersion: FilterVersion, CapturedAt: now}, NativeRecords: []map[string]any{{"type": "assistant", "model": "claude-response", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "x"}, map[string]any{"type": "tool_use", "id": "one"}, map[string]any{"type": "tool_use", "id": "two"}}}}}}
 	v, e := ParseNormalized(b)
@@ -600,6 +625,7 @@ func TestClaudeMultipleToolUseEntriesHaveResponseAttribution(t *testing.T) {
 }
 
 func TestHiddenChannelAndBearerCredentialAreRemoved(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"response_item","payload":{"type":"message","role":"assistant","channel":"analysis","content":"hidden"}}` + "\n" + `{"type":"response_item","payload":{"type":"message","role":"assistant","channel":"final","content":"Authorization: Bearer token-secret-value visible"}}`
 	f, e := (CodexAdapter{}).FilterJSONL(strings.NewReader(input))
 	if e != nil {
@@ -612,6 +638,7 @@ func TestHiddenChannelAndBearerCredentialAreRemoved(t *testing.T) {
 }
 
 func TestAllHiddenContentArrayOmitsFieldInsteadOfEmptyPlaceholder(t *testing.T) {
+	t.Parallel()
 	input := `{"type":"response_item","id":"x","payload":{"type":"message","role":"assistant","content":[{"type":"reasoning","text":"hidden thought only"}]}}`
 	f, e := (CodexAdapter{}).FilterJSONL(strings.NewReader(input))
 	if e != nil {
@@ -626,6 +653,7 @@ func TestAllHiddenContentArrayOmitsFieldInsteadOfEmptyPlaceholder(t *testing.T) 
 }
 
 func TestClaudeBundleAttributesRecordVersionToHarness(t *testing.T) {
+	t.Parallel()
 	filtered, err := (ClaudeAdapter{}).FilterJSONL(bytes.NewReader(fixture(t, "claude-tool-use.jsonl")))
 	if err != nil {
 		t.Fatal(err)

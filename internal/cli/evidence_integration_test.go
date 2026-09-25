@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestCollectionIncludesSkillHistoryAndExplicitFeedback(t *testing.T) {
@@ -38,7 +39,7 @@ func TestCollectionIncludesSkillHistoryAndExplicitFeedback(t *testing.T) {
 	if len(regs) != 1 {
 		t.Fatal("session was not registered")
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	env := testEnv(t, home, now)
 	env.Now = func() time.Time { return now }
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }

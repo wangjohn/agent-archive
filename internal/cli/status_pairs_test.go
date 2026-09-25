@@ -13,7 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestStatusRequiresEveryApplicationProjectPair(t *testing.T) {
@@ -28,7 +28,7 @@ func TestStatusRequiresEveryApplicationProjectPair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	publishPairSession(t, home, store, remote, cfg, now, "codex-a", projectA, true)
 	publishPairSession(t, home, store, remote, cfg, now, "codex-b", projectB, false)
 
@@ -57,7 +57,7 @@ func TestPairVerificationSurvivesUnrelatedChangesButNotReactivationOrDestination
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	publishPairSession(t, home, store, remote, cfg, now, "codex-a", projectA, true)
 	env := pairStatusEnv(t, home, userHome, now, "codex")
 
@@ -135,7 +135,7 @@ func TestStatusCountsLegacySessionsWithoutConfiguredProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	publishPairSession(t, home, store, remote, cfg, now, "codex-legacy", project, false)
 	env := pairStatusEnv(t, home, userHome, now, "codex")
 	view, err := readStatus(env)
@@ -169,7 +169,7 @@ func TestStatusIgnoresDuplicateProjectRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	publishPairSession(t, home, store, remote, cfg, now, "codex-a", project, true)
 	view, err := readStatus(pairStatusEnv(t, home, userHome, now, "codex"))
 	if err != nil {
@@ -189,7 +189,7 @@ func TestStatusTextDoesNotCallPartialReadBackVerified(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	publishPairSession(t, home, store, remote, cfg, now, "codex-a", projectA, true)
 	publishPairSession(t, home, store, remote, cfg, now, "codex-b", projectB, false)
 	env := pairStatusEnv(t, home, userHome, now, "codex")
@@ -219,7 +219,7 @@ func pairTestConfig(now time.Time, apps []string, roots ...string) config.Config
 
 // publishPairSession registers and publishes a Codex session, verifying it
 // when verify is set.
-func publishPairSession(t *testing.T, home string, store *state.Store, remote *storage.MemoryStore, cfg config.Config, now time.Time, id, project string, verify bool) {
+func publishPairSession(t *testing.T, home string, store *state.Store, remote *storagetest.MemoryStore, cfg config.Config, now time.Time, id, project string, verify bool) {
 	t.Helper()
 	path := filepath.Join(project, id+".jsonl")
 	if err := os.WriteFile(path, []byte(`{"type":"turn_context","model":"synthetic","cli_version":"1.2.3"}`+"\n"), 0600); err != nil {

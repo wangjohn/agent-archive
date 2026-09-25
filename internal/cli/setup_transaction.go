@@ -83,14 +83,6 @@ func destinationEqual(a, b credentials.Config) bool {
 	return config.DestinationID(a) == config.DestinationID(b)
 }
 
-// pendingSessions counts every accepted session state.Outstanding reports
-// as pending, a session waiting for its transcript included: status reports
-// it as pending, because from the user's side it is.
-func pendingSessions(home string, cfg config.Config) (int, error) {
-	blocking, waiting, err := pendingSessionCounts(home, cfg)
-	return blocking + waiting, err
-}
-
 // pendingSessionCounts splits the pending sessions in two. waiting counts
 // those only waiting for their transcript (state.Outstanding's
 // WaitingForTranscript): nothing of such a session can be published

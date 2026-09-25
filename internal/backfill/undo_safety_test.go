@@ -86,6 +86,7 @@ func (f *undoFixture) batch(id string, started time.Time, projectsAdded ...strin
 // CLI answers with advice about imports/) from registrations it can't list,
 // which is a different problem.
 func TestOpenBatchSeparatesRegistrationErrorsFromImportFiles(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	if err := os.RemoveAll(filepath.Join(f.home, "registrations")); err != nil {
 		t.Fatal(err)
@@ -112,6 +113,7 @@ func TestOpenBatchSeparatesRegistrationErrorsFromImportFiles(t *testing.T) {
 // B-1: a new import is numbered past every ID a registration still carries,
 // so an ID whose batch file was moved aside is never reused.
 func TestOpenBatchSkipsIDsRegistrationsStillCarry(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	first, err := OpenBatch(f.home, f.store, BatchFilters{}, "dest", fixedNow)
 	if err != nil || first.ID != "2026-09-23-1" {
@@ -128,6 +130,7 @@ func TestOpenBatchSkipsIDsRegistrationsStillCarry(t *testing.T) {
 // B-1: when an ID was already reused (by an earlier release), undo refuses
 // rather than remove the earlier import's sessions too.
 func TestPlanUndoRefusesABatchIDSharedWithAnEarlierImport(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	f.include("/p")
 	f.register("earlier", "/p", "2026-09-23-1", fixedNow.UTC())
@@ -153,6 +156,7 @@ func TestPlanUndoRefusesABatchIDSharedWithAnEarlierImport(t *testing.T) {
 // B-2: undoing import A keeps a project A added while import B still has
 // sessions there, says so, and names it for B; B's undo then excludes it.
 func TestUndoKeepsAProjectAnotherImportStillNeeds(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	p := f.include("/work/p")
 	q := f.include("/work/q")
@@ -206,6 +210,7 @@ func TestUndoKeepsAProjectAnotherImportStillNeeds(t *testing.T) {
 // B-2: a project kept for another import is not taken over by an undo of an
 // import that has no sessions there.
 func TestUndoDoesNotTakeOverAKeptProjectItHasNoSessionsIn(t *testing.T) {
+	t.Parallel()
 	f := newUndoFixture(t)
 	p := f.include("/work/p")
 	undone := fixedNow.UTC()
@@ -260,6 +265,7 @@ func TestResumedByEvidenceDoesNotDecodeRecords(t *testing.T) {
 // its headers when it has them, even an empty list, and from its inline
 // conversation only when it has none.
 func TestComposerMessagesCountedAsTheReaderCountsThem(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		value   string
 		counted bool

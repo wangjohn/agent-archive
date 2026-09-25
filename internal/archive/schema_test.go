@@ -65,6 +65,7 @@ func validateAgainst(t *testing.T, schema *jsonschema.Schema, what string, data 
 // hook-captured and as imported) validate against the published schemas.
 // This is what keeps a schema from drifting from what the code writes.
 func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
+	t.Parallel()
 	sourceSchema := compileSchema(t, "source-bundle.schema.json")
 	metadataSchema := compileSchema(t, "metadata.schema.json")
 	derived := time.Date(2026, 9, 23, 11, 0, 0, 0, time.UTC)
@@ -196,6 +197,7 @@ func goEnum(t *testing.T, typeName string) []string {
 
 // The schemas' enums are the Go constants, value for value.
 func TestSchemaEnumsMatchGoConstants(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		goType string
 		schema string
@@ -225,6 +227,7 @@ var gapCodeLiteral = regexp.MustCompile(`(?:addGap\(|Code:\s*)"([a-z_]+)"`)
 // Both schemas enumerate exactly CaptureGapCodes, and every gap code this
 // package writes as a literal is in it.
 func TestCaptureGapCodesAreEnumerated(t *testing.T) {
+	t.Parallel()
 	want := append([]string(nil), CaptureGapCodes...)
 	sort.Strings(want)
 	for _, name := range []string{"metadata.schema.json", "source-bundle.schema.json"} {

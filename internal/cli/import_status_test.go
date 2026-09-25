@@ -13,7 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // saveImportedSession registers an imported Codex session with a transcript.
@@ -50,7 +50,7 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	saveImportedSession(t, store, now, "published", project)
 	if result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil || len(result.Published) != 1 {
 		t.Fatalf("result=%#v err=%v", result, err)
@@ -116,7 +116,7 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveImportedSession(t, store, now, "failing", project)
-	if _, err := collector.Run(context.Background(), store, storage.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil {
+	if _, err := collector.Run(context.Background(), store, storagetest.NewMemoryStore(), collector.Options{MachineID: cfg.MachineID, AcceptSession: cfg.AcceptSession, Now: func() time.Time { return now }}); err != nil {
 		t.Fatal(err)
 	}
 	if _, blocked, err := store.LoadBlocked("gone"); err != nil || !blocked {
@@ -160,7 +160,7 @@ func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
-	publishPairSession(t, home, store, storage.NewMemoryStore(), cfg, now, "hook", project, true)
+	publishPairSession(t, home, store, storagetest.NewMemoryStore(), cfg, now, "hook", project, true)
 	var out strings.Builder
 	if code := runStatusCommand(nil, &out, &out, pairStatusEnv(t, home, userHome, now, "codex")); code != 0 || strings.Contains(out.String(), "Imported:") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
@@ -178,7 +178,7 @@ func TestVerificationReadsBackHookPublicationsBeforeImports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	for i := range maxVerificationsPerPass + 1 {
 		saveImportedSession(t, store, now, "import-"+string(rune('a'+i)), project)
 	}

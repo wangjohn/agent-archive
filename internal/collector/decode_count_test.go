@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // A collector scan reads a session's published state (a whole source bundle,
@@ -21,7 +21,7 @@ func TestScanReadsPublishedStateOnce(t *testing.T) {
 	if err := local.SaveRegistration(registration(t, path)); err != nil {
 		t.Fatal(err)
 	}
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	opts := Options{MachineID: "m", ParserVersion: "one", Now: func() time.Time { return now }}
 	pass := func(name string, wantPublished int) {

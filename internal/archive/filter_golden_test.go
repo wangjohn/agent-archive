@@ -74,6 +74,7 @@ func filterGoldenOf(t *testing.T, name string) filterGoldenEntry {
 // (regenerate with -update-filter-golden, which is itself a statement that
 // the filter's output changed on purpose).
 func TestFilterOutputIsUnchangedByTheRecordLimit(t *testing.T) {
+	t.Parallel()
 	names := filterGoldenFixtures(t)
 	if *updateFilterGolden {
 		golden := map[string]filterGoldenEntry{}

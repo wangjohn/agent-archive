@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 const codexTranscript = `{"type":"turn_context","model":"gpt-test"}
@@ -92,7 +93,7 @@ func fetchMetadata(t *testing.T, store storage.ObjectStore, sessionID string) ar
 func TestSweepRespectsGracePeriodBeforeDeletingSupersededSource(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	firstKey := publishTwice(t, local, store, "s1", dir, t0)
 	supersededAt := t0.Add(10 * time.Minute)
@@ -138,7 +139,7 @@ func TestSweepRespectsGracePeriodBeforeDeletingSupersededSource(t *testing.T) {
 func TestSweepNeverDeletesTheCurrentSource(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	publishTwice(t, local, store, "s1", dir, t0)
 	currentMeta := fetchMetadata(t, store, "s1")
@@ -155,7 +156,7 @@ func TestSweepNeverDeletesTheCurrentSource(t *testing.T) {
 func TestSweepDeletesWholeSessionPastRetentionWindow(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	path := writeTranscript(t, dir, "s1.jsonl", codexTranscript)
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
@@ -190,7 +191,7 @@ func TestSweepDeletesWholeSessionPastRetentionWindow(t *testing.T) {
 func TestSweepWithinRetentionWindowLeavesSessionAlone(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	path := writeTranscript(t, dir, "s1.jsonl", codexTranscript)
 	if err := local.SaveRegistration(registration("s1", path)); err != nil {
@@ -231,7 +232,7 @@ func (f failingDeleteStore) Delete(ctx context.Context, key string) error {
 func TestSweepIsolatesOneSessionsFailure(t *testing.T) {
 	dir := t.TempDir()
 	local := newTestStore(t)
-	memStore := storage.NewMemoryStore()
+	memStore := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	firstKeyA := publishTwice(t, local, memStore, "a", dir, t0)
 	_ = publishTwice(t, local, memStore, "b", dir, t0)
@@ -270,7 +271,7 @@ func publishThird(t *testing.T, local *state.Store, store storage.ObjectStore, i
 
 func TestSweepFailsClosedWithUnreadableCurrentMetadata(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	at := time.Now()
 	dir := t.TempDir()
 	first := publishTwice(t, local, store, "s1", dir, at)
@@ -297,7 +298,7 @@ func TestWholeSessionDeletionFailureNeverLeavesDanglingPointer(t *testing.T) {
 	for _, failMetadata := range []bool{true, false} {
 		t.Run(strconv.FormatBool(failMetadata), func(t *testing.T) {
 			local := newTestStore(t)
-			mem := storage.NewMemoryStore()
+			mem := storagetest.NewMemoryStore()
 			at := time.Now()
 			publishTwice(t, local, mem, "s1", t.TempDir(), at)
 			meta := fetchMetadata(t, mem, "s1")
@@ -333,7 +334,7 @@ func TestWholeSessionDeletionFailureNeverLeavesDanglingPointer(t *testing.T) {
 
 func TestRetentionProtectsNewerRemoteCaptureAndClockRollbackPredecessor(t *testing.T) {
 	local := newTestStore(t)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	at := time.Now().UTC()
 	dir := t.TempDir()
 	first := publishTwice(t, local, remote, "s1", dir, at)
@@ -414,7 +415,7 @@ func pointCurrentAt(t *testing.T, store storage.ObjectStore, id, key string) {
 // A, so the sweep must retain A and expire B, not the reverse.
 func TestSweepKeepsTruePredecessorAfterContentReversion(t *testing.T) {
 	local := newTestStore(t)
-	store := storage.NewMemoryStore()
+	store := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	a := publishTwice(t, local, store, "s1", t.TempDir(), t0) // ledger [A]; current B
 	b := fetchMetadata(t, store, "s1").SourceBundle.Key
@@ -465,7 +466,7 @@ func (c *countingStore) Get(ctx context.Context, key string) ([]byte, error) {
 
 func TestSweepSkipsRemoteReadWhenNothingIsExpirable(t *testing.T) {
 	local := newTestStore(t)
-	mem := storage.NewMemoryStore()
+	mem := storagetest.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
 	dir := t.TempDir()
 	first := publishTwice(t, local, mem, "s1", dir, t0) // ledger [first]: the predecessor

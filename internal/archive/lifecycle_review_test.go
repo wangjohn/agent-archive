@@ -6,6 +6,7 @@ import (
 )
 
 func TestSessionClosurePreservesLastObservedTurnOutcome(t *testing.T) {
+	t.Parallel()
 	at := time.Now().UTC()
 	for _, tc := range []struct {
 		event      string

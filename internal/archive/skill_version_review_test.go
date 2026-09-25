@@ -3,6 +3,7 @@ package archive
 import "testing"
 
 func TestSkillUseRetainsMultipleHashesForSameName(t *testing.T) {
+	t.Parallel()
 	var metadata Metadata
 	deriveSkills(SourceBundle{}, []SkillUse{
 		{Name: "review", SHA256: "aaa", Evidence: SkillUseEvidenceNativeInvocation},

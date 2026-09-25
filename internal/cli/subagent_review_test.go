@@ -13,7 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
@@ -56,7 +56,7 @@ func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
 	hook(stop, now)
 	cfg, _, _ := config.Load(home)
 	local, _ := state.Open(home)
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 	collect := func() {
 		t.Helper()
 		result, err := collector.Run(context.Background(), local, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }, AcceptSession: cfg.AcceptSession})

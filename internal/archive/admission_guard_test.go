@@ -86,6 +86,7 @@ func comparisons(fset *token.FileSet, file *ast.File, left, right []string) []to
 // silently for imports, whose start is long before both: the collector skips
 // the session, or retention leaves its objects behind. Compare Admitted().
 func TestNoBoundaryComparesSessionStartedAtOutsideAdmitted(t *testing.T) {
+	t.Parallel()
 	walkSources(t, func(path string, fset *token.FileSet, file *ast.File) {
 		for _, position := range boundaryComparisons(t, fset, file) {
 			t.Errorf("%s: compares SessionStartedAt with an admission boundary; use SessionRegistration.Admitted()", position)
@@ -100,6 +101,7 @@ func TestNoBoundaryComparesSessionStartedAtOutsideAdmitted(t *testing.T) {
 // admission, skips the ID: a session admitted into a bucket the
 // configuration switched away from and back to would look foreign.
 func TestNoDestinationTimeComparisonOutsideInCurrentDestination(t *testing.T) {
+	t.Parallel()
 	walkSources(t, func(path string, fset *token.FileSet, file *ast.File) {
 		for _, position := range destinationComparisons(fset, file) {
 			t.Errorf("%s: compares with DestinationSince; use config.InCurrentDestination", position)
@@ -172,6 +174,7 @@ func walkSources(t *testing.T, fn func(path string, fset *token.FileSet, file *a
 
 // The guard must recognise the comparisons it exists to forbid.
 func TestBoundaryGuardDetectsStartComparisons(t *testing.T) {
+	t.Parallel()
 	src := `package p
 func a() {
 	_ = r.SessionStartedAt.Before(c.DestinationSince)
@@ -198,6 +201,7 @@ func a() {
 // through a local variable too, outside the allowed functions, and leave
 // other uses of the field and other comparisons alone.
 func TestDestinationGuardDetectsComparisons(t *testing.T) {
+	t.Parallel()
 	src := `package config
 func a() {
 	_ = r.Admitted().Before(c.DestinationSince)

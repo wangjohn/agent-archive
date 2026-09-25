@@ -8,7 +8,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // Regression: PR #57 review. Retention's expiry deferral moved onto
@@ -33,7 +33,7 @@ func TestExpiryDefersOnlyForUndeliveredEvidence(t *testing.T) {
 			after: func(t *testing.T, local *state.Store, path string) {
 				t.Helper()
 				writeTranscript(t, filepath.Dir(path), filepath.Base(path), "not json\n")
-				collect(t, local, storage.NewMemoryStore(), t0.Add(time.Hour))
+				collect(t, local, storagetest.NewMemoryStore(), t0.Add(time.Hour))
 				if o, err := local.Outstanding(registration("s1", path), false); err != nil || !o.Scan {
 					t.Fatalf("the failing scan left no journal (%+v, %v); the test no longer covers it", o, err)
 				}
@@ -78,7 +78,7 @@ func TestExpiryDefersOnlyForUndeliveredEvidence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			local := newTestStore(t)
-			memory := storage.NewMemoryStore()
+			memory := storagetest.NewMemoryStore()
 			path := writeTranscript(t, t.TempDir(), "s1.jsonl", codexTranscript)
 			if err := local.SaveRegistration(registration("s1", path)); err != nil {
 				t.Fatal(err)
@@ -151,7 +151,7 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 					switch capture {
 					case "":
 					case state.CacheStatusPublished, state.CacheStatusRateLimited:
-						if result := collect(t, local, storage.NewMemoryStore(), t0); len(result.Published) != 1 {
+						if result := collect(t, local, storagetest.NewMemoryStore(), t0); len(result.Published) != 1 {
 							t.Fatalf("not published: %#v", result)
 						}
 						published, err := local.LoadPublishedState("s1")
@@ -193,7 +193,7 @@ func TestExpiryDeferralMatchesTheRuleBeforeOutstanding(t *testing.T) {
 						}
 					}
 
-					result := sweep(t, local, storage.NewMemoryStore(), expiry, Options{
+					result := sweep(t, local, storagetest.NewMemoryStore(), expiry, Options{
 						Publishable:        func(archive.SessionRegistration) bool { return publishable },
 						CurrentDestination: func(archive.SessionRegistration) bool { return current },
 					})

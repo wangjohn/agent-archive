@@ -8,6 +8,7 @@ import "testing"
 // constant value would otherwise change the persisted format without failing
 // any test.
 func TestWireKindSpellings(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		got  string
 		want string

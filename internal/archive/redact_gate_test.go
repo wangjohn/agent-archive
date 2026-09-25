@@ -75,6 +75,7 @@ func gateSeeds() []string {
 }
 
 func TestGatedRedactionMatchesWhole(t *testing.T) {
+	t.Parallel()
 	for _, s := range gateSeeds() {
 		checkGatedRedactionMatchesWhole(t, s)
 	}
@@ -100,6 +101,7 @@ func FuzzGatedRedactionMatchesWhole(f *testing.F) {
 // pattern edited to accept a new spelling fails here rather than silently
 // skipping lines.
 func TestPatternNeedlesAreRequired(t *testing.T) {
+	t.Parallel()
 	for name, p := range gatedPatterns() {
 		re, err := syntax.Parse(p.re.String(), syntax.Perl)
 		if err != nil {
@@ -136,6 +138,7 @@ func TestPatternNeedlesAreRequired(t *testing.T) {
 // that case-folds to an ASCII letter. needleText treats those as exotic
 // (never gated); this pins the list to Unicode's fold tables.
 func TestExoticFoldsAreComplete(t *testing.T) {
+	t.Parallel()
 	for r := rune(0x80); r <= unicode.MaxRune; r++ {
 		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
 			if f < 0x80 && unicode.IsLetter(f) && !newNeedleText(string(r)).exotic {

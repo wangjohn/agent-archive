@@ -59,28 +59,6 @@ func TestRetryPolicyRetriesOnlyTransientErrors(t *testing.T) {
 	}
 }
 
-type countingGetStore struct {
-	*MemoryStore
-	gets int
-}
-
-func (s *countingGetStore) Get(ctx context.Context, key string) ([]byte, error) {
-	s.gets++
-	return s.MemoryStore.Get(ctx, key)
-}
-
-// An existing source whose bytes differ will differ on every attempt.
-func TestSourcePublicationDoesNotRetryChecksumMismatch(t *testing.T) {
-	store := &countingGetStore{MemoryStore: NewMemoryStore()}
-	if err := store.Put(context.Background(), "source.hash", []byte("other bytes")); err != nil {
-		t.Fatal(err)
-	}
-	err := PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), RetryPolicy{MaxAttempts: 3, InitialWait: time.Nanosecond, MaxWait: time.Nanosecond})
-	if !errors.Is(err, ErrChecksumMismatch) || store.gets != 1 {
-		t.Fatalf("gets = %d, err = %v", store.gets, err)
-	}
-}
-
 // A server that accepts the connection and never answers must not hold a
 // request (and the collector lock with it) forever.
 func TestS3ClientGivesUpOnServerThatNeverResponds(t *testing.T) {

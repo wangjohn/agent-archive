@@ -122,7 +122,11 @@ var ErrChanged = errors.New("changed while it was being updated")
 
 // Apply rolls back already written files on failure. It refuses a configuration
 // changed since the plan was prepared, rather than overwriting concurrent edits.
-func Apply(changes []Change) error {
+func Apply(changes []Change) error { return apply(changes, resolveTarget) }
+
+// apply is Apply writing each change where writeTarget says: resolveTarget,
+// or a stand-in a test gives to point a write somewhere else.
+func apply(changes []Change, writeTarget func(path string) (string, error)) error {
 	applied := []Change{}
 	for _, c := range changes {
 		current, err := os.ReadFile(c.Path)
@@ -168,29 +172,14 @@ func Apply(changes []Change) error {
 	return nil
 }
 
-// PlanRemoval prepares the inverse of Plan for uninstall: for each harness,
+// PlanRemovalOf prepares the inverse of Plan for one harness, for uninstall:
 // a Change whose After is the current file with only hook's installation's
-// handlers (and the prototype's) stripped (see Remove). A harness whose hook
-// file is missing, or whose file never contained those, yields no Change at
-// all, so an unrelated configuration, or one only another installation's
-// hooks are in, is never rewritten or reformatted. Apply the result with
-// Apply, which keeps its refuse-on-concurrent-edit and rollback behavior.
-func PlanRemoval(files Files, hook Hook, harnesses []string) ([]Change, error) {
-	changes := []Change{}
-	for _, h := range harnesses {
-		c, found, err := PlanRemovalOf(files, hook, h)
-		if err != nil {
-			return nil, err
-		}
-		if found {
-			changes = append(changes, c)
-		}
-	}
-	return changes, nil
-}
-
-// PlanRemovalOf is PlanRemoval for one harness; found is false when its file
-// holds nothing of hook's installation.
+// handlers (and the prototype's) stripped (see Remove). found is false, and
+// there is no Change, when the harness's hook file is missing or holds
+// nothing of hook's installation, so an unrelated configuration, or one only
+// another installation's hooks are in, is never rewritten or reformatted.
+// Apply the result with Apply, which keeps its refuse-on-concurrent-edit and
+// rollback behavior.
 func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found bool, err error) {
 	path, err := files.path(harness)
 	if err != nil {
@@ -303,10 +292,6 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	}
 	return writeFile(target, data, mode)
 }
-
-// writeTarget is where Apply writes a change to path: resolveTarget,
-// replaceable so a test can make a write land in the wrong place.
-var writeTarget = resolveTarget
 
 // priorFile is what was at a path before Apply wrote it, so a write that
 // must be taken back can be: the old content, or its absence together with

@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // cursorDB stands in for Cursor's state.vscdb in a test. Running, it holds a
@@ -114,8 +115,6 @@ func cursorRegistration(id, composerID string) archive.SessionRegistration {
 func countSnapshots(t *testing.T) *[]int {
 	t.Helper()
 	var passes []int
-	afterCursorPass = func(n int) { passes = append(passes, n) }
-	t.Cleanup(func() { afterCursorPass = nil })
 	return &passes
 }
 
@@ -124,6 +123,7 @@ func countSnapshots(t *testing.T) *[]int {
 func run(t *testing.T, local *state.Store, remote storage.ObjectStore, opts Options, passes *[]int) (Result, int) {
 	t.Helper()
 	before := len(*passes)
+	opts.afterCursorPass = func(n int) { *passes = append(*passes, n) }
 	result, err := Run(context.Background(), local, remote, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +197,7 @@ func TestCursorSQLiteSourceChangeDetection(t *testing.T) {
 	if err := local.SaveRegistration(file); err != nil {
 		t.Fatal(err)
 	}
-	remote := storage.NewMemoryStore()
+	remote := storagetest.NewMemoryStore()
 
 	// Never scanned: the chat is read and published, beside the file.
 	result, copies := run(t, local, remote, opts, passes)
@@ -298,7 +298,7 @@ func TestCursorSQLiteOneSnapshotPerPass(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	result, copies := run(t, local, storage.NewMemoryStore(), opts, passes)
+	result, copies := run(t, local, storagetest.NewMemoryStore(), opts, passes)
 	if len(result.Errors) != 0 || len(result.Published) != 4 || copies != 1 {
 		t.Fatalf("%+v, %d copies", result, copies)
 	}
@@ -352,7 +352,7 @@ func TestCursorSQLiteFailuresCostNoCopies(t *testing.T) {
 			}
 			opts := Options{MachineID: "m", CursorDatabase: db.path, MaxTranscriptBytes: tc.maxBytes}
 			for pass := range 3 {
-				result, copies := run(t, local, storage.NewMemoryStore(), opts, passes)
+				result, copies := run(t, local, storagetest.NewMemoryStore(), opts, passes)
 				want := 0
 				if pass == 0 {
 					want = tc.firstCopy
@@ -390,7 +390,7 @@ func TestCursorSQLitePassSweepsStaleSnapshots(t *testing.T) {
 	if err := os.Chtimes(stale, old, old); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run(context.Background(), local, storage.NewMemoryStore(), opts)
+	result, err := Run(context.Background(), local, storagetest.NewMemoryStore(), opts)
 	if err != nil || !contains(result.Skipped, reg.ArchiveSessionID) {
 		t.Fatalf("%+v %v", result, err)
 	}
