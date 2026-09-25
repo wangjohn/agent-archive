@@ -384,7 +384,9 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
 		return Plan{}, err
 	}
-	planNested(r, &plan)
+	if err := planNested(ctx, r, &plan); err != nil {
+		return Plan{}, err
+	}
 	sort.SliceStable(plan.Candidates, func(i, j int) bool {
 		a, b := plan.Candidates[i], plan.Candidates[j]
 		if a.Harness != b.Harness {

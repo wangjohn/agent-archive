@@ -491,7 +491,12 @@ each such entry again once nothing included contains it (removing it then
 changes no capture); an import still in place keeps its entries, even while
 setup has the folder excluded, so including the folder again keeps them out.
 Home (rule 7) is not looked in: `--include-home` is the explicit
-choice to capture everything under home, and the plan warns about it. A
+choice to capture everything under home, and the plan warns about it. Nor
+is a folder whose nearest project above it is included and not itself
+looked in (home added by the same import, or a configured project): what is
+under it is captured with or without the folder, so keeping anything out
+would stop capture rather than keep it as it was. The look stops when the
+plan is cancelled. A
 later backfill skips a kept-out repository's sessions as
 `excluded_project`, until setup includes it.
 

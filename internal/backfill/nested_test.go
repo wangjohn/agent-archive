@@ -2,6 +2,8 @@ package backfill
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,6 +125,35 @@ func TestPlanKeepsAppFoldersAndTempDirsOut(t *testing.T) {
 	}
 	if s := summaryFor(t, p, run); !s.CapturesSubfolders() || strings.Join(s.KeptOut, ",") != repoInTemp {
 		t.Fatalf("temporary row %+v", s)
+	}
+}
+
+// Regression (PR #53 review): a plain folder inside home keeps nothing out
+// when the same import adds home with --include-home, the explicit choice
+// to capture everything under home; keeping its repositories out would
+// hide sessions the person asked for. Without it they are kept out. The
+// look stops when the plan is cancelled.
+func TestPlanKeepsNothingOutUnderAnIncludedHome(t *testing.T) {
+	tr := newTree(t)
+	home := tr.path("home")
+	code := tr.mkdir("home/code")
+	secret := tr.repo("home/code/secret-repo")
+	tr.write("home/"+claudeFile("s", "home"), claudeTranscript("home", home, fixedNow.Add(-72*time.Hour)))
+	tr.write("home/"+claudeFile("s", "code"), claudeTranscript("code", code, fixedNow.Add(-48*time.Hour)))
+
+	p := plan(t, tr.env(), nil, config.Config{}, Filters{IncludeHome: true})
+	if s := summaryFor(t, p, code); len(s.KeptOut) != 0 {
+		t.Fatalf("--include-home still keeps out %v", s.KeptOut)
+	}
+	p = plan(t, tr.env(), nil, config.Config{}, Filters{})
+	if s := summaryFor(t, p, code); strings.Join(s.KeptOut, ",") != secret {
+		t.Fatalf("without --include-home: kept out %v", s.KeptOut)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := planNested(ctx, newResolver(tr.env(), config.Config{}, Filters{}), &p); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled look: %v", err)
 	}
 }
 

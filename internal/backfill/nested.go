@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"context"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -49,14 +50,17 @@ func capturesSubfolders(kind ProjectKind) bool {
 // findNested looks inside root, a project the plan adds, for the folders the
 // import must keep out (see above). skip are roots that are, or will be,
 // projects of their own: the configured ones and those the plan adds.
-func (r *resolver) findNested(root string, skip []string) nestedFolders {
+func (r *resolver) findNested(ctx context.Context, root string, skip []string) (nestedFolders, error) {
 	out := nestedFolders{Complete: true}
 	if !r.env.exists(root) {
-		return out
+		return out, nil
 	}
 	budget := nestedScanBudget
 	queue := []string{root}
 	for len(queue) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nestedFolders{}, err
+		}
 		dir := queue[0]
 		queue = queue[1:]
 		if budget <= 0 {
@@ -89,12 +93,12 @@ func (r *resolver) findNested(root string, skip []string) nestedFolders {
 		}
 	}
 	sort.Strings(out.KeptOut)
-	return out
+	return out, nil
 }
 
 // planNested fills plan.nested for every project the plan adds that
-// captures its subfolders.
-func planNested(r *resolver, plan *Plan) {
+// captures its subfolders. It stops, with ctx's error, when ctx is done.
+func planNested(ctx context.Context, r *resolver, plan *Plan) error {
 	var skip []string
 	for _, p := range r.cfg.Archive.Projects {
 		skip = append(skip, uniquePaths(filepath.Clean(p.Root), r.env.resolved(p.Root))...)
@@ -104,12 +108,43 @@ func planNested(r *resolver, plan *Plan) {
 		skip = append(skip, s.Root)
 	}
 	for _, s := range summaries {
-		if s.Included || !capturesSubfolders(s.Kind) {
+		if s.Included || !capturesSubfolders(s.Kind) || capturedAnyway(r, summaries, s) {
 			continue
+		}
+		nested, err := r.findNested(ctx, s.Root, skip)
+		if err != nil {
+			return err
 		}
 		if plan.nested == nil {
 			plan.nested = map[string]nestedFolders{}
 		}
-		plan.nested[s.Root] = r.findNested(s.Root, skip)
+		plan.nested[s.Root] = nested
 	}
+	return nil
+}
+
+// capturedAnyway reports whether the folders under s, a plain folder the
+// plan adds, would be captured without it: the nearest project above it,
+// configured or added by the same plan, is included, and is not a plain
+// folder the plan looks in itself. That is a configured included project,
+// or a home folder added with --include-home, the explicit choice to capture
+// everything under home. Keeping folders under s out would then stop
+// capture the person has, or asked for, instead of keeping it as it was.
+func capturedAnyway(r *resolver, summaries []ProjectSummary, s ProjectSummary) bool {
+	nearest, included, scanned := "", false, false
+	consider := func(root string, isIncluded, isScanned bool) {
+		if root == s.Root || !pathWithin(s.Root, root) || len(root) <= len(nearest) {
+			return
+		}
+		nearest, included, scanned = root, isIncluded, isScanned
+	}
+	for _, p := range r.cfg.Archive.Projects {
+		for _, root := range uniquePaths(filepath.Clean(p.Root), r.env.resolved(p.Root)) {
+			consider(root, p.Included, false)
+		}
+	}
+	for _, o := range summaries {
+		consider(o.Root, true, !o.Included && capturesSubfolders(o.Kind))
+	}
+	return included && !scanned
 }
