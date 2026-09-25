@@ -172,7 +172,9 @@ registered sessions persist locally, and the next collector pass uploads them.
 `destination`, `filters`, `projects` (each has `root`, `kind`, `status`,
 `exists`, per-app `sessions`, `subagents`, `bytes`, first and last start,
 `captures_subfolders`, `kept_out`, the folders inside it the import adds as
-excluded projects, and `kept_out_complete`),
+excluded projects, `kept_out_unchecked`, those among them kept out whole
+without being looked in because macOS protects them, and
+`kept_out_complete`),
 `skipped` (a count for each reason), `apps_without_hooks`, `retention_days`,
 `expires_on`, and `storage_checked` (always `false` in a dry run, which
 writes nothing; the storage check writes a test object), then
@@ -495,10 +497,20 @@ inside the folder (at most 5,000 folders listed; symlinks, `.git`,
 `node_modules`, and virtual environments are not entered) for what must stay
 as it is: nested repositories and linked worktrees (a `.git` folder or
 file), and the desktop apps' workspace folders and temporary directories.
+It never looks inside a folder macOS protects with a privacy prompt (the
+home folder's Desktop, Documents, Downloads, and Library; iCloud Drive and
+other apps' containers inside Library; `/Volumes` and the other paths to
+removable and network volumes) unless the added folder is itself inside that
+one, where running a session already needed the access; the 5,000-folder
+limit applies either way. A protected folder it does not look in is kept out
+whole (`kept_out_unchecked` in the dry-run JSON), without reading it, so
+nothing in it is captured that was not before.
 The import adds each as an excluded project (`projects_kept_out` in the
 batch), so the nearest configured project for anything in them is excluded
 and hooks keep ignoring them, as before the import. The plan lists them, and
-says when not every folder could be checked. Undoing the import removes
+says when not every folder could be checked: a repository not found is then
+captured too, and the plan says how to stop that (exclude the folder in
+setup, or import only chosen projects with `--project`). Undoing the import removes
 each such entry again once nothing included contains it (removing it then
 changes no capture); an import still in place keeps its entries, even while
 setup has the folder excluded, so including the folder again keeps them out.

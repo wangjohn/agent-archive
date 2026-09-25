@@ -35,10 +35,13 @@ type ProjectSummary struct {
 	LastStart  time.Time
 	// KeptOut are the folders inside a project the plan adds that the
 	// import adds as excluded projects, so the new project does not capture
-	// them (see nested.go). NestedComplete is false when not every folder
-	// inside could be looked in.
-	KeptOut        []string
-	NestedComplete bool
+	// them (see nested.go). KeptOutUnchecked are those among them kept out
+	// whole without being looked in, because macOS protects them.
+	// NestedComplete is false when not every other folder inside could be
+	// looked in.
+	KeptOut          []string
+	KeptOutUnchecked []string
+	NestedComplete   bool
 }
 
 // CapturesSubfolders reports whether adding the project makes hooks capture
@@ -105,7 +108,7 @@ func (p Plan) Projects() []ProjectSummary {
 		out[i] = *s
 		out[i].NestedComplete = true
 		if nested, ok := p.nested[s.Root]; ok {
-			out[i].KeptOut, out[i].NestedComplete = nested.KeptOut, nested.Complete
+			out[i].KeptOut, out[i].KeptOutUnchecked, out[i].NestedComplete = nested.KeptOut, nested.Unchecked, nested.Complete
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -349,10 +352,18 @@ func (p Plan) renderSubfolderNote(w io.Writer, s ProjectSummary) {
 	terminal.Println(w, "  Every future session in a folder under it that isn't in a nearer project")
 	terminal.Println(w, "  will be captured too.")
 	if n := len(s.KeptOut); n > 0 {
-		if n == 1 {
+		switch {
+		case n == 1 && len(s.KeptOutUnchecked) > 0:
+			terminal.Println(w, "  One folder inside it, which macOS protects, is added as an excluded")
+			terminal.Println(w, "  project so it stays out of capture; setup can include it:")
+		case n == 1:
 			terminal.Println(w, "  One folder inside it, a repository or app folder, is added as an excluded")
 			terminal.Println(w, "  project so it stays out of capture; setup can include it:")
-		} else {
+		case len(s.KeptOutUnchecked) > 0:
+			terminal.Printf(w, "  %d folders inside it (repositories, app folders, or folders macOS\n", n)
+			terminal.Println(w, "  protects) are added as excluded projects so they stay out of capture;")
+			terminal.Println(w, "  setup can include them:")
+		default:
 			terminal.Printf(w, "  %d folders inside it, repositories or app folders, are added as excluded\n", n)
 			terminal.Println(w, "  projects so they stay out of capture; setup can include them:")
 		}
@@ -364,9 +375,23 @@ func (p Plan) renderSubfolderNote(w io.Writer, s ProjectSummary) {
 			terminal.Printf(w, "    %s\n", p.display(folder))
 		}
 	}
+	if len(s.KeptOutUnchecked) > 0 {
+		names := make([]string, 0, len(s.KeptOutUnchecked))
+		for _, folder := range s.KeptOutUnchecked {
+			names = append(names, p.display(folder))
+		}
+		they := "it was"
+		if len(names) > 1 {
+			they = "they were"
+		}
+		terminal.Printf(w, "  macOS asks before an app reads %s,\n", joinAnd(names))
+		terminal.Printf(w, "  so %s not looked in and %s out of capture whole.\n", they, stayStays(len(names)))
+	}
 	if !s.NestedComplete {
-		terminal.Println(w, "  Not every folder inside it could be checked for repositories; any not")
-		terminal.Println(w, "  found are captured too.")
+		terminal.Println(w, "  Not every folder inside it could be checked for repositories, so a")
+		terminal.Println(w, "  repository in it that was not found is captured too. To keep capture out")
+		terminal.Println(w, "  of this folder, exclude it later in agent-archive setup (Change apps and")
+		terminal.Println(w, "  projects), or import only the projects you want with --project.")
 	}
 }
 
@@ -697,10 +722,12 @@ type projectJSON struct {
 	// new sessions in folders under it that no nearer project owns.
 	CapturesSubfolders bool `json:"captures_subfolders"`
 	// KeptOut are the folders inside it the import adds as excluded
-	// projects; KeptOutComplete is false when not every folder inside could
-	// be checked.
-	KeptOut         []string `json:"kept_out"`
-	KeptOutComplete bool     `json:"kept_out_complete"`
+	// projects; KeptOutUnchecked are those among them kept out whole
+	// without being looked in, because macOS protects them; KeptOutComplete
+	// is false when not every other folder inside could be checked.
+	KeptOut          []string `json:"kept_out"`
+	KeptOutUnchecked []string `json:"kept_out_unchecked"`
+	KeptOutComplete  bool     `json:"kept_out_complete"`
 }
 
 // RenderJSON writes the plan with the spec's top-level keys, for
@@ -752,7 +779,7 @@ func RenderJSON(w io.Writer, p Plan) error {
 			Root: s.Root, Kind: s.Kind, Status: status, Exists: s.Exists,
 			Sessions: sessions, Subagents: s.Subagents, Bytes: s.Bytes,
 			FirstStartedAt: s.FirstStart.UTC(), LastStartedAt: s.LastStart.UTC(),
-			CapturesSubfolders: s.CapturesSubfolders(), KeptOut: append([]string{}, s.KeptOut...), KeptOutComplete: s.NestedComplete,
+			CapturesSubfolders: s.CapturesSubfolders(), KeptOut: append([]string{}, s.KeptOut...), KeptOutUnchecked: append([]string{}, s.KeptOutUnchecked...), KeptOutComplete: s.NestedComplete,
 		})
 	}
 	encoder := json.NewEncoder(w)

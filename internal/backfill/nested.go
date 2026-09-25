@@ -23,6 +23,14 @@ import (
 // The look is bounded (nestedScanBudget folders listed); when the budget
 // runs out, or a folder can't be read, the plan says not every folder was
 // checked.
+//
+// It never looks inside a folder macOS asks the person about before an app
+// reads it (privacyProtectedFolders: Desktop, Documents, Downloads, Library
+// and iCloud Drive in the home folder, and other volumes), unless the added
+// folder is itself inside that one: running a session there already needed
+// the access. Such a folder is kept out whole instead, without reading it,
+// so nothing in it is captured that was not before the import; the plan
+// says so and setup can include it.
 
 // nestedScanBudget bounds how many folders one project's look lists. A
 // test lowers it.
@@ -36,8 +44,48 @@ var nestedSkipNames = map[string]bool{".git": true, "node_modules": true, ".venv
 type nestedFolders struct {
 	// KeptOut are the folders the import adds as excluded projects.
 	KeptOut []string
-	// Complete is false when not every folder could be looked in.
+	// Unchecked are the folders among KeptOut kept out whole without being
+	// looked in, because macOS protects them (privacyProtectedFolders).
+	Unchecked []string
+	// Complete is false when not every folder could be looked in, other
+	// than the Unchecked ones.
 	Complete bool
+}
+
+// privacyProtectedFolders are the folders whose contents macOS shows a
+// privacy prompt (TCC) for before an app reads them, for home: the home
+// folder's Desktop, Documents, Downloads and Library; iCloud Drive (Library/
+// Mobile Documents) and other apps' data (Library/Containers and Library/
+// Group Containers), locations of their own inside Library; and the other
+// volumes: removable and network ones under /Volumes, and the same data
+// reached through /System/Volumes, /Network or /net. Both home as given and
+// with its symlinks resolved are covered.
+//
+// Resolution never makes a folder above home a project (above_home), and
+// home itself is not looked in, so today only a folder added inside Library
+// or at /Volumes reaches another location; the list guards every root.
+func privacyProtectedFolders(env Environment) []string {
+	var out []string
+	for _, home := range uniquePaths(filepath.Clean(env.Home), env.resolved(env.Home)) {
+		for _, name := range []string{"Desktop", "Documents", "Downloads", "Library", filepath.Join("Library", "Mobile Documents"), filepath.Join("Library", "Containers"), filepath.Join("Library", "Group Containers")} {
+			out = append(out, filepath.Join(home, name))
+		}
+	}
+	return append(out, "/Volumes", "/System/Volumes", "/Network", "/net")
+}
+
+// protectedOutside reports whether path is in a privacy-protected folder
+// (the nearest one containing it, from protected) that does not also
+// contain root: looking in it could make macOS ask, where running a session
+// in root did not need to.
+func protectedOutside(path, root string, protected []string) bool {
+	nearest := ""
+	for _, folder := range protected {
+		if pathWithin(path, folder) && len(folder) > len(nearest) {
+			nearest = folder
+		}
+	}
+	return nearest != "" && !pathWithin(root, nearest)
 }
 
 // capturesSubfolders reports whether adding a project of this kind makes
@@ -56,6 +104,7 @@ func (r *resolver) findNested(ctx context.Context, root string, skip []string) (
 		return out, nil
 	}
 	budget := nestedScanBudget
+	protected := privacyProtectedFolders(r.env)
 	queue := []string{root}
 	for len(queue) > 0 {
 		if err := ctx.Err(); err != nil {
@@ -83,6 +132,10 @@ func (r *resolver) findNested(ctx context.Context, root string, skip []string) (
 			switch {
 			case slices.Contains(skip, path):
 				// A project of its own already, or added by this import.
+			case protectedOutside(path, root, protected):
+				// Nothing inside is read, not even a .git: kept out whole.
+				out.KeptOut = append(out.KeptOut, path)
+				out.Unchecked = append(out.Unchecked, path)
 			case r.isWorkspaceFolder(path) || slices.Contains(r.temps, path):
 				out.KeptOut = append(out.KeptOut, path)
 			case r.env.exists(filepath.Join(path, ".git")):
@@ -93,6 +146,7 @@ func (r *resolver) findNested(ctx context.Context, root string, skip []string) (
 		}
 	}
 	sort.Strings(out.KeptOut)
+	sort.Strings(out.Unchecked)
 	return out, nil
 }
 

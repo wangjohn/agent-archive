@@ -175,7 +175,7 @@ func TestPlanSaysWhenNestedCheckIsIncomplete(t *testing.T) {
 	}
 	var out bytes.Buffer
 	RenderText(&out, p)
-	if !strings.Contains(out.String(), "Not every folder inside it could be checked for repositories") {
+	if !strings.Contains(out.String(), "Not every folder inside it could be checked for repositories") || !strings.Contains(out.String(), "repository in it that was not found is captured too. To keep capture out\n  of this folder, exclude it later in agent-archive setup") {
 		t.Fatalf("plan:\n%s", out.String())
 	}
 }

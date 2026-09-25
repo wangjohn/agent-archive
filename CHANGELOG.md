@@ -140,7 +140,9 @@ can list them, inspect them, and hand one to another agent.
   says that the folder will capture new sessions anywhere under it, and adds
   the repositories and app folders inside it as excluded projects, so they
   stay out of capture as before; the plan lists them. Undo removes them
-  again.
+  again. It never looks inside a folder macOS asks about (Desktop,
+  Documents, Downloads, Library, iCloud Drive, other volumes) unless the
+  plain folder is in it; such a folder is kept out whole.
 - Backfill: the import prompt's `edit` only raises retention (shorten it in
   setup). Undoing the import offers to put the earlier retention back,
   after saying how many older sessions (not only imported ones) that

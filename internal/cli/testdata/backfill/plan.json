@@ -28,6 +28,7 @@
       "last_started_at": "2026-09-21T09:00:00Z",
       "captures_subfolders": false,
       "kept_out": [],
+      "kept_out_unchecked": [],
       "kept_out_complete": true
     },
     {
@@ -46,6 +47,7 @@
       "last_started_at": "2026-09-20T09:00:00Z",
       "captures_subfolders": false,
       "kept_out": [],
+      "kept_out_unchecked": [],
       "kept_out_complete": true
     },
     {
@@ -64,6 +66,7 @@
       "last_started_at": "2026-09-22T10:00:00Z",
       "captures_subfolders": false,
       "kept_out": [],
+      "kept_out_unchecked": [],
       "kept_out_complete": true
     },
     {
@@ -82,6 +85,7 @@
       "last_started_at": "2026-09-18T12:00:00Z",
       "captures_subfolders": true,
       "kept_out": [],
+      "kept_out_unchecked": [],
       "kept_out_complete": true
     },
     {
@@ -100,6 +104,7 @@
       "last_started_at": "2026-09-20T18:00:00Z",
       "captures_subfolders": false,
       "kept_out": [],
+      "kept_out_unchecked": [],
       "kept_out_complete": true
     }
   ],

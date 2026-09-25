@@ -48,7 +48,14 @@ may have made; a copy a killed backfill leaves is removed by the next
   that no nearer project owns; the plan says so under its row. Repositories
   and app folders inside it are added to setup as excluded projects, so they
   stay out of capture as before, and the plan lists them. Include one in
-  setup to capture it; undoing the import removes them again.
+  setup to capture it; undoing the import removes them again. Backfill does
+  not look inside folders macOS asks about before an app reads them
+  (Desktop, Documents, Downloads, Library, iCloud Drive, other volumes)
+  unless the plain folder is itself inside one; such a folder is kept out
+  whole. When not every folder inside could be checked (it stops after
+  5,000), the plan says so: a repository it did not find is captured too.
+  To stop that, exclude the folder in setup, or import only the projects
+  you want with `--project`.
 - `--since` and `--until` take a date (`2026-09-01`), an RFC 3339 time, or an
   age (`30d`, `12h`). Backfill selects whole local days, so a time or an age
   selects from the start of the day it falls on. An interrupted import run
@@ -96,9 +103,10 @@ and other imports' included. The undo plan says how many, and the question
 you answer names them. With `--yes` undo leaves retention as it is and prints
 the command that restores it: `agent-archive backfill undo ID --yes
 --restore-retention`. A `--project` undo never changes retention, and neither
-does undo when retention was changed after the import. Undo refuses, and changes nothing, when it cannot tell its sessions
-from another import's (an earlier import whose file is missing had the same
-ID).
+does undo when retention was changed after the import.
+
+Undo refuses, and changes nothing, when it cannot tell its sessions from
+another import's (an earlier import whose file is missing had the same ID).
 
 ## Import files
 
