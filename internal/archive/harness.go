@@ -1,6 +1,9 @@
 package archive
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // The applications ("harnesses") agent-archive captures, by the canonical
 // name the archive records and compares.
@@ -9,6 +12,9 @@ const (
 	HarnessCodex  = "codex"
 	HarnessCursor = "cursor"
 )
+
+// knownHarnesses are the applications agent-archive captures.
+var knownHarnesses = []string{HarnessClaude, HarnessCodex, HarnessCursor}
 
 // harnessAliases maps every other accepted spelling to its canonical name.
 // Claude Code's hooks and older configurations say "claude-code".
@@ -32,9 +38,5 @@ func CanonicalHarness(name string) string {
 // application agent-archive captures.
 func KnownHarness(name string) (string, bool) {
 	name = CanonicalHarness(name)
-	switch name {
-	case HarnessClaude, HarnessCodex, HarnessCursor:
-		return name, true
-	}
-	return name, false
+	return name, slices.Contains(knownHarnesses, name)
 }

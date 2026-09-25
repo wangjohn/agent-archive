@@ -12,8 +12,9 @@ import (
 // the path was that root. There is one now.
 func TestPathWithin(t *testing.T) {
 	for _, tc := range []struct {
-		path, root string
-		want       bool
+		path string
+		root string
+		want bool
 	}{
 		{"/a", "/a", true},
 		{"/a/b", "/a", true},
@@ -65,23 +66,23 @@ func TestPathWithin(t *testing.T) {
 // file system locations does.
 func TestPathWithinSymlinks(t *testing.T) {
 	dir := t.TempDir()
-	real := filepath.Join(dir, "real")
-	if err := os.MkdirAll(filepath.Join(real, "inside"), 0o700); err != nil {
+	target := filepath.Join(dir, "target")
+	if err := os.MkdirAll(filepath.Join(target, "inside"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
 	}
 	through := filepath.Join(link, "inside")
-	if PathWithin(through, real) {
+	if PathWithin(through, target) {
 		t.Fatal("a path through a symlink counted as inside its target without resolving it")
 	}
 	resolvedPath, err := filepath.EvalSymlinks(through)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(real)
+	resolvedRoot, err := filepath.EvalSymlinks(target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestPathWithinSymlinks(t *testing.T) {
 	}
 	// A link inside the root that points out of it is outside once resolved.
 	outside := t.TempDir()
-	escape := filepath.Join(real, "escape")
+	escape := filepath.Join(target, "escape")
 	if err := os.Symlink(outside, escape); err != nil {
 		t.Fatal(err)
 	}

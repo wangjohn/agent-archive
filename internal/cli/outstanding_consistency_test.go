@@ -43,37 +43,45 @@ func TestEveryPendingCountAgrees(t *testing.T) {
 	}{
 		{"never captured", func(*testing.T, *state.Store, archive.SessionRegistration) {}, true},
 		{"published", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
 			cache(t, s, reg, state.CacheStatusPublished)
 		}, false},
 		{"published with a rate-limited update", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
 			cache(t, s, reg, state.CacheStatusPublished)
 			cache(t, s, reg, state.CacheStatusRateLimited)
 			pendingUpload(t, s, reg)
 		}, true},
 		{"published with a rate-limited cache but no upload file", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
 			cache(t, s, reg, state.CacheStatusPublished)
 			cache(t, s, reg, state.CacheStatusRateLimited)
 		}, true},
 		{"published with a request queued", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
 			cache(t, s, reg, state.CacheStatusPublished)
 			if err := s.SaveRequest(reg.ArchiveSessionID, "stop", now); err != nil {
 				t.Fatal(err)
 			}
 		}, true},
 		{"published with an interrupted scan", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
 			cache(t, s, reg, state.CacheStatusPublished)
 			if err := s.SetScanPending(reg.ArchiveSessionID, true); err != nil {
 				t.Fatal(err)
 			}
 		}, true},
 		{"published with an upload in flight", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
 			cache(t, s, reg, state.CacheStatusPublished)
 			pendingUpload(t, s, reg)
 		}, true},
 		{"declined", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
 			cache(t, s, reg, state.CacheStatusDeclined)
 		}, false},
 		{"blocked", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
 			if err := statetest.SaveBlocked(s, reg.ArchiveSessionID, bundle(reg), now.Add(-time.Hour), state.BlockedReasonTranscriptMissing); err != nil {
 				t.Fatal(err)
 			}

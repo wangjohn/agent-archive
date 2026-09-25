@@ -51,8 +51,9 @@ const (
 
 func TestImportBatchKeepsTheOnDiskFormat(t *testing.T) {
 	for _, tc := range []struct {
-		name, file string
-		batch      string
+		name  string
+		file  string
+		batch string
 	}{
 		{"import", mainImportRegistration, "2026-09-23-1"},
 		{"hook", mainHookRegistration, ""},

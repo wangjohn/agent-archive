@@ -13,8 +13,9 @@ import (
 
 func TestCanonicalHarness(t *testing.T) {
 	for _, tc := range []struct {
-		in, want string
-		known    bool
+		in    string
+		want  string
+		known bool
 	}{
 		{"claude", "claude", true},
 		{"Claude", "claude", true},

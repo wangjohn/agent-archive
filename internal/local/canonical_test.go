@@ -25,8 +25,8 @@ func TestCanonicalPathSpellsEachLocationOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	real := filepath.Join(dir, "Data", "Agent-Archive")
-	if err := os.MkdirAll(real, 0o700); err != nil {
+	target := filepath.Join(dir, "Data", "Agent-Archive")
+	if err := os.MkdirAll(target, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "link")
@@ -34,29 +34,29 @@ func TestCanonicalPathSpellsEachLocationOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, spelling := range []string{
-		real,
-		real + "/",
+		target,
+		target + "/",
 		filepath.Join(dir, "Data", ".", "Agent-Archive"),
 		filepath.Join(dir, "Data", "x", "..", "Agent-Archive"),
 		filepath.Join(link, "Agent-Archive"),
 	} {
-		if got := CanonicalPath(spelling); got != real {
-			t.Errorf("CanonicalPath(%q) = %q, want %q", spelling, got, real)
+		if got := CanonicalPath(spelling); got != target {
+			t.Errorf("CanonicalPath(%q) = %q, want %q", spelling, got, target)
 		}
-		if !SameLocation(spelling, real) {
-			t.Errorf("SameLocation(%q, %q) = false", spelling, real)
+		if !SameLocation(spelling, target) {
+			t.Errorf("SameLocation(%q, %q) = false", spelling, target)
 		}
 	}
 	// What does not exist yet is kept as written, under the existing
 	// part's canonical spelling.
-	if got, want := CanonicalPath(filepath.Join(link, "Agent-Archive", "New", "Dir")), filepath.Join(real, "New", "Dir"); got != want {
+	if got, want := CanonicalPath(filepath.Join(link, "Agent-Archive", "New", "Dir")), filepath.Join(target, "New", "Dir"); got != want {
 		t.Errorf("CanonicalPath of a missing tail = %q, want %q", got, want)
 	}
 	other := filepath.Join(dir, "Data", "other")
 	if err := os.Mkdir(other, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if SameLocation(real, other) || SameLocation(real, "") || SameLocation("", real) {
+	if SameLocation(target, other) || SameLocation(target, "") || SameLocation("", target) {
 		t.Error("two different locations compared the same")
 	}
 	if !SameLocation("", "") {
@@ -72,11 +72,11 @@ func TestCanonicalPathSpellsEachLocationOnce(t *testing.T) {
 		filepath.Join(dir, "DATA", "AGENT-ARCHIVE"),
 		strings.ToLower(filepath.Join(link, "Agent-Archive")),
 	} {
-		if got := CanonicalPath(spelling); got != real {
-			t.Errorf("CanonicalPath(%q) = %q, want %q", spelling, got, real)
+		if got := CanonicalPath(spelling); got != target {
+			t.Errorf("CanonicalPath(%q) = %q, want %q", spelling, got, target)
 		}
-		if !SameLocation(spelling, real) {
-			t.Errorf("SameLocation(%q, %q) = false", spelling, real)
+		if !SameLocation(spelling, target) {
+			t.Errorf("SameLocation(%q, %q) = false", spelling, target)
 		}
 	}
 }

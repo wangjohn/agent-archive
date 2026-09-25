@@ -21,12 +21,14 @@ func TestOutstandingFacets(t *testing.T) {
 		return archive.SourceBundle{Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: at}}
 	}
 	for _, tc := range []struct {
-		name                         string
-		reg                          func(archive.SessionRegistration) archive.SessionRegistration
-		setup                        func(t *testing.T, s *Store, reg archive.SessionRegistration)
-		requested                    bool
-		want                         Outstanding
-		pending, owed, syncCanFinish bool
+		name          string
+		reg           func(archive.SessionRegistration) archive.SessionRegistration
+		setup         func(t *testing.T, s *Store, reg archive.SessionRegistration)
+		requested     bool
+		want          Outstanding
+		pending       bool
+		owed          bool
+		syncCanFinish bool
 	}{
 		{
 			name: "never captured", want: Outstanding{NeverCaptured: true},
@@ -35,6 +37,7 @@ func TestOutstandingFacets(t *testing.T) {
 		{
 			name: "published and settled",
 			setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				savePublished(t, s, reg, bundle(reg), CacheStatusPublished)
 			},
 			want: Outstanding{Published: true},
@@ -42,6 +45,7 @@ func TestOutstandingFacets(t *testing.T) {
 		{
 			name: "published with a request queued", requested: true,
 			setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				savePublished(t, s, reg, bundle(reg), CacheStatusPublished)
 			},
 			want:    Outstanding{Requested: true, Published: true},
@@ -50,6 +54,7 @@ func TestOutstandingFacets(t *testing.T) {
 		{
 			name: "published with an interrupted scan",
 			setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				savePublished(t, s, reg, bundle(reg), CacheStatusPublished)
 				if err := s.SetScanPending(reg.ArchiveSessionID, true); err != nil {
 					t.Fatal(err)
@@ -63,6 +68,7 @@ func TestOutstandingFacets(t *testing.T) {
 			// the upload interval is pending everywhere.
 			name: "published with a rate-limited update",
 			setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				savePublished(t, s, reg, bundle(reg), CacheStatusPublished)
 				savePublished(t, s, reg, bundle(reg), CacheStatusRateLimited)
 				if err := s.SavePending(reg.ArchiveSessionID, pendingPublication(bundle(reg), at.Add(time.Hour))); err != nil {
@@ -77,6 +83,7 @@ func TestOutstandingFacets(t *testing.T) {
 			// collector rebuilds it on its next pass.
 			name: "rate-limited cache without its upload",
 			setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				savePublished(t, s, reg, bundle(reg), CacheStatusRateLimited)
 			},
 			want:    Outstanding{RateLimited: true},
@@ -84,6 +91,7 @@ func TestOutstandingFacets(t *testing.T) {
 		},
 		{
 			name: "blocked", setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				p, err := s.LoadPublishedState(reg.ArchiveSessionID)
 				if err != nil {
 					t.Fatal(err)
@@ -96,6 +104,7 @@ func TestOutstandingFacets(t *testing.T) {
 		},
 		{
 			name: "declined", setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				savePublished(t, s, reg, bundle(reg), CacheStatusDeclined)
 			},
 			want: Outstanding{},
@@ -116,6 +125,7 @@ func TestOutstandingFacets(t *testing.T) {
 				return r
 			},
 			setup: func(t *testing.T, s *Store, reg archive.SessionRegistration) {
+				t.Helper()
 				if err := s.SavePending(reg.ArchiveSessionID, pendingPublication(bundle(reg), time.Time{})); err != nil {
 					t.Fatal(err)
 				}
