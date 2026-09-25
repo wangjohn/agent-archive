@@ -11,10 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -266,7 +268,7 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 			t.Fatalf("did not restore %s", p)
 		}
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		t.Fatal("successful rollback left journal")
 	}
 }
@@ -277,11 +279,11 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	path := filepath.Join(home, "config.json")
 	c := hooks.Change{Path: path, Before: []byte("before"), After: []byte("after"), Existed: true, Mode: 0600}
-	journal := setupJournal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
-	if err := local.Write(journalPath(home), journal); err != nil {
+	journal := setupjournal.Journal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
+	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
-	if err := local.Write(journalPath(home), journal); err != nil {
+	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte("user edit"), 0600); err != nil {
@@ -313,7 +315,7 @@ func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T)
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
 	now := env.now().Add(time.Second)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "one", "cwd": project, "transcript_path": writeCodexTranscript(t, project)}
-	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	input := "storage\ns3\nother-bucket\nprofile\ny\n"

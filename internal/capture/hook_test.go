@@ -1,4 +1,4 @@
-package cli
+package capture
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -30,7 +31,7 @@ func TestAmbiguousStartIsNotRegisteredAndDiagnosticIsContentFree(t *testing.T) {
 		{"codex", map[string]any{"hook_event_name": "SessionStart", "session_id": "private-codex-id", "cwd": "/work/widget", "transcript_path": resumed}},
 		{"cursor", map[string]any{"hook_event_name": "sessionStart", "conversation_id": "private-cursor-id", "workspace_roots": []any{"/work/widget"}, "transcript_path": resumed}},
 	} {
-		if err := handleHookEvent(home, tc.harness, tc.payload, now); err != nil {
+		if err := HandleEvent(home, tc.harness, tc.payload, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -39,11 +40,11 @@ func TestAmbiguousStartIsNotRegisteredAndDiagnosticIsContentFree(t *testing.T) {
 	if len(regs) != 0 {
 		t.Fatalf("ambiguous starts were registered: %#v", regs)
 	}
-	diagnostics, err := readCaptureDiagnostics(home)
+	diagnostics, err := ReadDiagnostics(home)
 	if err != nil || len(diagnostics) != 2 {
 		t.Fatalf("diagnostics=%#v err=%v", diagnostics, err)
 	}
-	raw, err := os.ReadFile(captureDiagnosticsPath(home))
+	raw, err := os.ReadFile(DiagnosticsPath(home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestHandleHookEventRegistersEligibleSessionStart(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 	}
-	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+	if err := HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,7 +131,7 @@ func TestHandleHookEventSkipsIneligibleProject(t *testing.T) {
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/somewhere/else"}
-	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+	if err := HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -150,7 +151,7 @@ func TestHandleHookEventSkipsResumeOfUnknownClaudeSession(t *testing.T) {
 		"hook_event_name": "SessionStart", "session_id": "native-old", "source": "resume",
 		"cwd": "/work/widget",
 	}
-	if err := handleHookEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -171,7 +172,7 @@ func TestHandleHookEventSkipsResumeOfUnknownCodexSession(t *testing.T) {
 			"hook_event_name": "SessionStart", "session_id": "native-old-" + source, "source": source,
 			"cwd": "/work/widget",
 		}
-		if err := handleHookEvent(home, "codex", payload, now); err != nil {
+		if err := HandleEvent(home, "codex", payload, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -193,7 +194,7 @@ func TestHandleHookEventRegistersCodexStartup(t *testing.T) {
 			"hook_event_name": "SessionStart", "session_id": "native-" + source, "source": source,
 			"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 		}
-		if err := handleHookEvent(home, "codex", payload, now); err != nil {
+		if err := HandleEvent(home, "codex", payload, now); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -215,13 +216,13 @@ func TestHandleHookEventCodexCompactPreservesOriginalStartTime(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	firstStart := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "session_id": "native-1", "source": "startup", "cwd": "/work/widget"}
-	if err := handleHookEvent(home, "codex", payload, firstStart); err != nil {
+	if err := HandleEvent(home, "codex", payload, firstStart); err != nil {
 		t.Fatal(err)
 	}
 
 	compactAt := firstStart.Add(2 * time.Hour)
 	compactPayload := map[string]any{"hook_event_name": "SessionStart", "session_id": "native-1", "source": "compact", "cwd": "/work/widget"}
-	if err := handleHookEvent(home, "codex", compactPayload, compactAt); err != nil {
+	if err := HandleEvent(home, "codex", compactPayload, compactAt); err != nil {
 		t.Fatal(err)
 	}
 
@@ -241,7 +242,7 @@ func TestHandleHookEventResumePreservesOriginalStartTime(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	firstStart := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl"}
-	if err := handleHookEvent(home, "claude", payload, firstStart); err != nil {
+	if err := HandleEvent(home, "claude", payload, firstStart); err != nil {
 		t.Fatal(err)
 	}
 
@@ -250,7 +251,7 @@ func TestHandleHookEventResumePreservesOriginalStartTime(t *testing.T) {
 		"hook_event_name": "SessionStart", "session_id": "native-1", "source": "resume",
 		"cwd": "/work/widget", "transcript_path": "/tmp/t2.jsonl",
 	}
-	if err := handleHookEvent(home, "claude", resumePayload, resumeAt); err != nil {
+	if err := HandleEvent(home, "claude", resumePayload, resumeAt); err != nil {
 		t.Fatal(err)
 	}
 
@@ -273,16 +274,16 @@ func TestHandleHookEventStopWritesRequestWithEvidence(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	startPayload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}
-	if err := handleHookEvent(home, "claude", startPayload, start); err != nil {
+	if err := HandleEvent(home, "claude", startPayload, start); err != nil {
 		t.Fatal(err)
 	}
 
 	stopAt := start.Add(time.Minute)
 	stopPayload := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1", "model": "claude-opus-5"}
-	if err := handleHookEvent(home, "claude", stopPayload, stopAt); err != nil {
+	if err := HandleEvent(home, "claude", stopPayload, stopAt); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleHookEvent(home, "claude", map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "native-1"}, stopAt.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "native-1"}, stopAt.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -319,11 +320,11 @@ func TestHandleHookEventCapturesSupportedFinalTextAfterFiltering(t *testing.T) {
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}, start); err != nil {
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}, start); err != nil {
 		t.Fatal(err)
 	}
 	stop := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1", "model": "gpt-x", "last_assistant_message": "done token=synthetic-secret-value"}
-	if err := handleHookEvent(home, "codex", stop, start.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "codex", stop, start.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -347,11 +348,11 @@ func TestHandleHookEventLabelsSubagentFinalGapWithoutClaimingRedaction(t *testin
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}, start); err != nil {
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}, start); err != nil {
 		t.Fatal(err)
 	}
 	stop := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1", "agent_id": "sub-1", "last_assistant_message": "plain final text"}
-	if err := handleHookEvent(home, "codex", stop, start.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "codex", stop, start.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -387,11 +388,11 @@ func TestAcceptedCursorHookCapturesVersionModeModelParamsAndResponse(t *testing.
 		t.Fatal(err)
 	}
 	start := map[string]any{"hook_event_name": "sessionStart", "conversation_id": "native-1", "workspace_roots": []any{"/work/widget"}, "cursor_version": "1.7.2", "composer_mode": "agent", "model": "label", "model_id": "model-x", "model_params": []any{map[string]any{"id": "effort", "value": "high"}}}
-	if err := handleHookEvent(home, "cursor", start, now); err != nil {
+	if err := HandleEvent(home, "cursor", start, now); err != nil {
 		t.Fatal(err)
 	}
 	response := map[string]any{"hook_event_name": "afterAgentResponse", "conversation_id": "native-1", "generation_id": "generation-1", "text": "finished", "model": "label", "model_id": "model-x", "model_params": []any{map[string]any{"id": "effort", "value": "high"}}}
-	if err := handleHookEvent(home, "cursor", response, now.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "cursor", response, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	regs, _ := store.LoadRegistrations()
@@ -414,7 +415,7 @@ func TestHandleHookEventStopForUnregisteredSessionIsNoop(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "Stop", "session_id": "never-registered"}
-	if err := handleHookEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -462,7 +463,7 @@ func TestHandleHookEventIgnoresUnrelatedEvent(t *testing.T) {
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "native-1", "cwd": "/work/widget"}
-	if err := handleHookEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -477,7 +478,7 @@ func TestHandleHookEventNoopWhenNotConfigured(t *testing.T) {
 	home := t.TempDir() // no config.Save call
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": "/work/widget"}
-	if err := handleHookEvent(home, "claude", payload, now); err != nil {
+	if err := HandleEvent(home, "claude", payload, now); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -498,7 +499,7 @@ func TestHandleHookEventNoopWhilePaused(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": "/work/widget", "transcript_path": "/tmp/t.jsonl",
 	}
-	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+	if err := HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -512,17 +513,6 @@ func TestHandleHookEventNoopWhilePaused(t *testing.T) {
 	}
 	if len(regs) != 0 {
 		t.Fatalf("a paused hook must register nothing new: regs=%#v", regs)
-	}
-}
-
-func TestRunHookCommandNeverFailsOnMalformedInput(t *testing.T) {
-	t.Parallel()
-	home := t.TempDir()
-	env := testEnv(t, home, time.Now())
-	var errOut bytes.Buffer
-	code := runHookCommand([]string{"--harness", "codex"}, strings.NewReader("not json"), &errOut, env)
-	if code != 0 {
-		t.Fatalf("hook must never fail the harness's turn: code=%d stderr=%s", code, errOut.String())
 	}
 }
 
@@ -563,7 +553,7 @@ func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 				"cwd": cwd, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
 			}
-			if err := handleHookEvent(home, "claude", start, now); err != nil {
+			if err := HandleEvent(home, "claude", start, now); err != nil {
 				t.Fatal(err)
 			}
 			store, _ := state.Open(home)
@@ -577,13 +567,13 @@ func TestWorktreeAndSubdirectoryStartsRegisterUnderConfiguredProject(t *testing.
 			if regs[0].ProjectRoot != project || regs[0].ProjectID != archive.ProjectID(project) {
 				t.Fatalf("registered under the working directory instead of the configured project: %#v", regs[0])
 			}
-			if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+			if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
 				t.Fatalf("an accepted start left a diagnostic: %#v", ds)
 			}
 			// The consequence this guards: an unregistered start makes every
 			// later lifecycle event a no-op, so the session is never published.
 			stop := map[string]any{"hook_event_name": "Stop", "session_id": "native-1", "turn_id": "t1"}
-			if err := handleHookEvent(home, "claude", stop, now.Add(time.Minute)); err != nil {
+			if err := HandleEvent(home, "claude", stop, now.Add(time.Minute)); err != nil {
 				t.Fatal(err)
 			}
 			requests, err := store.LoadRequests()
@@ -622,7 +612,7 @@ func TestNestedExcludedProjectKeepsItsOwnExclusion(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": filepath.Join(nested, "sub"), "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
 	}
-	if err := handleHookEvent(home, "claude", start, now); err != nil {
+	if err := HandleEvent(home, "claude", start, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -630,7 +620,7 @@ func TestNestedExcludedProjectKeepsItsOwnExclusion(t *testing.T) {
 	if len(regs) != 0 {
 		t.Fatalf("an excluded nested project was captured through its parent: %#v", regs)
 	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+	if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
 		t.Fatalf("an excluded project left its path on disk: %#v", ds)
 	}
 }
@@ -650,7 +640,7 @@ func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": outside, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
 	}
-	if err := handleHookEvent(home, "claude", start, now); err != nil {
+	if err := HandleEvent(home, "claude", start, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -658,7 +648,7 @@ func TestStartOutsideEveryConfiguredProjectIsSilent(t *testing.T) {
 	if len(regs) != 0 {
 		t.Fatalf("a directory outside every project registered: %#v", regs)
 	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+	if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
 		t.Fatalf("a path outside every project was recorded: %#v", ds)
 	}
 }
@@ -701,17 +691,17 @@ func TestCursorStartUsesTranscriptEmptinessAsFreshStartProof(t *testing.T) {
 			if path := tc.transcript(t); path != "" {
 				payload["transcript_path"] = path
 			}
-			if err := handleHookEvent(home, "cursor", payload, now); err != nil {
+			if err := HandleEvent(home, "cursor", payload, now); err != nil {
 				t.Fatal(err)
 			}
 			store, _ := state.Open(home)
 			regs, _ := store.LoadRegistrations()
-			ds, _ := readCaptureDiagnostics(home)
+			ds, _ := ReadDiagnostics(home)
 			if !tc.registered {
 				if len(regs) != 0 {
 					t.Fatalf("a Cursor resume was registered: %#v", regs)
 				}
-				if len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart {
+				if len(ds) != 1 || ds[0].Code != DiagnosticUnknownSessionStart {
 					t.Fatalf("diagnostics=%#v", ds)
 				}
 				return
@@ -755,7 +745,7 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 				if tc.source != "" {
 					payload["source"] = tc.source
 				}
-				if err := handleHookEvent(home, harness, payload, now); err != nil {
+				if err := HandleEvent(home, harness, payload, now); err != nil {
 					t.Fatal(err)
 				}
 				store, _ := state.Open(home)
@@ -768,61 +758,23 @@ func TestCodexAndClaudeKeepTheirSourceRule(t *testing.T) {
 	}
 }
 
-// A start that arrives while setup's transaction is open cannot be registered.
-// It must say so instead of disappearing.
-func TestSetupInProgressRecordsDiagnosticAndSurfacesInStatus(t *testing.T) {
-	t.Parallel()
-	home, project := t.TempDir(), t.TempDir()
-	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	start := map[string]any{
-		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
-		"cwd": project, "transcript_path": writeTestTranscript(t, "t.jsonl", ""),
-	}
-	if err := handleHookEvent(home, "claude", start, now); err != nil {
-		t.Fatal(err)
-	}
-	store, _ := state.Open(home)
-	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
-		t.Fatalf("a hook registered during a setup transaction: %#v", regs)
-	}
-	ds, err := readCaptureDiagnostics(home)
-	if err != nil || len(ds) != 1 || ds[0].Code != diagnosticSetupInProgress || ds[0].ProjectRoot != project || ds[0].Harness != "claude" {
-		t.Fatalf("diagnostics=%#v err=%v", ds, err)
-	}
-	raw, err := os.ReadFile(captureDiagnosticsPath(home))
-	if err != nil || bytes.Contains(raw, []byte("native-1")) || bytes.Contains(raw, []byte("transcript")) {
-		t.Fatalf("diagnostic leaked session identity: %s err=%v", raw, err)
-	}
-	var out bytes.Buffer
-	if code := runStatusCommand([]string{"--json"}, &out, os.Stderr, testEnv(t, home, now)); code != 0 {
-		t.Fatalf("status exit=%d output=%s", code, out.String())
-	}
-	if !strings.Contains(out.String(), string(diagnosticSetupInProgress)) {
-		t.Fatalf("status --json omitted the diagnostic: %s", out.String())
-	}
-}
-
 func TestSetupInProgressLeavesNoDiagnosticForUnconfiguredPaths(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err := os.WriteFile(journalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
+	if err := os.WriteFile(setupjournal.JournalPath(home), []byte(`{"changes":[],"plist":""}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// Outside every configured project, and a non-start event inside one.
 	outside := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "n1", "cwd": t.TempDir()}
-	if err := handleHookEvent(home, "claude", outside, now); err != nil {
+	if err := HandleEvent(home, "claude", outside, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleHookEvent(home, "claude", map[string]any{"hook_event_name": "Stop", "session_id": "n1", "cwd": project}, now); err != nil {
+	if err := HandleEvent(home, "claude", map[string]any{"hook_event_name": "Stop", "session_id": "n1", "cwd": project}, now); err != nil {
 		t.Fatal(err)
 	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+	if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
 		t.Fatalf("diagnostics=%#v", ds)
 	}
 }
@@ -850,7 +802,7 @@ func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
 		"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1",
 		"cwd": worktree, "transcript_path": transcript,
 	}
-	if err := handleHookEvent(home, "claude", start, started); err != nil {
+	if err := HandleEvent(home, "claude", start, started); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
@@ -863,7 +815,7 @@ func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
 			"hook_event_name": "SessionStart", "source": source, "session_id": "native-1",
 			"cwd": worktree, "transcript_path": transcript,
 		}
-		if err := handleHookEvent(home, "claude", continuation, started.Add(time.Hour)); err != nil {
+		if err := HandleEvent(home, "claude", continuation, started.Add(time.Hour)); err != nil {
 			t.Fatalf("%s from the worktree conflicted with its own registration: %v", source, err)
 		}
 	}
@@ -871,7 +823,7 @@ func TestWorktreeContinuationsMatchTheConfiguredRegistration(t *testing.T) {
 	if len(regs) != 1 || !regs[0].SessionStartedAt.Equal(started) || regs[0].ProjectRoot != alias {
 		t.Fatalf("continuations changed the registration: %#v", regs)
 	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 0 {
+	if ds, _ := ReadDiagnostics(home); len(ds) != 0 {
 		t.Fatalf("continuations left a diagnostic: %#v", ds)
 	}
 }
@@ -893,14 +845,14 @@ func TestRelativeTranscriptPathProvesNothing(t *testing.T) {
 		"hook_event_name": "sessionStart", "conversation_id": "conv-1",
 		"workspace_roots": []any{project}, "transcript_path": "not-created-yet.jsonl",
 	}
-	if err := handleHookEvent(home, "cursor", payload, now); err != nil {
+	if err := HandleEvent(home, "cursor", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	store, _ := state.Open(home)
 	if regs, _ := store.LoadRegistrations(); len(regs) != 0 {
 		t.Fatalf("a relative transcript path registered a session: %#v", regs)
 	}
-	if ds, _ := readCaptureDiagnostics(home); len(ds) != 1 || ds[0].Code != diagnosticUnknownSessionStart {
+	if ds, _ := ReadDiagnostics(home); len(ds) != 1 || ds[0].Code != DiagnosticUnknownSessionStart {
 		t.Fatalf("diagnostics=%#v", ds)
 	}
 }
@@ -912,18 +864,18 @@ func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "s", "cwd": "/work/widget", "transcript_path": "/synthetic/transcript.jsonl"}
-	if err := handleHookEvent(home, "claude", payload, at); err != nil {
+	if err := HandleEvent(home, "claude", payload, at); err != nil {
 		t.Fatal(err)
 	}
 	delete(payload, "transcript_path")
 	payload["source"] = "resume"
-	if err := handleHookEvent(home, "claude", payload, at.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "claude", payload, at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleHookEvent(home, "codex", payload, at.Add(time.Minute)); err == nil {
+	if err := HandleEvent(home, "codex", payload, at.Add(time.Minute)); err == nil {
 		t.Fatal("cross-harness identity accepted")
 	}
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err == nil {
+	if err := HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err == nil {
 		t.Fatal("cross-harness stop accepted")
 	}
 	store, _ := state.Open(home)
@@ -953,12 +905,12 @@ func TestCompactFromSubdirectoryKeepsProjectIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "s", "cwd": "/work/widget", "transcript_path": "/synthetic/t1.jsonl"}
-	if err := handleHookEvent(home, "claude", start, at); err != nil {
+	if err := HandleEvent(home, "claude", start, at); err != nil {
 		t.Fatal(err)
 	}
 	// The agent `cd`'d into a subdirectory; Claude Code's hook cwd follows it.
 	compact := map[string]any{"hook_event_name": "SessionStart", "source": "compact", "session_id": "s", "cwd": "/work/widget/internal/cli", "transcript_path": "/synthetic/t2.jsonl", "model": "model-x"}
-	if err := handleHookEvent(home, "claude", compact, at.Add(time.Minute)); err != nil {
+	if err := HandleEvent(home, "claude", compact, at.Add(time.Minute)); err != nil {
 		t.Fatalf("compact from a subdirectory of the registered project was rejected: %v", err)
 	}
 	store, _ := state.Open(home)
@@ -977,7 +929,7 @@ func TestCompactFromSubdirectoryKeepsProjectIdentity(t *testing.T) {
 	}
 	// A continuation reported from a different configured project is still a conflict.
 	compact["cwd"] = "/work/other/sub"
-	if err := handleHookEvent(home, "claude", compact, at.Add(2*time.Minute)); err == nil {
+	if err := HandleEvent(home, "claude", compact, at.Add(2*time.Minute)); err == nil {
 		t.Fatal("cross-project identity accepted")
 	}
 	regs, _ = store.LoadRegistrations()

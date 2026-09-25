@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -69,10 +70,10 @@ func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg, _, _ := config.Load(home)
-	if err := recordCaptureDiagnostic(home, captureDiagnostic{Code: diagnosticSetupInProgress, Harness: "codex", ProjectRoot: cfg.Archive.Projects[0].Root, ObservedAt: time.Now()}); err != nil {
+	if err := capture.RecordDiagnostic(home, capture.Diagnostic{Code: capture.DiagnosticSetupInProgress, Harness: "codex", ProjectRoot: cfg.Archive.Projects[0].Root, ObservedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"scan-signatures", "superseded", "forgotten", "cache", diagnosticsLockName, "capture-diagnostics.json"} {
+	for _, name := range []string{"scan-signatures", "superseded", "forgotten", "cache", capture.DiagnosticsLockName, "capture-diagnostics.json"} {
 		if _, err := os.Stat(filepath.Join(home, name)); err != nil {
 			t.Fatalf("test precondition: %s was not created: %v", name, err)
 		}

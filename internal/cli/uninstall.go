@@ -18,6 +18,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -74,7 +75,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	// release is idempotent so the deferred calls cannot unlock twice.
 	release = releaseOnce(release)
 	defer release()
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		return errors.New(recoveryPending(home))
 	}
 	// Fail before prompting when the settings are unreadable; they are
@@ -83,37 +84,9 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	if err != nil {
 		return err
 	}
-	terminal.Println(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
-	if purge {
-		terminal.Printf(out, "Also delete owned local state and credentials under %s.\n", home)
-	} else {
-		terminal.Println(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
-	}
-	p := newPrompter(stdin, out)
-	confirm := func(question string) (bool, error) {
-		if yes {
-			return true, nil
-		}
-		confirmed, err := p.yesNo(question, false)
-		if err == nil && !confirmed {
-			terminal.Println(out, "Cancelled. No changes were made.")
-		}
-		return confirmed, err
-	}
-	if confirmed, err := confirm("Remove integrations?"); err != nil || !confirmed {
+	previewPending, confirmed, err := confirmUninstall(purge, yes, home, previewCfg, previewFound, stdin, out)
+	if err != nil || !confirmed {
 		return err
-	}
-	previewPending := 0
-	if purge {
-		pending, unreadable := unpublishedSessions(home, previewCfg, previewFound)
-		for _, problem := range unreadable {
-			terminal.Println(out, strings.Replace(problem, "status left it out", "it is deleted with the rest", 1))
-		}
-		previewPending = pending
-		terminal.Printf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
-		if confirmed, err := confirm("Delete local data and stored credentials too?"); err != nil || !confirmed {
-			return err
-		}
 	}
 	unlock, err := lockCollector(home, "uninstall", env.now())
 	if err != nil {
@@ -150,24 +123,9 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	// The collector for this data directory, and any an earlier release
 	// installed for it under another label. Never another directory's.
 	plists := append([]string{in.collectorPlist()}, in.previousCollectorPlists()...)
-	// A plist whose label launchd runs from another plist stays: removing
-	// it would leave this installation with nothing to reinstall from.
-	kept := map[string]bool{}
-	for _, plist := range plists {
-		state := env.jobState(plist)
-		if state == "unknown" {
-			return fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
-		}
-		if state == jobAnotherInstallation {
-			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchLabel(plist), plist)
-			kept[plist] = true
-			continue
-		}
-		if launchJobActive(state) {
-			if err = env.unloadLaunchAgent(plist); err != nil {
-				return fmt.Errorf("stop collector: %w", err)
-			}
-		}
+	kept, err := stopCollectors(plists, out, env)
+	if err != nil {
+		return err
 	}
 	// Disable capture before removing hooks. A partial uninstall remains safely disabled.
 	if found {
@@ -194,83 +152,160 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		terminal.Println(out, problem)
 	}
 	if purge {
-		refs := map[string]bool{}
-		for _, ref := range cfg.RetiredCredentialRefs {
-			refs[ref] = true
-		}
-		if cfg.Storage.R2CredentialRef != "" {
-			refs[cfg.Storage.R2CredentialRef] = true
-		}
-		for _, old := range cfg.PreviousDestinations {
-			if old.R2CredentialRef != "" {
-				refs[old.R2CredentialRef] = true
-			}
-		}
-		draft, _, problem, e := readDraft(home)
-		if e != nil {
-			return fmt.Errorf("read the saved setup %s: %w", draftPath(home), e)
-		}
-		if problem != "" {
-			// It is deleted with the rest; only the Keychain items it may
-			// name are out of reach.
-			terminal.Printf(out, "The saved setup in %s cannot be read (%s), so a Keychain item it staged, if any, is not deleted. Look for items of service %q in Keychain Access.\n", draftPath(home), problem, credentials.KeychainService)
-		}
-		if draft.CredentialRef != "" {
-			refs[draft.CredentialRef] = true
-		}
-		for _, ref := range draft.StagedRefs {
-			refs[ref] = true
-		}
-		// A Keychain that cannot delete an item must not strand the rest of
-		// the purge: hooks and the LaunchAgent are already gone, so local
-		// files are still removed and the items left behind are named, since
-		// once config.json is gone nothing else records them.
-		undeleted, keychainErr := deleteCredentialRefs(env, refs)
-		leftovers, e := removeLocalState(home)
-		if e != nil {
-			return e
-		}
-		// Local state is gone. Unlink the lock files while they are still
-		// held, so a hook, collector, or setup that opens one from now on
-		// creates a fresh inode it owns outright instead of acquiring this
-		// one after its release; then release them and remove the directory
-		// itself if nothing unrelated remains in it.
-		removeLockFiles(home)
-		releaseHooks()
-		unlock()
-		release()
-		if len(leftovers) == 0 {
-			if e := os.Remove(home); e != nil && !os.IsNotExist(e) && !isDirectoryNotEmpty(e) {
-				return e
-			}
-		}
-		var problems []string
-		if len(leftovers) > 0 {
-			problems = append(problems, fmt.Sprintf("unrelated files were kept in %s: %s", home, strings.Join(leftovers, ", ")))
-		}
-		if len(undeleted) > 0 {
-			// The account names are opaque random references
-			// ("setup-<hex>", see setup.go) that reveal nothing about the
-			// stored secret, and after this purge nothing else records them,
-			// so they are printed here on purpose (see the PR A3 ledger
-			// entry). The recovery is uninstall-specific: there is no
-			// configuration left to sync or re-run setup against.
-			commands := make([]string, 0, len(undeleted))
-			for _, ref := range undeleted {
-				commands = append(commands, fmt.Sprintf("security delete-generic-password -s %s -a %s", credentials.KeychainService, ref))
-			}
-			problem := fmt.Sprintf("%d stored credential(s) could not be deleted from Keychain service %q: %v", len(undeleted), credentials.KeychainService, keychainErr)
-			if errors.Is(keychainErr, credentials.ErrKeychainLocked) {
-				problem += ". Unlock the login Keychain (log in, or open Keychain Access)"
-			}
-			problem += fmt.Sprintf(". To remove them yourself, run: %s; or delete those items in Keychain Access", strings.Join(commands, " && "))
-			problems = append(problems, problem)
-		}
-		if len(problems) > 0 {
-			return errors.New(strings.Join(problems, "; "))
+		// The purge releases the locks once their files are gone: hooks.lock,
+		// then the collector lock, then setup.lock.
+		if err := purgeLocalData(home, cfg, out, env, func() { releaseHooks(); unlock(); release() }); err != nil {
+			return err
 		}
 	}
 	terminal.Println(out, "Uninstall complete. Remote archives and the CLI executable were kept.")
+	return nil
+}
+
+// confirmUninstall says what uninstall is about to do and asks, twice for a
+// purge (or not at all with --yes). A purge first counts the sessions whose
+// evidence it would delete before upload; that count is returned so it can
+// be checked again under the locks. Declining is not an error: confirmed is
+// false and nothing was changed.
+func confirmUninstall(purge, yes bool, home string, previewCfg config.Config, previewFound bool, stdin io.Reader, out io.Writer) (previewPending int, confirmed bool, err error) {
+	terminal.Println(out, "Remove the archive's hooks and background collector from this Mac. Remote archives are kept.")
+	if purge {
+		terminal.Printf(out, "Also delete owned local state and credentials under %s.\n", home)
+	} else {
+		terminal.Println(out, "Local evidence, settings, and credentials will be kept. Run setup to reinstall.")
+	}
+	p := newPrompter(stdin, out)
+	confirm := func(question string) (bool, error) {
+		if yes {
+			return true, nil
+		}
+		confirmed, err := p.yesNo(question, false)
+		if err == nil && !confirmed {
+			terminal.Println(out, "Cancelled. No changes were made.")
+		}
+		return confirmed, err
+	}
+	if confirmed, err := confirm("Remove integrations?"); err != nil || !confirmed {
+		return 0, false, err
+	}
+	if purge {
+		pending, unreadable := unpublishedSessions(home, previewCfg, previewFound)
+		for _, problem := range unreadable {
+			terminal.Println(out, strings.Replace(problem, "status left it out", "it is deleted with the rest", 1))
+		}
+		previewPending = pending
+		terminal.Printf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
+		if confirmed, err := confirm("Delete local data and stored credentials too?"); err != nil || !confirmed {
+			return 0, false, err
+		}
+	}
+	return previewPending, true, nil
+}
+
+// stopCollectors stops the background collectors plists define. A plist
+// whose label launchd runs from another plist stays: removing it would leave
+// this installation with nothing to reinstall from. Those are returned in
+// kept, and their jobs are left running.
+func stopCollectors(plists []string, out io.Writer, env Env) (kept map[string]bool, err error) {
+	kept = map[string]bool{}
+	for _, plist := range plists {
+		state := env.jobState(plist)
+		if state == "unknown" {
+			return nil, fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
+		}
+		if state == setupjournal.JobAnotherInstallation {
+			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchLabel(plist), plist)
+			kept[plist] = true
+			continue
+		}
+		if setupjournal.JobActive(state) {
+			if err = env.unloadLaunchAgent(plist); err != nil {
+				return nil, fmt.Errorf("stop collector: %w", err)
+			}
+		}
+	}
+	return kept, nil
+}
+
+// purgeLocalData runs once hooks and the LaunchAgent are gone. It deletes
+// every stored credential that cfg or the saved setup names, and every owned
+// local file. It unlinks the lock files while they are still held, then calls
+// releaseLocks, and removes the data directory itself if nothing unrelated
+// remains in it.
+func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, releaseLocks func()) error {
+	refs := map[string]bool{}
+	for _, ref := range cfg.RetiredCredentialRefs {
+		refs[ref] = true
+	}
+	if cfg.Storage.R2CredentialRef != "" {
+		refs[cfg.Storage.R2CredentialRef] = true
+	}
+	for _, old := range cfg.PreviousDestinations {
+		if old.R2CredentialRef != "" {
+			refs[old.R2CredentialRef] = true
+		}
+	}
+	draft, _, problem, e := readDraft(home)
+	if e != nil {
+		return fmt.Errorf("read the saved setup %s: %w", draftPath(home), e)
+	}
+	if problem != "" {
+		// It is deleted with the rest; only the Keychain items it may
+		// name are out of reach.
+		terminal.Printf(out, "The saved setup in %s cannot be read (%s), so a Keychain item it staged, if any, is not deleted. Look for items of service %q in Keychain Access.\n", draftPath(home), problem, credentials.KeychainService)
+	}
+	if draft.CredentialRef != "" {
+		refs[draft.CredentialRef] = true
+	}
+	for _, ref := range draft.StagedRefs {
+		refs[ref] = true
+	}
+	// A Keychain that cannot delete an item must not strand the rest of
+	// the purge: hooks and the LaunchAgent are already gone, so local
+	// files are still removed and the items left behind are named, since
+	// once config.json is gone nothing else records them.
+	undeleted, keychainErr := deleteCredentialRefs(env, refs)
+	leftovers, e := removeLocalState(home)
+	if e != nil {
+		return e
+	}
+	// Local state is gone. Unlink the lock files while they are still
+	// held, so a hook, collector, or setup that opens one from now on
+	// creates a fresh inode it owns outright instead of acquiring this
+	// one after its release; then release them and remove the directory
+	// itself if nothing unrelated remains in it.
+	removeLockFiles(home)
+	releaseLocks()
+	if len(leftovers) == 0 {
+		if e := os.Remove(home); e != nil && !os.IsNotExist(e) && !isDirectoryNotEmpty(e) {
+			return e
+		}
+	}
+	var problems []string
+	if len(leftovers) > 0 {
+		problems = append(problems, fmt.Sprintf("unrelated files were kept in %s: %s", home, strings.Join(leftovers, ", ")))
+	}
+	if len(undeleted) > 0 {
+		// The account names are opaque random references
+		// ("setup-<hex>", see setup.go) that reveal nothing about the
+		// stored secret, and after this purge nothing else records them,
+		// so they are printed here on purpose (see the PR A3 ledger
+		// entry). The recovery is uninstall-specific: there is no
+		// configuration left to sync or re-run setup against.
+		commands := make([]string, 0, len(undeleted))
+		for _, ref := range undeleted {
+			commands = append(commands, fmt.Sprintf("security delete-generic-password -s %s -a %s", credentials.KeychainService, ref))
+		}
+		problem := fmt.Sprintf("%d stored credential(s) could not be deleted from Keychain service %q: %v", len(undeleted), credentials.KeychainService, keychainErr)
+		if errors.Is(keychainErr, credentials.ErrKeychainLocked) {
+			problem += ". Unlock the login Keychain (log in, or open Keychain Access)"
+		}
+		problem += fmt.Sprintf(". To remove them yourself, run: %s; or delete those items in Keychain Access", strings.Join(commands, " && "))
+		problems = append(problems, problem)
+	}
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
 	return nil
 }
 

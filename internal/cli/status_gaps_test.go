@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
@@ -57,7 +58,7 @@ func TestBlockedCaptureIsNotPendingAndStatusReportsGap(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
 	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
 	path := writeCodexTranscript(t, project)
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runOnePass(env, false); err != nil {
@@ -72,7 +73,7 @@ func TestBlockedCaptureIsNotPendingAndStatusReportsGap(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"type":"turn_context","model":"gpt-test"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "native", "cwd": project, "transcript_path": path}, now.Add(time.Second)); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "native", "cwd": project, "transcript_path": path}, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 	env.Now = func() time.Time { return now.Add(2 * time.Second) }

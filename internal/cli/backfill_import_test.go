@@ -17,9 +17,11 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/reader"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -488,7 +490,7 @@ func TestBackfillConcurrentChanges(t *testing.T) {
 		if _, err := config.SetPaused(f.data, false); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(journalPath(f.data), []byte("{}"), 0o600); err != nil {
+		if err := os.WriteFile(setupjournal.JournalPath(f.data), []byte("{}"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		before = snapshotAll(t, f, bucket)
@@ -810,7 +812,7 @@ func TestBackfillHookDuringRegistration(t *testing.T) {
 			case <-time.After(25 * time.Millisecond):
 			}
 			at := time.Now()
-			err := handleHookEvent(home, "claude", map[string]any{
+			err := capture.HandleEvent(home, "claude", map[string]any{
 				"hook_event_name": "SessionStart", "source": "startup", "session_id": fmt.Sprintf("hook-%d", i), "cwd": project,
 				"transcript_path": filepath.Join(project, fmt.Sprintf("hook-%d.jsonl", i)),
 			}, time.Now())

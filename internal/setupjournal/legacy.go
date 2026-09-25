@@ -1,4 +1,4 @@
-package cli
+package setupjournal
 
 import (
 	"bytes"
@@ -12,17 +12,24 @@ import (
 	"github.com/wangjohn/agent-archive/internal/hooks"
 )
 
-const legacyLaunchLabel = "com.agent-skills.skill-runs-upload"
+// LegacyLaunchLabel is the launchd label of the prototype's upload job,
+// which the default installation's setup retires.
+const LegacyLaunchLabel = "com.agent-skills.skill-runs-upload"
 
-type legacyJob struct {
+// LegacyJob is a job a setup retires: the prototype's upload job, or a
+// collector an earlier release installed under another label. Change holds
+// its plist as setup found it.
+type LegacyJob struct {
 	Change    hooks.Change `json:"change"`
 	WasLoaded bool         `json:"was_loaded"`
 }
 
-// Only the prototype's exact label and command shape establish ownership.
-// Do not execute the plist or remove the private records referenced by --home.
-func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
-	path := filepath.Join(userHome, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
+// PlanLegacyMigration prepares retiring the prototype's upload job in
+// userHome, or returns nil when there is none. Only the prototype's exact
+// label and command shape establish ownership. Do not execute the plist or
+// remove the private records referenced by --home.
+func PlanLegacyMigration(userHome string, launchd Launchd) (*LegacyJob, error) {
+	path := filepath.Join(userHome, "Library", "LaunchAgents", LegacyLaunchLabel+".plist")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -73,7 +80,7 @@ func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
 			}
 		}
 	}
-	if label != legacyLaunchLabel || len(args) != 5 || filepath.Base(args[1]) != "skill_runs.py" || args[2] != "--home" || args[3] == "" || args[4] != "upload" {
+	if label != LegacyLaunchLabel || len(args) != 5 || filepath.Base(args[1]) != "skill_runs.py" || args[2] != "--home" || args[3] == "" || args[4] != "upload" {
 		return nil, fmt.Errorf("legacy job path contains an unrecognized command; preserve %s and resolve it before setup", path)
 	}
 	info, err := os.Stat(path)
@@ -86,17 +93,17 @@ func planLegacyMigration(userHome string, env Env) (*legacyJob, error) {
 	// on disk (the common fresh install) this function returned nil above,
 	// so an unknown launchctl state never blocks setup, matching applySetup's
 	// tolerance for the main job on a fresh install.
-	state := env.jobState(path)
+	state := launchd.JobState(path)
 	if state == "unknown" {
 		return nil, fmt.Errorf("cannot determine legacy upload job state; restore launchctl access and retry")
 	}
-	if state == jobAnotherInstallation {
+	if state == JobAnotherInstallation {
 		return nil, fmt.Errorf("launchd's legacy upload job was loaded from a plist other than %s; preserve it and resolve it before setup", path)
 	}
-	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)}, nil
+	return &LegacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: JobActive(state)}, nil
 }
 
-func retireLegacyJob(job *legacyJob, env Env) error {
+func retireLegacyJob(job *LegacyJob, launchd Launchd) error {
 	if job == nil {
 		return nil
 	}
@@ -108,7 +115,7 @@ func retireLegacyJob(job *legacyJob, env Env) error {
 		return fmt.Errorf("legacy upload job changed during setup; retry")
 	}
 	if job.WasLoaded {
-		if err := env.unloadLaunchAgent(job.Change.Path); err != nil {
+		if err := launchd.Unload(job.Change.Path); err != nil {
 			return err
 		}
 	}
@@ -119,7 +126,7 @@ func retireLegacyJob(job *legacyJob, env Env) error {
 // a collector an earlier release installed under another label. name
 // says which in errors, and home is the data directory whose interrupted
 // setup is being recovered.
-func restoreLegacyJob(home string, job *legacyJob, name string, env Env) error {
+func restoreLegacyJob(home string, job *LegacyJob, name string, launchd Launchd) error {
 	if job == nil {
 		return nil
 	}
@@ -132,16 +139,16 @@ func restoreLegacyJob(home string, job *legacyJob, name string, env Env) error {
 		}
 	}
 	if job.WasLoaded {
-		state := env.jobState(job.Change.Path)
-		//lint:ignore LV1001 Env.JobState (cli.go) reports launchd states as plain strings, and tests stub it with string-returning funcs
+		state := launchd.JobState(job.Change.Path)
+		//lint:ignore LV1001 Launchd.JobState reports launchd states as plain strings, and tests stub it with string-returning funcs
 		switch state {
 		case "unknown":
-			return &recoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to launchctl and rerun setup", name)}
-		case jobAnotherInstallation:
-			return &recoveryBlockedError{home: home, cause: fmt.Sprintf("launchd runs the %s's label from another plist now, so it cannot be restarted from %s", name, job.Change.Path)}
+			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the state of the %s is unknown; restore access to launchctl and rerun setup", name)}
+		case JobAnotherInstallation:
+			return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("launchd runs the %s's label from another plist now, so it cannot be restarted from %s", name, job.Change.Path)}
 		case "loaded", "running":
 		default:
-			if err := env.loadLaunchAgent(job.Change.Path); err != nil {
+			if err := launchd.Load(job.Change.Path); err != nil {
 				return launchctlBlocked(home, "restart the "+name, err)
 			}
 		}
@@ -151,7 +158,7 @@ func restoreLegacyJob(home string, job *legacyJob, name string, env Env) error {
 
 // checkLegacyJob confirms restoreLegacyJob can put job back: its plist is
 // either gone (setup removed it) or exactly as setup found it.
-func checkLegacyJob(home string, job *legacyJob, name string) error {
+func checkLegacyJob(home string, job *LegacyJob, name string) error {
 	if job == nil {
 		return nil
 	}
@@ -163,7 +170,7 @@ func checkLegacyJob(home string, job *legacyJob, name string) error {
 		return err
 	}
 	if !bytes.Equal(current, job.Change.Before) {
-		return &recoveryBlockedError{home: home, cause: fmt.Sprintf("the %s's plist %s changed outside setup, and recovery never overwrites your edits", name, job.Change.Path)}
+		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the %s's plist %s changed outside setup, and recovery never overwrites your edits", name, job.Change.Path)}
 	}
 	return nil
 }

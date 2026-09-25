@@ -14,10 +14,12 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -120,7 +122,7 @@ type statusView struct {
 	Projects                 []string               `json:"projects"`
 	Apps                     []appStatus            `json:"applications"`
 	Collector                state.Status           `json:"collector"`
-	CaptureDiagnostics       []captureDiagnostic    `json:"capture_diagnostics,omitempty"`
+	CaptureDiagnostics       []capture.Diagnostic   `json:"capture_diagnostics,omitempty"`
 	// ImportedSessions counts sessions `agent-archive backfill` registered,
 	// not their subagents; ImportedPending counts those the collector still
 	// has to upload, and ImportedWithIssues those with a capture gap or a
@@ -227,7 +229,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 	}
 	for _, diagnostic := range view.CaptureDiagnostics {
-		terminal.Printf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), captureDiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+		terminal.Printf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
 	if view.Collector.LastError != "" {
 		terminal.Printf(stdout, "Last error:    %s\n", view.Collector.LastError)
@@ -360,6 +362,29 @@ func readStatus(env Env) (view statusView, err error) {
 	if err != nil {
 		return view, err
 	}
+	readSetupProgress(&view, home)
+	if !found {
+		return view, nil
+	}
+	readConfiguredStatus(&view, cfg, home, env)
+	store := state.OpenReadOnly(home)
+	sessions := readSessionStatus(&view, cfg, home, store)
+	for _, name := range cfg.Harnesses {
+		view.Apps = append(view.Apps, sessions.appStatus(name, cfg, home, view.Collector.SessionIssues))
+	}
+	userHome, err := env.userHomeDir()
+	if err != nil {
+		return view, err
+	}
+	binaryProblem := readInstalledApps(&view, cfg, home, userHome, env)
+	background := readBackground(&view, cfg, home, userHome, env)
+	chooseNextStep(&view, cfg, home, env, binaryProblem, background)
+	return view, nil
+}
+
+// readSetupProgress reports a saved or interrupted setup, which is all status
+// has to say before the first setup commits a configuration.
+func readSetupProgress(view *statusView, home string) {
 	if _, err := os.Stat(draftPath(home)); err == nil {
 		view.State = "Setup saved"
 		view.Next = "Run agent-archive setup to continue your saved choices."
@@ -368,13 +393,16 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Warnings = append(view.Warnings, view.Next)
 		}
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		view.State = "Setup needs recovery"
 		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}
-	if !found {
-		return view, nil
-	}
+}
+
+// readConfiguredStatus fills in what the configuration and the advisory
+// local files say: storage and its privacy and access evidence, capture
+// diagnostics, and the included projects.
+func readConfiguredStatus(view *statusView, cfg config.Config, home string, env Env) {
 	view.configured = true
 	view.Background = "unknown"
 	view.Storage = storageLabel(cfg.Storage)
@@ -384,12 +412,13 @@ func readStatus(env Env) (view statusView, err error) {
 	view.ConfigurationID = configurationID(cfg)
 	// Advisory files: one that cannot be read is left out with a warning,
 	// never a reason to report nothing at all.
-	view.CaptureDiagnostics, err = readCaptureDiagnostics(home)
+	var err error
+	view.CaptureDiagnostics, err = capture.ReadDiagnostics(home)
 	if err != nil {
-		view.Warnings = append(view.Warnings, unreadableWarning(captureDiagnosticsPath(home), err, "The next capture diagnostic replaces it; deleting it loses only past diagnostics."))
+		view.Warnings = append(view.Warnings, unreadableWarning(capture.DiagnosticsPath(home), err, "The next capture diagnostic replaces it; deleting it loses only past diagnostics."))
 		view.CaptureDiagnostics = nil
 	}
-	view.CaptureDiagnostics = includedCaptureDiagnostics(view.CaptureDiagnostics, cfg.Archive.Projects)
+	view.CaptureDiagnostics = capture.IncludedDiagnostics(view.CaptureDiagnostics, cfg.Archive.Projects)
 	view.Authentication.State = "unknown"
 	if err := local.Read(filepath.Join(home, "storage-health.json"), &view.Authentication); err != nil && !os.IsNotExist(err) {
 		view.Warnings = append(view.Warnings, unreadableWarning(filepath.Join(home, "storage-health.json"), err, "The background collector checks storage again and replaces it within a few minutes."))
@@ -421,7 +450,22 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Projects = append(view.Projects, p.Root)
 		}
 	}
-	store := state.OpenReadOnly(home)
+}
+
+// statusSessions is the local session state status reads once and then
+// attributes to each app: the registrations whose files could be read, and
+// skip, which leaves a session whose own files cannot be read out of every
+// count, with one warning naming it.
+type statusSessions struct {
+	store *state.Store
+	regs  []archive.SessionRegistration
+	skip  func(id string, err error)
+}
+
+// readSessionStatus reads the collector's status, the pending count, and the
+// import counts, and returns the sessions every app's status is built from.
+func readSessionStatus(view *statusView, cfg config.Config, home string, store *state.Store) statusSessions {
+	var err error
 	view.Collector, err = store.LoadStatus()
 	if err != nil {
 		view.Warnings = append(view.Warnings, unreadableWarning(filepath.Join(home, "status.json"), err, "The collector replaces it on its next pass; agent-archive sync runs one now."))
@@ -477,182 +521,210 @@ func readStatus(env Env) (view statusView, err error) {
 	if len(batches) > 0 {
 		view.LastImport = batches[len(batches)-1].ID
 	}
-	for _, name := range cfg.Harnesses {
-		app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified"}
-		pairIndex := map[string]int{}
-		for _, project := range cfg.Archive.Projects {
-			if !project.Included {
-				continue
-			}
-			if _, dup := pairIndex[project.Root]; dup {
-				// A hand-edited configuration can repeat a root. The first
-				// entry owns the pair; a second would never receive evidence
-				// and would pin the app unverified.
-				continue
-			}
-			pairIndex[project.Root] = len(app.Projects)
-			app.Projects = append(app.Projects, projectCaptureStatus{
-				ProjectID: string(project.ProjectID), ProjectRoot: project.Root,
-				ActivatedAt: project.ActivatedAt, Configured: true, VerificationState: "not_verified",
-			})
+	return statusSessions{store: store, regs: regs, skip: skip}
+}
+
+// appStatus is one configured app's capture evidence: its sessions, per
+// project and overall, from hook observation to read-back verification.
+func (s statusSessions) appStatus(name string, cfg config.Config, home string, issues map[string]string) appStatus {
+	app := appStatus{Name: name, State: "waiting for first session", Configured: true, Trust: "unknown", VerificationState: "not_verified"}
+	pairIndex := map[string]int{}
+	for _, project := range cfg.Archive.Projects {
+		if !project.Included {
+			continue
 		}
-		var readBackIssue verificationOutcome
-		for _, reg := range regs {
-			// An import is not evidence that this app's hooks work: it
-			// never counts toward the app's sessions, hook observation,
-			// or verification. The Imported line reports it instead.
-			if reg.Imported() || reg.Harness.Name != name || !cfg.AcceptSession(reg) {
-				continue
-			}
-			// AcceptSession only admits a root without a configured pair
-			// under its legacy branch (no projects configured at all). The
-			// collector still publishes such sessions, so they count toward
-			// the app even though there is no pair to attribute them to.
-			var pair *projectCaptureStatus
-			if position, found := pairIndex[reg.ProjectRoot]; found {
-				pair = &app.Projects[position]
-			}
-			app.Sessions++
-			app.HookObserved = true
-			gapsBefore := len(app.CaptureGaps)
-			if pair != nil {
-				pair.HookObserved = true
-			}
-			if issue := view.Collector.SessionIssues[reg.ArchiveSessionID]; issue != "" {
-				app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: "Last scan could not update this session; retained evidence was kept. Run agent-archive sync for the failure."})
-			}
-			if reg.Harness.Version != "" && !containsString(app.HarnessVersions, reg.Harness.Version) {
-				app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
-			}
-			if app.State == "waiting for first session" {
-				app.State = "hook observed; waiting for capture"
-			}
-			bundle, _, cacheStatus, found, err := store.LoadPublished(reg.ArchiveSessionID)
-			if err != nil {
-				skip(reg.ArchiveSessionID, err)
-				continue
-			}
-			if cacheStatus == state.CacheStatusBlocked {
-				reason, _, e := store.LoadBlocked(reg.ArchiveSessionID)
-				if e != nil {
-					skip(reg.ArchiveSessionID, e)
-					continue
-				}
-				app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: blockedReasonDetail(reason)})
-			}
-			if found {
-				if cacheStatus != state.CacheStatusBlocked {
-					app.CapturedLocally = true
-					if pair != nil {
-						pair.CapturedLocally = true
-					}
-				}
-				app.CaptureGaps = append(app.CaptureGaps, bundle.Capture.Gaps...)
-				if version := bundle.Capture.AdapterVersion; version != "" && !containsString(app.AdapterVersions, version) {
-					app.AdapterVersions = append(app.AdapterVersions, version)
-				}
-			}
-			// A blocked session with no publication has captured nothing;
-			// one that was published earlier still counts as published below.
-			if found && cacheStatus != state.CacheStatusBlocked && app.LastPublishedAt.IsZero() {
-				app.State = "captured locally"
-			}
-			if len(app.CaptureGaps) > gapsBefore {
-				app.SessionsWithCaptureGaps++
-			}
-			publishedBundle, at, published, e := store.LoadLastPublished(reg.ArchiveSessionID)
-			if e != nil {
-				skip(reg.ArchiveSessionID, e)
-				continue
-			}
-			if published {
-				app.Published = true
-				app.PublishedSessions++
-				if pair != nil {
-					pair.Published = true
-					pair.PublishedSessions++
-				}
-				app.State = "published; read-back pending"
-				verification, e := readVerification(home, reg.ArchiveSessionID)
-				if e != nil {
-					skip(reg.ArchiveSessionID, e)
-					continue
-				}
-				verificationConfigurationID := sessionVerificationConfigurationID(cfg, reg)
-				if verification.ConfigurationID == verificationConfigurationID && verification.PublishedAt.Equal(at) && !verification.VerifiedAt.IsZero() {
-					app.VerifiedSessions++
-					if pair != nil {
-						pair.VerifiedSessions++
-						if verification.VerifiedAt.After(pair.VerifiedAt) {
-							pair.VerifiedAt = verification.VerifiedAt
-						}
-					}
-					app.VerificationState = "verified_at_recorded_time"
-					if verification.VerifiedAt.After(app.VerifiedAt) {
-						app.VerifiedAt = verification.VerifiedAt
-					}
-					app.State = "published; source verified"
-					if version := publishedBundle.Capture.Harness.Version; version != "" && !containsString(app.verifiedHarnessVersions, version) {
-						app.verifiedHarnessVersions = append(app.verifiedHarnessVersions, version)
-					}
-				} else if !verification.VerifiedAt.IsZero() {
-					app.VerificationState = "stale"
-				} else if verification.ConfigurationID == verificationConfigurationID && verification.PublishedAt.Equal(at) && verification.Attempts > 0 {
-					// The collector tried and could not read this publication
-					// back; a mismatch outranks a transient failure.
-					if verification.Outcome == verificationOutcomeMismatch || readBackIssue != verificationOutcomeMismatch {
-						readBackIssue = verification.Outcome
-						app.VerificationDetail = fmt.Sprintf("%s: %s (attempt %d; next retry %s)", verification.Outcome, verification.LastError, verification.Attempts, formatTimeOrNever(verification.NextRetryAt))
-					}
-				}
-				if at.After(app.LastPublishedAt) {
-					app.LastPublishedAt = at
-				}
-			}
+		if _, dup := pairIndex[project.Root]; dup {
+			// A hand-edited configuration can repeat a root. The first
+			// entry owns the pair; a second would never receive evidence
+			// and would pin the app unverified.
+			continue
 		}
-		app.ReadBackVerified = len(app.Projects) > 0
-		if len(app.Projects) == 0 {
-			// Nothing to require per pair (legacy configuration without
-			// projects): the sessions themselves are the evidence.
-			app.ReadBackVerified = app.PublishedSessions > 0 && app.VerifiedSessions == app.PublishedSessions
-		}
-		for i := range app.Projects {
-			pair := &app.Projects[i]
-			pair.ReadBackVerified = pair.PublishedSessions > 0 && pair.VerifiedSessions == pair.PublishedSessions
-			switch {
-			case pair.ReadBackVerified:
-				pair.VerificationState = "verified_at_recorded_time"
-			case pair.Published:
-				pair.VerificationState = "incomplete"
-			case pair.CapturedLocally:
-				pair.VerificationState = "captured_local"
-			case pair.HookObserved:
-				pair.VerificationState = "hook_observed"
-			default:
-				pair.VerificationState = "not_verified"
-			}
-			if !pair.ReadBackVerified {
-				app.ReadBackVerified = false
-			}
-		}
-		if app.Published && !app.ReadBackVerified {
-			app.State = "published; read-back pending"
-			app.VerificationState = "incomplete"
-			switch readBackIssue {
-			case verificationOutcomeMismatch:
-				app.VerificationState = "read_back_mismatch"
-			case verificationOutcomeFailed:
-				app.VerificationState = "read_back_failed"
-			case verificationOutcomeVerified:
-				// A verified session is not a read-back issue.
-			}
-		}
-		view.Apps = append(view.Apps, app)
+		pairIndex[project.Root] = len(app.Projects)
+		app.Projects = append(app.Projects, projectCaptureStatus{
+			ProjectID: string(project.ProjectID), ProjectRoot: project.Root,
+			ActivatedAt: project.ActivatedAt, Configured: true, VerificationState: "not_verified",
+		})
 	}
-	userHome, err := env.userHomeDir()
+	var readBackIssue verificationOutcome
+	for _, reg := range s.regs {
+		// An import is not evidence that this app's hooks work: it
+		// never counts toward the app's sessions, hook observation,
+		// or verification. The Imported line reports it instead.
+		if reg.Imported() || reg.Harness.Name != name || !cfg.AcceptSession(reg) {
+			continue
+		}
+		// AcceptSession only admits a root without a configured pair
+		// under its legacy branch (no projects configured at all). The
+		// collector still publishes such sessions, so they count toward
+		// the app even though there is no pair to attribute them to.
+		var pair *projectCaptureStatus
+		if position, found := pairIndex[reg.ProjectRoot]; found {
+			pair = &app.Projects[position]
+		}
+		s.addSession(&app, pair, reg, cfg, home, issues, &readBackIssue)
+	}
+	finishReadBack(&app, readBackIssue)
+	return app
+}
+
+// addSession adds one accepted session's evidence to app and to its project
+// pair (nil for a session no configured project owns): hook observation,
+// local capture and gaps, publication, and read-back verification. A session
+// whose files cannot be read is skipped where it fails.
+func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, reg archive.SessionRegistration, cfg config.Config, home string, issues map[string]string, readBackIssue *verificationOutcome) {
+	app.Sessions++
+	app.HookObserved = true
+	gapsBefore := len(app.CaptureGaps)
+	if pair != nil {
+		pair.HookObserved = true
+	}
+	if issue := issues[reg.ArchiveSessionID]; issue != "" {
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: "Last scan could not update this session; retained evidence was kept. Run agent-archive sync for the failure."})
+	}
+	if reg.Harness.Version != "" && !containsString(app.HarnessVersions, reg.Harness.Version) {
+		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
+	}
+	if app.State == "waiting for first session" {
+		app.State = "hook observed; waiting for capture"
+	}
+	bundle, _, cacheStatus, found, err := s.store.LoadPublished(reg.ArchiveSessionID)
 	if err != nil {
-		return view, err
+		s.skip(reg.ArchiveSessionID, err)
+		return
 	}
+	if cacheStatus == state.CacheStatusBlocked {
+		reason, _, e := s.store.LoadBlocked(reg.ArchiveSessionID)
+		if e != nil {
+			s.skip(reg.ArchiveSessionID, e)
+			return
+		}
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: string(reason), Detail: blockedReasonDetail(reason)})
+	}
+	if found {
+		if cacheStatus != state.CacheStatusBlocked {
+			app.CapturedLocally = true
+			if pair != nil {
+				pair.CapturedLocally = true
+			}
+		}
+		app.CaptureGaps = append(app.CaptureGaps, bundle.Capture.Gaps...)
+		if version := bundle.Capture.AdapterVersion; version != "" && !containsString(app.AdapterVersions, version) {
+			app.AdapterVersions = append(app.AdapterVersions, version)
+		}
+	}
+	// A blocked session with no publication has captured nothing;
+	// one that was published earlier still counts as published below.
+	if found && cacheStatus != state.CacheStatusBlocked && app.LastPublishedAt.IsZero() {
+		app.State = "captured locally"
+	}
+	if len(app.CaptureGaps) > gapsBefore {
+		app.SessionsWithCaptureGaps++
+	}
+	s.addPublication(app, pair, reg, cfg, home, readBackIssue)
+}
+
+// addPublication adds a session's last publication, if any, and its
+// read-back verification to app and pair. readBackIssue keeps the worst
+// read-back failure seen for the app: a mismatch outranks a transient one.
+func (s statusSessions) addPublication(app *appStatus, pair *projectCaptureStatus, reg archive.SessionRegistration, cfg config.Config, home string, readBackIssue *verificationOutcome) {
+	publishedBundle, at, published, e := s.store.LoadLastPublished(reg.ArchiveSessionID)
+	if e != nil {
+		s.skip(reg.ArchiveSessionID, e)
+		return
+	}
+	if !published {
+		return
+	}
+	app.Published = true
+	app.PublishedSessions++
+	if pair != nil {
+		pair.Published = true
+		pair.PublishedSessions++
+	}
+	app.State = "published; read-back pending"
+	verification, e := readVerification(home, reg.ArchiveSessionID)
+	if e != nil {
+		s.skip(reg.ArchiveSessionID, e)
+		return
+	}
+	verificationConfigurationID := sessionVerificationConfigurationID(cfg, reg)
+	if verification.ConfigurationID == verificationConfigurationID && verification.PublishedAt.Equal(at) && !verification.VerifiedAt.IsZero() {
+		app.VerifiedSessions++
+		if pair != nil {
+			pair.VerifiedSessions++
+			if verification.VerifiedAt.After(pair.VerifiedAt) {
+				pair.VerifiedAt = verification.VerifiedAt
+			}
+		}
+		app.VerificationState = "verified_at_recorded_time"
+		if verification.VerifiedAt.After(app.VerifiedAt) {
+			app.VerifiedAt = verification.VerifiedAt
+		}
+		app.State = "published; source verified"
+		if version := publishedBundle.Capture.Harness.Version; version != "" && !containsString(app.verifiedHarnessVersions, version) {
+			app.verifiedHarnessVersions = append(app.verifiedHarnessVersions, version)
+		}
+	} else if !verification.VerifiedAt.IsZero() {
+		app.VerificationState = "stale"
+	} else if verification.ConfigurationID == verificationConfigurationID && verification.PublishedAt.Equal(at) && verification.Attempts > 0 {
+		// The collector tried and could not read this publication
+		// back; a mismatch outranks a transient failure.
+		if verification.Outcome == verificationOutcomeMismatch || *readBackIssue != verificationOutcomeMismatch {
+			*readBackIssue = verification.Outcome
+			app.VerificationDetail = fmt.Sprintf("%s: %s (attempt %d; next retry %s)", verification.Outcome, verification.LastError, verification.Attempts, formatTimeOrNever(verification.NextRetryAt))
+		}
+	}
+	if at.After(app.LastPublishedAt) {
+		app.LastPublishedAt = at
+	}
+}
+
+// finishReadBack decides, once every session is counted, whether each of
+// app's projects and the app as a whole are read-back verified.
+func finishReadBack(app *appStatus, readBackIssue verificationOutcome) {
+	app.ReadBackVerified = len(app.Projects) > 0
+	if len(app.Projects) == 0 {
+		// Nothing to require per pair (legacy configuration without
+		// projects): the sessions themselves are the evidence.
+		app.ReadBackVerified = app.PublishedSessions > 0 && app.VerifiedSessions == app.PublishedSessions
+	}
+	for i := range app.Projects {
+		pair := &app.Projects[i]
+		pair.ReadBackVerified = pair.PublishedSessions > 0 && pair.VerifiedSessions == pair.PublishedSessions
+		switch {
+		case pair.ReadBackVerified:
+			pair.VerificationState = "verified_at_recorded_time"
+		case pair.Published:
+			pair.VerificationState = "incomplete"
+		case pair.CapturedLocally:
+			pair.VerificationState = "captured_local"
+		case pair.HookObserved:
+			pair.VerificationState = "hook_observed"
+		default:
+			pair.VerificationState = "not_verified"
+		}
+		if !pair.ReadBackVerified {
+			app.ReadBackVerified = false
+		}
+	}
+	if app.Published && !app.ReadBackVerified {
+		app.State = "published; read-back pending"
+		app.VerificationState = "incomplete"
+		switch readBackIssue {
+		case verificationOutcomeMismatch:
+			app.VerificationState = "read_back_mismatch"
+		case verificationOutcomeFailed:
+			app.VerificationState = "read_back_failed"
+		case verificationOutcomeVerified:
+			// A verified session is not a read-back issue.
+		}
+	}
+}
+
+// readInstalledApps fills in each app's installed version, support, and
+// hook state, and returns what is wrong with the executable setup installed
+// ("" when nothing is).
+func readInstalledApps(view *statusView, cfg config.Config, home, userHome string, env Env) (binaryProblem string) {
 	// Hooks are checked against the path setup installed, not the path this
 	// status process runs from; older configurations fall back to the latter.
 	executable, executableErr := cfg.InstalledExecutable, error(nil)
@@ -664,7 +736,6 @@ func readStatus(env Env) (view statusView, err error) {
 	// comparing it alone would report healthy hooks that fail on every event.
 	// An uninstalled archive has no hooks left to break.
 	hookFiles := env.installedHookFiles(userHome, cfg)
-	binaryProblem := ""
 	if cfg.InstalledExecutable != "" && cfg.Archive.Enabled {
 		binaryProblem = executableProblem(cfg.InstalledExecutable)
 	}
@@ -716,6 +787,21 @@ func readStatus(env Env) (view statusView, err error) {
 			view.Apps[i].Hooks = "installed"
 		}
 	}
+	return binaryProblem
+}
+
+// statusBackground is the background collector as status found it: its
+// LaunchAgent's plist, and the program the LaunchAgent runs when that
+// program is no longer usable (problem says why; both "" otherwise).
+type statusBackground struct {
+	plist   string
+	program string
+	problem string
+}
+
+// readBackground reads the background collector's launchd state, and what
+// the LaunchAgent actually runs.
+func readBackground(view *statusView, cfg config.Config, home, userHome string, env Env) statusBackground {
 	plist := env.installation(home, userHome).installedCollectorPlist()
 	view.Background = env.jobState(plist)
 	// launchd reports a job whose program is gone as loaded (it only fails
@@ -732,6 +818,13 @@ func readStatus(env Env) (view statusView, err error) {
 		view.Background = backgroundBroken
 		view.Warnings = append(view.Warnings, fmt.Sprintf("The background collector's LaunchAgent runs %s, which is %s, so scheduled collection has stopped.", backgroundProgram, backgroundProblem))
 	}
+	return statusBackground{plist: plist, program: backgroundProgram, problem: backgroundProblem}
+}
+
+// chooseNextStep sets the overall state and the one next step status
+// suggests. Later checks outrank earlier ones: each overwrites the state and
+// step of any before it.
+func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, binaryProblem string, background statusBackground) {
 	view.State = "Ready"
 	view.Next = "Keep working. Run agent-archive list to inspect archived sessions."
 	if len(view.Apps) == 0 {
@@ -741,47 +834,8 @@ func readStatus(env Env) (view statusView, err error) {
 		view.State = "Needs attention"
 		view.Next = "Run agent-archive setup and include at least one project."
 	}
-	for _, app := range view.Apps {
-		for _, pair := range app.Projects {
-			if pair.ReadBackVerified {
-				continue
-			}
-			view.State = "Waiting for capture"
-			switch {
-			case app.Capabilities.FreshStart.State == capabilityUnavailable && !pair.HookObserved:
-				view.Next = app.Capabilities.FreshStart.NextAction
-			case pair.Published:
-				view.Next = "Run agent-archive sync to retry read-back verification for " + appName(app.Name) + " in " + pair.ProjectRoot + "."
-			case pair.HookObserved:
-				view.Next = "Run agent-archive sync to capture and publish the " + appName(app.Name) + " session in " + pair.ProjectRoot + "."
-			default:
-				view.Next = "Review hook approval in " + appName(app.Name) + ", then start a new session in " + pair.ProjectRoot + "."
-			}
-			break
-		}
-		if view.State == "Waiting for capture" {
-			break
-		}
-	}
-	for _, app := range view.Apps {
-		if app.Hooks != "installed" {
-			view.State = "Needs attention"
-			view.Next = "Run agent-archive setup to check the hooks for " + appName(app.Name) + "."
-			if len(app.OtherInstallations) > 0 {
-				// setup refuses to install beside them, so it is not the way out.
-				view.Next = "Another agent-archive installation's hooks are in " + appName(app.Name) + "'s hook file (see the warning above). Remove that installation, or give this one its own HOME, then run agent-archive setup."
-			}
-			break
-		}
-	}
-	if !launchJobActive(view.Background) {
-		view.State = "Needs attention"
-		view.Next = "Run agent-archive setup to restore the background collector."
-		if view.Background == jobAnotherInstallation {
-			// setup refuses to replace that job, so it is not the way out.
-			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchLabel(plist))
-		}
-	}
+	chooseCaptureStep(view)
+	chooseInstallationStep(view, background.plist)
 	if !view.Collector.LastScanAt.IsZero() && env.now().Sub(view.Collector.LastScanAt) > 5*time.Minute {
 		view.State = "Needs attention"
 		view.Next = "The last scan is over 5 minutes old. Run agent-archive sync to check collection."
@@ -809,10 +863,10 @@ func readStatus(env Env) (view statusView, err error) {
 	// A moved or deleted binary is the root cause of every symptom above (a
 	// stale scan, a failing hook), and pausing does not stop the apps from
 	// running hooks that now fail, so it outranks all of them.
-	if binaryProblem != "" || backgroundProblem != "" {
+	if binaryProblem != "" || background.problem != "" {
 		moved := cfg.InstalledExecutable
 		if binaryProblem == "" {
-			moved = backgroundProgram
+			moved = background.program
 		}
 		view.State = "Needs attention"
 		view.Next = fmt.Sprintf("agent-archive is no longer usable at %s. Run agent-archive setup from the binary's new location to point the hooks and background collector at it.", moved)
@@ -821,11 +875,61 @@ func readStatus(env Env) (view statusView, err error) {
 		view.State = "Not installed"
 		view.Next = "Local data is kept. Run agent-archive setup to reinstall."
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		view.State = "Setup needs recovery"
 		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}
-	return view, nil
+}
+
+// chooseCaptureStep points at the first project of the first app whose
+// capture is not yet read-back verified, if any.
+func chooseCaptureStep(view *statusView) {
+	for _, app := range view.Apps {
+		for _, pair := range app.Projects {
+			if pair.ReadBackVerified {
+				continue
+			}
+			view.State = "Waiting for capture"
+			switch {
+			case app.Capabilities.FreshStart.State == capabilityUnavailable && !pair.HookObserved:
+				view.Next = app.Capabilities.FreshStart.NextAction
+			case pair.Published:
+				view.Next = "Run agent-archive sync to retry read-back verification for " + appName(app.Name) + " in " + pair.ProjectRoot + "."
+			case pair.HookObserved:
+				view.Next = "Run agent-archive sync to capture and publish the " + appName(app.Name) + " session in " + pair.ProjectRoot + "."
+			default:
+				view.Next = "Review hook approval in " + appName(app.Name) + ", then start a new session in " + pair.ProjectRoot + "."
+			}
+			break
+		}
+		if view.State == "Waiting for capture" {
+			break
+		}
+	}
+}
+
+// chooseInstallationStep points at hooks that are not installed, then at a
+// background collector that is not loaded (plist is its LaunchAgent).
+func chooseInstallationStep(view *statusView, plist string) {
+	for _, app := range view.Apps {
+		if app.Hooks != "installed" {
+			view.State = "Needs attention"
+			view.Next = "Run agent-archive setup to check the hooks for " + appName(app.Name) + "."
+			if len(app.OtherInstallations) > 0 {
+				// setup refuses to install beside them, so it is not the way out.
+				view.Next = "Another agent-archive installation's hooks are in " + appName(app.Name) + "'s hook file (see the warning above). Remove that installation, or give this one its own HOME, then run agent-archive setup."
+			}
+			break
+		}
+	}
+	if !setupjournal.JobActive(view.Background) {
+		view.State = "Needs attention"
+		view.Next = "Run agent-archive setup to restore the background collector."
+		if view.Background == setupjournal.JobAnotherInstallation {
+			// setup refuses to replace that job, so it is not the way out.
+			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchLabel(plist))
+		}
+	}
 }
 
 // collectorLockHeld reports whether another process holds collector.lock

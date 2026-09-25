@@ -11,6 +11,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
@@ -25,7 +26,7 @@ func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(userHome, ".codex", "hooks.json")); !os.IsNotExist(err) {
 		t.Fatal("failed setup left hooks")
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		t.Fatal("journal not cleaned after restoration")
 	}
 }
