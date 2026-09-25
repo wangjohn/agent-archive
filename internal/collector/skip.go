@@ -145,6 +145,24 @@ func sourceStillAt(ctx context.Context, reader sourceReader, signature state.Sca
 	return err == nil && observed.matches(signature)
 }
 
+// sourceSettled reports whether the session's source is still in the state
+// its last scan settled at (a signature recorded by recordScanSignature, not
+// a gap or a failure), and that scan ran the filter and adapter this build
+// runs: reading the source now would produce exactly the evidence that scan
+// cached. It trusts a stat exactly as far as unchangedSinceLastScan does,
+// so never for a Cursor text transcript.
+func (s *sessionScan) sourceSettled(reader sourceReader) bool {
+	signature, found, err := s.local.LoadScanSignature(s.id())
+	if err != nil || !found || signature.Blocked != "" || signature.Failed || signature.SourceFormat == cursorTextSourceFormat {
+		return false
+	}
+	adapterVersion, known := harnessAdapterVersion(s.reg.Harness.Name)
+	if !known || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion {
+		return false
+	}
+	return sourceStillAt(s.ctx, reader, signature)
+}
+
 // owesNothing reports that a session has no publication pending and, unless
 // failed (a remembered Cursor failure, whose scan stays journaled), no
 // interrupted scan journaled.

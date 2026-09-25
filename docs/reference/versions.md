@@ -21,11 +21,13 @@ The per-version filter changes are in the
 ## What a bump does
 
 The collector compares each session's last scan (its scan signature) with the
-running build's parser, filter, and adapter versions. When any differ, it
-re-reads the transcript, filters it again, and republishes the session; when
-only the parser changed and the retained source can't be rebuilt (the
-transcript is gone), it republishes metadata derived from the retained
-source. Nothing is re-uploaded unless it changed.
+running build's parser, filter, and adapter versions. When the filter or
+adapter differs, it re-reads the transcript, filters it again, and
+republishes the session. When only the parser changed, it republishes
+metadata derived from the retained source, and reads the transcript only
+if it changed since the last scan (an unchanged one would filter to
+exactly what was retained); a changed one is published as usual. Nothing
+is re-uploaded unless it changed.
 
 ## Rules for contributors
 

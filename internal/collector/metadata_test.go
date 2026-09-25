@@ -362,6 +362,33 @@ func TestParserUpgradeWithNewContentReadsTheTranscriptOnce(t *testing.T) {
 	}
 }
 
+// A parser upgrade re-derives every session's metadata, but a transcript
+// still at the state its last scan settled at, under the same filter, has
+// nothing new to say: the refresh publishes metadata over the retained
+// source without reading it. Not parallel: it reads a package-wide counter.
+func TestParserUpgradeOverAnUnchangedTranscriptDoesNotReadIt(t *testing.T) {
+	local := newTestStore(t)
+	reg := registration(t, writeTranscript(t, t.TempDir(), "s.jsonl", codexTranscript))
+	remote := storagetest.NewMemoryStore()
+	now := reg.RegisteredAt.Add(time.Hour)
+	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }}
+	published := publishOnce(t, local, remote, reg, &opts)
+
+	now = now.Add(10 * time.Minute)
+	opts.ParserVersion = "two"
+	before := transcriptFilters.Load()
+	result, err := Run(context.Background(), local, remote, opts)
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("%#v %v", result, err)
+	}
+	if filters := transcriptFilters.Load() - before; filters != 0 {
+		t.Fatalf("the refresh filtered the unchanged transcript %d times", filters)
+	}
+	if after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID); after.Parser.Version != "two" || after.SourceBundle != published.SourceBundle {
+		t.Fatalf("metadata = %+v, want parser two over the same source", after)
+	}
+}
+
 func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 	local := newTestStore(t)
 	dir := t.TempDir()

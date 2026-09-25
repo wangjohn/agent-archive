@@ -216,6 +216,14 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if !found {
 		return false
 	}
+	if s.sourceSettled(source) {
+		// Read at this very state by a scan that settled, through the same
+		// filter and adapter: it would filter to what that scan cached.
+		// Only the parser moved, and filtering every historical session's
+		// transcript to find that out made the first pass after an upgrade
+		// cost a full read of each.
+		return false
+	}
 	adapter, err := archive.NewAdapter(s.reg.Harness.Name)
 	if err != nil {
 		return false
