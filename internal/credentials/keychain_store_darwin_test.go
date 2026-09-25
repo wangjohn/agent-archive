@@ -11,8 +11,9 @@ import (
 	"testing"
 )
 
-// KeychainStore checks its arguments before it asks the Keychain anything,
-// so these run without touching it.
+// KeychainStore checks its arguments before it asks the Keychain anything.
+// These run with TestMain's fail-closed Keychain (isolateKeychainForTesting):
+// a check moved after the Keychain call panics rather than writing an item.
 func TestKeychainStoreRefusesBeforeAskingTheKeychain(t *testing.T) {
 	if _, err := NewKeychainStore(""); err == nil {
 		t.Fatal("a store without a service was made")
@@ -62,6 +63,11 @@ func TestKeychainRoundTrip(t *testing.T) {
 	if os.Getenv(keychainRoundTripEnv) != "1" {
 		t.Skipf("writes to the login Keychain; set %s=1 to run it", keychainRoundTripEnv)
 	}
+	// The one test that reaches the real Keychain; it runs sequentially, so
+	// no other test sees the swap.
+	failClosed := keychain
+	keychain = securityFramework
+	t.Cleanup(func() { keychain = failClosed })
 	suffix := make([]byte, 8)
 	if _, err := rand.Read(suffix); err != nil {
 		t.Fatal(err)

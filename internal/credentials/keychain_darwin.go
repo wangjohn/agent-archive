@@ -123,6 +123,54 @@ var (
 // `security` command, which would expose a secret through argv or shell logs.
 type KeychainStore struct{ service string }
 
+// keychainAccess is every call KeychainStore makes into the login Keychain.
+// Each returns an OSStatus.
+type keychainAccess struct {
+	get    func(service, account string) ([]byte, int)
+	save   func(service, account string, data []byte) int
+	delete func(service, account string) int
+}
+
+// securityFramework reaches the real login Keychain through
+// Security.framework.
+var securityFramework = keychainAccess{
+	get: func(service, account string) ([]byte, int) {
+		cService, cAccount := C.CString(service), C.CString(account)
+		defer C.free(unsafe.Pointer(cService))
+		defer C.free(unsafe.Pointer(cAccount))
+		var data unsafe.Pointer
+		var length C.size_t
+		// kSecUseAuthenticationUIFail (see aa_lookup_query) keeps a
+		// background process from ever prompting; a locked Keychain is
+		// reported instead.
+		if status := C.aa_keychain_get(cService, cAccount, &data, &length); status != 0 {
+			return nil, int(status)
+		}
+		defer C.aa_keychain_free(data)
+		return C.GoBytes(data, C.int(length)), 0
+	},
+	save: func(service, account string, data []byte) int {
+		cService, cAccount := C.CString(service), C.CString(account)
+		defer C.free(unsafe.Pointer(cService))
+		defer C.free(unsafe.Pointer(cAccount))
+		status := C.aa_keychain_save(cService, cAccount, unsafe.Pointer(&data[0]), C.size_t(len(data)))
+		runtime.KeepAlive(data)
+		return int(status)
+	},
+	delete: func(service, account string) int {
+		cService, cAccount := C.CString(service), C.CString(account)
+		defer C.free(unsafe.Pointer(cService))
+		defer C.free(unsafe.Pointer(cAccount))
+		// aa_keychain_delete already treats an absent item as deleted.
+		return int(C.aa_keychain_delete(cService, cAccount))
+	},
+}
+
+// keychain is what every KeychainStore calls: securityFramework, except in
+// this package's tests, whose TestMain replaces it with calls that stop the
+// test, so only the opt-in TestKeychainRoundTrip reaches the real Keychain.
+var keychain = securityFramework
+
 // lookupForbidsUI reports whether Load's Keychain query refuses to show UI.
 func lookupForbidsUI() bool { return C.aa_lookup_forbids_ui() != 0 }
 
@@ -147,12 +195,7 @@ func (s *KeychainStore) Save(ctx context.Context, reference string, value R2Cred
 	if err != nil {
 		return err
 	}
-	cService, cReference := C.CString(s.service), C.CString(reference)
-	defer C.free(unsafe.Pointer(cService))
-	defer C.free(unsafe.Pointer(cReference))
-	status := C.aa_keychain_save(cService, cReference, unsafe.Pointer(&encoded[0]), C.size_t(len(encoded)))
-	runtime.KeepAlive(encoded)
-	return errorForOSStatus(int(status))
+	return errorForOSStatus(keychain.save(s.service, reference, encoded))
 }
 
 // Load returns the credentials stored under reference without ever showing
@@ -164,19 +207,11 @@ func (s *KeychainStore) Load(ctx context.Context, reference string) (R2Credentia
 	if reference == "" {
 		return R2Credentials{}, ErrInvalidReference
 	}
-	cService, cReference := C.CString(s.service), C.CString(reference)
-	defer C.free(unsafe.Pointer(cService))
-	defer C.free(unsafe.Pointer(cReference))
-	var data unsafe.Pointer
-	var length C.size_t
-	// kSecUseAuthenticationUIFail (see aa_lookup_query) keeps a background
-	// process from ever prompting; a locked Keychain is reported instead.
-	status := C.aa_keychain_get(cService, cReference, &data, &length)
-	if err := errorForOSStatus(int(status)); err != nil {
+	data, status := keychain.get(s.service, reference)
+	if err := errorForOSStatus(status); err != nil {
 		return R2Credentials{}, err
 	}
-	defer C.aa_keychain_free(data)
-	return DecodeSecret(C.GoBytes(data, C.int(length)))
+	return DecodeSecret(data)
 }
 
 // Delete removes the item under reference; an absent item is not an error.
@@ -187,11 +222,7 @@ func (s *KeychainStore) Delete(ctx context.Context, reference string) error {
 	if reference == "" {
 		return ErrInvalidReference
 	}
-	cService, cReference := C.CString(s.service), C.CString(reference)
-	defer C.free(unsafe.Pointer(cService))
-	defer C.free(unsafe.Pointer(cReference))
-	// aa_keychain_delete already treats an absent item as deleted.
-	return errorForOSStatus(int(C.aa_keychain_delete(cService, cReference)))
+	return errorForOSStatus(keychain.delete(s.service, reference))
 }
 
 var _ CredentialStore = (*KeychainStore)(nil)

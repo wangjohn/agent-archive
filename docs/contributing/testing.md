@@ -82,6 +82,10 @@ In Go tests, everything goes through injection:
   `launchctl` and Keychain with stand-ins that stop the test (see
   `isolation_test.go`). A test that leaves an `Env` field unset can therefore
   never reach your real apps, launchd, or Keychain.
+- `internal/credentials` fails closed too: its `TestMain` replaces every
+  Keychain call `KeychainStore` makes with one that stops the test, so a
+  test can reach the real login Keychain only through the opt-in
+  `TestKeychainRoundTrip` (`AGENT_ARCHIVE_KEYCHAIN_ROUND_TRIP=1`).
 - `internal/backfill` and `internal/cli` point Cursor database copies at a
   per-run temporary folder (`cursorstore.SnapshotTempDirForTesting`, set in
   their `TestMain`).
