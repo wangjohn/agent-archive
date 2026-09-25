@@ -180,14 +180,11 @@ func ParseR2Location(input string) (R2Location, error) {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return R2Location{}, errors.New("invalid R2 endpoint")
 	}
-	var loc R2Location
-	path := strings.Trim(u.Path, "/")
-	if path != "" {
-		if strings.Contains(path, "/") {
-			return R2Location{}, errors.New("an R2 bucket URL names only the bucket, not a folder or object inside it")
-		}
-		loc.Bucket = path
+	bucket := strings.Trim(u.Path, "/")
+	if strings.Contains(bucket, "/") {
+		return R2Location{}, errors.New("an R2 bucket URL names only the bucket, not a folder or object inside it")
 	}
+	loc := R2Location{Bucket: bucket}
 	host := strings.ToLower(u.Host)
 	if account, ok := strings.CutSuffix(host, r2DefaultHostSuffix); ok && account != "" && !strings.Contains(account, ".") {
 		loc.AccountID = account

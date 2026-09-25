@@ -160,7 +160,8 @@ func TestSetupReviewShowsSessionsOnlyWhenNotTheDefault(t *testing.T) {
 	skills.RequireSkillUse = true
 	for _, tc := range []struct {
 		name          string
-		next, current config.Config
+		next          config.Config
+		current       config.Config
 		reconfiguring bool
 		want          string
 	}{

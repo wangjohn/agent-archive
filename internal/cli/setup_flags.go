@@ -26,9 +26,12 @@ const (
 
 // setupOptions are setup's answers given as flags, for setup --yes.
 type setupOptions struct {
-	provider, bucket     string
-	r2Account, r2KeyID   string
-	awsProfile, region   string
+	provider             string
+	bucket               string
+	r2Account            string
+	r2KeyID              string
+	awsProfile           string
+	region               string
 	apps                 string
 	projects             []string
 	yes                  bool
