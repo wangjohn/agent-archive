@@ -815,8 +815,8 @@ func redactURLUserinfo(s string) (string, bool) {
 	return out.String(), true
 }
 
-// urlTokenStops are the characters that end a URL's token.
-const urlTokenStops = " \t\r\n\"'<>`"
+// urlEndChars are the characters that end a URL's token.
+const urlEndChars = " \t\r\n\"'<>`"
 
 // userinfoScanner finds the end of each URL's userinfo in s. Its queries
 // come in increasing order of start (the URLs of one string, in order), so
@@ -827,9 +827,12 @@ type userinfoScanner struct {
 	// tokenStop is the first token stop at or after the last start queried
 	// (len(s) when there is none), or -1 before the first query.
 	tokenStop int
-	// hostAt is the first `@` a host name follows at or after hostFrom
-	// (len(s) when there is none); hostFrom is -1 before the first search.
-	hostFrom, hostAt int
+	// hostFrom is where the last search for an `@` a host name follows
+	// started, or -1 before the first search.
+	hostFrom int
+	// hostAt is the first such `@` at or after hostFrom (len(s) when there
+	// is none).
+	hostAt int
 }
 
 // end returns the index in s of the `@` that ends the userinfo of the URL
@@ -844,7 +847,7 @@ type userinfoScanner struct {
 func (u *userinfoScanner) end(start int) int {
 	if u.tokenStop < start {
 		u.tokenStop = len(u.s)
-		if i := strings.IndexAny(u.s[start:], urlTokenStops); i >= 0 {
+		if i := strings.IndexAny(u.s[start:], urlEndChars); i >= 0 {
 			u.tokenStop = start + i
 		}
 	}
@@ -896,7 +899,7 @@ func hostStartsAt(s string, i int) bool {
 	j := i
 	for ; j < len(s); j++ {
 		c := s[j]
-		if strings.IndexByte(":/?#", c) >= 0 || strings.IndexByte(urlTokenStops, c) >= 0 {
+		if strings.IndexByte(":/?#", c) >= 0 || strings.IndexByte(urlEndChars, c) >= 0 {
 			break
 		}
 		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && strings.IndexByte(".-[]_", c) < 0 {
@@ -917,7 +920,7 @@ func isDigits(s string) bool {
 
 // pgpassField is one field of a .pgpass line: anything but a colon or
 // whitespace, where `\:` and `\\` are a literal colon and backslash.
-const pgpassField = `(?:\\[:\\]|[^\s:\\"'])+`
+const pgpassField = `(?:\\[:\\]|[^\s:\\"'])+` //nolint:gosec // G101: regex fragment for a .pgpass field, not a credential
 
 // pgpassLine matches a line of a PostgreSQL password file,
 // `host:port:database:user:password` (the port may be `*`), as a display
