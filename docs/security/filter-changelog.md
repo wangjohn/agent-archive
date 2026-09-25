@@ -61,7 +61,13 @@ version 0.11.0 go with it. Every format changes.
   `/` is covered.
 - **A PEM BEGIN line without an END line** takes only the base64 body that
   follows it (P-26). Filter 10 took everything to the end of the string, so
-  source code that named the BEGIN line lost the rest of the file.
+  source code that named the BEGIN line lost the rest of the file. A key
+  between BEGIN and END lines is taken when its lines are key body, read
+  through the decoration a display adds (line numbers from the Claude Code
+  Read tool, `cat -n`, or `grep -n`; diff, quote, and comment markers;
+  string quotes in source code), or, failing that, when it holds a base64
+  run of 48 characters or more; code between two constants that name the
+  armor lines is kept.
 - **Cursor text headers in one case** (A-20). A role header is a role and a
   colon at column 0, in the case of the transcript's first header: lower
   case (`user:`) or capitalized (`User:`). A line in the other case is

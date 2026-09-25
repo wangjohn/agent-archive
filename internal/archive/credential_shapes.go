@@ -356,13 +356,24 @@ var (
 // holds none.
 const minPEMBodyBytes = 16
 
+// minPEMFallbackRun is the longest base64 run (a key line is 64 characters)
+// that makes the text between a BEGIN and an END line a key even when its
+// lines are decorated in a way pemLineCore does not know. Code between two
+// constants that name the armor lines has no run this long.
+const minPEMFallbackRun = 48
+
+// maxPEMFallbackBytes bounds how far an END line may be from its BEGIN line
+// for that fallback (an 8192-bit RSA key is about 6.5 KB).
+const maxPEMFallbackBytes = 16 * 1024
+
 // redactPrivateKeyBlocks replaces each PEM or PGP private key with
 // [REDACTED]: from its BEGIN line through its END line when everything
 // between is key body (base64, armor headers, real or JSON-escaped line
-// breaks), or, when the END line is missing (a key cut off by a truncated
-// record), through the base64 lines that follow the BEGIN line. Filter 10
-// took everything after a BEGIN line with no END line, so source code that
-// merely mentions the BEGIN line lost the rest of the file.
+// breaks, each line possibly decorated as a display of a file decorates it:
+// see pemLineCore), or, when the END line is missing (a key cut off by a
+// truncated record), through the base64 lines that follow the BEGIN line.
+// Filter 10 took everything after a BEGIN line with no END line, so source
+// code that merely mentions the BEGIN line lost the rest of the file.
 func redactPrivateKeyBlocks(s string) (string, bool) {
 	var out strings.Builder
 	pos, hit := 0, false
@@ -392,32 +403,39 @@ func redactPrivateKeyBlocks(s string) (string, bool) {
 // privateKeyBlockEnd returns the index just past a private key block whose
 // body starts at from, or -1 when what follows the BEGIN line is not a key.
 func privateKeyBlockEnd(s string, from int) int {
-	if loc := pemEnd.FindStringIndex(s[from:]); loc != nil && isPEMBody(s[from:from+loc[0]]) {
-		return from + loc[1]
+	if loc := pemEnd.FindStringIndex(s[from:]); loc != nil {
+		body := s[from : from+loc[0]]
+		// A body in a form pemLineCore does not know still holds the key's
+		// long base64 lines: fail closed and take the block.
+		if isPEMBody(body) || (len(body) <= maxPEMFallbackBytes && longestBase64Run(body) >= minPEMFallbackRun) {
+			return from + loc[1]
+		}
 	}
-	// No END line: the BEGIN line must end where it is, then take the body
-	// lines that follow, stopping at the first line that is not one.
+	// No END line: the BEGIN line must end where it is (but for a closing
+	// decoration), then take the body lines that follow, stopping at the
+	// first line that is not one.
 	lineEnd, next := pemLineEnd(s, from)
-	if strings.TrimSpace(s[from:lineEnd]) != "" || next < 0 {
+	if strings.TrimSpace(pemLineSuffix.ReplaceAllString(s[from:lineEnd], "")) != "" || next < 0 {
 		return -1
 	}
 	end, body := -1, 0
 	for pos := next; pos >= 0 && pos < len(s); {
 		lineEnd, next = pemLineEnd(s, pos)
-		line := strings.TrimSpace(s[pos:lineEnd])
-		lead := pos + strings.Index(s[pos:lineEnd], line)
+		line := s[pos:lineEnd]
+		coreStart, coreEnd := pemLineCore(line)
+		core := line[coreStart:coreEnd]
 		switch {
-		case line == "" || pemHeader.MatchString(line):
-		case isBase64Line(line):
-			body += len(line)
-			end = lead + len(line)
+		case core == "" || pemHeader.MatchString(core):
+		case isBase64Line(core):
+			body += len(core)
+			end = pos + coreEnd
 		default:
 			// A key cut off inside a line (`…base64"` at the end of a JSON
 			// string) keeps its base64 prefix in the block, when a closing
 			// quote or an escape ends it; a line of code does not.
-			if prefix := base64Prefix(line); len(prefix) >= 4 && strings.IndexByte("\"'\\,", line[len(prefix)]) >= 0 {
+			if prefix := base64Prefix(core); len(prefix) >= 4 && strings.IndexByte("\"'\\,", core[len(prefix)]) >= 0 {
 				body += len(prefix)
-				end = lead + len(prefix)
+				end = pos + coreStart + len(prefix)
 			}
 			next = -1
 		}
@@ -427,6 +445,52 @@ func privateKeyBlockEnd(s string, from int) int {
 		return -1
 	}
 	return end
+}
+
+// pemLinePrefix and pemLineSuffix match what a display of a file puts
+// around each line of a key, so a key read through one is still recognized:
+// a line number (`cat -n`'s `     2<TAB>`, the Claude Code Read tool's
+// `     2→`, `grep -n`'s `2:`), a diff, quote, or comment marker (`+`, `-`,
+// `>`, `#`, `//`, `*`, `;`), and in source code a string's quotes, an
+// escaped line break, and what joins the strings (`"MIIE…\n" +`). Filter
+// 11 as first written read only bare lines, so a key file read by Claude
+// Code, whose Read tool numbers every line, was not redacted at all.
+var (
+	pemLinePrefix = regexp.MustCompile(`^[ \t]*(?:[0-9]+(?:→|\t|:|[ \t]+))?[ \t]*(?:(?:[-+>#*;]|//)[ \t]*)*["'` + "`" + `]?`)
+	pemLineSuffix = regexp.MustCompile(`(?:\\r)?(?:\\n)?["'` + "`" + `]?[ \t]*[,;+)]*[ \t]*\\?\r?$`)
+)
+
+// pemLineCore returns where the content of one line of a key block starts
+// and ends in line, without the decoration pemLinePrefix and pemLineSuffix
+// match, and without surrounding whitespace.
+func pemLineCore(line string) (start, end int) {
+	start = len(pemLinePrefix.FindString(line))
+	end = len(line)
+	if loc := pemLineSuffix.FindStringIndex(line[start:]); loc != nil {
+		end = start + loc[0]
+	}
+	for start < end && (line[start] == ' ' || line[start] == '\t') {
+		start++
+	}
+	for end > start && (line[end-1] == ' ' || line[end-1] == '\t') {
+		end--
+	}
+	return start, end
+}
+
+// longestBase64Run returns the length of the longest run of base64
+// characters in s.
+func longestBase64Run(s string) int {
+	longest, run := 0, 0
+	for i := range len(s) {
+		if isBase64Byte(s[i]) {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return longest
 }
 
 // pemLineEnd returns the end of the line starting at from and where the
@@ -453,11 +517,14 @@ func pemLineEnd(s string, from int) (end, next int) {
 }
 
 // isPEMBody reports whether the text between a BEGIN and an END line is a
-// key's body: base64 lines, armor headers, and blank lines only.
+// key's body: base64 lines, armor headers, and blank lines only, each
+// possibly decorated (pemLineCore).
 func isPEMBody(body string) bool {
 	for pos := 0; pos <= len(body); {
 		end, next := pemLineEnd(body, pos)
-		line := strings.TrimSpace(strings.ReplaceAll(body[pos:end], `\t`, ""))
+		line := strings.ReplaceAll(body[pos:end], `\t`, "")
+		coreStart, coreEnd := pemLineCore(line)
+		line = line[coreStart:coreEnd]
 		if line != "" && !pemHeader.MatchString(line) && !isBase64Line(line) {
 			return false
 		}
@@ -476,12 +543,15 @@ func isBase64Line(line string) bool {
 // base64Prefix returns the longest prefix of line made of base64 characters.
 func base64Prefix(line string) string {
 	for i := range len(line) {
-		c := line[i]
-		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '+' && c != '/' && c != '=' {
+		if !isBase64Byte(line[i]) {
 			return line[:i]
 		}
 	}
 	return line
+}
+
+func isBase64Byte(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '/' || c == '='
 }
 
 // urlScheme finds the start of a URL's authority (`postgres://`).
