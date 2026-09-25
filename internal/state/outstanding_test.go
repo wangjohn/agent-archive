@@ -29,6 +29,7 @@ func TestOutstandingFacets(t *testing.T) {
 		pending       bool
 		owed          bool
 		syncCanFinish bool
+		defersExpiry  bool
 	}{
 		{
 			name: "never captured", want: Outstanding{NeverCaptured: true},
@@ -49,7 +50,7 @@ func TestOutstandingFacets(t *testing.T) {
 				savePublished(t, s, reg, bundle(reg), CacheStatusPublished)
 			},
 			want:    Outstanding{Requested: true, Published: true},
-			pending: true, owed: true, syncCanFinish: true,
+			pending: true, owed: true, syncCanFinish: true, defersExpiry: true,
 		},
 		{
 			name: "published with an interrupted scan",
@@ -76,7 +77,7 @@ func TestOutstandingFacets(t *testing.T) {
 				}
 			},
 			want:    Outstanding{Upload: true, RateLimited: true, Published: true},
-			pending: true, owed: true, syncCanFinish: true,
+			pending: true, owed: true, syncCanFinish: true, defersExpiry: true,
 		},
 		{
 			// A rate-limited candidate whose pending file was lost: the
@@ -116,7 +117,7 @@ func TestOutstandingFacets(t *testing.T) {
 				return r
 			},
 			want:    Outstanding{Requested: true, NeverCaptured: true, WaitingForTranscript: true},
-			pending: true, owed: true,
+			pending: true, owed: true, defersExpiry: true,
 		},
 		{
 			name: "no transcript path but an upload in flight", requested: true,
@@ -131,7 +132,7 @@ func TestOutstandingFacets(t *testing.T) {
 				}
 			},
 			want:    Outstanding{Requested: true, Upload: true, NeverCaptured: true},
-			pending: true, owed: true, syncCanFinish: true,
+			pending: true, owed: true, syncCanFinish: true, defersExpiry: true,
 		},
 		{
 			// A Cursor database chat has no path by design and never waits.
@@ -141,7 +142,7 @@ func TestOutstandingFacets(t *testing.T) {
 				return r
 			},
 			want:    Outstanding{Requested: true, NeverCaptured: true},
-			pending: true, owed: true, syncCanFinish: true,
+			pending: true, owed: true, syncCanFinish: true, defersExpiry: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -160,8 +161,8 @@ func TestOutstandingFacets(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("Outstanding = %+v, want %+v", got, tc.want)
 			}
-			if got.Pending() != tc.pending || got.Owed() != tc.owed || got.SyncCanFinish() != tc.syncCanFinish {
-				t.Fatalf("Pending %v Owed %v SyncCanFinish %v, want %v %v %v", got.Pending(), got.Owed(), got.SyncCanFinish(), tc.pending, tc.owed, tc.syncCanFinish)
+			if got.Pending() != tc.pending || got.Owed() != tc.owed || got.SyncCanFinish() != tc.syncCanFinish || got.DefersExpiry() != tc.defersExpiry {
+				t.Fatalf("Pending %v Owed %v SyncCanFinish %v DefersExpiry %v, want %v %v %v %v", got.Pending(), got.Owed(), got.SyncCanFinish(), got.DefersExpiry(), tc.pending, tc.owed, tc.syncCanFinish, tc.defersExpiry)
 			}
 		})
 	}

@@ -61,9 +61,14 @@ A recorded capture gap or a policy decline is not pending: nothing more can
 be done until the transcript changes. Every count uses this one definition
 (`state.Store.Outstanding`): `status`'s pending count and its imported
 "waiting to upload", `backfill`'s upload progress and history, the
-destination check in `setup`, the warning in `uninstall`, and the collector
-and retention (which never expires a session with pending work, other than
-a chat that never received its transcript). A session only waiting for its
+destination check in `setup`, the warning in `uninstall`, and the collector.
+Retention asks the same files a narrower question: it doesn't expire a
+session with a queued request or a publication storage hasn't accepted
+(unless it's a chat that never received its transcript, or one the
+configuration no longer publishes). An unfinished scan or a rate-limited
+cache doesn't hold expiry back, because a scan that fails on every pass
+leaves both in place for good, and a session never captured ages from when
+it was registered. A session only waiting for its
 transcript is pending but doesn't hold `setup` at the current destination,
 since no sync can publish it.
 
