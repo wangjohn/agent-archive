@@ -61,7 +61,6 @@ can list them, inspect them, and hand one to another agent.
   as a backstop, and moving to a new Mac.
 - A "Security contact request" issue template, for reaching the maintainer
   privately without describing the problem in public.
-
 - `list --json` prints `{"schema_version": 1, "sessions": [...]}` for
   scripts, and `show` accepts `--json` (#48). See
   [JSON output](docs/reference/json-output.md).
@@ -94,7 +93,6 @@ can list them, inspect them, and hand one to another agent.
   [bucket permissions](docs/security/bucket-permissions.md), if a missing
   object can't be told apart from a denied one. The policy has not yet been
   tested on AWS itself.
-
 - A second installation (a different `AGENT_ARCHIVE_HOME`) gets its own
   launchd label and carries its data directory in its hook commands, so it
   can never stop or replace your main installation's collector. Hooks follow
@@ -121,7 +119,6 @@ can list them, inspect them, and hand one to another agent.
   `SKILL.md` text every captured session uploads; the Cursor 3.21.13
   read-back and the expiry of Cursor chats that never get a transcript are
   recorded; the documented lint command is the one CI runs.
-
 - Metadata counts (parser 0.10.0, #44): a tool call's arguments no longer
   count as more tool calls, calls come out in a stable order,
   `[Request interrupted by user]` is not a prompt, and Claude Code's

@@ -25,11 +25,17 @@ point at it and at the [install guide](../getting-started/install.md).
 
 These are repository settings only the owner can make:
 
-- Create the `release` environment (Settings → Environments) with required
-  reviewers, and move the Apple secrets below into it. Without reviewers,
-  anyone who can push a tag to a commit on `main` can publish.
+- Create the `release` environment (Settings → Environments) **before the
+  first tag**: a job that names an environment that doesn't exist gets one
+  created for it, with no protection. Add required reviewers, limit its
+  deployment branches and tags to the tag pattern `v*.*.*`, and move the
+  Apple secrets below into it, deleting the repository-level copies.
+  Without reviewers, anyone who can push a tag to a commit on `main` can
+  publish.
 - Set `team_id` in `install.sh` to the Apple Developer Team ID that signs
-  releases (the `APPLE_TEAM_ID` secret). `scripts/check-release-signing.sh`
+  releases (the `APPLE_TEAM_ID` secret: ten capital letters and digits,
+  shown under Membership details at developer.apple.com), in a pull
+  request merged before tagging. `scripts/check-release-signing.sh`
   refuses to publish while they differ, and `install.sh` refuses to install
   anything while `team_id` is empty.
 - Protect `main` so the tag's commit has passed CI.
