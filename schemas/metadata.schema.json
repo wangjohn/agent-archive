@@ -300,6 +300,7 @@
           "type": "string"
         },
         "sha256": {
+          "description": "SHA-256 of the skill's SKILL.md with its credentials redacted (from filter 12; earlier filters hashed the original bytes). A file with nothing to redact hashes to its own SHA-256.",
           "type": "string"
         },
         "coverage": {
@@ -388,6 +389,7 @@
           "minLength": 1
         },
         "sha256": {
+          "description": "SHA-256 of the skill's SKILL.md with its credentials redacted (from filter 12; earlier filters hashed the original bytes). A file with nothing to redact hashes to its own SHA-256.",
           "type": "string"
         },
         "turn_count": {

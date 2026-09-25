@@ -48,13 +48,14 @@ var ErrRecordTooLarge = &FilterError{Reason: "record exceeds the record size lim
 //
 // Reading one record costs memory in proportion to its size: the scanner's
 // buffer and the decoded JSON value both hold it, several times over at the
-// limit. See docs/history/implementation-ledger.md for the measured ceiling.
+// limit: TestLargeRecordMemoryCeiling measured a peak of roughly 3x the
+// record's size (about 175 MiB for a 63 MiB record).
 const MaxRecordBytes = 64 * 1024 * 1024
 
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.11.0"
+const adapterVersion = "0.12.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
