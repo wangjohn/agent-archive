@@ -106,7 +106,7 @@ func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, pr
 }
 
 func r2SetupInput(project, secret string) string {
-	return strings.Join([]string{"y", "n", "n", project, "", "r2", "test-bucket", "0123456789abcdef0123456789abcdef", "ACCESS", secret, "y"}, "\n") + "\n"
+	return strings.Join([]string{"y", "n", "n", project, "", "r2", "0123456789abcdef0123456789abcdef", "test-bucket", "ACCESS", secret, "y"}, "\n") + "\n"
 }
 
 func setupRun(t *testing.T, env Env, input string, want int) string {
@@ -195,7 +195,7 @@ func TestSetupStorageFailureKeepsDraftAndOldSecret(t *testing.T) {
 	setupRun(t, env, r2SetupInput(project, "old-private-value"), 0)
 	old, _, _ := config.Load(home)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return nil, errors.New("offline") }
-	input := "storage\nr2\ntest-bucket\n0123456789abcdef0123456789abcdef\nn\nACCESS2\nnew-private-value\ny\n"
+	input := "storage\nr2\n0123456789abcdef0123456789abcdef\ntest-bucket\nn\nACCESS2\nnew-private-value\ny\n"
 	output := setupRun(t, env, input, 1)
 	secret, err := kc.Load(context.Background(), old.Storage.R2CredentialRef)
 	if err != nil || secret.SecretAccessKey != "old-private-value" {
@@ -213,6 +213,30 @@ func TestSetupStorageFailureKeepsDraftAndOldSecret(t *testing.T) {
 	current, _, _ := config.Load(home)
 	if current.Storage.R2CredentialRef != old.Storage.R2CredentialRef {
 		t.Fatal("active config changed")
+	}
+}
+
+// After a rebuild the Keychain can refuse the stored R2 item. Choosing
+// storage again asks for the key right away, and one run fixes it.
+func TestSetupStorageReasksForAnUnreadableStoredCredential(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	kc := newFakeKeychain()
+	env := setupTestEnv(t, home, t.TempDir(), kc, time.Now())
+	setupRun(t, env, r2SetupInput(project, "old-private-value"), 0)
+	old, _, _ := config.Load(home)
+	if err := kc.Delete(context.Background(), old.Storage.R2CredentialRef); err != nil {
+		t.Fatal(err)
+	}
+	// No answer to "Keep stored R2 credentials?": the key is asked for next.
+	output := setupRun(t, env, "storage\nr2\n0123456789abcdef0123456789abcdef\ntest-bucket\nACCESS2\nnew-private-value\ny\n", 0)
+	if strings.Contains(output, "Keep stored R2 credentials?") || !strings.Contains(output, "can't be read from the Keychain") {
+		t.Fatalf("setup offered the unreadable credential:\n%s", output)
+	}
+	current, _, _ := config.Load(home)
+	secret, err := kc.Load(context.Background(), current.Storage.R2CredentialRef)
+	if err != nil || secret.SecretAccessKey != "new-private-value" {
+		t.Fatalf("new credential not stored: %v", err)
 	}
 }
 
@@ -350,7 +374,7 @@ func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
 	}
 	root := t.TempDir()
 	p = newPrompter(strings.NewReader("/does/not/exist\n"+root+"\n"+root+"/./\n\n"), &out)
-	projects, err := promptProjects(p, nil, nil)
+	projects, err := promptProjects(p, nil, nil, nil)
 	if err != nil || len(projects) != 1 {
 		t.Fatal(projects, err)
 	}

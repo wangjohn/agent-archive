@@ -86,6 +86,9 @@ func TestBackfillPointsAtAnInterruptedImport(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestBackfillErrorPathReconciles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	t.Parallel()
 	f, _ := newImportFixture(t)
 	imports := filepath.Join(f.data, "imports")
@@ -133,6 +136,9 @@ func TestBackfillErrorPathReconciles(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	t.Parallel()
 	f, _ := newImportFixture(t)
 	imports := filepath.Join(f.data, "imports")

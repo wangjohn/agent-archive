@@ -13,15 +13,38 @@ import (
 
 var commandHelp = map[string]string{
 	"setup": `Usage: agent-archive setup [--abandon-recovery]
+       agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
 
 Choose apps and projects, connect storage, then review and enable capture.
 Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
-Setup asks questions, so it needs a terminal.
-An interrupted setup is recovered on the next run. If recovery stops because
-a file it changed was edited since, --abandon-recovery keeps every file as it
-is now and discards the interrupted setup; then run setup again.
+Setup asks questions, so it needs a terminal, unless --yes is given.
+An interrupted setup is recovered on the next run.
+  --abandon-recovery    If recovery stops because a file it changed was
+                        edited since, keep every file as it is now and
+                        discard the interrupted setup; then run setup again
+  --yes                 Ask nothing: take the answers below, the saved
+                        settings, and the apps found; run the same storage
+                        check; and save. Refuses if an answer is missing
+  --provider r2|s3      Storage provider (default: the saved storage)
+  --bucket NAME         Bucket (R2: or from --r2-account's URL)
+  --r2-account ACCOUNT|URL
+                        The R2 account, or the bucket URL the dashboard shows
+  --r2-access-key-id KEY
+                        The R2 access key (or AGENT_ARCHIVE_R2_ACCESS_KEY_ID;
+                        default: keep the saved key)
+  --aws-profile NAME    S3: the AWS profile with access to the bucket
+  --region REGION       S3: the bucket's region (default: the profile's)
+  --project DIR         Capture this project, besides any saved (repeatable)
+  --apps LIST           Apps to capture: codex,claude,cursor (default: the
+                        saved apps, else those found on this Mac). It must
+                        name every app set up now: --yes never removes one
+With --yes, the R2 secret access key is read from
+AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY, or else from standard input.
 Example: agent-archive setup
+Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
+  --r2-account ACCOUNT_ID --bucket BUCKET --r2-access-key-id KEY_ID \
+  --project ~/src/app --apps codex,claude
 `,
 	"status": `Usage: agent-archive status [--json]
 

@@ -21,13 +21,16 @@ func noEnv(string) (string, bool) { return "", false }
 
 func testEnv(t *testing.T, home string, now time.Time) Env {
 	t.Helper()
-	userHome, accountHome := t.TempDir(), t.TempDir()
+	userHome, accountHome, tempDir := t.TempDir(), t.TempDir(), t.TempDir()
 	return Env{
 		UserHomeDir: func() (string, error) { return userHome, nil },
 		// Tests never run as the account's default installation.
 		AccountHome: func() (string, error) { return accountHome, nil },
 		Home:        func() (string, error) { return home, nil },
 		Now:         func() time.Time { return now },
+		// Test executables live in the run's temporary folder, which setup
+		// refuses; this one holds none of them.
+		TempDir: func() string { return tempDir },
 		// Tests must not see the real environment: run inside an agent,
 		// CLAUDE_CODE_SESSION_ID would change what `handoff --latest` skips.
 		LookupEnv: func(string) (string, bool) { return "", false },
@@ -106,6 +109,26 @@ func TestUnknownCommandAndNoArgs(t *testing.T) {
 	errOut.Reset()
 	if code := Run(nil, nil, &out, &errOut, Env{}); code != 0 {
 		t.Fatalf("code=%d", code)
+	}
+}
+
+// With no arguments, a Mac that is not set up is told to run setup first;
+// one that is set up sees only the command list.
+func TestNoArgsSaysWhenNotSetUp(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	var out bytes.Buffer
+	if code := Run(nil, nil, &out, nil, env); code != 0 || !strings.HasPrefix(out.String(), "Not set up yet — run agent-archive setup.\n\nAgent Archive") {
+		t.Fatalf("exit %d\n%s", code, &out)
+	}
+	if _, err := os.Stat(filepath.Join(home, "config.json")); !os.IsNotExist(err) {
+		t.Fatal("printing help wrote the data directory")
+	}
+	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", true, false, false, t.TempDir()), 0)
+	out.Reset()
+	if code := Run(nil, nil, &out, nil, env); code != 0 || !strings.HasPrefix(out.String(), "Agent Archive") {
+		t.Fatalf("exit %d\n%s", code, &out)
 	}
 }
 

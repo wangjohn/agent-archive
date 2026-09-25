@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
@@ -22,6 +23,43 @@ func TestR2EndpointCanBeDerived(t *testing.T) {
 	} {
 		if _, err := R2Endpoint(endpoint, ""); err == nil {
 			t.Fatalf("accepted invalid endpoint %q", endpoint)
+		}
+	}
+}
+
+// The bucket URL Cloudflare's dashboard shows names the account in its host
+// and the bucket in its path; setup takes both from it.
+func TestParseR2LocationReadsTheDashboardBucketURL(t *testing.T) {
+	const account = "0123456789abcdef0123456789abcdef"
+	for _, tc := range []struct {
+		input string
+		want  R2Location
+		other bool
+	}{
+		{account, R2Location{AccountID: account}, false},
+		{strings.ToUpper(account), R2Location{AccountID: account}, false},
+		{"https://" + account + ".r2.cloudflarestorage.com", R2Location{AccountID: account}, false},
+		{" https://" + strings.ToUpper(account) + ".R2.cloudflarestorage.com/my-bucket/ ", R2Location{AccountID: account, Bucket: "my-bucket"}, false},
+		// Pasted without its scheme.
+		{account + ".r2.cloudflarestorage.com/my-bucket", R2Location{AccountID: account, Bucket: "my-bucket"}, false},
+		{"https://" + account + ".EU.r2.cloudflarestorage.com/eu-bucket", R2Location{Endpoint: "https://" + account + ".eu.r2.cloudflarestorage.com", Bucket: "eu-bucket"}, false},
+		{"https://s3.example.test", R2Location{Endpoint: "https://s3.example.test"}, true},
+	} {
+		got, err := ParseR2Location(tc.input)
+		if err != nil || got != tc.want || got.Cloudflare() == tc.other {
+			t.Errorf("ParseR2Location(%q) = %+v (Cloudflare %v), %v; want %+v", tc.input, got, got.Cloudflare(), err, tc.want)
+		}
+	}
+	for _, input := range []string{
+		"",
+		"account-123",
+		"0123abcd",
+		"http://" + account + ".r2.cloudflarestorage.com/bucket",
+		"https://" + account + ".r2.cloudflarestorage.com/bucket/folder",
+		"https://" + account + ".r2.cloudflarestorage.com/bucket?token=secret",
+	} {
+		if got, err := ParseR2Location(input); err == nil {
+			t.Errorf("ParseR2Location(%q) = %+v, want an error", input, got)
 		}
 	}
 }
