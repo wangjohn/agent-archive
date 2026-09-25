@@ -158,3 +158,55 @@ func TestHandoffCarriageReturnStaysQuoted(t *testing.T) {
 		t.Errorf("the tool output line is not inside the fence:\n%s", markdown)
 	}
 }
+
+// `handoff --json` prints what BuildHandoff returns without rendering it, so
+// BuildHandoff itself returns display text, for records and for a Cursor
+// text transcript alike.
+func TestBuildHandoffReturnsDisplayText(t *testing.T) {
+	check := func(name string, h Handoff) {
+		t.Helper()
+		encoded, err := json.Marshal(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded any
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		var walk func(any)
+		walk = func(v any) {
+			switch x := v.(type) {
+			case string:
+				assertDisplayText(t, name, x)
+			case map[string]any:
+				for _, y := range x {
+					walk(y)
+				}
+			case []any:
+				for _, y := range x {
+					walk(y)
+				}
+			}
+		}
+		walk(decoded)
+	}
+	bundle := claudeLines(t,
+		`{"type":"user","timestamp":"2026-09-01T00:00:00Z","cwd":"/p","message":{"role":"user","content":"fix \u001b]52;c;aGk=\u0007it\rnow"}}`,
+		`{"type":"assistant","timestamp":"2026-09-01T00:00:01Z","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"done\u001b[2J\u009b31m"}]}}`,
+	)
+	h, err := BuildHandoff(bundle, nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("records", h)
+
+	filtered, err := CursorAdapter{}.FilterText(strings.NewReader("user: fix \x1b[31mit\rnow\nassistant: ok\x07\n"), time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err = BuildHandoff(parserTestBundle(t, "cursor", CursorAdapter{}, filtered), nil, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("cursor text", h)
+}
