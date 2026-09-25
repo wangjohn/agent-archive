@@ -240,8 +240,28 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	}
 	undoneAt := fixedNow
 	a.UndoneAt = &undoneAt
+	// Second review of PR #53: an import marked undone that still has a
+	// session registered (a --project undo of another of its projects, or
+	// a removal that failed) is still in place, so its entries stay.
+	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
+		t.Fatalf("a partly undone import's kept-out entry was removed: %v %v", plan.RemoveKeptOut, err)
+	}
+	aSession, _, err := f.store.ArchiveSessionID("a-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aReg, _, err := f.store.LoadRegistration(aSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ForgetIdleSession(aSession, "a-session", false, nil); err != nil {
+		t.Fatal(err)
+	}
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 1 {
 		t.Fatalf("an undone import's kept-out entry stayed: %v %v", plan.RemoveKeptOut, err)
+	}
+	if err := f.store.SaveRegistration(aReg); err != nil {
+		t.Fatal(err)
 	}
 	a.UndoneAt = nil
 	f.cfg.Archive.Projects[0].Included = true

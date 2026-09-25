@@ -218,7 +218,7 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	p.Sessions = slices.Concat(children, parents)
 
 	p.ExcludeProjects, p.KeepProjects, p.TakenOver, p.Settled.Excluded = undoProjects(cfg, regs, batches, b, inProject)
-	p.RemoveKeptOut = keptOutToRemove(env, cfg, regs, batches, b, p.ExcludeProjects)
+	p.RemoveKeptOut = keptOutToRemove(env, cfg, regs, batches, b, p.Sessions, p.ExcludeProjects)
 	excludedRoots := map[string]bool{}
 	for _, project := range p.ExcludeProjects {
 		excludedRoots[project.Root] = true
@@ -275,17 +275,34 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 // being excluded, containing them. For such a folder the nearest configured
 // project, with or without the entry, is excluded or absent, so removing it
 // changes no capture; it only puts the configuration back.
-func keptOutToRemove(env Environment, cfg config.Config, regs []archive.SessionRegistration, batches []Batch, b Batch, exclude []archive.ProjectActivation) []archive.ProjectActivation {
+//
+// An import is still in place when it was never undone (b aside), or when
+// any session of it stays registered once removing are removed: a --project
+// undo marks the import undone but leaves its other projects' sessions, and
+// setup may include their folders again.
+func keptOutToRemove(env Environment, cfg config.Config, regs []archive.SessionRegistration, batches []Batch, b Batch, removing []UndoSession, exclude []archive.ProjectActivation) []archive.ProjectActivation {
+	removed := map[string]bool{}
+	for _, s := range removing {
+		removed[s.Registration.ArchiveSessionID] = true
+	}
+	inPlace := func(o Batch) bool {
+		if o.ID != b.ID && o.UndoneAt == nil {
+			return true
+		}
+		return slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
+			return InBatch(reg, o.ID) && !removed[reg.ArchiveSessionID]
+		})
+	}
 	// Only an entry of an import being undone, or undone already, goes: an
 	// import still in place keeps its entries even while setup has its
 	// folder excluded, so including the folder again keeps them out.
 	keptOut, live := map[string]bool{}, map[string]bool{}
 	for _, o := range append(slices.Clone(batches), b) {
 		for _, id := range o.ProjectsKeptOut {
-			if o.ID == b.ID || o.UndoneAt != nil {
-				keptOut[id] = true
-			} else {
+			if inPlace(o) {
 				live[id] = true
+			} else {
+				keptOut[id] = true
 			}
 		}
 	}
