@@ -216,7 +216,7 @@ func TestSetupMovesARelocatedCollectorOffTheDefaultLabel(t *testing.T) {
 				dataHome = env.installation(home, userHome).defaultDataHome()
 			}
 			old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel)
+			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel, nil)
 			if err := local.WriteBytes(old, plist); err != nil {
 				t.Fatal(err)
 			}
@@ -255,7 +255,7 @@ func TestUninstallTouchesOnlyThisDirectorysCollector(t *testing.T) {
 				dataHome = env.installation(home, userHome).defaultDataHome()
 			}
 			old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel)
+			plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, hooks.LaunchLabel, nil)
 			if err := local.WriteBytes(old, plist); err != nil {
 				t.Fatal(err)
 			}

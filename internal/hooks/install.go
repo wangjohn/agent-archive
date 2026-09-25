@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -396,7 +397,10 @@ func CollectorLabel(dataHome, defaultDataHome string) string {
 }
 
 // LaunchAgent is the collector's plist; label is its CollectorLabel.
-func LaunchAgent(executable, dataHome, label string) ([]byte, error) {
+// environment holds variables the collector runs with besides
+// AGENT_ARCHIVE_HOME, which is always dataHome; launchd gives a job nothing
+// of the shell's environment, so what setup relied on must be written here.
+func LaunchAgent(executable, dataHome, label string, environment map[string]string) ([]byte, error) {
 	if !filepath.IsAbs(executable) || !filepath.IsAbs(dataHome) {
 		return nil, errors.New("LaunchAgent paths must be absolute")
 	}
@@ -405,23 +409,41 @@ func LaunchAgent(executable, dataHome, label string) ([]byte, error) {
 		_ = xml.EscapeText(&b, []byte(s)) // a strings.Builder never fails to write
 		return b.String()
 	}
+	variables := "<key>AGENT_ARCHIVE_HOME</key><string>" + escape(dataHome) + "</string>"
+	for _, name := range slices.Sorted(maps.Keys(environment)) {
+		if name == "" || name == "AGENT_ARCHIVE_HOME" {
+			return nil, fmt.Errorf("LaunchAgent cannot set %q", name)
+		}
+		variables += "<key>" + escape(name) + "</key><string>" + escape(environment[name]) + "</string>"
+	}
 	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>%s</string>
 <key>ProgramArguments</key><array><string>%s</string><string>_collect</string></array>
-<key>EnvironmentVariables</key><dict><key>AGENT_ARCHIVE_HOME</key><string>%s</string></dict>
+<key>EnvironmentVariables</key><dict>%s</dict>
 <key>RunAtLoad</key><true/><key>StartInterval</key><integer>60</integer>
 <key>ProcessType</key><string>Background</string>
 <key>StandardOutPath</key><string>%s</string>
 <key>StandardErrorPath</key><string>%s</string>
 </dict></plist>
-`, escape(label), escape(executable), escape(dataHome), escape(filepath.Join(dataHome, "collector.log")), escape(filepath.Join(dataHome, "collector-error.log")))), nil
+`, escape(label), escape(executable), variables, escape(filepath.Join(dataHome, "collector.log")), escape(filepath.Join(dataHome, "collector-error.log")))), nil
 }
 
 // LaunchAgentDataHome returns the AGENT_ARCHIVE_HOME a LaunchAgent plist
 // sets, or "" when it sets none.
 func LaunchAgentDataHome(plist []byte) (string, error) {
+	environment, err := LaunchAgentEnvironment(plist)
+	if err != nil {
+		return "", err
+	}
+	return environment["AGENT_ARCHIVE_HOME"], nil
+}
+
+// LaunchAgentEnvironment returns the EnvironmentVariables a LaunchAgent
+// plist sets: the only environment launchd gives the job besides its own
+// defaults. It is empty, not nil, for a plist that sets none.
+func LaunchAgentEnvironment(plist []byte) (map[string]string, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(plist))
 	decoder.Strict = false
 	var (
@@ -431,13 +453,14 @@ func LaunchAgentDataHome(plist []byte) (string, error) {
 		reading  bool
 		text     strings.Builder
 	)
+	environment := map[string]string{}
 	for {
 		token, err := decoder.Token()
 		if errors.Is(err, io.EOF) {
-			return "", nil
+			return environment, nil
 		}
 		if err != nil {
-			return "", fmt.Errorf("read LaunchAgent: %w", err)
+			return nil, fmt.Errorf("read LaunchAgent: %w", err)
 		}
 		switch t := token.(type) {
 		case xml.StartElement:
@@ -463,8 +486,10 @@ func LaunchAgentDataHome(plist []byte) (string, error) {
 			case "key":
 				lastKey = strings.TrimSpace(text.String())
 			case "string":
-				if envDepth >= 0 && depth == envDepth+1 && lastKey == "AGENT_ARCHIVE_HOME" {
-					return strings.TrimSpace(text.String()), nil
+				if envDepth >= 0 && depth == envDepth+1 && lastKey != "" {
+					if _, seen := environment[lastKey]; !seen {
+						environment[lastKey] = strings.TrimSpace(text.String())
+					}
 				}
 			case "dict":
 				if depth == envDepth {

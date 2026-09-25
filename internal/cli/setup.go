@@ -115,6 +115,14 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		terminal.Println(stderr, "agent-archive: setup: setup asks questions and needs a terminal. Nothing was changed. Run agent-archive setup in Terminal.")
 		return 1
 	}
+	// Every hook and the LaunchAgent run this path, so one that is about to
+	// disappear would leave capture dead as soon as setup exits.
+	if exe, err := env.executable(); err == nil {
+		if problem := env.temporaryExecutableProblem(exe); problem != "" {
+			terminal.Printf(stderr, "agent-archive: setup: %s Nothing was changed. Build or install agent-archive somewhere lasting (for example with go build -o ~/bin/agent-archive ./cmd/agent-archive, or the installer), then run setup from there.\n", problem)
+			return 1
+		}
+	}
 	if err := setup(stdin, stdout, stderr, env); err != nil {
 		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
 		var blocked *setupjournal.RecoveryBlockedError
@@ -162,6 +170,10 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	if err != nil {
 		return err
 	}
+	// After uninstall the configuration stays, with archiving disabled:
+	// its answers are the defaults, but this is setting up again, not a
+	// change to a running installation.
+	installed := found && existing.Archive.Enabled
 	terminal.Println(out, "Checking installed applications...")
 	discoveries := env.discoverApplications(userHome)
 	discoveredAt := env.now()
@@ -228,7 +240,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 				return e
 			}
 		}
-	} else if found {
+	} else if installed {
 		choice, e := p.menu("Agent Archive is already set up. What would you like to change?", "capture",
 			option{"capture", "Apps and projects"},
 			option{"storage", "Storage (bucket and credentials)"},
@@ -372,7 +384,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		// Review what will be committed, not what a draft may have saved.
 		draft.Config.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
-		showSetupReview(p, draft.Config, existing, found, reviewed)
+		showSetupReview(p, draft.Config, existing, installed, reviewed)
 		terminal.Println(out, "\n"+p.style.bold("Before you confirm"))
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
 			return err
@@ -382,7 +394,10 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		reviewHookFiles(p, draft.Config.Harnesses, env.hookFiles(userHome), env.installedHookFiles(userHome, existing), existing.Harnesses, len(existing.HookFiles) > 0)
 		printReviewNotes(p, draft.Config, reviewed)
-		action, e := reviewAction(p, found)
+		for _, problem := range collectorEnvironmentProblems(draft.Config.Storage, env.collectorEnvironment(draft.Config.Storage), userHome) {
+			p.warn(problem, "Scheduled uploads will fail until it can; agent-archive sync from this shell still works. Run setup from a shell where the profile works without aliases or shell functions.")
+		}
+		action, e := reviewAction(p, installed)
 		if e != nil {
 			return e
 		}
@@ -902,4 +917,38 @@ func backfilledProjects(env Env) map[string]bool {
 		}
 	}
 	return out
+}
+
+// temporaryExecutableProblem says why exe cannot be what the hooks and the
+// LaunchAgent run, or "" when it can: go run and go test build into a
+// go-build directory that Go deletes on exit, and macOS clears the
+// temporary folder.
+func (e Env) temporaryExecutableProblem(exe string) string {
+	paths := []string{filepath.Clean(exe)}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		paths = append(paths, resolved)
+	}
+	for _, path := range paths {
+		for dir := filepath.Dir(path); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+			if strings.HasPrefix(filepath.Base(dir), "go-build") {
+				return fmt.Sprintf("%s is a temporary build (from go run or go test) that Go deletes when it exits, so the hooks and background collector would stop working.", exe)
+			}
+		}
+	}
+	temp := e.tempDir()
+	if temp == "" {
+		return ""
+	}
+	temps := []string{filepath.Clean(temp)}
+	if resolved, err := filepath.EvalSymlinks(temp); err == nil {
+		temps = append(temps, resolved)
+	}
+	for _, path := range paths {
+		for _, dir := range temps {
+			if local.PathWithin(path, dir) {
+				return fmt.Sprintf("%s is in the temporary folder %s, which is cleared automatically, so the hooks and background collector would stop working.", exe, temp)
+			}
+		}
+	}
+	return ""
 }

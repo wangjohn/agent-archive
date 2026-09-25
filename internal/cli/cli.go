@@ -119,6 +119,10 @@ type Env struct {
 	// Executable returns the absolute path setup installs into hook
 	// commands and the LaunchAgent. Defaults to os.Executable.
 	Executable func() (string, error)
+	// TempDir is the temporary folder setup refuses to install an
+	// executable from, since it is cleared automatically. Defaults to
+	// os.TempDir; tests set it because their executables live in theirs.
+	TempDir func() string
 	// UserHomeDir is the real user home directory — where hook config files
 	// and ~/Library/LaunchAgents live — as distinct from Home, which is
 	// agent-archive's own (possibly redirected) private data directory.
@@ -246,6 +250,13 @@ func (e Env) accountHome() string {
 		return ""
 	}
 	return home
+}
+
+func (e Env) tempDir() string {
+	if e.TempDir != nil {
+		return e.TempDir()
+	}
+	return os.TempDir()
 }
 
 func (e Env) userHomeDir() (string, error) {

@@ -75,7 +75,7 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 	write := func(label, dataHome string) string {
 		t.Helper()
 		path := filepath.Join(agents, label+".plist")
-		plist, err := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, label)
+		plist, err := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, label, nil)
 		must(t, err)
 		must(t, local.WriteBytes(path, plist))
 		return path
@@ -162,7 +162,7 @@ func TestFailedSetupRestoresEveryRetiredJob(t *testing.T) {
 	for i := range 3 {
 		label := hooks.CollectorLabel(fmt.Sprintf("/old/spelling/%d", i), "")
 		path := filepath.Join(agents, label+".plist")
-		plist, err := hooks.LaunchAgent("/opt/old/agent-archive", home, label)
+		plist, err := hooks.LaunchAgent("/opt/old/agent-archive", home, label, nil)
 		must(t, err)
 		must(t, local.WriteBytes(path, plist))
 		plists[path] = plist

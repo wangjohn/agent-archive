@@ -723,10 +723,20 @@ func readStatus(env Env) (view statusView, err error) {
 	// launchd reports a job whose program is gone as loaded (it only fails
 	// when it fires), so read the program the LaunchAgent actually runs.
 	backgroundProgram, backgroundProblem := "", ""
+	var environmentProblems []string
 	if cfg.Archive.Enabled {
 		if data, err := os.ReadFile(plist); err == nil {
 			if program, err := hooks.LaunchAgentProgram(data); err == nil {
 				backgroundProgram, backgroundProblem = program, executableProblem(program)
+			}
+			// The collector has only the environment its plist sets, which
+			// may no longer match the files and programs the profile needs.
+			if environment, err := hooks.LaunchAgentEnvironment(data); err == nil {
+				environmentProblems = collectorEnvironmentProblems(cfg.Storage, environment, userHome)
+				view.Warnings = append(view.Warnings, environmentProblems...)
+				if drift := env.awsFilesDrift(cfg.Storage, environment, userHome); drift != "" {
+					view.Warnings = append(view.Warnings, drift)
+				}
 			}
 		}
 	}
@@ -803,6 +813,10 @@ func readStatus(env Env) (view statusView, err error) {
 		if action := credentials.RecoveryActionForMessage(view.Collector.LastError); action != "" {
 			view.Next = action
 		}
+	}
+	if len(environmentProblems) > 0 {
+		view.State = "Needs attention"
+		view.Next = "The background collector cannot load your AWS profile (see the warning above). Run agent-archive setup again from a shell where the profile works, so the collector gets that shell's AWS settings files and PATH."
 	}
 	if cfg.Paused {
 		view.State = "Paused"

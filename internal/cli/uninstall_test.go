@@ -222,7 +222,7 @@ func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
 	if err := hooks.Apply(changes); err != nil {
 		t.Fatal(err)
 	}
-	plist, err := hooks.LaunchAgent(executable, home, launchLabel(env.installation(home, userHome).collectorPlist()))
+	plist, err := hooks.LaunchAgent(executable, home, launchLabel(env.installation(home, userHome).collectorPlist()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

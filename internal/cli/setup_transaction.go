@@ -314,7 +314,9 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		}
 	}
 	plistPath := env.installation(home, userHome).collectorPlist()
-	plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath))
+	// The collector gets the AWS files and PATH this storage was just
+	// verified with; launchd would otherwise start it with none of them.
+	plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath), env.collectorEnvironment(next.Storage))
 	if err != nil {
 		return err
 	}
