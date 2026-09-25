@@ -308,6 +308,12 @@ can list them, inspect them, and hand one to another agent.
   through `SessionRegistration.InBatch`, enforced by the compiler.
   Read-back of publications decodes only the sessions due for one. A fuzz
   target for the hook itself (`FuzzHookPayload`).
+- The in-memory object store moved to `internal/storage/storagetest`, test
+  code only (enforced by depguard); functions only tests reached moved into
+  test files, and CI runs `deadcode` to keep it so. Package-level test
+  hooks became option fields, and the archive and backfill tests run in
+  parallel. Tests for launchctl load and unload and for credentials
+  without the Keychain, plus an opt-in real Keychain round trip.
 - `internal/cli` tests fail closed: `TestMain` gives them a temporary `HOME`
   and stand-ins for launchctl and the Keychain that stop the test, and
   `testEnv` fails every side-effecting call a test did not set up. The
