@@ -1,8 +1,11 @@
 # JSON output
 
-Three commands print JSON for scripts. Each is a stable contract: fields may
-be added, but an existing field keeps its meaning, and an incompatible change
-bumps the document's `schema_version`. None of them ever contains
+Three commands print JSON for scripts. Each document carries a
+`schema_version`. The aim is that fields are only added, an existing field
+keeps its meaning, and an incompatible change bumps `schema_version`; that
+becomes a promise from `v0.1.0`. Until then agent-archive is pre-release
+and any of it may still change, so check `schema_version` and read the
+[changelog](../../CHANGELOG.md) when you upgrade. None of them ever contains
 conversation content, except `show --normalized`, which you ask for
 explicitly.
 

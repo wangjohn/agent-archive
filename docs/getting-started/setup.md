@@ -52,7 +52,10 @@ The summary shows the apps, projects, destination, session scope, and
 automatic deletion period (90 days by default; older sessions are deleted
 from the bucket automatically). At "Start archiving?", enter the number for
 "Edit a setting" to adjust apps, projects, session scope, retention, storage,
-the folder inside the bucket, or the AWS region. Storage changes are checked
+the folder inside the bucket, or the AWS region. The folder inside the
+bucket (the prefix) is `agent-archive/` unless you change it. Retention is
+a whole number of days from 1 to 36,500; there is no "keep forever" (36,500
+days is about a century). Storage changes are checked
 again before starting. If the connection test fails, choose "Edit settings"
 or "Retry" after restoring access.
 
@@ -99,14 +102,12 @@ from stopping or replacing the default one. They do not stop it from loading
 its own job into your real launchd: stub `launchctl` in tests (see
 [testing](../contributing/testing.md)).
 
-Setup retires the old `com.agent-skills.skill-runs-upload` job only when its
-label and command match that prototype, and keeps the prototype's private
-records.
-
 ## After setup
 
-Approve the hooks in each app (Codex CLI: `/hooks`), then start a harmless new
-session in an included project. Setup finishes without waiting for it. Check
+Approve the hooks in each app if it asks (Codex CLI: `/hooks`): an app
+doesn't run hooks it hasn't approved, and this is the most common reason
+nothing is captured. Then start a harmless new session in an included
+project. Setup finishes without waiting for it. Check
 progress with:
 
 ```sh

@@ -25,8 +25,9 @@ VERSION=dev ./scripts/build-release.sh
 
 `scripts/build-release.sh` is the script the release workflow uses, so a
 local build has the release's build flags. Plain `go build
-./cmd/agent-archive` also works for quick tests, but skips version
-embedding.
+./cmd/agent-archive` also works for quick tests. Either way, a build from a
+Git checkout reports `dev-<commit>` from `--version` (with `-dirty` when you
+had uncommitted changes); put that in bug reports.
 
 Put the binary on your `PATH` as plain `agent-archive`, for example:
 
@@ -56,8 +57,11 @@ curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install
 
 [`install.sh`](../../install.sh) is short; read it first if you prefer. It
 downloads the release binary for your Mac's architecture, checks it against
-the release's `SHA256SUMS`, and installs it as `agent-archive`, without
-`sudo`. If `agent-archive` is already on your `PATH`, it replaces that copy,
+the release's `SHA256SUMS` (which catches a damaged download; both files
+come from the same release), checks that it carries a valid Developer ID
+signature from the team the script names (which catches a binary someone
+else built), and installs it as `agent-archive`, without `sudo`. Until the
+first release the script names no team and refuses to install anything. If `agent-archive` is already on your `PATH`, it replaces that copy,
 so the hooks and background collector keep pointing at it. Otherwise it uses
 `/usr/local/bin` when that is writable, and `~/.local/bin` if not, printing
 the line to add to your shell profile when the directory isn't on your
@@ -97,7 +101,12 @@ curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install
 
 Release binaries are signed with a Developer ID and notarized by Apple.
 Gatekeeper may need network access to check the notarization ticket on first
-launch.
+launch. To check a download yourself, `codesign --verify --strict
+--verbose=2 agent-archive-darwin-arm64` checks the signature, `codesign -dv
+agent-archive-darwin-arm64` shows the `TeamIdentifier` (compare it with
+`team_id` in `install.sh`), and, with the GitHub CLI, `gh attestation verify
+agent-archive-darwin-arm64 --repo wangjohn/agent-archive` checks that the
+file was built by this repository's release workflow.
 
 ## Next
 
