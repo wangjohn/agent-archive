@@ -216,7 +216,7 @@ func invalid(src []byte, err error) error {
 		offset = len(src)
 	}
 	if offset < 0 || offset > len(src) {
-		return fmt.Errorf("%w: %v", errInvalidConfiguration, err)
+		return fmt.Errorf("%w: %w", errInvalidConfiguration, err)
 	}
 	// Offset counts the bytes read, which ends just after the one that
 	// failed; step back over whitespace to the character itself.
@@ -234,7 +234,7 @@ func invalid(src []byte, err error) error {
 	case bytes.HasPrefix(rest, []byte(",")) && (bytes.HasPrefix(after, []byte("}")) || bytes.HasPrefix(after, []byte("]"))):
 		hint = "; a comma before a closing brace or bracket (a trailing comma) is not JSON, so remove it"
 	}
-	return fmt.Errorf("%w: line %d, column %d: %v%s", errInvalidConfiguration, line, column, err, hint)
+	return fmt.Errorf("%w: line %d, column %d: %w%s", errInvalidConfiguration, line, column, err, hint)
 }
 
 // parseDocument reads src, which must be empty or a single JSON object.
