@@ -291,13 +291,20 @@ func interruptibleContext(env Env, out io.Writer) (context.Context, func()) {
 // until a later sweep. The exit status is the shell's for the signal. A test
 // replaces it.
 var exitOnSignal = func(sig os.Signal) {
-	cursorstore.RemoveOwnSnapshots()
+	removeOwnSnapshots()
 	code := 1
 	if s, ok := sig.(syscall.Signal); ok {
 		code = 128 + int(s)
 	}
-	os.Exit(code)
+	exitProcess(code)
 }
+
+// removeOwnSnapshots and exitProcess are what exitOnSignal calls; a test
+// replaces them to check their order and the exit status.
+var (
+	removeOwnSnapshots = cursorstore.RemoveOwnSnapshots
+	exitProcess        = os.Exit
+)
 
 // signalWatch watches, while backfill works, for the signals env.interrupts
 // delivers: Ctrl-C, SIGTERM, and SIGHUP. The first Ctrl-C calls onFirst and

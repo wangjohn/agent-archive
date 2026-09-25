@@ -202,6 +202,17 @@ func TestUndoRestoresRetentionAndCountsWhatItDeletes(t *testing.T) {
 		t.Fatalf("restored over a retention changed since: %+v, %d", c, changed.RetentionDays)
 	}
 
+	// Rechecked under the locks, a restore the confirmed plan lacked, or one
+	// that now deletes more, is refused (Grew).
+	if !plan.Grew(UndoPlan{}) {
+		t.Fatal("a restore that appeared since the confirmation was not refused")
+	}
+	fewer := plan
+	fewer.RetentionDeletes = 0
+	if !plan.Grew(fewer) || plan.Grew(plan) {
+		t.Fatal("Grew does not compare the sessions the restore deletes")
+	}
+
 	// A --project undo leaves retention alone.
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{b}, b, "/work/p"); err != nil || plan.RestoreRetention != nil {
 		t.Fatalf("--project: %+v %v", plan.RestoreRetention, err)

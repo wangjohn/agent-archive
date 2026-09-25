@@ -73,6 +73,22 @@ func TestPlanningInterruptCancelsAndSecondOneExits(t *testing.T) {
 	<-stopped
 }
 
+// B-24: exitOnSignal removes this process's copies of Cursor's database
+// before it exits, with the shell's status for the signal.
+func TestExitOnSignalRemovesSnapshotsThenExits(t *testing.T) {
+	savedRemove, savedExit := removeOwnSnapshots, exitProcess
+	t.Cleanup(func() { removeOwnSnapshots, exitProcess = savedRemove, savedExit })
+	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129} {
+		var steps []string
+		removeOwnSnapshots = func() { steps = append(steps, "remove") }
+		exitProcess = func(code int) { steps = append(steps, fmt.Sprintf("exit %d", code)) }
+		exitOnSignal(sig)
+		if got := strings.Join(steps, ", "); got != fmt.Sprintf("remove, exit %d", want) {
+			t.Fatalf("%v: %s", sig, got)
+		}
+	}
+}
+
 // B-24: SIGTERM or SIGHUP (a closing terminal, a process manager) quits at
 // once, even as the first signal, through exitOnSignal.
 func TestTerminateSignalsExitAtOnce(t *testing.T) {

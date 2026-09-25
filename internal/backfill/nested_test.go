@@ -251,4 +251,11 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
 		t.Fatalf("included kept-out removed: %v %v", plan.RemoveKeptOut, err)
 	}
+	// So is one with a session registered in it (captured while setup had
+	// it included), even once it is excluded again.
+	f.register("secret-session", code+"/secret", "", fixedNow.Add(-time.Minute))
+	f.cfg.Archive.Projects[0].Included, f.cfg.Archive.Projects[1].Included = false, false
+	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b}, a, ""); err != nil || len(plan.RemoveKeptOut) != 0 {
+		t.Fatalf("kept-out entry with a session removed: %v %v", plan.RemoveKeptOut, err)
+	}
 }
