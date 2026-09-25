@@ -146,8 +146,8 @@ LaunchAgent runs) are not part of the user interface and may change.
 
 ## Fuzzing
 
-Redaction and parsing have fuzz targets in `internal/archive`
-(`go test -list Fuzz ./internal/archive`):
+Redaction, parsing and hook-file editing have fuzz targets
+(`go test -list Fuzz ./...`). In `internal/archive`:
 
 | Target | Input | Properties |
 | --- | --- | --- |
@@ -160,9 +160,16 @@ Redaction and parsing have fuzz targets in `internal/archive`
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
 | `FuzzDecodeSource` | any byte stream, gzip or not | no panic; the streaming and whole-bundle readers agree |
 
+In `internal/hooks`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzMergeRemove` | any hook file Merge accepts, per harness | merging twice changes nothing; Remove takes out exactly what Merge added |
+| `FuzzCommandDataHome` | any data directory | the hook command reads back the directory it was built with |
+
 Their seeds come from the fixtures in `testdata/` and from
-`testdata/fuzz/<target>/`, and plain `go test` runs them. CI runs each target
-for 30 seconds on every pull request (the `fuzz` job in
+`testdata/fuzz/<target>/`, and plain `go test` runs them. CI runs every target
+in every package for 30 seconds on every pull request (the `fuzz` job in
 `.github/workflows/test.yml`). For a change to redaction or parsing, run the
 affected targets for a couple of minutes each, with fast minimization so a
 failure is reported promptly:

@@ -50,13 +50,17 @@ jobs:
           cache-dependency-path: go.sum
       - name: Fuzz each target for 30 seconds
         run: |
-          targets=$(go test -list '^Fuzz' ./internal/archive | grep '^Fuzz')
-          test -n "$targets"
-          for target in $targets; do
-            echo "::group::$target"
-            go test ./internal/archive -run '^$' -fuzz "^${target}\$" -fuzztime 30s -fuzzminimizetime 2s
-            echo "::endgroup::"
+          found=0
+          for pkg in $(go list ./...); do
+            for target in $(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true); do
+              found=$((found + 1))
+              echo "::group::$pkg $target"
+              go test "$pkg" -run '^$' -fuzz "^${target}\$" -fuzztime 30s -fuzzminimizetime 2s
+              echo "::endgroup::"
+            done
           done
+          # Every package's targets: internal/archive has eight, internal/hooks two.
+          test "$found" -ge 10
 
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is
