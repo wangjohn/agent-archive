@@ -31,6 +31,16 @@ func Imports(tb testing.TB, importPath string) (direct, all []string) {
 	return direct, all
 }
 
+// TestImports returns the packages the test files of the package at
+// importPath import directly (its own and its external _test package's),
+// sorted and without duplicates.
+func TestImports(tb testing.TB, importPath string) []string {
+	tb.Helper()
+	imports := goList(tb, "-f", `{{join .TestImports "\n"}}{{"\n"}}{{join .XTestImports "\n"}}`, importPath)
+	slices.Sort(imports)
+	return slices.Compact(imports)
+}
+
 func goList(tb testing.TB, args ...string) []string {
 	tb.Helper()
 	out, err := exec.CommandContext(tb.Context(), "go", append([]string{"list"}, args...)...).Output()
