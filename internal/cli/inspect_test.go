@@ -417,3 +417,47 @@ func readSingleMetadata(t *testing.T, mem *storage.MemoryStore) (archive.Metadat
 	t.Fatal("no metadata sidecar in store")
 	return archive.Metadata{}, nil
 }
+
+// Metadata comes from the bucket, so a model or skill name can hold anything:
+// `list` prints it without escape sequences, controls, or a tab or newline
+// that would break the table.
+func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
+	env, mem, id := publishedFixture(t)
+	key, err := archive.MetadataObjectKey("codex", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := mem.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m archive.Metadata
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Models) == 0 {
+		t.Fatal("fixture has no model")
+	}
+	m.Models[0].Attributes = map[string]string{"gen_ai.request.model": "gpt\x1b]52;c;aGk=\x07\tx\ny"}
+	m.SkillsUsed = []archive.SkillUse{{Name: "rev\x1b[2Jiew\u009b31m\r", SHA256: strings.Repeat("a", 64), Evidence: archive.SkillUseEvidenceNativeInvocation}}
+	m.SkillDetection = archive.SkillDetectionObserved
+	encoded, _ := json.Marshal(m)
+	if err := mem.Put(context.Background(), key, encoded); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	}
+	for _, r := range out.String() {
+		if (r < 0x20 && r != '\n') || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			t.Fatalf("control %U in list output:\n%q", r, out.String())
+		}
+	}
+	if got := len(strings.Split(strings.TrimSpace(out.String()), "\n")); got != 3 {
+		t.Fatalf("list printed %d lines, want header, one row, count:\n%s", got, out.String())
+	}
+	if !strings.Contains(out.String(), "gpt]52;c;aGk= x y") || !strings.Contains(out.String(), "rev[2Jiew31m") {
+		t.Fatalf("names not shown as text:\n%s", out.String())
+	}
+}
