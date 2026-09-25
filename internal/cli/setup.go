@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -36,6 +37,61 @@ type setupDraft struct {
 	// stop publishing. Config.ImportedHarnesses itself always comes from the
 	// committed configuration (see carriedImportedHarnesses).
 	StopImported []string `json:"stop_imported,omitempty"`
+}
+
+// draftFormat is the setupDraft.Version this release writes and reads.
+const draftFormat = 1
+
+func draftPath(home string) string { return filepath.Join(home, "setup-draft.json") }
+
+// readDraft reads the saved setup. found is whether one exists; problem says
+// why one that exists cannot be used (it does not decode, or another version
+// of agent-archive wrote it), and err is any other failure to read it.
+func readDraft(home string) (draft setupDraft, found bool, problem string, err error) {
+	err = local.Read(draftPath(home), &draft)
+	switch {
+	case os.IsNotExist(err):
+		return setupDraft{}, false, "", nil
+	case state.IsUndecodable(err):
+		return setupDraft{}, true, fmt.Sprintf("it does not read as a saved setup: %v", err), nil
+	case err != nil:
+		return setupDraft{}, true, "", err
+	case draft.Version > draftFormat:
+		return setupDraft{}, true, fmt.Sprintf("a newer version of agent-archive saved it (format %d)", draft.Version), nil
+	case draft.Version != draftFormat || draft.Step < 0 || draft.Step > 2:
+		return setupDraft{}, true, "it is not in a format this version saves", nil
+	}
+	return draft, true, "", nil
+}
+
+// offerUnusableDraft reads the saved setup, and when one exists but cannot
+// be used, names it and offers to move it aside so setup can go on without
+// it (declining leaves it, and stops). have is whether a usable draft was
+// read.
+func offerUnusableDraft(p *prompter, home string) (saved setupDraft, have bool, err error) {
+	saved, found, problem, err := readDraft(home)
+	if err != nil {
+		return setupDraft{}, false, fmt.Errorf("read the saved setup %s: %w", draftPath(home), err)
+	}
+	if problem == "" {
+		return saved, found, nil
+	}
+	p.warn(fmt.Sprintf("The saved setup in %s cannot be used: %s.", draftPath(home), problem),
+		"Moving it aside keeps it, renamed, for reference, and setup starts again from your current settings.",
+		"A Keychain item it staged, if any, stays in the Keychain (service "+credentials.KeychainService+").")
+	move, err := p.yesNo("Move it aside and continue?", true)
+	if err != nil {
+		return setupDraft{}, false, err
+	}
+	if !move {
+		return setupDraft{}, false, fmt.Errorf("the saved setup in %s cannot be used (%s); move it aside or delete it, then run agent-archive setup", draftPath(home), problem)
+	}
+	aside, err := moveAside(draftPath(home))
+	if err != nil {
+		return setupDraft{}, false, err
+	}
+	p.note("Moved it to " + aside + ".")
+	return setupDraft{}, false, nil
 }
 
 func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
@@ -120,16 +176,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
 	}
 	draft := setupDraft{Version: 1, Config: existing}
-	draftPath := filepath.Join(home, "setup-draft.json")
-	var saved setupDraft
-	readErr := local.Read(draftPath, &saved)
-	if readErr != nil && !os.IsNotExist(readErr) {
-		return fmt.Errorf("read saved setup: %w", readErr)
+	savedPath := draftPath(home)
+	saved, haveDraft, err := offerUnusableDraft(p, home)
+	if err != nil {
+		return err
 	}
-	if readErr == nil {
-		if saved.Version != 1 || saved.Step < 0 || saved.Step > 2 {
-			return fmt.Errorf("saved setup has an unsupported version")
-		}
+	if haveDraft {
 		choice, e := p.menu("You have an unfinished setup. What would you like to do?", "continue",
 			option{"continue", "Continue where you left off"},
 			option{"capture", "Change apps and projects"},
@@ -204,7 +256,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			draft.Step = 2
 		}
 	}
-	save := func() error { return local.Write(draftPath, draft) }
+	save := func() error { return local.Write(savedPath, draft) }
 	var verifiedStorage credentials.Config
 	for {
 		if draft.Step == 0 {
@@ -348,7 +400,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if err = recordApplicationDiscoveries(home, discoveries, discoveredAt); err != nil {
 			terminal.Printf(out, "Warning: installed application versions could not be recorded: %v\n", err)
 		}
-		if err = os.Remove(draftPath); err != nil && !os.IsNotExist(err) {
+		if err = os.Remove(savedPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		// The configuration is committed; a diagnostic for a project that

@@ -141,7 +141,9 @@ func restoreLegacyJob(home string, job *legacyJob, name string, env Env) error {
 			return &recoveryBlockedError{home: home, cause: fmt.Sprintf("launchd runs the %s's label from another plist now, so it cannot be restarted from %s", name, job.Change.Path)}
 		case "loaded", "running":
 		default:
-			return env.loadLaunchAgent(job.Change.Path)
+			if err := env.loadLaunchAgent(job.Change.Path); err != nil {
+				return launchctlBlocked(home, "restart the "+name, err)
+			}
 		}
 	}
 	return nil

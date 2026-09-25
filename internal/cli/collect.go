@@ -97,7 +97,9 @@ type passOptions struct {
 }
 
 func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, error) {
-	home, err := env.home()
+	// Read-only until the configuration is found: sync before setup leaves
+	// no data directory behind.
+	home, err := env.readHome()
 	if err != nil {
 		return collector.Result{}, fmt.Errorf("resolve home: %w", err)
 	}
@@ -142,7 +144,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	defer unlock()
 	pruneHandoffs(home, env.now())
 	if transactionPending(home) {
-		return collector.Result{}, fmt.Errorf("setup needs recovery; run agent-archive setup")
+		return collector.Result{}, errors.New(recoveryPending(home))
 	}
 	cfg, found, err = config.Load(home)
 	if err != nil {

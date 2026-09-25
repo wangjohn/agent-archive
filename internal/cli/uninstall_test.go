@@ -271,7 +271,7 @@ func TestUninstallReportsBusyCollectorAndKeepsLocalState(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "another operation is finishing") {
+	if !strings.Contains(stderr.String(), "holds the collector lock; retry uninstall") {
 		t.Fatalf("stderr=%s", stderr.String())
 	}
 	if _, found, _ := config.Load(home); !found {

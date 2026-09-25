@@ -96,9 +96,12 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	previewPending := 0
 	if purge {
-		pending, e := unpublishedSessions(home, previewCfg, previewFound)
+		pending, unreadable, e := unpublishedSessions(home, previewCfg, previewFound)
 		if e != nil {
 			return e
+		}
+		for _, problem := range unreadable {
+			terminal.Println(out, strings.Replace(problem, "status left it out", "it is deleted with the rest", 1))
 		}
 		previewPending = pending
 		terminal.Printf(out, "%d pending session(s) and all owned local caches will be removed. Unpublished evidence cannot be recovered from the bucket.\n", pending)
@@ -108,7 +111,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 	}
 	unlock, err := lockCollector(home, "uninstall", env.now())
 	if err != nil {
-		return fmt.Errorf("another operation is finishing; retry uninstall: %w", err)
+		return fmt.Errorf("%s holds the collector lock; retry uninstall when it finishes: %w", lockHolder(home), err)
 	}
 	unlock = releaseOnce(unlock)
 	defer unlock()
@@ -124,7 +127,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		return err
 	}
 	if purge {
-		pending, e := unpublishedSessions(home, cfg, found)
+		pending, _, e := unpublishedSessions(home, cfg, found)
 		if e != nil {
 			return e
 		}
@@ -203,14 +206,20 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 				refs[old.R2CredentialRef] = true
 			}
 		}
-		var draft setupDraft
-		if e := local.Read(filepath.Join(home, "setup-draft.json"), &draft); e == nil && draft.CredentialRef != "" {
+		draft, _, problem, e := readDraft(home)
+		if e != nil {
+			return fmt.Errorf("read the saved setup %s: %w", draftPath(home), e)
+		}
+		if problem != "" {
+			// It is deleted with the rest; only the Keychain items it may
+			// name are out of reach.
+			terminal.Printf(out, "The saved setup in %s cannot be read (%s), so a Keychain item it staged, if any, is not deleted. Look for items of service %q in Keychain Access.\n", draftPath(home), problem, credentials.KeychainService)
+		}
+		if draft.CredentialRef != "" {
 			refs[draft.CredentialRef] = true
-			for _, ref := range draft.StagedRefs {
-				refs[ref] = true
-			}
-		} else if e != nil && !os.IsNotExist(e) {
-			return e
+		}
+		for _, ref := range draft.StagedRefs {
+			refs[ref] = true
 		}
 		// A Keychain that cannot delete an item must not strand the rest of
 		// the purge: hooks and the LaunchAgent are already gone, so local
@@ -271,21 +280,35 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 // sessions would have been uploaded, so every one with work outstanding
 // counts. (A zero configuration would admit none: every registration records
 // a destination it does not have.)
-func unpublishedSessions(home string, cfg config.Config, found bool) (int, error) {
-	if found {
-		return pendingSessions(home, cfg)
+//
+// A registration or request that cannot be read does not stop the purge,
+// which deletes it anyway: it is named in unreadable, and its session is not
+// counted.
+func unpublishedSessions(home string, cfg config.Config, found bool) (count int, unreadable []string, err error) {
+	accept := cfg.AcceptSession
+	if !found {
+		accept = func(archive.SessionRegistration) bool { return true }
 	}
 	store := state.OpenReadOnly(home)
-	regs, err := store.LoadRegistrations()
-	if err != nil {
-		return 0, err
+	regs, reqs, unreadable := statusState(home, store)
+	requested := map[string]bool{}
+	for _, r := range reqs {
+		requested[r.ArchiveSessionID] = true
 	}
-	reqs, err := store.LoadRequests()
-	if err != nil {
-		return 0, err
+	for _, reg := range regs {
+		if !accept(reg) {
+			continue
+		}
+		pending, _, err := sessionPending(store, reg, requested[reg.ArchiveSessionID])
+		if err != nil {
+			unreadable = append(unreadable, fmt.Sprintf("Local state of session %s could not be read (%v).", reg.ArchiveSessionID, err))
+			continue
+		}
+		if pending {
+			count++
+		}
 	}
-	blocking, waiting, err := countPending(store, regs, reqs, func(archive.SessionRegistration) bool { return true })
-	return blocking + waiting, err
+	return count, unreadable, nil
 }
 
 // installedApps is the apps whose hooks setup installed, per the committed
@@ -434,7 +457,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" {
 			continue
 		}
-		if !known[name] && !strings.HasPrefix(name, ".pending-") {
+		if !known[name] && !strings.HasPrefix(name, ".pending-") && !isMovedAside(name, known) {
 			leftover = append(leftover, name)
 			continue
 		}

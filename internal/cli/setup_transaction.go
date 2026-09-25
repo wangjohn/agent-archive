@@ -110,28 +110,39 @@ func countPending(store *state.Store, regs []archive.SessionRegistration, reqs [
 		if !accept(r) {
 			continue
 		}
-		_, _, cacheStatus, found, err := store.LoadPublished(r.ArchiveSessionID)
+		pending, idle, err := sessionPending(store, r, requested[r.ArchiveSessionID])
 		if err != nil {
 			return 0, 0, err
 		}
-		scanPending, err := store.ScanPending(r.ArchiveSessionID)
-		if err != nil {
-			return 0, 0, err
-		}
-		if !scanPending && !requested[r.ArchiveSessionID] && found && cacheStatus != state.CacheStatusRateLimited {
-			continue
-		}
-		idle, err := waitingForTranscript(store, r)
-		if err != nil {
-			return 0, 0, err
-		}
-		if idle {
+		switch {
+		case !pending:
+		case idle:
 			waiting++
-		} else {
+		default:
 			blocking++
 		}
 	}
 	return blocking, waiting, nil
+}
+
+// sessionPending reports whether one session has work outstanding, and if
+// so whether it is only waiting for its transcript (see
+// pendingSessionCounts). requested is whether a hook request for it is
+// queued.
+func sessionPending(store *state.Store, r archive.SessionRegistration, requested bool) (pending, idle bool, err error) {
+	_, _, cacheStatus, found, err := store.LoadPublished(r.ArchiveSessionID)
+	if err != nil {
+		return false, false, err
+	}
+	scanPending, err := store.ScanPending(r.ArchiveSessionID)
+	if err != nil {
+		return false, false, err
+	}
+	if !scanPending && !requested && found && cacheStatus != state.CacheStatusRateLimited {
+		return false, false, nil
+	}
+	idle, err = waitingForTranscript(store, r)
+	return err == nil, idle, err
 }
 
 // sessionsAdmittedInto counts the registrations that record cfg's
@@ -251,7 +262,7 @@ func carriedImportedHarnesses(committed, harnesses, stopImported []string) []str
 func applySetup(home, userHome, executable string, old config.Config, next *config.Config, stopImported []string, env Env) error {
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
-		return fmt.Errorf("another operation is running; retry setup when it finishes: %w", err)
+		return fmt.Errorf("%s holds the collector lock; retry setup when it finishes: %w", lockHolder(home), err)
 	}
 	defer unlock()
 	releaseHooks, err := local.NamedLock(home, "hooks.lock")
@@ -479,17 +490,17 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 	state := env.jobState(journal.Plist)
 	if launchJobActive(state) {
 		if err := env.unloadLaunchAgent(journal.Plist); err != nil {
-			return err
+			return launchctlBlocked(home, "stop the background collector", err)
 		}
 	} else if state == "unknown" {
 		return &recoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to launchctl and rerun setup"}
 	}
 	if err := hooks.Rollback(changed); err != nil {
-		return err
+		return &recoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 	}
 	if journal.WasLoaded {
 		if err := env.loadLaunchAgent(journal.Plist); err != nil {
-			return err
+			return launchctlBlocked(home, "restart the background collector", err)
 		}
 	}
 	if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, env); err != nil {
@@ -531,6 +542,12 @@ func (e *recoveryBlockedError) Error() string {
 	return "cannot recover the interrupted setup: " + e.cause
 }
 
+// launchctlBlocked is a recovery stopped because launchctl failed to do what
+// it was asked, which rerunning setup alone may not change either.
+func launchctlBlocked(home, action string, err error) error {
+	return &recoveryBlockedError{home: home, cause: fmt.Sprintf("launchctl could not %s (%v); once launchctl works again, rerun setup", action, err)}
+}
+
 func (e *recoveryBlockedError) guidance() string {
 	return fmt.Sprintf("The interrupted setup is recorded in %s.\nTo keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery\nThen run agent-archive setup to review your settings.", journalPath(e.home))
 }
@@ -559,7 +576,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 	defer release()
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {
-		return fmt.Errorf("another operation is running; retry when it finishes: %w", err)
+		return fmt.Errorf("%s holds the collector lock; retry when it finishes: %w", lockHolder(home), err)
 	}
 	defer unlock()
 	releaseHooks, err := local.NamedLock(home, "hooks.lock")
@@ -571,6 +588,17 @@ func abandonRecovery(out io.Writer, env Env) error {
 	err = local.Read(journalPath(home), &journal)
 	if os.IsNotExist(err) {
 		terminal.Println(out, "No interrupted setup to discard. Nothing was changed.")
+		return nil
+	}
+	if state.IsUndecodable(err) {
+		// Nothing in it can be trusted, so nothing in it is acted on; it is
+		// kept for anyone who wants to see what setup was doing.
+		aside, moveErr := moveAside(journalPath(home))
+		if moveErr != nil {
+			return moveErr
+		}
+		terminal.Printf(out, "The interrupted setup's record %s could not be read (%v). It was moved to %s, and every file was kept as it is now.\n", journalPath(home), err, aside)
+		terminal.Println(out, "Next: run agent-archive setup to review your settings; it reinstalls the hooks and starts the background collector again.")
 		return nil
 	}
 	if err != nil {
@@ -594,8 +622,11 @@ func recoverSetup(home string, env Env) error {
 	if os.IsNotExist(err) {
 		return nil
 	}
+	if state.IsUndecodable(err) {
+		return &recoveryBlockedError{home: home, cause: fmt.Sprintf("its record %s could not be read (%v), so nothing in it can be put back", journalPath(home), err)}
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("read %s: %w", journalPath(home), err)
 	}
 	unlock, err := lockCollector(home, "setup", env.now())
 	if err != nil {

@@ -98,7 +98,7 @@ func TestUnpublishedSessionsWithoutConfigurationCountsAll(t *testing.T) {
 	startSession(t, env, project, "sess-1")
 	cfg := mustConfig(t, home)
 	must(t, os.Remove(filepath.Join(home, "config.json")))
-	if n, err := unpublishedSessions(home, cfg, false); err != nil || n != 1 {
+	if n, _, err := unpublishedSessions(home, cfg, false); err != nil || n != 1 {
 		t.Fatalf("unpublished = %d, %v", n, err)
 	}
 }
