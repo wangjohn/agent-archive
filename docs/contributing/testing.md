@@ -199,8 +199,10 @@ Tests call `t.Parallel()` unless they cannot share the process: a test that
 assigns a package variable (`stubLaunchctl`, `collectSoftDeadline`,
 `hookDiagnosticsWait`), calls `t.Setenv` or `os.Chdir`, reads a process-wide
 counter (`state.PublishedStateLoads`), removes this process's Cursor
-snapshots, or orders goroutines with real sleeps stays sequential, with a
-comment saying why when it is not obvious. Go runs every sequential test
+snapshots, orders goroutines with real sleeps, or needs work to finish
+within a production time bound that a busy parallel run can exceed (a
+hook's one-second lock wait, a version command's output deadline) stays
+sequential, with a comment saying why when it is not obvious. Go runs every sequential test
 before it releases the parallel ones, so a package variable a sequential
 test changes and restores is never seen by a parallel test. Test seams
 that vary per test belong in `Env` (`observeFlags`, `backfillCheckpoint`,
@@ -208,11 +210,13 @@ that vary per test belong in `Env` (`observeFlags`, `backfillCheckpoint`,
 own fixture call `t.Parallel()` too.
 
 Check a change for order dependence and races with
-`go test -race -count=3 -shuffle=on ./internal/cli`.
+`go test -race -count=3 -shuffle=on ./internal/cli`, and for timing
+under load with `go test -race -cpu 1,4,18 -shuffle=on ./internal/cli`.
 `internal/cli`'s `TestMain` puts `$TMPDIR` (so every `t.TempDir`) in a
 folder of the run's own under `/tmp`: `local.CanonicalPath` lists each parent
 of a path, and macOS's per-user temporary folder can hold thousands of
-entries.
+entries. (The product calls it only from setup, status and uninstall, on
+paths under your home folder, never from a hook or a collector pass.)
 
 ## Fuzzing
 
