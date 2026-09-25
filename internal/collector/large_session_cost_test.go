@@ -102,8 +102,18 @@ func measureLargePass(t *testing.T, local *state.Store, remote *countingStore, o
 // A long working session keeps growing, and every pass that sees it grow
 // publishes it again. At the documented size (AGENT_ARCHIVE_PERF=1) this is
 // a 30 MB transcript whose content all survives filtering; otherwise a small
-// one, which still checks what a republish may download.
-func TestLargeGrowingSessionPassStaysFast(t *testing.T) {
+// one, which still checks what each pass may download and read.
+//
+// A 2026-09 pre-release review measured about 10 s, 1.1 to 1.5 GB allocated,
+// and a download of the whole compressed source (9 MB here) for each of the
+// three passes, and a 32 MB published state file. Now a publication takes
+// about 4 s and 0.6 to 0.8 GB, the refresh about 1.2 s without reading the
+// transcript, and none of them downloads anything. The limits below leave
+// room for a slower machine.
+//
+// Not parallel: it measures the process's allocation and reads a
+// package-wide counter.
+func TestLargeGrowingSessionPassesStayFast(t *testing.T) {
 	records, timed := 200, false
 	if os.Getenv(perfEnv) != "" {
 		if raceEnabled {
@@ -151,11 +161,15 @@ func TestLargeGrowingSessionPassStaysFast(t *testing.T) {
 
 	now = now.Add(time.Hour)
 	opts.ParserVersion = "perf-next-parser"
+	filters := transcriptFilters.Load()
 	result, refreshed := measureLargePass(t, local, remote, opts)
-	if len(result.Errors) != 0 {
+	if len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("parser refresh pass: %#v", result)
 	}
 	t.Logf("metadata refresh after a parser bump: %s", refreshed)
+	if filters := transcriptFilters.Load() - filters; filters != 0 {
+		t.Errorf("the metadata refresh read the unchanged transcript %d times", filters)
+	}
 
 	// A store that reports each object's checksum verifies a publication
 	// without downloading it.
@@ -164,7 +178,17 @@ func TestLargeGrowingSessionPassStaysFast(t *testing.T) {
 			t.Errorf("%s downloaded %d bytes", name, cost.downloaded)
 		}
 	}
-	_ = timed
+	if !timed {
+		return
+	}
+	for name, cost := range map[string]largePassCost{"first publication": first, "republication": grown} {
+		if cost.elapsed > 7*time.Second || cost.allocated > 1<<30 {
+			t.Errorf("%s: %s, want under 7 s and 1 GB", name, cost)
+		}
+	}
+	if refreshed.elapsed > 3*time.Second {
+		t.Errorf("metadata refresh: %s, want under 3 s", refreshed)
+	}
 }
 
 // variedTranscript is a codex transcript of n assistant messages of about 2
