@@ -205,6 +205,48 @@ func TestQueuedRequestDoesNotKeepATranscriptlessSessionPastRetention(t *testing.
 	}
 }
 
+// A registration whose transcript file exists but was never written has
+// captured nothing either: a queued request no longer defers its expiry
+// once it is older than the retention window, as for a registration with
+// no path. The same request on a transcript with content still does.
+//
+// Regression: 2026-09 pre-release review, collector bug 4.
+func TestQueuedRequestDoesNotKeepAnEmptyTranscriptSessionPastRetention(t *testing.T) {
+	dir := t.TempDir()
+	local := newTestStore(t)
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	withContent := registration("with-content", writeTranscript(t, dir, "with-content.jsonl", codexTranscript))
+	empty := registration("empty", writeTranscript(t, dir, "empty.jsonl", ""))
+	for _, reg := range []archive.SessionRegistration{withContent, empty} {
+		if err := local.SaveRegistration(reg); err != nil {
+			t.Fatal(err)
+		}
+		if err := local.SaveRequest(reg.ArchiveSessionID, "stop", t0.Add(time.Minute), finalResponse(t, t0.Add(time.Minute))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := &recordingStore{ObjectStore: storagetest.NewMemoryStore()}
+
+	if result := sweep(t, local, store, t0.Add(retentionWindow-time.Hour), Options{}); len(result.PrunedSessions) != 0 || len(result.Errors) != 0 {
+		t.Fatalf("expired inside the retention window: %#v", result)
+	}
+
+	result := sweep(t, local, store, t0.Add(retentionWindow+time.Hour), Options{})
+	if len(result.Errors) != 0 || len(result.PrunedSessions) != 1 || result.PrunedSessions[0] != "empty" || len(result.DeletedSessions) != 0 {
+		t.Fatalf("result=%#v, want only empty pruned", result)
+	}
+	if store.count() != 0 {
+		t.Fatalf("a never-captured session cost %d bucket calls", store.count())
+	}
+	if _, found, _ := local.LoadRegistration("with-content"); !found {
+		t.Fatal("the request stopped deferring expiry for a session the collector can still capture")
+	}
+	requests, err := local.LoadRequests()
+	if err != nil || len(requests) != 1 || requests[0].ArchiveSessionID != "with-content" {
+		t.Fatalf("requests=%#v err=%v; the forgotten session's request must go with it", requests, err)
+	}
+}
+
 // A session read from Cursor's database has no transcript path by design,
 // but the collector still captures it: its queued request keeps deferring
 // expiry past the retention window, as a file session's does.
