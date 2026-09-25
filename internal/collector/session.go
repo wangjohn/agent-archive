@@ -24,7 +24,8 @@ import (
 //	         (regenerateMetadata), without reading the transcript.
 //	read     The source (a transcript file, or a Cursor database chat) is
 //	         read and filtered. A size limit or a deleted transcript ends the
-//	         scan as a recorded gap (blocked).
+//	         scan as a recorded gap (blocked), as does a published source
+//	         that now retains nothing (emptied).
 //	build    The candidate bundle: the filtered records plus supplemental
 //	         evidence (hook evidence, and skill observations when the
 //	         session was active).
@@ -97,6 +98,9 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	read, ok, err := s.read()
 	if !ok || err != nil {
 		return read.outcome, err
+	}
+	if emptied, err := s.emptied(read); emptied || err != nil {
+		return outcomeSkipped, err
 	}
 	candidate, supplemental, err := s.build(read)
 	if err != nil {
@@ -185,8 +189,8 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 		// same waiting as having no path at all, one step later. Nothing has
 		// been captured, so there is nothing to block or fail; the request
 		// stays queued and the next pass reads whatever has arrived. A file
-		// emptied after a publication is a rewrite, which the comparison
-		// still reports rather than waits on.
+		// emptied after a publication is a rewrite, which emptied records
+		// rather than waits on.
 		if _, _, published := s.published.LastPublished(); !published {
 			return read, false, nil
 		}
@@ -226,6 +230,32 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 		return outcomeSkipped, errors.Join(err, rememberErr)
 	}
 	return outcomeSkipped, err
+}
+
+// emptied records a source that retains nothing any more, after the session
+// was published, as a rewrite gap: there is no bundle to build from it, and
+// the published snapshot is richer than anything it now holds. The gap
+// keeps that snapshot and acknowledges the request, as the rewrite guard
+// does, and stands until the source changes. emptied reports that the scan
+// ends here. A never-published source that retains nothing is left to build,
+// which reports it.
+func (s *sessionScan) emptied(read sourceRead) (bool, error) {
+	if len(read.filtered.Records) > 0 {
+		return false, nil
+	}
+	for _, text := range read.filtered.Text {
+		if text != "" {
+			return false, nil
+		}
+	}
+	if _, _, published := s.published.LastPublished(); !published {
+		return false, nil
+	}
+	if err := s.clearEndedBlock(); err != nil {
+		return true, err
+	}
+	_, err := s.block(state.BlockedReasonTranscriptRewritten, nil, &read.observed)
+	return true, err
 }
 
 // build assembles the candidate bundle, and returns the supplemental

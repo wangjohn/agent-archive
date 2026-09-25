@@ -201,6 +201,10 @@ can list them, inspect them, and hand one to another agent.
 
 ### Fixed
 
+- A transcript emptied after it was archived no longer fails its session
+  on every pass (`status` showed "1 session(s) failed" for good, and its
+  queued hook requests were never acknowledged). It is recorded as a
+  rewritten transcript, and the archived copy is kept.
 - A filter or adapter upgrade no longer moves every session's capture
   time to the day you upgraded. A session whose transcript hasn't changed
   is refiltered and republished with its original capture time, so it

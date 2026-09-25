@@ -634,6 +634,60 @@ func TestRunPreservesLastGoodSnapshotAcrossTranscriptRewrite(t *testing.T) {
 	}
 }
 
+// A transcript emptied after it was published is a rewrite: a recorded gap
+// that keeps the last published snapshot and acknowledges the request, not
+// a failure on every pass.
+//
+// Regression: 2026-09 pre-release review, collector bug 3.
+func TestTranscriptEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
+	store := newTestStore(t)
+	if err := store.SaveRegistration(registration(t, path)); err != nil {
+		t.Fatal(err)
+	}
+	cloud := storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
+		t.Fatal(err)
+	}
+	before := fetchMetadata(t, cloud, "codex", "session-1")
+
+	writeTranscript(t, dir, "codex.jsonl", "")
+	for i, at := range []time.Time{t0.Add(10 * time.Minute), t0.Add(20 * time.Minute)} {
+		if err := store.SaveRequest("session-1", "stop", at); err != nil {
+			t.Fatal(err)
+		}
+		result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return at }})
+		if err != nil || len(result.Errors) != 0 || len(result.Published) != 0 {
+			t.Fatalf("pass %d: emptied transcript should be a recorded gap: result=%#v err=%v", i, result, err)
+		}
+		if requests, err := store.LoadRequests(); err != nil || len(requests) != 0 {
+			t.Fatalf("pass %d: request on an emptied transcript not acknowledged: %#v err=%v", i, requests, err)
+		}
+		if reason, blocked, err := store.LoadBlocked("session-1"); err != nil || !blocked || reason != state.BlockedReasonTranscriptRewritten {
+			t.Fatalf("pass %d: blocked=%v reason=%q err=%v", i, blocked, reason, err)
+		}
+		if status, err := store.LoadStatus(); err != nil || status.LastError != "" {
+			t.Fatalf("pass %d: status reports a failure: %+v err=%v", i, status, err)
+		}
+	}
+	if after := fetchMetadata(t, cloud, "codex", "session-1"); after.SourceBundle.SHA256 != before.SourceBundle.SHA256 {
+		t.Fatal("an emptied transcript replaced the published snapshot")
+	}
+
+	// Content that again extends the snapshot resumes capture.
+	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
+	t3 := t0.Add(30 * time.Minute)
+	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t3 }})
+	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
+		t.Fatalf("refilled transcript was not republished: result=%#v err=%v", result, err)
+	}
+	if _, blocked, err := store.LoadBlocked("session-1"); err != nil || blocked {
+		t.Fatalf("session still blocked after republish: blocked=%v err=%v", blocked, err)
+	}
+}
+
 func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
