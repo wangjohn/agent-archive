@@ -16,6 +16,11 @@ import (
 func bundleEvidenceEqual(a, b archive.SourceBundle) (bool, error) {
 	a.Capture.CapturedAt = time.Time{}
 	b.Capture.CapturedAt = time.Time{}
+	return jsonEqual(a, b)
+}
+
+// jsonEqual reports whether a and b encode to the same JSON.
+func jsonEqual(a, b any) (bool, error) {
 	aBytes, err := json.Marshal(a)
 	if err != nil {
 		return false, err
@@ -58,6 +63,9 @@ func withoutLinkedSessionEvidence(in []archive.SupplementalEvidence) []archive.S
 // It compares filtered output, so it is only meaningful when both were
 // filtered the same way: a new filter or adapter version legitimately changes
 // what earlier records look like, and must not read as a rewrite.
+//
+// TODO(#70): that also lets a transcript truncated since the last publish
+// replace the richer snapshot on an upgrade.
 func nativeEvidenceExtends(previous, candidate archive.SourceBundle) bool {
 	if previous.Capture.FilterVersion != candidate.Capture.FilterVersion || previous.Capture.AdapterVersion != candidate.Capture.AdapterVersion {
 		return true

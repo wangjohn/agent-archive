@@ -292,12 +292,23 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 	// otherwise the registration and that text would stay on this machine
 	// forever. It never published, so forgetting it needs no bucket call. A
 	// transcript file the app created but never wrote is the same case one
-	// step later: nothing of it was ever captured. A session read from
-	// Cursor's database has no path by design and is captured all the same,
-	// so its work still defers expiry.
+	// step later: nothing of it was ever captured, unless a first
+	// publication is still waiting to upload (built before the file was
+	// emptied). A session read from Cursor's database has no path by design
+	// and is captured all the same, so its work still defers expiry.
 	deferForWork := s.opts.Publishable == nil || s.opts.Publishable(reg)
-	if reg.ReadsTranscriptFile() && s.expired(reg.Admitted()) && (reg.TranscriptPath == "" || !found && transcriptEmpty(reg.TranscriptPath)) {
-		deferForWork = false
+	if reg.ReadsTranscriptFile() && s.expired(reg.Admitted()) {
+		neverCapturable := reg.TranscriptPath == ""
+		if !neverCapturable && !found && transcriptEmpty(reg.TranscriptPath) {
+			owed, err := s.local.Outstanding(reg, s.requested[id])
+			if err != nil {
+				return fmt.Errorf("check outstanding work: %w", err)
+			}
+			neverCapturable = !owed.Upload
+		}
+		if neverCapturable {
+			deferForWork = false
+		}
 	}
 	// What the session still owes (state.Outstanding), read only for a
 	// session old enough to expire: the steady state stays a summary read.

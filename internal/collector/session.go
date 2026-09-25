@@ -236,7 +236,10 @@ func (s *sessionScan) readFailed(read sourceRead, err error) (sessionOutcome, er
 // was published, as a rewrite gap: there is no bundle to build from it, and
 // the published snapshot is richer than anything it now holds. The gap
 // keeps that snapshot and acknowledges the request, as the rewrite guard
-// does, and stands until the source changes. emptied reports that the scan
+// does, and stands until the source changes. As with the rewrite guard, a
+// transcript_rewritten gap is not recoverable (see
+// state.BlockedReason.Recoverable), so hook evidence of requests acknowledged while it stands
+// is dropped, not held for when the source extends the snapshot again. emptied reports that the scan
 // ends here. A never-published source that retains nothing is left to build,
 // which reports it.
 func (s *sessionScan) emptied(read sourceRead) (bool, error) {
@@ -386,22 +389,30 @@ func (s *sessionScan) compare(read sourceRead, candidate *archive.SourceBundle) 
 // refilteredUnchanged reports whether candidate differs from cached only
 // because a new filter or adapter version filtered the same evidence: the
 // versions differ, the source is exactly as the last settled scan left it
-// (when cached was built from it), and this scan brought no hook evidence.
-// Filtered output can't tell that on its own, since a new filter changes
-// what earlier records look like. Without a settled scan signature to
-// compare with, the change counts as new evidence.
+// (when cached was built from it), and the supplemental evidence (hook
+// evidence, skill observations) is the same. Filtered records can't tell
+// that on their own, since a new filter changes what earlier records look
+// like. Without a settled scan signature to compare with, or for a Cursor
+// text transcript, which is never trusted as unchanged on a stat alone (see
+// unchangedSinceLastScan), the change counts as new evidence.
 func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate archive.SourceBundle) (bool, error) {
 	if cached.Capture.FilterVersion == candidate.Capture.FilterVersion && cached.Capture.AdapterVersion == candidate.Capture.AdapterVersion {
 		return false, nil
 	}
-	if len(s.req.HookEvidence) > 0 {
-		return false, nil
+	if len(cached.SupplementalEvidence) > 0 || len(candidate.SupplementalEvidence) > 0 {
+		same, err := jsonEqual(cached.SupplementalEvidence, candidate.SupplementalEvidence)
+		if err != nil {
+			return false, fmt.Errorf("compare supplemental evidence: %w", err)
+		}
+		if !same {
+			return false, nil
+		}
 	}
 	signature, found, err := s.local.LoadScanSignature(s.id())
 	if err != nil {
 		return false, fmt.Errorf("load scan signature: %w", err)
 	}
-	return found && signature.Blocked == "" && !signature.Failed && read.observed.matches(signature), nil
+	return found && signature.SourceFormat != cursorTextSourceFormat && signature.Blocked == "" && !signature.Failed && read.observed.matches(signature), nil
 }
 
 // guard checks that candidate still extends the evidence already retained.
