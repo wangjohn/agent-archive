@@ -138,6 +138,12 @@ in the bucket:
   always keeps a session's immediate predecessor, so for a session that
   doesn't change again the old copy stays until the whole session expires
   (90 days after its last capture by default).
+- **Sessions whose transcript is still there but no longer holds everything
+  that was archived** (the app truncated or compacted it) are not replaced
+  by the shorter transcript: the archived copy itself is filtered again
+  with the new filter and republished, and the session is recorded as
+  having a rewritten transcript. The old copy then stays as the previous
+  source, as above.
 - **Sessions whose transcript is gone** (deleted, or on a Mac that no longer
   runs agent-archive) are never refiltered: their current copy stays as the
   old filter made it until the session expires.

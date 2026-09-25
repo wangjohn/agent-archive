@@ -34,7 +34,9 @@ import (
 //	         is a new snapshot, captured now.
 //	guard    A candidate that no longer extends what was published is a
 //	         rewrite: a transcript is blocked; a Cursor chat is accepted with
-//	         a rewrite gap.
+//	         a rewrite gap. Across a filter or adapter upgrade, a rewritten
+//	         transcript's retained snapshot is filtered again and published
+//	         in its place, then blocked (refilter.go).
 //	decide   Decline it (Options.RequireSkillUse), hold it back
 //	         (Options.MinUploadInterval), or publish it now.
 //	persist  The publication is saved as pending before any upload, then
@@ -76,6 +78,11 @@ type sessionScan struct {
 	// it (see liveTranscriptChanged), which read then uses rather than
 	// filtering the whole source a second time in the same scan.
 	filtered *filteredSource
+	// rewritten is a rewritten transcript's candidate, set when guard
+	// publishes the retained snapshot filtered again in its place (see
+	// refilter.go); once that is published, the rewrite is recorded as the
+	// gap it is, with this candidate cached as the state it was reached at.
+	rewritten *archive.SourceBundle
 }
 
 // filteredSource is a source read and filtered once in a scan.
@@ -123,7 +130,15 @@ func (s *sessionScan) run() (sessionOutcome, error) {
 	if blocked || err != nil {
 		return outcomeSkipped, err
 	}
-	return s.publish(read, candidate)
+	outcome, err := s.publish(read, candidate)
+	if err != nil || outcome != outcomePublished || s.rewritten == nil {
+		return outcome, err
+	}
+	// Held back or declined instead, the next pass that reads the
+	// transcript reaches the same gap through the guard, since the snapshot
+	// it compares with is then filtered by the current rules.
+	_, err = s.block(state.BlockedReasonTranscriptRewritten, s.rewritten, &read.observed)
+	return outcome, err
 }
 
 // resume retries a pending publication, or runs the metadata refresh when
@@ -439,6 +454,12 @@ func (s *sessionScan) guard(read sourceRead, candidate archive.SourceBundle, sup
 	guardBundle, _, haveGuard := s.published.LastPublished()
 	if cached, _, status, haveCached := s.published.Cached(); haveCached && status != state.CacheStatusBlocked {
 		guardBundle, haveGuard = cached, true
+	}
+	if haveGuard && versionChanged(guardBundle, candidate) {
+		refiltered, replaced, err := s.refilterRewritten(read, guardBundle, candidate)
+		if err != nil || replaced {
+			return refiltered, false, err
+		}
 	}
 	if !haveGuard || nativeEvidenceExtends(guardBundle, candidate) {
 		return candidate, false, nil

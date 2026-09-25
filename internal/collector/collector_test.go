@@ -688,40 +688,11 @@ func TestTranscriptEmptiedAfterPublicationIsARewriteGap(t *testing.T) {
 	}
 }
 
-func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
-	dir := t.TempDir()
-	path := writeTranscript(t, dir, "codex.jsonl", codexTranscript)
-	store := newTestStore(t)
-	if err := store.SaveRegistration(registration(t, path)); err != nil {
-		t.Fatal(err)
-	}
-	cloud := storagetest.NewMemoryStore()
-	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
-		t.Fatal(err)
-	}
-	before := fetchMetadata(t, cloud, "codex", "session-1")
-	// Simulate a cache written by an earlier release whose filter produced
-	// different records: the new release must republish, not block forever.
-	var file publishedFile
-	if err := local.Read(publishedPath(store, "session-1"), &file); err != nil {
-		t.Fatal(err)
-	}
-	file.Bundle.Capture.FilterVersion = "0"
-	file.LastPublished.Bundle.Capture.FilterVersion = "0"
-	if err := local.Write(publishedPath(store, "session-1"), file); err != nil {
-		t.Fatal(err)
-	}
-	writeTranscript(t, dir, "codex.jsonl", `{"type":"turn_context","model":"gpt-test"}`)
-	t1 := t0.Add(10 * time.Minute)
-	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
-	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
-		t.Fatalf("filter version change should republish: result=%#v err=%v", result, err)
-	}
-	if fetchMetadata(t, cloud, "codex", "session-1").SourceBundle.SHA256 == before.SourceBundle.SHA256 {
-		t.Fatal("republish did not replace the old-filter source")
-	}
-
+// nativeEvidenceExtends compares filtered records, so records filtered by
+// different versions never read as a rewrite; a rewrite across an upgrade is
+// found from the transcript instead (see refilter.go).
+func TestNativeEvidenceExtendsYieldsToVersionChange(t *testing.T) {
+	t.Parallel()
 	previous := archive.SourceBundle{
 		NativeRecords: []map[string]any{{"a": 1}, {"b": 2}},
 		Capture:       archive.SourceCapture{AdapterVersion: "1"},
@@ -739,12 +710,13 @@ func TestRewriteGuardYieldsToNewFilterOrAdapterVersion(t *testing.T) {
 	}
 }
 
-// simulateFilterUpgrade rewrites a session's local state as an earlier
+// simulateFilterUpgrade rewrites session-1's local state as an earlier
 // release with filter version "0" would have left it: the cached and last
 // published bundles, and the scan signature, so the next pass reads the
 // transcript again as it does after a real upgrade.
-func simulateFilterUpgrade(t *testing.T, store *state.Store, id string) {
+func simulateFilterUpgrade(t *testing.T, store *state.Store) {
 	t.Helper()
+	const id = "session-1"
 	var file publishedFile
 	if err := local.Read(publishedPath(store, id), &file); err != nil {
 		t.Fatal(err)
@@ -786,7 +758,7 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	simulateFilterUpgrade(t, store, "session-1")
+	simulateFilterUpgrade(t, store)
 	t1 := t0.Add(20 * 24 * time.Hour)
 	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
@@ -801,7 +773,7 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	}
 
 	// New activity arriving with the upgrade is captured when it was read.
-	simulateFilterUpgrade(t, store, "session-1")
+	simulateFilterUpgrade(t, store)
 	writeTranscript(t, dir, "codex.jsonl", codexTranscript+"\n"+`{"type":"response_item","id":"m2","payload":{"type":"message","role":"assistant","content":"more"}}`)
 	t2 := t1.Add(24 * time.Hour)
 	result, err = Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t2 }})
@@ -871,7 +843,7 @@ func TestFilterUpgradeWithNewEvidenceIsCapturedNow(t *testing.T) {
 			if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }, SupplementalEvidence: tc.first}); err != nil {
 				t.Fatal(err)
 			}
-			simulateFilterUpgrade(t, store, "session-1")
+			simulateFilterUpgrade(t, store)
 			provider := tc.upgrade(t, store)
 			result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }, SupplementalEvidence: provider})
 			if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
