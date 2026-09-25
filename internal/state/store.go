@@ -45,6 +45,9 @@ import (
 // what the published source bundle itself already contains.
 type Store struct {
 	home string
+	// collectorPass marks a Store from ForCollectorPass, which may move a
+	// corrupt collector-owned file aside.
+	collectorPass bool
 }
 
 // OpenReadOnly returns a handle to an existing local store under
@@ -525,16 +528,31 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 // LoadPending returns a session's outstanding publication transaction, if
 // any. Decoding it reads the whole compressed source; HasPending answers
 // whether one exists without that cost.
+//
+// In a collector pass, a pending publication that no longer decodes is moved
+// aside (the error wraps ErrQuarantined, once) and the session carries on as
+// if it had none; see quarantineInPass.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
+	if !safeFileComponent(id) {
+		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
+	}
 	var pending PendingPublication
-	err := local.Read(s.pendingPath(id), &pending)
-	if errors.Is(err, os.ErrNotExist) {
-		return PendingPublication{}, false, nil
-	}
+	found, err := s.readOwned(s.pendingPath(id), &pending)
 	if err != nil {
-		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, err)
+		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, s.afterLoss(id, err))
 	}
-	return pending, true, nil
+	return pending, found, nil
+}
+
+// afterLoss follows a collector-owned file of the session being moved aside:
+// the session is no longer settled at what that file recorded, so its scan
+// signature goes and the next pass scans it. err is returned as is, with any
+// failure to do so.
+func (s *Store) afterLoss(id string, err error) error {
+	if !errors.Is(err, ErrQuarantined) {
+		return err
+	}
+	return errors.Join(err, s.RemoveScanSignature(id))
 }
 
 // HasPending reports whether a publication is still outstanding for a session
@@ -632,8 +650,13 @@ func (s *Store) ScanPending(id string) (bool, error) {
 	}
 	var pending bool
 	err := local.Read(filepath.Join(s.home, "pending-scans", id+".json"), &pending)
-	if os.IsNotExist(err) {
+	switch {
+	case os.IsNotExist(err):
 		return false, nil
+	case IsUndecodable(err):
+		// The journal exists, so a scan was started; that it no longer
+		// decodes changes nothing (readAsPending). The next scan rewrites it.
+		return true, nil
 	}
 	return pending, err
 }

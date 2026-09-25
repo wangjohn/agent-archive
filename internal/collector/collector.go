@@ -138,6 +138,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return Result{}, errors.New("machine ID is required")
 	}
 	now := opts.now()
+	// The caller holds the collector lock, so this pass is the only writer
+	// of the files it owns and may move a corrupt one aside.
+	local = local.ForCollectorPass()
 	local.RemoveStaleTemps()
 	p := &pass{
 		ctx:    ctx,
@@ -287,6 +290,9 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	}
 	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	outcome, err := scan.run()
+	for _, warning := range scan.warnings {
+		addError(p.result.Errors, id, warning)
+	}
 	if err != nil && p.ctx.Err() != nil {
 		// The pass ran out of time (or was cancelled) with this session in
 		// flight. That is not the session failing: its pending publication

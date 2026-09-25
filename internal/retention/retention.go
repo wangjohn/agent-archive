@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
@@ -128,6 +129,8 @@ type Result struct {
 // collector pass does: the session in flight and the rest are left for the
 // next sweep (Result.Unfinished), not reported as failing.
 func Sweep(ctx context.Context, local *state.Store, store storage.ObjectStore, opts Options) (Result, error) {
+	// The caller holds the collector lock, as for collector.Run.
+	local = local.ForCollectorPass()
 	s := &sweeper{ctx: ctx, local: local, store: store, opts: opts, now: opts.now(), result: Result{Errors: map[string]error{}}}
 
 	// An unreadable registration or request fails only its own session, as
@@ -159,16 +162,88 @@ func Sweep(ctx context.Context, local *state.Store, store storage.ObjectStore, o
 			s.result.Unfinished += len(registrations) - i
 			break
 		}
-		if err := s.session(reg); err != nil {
-			if ctx.Err() != nil {
-				// Cut off in flight: the deadline, not the session, failed.
-				s.result.Unfinished++
-				continue
-			}
-			s.result.Errors[reg.ArchiveSessionID] = err
+		s.record(reg.ArchiveSessionID, s.session(reg))
+	}
+	// A registration that exists but could not be read this time is still
+	// registered; one that was moved aside is not, and its session is an
+	// orphan like any other.
+	keep := map[string]bool{}
+	for _, reg := range registrations {
+		keep[reg.ArchiveSessionID] = true
+	}
+	for id, issue := range registrationIssues {
+		keep[id] = keep[id] || !errors.Is(issue, state.ErrQuarantined)
+	}
+	s.orphans(keep)
+	return s.result, nil
+}
+
+// record files one session's outcome: an error, unless the sweep's context
+// ended with the session in flight, which is the deadline failing rather than
+// the session.
+func (s *sweeper) record(id string, err error) {
+	switch {
+	case err == nil:
+	case s.ctx.Err() != nil:
+		s.result.Unfinished++
+	default:
+		s.result.Errors[id] = err
+	}
+}
+
+// orphans expires the sessions whose registration is gone while their
+// published, pending, or superseded state remains (see
+// state.OrphanedSessions): a registration moved aside because it no longer
+// decoded, or a crash in the middle of forgetting one. Nothing else records
+// that their objects exist, so without this they would outlive retention.
+// Such a session ages from its capture when that is recorded, otherwise from
+// the last change to its files, and is deleted from the bucket (under every
+// harness when its own is not recorded: another harness has nothing at its
+// random ID) before its local state is forgotten.
+func (s *sweeper) orphans(keep map[string]bool) {
+	ids, err := s.local.OrphanedSessions(keep)
+	if err != nil {
+		s.result.Errors["orphaned-state"] = err
+		return
+	}
+	for i, id := range ids {
+		if s.ctx.Err() != nil {
+			s.result.Unfinished += len(ids) - i
+			return
+		}
+		s.record(id, s.orphan(id))
+	}
+}
+
+func (s *sweeper) orphan(id string) error {
+	ageFrom := s.local.OrphanChangedAt(id)
+	summary, found, err := s.local.LoadPublishedSummary(id)
+	if err != nil {
+		return fmt.Errorf("load published cache of an unregistered session: %w", err)
+	}
+	if found && !summary.RetentionAge().IsZero() {
+		ageFrom = summary.RetentionAge()
+	}
+	if !s.expired(ageFrom) || !s.clockAllowsDeletion() {
+		return nil
+	}
+	harnesses := s.local.OrphanHarnesses(id)
+	if len(harnesses) == 0 {
+		harnesses = reader.Harnesses
+	}
+	for _, harness := range harnesses {
+		if err := DeleteWholeSession(s.ctx, s.store, harness, id); err != nil {
+			return fmt.Errorf("delete unregistered session: %w", err)
 		}
 	}
-	return s.result, nil
+	forgotten, err := s.local.ForgetOrphan(id)
+	if forgotten {
+		s.result.DeletedSessions = append(s.result.DeletedSessions, id)
+	}
+	if err != nil {
+		return fmt.Errorf("forget unregistered session: %w", err)
+	}
+	return nil
 }
 
 // sweeper is one Sweep: its inputs, the clock verdict it reaches at most
@@ -259,7 +334,11 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 		if err != nil {
 			return fmt.Errorf("check pending publication: %w", err)
 		}
-		if !summary.Published && !pending {
+		// A published state or pending publication moved aside because it
+		// no longer decoded may have been the record of objects that are in
+		// the bucket, so such a session is deleted from it like a published
+		// one.
+		if !summary.Published && !pending && !s.local.LostPublication(id) {
 			return s.forget(reg, deferForWork, &s.result.PrunedSessions, "forget never-published session")
 		}
 	}

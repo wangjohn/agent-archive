@@ -90,9 +90,14 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	// state.Published.LastPublishedSource). If it is unknown, only state from
 	// an old version without cached metadata, nothing is recorded: the old
 	// object then stays until the whole session expires, which is safe.
+	//
+	// For the same reason recording it is best effort: the publication has
+	// reached storage, and failing it here, before it is saved, would upload
+	// it again on every pass (a ledger that no longer decodes did exactly
+	// that). A failure is reported once the publication is recorded.
 	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && previous.Key != pending.SourceKey {
 		if err := s.local.RecordSuperseded(s.id(), previous.Key, s.now); err != nil {
-			return outcomeSkipped, fmt.Errorf("record superseded source: %w", err)
+			s.warn(fmt.Errorf("record superseded source (it stays until the session expires): %w", err))
 		}
 	}
 	var saveErr error

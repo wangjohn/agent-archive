@@ -66,7 +66,13 @@ type sessionScan struct {
 	// readyAt is when a publication the scan left waiting for the upload
 	// interval (outcomeRateLimited) becomes due.
 	readyAt time.Time
+	// warnings are failures that did not stop the scan or change its
+	// outcome, reported with the session once it ends.
+	warnings []error
 }
+
+// warn records a failure that does not end the scan.
+func (s *sessionScan) warn(err error) { s.warnings = append(s.warnings, err) }
 
 // processSession scans one session: see sessionScan for its steps.
 func processSession(ctx context.Context, local *state.Store, store storage.ObjectStore, reg archive.SessionRegistration, req state.Request, now time.Time, opts Options) (sessionOutcome, error) {

@@ -25,9 +25,135 @@ var ErrQuarantined = errors.New("unreadable local state file was moved aside")
 // quarantined file is never read again.
 const quarantineSuffix = ".corrupt"
 
-// quarantineDirs are the directories whose files the collector lists on
-// every pass and so may quarantine.
-var quarantineDirs = []string{"registrations", "requests", "subagent-candidates"}
+// corruption says what a reader does with a file of one state directory once
+// its bytes no longer decode (see isCorruptJSON). Every entry a Store owns
+// has one (corruptionPolicies, checked by a test against OwnedEntries), so a
+// new directory cannot be added without deciding it: a corrupt file must
+// never fail its session on every pass with no way out.
+type corruption int
+
+const (
+	// quarantineUnderLock: moved aside by the collector's scan, under the
+	// lock its writers (hooks among them) hold; the session carries on
+	// without it, and a hook can write it again.
+	quarantineUnderLock corruption = iota
+	// quarantineInPass: moved aside by a collector pass or retention sweep
+	// (a Store from ForCollectorPass), whose collector lock makes it the
+	// file's only writer. What it recorded is treated as never having been
+	// recorded: a lost published state or pending publication as never
+	// published, with retention still deleting whatever may have reached the
+	// bucket (see LostPublication), and a lost superseded ledger as empty,
+	// leaving its objects to whole-session expiry.
+	quarantineInPass
+	// readAsAbsent: derived bookkeeping, read as missing and rewritten.
+	readAsAbsent
+	// readAsPending: a scan journal, read as a scan still owed, which the
+	// next scan rewrites.
+	readAsPending
+	// rebuiltFromRegistrations: the native-session index, recovered from the
+	// registration naming the native session, or assigned afresh.
+	rebuiltFromRegistrations
+	// readAsRemoved: a removal record; its existence is the record.
+	readAsRemoved
+	// replacedByNextPass: status.json, rewritten whole by the next pass.
+	replacedByNextPass
+	// holdsNoContent: lock files, never decoded.
+	holdsNoContent
+)
+
+// corruptionPolicies is the corruption policy of every entry OwnedEntries
+// names.
+var corruptionPolicies = map[string]corruption{
+	"registrations":       quarantineUnderLock,
+	"requests":            quarantineUnderLock,
+	"subagent-candidates": quarantineUnderLock,
+	"published":           quarantineInPass,
+	"pending":             quarantineInPass,
+	"superseded":          quarantineInPass,
+	"scan-signatures":     readAsAbsent,
+	refreshSkipDir:        readAsAbsent,
+	"pending-scans":       readAsPending,
+	"sessions":            rebuiltFromRegistrations,
+	"forgotten":           readAsRemoved,
+	"status.json":         replacedByNextPass,
+	"request-locks":       holdsNoContent,
+}
+
+// quarantineDirs are the directories whose files a reader may move aside.
+var quarantineDirs = func() []string {
+	var dirs []string
+	for dir, policy := range corruptionPolicies {
+		if policy == quarantineUnderLock || policy == quarantineInPass {
+			dirs = append(dirs, dir)
+		}
+	}
+	sort.Strings(dirs)
+	return dirs
+}()
+
+// ForCollectorPass returns the store as a collector pass or a retention
+// sweep uses it: under the collector lock, which makes it the only writer of
+// published/, pending/, and superseded/, so a file there that no longer
+// decodes can be moved aside on the spot (see quarantineInPass). Any other
+// Store only reports such a file.
+func (s *Store) ForCollectorPass() *Store {
+	return &Store{home: s.home, collectorPass: true}
+}
+
+// readOwned reads a collector-owned JSON file at path into value. found is
+// false when it does not exist. A file that does not decode is moved aside
+// when the store belongs to a collector pass (the error then wraps
+// ErrQuarantined, once) and reported otherwise.
+func (s *Store) readOwned(path string, value any) (found bool, err error) {
+	err = local.Read(path, value)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, os.ErrNotExist):
+		return false, nil
+	case !s.collectorPass || !isCorruptJSON(err):
+		return false, err
+	}
+	return false, s.moveAside(path, err)
+}
+
+// moveAside renames a corrupt file out of the way and returns the error that
+// reports it, wrapping ErrQuarantined and the decoding error.
+func (s *Store) moveAside(path string, decodeErr error) error {
+	rel, relErr := filepath.Rel(s.home, path)
+	if relErr != nil {
+		rel = path
+	}
+	aside := quarantinePath(path)
+	if renameErr := os.Rename(path, aside); renameErr != nil {
+		return fmt.Errorf("%w (and it could not be moved aside: %w)", decodeErr, renameErr)
+	}
+	pruneQuarantine(path)
+	return fmt.Errorf("%w: %s did not decode (%w) and is now %s", ErrQuarantined, rel, decodeErr, filepath.Join(filepath.Dir(rel), filepath.Base(aside)))
+}
+
+// LostPublication reports whether a published state or pending publication
+// of the session was ever moved aside: the session may then have objects in
+// the bucket that nothing local records any more, so retention must not
+// take it for one that never published.
+func (s *Store) LostPublication(archiveSessionID string) bool {
+	for _, dir := range []string{"published", "pending"} {
+		if matches, _ := filepath.Glob(filepath.Join(s.home, dir, archiveSessionID+".json.*"+quarantineSuffix)); len(matches) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// quarantinedCopies lists the moved-aside copies of a session's files.
+func (s *Store) quarantinedCopies(archiveSessionID string) []string {
+	var out []string
+	for _, dir := range quarantineDirs {
+		matches, _ := filepath.Glob(filepath.Join(s.home, dir, archiveSessionID+".json.*"+quarantineSuffix))
+		out = append(out, matches...)
+	}
+	return out
+}
 
 // quarantinePath names the file path is moved aside to. The time in the name
 // keeps a second quarantine of the same file (a hook rewrote it, and it was
@@ -73,16 +199,7 @@ func readOrQuarantine[T any](s *Store, path, lockName string) (value T, found bo
 	if err == nil || !isCorruptJSON(err) {
 		return value, found, err
 	}
-	rel, relErr := filepath.Rel(s.home, path)
-	if relErr != nil {
-		rel = path
-	}
-	aside := quarantinePath(path)
-	if renameErr := os.Rename(path, aside); renameErr != nil {
-		return value, false, fmt.Errorf("%w (and it could not be moved aside: %w)", err, renameErr)
-	}
-	pruneQuarantine(path)
-	return value, false, fmt.Errorf("%w: %s did not decode (%w) and is now %s", ErrQuarantined, rel, err, filepath.Join(filepath.Dir(rel), filepath.Base(aside)))
+	return value, false, s.moveAside(path, err)
 }
 
 // quarantineKeep is how many quarantined copies of one file are kept. A file

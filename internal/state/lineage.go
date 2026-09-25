@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -38,7 +40,10 @@ func (s *Store) RecordSuperseded(archiveSessionID, key string, at time.Time) err
 		return errors.New("archive session ID is not a safe file name component")
 	}
 	existing, err := s.LoadSuperseded(archiveSessionID)
-	if err != nil {
+	// A ledger just moved aside is an empty one: this entry starts a new
+	// ledger, and the loss is still reported.
+	lost := err
+	if err != nil && !errors.Is(err, ErrQuarantined) {
 		return err
 	}
 	out := make([]SupersededSource, 0, len(existing)+1)
@@ -48,17 +53,16 @@ func (s *Store) RecordSuperseded(archiveSessionID, key string, at time.Time) err
 		}
 	}
 	out = append(out, SupersededSource{Key: key, SupersededAt: at})
-	return local.Write(s.supersededPath(archiveSessionID), out)
+	return errors.Join(lost, local.Write(s.supersededPath(archiveSessionID), out))
 }
 
-// LoadSuperseded returns a session's superseded-source ledger.
+// LoadSuperseded returns a session's superseded-source ledger. In a
+// collector pass a ledger that no longer decodes is moved aside (the error
+// wraps ErrQuarantined, once) and reads as empty afterwards; the objects it
+// listed stay until the whole session expires.
 func (s *Store) LoadSuperseded(archiveSessionID string) ([]SupersededSource, error) {
 	var out []SupersededSource
-	err := local.Read(s.supersededPath(archiveSessionID), &out)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
+	if _, err := s.readOwned(s.supersededPath(archiveSessionID), &out); err != nil {
 		return nil, fmt.Errorf("read superseded sources %q: %w", archiveSessionID, err)
 	}
 	return out, nil
@@ -155,6 +159,90 @@ func (s *Store) ForgetIdleSession(archiveSessionID, nativeSessionID string, defe
 	return true, nil
 }
 
+// orphanDirs are the directories whose files outlive a registration that is
+// gone without the session being forgotten: moved aside because it no longer
+// decoded, or lost to a crash in the middle of ForgetSession. They are the
+// files that say the session may have objects in the bucket.
+var orphanDirs = []string{"published", "pending", "superseded"}
+
+// OrphanedSessions lists the sessions that have published, pending, or
+// superseded state but no registration file, other than those in keep (the
+// registrations that exist but could not be read this time). Nothing else
+// records that their objects exist, so without this they would outlive
+// retention in the bucket and on this machine.
+func (s *Store) OrphanedSessions(keep map[string]bool) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, dir := range orphanDirs {
+		ids, err := s.listJSONStems(dir)
+		if err != nil {
+			return nil, fmt.Errorf("list %s: %w", dir, err)
+		}
+		for _, id := range ids {
+			if seen[id] || keep[id] {
+				continue
+			}
+			seen[id] = true
+			if _, err := os.Lstat(s.registrationPath(id)); errors.Is(err, os.ErrNotExist) {
+				out = append(out, id)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// OrphanHarnesses returns the harness an orphaned session's objects are
+// under, as its published state or superseded ledger records it, or nil when
+// neither does. Neither is decoded beyond what that takes.
+func (s *Store) OrphanHarnesses(archiveSessionID string) []string {
+	if summary, found, err := s.LoadPublishedSummary(archiveSessionID); err == nil && found && summary.Harness != "" {
+		return []string{summary.Harness}
+	}
+	ledger, _ := s.LoadSuperseded(archiveSessionID)
+	for _, entry := range ledger {
+		if parts := strings.Split(entry.Key, "/"); len(parts) > 3 && parts[0] == "sessions" && parts[2] == archiveSessionID {
+			return []string{parts[1]}
+		}
+	}
+	return nil
+}
+
+// OrphanChangedAt is the latest modification time of an orphaned session's
+// files: when it was last known to change, for a session whose capture time
+// is not recorded.
+func (s *Store) OrphanChangedAt(archiveSessionID string) time.Time {
+	var latest time.Time
+	for _, dir := range orphanDirs {
+		if info, err := os.Stat(filepath.Join(s.home, dir, archiveSessionID+".json")); err == nil && info.ModTime().After(latest) {
+			latest = info.ModTime()
+		}
+	}
+	return latest
+}
+
+// ForgetOrphan forgets an orphaned session's local state (see
+// OrphanedSessions), under its request lock, unless a registration for it has
+// appeared meanwhile: a hook registering the native session again reuses its
+// archive ID. forgotten reports whether it did.
+func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error) {
+	if !safeFileComponent(archiveSessionID) {
+		return false, errors.New("archive session ID is not a safe file name component")
+	}
+	unlock, err := s.lockRequest(archiveSessionID)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	if _, err := os.Lstat(s.registrationPath(archiveSessionID)); !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := s.ForgetSession(archiveSessionID, ""); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // SessionDir is the per-session directory under the collector-owned
 // sessions/ tree where other packages keep session-scoped evidence (the CLI's
 // read-back verification record, for one). ForgetSession clears it.
@@ -203,6 +291,9 @@ func (s *Store) ForgetSession(archiveSessionID, nativeSessionID string) error {
 	// file it locked, so a caller that opened this file just before the
 	// unlink retries on the new one instead of sharing the lock.
 	paths = append(paths, filepath.Join(s.home, subagentLockName(archiveSessionID)))
+	// Copies of its files moved aside go with it: they hold the same
+	// evidence, which expiry must not leave on this machine.
+	paths = append(paths, s.quarantinedCopies(archiveSessionID)...)
 	// The request lock goes last. Unlinking it lets a waiting hook lock a
 	// fresh file at once, so everything a hook rechecks under that lock (the
 	// registration, the request, and the native-session index a new

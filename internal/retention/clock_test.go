@@ -284,11 +284,11 @@ func TestSweepPastItsDeadlineLeavesTheRestForTheNextSweep(t *testing.T) {
 	mem := storage.NewMemoryStore()
 	dir := t.TempDir()
 	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	const sessions = 30
+	const sessions = 12
 	for i := range sessions {
 		publishTwice(t, local, mem, fmt.Sprintf("s%02d", i), dir, t0)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	opts := agreeing(Options{Now: func() time.Time { return t0.Add(100 * 24 * time.Hour) }, SessionMaxAge: 90 * 24 * time.Hour})
 	result, err := Sweep(ctx, local, slowStore{mem, 10 * time.Millisecond}, opts)

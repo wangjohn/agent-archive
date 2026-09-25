@@ -127,6 +127,8 @@ func (p publishedState) ageClampFor(bundle archive.SourceBundle) *ageClamp {
 // session without its source bundles: enough for retention, for a subagent
 // looking for its link in its parent, and for status.
 type PublishedSummary struct {
+	// Harness is the cached bundle's harness: the one its objects are under.
+	Harness string `json:"harness,omitempty"`
 	// Status is the cached bundle's status, and BlockedReason why it is
 	// blocked when it is.
 	Status        CacheStatus   `json:"status"`
@@ -162,7 +164,8 @@ func (s PublishedSummary) LinksPublished(child string) bool {
 func (p publishedState) summary() PublishedSummary {
 	_, lastPublishedAt, published := p.resolveLastPublished()
 	out := PublishedSummary{
-		Status: p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt,
+		Harness: p.Bundle.Capture.Harness.Name,
+		Status:  p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt,
 		Published: published, LastPublishedAt: lastPublishedAt,
 	}
 	if clamp := p.ageClampFor(p.Bundle); clamp != nil {
@@ -338,14 +341,15 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 	}
 	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: archiveSessionID}
-	err := local.Read(s.publishedPath(archiveSessionID), &p.state)
-	switch {
-	case err == nil:
-		p.found = true
-	case errors.Is(err, os.ErrNotExist):
+	found, err := s.readOwned(s.publishedPath(archiveSessionID), &p.state)
+	if err != nil {
+		// In a collector pass a corrupt file was moved aside: reported once,
+		// then the session is one that never published (quarantineInPass).
+		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
+	}
+	p.found = found
+	if !found {
 		p.state = publishedState{}
-	default:
-		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
 	}
 	return p, nil
 }
