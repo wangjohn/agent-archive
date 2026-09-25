@@ -129,9 +129,14 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 			return fmt.Errorf("new pending evidence appeared while confirming; rerun uninstall to review it")
 		}
 	}
-	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), legacyHookFiles(userHome), installedApps(cfg, found))
+	in := env.installation(home, userHome)
+	changes, skipped, err := planUninstallHooks(env.installedHookFiles(userHome, cfg), legacyHookFiles(userHome), in.owner(), installedApps(cfg, found))
 	if err != nil {
 		return err
+	}
+	// Another installation's hooks stay; say so, so nobody expects them gone.
+	for _, problem := range in.otherInstallationProblems(env.installedHookFiles(userHome, cfg), allHarnesses) {
+		skipped = append(skipped, "Kept: "+problem)
 	}
 	// The collector for this data directory, and one an earlier release
 	// installed for it under the default label. Never another directory's.
@@ -267,20 +272,21 @@ func installedApps(cfg config.Config, found bool) []string {
 	return cfg.Harnesses
 }
 
-// planUninstallHooks plans removing our handlers from every app's hook file
-// (files), and from its legacy path too when that differs, where an earlier
-// release may have left them. An installed app's file must be readable, or
+// planUninstallHooks plans removing owner's handlers (see hooks.Hook) from
+// every app's hook file (files), and from its legacy path too when that
+// differs, where an earlier release may have left them. Another
+// installation's handlers are never removed. An installed app's file must be readable, or
 // its hooks would stay behind. Any other file is only checked for
 // leftovers, so one that cannot be parsed (the user's own, half-edited
 // ~/.cursor/hooks.json, say) is reported in skipped and left alone rather
 // than blocking the collector's removal.
-func planUninstallHooks(files, legacy hooks.Files, installed []string) (changes []hooks.Change, skipped []string, err error) {
+func planUninstallHooks(files, legacy hooks.Files, owner hooks.Hook, installed []string) (changes []hooks.Change, skipped []string, err error) {
 	for _, app := range allHarnesses {
 		for i, set := range []hooks.Files{files, legacy} {
 			if i == 1 && legacy[app] == files[app] {
 				continue
 			}
-			change, found, err := hooks.PlanRemovalOf(set, app)
+			change, found, err := hooks.PlanRemovalOf(set, owner, app)
 			if err != nil {
 				if containsString(installed, app) && i == 0 {
 					return nil, nil, err

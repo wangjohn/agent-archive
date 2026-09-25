@@ -128,15 +128,16 @@ func Apply(changes []Change) error {
 }
 
 // PlanRemoval prepares the inverse of Plan for uninstall: for each harness,
-// a Change whose After is the current file with only our own handlers
-// stripped (see Remove). A harness whose hook file is missing, or whose file
-// never contained our entries, yields no Change at all, so an unrelated
-// configuration is never rewritten or reformatted. Apply the result with
+// a Change whose After is the current file with only hook's installation's
+// handlers (and the prototype's) stripped (see Remove). A harness whose hook
+// file is missing, or whose file never contained those, yields no Change at
+// all, so an unrelated configuration, or one only another installation's
+// hooks are in, is never rewritten or reformatted. Apply the result with
 // Apply, which keeps its refuse-on-concurrent-edit and rollback behavior.
-func PlanRemoval(files Files, harnesses []string) ([]Change, error) {
+func PlanRemoval(files Files, hook Hook, harnesses []string) ([]Change, error) {
 	changes := []Change{}
 	for _, h := range harnesses {
-		c, found, err := PlanRemovalOf(files, h)
+		c, found, err := PlanRemovalOf(files, hook, h)
 		if err != nil {
 			return nil, err
 		}
@@ -148,8 +149,8 @@ func PlanRemoval(files Files, harnesses []string) ([]Change, error) {
 }
 
 // PlanRemovalOf is PlanRemoval for one harness; found is false when its file
-// holds nothing of ours.
-func PlanRemovalOf(files Files, harness string) (change Change, found bool, err error) {
+// holds nothing of hook's installation.
+func PlanRemovalOf(files Files, hook Hook, harness string) (change Change, found bool, err error) {
 	path, err := files.path(harness)
 	if err != nil {
 		return Change{}, false, err
@@ -161,7 +162,7 @@ func PlanRemovalOf(files Files, harness string) (change Change, found bool, err 
 	if err != nil {
 		return Change{}, false, fmt.Errorf("cannot read %s", path)
 	}
-	after, removed, err := Remove(before, harness)
+	after, removed, err := Remove(before, harness, hook)
 	if err != nil {
 		return Change{}, false, fmt.Errorf("%s: %w", path, err)
 	}
@@ -498,10 +499,11 @@ func LaunchAgentProgram(plist []byte) (string, error) {
 }
 
 // Installed reports whether harness's hook file holds exactly what setup
-// installs: in every lifecycle event, exactly one handler of ours running
-// hook's command, wherever it sits among the user's own handlers, and no
-// handler of ours anywhere else. Formatting, key order, and the user's own
-// handlers do not affect the result.
+// installs: in every lifecycle event, exactly one handler of hook's
+// installation running hook's command, wherever it sits among the user's own
+// handlers, and no handler of that installation (or the prototype) anywhere
+// else. Formatting, key order, the user's own handlers, and another
+// installation's do not affect the result (see OtherInstallations).
 func Installed(files Files, hook Hook, harness string) (bool, error) {
 	path, err := files.path(harness)
 	if err != nil {
@@ -543,34 +545,21 @@ func Installed(files Files, hook Hook, harness string) (bool, error) {
 		if !ok {
 			return false, fmt.Errorf("invalid hook list for %s", m.key)
 		}
+		handlers, err := handlerList(groups, app)
+		if err != nil {
+			return false, err
+		}
 		ours := 0
-		for _, item := range groups {
-			g, ok := item.(*object)
-			if !ok {
-				return false, errors.New("invalid hook entry")
+		for _, handler := range handlers {
+			if kind, _, _ := classify(handler, app, hook); !hook.replaces(kind) {
+				continue
 			}
-			handlers := []any{g}
-			if app != harnessCursor {
-				raw, _ := g.get("hooks")
-				if handlers, ok = raw.([]any); !ok {
-					return false, errors.New("invalid hook handlers")
-				}
+			got, _ := handler.get("command")
+			kind, _ := handler.get("type")
+			if got != command || (app != harnessCursor && kind != "command") {
+				return false, nil
 			}
-			for _, h := range handlers {
-				handler, ok := h.(*object)
-				if !ok {
-					return false, errors.New("invalid hook handler")
-				}
-				if !owned(handler, app) {
-					continue
-				}
-				got, _ := handler.get("command")
-				kind, _ := handler.get("type")
-				if got != command || (app != harnessCursor && kind != "command") {
-					return false, nil
-				}
-				ours++
-			}
+			ours++
 		}
 		want := 0
 		if slices.Contains(names, m.key) {
@@ -581,4 +570,72 @@ func Installed(files Files, hook Hook, harness string) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// OtherInstallation is a hook handler another installation of agent-archive
+// (another data directory) installed in a file this one uses.
+type OtherInstallation struct {
+	// DataHome is the data directory the handler runs with: its
+	// AGENT_ARCHIVE_HOME, or the default installation's directory (""
+	// when that is not known).
+	DataHome string
+	// Default is whether it is the account's default installation, whose
+	// handlers set no AGENT_ARCHIVE_HOME.
+	Default bool
+	// Command is the handler's command when no data directory could be read
+	// from it (it was edited by hand); DataHome is then "".
+	Command string
+}
+
+// OtherInstallations lists, once each, the other installations whose
+// handlers are in harness's hook file: handlers that carry agent-archive's
+// marker but run with another data directory than hook's. Setup, uninstall,
+// and Installed leave them alone; setup refuses to install beside them, since
+// every session would then be captured twice. A missing file has none.
+func OtherInstallations(files Files, hook Hook, harness string) ([]OtherInstallation, error) {
+	path, err := files.path(harness)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	doc, err := parseDocument(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	hs, err := hooksObject(doc.root)
+	if err != nil || hs == nil {
+		return nil, err
+	}
+	app := harnessName(harness)
+	var others []OtherInstallation
+	for _, m := range hs.members {
+		groups, ok := m.value.([]any)
+		if !ok {
+			return nil, fmt.Errorf("%s: invalid hook list for %s", path, m.key)
+		}
+		handlers, err := handlerList(groups, app)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		for _, handler := range handlers {
+			kind, dataHome, unreadable := classify(handler, app, hook)
+			if kind != kindOther {
+				continue
+			}
+			other := OtherInstallation{DataHome: dataHome, Command: unreadable}
+			if other.Command == "" && other.DataHome == "" {
+				other.DataHome, other.Default = hook.DefaultDataHome, true
+			}
+			if !slices.Contains(others, other) {
+				others = append(others, other)
+			}
+		}
+	}
+	return others, nil
 }

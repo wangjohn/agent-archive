@@ -92,16 +92,25 @@ label `com.agent-archive.collector`. Any other data directory, whether set
 with `AGENT_ARCHIVE_HOME` or moved by a sandbox that overrides `HOME`, gets a
 label of its own (`com.agent-archive.collector.<hash>`), and its hooks carry
 the directory in their command, since apps run hooks without your shell's
-environment. Before stopping a job, setup and uninstall check that launchd
-loaded it from this installation's own plist; a job loaded from any other
-plist is left running and reported. These keep a second or test installation
-from stopping or replacing the default one. They do not stop it from loading
-its own job into your real launchd: stub `launchctl` in tests (see
+environment. That directory is also how each installation recognizes its own
+hooks: setup replaces and uninstall removes only handlers whose command runs
+with this installation's data directory, and leaves another installation's
+alone. If an app's hook file already holds another installation's hooks,
+setup names that installation and installs nothing beside it (two
+installations would each capture every session), and `status` reports it;
+uninstall that installation first, or give the new one its own `HOME` (or
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME`) so the apps' hook files are separate
+too. Before stopping a job, setup and uninstall check that launchd loaded it
+from this installation's own plist; a job loaded from any other plist is left
+running and reported. These keep a second or test installation from stopping
+or replacing the default one. They do not stop it from loading its own job
+into your real launchd: stub `launchctl` in tests (see
 [testing](../contributing/testing.md)).
 
-Setup retires the old `com.agent-skills.skill-runs-upload` job only when its
-label and command match that prototype, and keeps the prototype's private
-records.
+The default installation's setup retires the old
+`com.agent-skills.skill-runs-upload` job and the prototype's hooks, only when
+the job's label and command match that prototype, and keeps the prototype's
+private records. A second or test installation leaves them alone.
 
 ## After setup
 

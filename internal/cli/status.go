@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,7 +66,12 @@ type appStatus struct {
 
 	Code  string `json:"code"`
 	Hooks string `json:"hooks"`
-	Name  string `json:"name"`
+	// OtherInstallations lists the data directories of other agent-archive
+	// installations whose hooks are in this app's hook file (or, for one
+	// whose directory cannot be read, its command). This installation never
+	// changes them.
+	OtherInstallations []string `json:"other_installations,omitempty"`
+	Name               string   `json:"name"`
 	//lint:ignore LV1001 an open-ended, human-readable label built from many phrasings; statusCode maps it to the stable Code
 	State           string    `json:"state"`
 	Sessions        int       `json:"sessions"`
@@ -644,11 +650,21 @@ func readStatus(env Env) (view statusView, err error) {
 		view.Apps[i].VersionState = appDiscovery.VersionState
 		view.Apps[i].Capabilities = captureCapabilityProfile(view.Apps[i].Name)
 		view.Apps[i].VersionSupport, view.Apps[i].VersionSupportReason = installedVersionSupportDetail(appDiscovery, view.Apps[i].verifiedHarnessVersions)
-		installed, e := hooks.Installed(hookFiles, env.installation(home, userHome).hook(executable), view.Apps[i].Name)
+		in := env.installation(home, userHome)
+		installed, e := hooks.Installed(hookFiles, in.hook(executable), view.Apps[i].Name)
+		if others, err := hooks.OtherInstallations(hookFiles, in.owner(), view.Apps[i].Name); err == nil && len(others) > 0 {
+			for _, other := range others {
+				view.Apps[i].OtherInstallations = append(view.Apps[i].OtherInstallations, cmp.Or(other.DataHome, other.Command, "default"))
+			}
+			view.Warnings = append(view.Warnings, describeOtherInstallations(hookFiles[view.Apps[i].Name], view.Apps[i].Name, others))
+		}
 		switch {
 		case binaryProblem != "":
 			view.Apps[i].Hooks = hooksBroken
-		case e != nil || executableErr != nil:
+		case e != nil:
+			view.Apps[i].Hooks = "unknown"
+			view.Warnings = append(view.Warnings, fmt.Sprintf("%s hooks could not be checked: %v. Fix or restore %s, then run agent-archive setup.", appName(view.Apps[i].Name), e, hookFiles[view.Apps[i].Name]))
+		case executableErr != nil:
 			view.Apps[i].Hooks = "unknown"
 		case !installed:
 			view.Apps[i].Hooks = "missing or incomplete"
@@ -707,6 +723,10 @@ func readStatus(env Env) (view statusView, err error) {
 		if app.Hooks != "installed" {
 			view.State = "Needs attention"
 			view.Next = "Run agent-archive setup to check the hooks for " + appName(app.Name) + "."
+			if len(app.OtherInstallations) > 0 {
+				// setup refuses to install beside them, so it is not the way out.
+				view.Next = "Another agent-archive installation's hooks are in " + appName(app.Name) + "'s hook file (see the warning above). Remove that installation, or give this one its own HOME, then run agent-archive setup."
+			}
 			break
 		}
 	}

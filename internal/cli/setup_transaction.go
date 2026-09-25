@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -345,6 +346,11 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	for _, app := range next.Harnesses {
 		next.HookFiles[app] = files[app]
 	}
+	// Another installation's hooks in a file this one would install into
+	// mean every session would be captured twice; they are its to remove.
+	if problems := env.installation(home, userHome).otherInstallationProblems(files, next.Harnesses); len(problems) > 0 {
+		return &otherInstallationError{problems: problems}
+	}
 	changes, err := hooks.Plan(files, env.installation(home, userHome).hook(executable), next.Harnesses)
 	if err != nil {
 		return err
@@ -355,7 +361,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		if containsString(next.Harnesses, app) && previousFiles[app] == files[app] {
 			continue
 		}
-		removal, found, err := hooks.PlanRemovalOf(previousFiles, app)
+		removal, found, err := hooks.PlanRemovalOf(previousFiles, env.installation(home, userHome).owner(), app)
 		if err != nil {
 			return err
 		}
@@ -391,9 +397,13 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if job == jobAnotherInstallation {
 		return fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)
 	}
-	legacy, err := planLegacyMigration(userHome, env)
-	if err != nil {
-		return err
+	// The prototype's job is the account's, retired only by the account's
+	// default installation: a test installation must not change it.
+	var legacy *legacyJob
+	if env.installation(home, userHome).isDefault() {
+		if legacy, err = planLegacyMigration(userHome, env); err != nil {
+			return err
+		}
 	}
 	relabeled, err := planRelabel(home, userHome, env)
 	if err != nil {
@@ -491,6 +501,18 @@ const (
 	legacyJobName    = "legacy upload job"
 	relabeledJobName = "background collector installed under the default label"
 )
+
+// otherInstallationError is a setup refused because another installation's
+// hooks are in a hook file it would install into (see
+// describeOtherInstallations). Rerunning setup stops there again until they
+// are gone, which only the user can decide.
+type otherInstallationError struct{ problems []string }
+
+func (e *otherInstallationError) Error() string { return strings.Join(e.problems, "\n") }
+
+func (e *otherInstallationError) guidance() string {
+	return "Nothing was installed; your answers are saved. Once the other installation's hooks are gone (or this installation has its own HOME), run agent-archive setup to continue."
+}
 
 // recoveryBlockedError is a recovery that cannot proceed without the user:
 // a file changed outside setup, or launchd cannot be asked. Rerunning setup

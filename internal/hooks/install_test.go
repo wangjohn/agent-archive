@@ -105,7 +105,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removal, err := PlanRemoval(testFiles(home), []string{"claude", "codex", "cursor"})
+	removal, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude", "codex", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestPlanRemovalStripsOnlyOurEntries(t *testing.T) {
 	}
 
 	// A second removal finds nothing of ours and plans no rewrite at all.
-	again, err := PlanRemoval(testFiles(home), []string{"claude", "codex", "cursor"})
+	again, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude", "codex", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestPlanRemovalSkipsMissingAndUnrelatedFiles(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Dir(path), 0700))
 	unrelated := []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}`)
 	must(t, os.WriteFile(path, unrelated, 0600))
-	plan, err := PlanRemoval(testFiles(home), []string{"codex", "claude", "cursor"})
+	plan, err := PlanRemoval(testFiles(home), Hook{}, []string{"codex", "claude", "cursor"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestHookFilesAreWrittenThroughSymlinks(t *testing.T) {
 	if err := Apply(plan); err != nil {
 		t.Fatal(err)
 	}
-	removal, err := PlanRemoval(testFiles(home), []string{"claude"})
+	removal, err := PlanRemoval(testFiles(home), Hook{}, []string{"claude"})
 	if err != nil || len(removal) != 1 {
 		t.Fatalf("removal %d changes, err %v", len(removal), err)
 	}

@@ -64,6 +64,11 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			terminal.Println(stderr, blocked.guidance())
 			return 1
 		}
+		var other *otherInstallationError
+		if errors.As(err, &other) {
+			terminal.Println(stderr, other.guidance())
+			return 1
+		}
 		terminal.Println(stderr, "Run agent-archive setup to continue.")
 		return 1
 	}
@@ -106,6 +111,11 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	reviewed := reviewDiscoveries(discoveries, env.detectHarnesses(userHome))
 	p := newPrompter(stdin, out)
 	p.now = env.now
+	// Said before any question: setup will refuse to install an app's hooks
+	// beside another installation's (see applySetup).
+	for _, problem := range env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), allHarnesses) {
+		p.warn(problem)
+	}
 	if !found {
 		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
 	}
