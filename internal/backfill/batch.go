@@ -46,15 +46,22 @@ type Batch struct {
 	// is written before anything is removed, so an import undone even in
 	// part is never continued; history says whether anything of it is left.
 	UndoneAt *time.Time `json:"undone_at,omitempty"`
-	// ProjectsExcluded are the added projects undo has excluded. Undo never
-	// excludes one of them again, so a project setup included again stays
-	// included.
+	// ProjectsExcluded are the projects this import's undo has excluded. No
+	// undo, of this import or any other, excludes one of them again: once an
+	// undo has excluded a project, only setup can include it again, and a
+	// project setup included stays included.
 	ProjectsExcluded []string `json:"projects_excluded,omitempty"`
 	// ProjectsKept are projects undo left included although this import
 	// added them (or took them over from an earlier undo that kept them),
 	// because another import's sessions were still there. The undo of the
-	// last import with sessions there excludes them (see PlanUndo).
+	// last of those imports with sessions there excludes them (see
+	// PlanUndo).
 	ProjectsKept []string `json:"projects_kept,omitempty"`
+	// ProjectsKeptFor names, for each project in ProjectsKept, the imports
+	// that still had sessions there when undo kept it: only their undos take
+	// it over. A batch written before this field has no entry, and then any
+	// import with sessions there takes it over.
+	ProjectsKeptFor map[string][]string `json:"projects_kept_for,omitempty"`
 }
 
 // BatchFilters are the filters and --include-* flags a batch was run with.

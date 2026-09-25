@@ -202,6 +202,13 @@ asks `[y/N]`. On a yes:
   first covers apps without hooks. A republish alone is not a resume: parser
   upgrades and subagent links republish too.
 - `--project` limits the undo to one project.
+- **Shared projects.** A project the import added stays included while
+  another import still has sessions there; the batch records it in
+  `projects_kept`, and the imports it was kept for in `projects_kept_for`.
+  Only the undo of one of those imports takes it over, and the plan lists a
+  taken-over project apart from the ones the import added. A project any
+  undo has excluded (it is in some batch's `projects_excluded`) is never
+  excluded again by any undo: if it is included now, setup included it.
 
 ## Admission model
 
@@ -382,7 +389,12 @@ The file never holds native IDs or paths; added projects are stored as
 project IDs. Registrations point back through `ImportBatch`, and they are the
 source of truth: a crash can leave registrations the batch file doesn't list
 yet, so a rerun rebuilds the batch's session list from them before marking it
-complete, and undo selects sessions by `ImportBatch`. A rerun with the same
+complete, and undo selects sessions by `ImportBatch`. Only an import
+registration (`origin: import`) carrying the batch's ID belongs to it
+(`backfill.InBatch`, the one place that compares the field). A batch file
+whose `id` is missing or malformed (not `<date>-<n>`), differs from its file
+name, or that has no start time is reported as unreadable, like one that
+isn't JSON, so undo stops rather than select by an empty ID. A rerun with the same
 filters and destination continues an unfinished batch rather than starting a
 new one. `history`, `undo`, and `status` read these files, and
 `uninstall --delete-local-data` removes them.

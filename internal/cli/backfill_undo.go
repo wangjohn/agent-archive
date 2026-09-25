@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -225,11 +224,7 @@ func selectUndoBatch(home, id string) ([]backfill.Batch, *backfill.Batch, error)
 func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fingerprint string, now time.Time) ([]string, error) {
 	markUndone := func() error {
 		batch.UndoneAt = &now
-		for _, id := range plan.KeptProjectIDs() {
-			if !slices.Contains(batch.ProjectsKept, id) {
-				batch.ProjectsKept = append(batch.ProjectsKept, id)
-			}
-		}
+		batch.RecordKept(plan.KeepProjects)
 		if err := backfill.SaveBatch(home, *batch); err != nil {
 			return fmt.Errorf("%w. Nothing was changed", err)
 		}

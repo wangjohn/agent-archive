@@ -61,10 +61,11 @@ Undo also excludes the projects the import added, with two exceptions the
 plan names:
 
 - A project another import still has sessions in stays included, so that
-  import's sessions keep updating. The undo of the last import with sessions
-  there excludes it.
-- A project setup included again after an earlier undo excluded it is left
-  included.
+  import's sessions keep updating. The undo of the last of those imports
+  excludes it; the plan lists such a project apart from the ones the import
+  added.
+- A project setup included again after any undo excluded it is left
+  included, whichever import added it.
 
 Sessions captured by hooks in an excluded project stop uploading; they are not
 deleted. Undo refuses, and changes nothing, when it cannot tell its sessions
