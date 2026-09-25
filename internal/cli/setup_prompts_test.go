@@ -217,7 +217,7 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"cursor"}, DeclinedHarnesses: []string{"codex", "claude"}}}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\n"), &out)
-	if err := editSetupReview(p, &draft, t.TempDir(), nil); err != nil {
+	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Also found") || !strings.Contains(out.String(), "Change which apps are included?") {
@@ -257,7 +257,7 @@ func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
 	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}}
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\n"), &bytes.Buffer{})
-	if err := editSetupReview(p, &draft, t.TempDir(), nil); err != nil {
+	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) || !reflect.DeepEqual(draft.Config.DeclinedHarnesses, []string{"codex"}) {
@@ -324,7 +324,7 @@ func TestManualProjectsExpandInjectedHomeAndDeduplicateSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, home)
+	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, nil, home)
 	canonical, _ := filepath.EvalSymlinks(project)
 	if err != nil || len(projects) != 1 || projects[0].Root != canonical {
 		t.Fatalf("projects=%+v err=%v", projects, err)

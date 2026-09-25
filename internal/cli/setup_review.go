@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -269,7 +270,9 @@ func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) 
 	return promptStopImported(p, draft)
 }
 
-func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool) error {
+// editSetupReview asks which setting to change and asks for it again.
+// known, when not nil, lists the projects the apps' history mentions.
+func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool, known func(config.Config) []backfill.KnownProject) error {
 	choices := []option{
 		{"apps", "Apps to include"},
 		{"projects", "Projects to include"},
@@ -294,7 +297,11 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 		}
 		err = promptStopImported(p, draft)
 	case "projects":
-		projects, e := promptProjects(p, draft.Config.Archive.Projects, backfilled, userHome)
+		var offered []backfill.KnownProject
+		if known != nil {
+			offered = known(draft.Config)
+		}
+		projects, e := promptProjects(p, draft.Config.Archive.Projects, backfilled, offered, userHome)
 		if e != nil {
 			return e
 		}

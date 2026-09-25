@@ -26,6 +26,36 @@ func TestR2EndpointCanBeDerived(t *testing.T) {
 	}
 }
 
+// The bucket URL Cloudflare's dashboard shows names the account in its host
+// and the bucket in its path; setup takes both from it.
+func TestParseR2LocationReadsTheDashboardBucketURL(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  R2Location
+	}{
+		{"0123abcd", R2Location{AccountID: "0123abcd"}},
+		{"https://0123abcd.r2.cloudflarestorage.com", R2Location{AccountID: "0123abcd"}},
+		{" https://0123ABCD.r2.cloudflarestorage.com/my-bucket/ ", R2Location{AccountID: "0123abcd", Bucket: "my-bucket"}},
+		{"https://0123abcd.eu.r2.cloudflarestorage.com/eu-bucket", R2Location{Endpoint: "https://0123abcd.eu.r2.cloudflarestorage.com", Bucket: "eu-bucket"}},
+	} {
+		got, err := ParseR2Location(tc.input)
+		if err != nil || got != tc.want {
+			t.Errorf("ParseR2Location(%q) = %+v, %v; want %+v", tc.input, got, err, tc.want)
+		}
+	}
+	for _, input := range []string{
+		"",
+		"account with spaces",
+		"http://0123abcd.r2.cloudflarestorage.com/bucket",
+		"https://0123abcd.r2.cloudflarestorage.com/bucket/folder",
+		"https://0123abcd.r2.cloudflarestorage.com/bucket?token=secret",
+	} {
+		if got, err := ParseR2Location(input); err == nil {
+			t.Errorf("ParseR2Location(%q) = %+v, want an error", input, got)
+		}
+	}
+}
+
 func TestLoadAWSConfigHonorsExplicitProfileOverEnvironmentCredentials(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config")

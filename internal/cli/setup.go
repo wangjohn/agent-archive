@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -257,6 +258,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 	}
 	save := func() error { return local.Write(savedPath, draft) }
+	known := func(cfg config.Config) []backfill.KnownProject { return knownProjects(env, userHome, cfg) }
 	var verifiedStorage credentials.Config
 	for {
 		if draft.Step == 0 {
@@ -329,16 +331,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		if draft.Config.Storage != verifiedStorage {
 			terminal.Println(out, "\nChecking your storage connection…")
-			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			store, e := env.openStore(draft.Config)
-			if e != nil {
-				cancel()
+			connectErr, e := verifyStorage(&draft.Config, env)
+			if connectErr != nil {
 				draft.Step = 1
 				_ = save()
-				return fmt.Errorf("connect storage: %w", e)
+				return connectErr
 			}
-			e = storage.VerifyAccess(ctx, store)
-			cancel()
 			if e != nil {
 				failure := fmt.Errorf("storage test failed: %w (check access and retry; saved choices are kept)", e)
 				terminal.Println(out, failure)
@@ -350,7 +348,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 					return failure
 				}
 				if choice == "edit" {
-					if err = editSetupReview(p, &draft, userHome, backfilledProjects(env)); err != nil {
+					if err = editSetupReview(p, &draft, userHome, backfilledProjects(env), known); err != nil {
 						return err
 					}
 					if err = save(); err != nil {
@@ -359,8 +357,6 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 				}
 				continue
 			}
-			draft.Config.BucketPrivacy = inspectBucketPrivacy(draft.Config, store, env.now())
-			draft.Config.StorageVerifiedAt = env.now().UTC()
 			verifiedStorage = draft.Config.Storage
 			terminal.Println(out, p.style.green("✓ Connected."))
 		}
@@ -389,7 +385,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			return nil
 		}
 		if action == "edit" {
-			if err = editSetupReview(p, &draft, userHome, backfilledProjects(env)); err != nil {
+			if err = editSetupReview(p, &draft, userHome, backfilledProjects(env), known); err != nil {
 				return err
 			}
 			if err = save(); err != nil {
@@ -418,20 +414,56 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if e := pruneCaptureDiagnostics(home, draft.Config.Archive.Projects); e != nil {
 			terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
 		}
-		terminal.Println(out, "\nConfiguration saved.")
-		if existing.Paused {
-			terminal.Println(out, "Next: run agent-archive resume when you’re ready to start archiving.")
-		} else if containsString(draft.Config.Harnesses, "codex") {
-			terminal.Println(out, "Next: in Codex CLI, open /hooks to approve the archive hooks, then start a new session in an included project.")
-			if len(draft.Config.Harnesses) > 1 {
-				terminal.Println(out, "Repeat hook approval and a new session in your other selected apps.")
-			}
-		} else {
-			terminal.Println(out, "Next: approve the archive hooks in your selected apps, then start a new session in an included project.")
-		}
-		terminal.Println(out, "Check progress with agent-archive status.")
+		printNextSteps(p, draft.Config.Harnesses, existing.Paused)
 		return nil
 	}
+}
+
+// verifyStorage checks that setup can write, read, and delete in the
+// configured bucket, and records the bucket's privacy evidence and the check
+// time in cfg. connectErr is a failure to build a client at all; accessErr
+// is a failed check, which new settings may fix.
+func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	store, err := env.openStore(*cfg)
+	if err != nil {
+		return fmt.Errorf("connect storage: %w", err), nil
+	}
+	if err = storage.VerifyAccess(ctx, store); err != nil {
+		return nil, err
+	}
+	cfg.BucketPrivacy = inspectBucketPrivacy(*cfg, store, env.now())
+	cfg.StorageVerifiedAt = env.now().UTC()
+	return nil, nil
+}
+
+// hookNextStep says what each app needs before it captures: Codex asks to
+// review new hooks in /hooks, while Claude Code and Cursor read them when a
+// session starts.
+var hookNextStep = map[string]string{
+	"codex":  "Codex: run /hooks and approve the archive hooks, then start a new session.",
+	"claude": "Claude Code: nothing to approve; start a new session.",
+	"cursor": "Cursor: nothing to approve; start a new Agent chat.",
+}
+
+// printNextSteps ends a committed setup with one line per app on what to do
+// next. Capture needs a proven fresh start (provesFreshSessionStart), so it
+// says that sessions already open are not captured.
+func printNextSteps(p *prompter, apps []string, paused bool) {
+	terminal.Println(p.out, "\nConfiguration saved.")
+	if paused {
+		terminal.Println(p.out, "Next: run agent-archive resume when you’re ready to start archiving.")
+		return
+	}
+	terminal.Println(p.out, "Next, in each app:")
+	for _, app := range apps {
+		if step, ok := hookNextStep[app]; ok {
+			terminal.Println(p.out, "  "+step)
+		}
+	}
+	terminal.Println(p.out, "Sessions already open are not captured: only a new session (or /clear) in an included project counts.")
+	terminal.Println(p.out, "Check progress with agent-archive status.")
 }
 
 func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) error {
@@ -458,12 +490,22 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 				}
 				if acceptedProject {
 					cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(root), Root: root, Included: true}}
+					more, e := p.yesNo("Add another project?", false)
+					if e != nil {
+						return e
+					}
+					if more {
+						cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, nil, knownProjects(env, userHome, *cfg), userHome)
+						if err != nil {
+							return err
+						}
+					}
 				}
 			}
 		}
 	}
 	if !acceptedProject {
-		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), userHome)
+		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), knownProjects(env, userHome, *cfg), userHome)
 		if err != nil {
 			return err
 		}
@@ -503,7 +545,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 		terminal.Println(p.out, "  1. R2 Object Storage > Create bucket. Leave public access off.")
 		terminal.Println(p.out, "  2. Manage API tokens > Create API token: Object Read & Write, applied to only that bucket.")
 		terminal.Println(p.out, "     Copy the Access Key ID and Secret Access Key.")
-		terminal.Println(p.out, "  3. Copy the Account ID from the R2 overview page.")
+		terminal.Println(p.out, "  3. Copy the Account ID from the R2 overview page, or the bucket's URL from its settings.")
 		terminal.Println(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
 		terminal.Println(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
 		terminal.Println(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
@@ -515,29 +557,17 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 	if cfg.Provider != choice {
 		cfg = credentials.Config{Provider: choice}
 	}
-	cfg.Bucket, err = p.required("Bucket name", cfg.Bucket)
-	if err != nil {
-		return cfg, secret, false, err
-	}
 	if choice == "r2" {
-		for {
-			endpoint, e := p.required("R2 account ID or full S3 endpoint", firstNonEmpty(cfg.R2Endpoint, cfg.R2AccountID))
-			if e != nil {
-				return cfg, secret, false, e
+		// The account comes first, so a pasted bucket URL can fill in the
+		// bucket too.
+		fromURL, e := promptR2Location(p, &cfg)
+		if e != nil {
+			return cfg, secret, false, e
+		}
+		if !fromURL {
+			if cfg.Bucket, err = p.required("Bucket name", cfg.Bucket); err != nil {
+				return cfg, secret, false, err
 			}
-			if strings.Contains(endpoint, "://") {
-				cfg.R2Endpoint = endpoint
-				cfg.R2AccountID = ""
-			} else {
-				cfg.R2AccountID = endpoint
-				cfg.R2Endpoint = ""
-			}
-			normalized, e := credentials.R2Endpoint(cfg.R2Endpoint, cfg.R2AccountID)
-			if e == nil {
-				cfg.R2Endpoint = normalized
-				break
-			}
-			terminal.Println(p.out, "Enter the Cloudflare R2 S3 endpoint or account ID from your dashboard.")
 		}
 		reuse := false
 		if cfg.R2CredentialRef != "" {
@@ -566,6 +596,9 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 			}
 		}
 	} else {
+		if cfg.Bucket, err = p.required("Bucket name", cfg.Bucket); err != nil {
+			return cfg, secret, false, err
+		}
 		if err = promptAWSProfile(p, &cfg, env); err != nil {
 			return cfg, secret, false, err
 		}
@@ -573,6 +606,32 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)
 
 	return cfg, secret, secret.SecretAccessKey != "", err
+}
+
+// promptR2Location asks for the R2 account ID, or a URL: the bucket URL
+// Cloudflare's dashboard shows fills in the bucket as well (see
+// credentials.ParseR2Location), and fromURL says it did.
+func promptR2Location(p *prompter, cfg *credentials.Config) (fromURL bool, err error) {
+	for {
+		answer, err := p.required("R2 account ID or bucket URL", firstNonEmpty(cfg.R2AccountID, cfg.R2Endpoint))
+		if err != nil {
+			return false, err
+		}
+		loc, err := credentials.ParseR2Location(answer)
+		if err == nil {
+			var endpoint string
+			if endpoint, err = credentials.R2Endpoint(loc.Endpoint, loc.AccountID); err == nil {
+				if loc.Bucket != "" {
+					cfg.Bucket = loc.Bucket
+					terminal.Printf(p.out, "Bucket: %s\n", cfg.Bucket)
+				}
+				cfg.R2AccountID, cfg.R2Endpoint = loc.AccountID, endpoint
+				return loc.Bucket != "", nil
+			}
+		}
+		terminal.Printf(p.out, "That isn't an R2 account ID or bucket URL (%v).\n", err)
+		terminal.Println(p.out, "Paste the Account ID from the R2 overview page, or the bucket's URL from its settings, such as https://<account-id>.r2.cloudflarestorage.com/<bucket>.")
+	}
 }
 
 // chooseHarnesses asks which apps to include and keeps cfg.DeclinedHarnesses
@@ -724,9 +783,9 @@ func appList(apps []string) string {
 // An excluded project stays in the list as excluded, so its exclusion keeps
 // holding: its imported sessions stop uploading and later backfills skip it.
 // A project that was not imported and is not kept is dropped, as before.
-func promptProjects(p *prompter, existing []archive.ProjectActivation, backfilled map[string]bool, userHomes ...string) ([]archive.ProjectActivation, error) {
+// known are the projects the apps' history mentions, offered by number.
+func promptProjects(p *prompter, existing []archive.ProjectActivation, backfilled map[string]bool, known []backfill.KnownProject, userHomes ...string) ([]archive.ProjectActivation, error) {
 	result := []archive.ProjectActivation{}
-	seen := map[string]bool{}
 	imported := 0
 	for _, project := range existing {
 		if project.Included && backfilled[project.ProjectID] {
@@ -757,58 +816,84 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, backfille
 		switch {
 		case keep:
 			result = append(result, project)
-			seen[project.Root] = true
 		case backfilled[project.ProjectID]:
 			project.Included = false
 			result = append(result, project)
 		}
 	}
-	terminal.Println(p.out, "Add project directories, one per line. Enter a blank line when finished.")
-	for {
-		root, err := p.line("Project path: ")
-		if err != nil {
-			return nil, err
+	return addProjects(p, result, existing, known, userHomes...)
+}
+
+// maxKnownProjects caps how many projects from the apps' history setup
+// lists, most recent first; any other can still be typed.
+const maxKnownProjects = 12
+
+// addProjects asks for projects to add to result: by number from known,
+// when the apps' history mentions any result does not include, or by path.
+// A project in existing keeps its activation time.
+func addProjects(p *prompter, result, existing []archive.ProjectActivation, known []backfill.KnownProject, userHomes ...string) ([]archive.ProjectActivation, error) {
+	home := ""
+	if len(userHomes) > 0 {
+		home = userHomes[0]
+	}
+	seen := map[string]bool{}
+	for _, project := range result {
+		if project.Included {
+			seen[project.Root] = true
 		}
-		if root == "" {
-			break
+	}
+	var offered []string
+	for _, project := range known {
+		if !seen[project.Root] && len(offered) < maxKnownProjects {
+			if len(offered) == 0 {
+				terminal.Println(p.out, "Projects with recent sessions:")
+			}
+			offered = append(offered, project.Root)
+			terminal.Printf(p.out, "  %d) %s  %s\n", len(offered), displayPath(project.Root, home), p.style.dim(lastUsed(project.LastUsed, p.clock())))
 		}
+	}
+	label := "Project path: "
+	if len(offered) > 0 {
+		terminal.Println(p.out, "Enter the numbers to include (for example 1 3), or a project path. Enter a blank line when finished.")
+		label = "Projects: "
+	} else {
+		terminal.Println(p.out, "Add project directories, one per line. Enter a blank line when finished.")
+	}
+	include := func(root string) {
 		if root == "~" || strings.HasPrefix(root, "~/") {
-			home, e := os.UserHomeDir()
-			if len(userHomes) > 0 {
-				home = userHomes[0]
-				e = nil
+			h, e := os.UserHomeDir()
+			if home != "" {
+				h, e = home, nil
 			}
 			if e != nil {
-				return nil, e
+				terminal.Println(p.out, "Your home directory is unknown; enter the full path.")
+				return
 			}
-			root = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(root, "~"), "/"))
+			root = filepath.Join(h, strings.TrimPrefix(strings.TrimPrefix(root, "~"), "/"))
 		}
-		root, err = filepath.Abs(root)
+		root, err := filepath.Abs(root)
 		if err == nil {
 			root, err = filepath.EvalSymlinks(root)
 		}
 		if err != nil {
 			terminal.Println(p.out, "That directory does not exist. Enter an existing project path.")
-			continue
+			return
 		}
 		info, err := os.Stat(root)
 		if err != nil || !info.IsDir() {
 			terminal.Println(p.out, "Enter a directory, not a file.")
-			continue
+			return
 		}
 		if seen[root] {
 			terminal.Println(p.out, "That project is already included.")
-			continue
+			return
 		}
 		seen[root] = true
-		reincluded := false
 		for i := range result {
 			if result[i].Root == root {
-				result[i].Included, reincluded = true, true
+				result[i].Included = true
+				return
 			}
-		}
-		if reincluded {
-			continue
 		}
 		// ActivatedAt is left zero here; setup stamps it when it commits.
 		project := archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true}
@@ -819,7 +904,90 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, backfille
 		}
 		result = append(result, project)
 	}
-	return result, nil
+	for {
+		answer, err := p.line(label)
+		if err != nil {
+			return nil, err
+		}
+		if answer == "" {
+			return result, nil
+		}
+		if numbers, ok := parseNumbers(answer); ok && len(offered) > 0 {
+			if slices.ContainsFunc(numbers, func(n int) bool { return n < 1 || n > len(offered) }) {
+				terminal.Printf(p.out, "Enter numbers from 1 to %d, or a project path.\n", len(offered))
+				continue
+			}
+			for _, n := range numbers {
+				if !seen[offered[n-1]] {
+					include(offered[n-1])
+				}
+			}
+			continue
+		}
+		include(answer)
+	}
+}
+
+// parseNumbers reads a list of numbers such as "1 3", "1,3", or "2-4". ok is
+// false for anything else, such as a path.
+func parseNumbers(answer string) (numbers []int, ok bool) {
+	for _, field := range strings.FieldsFunc(answer, func(r rune) bool { return r == ' ' || r == ',' }) {
+		first, last, isRange := strings.Cut(field, "-")
+		from, err := strconv.Atoi(first)
+		if err != nil {
+			return nil, false
+		}
+		to := from
+		if isRange {
+			if to, err = strconv.Atoi(last); err != nil || to < from {
+				return nil, false
+			}
+		}
+		for n := from; n <= to; n++ {
+			numbers = append(numbers, n)
+		}
+	}
+	return numbers, len(numbers) > 0
+}
+
+// displayPath shows path with the home directory as ~.
+func displayPath(path, home string) string {
+	if home != "" {
+		if rel, err := filepath.Rel(home, path); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			return filepath.Join("~", rel)
+		}
+	}
+	return path
+}
+
+// lastUsed says how long ago a project was last used, in days.
+func lastUsed(at, now time.Time) string {
+	if at.IsZero() {
+		return ""
+	}
+	y1, m1, d1 := at.In(now.Location()).Date()
+	y2, m2, d2 := now.Date()
+	days := int(time.Date(y2, m2, d2, 0, 0, 0, 0, time.UTC).Sub(time.Date(y1, m1, d1, 0, 0, 0, 0, time.UTC)).Hours() / 24)
+	switch {
+	case days <= 0:
+		return "today"
+	case days == 1:
+		return "yesterday"
+	}
+	return fmt.Sprintf("%d days ago", days)
+}
+
+// knownProjects lists the projects the apps' session history mentions
+// that cfg does not, most recent first (backfill.KnownProjects). It is only
+// an offer, so a failure or a slow disk leaves the list empty.
+func knownProjects(env Env, userHome string, cfg config.Config) []backfill.KnownProject {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	projects, err := backfill.KnownProjects(ctx, env.backfillEnvironment(userHome, cfg), cfg)
+	if err != nil {
+		return nil
+	}
+	return projects
 }
 
 // includedProjects counts the projects capture is on for.
