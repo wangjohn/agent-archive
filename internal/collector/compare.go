@@ -153,7 +153,8 @@ func withoutLinkedSessionEvidence(in []archive.SupplementalEvidence) []archive.S
 // did, record for record, so replacing previous loses no retained evidence.
 // It compares filtered output, so it is only meaningful when both were
 // filtered the same way: a new filter or adapter version legitimately changes
-// what earlier records look like, and must not read as a rewrite.
+// what earlier records look like, and must not read as a rewrite. A rewrite
+// across an upgrade is found from the transcript instead (see refilter.go).
 func nativeEvidenceExtends(previous, candidate archive.SourceBundle) bool {
 	if previous.Capture.FilterVersion != candidate.Capture.FilterVersion || previous.Capture.AdapterVersion != candidate.Capture.AdapterVersion {
 		return true
