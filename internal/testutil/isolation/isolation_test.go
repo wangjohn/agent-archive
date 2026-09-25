@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/local"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 const testPrefix = "agent-archive-isolation-test-"
@@ -34,7 +35,7 @@ func TestGoCommandKeepsItsCaches(t *testing.T) {
 		t.Skipf("no go command: %v", err)
 	}
 	home := os.Getenv("HOME")
-	for _, dir := range strings.Fields(string(out)) {
+	for dir := range strings.FieldsSeq(string(out)) {
 		if local.PathWithin(dir, home) {
 			t.Errorf("the go command keeps %s in the test's temporary home %s", dir, home)
 		}
