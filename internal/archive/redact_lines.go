@@ -13,8 +13,13 @@ import (
 // for a start anchor), so they are run line by line instead, and only on the
 // lines that hold one of the literal words (needles) every match of the
 // pattern must contain. A short line also lets regexp use its much faster
-// backtracker. The result is what matching the whole string would give.
-// TestLineMatchesAgreeWithWholeStringMatches checks that.
+// backtracker. The result is what matching the whole string would give:
+// FuzzGatedRedactionMatchesWhole checks the whole redaction against an
+// ungated run over the whole string (needleText.whole), and
+// TestPatternNeedlesAreRequired proves from each parsed regexp that every
+// match holds one of its needles and separators. A start anchor in a
+// pattern must mean the same on a line as in the whole string: use `(?m)`
+// or a leading `\s`, not `^` alone.
 
 // linePattern is a single-line credential pattern and its needles: lower
 // case literals one of which every match contains, in its ASCII-lowered
@@ -52,6 +57,10 @@ type needleText struct {
 	s      string
 	lower  string
 	exotic bool
+	// whole, set only by tests, runs every pattern over the whole string
+	// with no needle, separator, or line gate: the reference the gated
+	// search is checked against (FuzzGatedRedactionMatchesWhole).
+	whole bool
 }
 
 func newNeedleText(s string) needleText {
@@ -82,6 +91,9 @@ func (t needleText) presentNeedles(needles []string) (present []string, gated bo
 // on the whole string would, with offsets into t.s. It searches only the
 // lines holding one of p's needles.
 func lineMatches(p linePattern, t needleText) [][]int {
+	if t.whole {
+		return p.re.FindAllStringSubmatchIndex(t.s, -1)
+	}
 	present, gated := t.presentNeedles(p.needles)
 	if gated && len(present) == 0 {
 		return nil

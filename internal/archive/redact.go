@@ -113,13 +113,18 @@ const maxRedactPasses = 4
 // The line-based patterns read the text through a needleText (see
 // linePattern), prepared again only when a step changed the text.
 func redactSensitiveOnce(value string) (string, bool) {
+	return redactOnce(value, newNeedleText)
+}
+
+// redactOnce is redactSensitiveOnce with the text prepared by prepare.
+func redactOnce(value string, prepare func(string) needleText) (string, bool) {
 	redacted := false
-	text := newNeedleText(value)
+	text := prepare(value)
 	apply := func(out string, hit bool) {
 		if hit {
 			value, redacted = out, true
 			if text.s != value {
-				text = newNeedleText(value)
+				text = prepare(value)
 			}
 		}
 	}
@@ -192,6 +197,13 @@ func redactMatches(pattern linePattern, t needleText, values bool) (string, bool
 // line by line, on the lines holding a credential word (see linePattern).
 func redactAssignments(t needleText) (string, bool) {
 	s := t.s
+	if t.whole {
+		spans := appendAssignmentSpans(nil, s, 0, len(s))
+		if len(spans) == 0 {
+			return s, false
+		}
+		return redactSpans(s, spans), true
+	}
 	present, gated := t.presentNeedles(vocabularyNeedles)
 	if gated && len(present) == 0 {
 		return s, false

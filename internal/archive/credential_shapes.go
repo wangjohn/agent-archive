@@ -96,7 +96,7 @@ var credentialName = credentialNamePattern() + credentialSuffix
 // matches it. See docs/security/privacy.md.
 var (
 	credentialAssignment = regexp.MustCompile(`(?i)` + credentialLead + credentialQuote + `(?P<name>` + credentialName + `)` + credentialQuote + credentialSeparator + credentialScheme + `(?P<value>` + credentialValue + `)`)
-	credentialFlag       = regexp.MustCompile(`(?i)(?:^|[ \t])-{1,2}` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`)
+	credentialFlag       = regexp.MustCompile(`(?im)(?:^|[ \t])-{1,2}` + credentialName + `[ \t]+(?P<value>` + credentialFlagValue + `)`)
 	// credentialArgvFlag is a credential flag as one element of an argument
 	// vector (`["gh", "auth", "login", "--token", "abc"]`).
 	credentialArgvFlag = regexp.MustCompile(`(?i)^-{1,2}` + credentialName + `$`)
