@@ -148,7 +148,10 @@ can list them, inspect them, and hand one to another agent.
   wrong. Every age it compares was stamped by that clock, so a clock set a
   year ahead deleted every session within a minute. Before deleting anything
   by age it now checks its clock against the storage service's, and deletes
-  nothing while the Mac is more than an hour ahead (`status` says why); a
+  nothing while the Mac is more than an hour ahead (`status` says why). The
+  check runs only when something is due, and at most once an hour while it
+  holds deletion, so a clock that stays wrong does not write a check object
+  to the bucket every minute; a
   capture time stamped while the clock was ahead no longer keeps a session
   past retention. See [bucket layout](docs/reference/bucket-layout.md).
 - A retention sweep that runs out of time leaves the rest for the next pass
