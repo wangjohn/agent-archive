@@ -13,8 +13,9 @@ The first release, `v0.1.0`, will be cut from this section.
 - **Capture** of Claude Code, Codex, and Cursor sessions on macOS through
   each app's lifecycle hooks, for the projects you include. A LaunchAgent
   filters each session, uploads it with its metadata to your own S3 or R2
-  bucket, reads it back to verify it, and deletes sessions past the
-  retention period (90 days by default).
+  bucket, verifies what arrived by its checksum, and deletes sessions past
+  the retention period (90 days by default). A long, growing session costs
+  a pass a few seconds, and nothing is downloaded to verify it.
 - **`setup`**: three steps (apps and projects, storage, review), resumable if
   interrupted, and safe to rerun to change any of them. It offers the
   projects your apps already have sessions in, accepts the R2 bucket URL the

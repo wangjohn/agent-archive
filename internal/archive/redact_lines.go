@@ -57,6 +57,10 @@ type needleText struct {
 	s      string
 	lower  string
 	exotic bool
+	// pairs, for a text long enough to be worth it, records the pairs of
+	// adjacent bytes in lower, so a needle that holds a pair lower does not
+	// is known absent without searching for it (see presentNeedles).
+	pairs *pairSet
 	// whole, set only by tests, runs every pattern over the whole string
 	// with no needle, separator, or line gate: the reference the gated
 	// search is checked against (FuzzGatedRedactionMatchesWhole).
@@ -70,21 +74,64 @@ func newNeedleText(s string) needleText {
 			lower[i] = c + 'a' - 'A'
 		}
 	}
-	return needleText{s: s, lower: string(lower), exotic: strings.ContainsRune(s, '\u017f') || strings.ContainsRune(s, '\u212a')}
+	t := needleText{s: s, lower: string(lower), exotic: strings.ContainsRune(s, '\u017f') || strings.ContainsRune(s, '\u212a')}
+	if len(s) >= pairSetMinLength {
+		t.pairs = newPairSet(t.lower)
+	}
+	return t
 }
 
 // presentNeedles returns the needles that occur anywhere in t, all of them
 // when t is not gated (see needleText), or nil when needles is empty.
+//
+// Each redaction pass checks every string for a few hundred needles, and
+// searching the whole string for each one was most of the time a large
+// transcript took to filter. A needle one of whose byte pairs is not in
+// t.pairs cannot be in the string, so only the rest are searched for; the
+// answer is the same.
 func (t needleText) presentNeedles(needles []string) (present []string, gated bool) {
 	if len(needles) == 0 || t.exotic {
 		return nil, false
 	}
 	for _, needle := range needles {
-		if strings.Contains(t.lower, needle) {
+		if (t.pairs == nil || t.pairs.mayContain(needle)) && strings.Contains(t.lower, needle) {
 			present = append(present, needle)
 		}
 	}
 	return present, true
+}
+
+// pairSetMinLength is the length from which a needleText records its byte
+// pairs: below it, searching for every needle is as cheap as recording them.
+const pairSetMinLength = 256
+
+// pairSet is a set of pairs of adjacent bytes, hashed into 8192 bits. A
+// hash collision can only make a pair look present, never absent.
+type pairSet [128]uint64
+
+func pairBit(a, b byte) uint { return (uint(a)<<5 ^ uint(b)) & 8191 }
+
+// newPairSet records every pair of adjacent bytes in s.
+func newPairSet(s string) *pairSet {
+	var set pairSet
+	for i := 0; i+1 < len(s); i++ {
+		bit := pairBit(s[i], s[i+1])
+		set[bit>>6] |= 1 << (bit & 63)
+	}
+	return &set
+}
+
+// mayContain reports whether a string the set was built from can contain
+// needle: false only when a pair of adjacent bytes in needle is in none of
+// its positions, which every occurrence of needle would put there.
+func (set *pairSet) mayContain(needle string) bool {
+	for i := 0; i+1 < len(needle); i++ {
+		bit := pairBit(needle[i], needle[i+1])
+		if set[bit>>6]&(1<<(bit&63)) == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // lineMatches returns every match of p in t.s, as FindAllStringSubmatchIndex

@@ -3,24 +3,115 @@ package collector
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"reflect"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 )
 
 // bundleEvidenceEqual reports whether two source bundles carry the same
 // retained evidence, ignoring their capture timestamp: a changed scan time
-// alone must never look like a change in evidence.
+// alone must never look like a change in evidence. Evidence is equal when
+// its JSON is. The native records and text, nearly all of a large bundle,
+// are compared in place (see jsonValuesEqual) rather than by encoding both
+// bundles, which cost two copies of a bundle tens of megabytes long every
+// pass; the rest is small and is compared as JSON.
 func bundleEvidenceEqual(a, b archive.SourceBundle) (bool, error) {
-	a.Capture.CapturedAt = time.Time{}
-	b.Capture.CapturedAt = time.Time{}
-	return jsonEqual(a, b)
+	if len(a.NativeRecords) != len(b.NativeRecords) || (a.NativeRecords == nil) != (b.NativeRecords == nil) || len(a.NativeText) != len(b.NativeText) {
+		return false, nil
+	}
+	for i := range a.NativeText {
+		if !jsonStringsEqual(a.NativeText[i].Format, b.NativeText[i].Format) || !jsonStringsEqual(a.NativeText[i].Content, b.NativeText[i].Content) {
+			return false, nil
+		}
+	}
+	for i := range a.NativeRecords {
+		if same, err := jsonValuesEqual(a.NativeRecords[i], b.NativeRecords[i]); err != nil || !same {
+			return false, err
+		}
+	}
+	a.Capture.CapturedAt, b.Capture.CapturedAt = time.Time{}, time.Time{}
+	a.NativeRecords, b.NativeRecords = nil, nil
+	a.NativeText, b.NativeText = nil, nil
+	return jsonEncodingsEqual(a, b)
 }
 
-// jsonEqual reports whether a and b encode to the same JSON.
-func jsonEqual(a, b any) (bool, error) {
+// jsonValuesEqual reports whether a and b encode to the same JSON, without
+// encoding them when they hold what decoded JSON holds (objects, arrays,
+// strings, numbers, booleans, null) of the same kinds. Anything else is
+// encoded and compared.
+func jsonValuesEqual(a, b any) (bool, error) {
+	switch x := a.(type) {
+	case map[string]any:
+		if y, ok := b.(map[string]any); ok {
+			if (x == nil) != (y == nil) || len(x) != len(y) {
+				return false, nil
+			}
+			for key, xv := range x {
+				yv, found := y[key]
+				if !found {
+					// Keys that differ as strings can still encode alike
+					// (invalid UTF-8): only an encoding can tell.
+					return jsonEncodingsEqual(a, b)
+				}
+				if same, err := jsonValuesEqual(xv, yv); err != nil || !same {
+					return false, err
+				}
+			}
+			return true, nil
+		}
+	case []any:
+		if y, ok := b.([]any); ok {
+			if (x == nil) != (y == nil) || len(x) != len(y) {
+				return false, nil
+			}
+			for i := range x {
+				if same, err := jsonValuesEqual(x[i], y[i]); err != nil || !same {
+					return false, err
+				}
+			}
+			return true, nil
+		}
+	case string:
+		if y, ok := b.(string); ok {
+			return jsonStringsEqual(x, y), nil
+		}
+	case float64:
+		// Every float64 JSON can hold has one encoding, and 0 and -0 have
+		// different ones ("0", "-0"), as they have different bits.
+		if y, ok := b.(float64); ok {
+			return math.Float64bits(x) == math.Float64bits(y), nil
+		}
+	case bool:
+		if y, ok := b.(bool); ok {
+			return x == y, nil
+		}
+	case nil:
+		if b == nil {
+			return true, nil
+		}
+	}
+	return jsonEncodingsEqual(a, b)
+}
+
+// jsonStringsEqual reports whether two strings encode to the same JSON.
+// Distinct valid UTF-8 strings never do; invalid bytes encode as U+FFFD, so
+// strings holding them are compared by encoding.
+func jsonStringsEqual(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if utf8.ValidString(a) && utf8.ValidString(b) {
+		return false
+	}
+	same, err := jsonEncodingsEqual(a, b)
+	return err == nil && same
+}
+
+func jsonEncodingsEqual(a, b any) (bool, error) {
 	aBytes, err := json.Marshal(a)
 	if err != nil {
 		return false, err
@@ -63,9 +154,6 @@ func withoutLinkedSessionEvidence(in []archive.SupplementalEvidence) []archive.S
 // It compares filtered output, so it is only meaningful when both were
 // filtered the same way: a new filter or adapter version legitimately changes
 // what earlier records look like, and must not read as a rewrite.
-//
-// TODO(#70): that also lets a transcript truncated since the last publish
-// replace the richer snapshot on an upgrade.
 func nativeEvidenceExtends(previous, candidate archive.SourceBundle) bool {
 	if previous.Capture.FilterVersion != candidate.Capture.FilterVersion || previous.Capture.AdapterVersion != candidate.Capture.AdapterVersion {
 		return true

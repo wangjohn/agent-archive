@@ -3,6 +3,8 @@ package archive
 import (
 	"fmt"
 	"math"
+	"math/rand/v2"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -109,15 +111,57 @@ func FuzzLineMatchesCoverWholeString(f *testing.F) {
 	})
 }
 
+// A pair set only ever rules a needle out when the text cannot hold it, so
+// the needles found present are the same with it and without it, whatever
+// the text.
+func TestPairSetFindsTheSameNeedles(t *testing.T) {
+	t.Parallel()
+	var needles []string
+	for _, p := range gatedPatterns() {
+		needles = append(needles, p.needles...)
+	}
+	random := rand.New(rand.NewPCG(3, 4))
+	alphabets := []string{"abcdefghijklmnopqrstuvwxyz", "etaoinsrhld_-:=. \n", "\x00\x01\xffAa:-_\u00e9"}
+	for trial := range 2000 {
+		alphabet := alphabets[trial%len(alphabets)]
+		var b strings.Builder
+		for b.Len() < pairSetMinLength+random.IntN(2048) {
+			if random.IntN(20) == 0 {
+				b.WriteString(needles[random.IntN(len(needles))])
+				continue
+			}
+			b.WriteByte(alphabet[random.IntN(len(alphabet))])
+		}
+		text := newNeedleText(b.String())
+		if text.pairs == nil {
+			t.Fatalf("no pair set for %d bytes", len(text.s))
+		}
+		// Every substring of the text is one it may contain.
+		for range 20 {
+			start := random.IntN(len(text.lower))
+			end := min(len(text.lower), start+1+random.IntN(12))
+			if !text.pairs.mayContain(text.lower[start:end]) {
+				t.Fatalf("the pair set rules out %q, which is in the text", text.lower[start:end])
+			}
+		}
+		withPairs, _ := text.presentNeedles(needles)
+		text.pairs = nil
+		without, _ := text.presentNeedles(needles)
+		if !slices.Equal(withPairs, without) {
+			t.Fatalf("needles present with the pair set %v, without %v, in %q", withPairs, without, text.s)
+		}
+	}
+}
+
 // A long line with many assignments, as minified code has, costs time in
 // proportion to its length. Each assignment used to rescan its line from the
 // start, so the cost grew with the square of the line (0.9 MB took half a
 // minute).
+// It is timed, so it runs alone rather than alongside the parallel tests.
 func TestManyAssignmentsOnOneLineStayLinear(t *testing.T) {
 	if raceEnabled {
 		t.Skip("timings under the race detector are meaningless")
 	}
-	t.Parallel()
 	const unit = "var a={password:e.password,token:t};"
 	fastest := func(n int) time.Duration {
 		in := strings.Repeat(unit, n)
@@ -145,16 +189,16 @@ func TestManyAssignmentsOnOneLineStayLinear(t *testing.T) {
 // time in proportion to the token's length. Each URL used to read the rest
 // of the token again, to its end and for an `@` a host follows, so 1.6 MB
 // of `http://x` took a minute.
+// It is timed, so it runs alone rather than alongside the parallel tests.
 func TestGluedURLsStayLinear(t *testing.T) {
 	if raceEnabled {
 		t.Skip("timings under the race detector are meaningless")
 	}
-	t.Parallel()
 	for _, unit := range []string{"http://x", "http://a:b/", "http://a:b/@"} {
 		fastest := func(n int) time.Duration {
 			in := strings.Repeat(unit, n)
 			best := time.Duration(math.MaxInt64)
-			for range 2 {
+			for range 3 {
 				start := time.Now()
 				redactSensitive(in)
 				best = min(best, time.Since(start))
@@ -162,7 +206,9 @@ func TestGluedURLsStayLinear(t *testing.T) {
 			return best
 		}
 		// Eight times the input: linear is about 8x the time, quadratic 64x.
-		small, large := fastest(4000), fastest(32000)
+		// Sized so the smaller run takes tens of milliseconds, long enough
+		// to time while other tests run.
+		small, large := fastest(32000), fastest(256000)
 		if large > 20*small {
 			t.Errorf("%q: 8x the input took %.1fx as long (%v, then %v)", unit, float64(large)/float64(small), small, large)
 		}

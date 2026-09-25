@@ -72,6 +72,16 @@ type sessionScan struct {
 	warnings []error
 	// gap is the capture gap the scan ended in, if it did (see block).
 	gap state.BlockedReason
+	// filtered is the source as the refresh step already read and filtered
+	// it (see liveTranscriptChanged), which read then uses rather than
+	// filtering the whole source a second time in the same scan.
+	filtered *filteredSource
+}
+
+// filteredSource is a source read and filtered once in a scan.
+type filteredSource struct {
+	transcript archive.FilteredTranscript
+	observed   sourceState
 }
 
 // warn records a failure that does not end the scan.
@@ -178,7 +188,11 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 	if read.adapter, err = archive.NewAdapter(s.reg.Harness.Name); err != nil {
 		return read, false, err
 	}
-	read.filtered, read.observed, err = reader.Filter(s.ctx, read.adapter, s.opts.maxTranscriptBytes())
+	if s.filtered != nil {
+		read.filtered, read.observed = s.filtered.transcript, s.filtered.observed
+	} else {
+		read.filtered, read.observed, err = reader.Filter(s.ctx, read.adapter, s.opts.maxTranscriptBytes())
+	}
 	if err != nil {
 		read.outcome, err = s.readFailed(read, err)
 		return read, false, err
@@ -400,7 +414,7 @@ func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate arc
 		return false, nil
 	}
 	if len(cached.SupplementalEvidence) > 0 || len(candidate.SupplementalEvidence) > 0 {
-		same, err := jsonEqual(cached.SupplementalEvidence, candidate.SupplementalEvidence)
+		same, err := jsonEncodingsEqual(cached.SupplementalEvidence, candidate.SupplementalEvidence)
 		if err != nil {
 			return false, fmt.Errorf("compare supplemental evidence: %w", err)
 		}
@@ -408,11 +422,11 @@ func (s *sessionScan) refilteredUnchanged(read sourceRead, cached, candidate arc
 			return false, nil
 		}
 	}
-	signature, found, err := s.local.LoadScanSignature(s.id())
+	signature, settled, err := s.settledSignature()
 	if err != nil {
 		return false, fmt.Errorf("load scan signature: %w", err)
 	}
-	return found && signature.SourceFormat != cursorTextSourceFormat && signature.Blocked == "" && !signature.Failed && read.observed.matches(signature), nil
+	return settled && read.observed.matches(signature), nil
 }
 
 // guard checks that candidate still extends the evidence already retained.
@@ -474,10 +488,13 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 	}
 
 	readyAt := publicationReadyAt(s.now, lastPublishedAt, s.req, s.opts)
+	// A publication due now is uploaded straight after it is saved, so it is
+	// saved already marked attempted (see publishPending): marking it
+	// separately would write the whole file a second time.
 	pending := state.PendingPublication{
 		Bundle: candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
-		RequestToken: s.req.Token, ReadyAt: readyAt,
+		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, fmt.Errorf("persist pending publication: %w", err)

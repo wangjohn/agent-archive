@@ -83,7 +83,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if err != nil || !changed {
 		return outcomeSkipped, false, err
 	}
-	pending := state.PendingPublication{MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: s.now}
+	pending := state.PendingPublication{MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: s.now, Attempted: true}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, false, err
 	}
@@ -216,14 +216,25 @@ func (s *sessionScan) liveTranscriptChanged(lastPublished archive.SourceBundle) 
 	if !found {
 		return false
 	}
+	if s.sourceSettled(source) {
+		// Read at this very state by a scan that settled, through the same
+		// filter and adapter: it would filter to what that scan cached.
+		// Only the parser moved, and filtering every historical session's
+		// transcript to find that out made the first pass after an upgrade
+		// cost a full read of each.
+		return false
+	}
 	adapter, err := archive.NewAdapter(s.reg.Harness.Name)
 	if err != nil {
 		return false
 	}
-	filtered, _, err := source.Filter(s.ctx, adapter, s.opts.maxTranscriptBytes())
+	filtered, observed, err := source.Filter(s.ctx, adapter, s.opts.maxTranscriptBytes())
 	if err != nil {
 		return false
 	}
+	// Normal capture reads this same source next unless the refresh ends the
+	// scan, so it keeps what was read here.
+	s.filtered = &filteredSource{transcript: filtered, observed: observed}
 	candidate, err := archive.NewSourceBundle(s.reg, adapter, filtered, s.now, cached.SupplementalEvidence)
 	if err != nil {
 		return false

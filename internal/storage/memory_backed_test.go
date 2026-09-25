@@ -229,12 +229,24 @@ func (keepingDeleteStore) Delete(context.Context, string) error { return nil }
 
 type countingGetStore struct {
 	*storagetest.MemoryStore
-	gets int
+	gets  int
+	stats int
+	puts  int
 }
 
 func (s *countingGetStore) Get(ctx context.Context, key string) ([]byte, error) {
 	s.gets++
 	return s.MemoryStore.Get(ctx, key)
+}
+
+func (s *countingGetStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	s.stats++
+	return s.MemoryStore.Stat(ctx, key)
+}
+
+func (s *countingGetStore) Put(ctx context.Context, key string, data []byte) error {
+	s.puts++
+	return s.MemoryStore.Put(ctx, key, data)
 }
 
 // An existing source whose bytes differ will differ on every attempt.
@@ -244,7 +256,85 @@ func TestSourcePublicationDoesNotRetryChecksumMismatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := storage.PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 3, InitialWait: time.Nanosecond, MaxWait: time.Nanosecond})
-	if !errors.Is(err, storage.ErrChecksumMismatch) || store.gets != 1 {
-		t.Fatalf("gets = %d, err = %v", store.gets, err)
+	if !errors.Is(err, storage.ErrChecksumMismatch) || store.gets+store.stats != 1 {
+		t.Fatalf("gets = %d, stats = %d, err = %v", store.gets, store.stats, err)
+	}
+}
+
+// A store that reports each object's SHA-256 verifies a publication with
+// Stat alone: publishing a large source costs its upload, not a download of
+// it as well, and republishing metadata over a source already stored costs
+// neither.
+func TestSourcePublicationVerifiesWithoutDownloading(t *testing.T) {
+	store := &countingGetStore{MemoryStore: storagetest.NewMemoryStore()}
+	source := []byte("source bytes")
+	key := "sessions/codex/id/source." + storage.SHA256Hex(source) + ".jsonl.gz"
+	for range 2 {
+		if err := storage.PutSourceThenMetadata(context.Background(), store, key, "sessions/codex/id/metadata.json", source, []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if store.gets != 0 {
+		t.Errorf("gets = %d, want none: Stat reports the checksum", store.gets)
+	}
+	// One source upload, then two metadata uploads.
+	if store.puts != 3 {
+		t.Errorf("puts = %d, want the source uploaded once", store.puts)
+	}
+	// Before and after the first upload, and before the second.
+	if store.stats != 3 {
+		t.Errorf("stats = %d, want 3", store.stats)
+	}
+}
+
+// noChecksumStore describes objects without their SHA-256, as a store does
+// for an object uploaded without a checksum or in parts.
+type noChecksumStore struct{ *countingGetStore }
+
+func (s noChecksumStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	info, err := s.countingGetStore.Stat(ctx, key)
+	info.SHA256 = ""
+	return info, err
+}
+
+// corruptingStore stores other bytes than it was given, with a checksum of
+// what it stored (or none, when hideChecksum is set).
+type corruptingStore struct {
+	*storagetest.MemoryStore
+	hideChecksum bool
+}
+
+func (s corruptingStore) Put(ctx context.Context, key string, data []byte) error {
+	return s.MemoryStore.Put(ctx, key, append([]byte("x"), data...))
+}
+
+func (s corruptingStore) Stat(ctx context.Context, key string) (storage.ObjectInfo, error) {
+	info, err := s.MemoryStore.Stat(ctx, key)
+	if s.hideChecksum {
+		info.SHA256 = ""
+	}
+	return info, err
+}
+
+// Without a checksum from Stat, the source is read back and hashed, as
+// before; either way a source stored with other bytes than were uploaded
+// fails the publication, and no metadata points at it.
+func TestSourcePublicationReadsBackWhenStoreReportsNoChecksum(t *testing.T) {
+	store := noChecksumStore{&countingGetStore{MemoryStore: storagetest.NewMemoryStore()}}
+	if err := storage.PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if store.gets != 1 {
+		t.Errorf("gets = %d, want the uploaded source read back once", store.gets)
+	}
+	for _, hide := range []bool{false, true} {
+		store := corruptingStore{MemoryStore: storagetest.NewMemoryStore(), hideChecksum: hide}
+		err := storage.PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1})
+		if !errors.Is(err, storage.ErrChecksumMismatch) {
+			t.Errorf("hide checksum %t: err = %v, want a checksum mismatch", hide, err)
+		}
+		if _, err := store.Get(context.Background(), "metadata.json"); !errors.Is(err, storage.ErrNotFound) {
+			t.Errorf("hide checksum %t: metadata was published over a bad source (err = %v)", hide, err)
+		}
 	}
 }

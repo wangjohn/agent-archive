@@ -358,7 +358,7 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 func (p *Published) write(next publishedState) error {
 	summary := next.summary()
 	next.Summary = &summary
-	if err := local.Write(p.store.publishedPath(p.id), next); err != nil {
+	if err := local.WriteCompact(p.store.publishedPath(p.id), next); err != nil {
 		return err
 	}
 	p.state, p.found = next, true
