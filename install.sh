@@ -34,6 +34,10 @@ main() {
     fail "agent-archive supports macOS only (this system reports $(uname -s))."
   fi
 
+  # Before downloading anything: without a pinned team there is nothing
+  # this script could accept.
+  check_team_id
+
   arch="$(detect_arch)"
   asset="agent-archive-darwin-${arch}"
 
@@ -115,16 +119,20 @@ detect_arch() {
 # ID Application certificate that Apple issued to this project's team: the
 # standard Developer ID designated requirement, with the team pinned.
 verify_signature() {
-  if [ -z "$team_id" ]; then
-    fail "this install script names no signing team yet, so there is no signed release to install. Build from source instead (docs/getting-started/install.md)."
-  fi
-  case "$team_id" in
-    *[!A-Z0-9]*) fail "invalid signing team ID in this script: ${team_id}" ;;
-  esac
+  check_team_id
   requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"${team_id}\""
   if ! codesign --verify --strict -R="$requirement" "$1" 2>/dev/null; then
     fail "${asset} is not signed by the agent-archive Developer ID (team ${team_id}); not installing it."
   fi
+}
+
+check_team_id() {
+  if [ -z "$team_id" ]; then
+    fail "this install script names no signing team yet, so there is no signed release to install. Build from source instead: https://github.com/wangjohn/agent-archive/blob/main/docs/getting-started/install.md"
+  fi
+  case "$team_id" in
+    *[!A-Z0-9]*) fail "invalid signing team ID in this script: ${team_id}" ;;
+  esac
 }
 
 choose_install_dir() {

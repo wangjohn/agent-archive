@@ -164,7 +164,10 @@ class InstallScriptTest(unittest.TestCase):
     def test_shipped_script_without_a_team_installs_nothing(self):
         if 'team_id=""' not in INSTALL_SH.read_text():
             self.skipTest('install.sh names its signing team')
-        result = self.run_install(script=INSTALL_SH)
+        # It says so before downloading: pointed at a release that doesn't
+        # exist, it still fails on the missing team, not on the download.
+        result = self.run_install(script=INSTALL_SH,
+                                  extra_env={'AGENT_ARCHIVE_DOWNLOAD_URL': (self.root / 'no-release').as_uri()})
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('names no signing team yet', result.stderr)
         self.assertFalse((self.home / '.local').exists())

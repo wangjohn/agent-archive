@@ -61,7 +61,8 @@ the release's `SHA256SUMS` (which catches a damaged download; both files
 come from the same release), checks that it carries a valid Developer ID
 signature from the team the script names (which catches a binary someone
 else built), and installs it as `agent-archive`, without `sudo`. Until the
-first release the script names no team and refuses to install anything. If `agent-archive` is already on your `PATH`, it replaces that copy,
+first release the script names no team and refuses to install anything.
+If `agent-archive` is already on your `PATH`, it replaces that copy,
 so the hooks and background collector keep pointing at it. Otherwise it uses
 `/usr/local/bin` when that is writable, and `~/.local/bin` if not, printing
 the line to add to your shell profile when the directory isn't on your
