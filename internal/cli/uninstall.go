@@ -227,10 +227,11 @@ func stopCollectors(plists []string, out io.Writer, env Env) (kept map[string]bo
 	return kept, nil
 }
 
-// purgeLocalData deletes the stored credentials cfg and the saved setup name
-// and every owned local file, once hooks and the LaunchAgent are gone. It
-// unlinks the lock files while they are still held, then calls releaseLocks,
-// and removes the data directory itself if nothing unrelated remains in it.
+// purgeLocalData runs once hooks and the LaunchAgent are gone. It deletes
+// every stored credential that cfg or the saved setup names, and every owned
+// local file. It unlinks the lock files while they are still held, then calls
+// releaseLocks, and removes the data directory itself if nothing unrelated
+// remains in it.
 func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, releaseLocks func()) error {
 	refs := map[string]bool{}
 	for _, ref := range cfg.RetiredCredentialRefs {
