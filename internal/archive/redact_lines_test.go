@@ -2,8 +2,10 @@ package archive
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 // gatedPatterns are every line pattern the redaction runs, with the gate it
@@ -103,4 +105,36 @@ func FuzzLineMatchesCoverWholeString(f *testing.F) {
 		}
 		checkLineMatchesCoverWholeString(t, s)
 	})
+}
+
+// A long line with many assignments, as minified code has, costs time in
+// proportion to its length. Each assignment used to rescan its line from the
+// start, so the cost grew with the square of the line (0.9 MB took half a
+// minute).
+func TestManyAssignmentsOnOneLineStayLinear(t *testing.T) {
+	if raceEnabled {
+		t.Skip("timings under the race detector are meaningless")
+	}
+	t.Parallel()
+	const unit = "var a={password:e.password,token:t};"
+	fastest := func(n int) time.Duration {
+		in := strings.Repeat(unit, n)
+		best := time.Duration(math.MaxInt64)
+		for range 2 {
+			start := time.Now()
+			out, _ := redactSensitive(in)
+			best = min(best, time.Since(start))
+			// Each unquoted value runs to the next statement.
+			if got := strings.Count(out, "[REDACTED]"); got != n {
+				t.Fatalf("%d statements: %d values redacted", n, got)
+			}
+		}
+		return best
+	}
+	// Eight times the input: linear is about 8x the time, quadratic 20x
+	// or more.
+	small, large := fastest(500), fastest(4000)
+	if large > 14*small {
+		t.Fatalf("8x the input took %.1fx as long (%v, then %v)", float64(large)/float64(small), small, large)
+	}
 }
