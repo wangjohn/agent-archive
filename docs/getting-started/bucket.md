@@ -13,10 +13,12 @@ every Mac you set up can share it. Cloudflare R2 is the quickest to set up.
    token**. Give it **Object Read & Write** permission, applied to **only
    that bucket**. Create it, then copy the **Access Key ID** and **Secret
    Access Key** (the secret is shown once).
-3. Copy your **Account ID** from the R2 overview page.
+3. Copy your **Account ID** from the R2 overview page, or the bucket's S3 API
+   URL from its **Settings** (`https://<account-id>.r2.cloudflarestorage.com/<bucket>`).
 
-Then run `agent-archive setup`, choose `r2`, and paste the bucket name,
-Account ID, and the two keys. The secret is kept in the macOS Keychain.
+Then run `agent-archive setup`, choose `r2`, and paste the Account ID (then
+the bucket name) or the bucket's URL (which names both), and the two keys.
+The secret is kept in the macOS Keychain.
 
 ## Amazon S3
 

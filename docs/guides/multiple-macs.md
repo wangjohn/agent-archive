@@ -22,7 +22,8 @@ own setup, with its own machine ID, hooks, collector, and local state.
   sessions it owns. Set the same value on every Mac if you want one policy.
 - **Credentials.** Each Mac needs its own access to the bucket: an AWS
   profile, or R2 credentials entered in its own setup (stored in that Mac's
-  Keychain). A key limited to one prefix (see
+  Keychain). [`setup --yes`](../getting-started/setup.md#set-up-without-questions)
+  sets up another Mac from a script. A key limited to one prefix (see
   [bucket permissions](../security/bucket-permissions.md)) works for several
   Macs sharing that prefix.
 

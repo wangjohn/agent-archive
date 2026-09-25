@@ -16,8 +16,12 @@ The first release, `v0.1.0`, will be cut from this section.
   bucket, reads it back to verify it, and deletes sessions past the
   retention period (90 days by default).
 - **`setup`**: three steps (apps and projects, storage, review), resumable if
-  interrupted, and safe to rerun to change any of them. R2 secrets are kept
-  in the macOS Keychain; S3 uses an AWS profile.
+  interrupted, and safe to rerun to change any of them. It offers the
+  projects your apps already have sessions in, accepts the R2 bucket URL the
+  Cloudflare dashboard shows, and ends with what each app needs next.
+  `setup --yes` takes its answers as flags, to script a second Mac. R2
+  secrets are kept in the macOS Keychain; S3 uses an AWS profile.
+- `agent-archive` with no arguments says when setup hasn't run yet.
 - **`status`**: storage, collector, hook, and per-app capture health, with a
   `Next:` line whenever something needs you. `--json` for scripts.
 - **`list`, `show`, `handoff`**: browse the archive from any Mac sharing the
@@ -53,7 +57,8 @@ The first release, `v0.1.0`, will be cut from this section.
 - macOS only. Redaction is best effort: a secret with no recognizable name
   or shape is archived as it appears.
 - R2's S3 keys can't read bucket privacy settings, so `status` reports R2
-  privacy as `not_verified`; check the bucket in the Cloudflare dashboard.
+  privacy as `not_verified`, and setup reminds you to check that public
+  access is disabled in the Cloudflare dashboard.
 - Sessions are not encrypted by agent-archive; anyone who can read the
   bucket can read them.
 

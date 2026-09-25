@@ -8,10 +8,11 @@ Setup has three steps: choose apps and projects, connect storage, then review
 and start. You need an existing private Cloudflare R2 or Amazon S3 bucket
 ([create one](bucket.md); [bucket permissions](../security/bucket-permissions.md)
 has the least access it needs). Run it from inside a project you want
-archived, so setup can offer it. Type `help` at the storage prompt for
+archived, so setup can offer it, or from anywhere: setup then offers the
+projects your apps have sessions in. Type `help` at the storage prompt for
 provider instructions. Setup asks questions, so it needs a terminal: without one it
 stops before asking anything and changes nothing. Its prompt sequence is not
-a scripting API.
+a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
 Setup captures only **new** sessions in the projects you include. To import
 conversations already on this Mac, run [`agent-archive
@@ -26,14 +27,23 @@ lists the apps included and not included, then asks "Change which apps are
 included? [y/N]".
 
 If setup finds the current Git project, it shows its full path and asks
-"Archive sessions in this project?" Accept, or decline to enter project paths
-yourself. Include each project explicitly; nothing outside an included
-project is captured.
+"Archive sessions in this project?" Accept, then answer "Add another
+project? [y/N]" to add more, or decline to choose projects yourself.
+
+To choose projects, setup lists the ones Claude Code and Codex sessions on
+this Mac ran in, most recent first. Enter their numbers (`1 3`, or a range
+such as `2-4`), or type a project path; a blank line finishes. With no
+history to offer, it asks for paths. Include each project explicitly; nothing
+outside an included project is captured.
 
 ## 2. Storage
 
-- **R2:** enter a bucket, an account ID or S3 endpoint, and credentials.
-  Secret input is hidden on a terminal and stored in the macOS Keychain.
+- **R2:** enter the account ID, then the bucket, then credentials. Pasting
+  the bucket's URL from the Cloudflare dashboard,
+  `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
+  account and the bucket, so the bucket isn't asked for. Any other S3 API
+  endpoint (such as an EU jurisdiction's) works too. Secret input is hidden
+  on a terminal and stored in the macOS Keychain.
 - **S3:** enter the bucket and choose an existing AWS profile. Setup offers
   the profiles in your AWS settings and uses the profile's region when it has
   one; it asks for a region only when one is missing.
@@ -42,17 +52,23 @@ Setup checks the connection with one temporary synthetic object
 (`.setup-test/<random>.json`), which it deletes again. That proves the
 credentials work; it does not prove the bucket is private. Setup then
 inspects the bucket's public-access settings read-only (S3 only; see
-[privacy](../security/privacy.md#bucket-privacy-evidence)).
+[privacy](../security/privacy.md#bucket-privacy-evidence)). R2 keys cannot
+read those settings, so for R2 the review reminds you to check that public
+access is disabled in the Cloudflare dashboard.
 
 Never pass secrets as command arguments; secret input fails rather than
 falling back to visible keystrokes.
 
 ## 3. Review and start
 
-The summary shows the apps, projects, destination, session scope, and
-automatic deletion period (90 days by default; older sessions are deleted
-from the bucket automatically). At "Start archiving?", enter the number for
-"Edit a setting" to adjust apps, projects, session scope, retention, storage,
+The summary shows the apps, projects, destination, and automatic deletion
+period, and the session scope when it is not the default (every new
+session). An app you left out is listed as skipped: setup does not offer it
+again, but you can add it back under "Apps and projects" in a later
+`agent-archive setup`. The deletion period is 90 days by default; older
+sessions are deleted from the bucket automatically.
+
+At "Start archiving?", enter the number for "Edit a setting" to adjust apps, projects, session scope, retention, storage,
 the folder inside the bucket, or the AWS region. The folder inside the
 bucket (the prefix) is `agent-archive/` unless you change it. Retention is
 a whole number of days from 1 to 36,500; there is no "keep forever" (36,500
@@ -69,6 +85,34 @@ interrupted, run it again to continue or start over. Reconfiguration lets you
 edit capture, storage, or retention separately, and keeps the machine
 identity, existing project activation times, paused state, and unrelated
 hooks.
+
+## Set up without questions
+
+For a second Mac, or any scripted setup, pass the answers as flags with
+`--yes`. Setup then asks nothing, runs the same storage check, and saves;
+if an answer is missing or the check fails, it says so and changes nothing.
+
+```sh
+export AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY=...   # or pipe it on standard input
+agent-archive setup --yes --provider r2 --r2-account ACCOUNT_ID --bucket BUCKET \
+  --r2-access-key-id KEY_ID --project ~/code/app --project ~/code/api \
+  --apps codex,claude
+
+agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
+  --project ~/code/app
+```
+
+- The R2 secret access key comes from `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY`,
+  or else from standard input. It is never a flag. The access key ID can
+  also come from `AGENT_ARCHIVE_R2_ACCESS_KEY_ID`.
+- `--r2-account` also takes the bucket URL, which names the bucket too.
+- For S3, `--region` defaults to the profile's region.
+- `--apps` defaults to the apps already set up, else those found on this Mac.
+- `--project` adds to the projects already set up; repeat it for several.
+- Without storage flags, the storage already set up is kept, so
+  `agent-archive setup --yes --project DIR` just adds a project.
+
+[CLI reference](../reference/cli.md#agent-archive-setup) lists every flag.
 
 ## What setup changes on your Mac
 
@@ -127,10 +171,17 @@ into your real launchd: stub `launchctl` in tests (see
 
 ## After setup
 
-Approve the hooks in each app if it asks (Codex CLI: `/hooks`): an app
-doesn't run hooks it hasn't approved, and this is the most common reason
-nothing is captured. Then start a harmless new session in an included
-project. Setup finishes without waiting for it. Check
+Setup ends with one line per app on what to do next:
+
+- **Codex:** run `/hooks` and approve the archive hooks, then start a new
+  session. Codex doesn't run hooks it hasn't approved, and this is the most
+  common reason nothing is captured.
+- **Claude Code:** nothing to approve; start a new session.
+- **Cursor:** nothing to approve; start a new Agent chat.
+
+Sessions already open are not captured: capture needs a provable fresh
+start, so only a new session (or `/clear` in Codex or Claude Code) in an
+included project counts. Setup finishes without waiting for it. Check
 progress with:
 
 ```sh
