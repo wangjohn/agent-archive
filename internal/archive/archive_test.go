@@ -253,7 +253,7 @@ func TestCursorTextFailsClosedAndTypelessJSONLWorks(t *testing.T) {
 }
 
 func TestCursorTextRetainsMultilineMessageBodies(t *testing.T) {
-	input := "User: hello\nAssistant: Let me help.\nHere is more detail on a second line.\n"
+	input := "user: hello\nassistant: Let me help.\nHere is more detail on a second line.\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), time.Now())
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -264,7 +264,7 @@ func TestCursorTextRetainsMultilineMessageBodies(t *testing.T) {
 }
 
 func TestCursorTextOmitsHiddenSectionContinuationLines(t *testing.T) {
-	input := "User: hello\nSystem: hidden instructions\nmore hidden continuation\nAssistant: ok\n"
+	input := "user: hello\nsystem: hidden instructions\nmore hidden continuation\nassistant: ok\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), time.Now())
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -276,7 +276,7 @@ func TestCursorTextOmitsHiddenSectionContinuationLines(t *testing.T) {
 
 func TestCursorTextMetadataLeavesStructuredCountsUnknown(t *testing.T) {
 	now := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
-	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader("User: hello\nAssistant: hi\n"), now)
+	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader("user: hello\nassistant: hi\n"), now)
 	if err != nil {
 		t.Fatal(err)
 	}

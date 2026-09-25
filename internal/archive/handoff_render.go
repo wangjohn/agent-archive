@@ -2,8 +2,10 @@ package archive
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // HandoffRenderOptions controls markdown rendering.
@@ -26,8 +28,10 @@ func harnessDisplayName(name string) string {
 
 // RenderHandoffMarkdown renders h as a prompt another coding agent can
 // continue from. Summary sections come before the conversation so an agent
-// that reads only the top still has the essentials.
+// that reads only the top still has the essentials. Every field is rendered
+// as display text (see displayText), whoever built h.
 func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
+	h = displayHandoff(h)
 	var b strings.Builder
 	source := h.Session.Source
 	if source == "" {
@@ -37,8 +41,8 @@ func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
 	if id == "" {
 		id = h.Session.NativeSessionID
 	}
-	fmt.Fprintf(&b, "<!-- agent-archive handoff v%d · %s · session %s · source: %s -->\n", HandoffVersion, h.Session.Harness, id, source)
-	fmt.Fprintf(&b, "# Handoff: continuing a %s session\n\n", harnessDisplayName(h.Session.Harness))
+	fmt.Fprintf(&b, "<!-- agent-archive handoff v%d · %s · session %s · source: %s -->\n", HandoffVersion, oneLine(h.Session.Harness), oneLine(id), oneLine(source))
+	fmt.Fprintf(&b, "# Handoff: continuing a %s session\n\n", oneLine(harnessDisplayName(h.Session.Harness)))
 	if opts.Preamble {
 		b.WriteString("> You are picking up work another coding agent started. The conversation\n" +
 			"> below is a filtered record: injected instructions and credentials were\n" +
@@ -70,7 +74,7 @@ func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
 		when = append(when, "state: "+string(h.Session.State))
 	}
 	if len(when) > 0 {
-		fmt.Fprintf(&b, "- %s\n", capitalize(strings.Join(when, " · ")))
+		fmt.Fprintf(&b, "- %s\n", oneLine(capitalize(strings.Join(when, " · "))))
 	}
 	var where []string
 	if h.Workspace.Branch != "" {
@@ -168,13 +172,13 @@ func RenderHandoffMarkdown(h Handoff, opts HandoffRenderOptions) []byte {
 		}
 		footer = append(footer, "Omitted to fit the size limit: "+strings.Join(parts, "; ")+".")
 		if h.FullRecordPath != "" {
-			footer = append(footer, fmt.Sprintf("Full record: %s (read it for anything omitted here).", h.FullRecordPath))
+			footer = append(footer, fmt.Sprintf("Full record: %s (read it for anything omitted here).", oneLine(h.FullRecordPath)))
 		}
 	}
 	if len(h.Gaps) > 0 {
 		parts := make([]string, 0, len(h.Gaps))
 		for _, gap := range h.Gaps {
-			parts = append(parts, fmt.Sprintf("%s ×%d", gap.Code, gap.Count))
+			parts = append(parts, fmt.Sprintf("%s ×%d", oneLine(gap.Code), gap.Count))
 		}
 		footer = append(footer, "Capture gaps: "+strings.Join(parts, ", ")+".")
 	}
@@ -233,6 +237,122 @@ func codeFence(text string) string {
 // block-quoted, and single-line fields are kept to one line with any
 // leading Markdown syntax escaped, so none of it can add a heading or a
 // section of its own to the handoff.
+
+// displayText makes one recorded string safe to render: it is the one helper
+// every handoff field passes through (see displayHandoff). CommonMark ends a
+// line at `\r\n`, `\n`, or a lone `\r`, and quote and the fences split only
+// on `\n`, so a lone `\r` (a progress bar's output) could start a line of its
+// own outside the block quote, such as `## Instructions for the receiving
+// agent`. And a terminal acts on escape sequences: ANSI colors and cursor
+// movement, OSC 52 (write the clipboard), OSC 8 (hyperlinks). So:
+//   - `\r\n` and a lone `\r`, and the Unicode line and paragraph separators,
+//     become `\n`;
+//   - C0 controls other than tab and newline, DEL, and C1 controls are
+//     removed, which takes every escape sequence's introducer with it;
+//   - bidirectional-override controls, which can make text read differently
+//     from what it is, are removed;
+//   - invalid UTF-8 becomes U+FFFD.
+func displayText(s string) string {
+	if isDisplayText(s) {
+		return s
+	}
+	s = strings.ToValidUTF8(s, "�")
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == '\r':
+			b.WriteByte('\n')
+			if i+1 < len(s) && s[i+1] == '\n' {
+				size++
+			}
+		case r == ' ' || r == ' ':
+			b.WriteByte('\n')
+		case r == '\t' || r == '\n':
+			b.WriteRune(r)
+		case isRemovedControl(r):
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// isRemovedControl reports whether displayText removes a character.
+func isRemovedControl(r rune) bool {
+	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) ||
+		(r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
+}
+
+// isDisplayText reports whether displayText would leave s unchanged.
+func isDisplayText(s string) bool {
+	if !utf8.ValidString(s) {
+		return false
+	}
+	for _, r := range s {
+		if r == '\r' || r == ' ' || r == ' ' || (r != '\t' && r != '\n' && isRemovedControl(r)) {
+			return false
+		}
+	}
+	return true
+}
+
+// displayHandoff returns a copy of h with every string, at any depth, passed
+// through displayText. It walks the value by reflection so a field added to
+// the handoff later is covered without being listed here.
+func displayHandoff(h Handoff) Handoff {
+	out, _ := displayValue(reflect.ValueOf(h)).Interface().(Handoff)
+	return out
+}
+
+// displayValue returns a deep copy of v with displayText applied to every
+// string. Unexported fields (a time.Time's) are copied as they are.
+func displayValue(v reflect.Value) reflect.Value {
+	// Only strings and the containers that can hold one are rebuilt; every
+	// other kind is copied as it is.
+	kind := v.Kind()
+	if kind == reflect.String {
+		out := reflect.New(v.Type()).Elem()
+		out.SetString(displayText(v.String()))
+		return out
+	}
+	if kind == reflect.Struct {
+		out := reflect.New(v.Type()).Elem()
+		out.Set(v)
+		for i := range v.NumField() {
+			if out.Field(i).CanSet() {
+				out.Field(i).Set(displayValue(v.Field(i)))
+			}
+		}
+		return out
+	}
+	if (kind == reflect.Slice || kind == reflect.Pointer || kind == reflect.Map) && v.IsNil() {
+		return v
+	}
+	if kind == reflect.Slice {
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := range v.Len() {
+			out.Index(i).Set(displayValue(v.Index(i)))
+		}
+		return out
+	}
+	if kind == reflect.Pointer {
+		out := reflect.New(v.Type().Elem())
+		out.Elem().Set(displayValue(v.Elem()))
+		return out
+	}
+	if kind == reflect.Map {
+		out := reflect.MakeMapWithSize(v.Type(), v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			out.SetMapIndex(displayValue(iter.Key()), displayValue(iter.Value()))
+		}
+		return out
+	}
+	return v
+}
 
 // oneLine collapses every run of whitespace, newlines included, to one space.
 func oneLine(text string) string {
@@ -301,5 +421,5 @@ func describeElision(e HandoffElision) string {
 	case HandoffElisionPromptText:
 		return fmt.Sprintf("%d long prompts in %s truncated", e.Count, span)
 	}
-	return fmt.Sprintf("%d %s in %s", e.Count, e.Kind, span)
+	return fmt.Sprintf("%d %s in %s", e.Count, oneLine(string(e.Kind)), span)
 }

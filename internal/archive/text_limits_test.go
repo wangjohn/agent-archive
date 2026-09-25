@@ -91,12 +91,12 @@ func TestCursorTextTruncatesOnlyTheOversizeSection(t *testing.T) {
 // and their continuation lines are omitted, and the gap is recorded once
 // however many hidden sections there were.
 func TestCursorTextKeepsLineStructureAndOmitsHiddenSections(t *testing.T) {
-	input := "User: hello\nsecond line\nSystem: hidden one\nhidden continuation\nAssistant: ok\n  indented line\nthinking: hidden two\nTool: result\n"
+	input := "user: hello\nsecond line\nsystem: hidden one\nhidden continuation\nassistant: ok\n  indented line\nthinking: hidden two\ntool: result\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "User: hello\nsecond line\nAssistant: ok\n  indented line\nTool: result"; filtered.Text[0] != want {
+	if want := "user: hello\nsecond line\nassistant: ok\n  indented line\ntool: result"; filtered.Text[0] != want {
 		t.Fatalf("text = %q, want %q", filtered.Text[0], want)
 	}
 	if gapsWithCode(filtered.Gaps, "hidden_instruction_omitted") != 1 {
@@ -156,13 +156,13 @@ func TestCursorTextSanitizesContinuationLinesAndOmitsHiddenTail(t *testing.T) {
 	input := strings.Join([]string{
 		"user: hello",
 		"  token=synthetic-continuation-secret",
-		"SYSTEM: hidden one",
+		"system: hidden one",
 		"hidden continuation one",
 		"assistant: ok <system-reminder>",
 		"injected line",
 		"</system-reminder> visible tail",
 		"tool: result",
-		"Thinking: hidden two",
+		"thinking: hidden two",
 		"hidden continuation two",
 	}, "\n") + "\n"
 	filtered, err := (CursorAdapter{}).FilterText(strings.NewReader(input), textStart)
@@ -184,7 +184,7 @@ func TestCursorTextSanitizesContinuationLinesAndOmitsHiddenTail(t *testing.T) {
 			details[gap.Detail] = true
 		}
 	}
-	if len(details) != 2 || !details["text section omitted"] || !details["injected instruction block omitted"] {
+	if len(details) != 2 || !details["2 text sections omitted (4 lines)"] || !details["injected instruction block omitted"] {
 		t.Fatalf("hidden_instruction_omitted details = %v", details)
 	}
 	if gapsWithCode(filtered.Gaps, "sensitive_content_redacted") != 1 || gapsWithCode(filtered.Gaps, "text_structure_partial") != 1 {

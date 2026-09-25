@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -53,7 +54,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.10.0"
+const adapterVersion = "0.11.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.
@@ -62,7 +63,7 @@ const maxOmittedKeyNames = 64
 // DefaultParserVersion is the source parser version reported by this bounded
 // foundation. The parser is intentionally partial until fixture coverage proves
 // a given native format more completely.
-const DefaultParserVersion = "0.10.0"
+const DefaultParserVersion = "0.11.0"
 
 // NewAdapter returns a privacy-first adapter by canonical harness name.
 func NewAdapter(name string) (Adapter, error) {
@@ -163,19 +164,22 @@ var (
 	hiddenTextRoles  = map[textRole]bool{textRoleSystem: true, textRoleDeveloper: true, textRoleThinking: true, textRoleAnalysis: true}
 )
 
-// textRoleHeader reports whether line starts a role section of a Cursor text
-// transcript, and returns the role and the text after the header. A header
-// is how Cursor writes one: the role name (in any case) and a colon at
-// column 0, then a space or the end of the line; the role is returned in
-// lower case. An indented "user:" is content, such as a YAML key in tool
-// output, and must never start a turn or hide what follows it.
+// textRoleHeader reports whether line has the shape of a role header of a
+// Cursor text transcript, and returns the role and the text after the
+// header. A header is written exactly as Cursor writes one: a lower-case
+// role name and a colon at column 0, then a space or the end of the line.
+// An indented "user:" is content (a YAML key in tool output), and so, since
+// filter 11, is a capitalized one: prose such as "Analysis: the bug is …"
+// or "System: linux" at the start of a line no longer hides what follows
+// it. Whether a line with this shape really starts a section also depends
+// on the lines around it; see parseTextSections.
 func textRoleHeader(line string) (role textRole, rest string, ok bool) {
 	line = strings.TrimSuffix(line, "\r")
 	colon := strings.IndexByte(line, ':')
 	if colon <= 0 {
 		return "", "", false
 	}
-	role, rest = textRole(strings.ToLower(line[:colon])), line[colon+1:]
+	role, rest = textRole(line[:colon]), line[colon+1:]
 	if !visibleTextRoles[role] && !hiddenTextRoles[role] {
 		return "", "", false
 	}
@@ -183,6 +187,84 @@ func textRoleHeader(line string) (role textRole, rest string, ok bool) {
 		return "", "", false
 	}
 	return role, strings.TrimPrefix(rest, " "), true
+}
+
+// indentHeaderShapedLines indents by one space every line of a sanitized
+// section, after its first, that has a role header's shape. Such a line was
+// content in the transcript (parseTextSections decided so), or sanitizing
+// brought it to the start of a line (stripping an injected block can); the
+// handoff reads the retained text back with the same parser, and the
+// indent keeps the line content there too, so a line of a tool's output
+// can never become a Person turn or hide the rest.
+func indentHeaderShapedLines(section string) string {
+	lines := strings.Split(section, "\n")
+	changed := false
+	for i := 1; i < len(lines); i++ {
+		if _, _, header := textRoleHeader(lines[i]); header {
+			lines[i], changed = " "+lines[i], true
+		}
+	}
+	if !changed {
+		return section
+	}
+	return strings.Join(lines, "\n")
+}
+
+// textSection is one role section of a Cursor text transcript: its role and
+// its lines, the header line first. Blank lines inside the section are kept;
+// blank lines after its last line are not.
+type textSection struct {
+	role  textRole
+	lines []string
+}
+
+// parseTextSections splits a Cursor text transcript into its role sections.
+// FilterText and the handoff reader both use it, so the retained text is
+// read back exactly as it was filtered. It returns ok false when non-blank
+// text comes before the first header; that text is in no section.
+//
+// A line with a header's shape (textRoleHeader) at column 0 starts a
+// section, with one refinement. Cursor separates its sections with a blank
+// line; when the transcript does (its second header follows a blank line),
+// a visible header that does not follow a blank line is content, so a
+// `user: …` line in the middle of a tool's output cannot start a Person
+// turn. A hidden header (`system:`, `thinking:`, …) always starts a
+// section, so text that might be a hidden section is never retained. A
+// transcript whose second header does not follow a blank line is read as
+// filter 10 read it, one header per line. blankSeparated reports which
+// reading applied.
+func parseTextSections(content string) (sections []textSection, blankSeparated, ok bool) {
+	decided, previousBlank, leading := false, false, false
+	for line := range strings.SplitSeq(content, "\n") {
+		blank := strings.TrimSpace(line) == ""
+		role, _, header := textRoleHeader(line)
+		if header && len(sections) > 0 {
+			switch {
+			case !decided:
+				blankSeparated, decided = previousBlank, true
+			case blankSeparated && !previousBlank && visibleTextRoles[role]:
+				header = false
+			}
+		}
+		previousBlank = blank
+		switch {
+		case header:
+			sections = append(sections, textSection{role: role, lines: []string{line}})
+		case len(sections) > 0:
+			sections[len(sections)-1].lines = append(sections[len(sections)-1].lines, line)
+		case !blank:
+			// Text before the first header belongs to no section.
+			leading = true
+		}
+	}
+	for i := range sections {
+		lines := sections[i].lines
+		for len(lines) > 1 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+			lines = lines[:len(lines)-1]
+		}
+		sections[i].lines = lines
+	}
+	return sections, blankSeparated, !leading
 }
 
 // FilterText retains a hook-provided Cursor text transcript only when the hook
@@ -234,29 +316,30 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 	}
 	addGap("text_structure_partial", "Cursor role sections retained without manufactured events")
 
-	// Split into sections, keeping each visible section's lines as they were.
+	parsed, blankSeparated, ok := parseTextSections(string(content))
+	if !ok {
+		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has unrecognized role section"}
+	}
+	// Keep each visible section's lines as they were, blank lines inside it
+	// included (filter 10 dropped them). Sections are joined with a blank
+	// line when the transcript separated them with one, so the retained
+	// text is read back with the same rule.
 	var sections [][]string
-	hidden := false
-	for line := range strings.SplitSeq(string(content), "\n") {
-		if strings.TrimSpace(line) == "" {
+	hiddenSections, hiddenLines := 0, 0
+	for _, section := range parsed {
+		if hiddenTextRoles[section.role] {
+			hiddenSections++
+			for _, line := range section.lines {
+				if strings.TrimSpace(line) != "" {
+					hiddenLines++
+				}
+			}
 			continue
 		}
-		role, _, header := textRoleHeader(line)
-		switch {
-		case header && hiddenTextRoles[role]:
-			hidden = true
-			addGap("hidden_instruction_omitted", "text section omitted")
-		case header:
-			hidden = false
-			sections = append(sections, []string{line})
-		case hidden:
-			// continuation line of an already-hidden section; omit.
-		case len(sections) > 0:
-			// continuation line of the current visible section's message body.
-			sections[len(sections)-1] = append(sections[len(sections)-1], line)
-		default:
-			return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has unrecognized role section"}
-		}
+		sections = append(sections, section.lines)
+	}
+	if hiddenSections > 0 {
+		addGap("hidden_instruction_omitted", fmt.Sprintf("%d text sections omitted (%d lines)", hiddenSections, hiddenLines))
 	}
 	if len(sections) == 0 {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable visible sections"}
@@ -272,12 +355,16 @@ func (CursorAdapter) FilterText(r io.Reader, freshStartedAt time.Time) (Filtered
 		if !ok {
 			return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript is not text"}
 		}
-		retained = append(retained, text)
+		retained = append(retained, indentHeaderShapedLines(text))
 	}
 	if len(retained) == 0 {
 		return FilteredTranscript{}, &FilterError{Reason: "cursor text transcript has no retainable content"}
 	}
-	text := strings.Join(retained, "\n")
+	separator := "\n"
+	if blankSeparated {
+		separator = "\n\n"
+	}
+	text := strings.Join(retained, separator)
 	result.Text = []string{text}
 	result.Boundary.RetainedBytes = len(text)
 	return result, nil
@@ -358,36 +445,39 @@ var toolArgumentKeys = map[string]bool{"input": true, "arguments": true, "tool_i
 // gap; its value is never retained.
 //
 // typedInputArgumentKeys are the arguments which carry text a tool types or
-// submits outward — into a browser field, a terminal, or a device — when the
-// tool's name (`name` or `tool_name` beside the subtree) is one of
-// typedInputToolNames, ends with `_` followed by one of them (an MCP tool such
-// as `mcp__browser__computer`), or ends with one of typedInputToolSuffixes.
-// What was typed into a login form is exactly the value a transcript must not
-// keep, and the tool's own name is the only signal of that.
+// submits outward — into a browser field, a form, a terminal, or a device.
+// They are dropped when the tool's name (`name` or `tool_name` beside the
+// subtree) says it types (see isTypedInputTool), and, for any tool, when a
+// label beside the value says it is a secret (see hasSensitiveLabel). What
+// was typed into a login form is exactly the value a transcript must not
+// keep.
 //
-// credentialKeyFragments drop any argument whose lowercase key contains one
-// of them, for every tool. This is broader than blockedKeys (which need an
-// exact name) and knowingly catches budgets such as `max_tokens`.
+// Any argument whose key names a credential (isCredentialKey, from the one
+// credentialVocabulary the text patterns use too) is dropped for every
+// tool.
 var (
-	typedInputArgumentKeys  = map[string]bool{"text": true, "value": true, "values": true}
-	typedInputToolNames     = []string{"type", "form_input", "computer", "key", "enter_verification_code", "autofill_credential"}
-	typedInputToolSuffixes  = []string{"_type", "_input", "_fill"}
-	credentialKeyFragments  = []string{"password", "secret", "token", "credential", "api_key", "apikey", "cookie", "authorization"}
+	typedInputArgumentKeys  = map[string]bool{"text": true, "value": true, "values": true, "keys": true, "chars": true}
 	deniedToolArgumentIntro = "omitted tool argument keys: "
 )
 
+// typedInputToolWords are the words of a tool name that say the tool types
+// or submits text: Playwright's browser_type, browser_fill_form, and
+// browser_press_key, chrome-devtools' fill and fill_form, a computer-use
+// tool's type action, form_input, select_option, send_keys, Codex's
+// write_stdin, enter_verification_code, autofill_credential. Filter 10
+// matched a few whole names and suffixes, and missed every fill_form tool.
+var typedInputToolWords = map[string]bool{
+	"type": true, "typing": true, "fill": true, "form": true, "input": true, "keyboard": true,
+	"key": true, "keys": true, "press": true, "autofill": true, "credential": true, "credentials": true,
+	"verification": true, "otp": true, "password": true, "select": true, "paste": true,
+	"computer": true, "stdin": true,
+}
+
+// isTypedInputTool reports whether a tool's name, split into words (see
+// splitNameWords), holds one of typedInputToolWords.
 func isTypedInputTool(name string) bool {
-	lower := strings.ToLower(strings.TrimSpace(name))
-	if lower == "" {
-		return false
-	}
-	for _, candidate := range typedInputToolNames {
-		if lower == candidate || strings.HasSuffix(lower, "_"+candidate) {
-			return true
-		}
-	}
-	for _, suffix := range typedInputToolSuffixes {
-		if strings.HasSuffix(lower, suffix) {
+	for _, word := range splitNameWords(name) {
+		if typedInputToolWords[word] {
 			return true
 		}
 	}
@@ -395,15 +485,13 @@ func isTypedInputTool(name string) bool {
 }
 
 // deniedToolArgument reports whether a tool argument's value must be dropped
-// even though the subtree otherwise retains every key.
-func deniedToolArgument(key, toolName string) bool {
-	lower := strings.ToLower(key)
-	for _, fragment := range credentialKeyFragments {
-		if strings.Contains(lower, fragment) {
-			return true
-		}
+// even though the subtree otherwise retains every key: a credential-named
+// key, or a typed-input key of a typing tool or beside a sensitive label.
+func deniedToolArgument(key, toolName string, sensitiveLabelled bool) bool {
+	if isCredentialKey(key) {
+		return true
 	}
-	return typedInputArgumentKeys[lower] && isTypedInputTool(toolName)
+	return typedInputArgumentKeys[strings.ToLower(key)] && (sensitiveLabelled || isTypedInputTool(toolName))
 }
 
 // keyNameSet collects distinct key names for one summary gap, capped so a
@@ -829,16 +917,17 @@ func (s *sanitizeState) denyArgument(key string) {
 	s.addGap("sensitive_or_hidden_field_omitted", s.record, "field omitted")
 }
 
+// isHiddenObject reports whether an object is a system, developer, or
+// reasoning record or block, by its role, channel, or type.
+func isHiddenObject(in map[string]any) bool {
+	role, _ := in["role"].(string)
+	channel, _ := in["channel"].(string)
+	kind, _ := in["type"].(string)
+	return isHiddenRole(role) || isHiddenChannel(channel) || isHiddenRole(kind)
+}
+
 func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bool) {
-	if role, _ := in["role"].(string); isHiddenRole(role) {
-		state.addGap("hidden_instruction_omitted", state.record, "record omitted")
-		return nil, false
-	}
-	if channel, _ := in["channel"].(string); isHiddenChannel(channel) {
-		state.addGap("hidden_instruction_omitted", state.record, "record omitted")
-		return nil, false
-	}
-	if kind, _ := in["type"].(string); isHiddenRole(kind) {
+	if isHiddenObject(in) {
 		state.addGap("hidden_instruction_omitted", state.record, "record omitted")
 		return nil, false
 	}
@@ -856,6 +945,11 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	// Filter 11: a value whose sibling label says it is a password, PIN,
+	// one-time code, or card number (`{"name": "Password", "value": …}`,
+	// `{"name": "DB_PASSWORD", "value": …}`) is typed input, whatever the
+	// tool.
+	sensitiveLabelled := state.retainAllKeys && hasSensitiveLabel(in)
 	for _, key := range keys {
 		value := in[key]
 		lower := strings.ToLower(key)
@@ -872,7 +966,7 @@ func sanitizeObject(in map[string]any, state *sanitizeState) (map[string]any, bo
 		case state.retainAllKeys:
 			// A tool argument's own name is retained; its value is not trusted,
 			// and a typed-input or credential-named argument is dropped whole.
-			if deniedToolArgument(key, state.toolName) {
+			if deniedToolArgument(key, state.toolName, sensitiveLabelled) {
 				state.denyArgument(key)
 				continue
 			}
@@ -972,44 +1066,147 @@ func isHiddenChannel(value string) bool {
 // everything else, including strings and booleans, is omitted there.
 func isNumericSubtreeValue(value any) bool {
 	switch value.(type) {
-	case float64, map[string]any, []any:
+	case float64, json.Number, map[string]any, []any:
 		return true
 	default:
 		return false
 	}
 }
 
+// sanitizeNestedJSON sanitizes a string that holds a JSON object or array
+// (Codex's function_call arguments, a tool result an MCP server returned as
+// JSON text, a Cursor result stored as a string) structurally, as the
+// object or array it is, rather than as opaque text. Filter 10 saw such a
+// string only through the text patterns, so the key rules never ran on it:
+// a Codex browser_type call kept the password it typed, which the same call
+// from Claude Code (whose arguments are an object) dropped.
+//
+// The decoded value is sanitized as a tool-argument subtree is: every key
+// name kept, credential-named keys and typed input dropped, every string
+// redacted, binary blocks dropped, and nested JSON strings decoded again.
+// Inside a tool call's arguments the tool name still decides what counts as
+// typed input. The result is re-encoded (compact, keys sorted, no HTML
+// escaping) only when sanitizing changed something; otherwise the string is
+// kept byte for byte. A value the sanitizer keeps nothing of becomes `{}` or
+// `[]`. ok is false when the string is not a JSON object or array.
+func sanitizeNestedJSON(v string, state *sanitizeState) (out string, ok bool) {
+	trimmed := strings.TrimSpace(v)
+	if len(trimmed) < 2 || (trimmed[0] != '{' && trimmed[0] != '[') {
+		return v, false
+	}
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	decoder.UseNumber()
+	var decoded any
+	if decoder.Decode(&decoded) != nil {
+		return v, false
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return v, false
+	}
+	if !nonEmptyValue(decoded) {
+		return v, true
+	}
+	retainAll, deniedKey := state.retainAllKeys, state.deniedKey
+	if !retainAll {
+		// Outside a tool call's arguments a dropped key is not a tool
+		// argument, so it is not named as one.
+		state.retainAllKeys, state.deniedKey = true, nil
+	}
+	safe, keep := sanitizeValue(decoded, state)
+	state.retainAllKeys, state.deniedKey = retainAll, deniedKey
+	if !keep {
+		return emptyJSONContainer(trimmed[0]), true
+	}
+	if reflect.DeepEqual(safe, decoded) {
+		return v, true
+	}
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if encoder.Encode(safe) != nil {
+		return emptyJSONContainer(trimmed[0]), true
+	}
+	return strings.TrimSuffix(encoded.String(), "\n"), true
+}
+
+// maxSanitizeStringPasses bounds how often sanitizeValue repeats the string
+// passes looking for a stable result. Every pass is a complete sanitize, so
+// the result is filtered however many ran.
+const maxSanitizeStringPasses = 4
+
+// maxTextBytes is the longest string the filter retains.
+const maxTextBytes = 64 * 1024
+
+// sanitizeStringOnce is one pass of the string rules: JSON inside the
+// string, injected instruction blocks, base64 data URLs, credential
+// redaction, and the length cap. keep is false when nothing is left.
+func sanitizeStringOnce(v string, state *sanitizeState) (string, bool) {
+	if nested, isJSON := sanitizeNestedJSON(v, state); isJSON {
+		v = nested
+	}
+	if injected, stripped := stripInjectedInstructions(v); injected {
+		state.addGap("hidden_instruction_omitted", state.record, "injected instruction block omitted")
+		if stripped == "" {
+			return "", false
+		}
+		v = stripped
+	}
+	if base64DataURL.MatchString(v) {
+		state.addGap("binary_content_omitted", state.record, "base64 data URL omitted")
+		v = base64DataURL.ReplaceAllString(v, "data:${1}${2};base64,[OMITTED]")
+	}
+	if redacted, hit := redactSensitive(v); hit {
+		state.addGap("sensitive_content_redacted", state.record, "content redacted")
+		v = redacted
+	}
+	if len(v) > maxTextBytes {
+		// Cut on a character boundary, so a retained string stays valid
+		// UTF-8 (filter 8 could split a multi-byte character).
+		state.addGap("content_truncated", state.record, "content truncated")
+		v = TruncateUTF8(v, maxTextBytes)
+	}
+	return v, true
+}
+
+// emptyJSONContainer is an empty object or array, by its opening bracket.
+func emptyJSONContainer(open byte) string {
+	if open == '[' {
+		return "[]"
+	}
+	return "{}"
+}
+
 func sanitizeValue(value any, state *sanitizeState) (any, bool) {
 	switch v := value.(type) {
-	case nil, bool, float64:
+	case nil, bool, float64, json.Number:
 		return v, true
 	case string:
-		if injected, stripped := stripInjectedInstructions(v); injected {
-			state.addGap("hidden_instruction_omitted", state.record, "injected instruction block omitted")
-			if stripped == "" {
+		// One pass can make a string another pass would change: redacting
+		// `{"pAss":"0"""}` as text leaves valid JSON whose key the next pass
+		// drops, and a cut at the length cap can end a string mid-shape. So
+		// the passes repeat until the string is stable (in practice once, or
+		// twice when something was changed), which keeps sanitizing
+		// idempotent: a republished snapshot is byte-identical.
+		for range maxSanitizeStringPasses {
+			next, keep := sanitizeStringOnce(v, state)
+			if !keep {
 				return nil, false
 			}
-			v = stripped
-		}
-		if base64DataURL.MatchString(v) {
-			state.addGap("binary_content_omitted", state.record, "base64 data URL omitted")
-			v = base64DataURL.ReplaceAllString(v, "data:${1}${2};base64,[OMITTED]")
-		}
-		if redacted, hit := redactSensitive(v); hit {
-			state.addGap("sensitive_content_redacted", state.record, "content redacted")
-			v = redacted
-		}
-		const maxTextBytes = 64 * 1024
-		if len(v) > maxTextBytes {
-			// Cut on a character boundary, so a retained string stays valid
-			// UTF-8 (filter 8 could split a multi-byte character).
-			state.addGap("content_truncated", state.record, "content truncated")
-			v = TruncateUTF8(v, maxTextBytes)
+			if next == v {
+				break
+			}
+			v = next
 		}
 		return v, true
 	case map[string]any:
 		return sanitizeObject(v, state)
 	case []any:
+		// Filter 11: an argument vector's secret values (`-pS3cret` after
+		// mysql, the word after `--token`) are redacted by their position.
+		if redacted, hit := redactArgv(v); hit && !state.numericOnly {
+			state.addGap("sensitive_content_redacted", state.record, "content redacted")
+			v = redacted
+		}
 		out := make([]any, 0, len(v))
 		for _, item := range v {
 			// An array inside a numbers-only subtree is filtered per element,

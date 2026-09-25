@@ -50,7 +50,7 @@ func TestCursorTextRoleHeadersOnlyAtColumnZero(t *testing.T) {
 		"  system: linux\n" +
 		"after the indented system line\n" +
 		"assistant: done\n" +
-		"System: a real hidden section\n" +
+		"system: a real hidden section\n" +
 		"hidden continuation\n"
 	filtered, err := CursorAdapter{}.FilterText(strings.NewReader(text), time.Unix(1, 0))
 	if err != nil {
@@ -63,7 +63,7 @@ func TestCursorTextRoleHeadersOnlyAtColumnZero(t *testing.T) {
 		}
 	}
 	if strings.Contains(retained, "hidden continuation") || strings.Contains(retained, "a real hidden section") {
-		t.Errorf("a column-0 System: section was retained:\n%s", retained)
+		t.Errorf("a column-0 system: section was retained:\n%s", retained)
 	}
 	h, err := BuildHandoff(parserTestBundle(t, "cursor", CursorAdapter{}, filtered), nil, HandoffOptions{})
 	if err != nil {
@@ -72,12 +72,12 @@ func TestCursorTextRoleHeadersOnlyAtColumnZero(t *testing.T) {
 	if len(h.Exchanges) != 1 || h.Exchanges[0].Prompt != "show the compose file" {
 		t.Fatalf("exchanges: %+v", h.Exchanges)
 	}
-	for _, header := range []string{"user:", "User:", "user: text", "USER:\r"} {
+	for _, header := range []string{"user:", "user: text", "system:\r", "thinking: x"} {
 		if _, _, ok := textRoleHeader(header); !ok {
 			t.Errorf("%q is a header", header)
 		}
 	}
-	for _, content := range []string{" user:", "\tuser:", "user:text", "users: x", "username: x", ":"} {
+	for _, content := range []string{" user:", "\tuser:", "user:text", "users: x", "username: x", ":", "User:", "USER:\r", "System: linux", "Analysis: the bug"} {
 		if _, _, ok := textRoleHeader(content); ok {
 			t.Errorf("%q is not a header", content)
 		}

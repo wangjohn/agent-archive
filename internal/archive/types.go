@@ -41,7 +41,7 @@ const (
 	// hidden one; and a quoted credential value takes along whatever a shell
 	// would glue onto it after the closing quote (`PASSWORD="abc"secret`).
 	// See docs/agent-archive-privacy.md.
-	FilterVersion = "10"
+	FilterVersion = "11"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
