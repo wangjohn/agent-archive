@@ -476,7 +476,14 @@ matching rule wins.
    scratch chats) or `~/Documents/Codex/` (Codex desktop's dated workspaces,
    `<date>/<name>`) becomes that one folder as a project, unless rule 3 or 4
    already found a repository inside it. Because the nearest ancestor wins,
-   future chats there are captured too, and the plan says so.
+   future chats there are captured too, and the plan says so. macOS asks
+   before an app looks inside `~/Documents`, so the plan matches
+   `~/Documents/Codex/` as spelled (under home as given and with its
+   symlinks resolved) and doesn't look inside Documents for it: a plan with
+   no session and no configured project in Documents never touches it, and
+   a terminal without Documents access gets no prompt. Only when a
+   configured project is already in Documents is the folder's own symlink
+   resolved, as before.
 6. **Temporary directories.** `/tmp`, `/private/tmp`, `/var/folders`, and
    `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
    each directory becomes its own project. These sessions are mostly tool

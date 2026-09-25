@@ -44,7 +44,20 @@ type resolver struct {
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
 	var workspaces []workspaceFolder
+	resolvedHome := env.resolved(env.Home)
+	lookInDocuments := documentsInUse(env, resolvedHome, cfg)
 	for _, folder := range workspaceFolders(env.Home) {
+		if !lookInDocuments && local.PathWithin(folder, filepath.Join(env.Home, "Documents")) {
+			// Resolving a folder in ~/Documents looks inside Documents, which
+			// makes macOS ask a terminal without access for it. Unless
+			// Documents is in use already, the folder is matched as spelled,
+			// under home as given and resolved: a session there still maps
+			// to it, and a plan that has none never touches Documents.
+			rel, _ := filepath.Rel(env.Home, folder)
+			root := filepath.Join(resolvedHome, rel)
+			workspaces = append(workspaces, workspaceFolder{root: root, forms: uniquePaths(filepath.Clean(folder), root)})
+			continue
+		}
 		workspaces = append(workspaces, workspaceFolder{root: env.resolved(folder), forms: uniquePaths(filepath.Clean(folder), env.resolved(folder))})
 	}
 	var temps []string
@@ -171,6 +184,21 @@ func (r *resolver) resolveUncached(cwd string) resolution {
 type workspaceFolder struct {
 	root  string
 	forms []string
+}
+
+// documentsInUse reports whether a configured project, included or
+// excluded, is in ~/Documents: then the person already gave this Mac's
+// capture access to it, and looking in it (resolving the Codex workspace
+// folder's symlinks) asks nothing new.
+func documentsInUse(env Environment, resolvedHome string, cfg config.Config) bool {
+	for _, p := range cfg.Archive.Projects {
+		for _, home := range uniquePaths(filepath.Clean(env.Home), resolvedHome) {
+			if local.PathWithin(filepath.Clean(p.Root), filepath.Join(home, "Documents")) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // workspaceFolders are the folders desktop apps start chats in, under home:
