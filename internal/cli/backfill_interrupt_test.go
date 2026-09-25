@@ -13,18 +13,16 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
-// stubExit replaces exitOnSignal for a test and returns the signals it was
-// called with; the real one still removes this process's snapshots first.
-func stubExit(t *testing.T) func() []os.Signal {
-	t.Helper()
+// stubExit returns a stand-in for exitOnSignal, to set as Env.exitOnSignal,
+// and a function returning the signals it was called with; like the real
+// one it removes this process's snapshots first.
+func stubExit() (func(os.Signal), func() []os.Signal) {
 	exits := make(chan os.Signal, 8)
-	saved := exitOnSignal
-	exitOnSignal = func(sig os.Signal) {
+	exit := func(sig os.Signal) {
 		cursorstore.RemoveOwnSnapshots()
 		exits <- sig
 	}
-	t.Cleanup(func() { exitOnSignal = saved })
-	return func() []os.Signal {
+	return exit, func() []os.Signal {
 		var got []os.Signal
 		for {
 			select {
@@ -43,10 +41,10 @@ func stubExit(t *testing.T) func() []os.Signal {
 // exitOnSignal, which removes this process's copies of Cursor's database
 // first, instead of the default handler leaving them behind.
 func TestPlanningInterruptCancelsAndSecondOneExits(t *testing.T) {
-	exits := stubExit(t)
+	exit, exits := stubExit()
 	signals := make(chan os.Signal, 1)
 	stopped := make(chan struct{})
-	env := Env{Interrupts: func() (<-chan os.Signal, func()) {
+	env := Env{exitOnSignal: exit, Interrupts: func() (<-chan os.Signal, func()) {
 		return signals, func() { close(stopped) }
 	}}
 	out := &syncBuffer{}
@@ -76,13 +74,9 @@ func TestPlanningInterruptCancelsAndSecondOneExits(t *testing.T) {
 // B-24: exitOnSignal removes this process's copies of Cursor's database
 // before it exits, with the shell's status for the signal.
 func TestExitOnSignalRemovesSnapshotsThenExits(t *testing.T) {
-	savedRemove, savedExit := removeOwnSnapshots, exitProcess
-	t.Cleanup(func() { removeOwnSnapshots, exitProcess = savedRemove, savedExit })
 	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129} {
 		var steps []string
-		removeOwnSnapshots = func() { steps = append(steps, "remove") }
-		exitProcess = func(code int) { steps = append(steps, fmt.Sprintf("exit %d", code)) }
-		exitOnSignal(sig)
+		exitAfterSignal(sig, func() { steps = append(steps, "remove") }, func(code int) { steps = append(steps, fmt.Sprintf("exit %d", code)) })
 		if got := strings.Join(steps, ", "); got != fmt.Sprintf("remove, exit %d", want) {
 			t.Fatalf("%v: %s", sig, got)
 		}
@@ -93,9 +87,9 @@ func TestExitOnSignalRemovesSnapshotsThenExits(t *testing.T) {
 // once, even as the first signal, through exitOnSignal.
 func TestTerminateSignalsExitAtOnce(t *testing.T) {
 	for _, sig := range []os.Signal{syscall.SIGTERM, syscall.SIGHUP} {
-		exits := stubExit(t)
+		exit, exits := stubExit()
 		signals := make(chan os.Signal, 1)
-		env := Env{Interrupts: func() (<-chan os.Signal, func()) { return signals, func() {} }}
+		env := Env{exitOnSignal: exit, Interrupts: func() (<-chan os.Signal, func()) { return signals, func() {} }}
 		_, stop := interruptibleContext(env, &syncBuffer{})
 		signals <- sig
 		var got []os.Signal

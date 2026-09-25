@@ -73,7 +73,7 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, bool, error) {
 // metadata fields, so its output can never contain transcript content. It
 // reuses unchanged sidecars from the local metadata cache unless --no-cache.
 func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("list", stderr)
+	fs := env.newCommandFlags("list", stderr)
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
 	model := fs.String("model", "", "only sessions that requested or observed this model")
 	skill := fs.String("skill", "", "only sessions involving this skill (see --skill-usage)")
@@ -267,7 +267,7 @@ func validLowerSHA256(value string) bool {
 // is printed only when the user passes --normalized explicitly, keeping the
 // spec's rule that nothing prints transcript contents unless asked.
 func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("show", stderr)
+	fs := env.newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
 	normalized := fs.Bool("normalized", false, "also download, verify, and print the normalized conversation view (this prints transcript content)")
 	// show always prints JSON; --json is accepted so the three inspection

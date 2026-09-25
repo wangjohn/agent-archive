@@ -63,16 +63,15 @@ func asMainBatch(t *testing.T, home string) {
 // sessions deleted and the projects it added excluded.
 func TestBackfillMainBatchStillContinuesAndUndoes(t *testing.T) {
 	f, bucket := newImportFixture(t)
-	backfillHoldSteps = 3
+	f.env.backfillHoldSteps = 3
 	stopped := false
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillCheckpoint = func(step string) error {
 		if step == "registered" && !stopped {
 			stopped = true
 			return errors.New("simulated crash")
 		}
 		return nil
 	}
-	t.Cleanup(func() { backfillCheckpoint, backfillHoldSteps = nil, 0 })
 	if _, _, code := f.importRun(t, nil, false, "--yes", "--background", "--since", "30d"); code != 1 {
 		t.Fatalf("first run: code %d", code)
 	}
@@ -81,7 +80,7 @@ func TestBackfillMainBatchStillContinuesAndUndoes(t *testing.T) {
 		t.Fatalf("not a main-era interrupted batch: %s", raw)
 	}
 
-	backfillCheckpoint = nil
+	f.env.backfillCheckpoint = nil
 	out, errOut, code := f.importRun(t, nil, false, "--yes", "--background", "--since", "30d")
 	if code != 0 || !strings.Contains(out, "as import "+firstImport+".") {
 		t.Fatalf("rerun did not continue %s: %d %s\n%s", firstImport, code, errOut, out)

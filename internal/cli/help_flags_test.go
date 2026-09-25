@@ -15,9 +15,8 @@ import (
 // without help fails here.
 func TestHelpDescribesEveryFlag(t *testing.T) {
 	var sets []*commandFlags
-	onNewCommandFlags = func(f *commandFlags) { sets = append(sets, f) }
-	t.Cleanup(func() { onNewCommandFlags = nil })
 	env := testEnv(t, t.TempDir(), time.Now())
+	env.observeFlags = func(f *commandFlags) { sets = append(sets, f) }
 	for command := range commandHelp {
 		if command == "version" {
 			continue

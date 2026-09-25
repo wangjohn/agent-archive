@@ -22,26 +22,13 @@ import (
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// backfillCheckpoint, when set, is called inside the configuration commit
-// between writing the batch file and saving the configuration ("batch
-// saved"), after the commit ("committed"), after each registration hold
-// ("registered"), before the upload ("uploading"), and when undo holds its
-// locks and has rechecked its plan ("undoing"), has marked the batch undone
-// but not saved the configuration ("undo marked"), has saved it but not
-// recorded the changes in the batch ("undo configured"), and has recorded
-// them but removed no session ("undo recorded"). A test returns an error
-// from it to stop the import or undo there, as a crash would.
-var backfillCheckpoint func(step string) error
-
-// backfillHoldSteps, when positive, caps the steps registration takes per
-// hold of hooks.lock; a test lowers it to force several holds.
-var backfillHoldSteps int
-
-func checkpoint(step string) error {
-	if backfillCheckpoint == nil {
+// checkpoint calls Env.backfillCheckpoint, a test's stand-in for a crash at
+// step; it does nothing in a real run.
+func (e Env) checkpoint(step string) error {
+	if e.backfillCheckpoint == nil {
 		return nil
 	}
-	return backfillCheckpoint(step)
+	return e.backfillCheckpoint(step)
 }
 
 // Lock waits. A collector pass can take a while; hooks hold hooks.lock for
@@ -78,7 +65,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	if err != nil {
 		return fail("%v", err)
 	}
-	if err := checkpoint("committed"); err != nil {
+	if err := env.checkpoint("committed"); err != nil {
 		return fail("%v", err)
 	}
 
@@ -98,13 +85,13 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
 	registration := backfill.Registration{
 		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
-		MaxHoldSteps: backfillHoldSteps, CursorDatabase: env.cursorDatabase(),
+		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(),
 		AfterHold: func(sessions, subagents []string) error {
 			batch.AddSessions(sessions, subagents)
 			if err := backfill.SaveBatch(home, batch); err != nil {
 				return err
 			}
-			return checkpoint("registered")
+			return env.checkpoint("registered")
 		},
 		Stop: interrupt.requested,
 	}
@@ -133,7 +120,7 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 		return 0
 	}
 	// Step 6: upload.
-	if err := checkpoint("uploading"); err != nil {
+	if err := env.checkpoint("uploading"); err != nil {
 		return fail("%v", err)
 	}
 	return uploadImport(env, stdout, stderr, home, batch.ID, plan, interrupt)
@@ -258,7 +245,7 @@ func commitImport(env Env, home string, plan backfill.Plan, fingerprint string) 
 	if err := backfill.SaveBatch(home, batch); err != nil {
 		return batch, admittedAt, 0, err
 	}
-	if err := checkpoint("batch saved"); err != nil {
+	if err := env.checkpoint("batch saved"); err != nil {
 		return batch, admittedAt, 0, err
 	}
 	if err := config.Save(home, cfg); err != nil {
@@ -493,7 +480,7 @@ func (u *upload) draw(newline bool) {
 // import with its ID, start, sessions, projects added, and upload state. It
 // reads local state only.
 func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
-	if !newCommandFlags("backfill history", stderr).parseFlagsOnly(args) {
+	if !env.newCommandFlags("backfill history", stderr).parseFlagsOnly(args) {
 		return 2
 	}
 	home, err := env.readHome()

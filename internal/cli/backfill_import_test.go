@@ -505,8 +505,8 @@ func TestBackfillCrashConverges(t *testing.T) {
 		t.Run(crash.name, func(t *testing.T) {
 			f, _ := newImportFixture(t)
 			calls := 0
-			backfillHoldSteps = 3
-			backfillCheckpoint = func(step string) error {
+			f.env.backfillHoldSteps = 3
+			f.env.backfillCheckpoint = func(step string) error {
 				if step == crash.at {
 					if calls++; calls == crash.n {
 						return errors.New("simulated crash")
@@ -514,7 +514,6 @@ func TestBackfillCrashConverges(t *testing.T) {
 				}
 				return nil
 			}
-			t.Cleanup(func() { backfillCheckpoint, backfillHoldSteps = nil, 0 })
 			if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 1 || !strings.Contains(errOut, "simulated crash") {
 				t.Fatalf("crash: code %d, %s", code, errOut)
 			}
@@ -534,7 +533,7 @@ func TestBackfillCrashConverges(t *testing.T) {
 				t.Fatalf("history:\n%s", history)
 			}
 
-			backfillCheckpoint = nil
+			f.env.backfillCheckpoint = nil
 			out, errOut, code := f.importRun(t, nil, false, "--yes")
 			if code != 0 {
 				t.Fatalf("rerun: code %d, %s\n%s", code, errOut, out)
@@ -679,7 +678,7 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	}
 	out := &syncBuffer{}
 	const notice = "Stopping after the current session; press Ctrl-C again to quit."
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillCheckpoint = func(step string) error {
 		if step != "uploading" {
 			return nil
 		}
@@ -692,7 +691,6 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 		record("upload starts")
 		return nil
 	}
-	t.Cleanup(func() { backfillCheckpoint = nil })
 	env := f.env
 	env.IsTerminal = func(any) bool { return false }
 	var errOut bytes.Buffer

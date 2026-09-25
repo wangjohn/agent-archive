@@ -577,7 +577,7 @@ func TestBackfillUndoResumedDuringPrompt(t *testing.T) {
 func TestBackfillUndoHoldsCollectorLock(t *testing.T) {
 	f, _ := newUndoFixture(t)
 	checked := false
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillCheckpoint = func(step string) error {
 		if step != "undoing" {
 			return nil
 		}
@@ -591,7 +591,6 @@ func TestBackfillUndoHoldsCollectorLock(t *testing.T) {
 		}
 		return nil
 	}
-	t.Cleanup(func() { backfillCheckpoint = nil })
 	if _, errOut, code := f.undoRun(t, nil, false, "--yes"); code != 0 {
 		t.Fatalf("code %d, %s", code, errOut)
 	}
@@ -1003,13 +1002,12 @@ func TestBackfillUndoConfigChanged(t *testing.T) {
 					change(t, f.data)
 				}
 			}}
-			backfillCheckpoint = func(step string) error {
+			f.env.backfillCheckpoint = func(step string) error {
 				if step == "undoing" && at == "commit" {
 					change(t, f.data)
 				}
 				return nil
 			}
-			t.Cleanup(func() { backfillCheckpoint = nil })
 			out, errOut, code := f.undoRun(t, stdin, true)
 			if code != 1 || !strings.Contains(errOut, "the configuration changed while this was open; run undo again") {
 				t.Fatalf("code %d, %s\n%s", code, errOut, out)
@@ -1072,18 +1070,17 @@ func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
 // options starts a new one.
 func TestBackfillUndoneImportNotContinued(t *testing.T) {
 	f, _ := newImportFixture(t)
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillCheckpoint = func(step string) error {
 		if step == "registered" {
 			return errors.New("simulated crash")
 		}
 		return nil
 	}
-	backfillHoldSteps = 3
-	t.Cleanup(func() { backfillCheckpoint, backfillHoldSteps = nil, 0 })
+	f.env.backfillHoldSteps = 3
 	if _, _, code := f.importRun(t, nil, false, "--yes", "--background"); code != 1 {
 		t.Fatal("no crash")
 	}
-	backfillCheckpoint = nil
+	f.env.backfillCheckpoint = nil
 	if _, errOut, code := f.undoRun(t, nil, false, "--yes"); code != 0 {
 		t.Fatalf("undo: %s", errOut)
 	}

@@ -34,7 +34,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		terminal.Printf(stderr, "agent-archive: backfill undo: "+format+"\n", args...)
 		return 1
 	}
-	fs := newCommandFlags("backfill undo", stderr)
+	fs := env.newCommandFlags("backfill undo", stderr)
 	project := fs.String("project", "", "only undo this project's sessions")
 	yes := fs.Bool("yes", false, "skip the confirmation")
 	restoreRetention := fs.Bool("restore-retention", false, "with --yes, also put back the shorter retention from before the import")
@@ -178,7 +178,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if plan.Grew(confirmed) {
 		return fail("the import changed while this was open; run undo again to review it. Nothing was changed.")
 	}
-	if err := checkpoint("undoing"); err != nil {
+	if err := env.checkpoint("undoing"); err != nil {
 		return fail("%v", err)
 	}
 
@@ -196,11 +196,11 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// session is removed: once the projects are excluded, nothing of theirs
 	// is published again, even if undo is interrupted, and an import undone
 	// in part is never continued. A rerun finishes the sessions.
-	changes, err := commitUndo(home, batch, plan, fingerprint, now)
+	changes, err := commitUndo(env, home, batch, plan, fingerprint, now)
 	if err != nil {
 		return fail("%v", err)
 	}
-	if err := checkpoint("undo configured"); err != nil {
+	if err := env.checkpoint("undo configured"); err != nil {
 		return fail("%v", err)
 	}
 	if len(changes.Excluded) > 0 || changes.RetentionRestored {
@@ -209,7 +209,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			return fail("%v. The configuration was already changed. Run undo again to remove the sessions.", err)
 		}
 	}
-	if err := checkpoint("undo recorded"); err != nil {
+	if err := env.checkpoint("undo recorded"); err != nil {
 		return fail("%v", err)
 	}
 	result := plan.Remove(context.Background(), store, bucket, now)
@@ -256,7 +256,7 @@ func selectUndoBatch(home, id string) ([]backfill.Batch, *backfill.Batch, error)
 // the one the plan was made from. It returns the IDs of the projects it
 // excluded and whether it restored retention; the caller records them in the
 // batch.
-func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fingerprint string, now time.Time) (backfill.UndoChanges, error) {
+func commitUndo(env Env, home string, batch *backfill.Batch, plan backfill.UndoPlan, fingerprint string, now time.Time) (backfill.UndoChanges, error) {
 	markUndone := func() error {
 		batch.UndoneAt = &now
 		batch.RecordKept(plan.KeepProjects)
@@ -287,7 +287,7 @@ func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fing
 	if err := markUndone(); err != nil {
 		return backfill.UndoChanges{}, err
 	}
-	if err := checkpoint("undo marked"); err != nil {
+	if err := env.checkpoint("undo marked"); err != nil {
 		return backfill.UndoChanges{}, err
 	}
 	changes := plan.ApplyToConfig(&cfg)

@@ -139,7 +139,7 @@ type statusView struct {
 }
 
 func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("status", stderr)
+	fs := env.newCommandFlags("status", stderr)
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
 	if !fs.parseFlagsOnly(args) {
 		return 2

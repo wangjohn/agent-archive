@@ -18,16 +18,15 @@ import (
 // records the value as typed, and the same value continues it on any day.
 func TestBackfillRelativeSinceContinuesNextDay(t *testing.T) {
 	f, _ := newImportFixture(t)
-	backfillHoldSteps = 3
+	f.env.backfillHoldSteps = 3
 	stopped := false
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillCheckpoint = func(step string) error {
 		if step == "registered" && !stopped {
 			stopped = true
 			return errors.New("simulated crash")
 		}
 		return nil
 	}
-	t.Cleanup(func() { backfillCheckpoint, backfillHoldSteps = nil, 0 })
 	if _, _, code := f.importRun(t, nil, false, "--yes", "--background", "--since", "30d"); code != 1 {
 		t.Fatalf("first run: code %d", code)
 	}
@@ -36,7 +35,7 @@ func TestBackfillRelativeSinceContinuesNextDay(t *testing.T) {
 		t.Fatalf("batch %+v", b)
 	}
 
-	backfillCheckpoint = nil
+	f.env.backfillCheckpoint = nil
 	f.env.Now = func() time.Time { return backfillNow.Add(24 * time.Hour) }
 	out, errOut, code := f.importRun(t, nil, false, "--yes", "--background", "--since", "30d")
 	if code != 0 {
@@ -57,19 +56,18 @@ func TestBackfillRelativeSinceContinuesNextDay(t *testing.T) {
 func TestBackfillPointsAtAnInterruptedImport(t *testing.T) {
 	f, _ := newImportFixture(t)
 	stopped := false
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillCheckpoint = func(step string) error {
 		if step == "registered" && !stopped {
 			stopped = true
 			return errors.New("simulated crash")
 		}
 		return nil
 	}
-	backfillHoldSteps = 3
-	t.Cleanup(func() { backfillCheckpoint, backfillHoldSteps = nil, 0 })
+	f.env.backfillHoldSteps = 3
 	if _, _, code := f.importRun(t, nil, false, "--yes", "--background", "--since", "30d", "--harness", "claude", "--project", f.userHome+"/levenshtein"); code != 1 {
 		t.Fatalf("first run: code %d", code)
 	}
-	backfillCheckpoint = nil
+	f.env.backfillCheckpoint = nil
 	out, errOut, code := f.command(t, "backfill", "--dry-run")
 	if code != 0 {
 		t.Fatalf("dry run: %d %s", code, errOut)
@@ -88,15 +86,14 @@ func TestBackfillPointsAtAnInterruptedImport(t *testing.T) {
 func TestBackfillErrorPathReconciles(t *testing.T) {
 	f, _ := newImportFixture(t)
 	imports := filepath.Join(f.data, "imports")
-	backfillHoldSteps = 3
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillHoldSteps = 3
+	f.env.backfillCheckpoint = func(step string) error {
 		if step == "committed" {
 			return os.Chmod(imports, 0o500)
 		}
 		return nil
 	}
 	t.Cleanup(func() {
-		backfillCheckpoint, backfillHoldSteps = nil, 0
 		_ = os.Chmod(imports, 0o700)
 	})
 	if _, _, code := f.importRun(t, nil, false, "--yes", "--background"); code != 1 {
@@ -111,7 +108,7 @@ func TestBackfillErrorPathReconciles(t *testing.T) {
 		t.Fatalf("no gap to repair: %d recorded, %d registered", len(b.Sessions), len(crashed))
 	}
 
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillCheckpoint = func(step string) error {
 		if step == "registered" {
 			return errors.New("simulated registration error")
 		}
@@ -135,15 +132,14 @@ func TestBackfillErrorPathReconciles(t *testing.T) {
 func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
 	f, _ := newImportFixture(t)
 	imports := filepath.Join(f.data, "imports")
-	backfillHoldSteps = 3
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillHoldSteps = 3
+	f.env.backfillCheckpoint = func(step string) error {
 		if step == "committed" {
 			return os.Chmod(imports, 0o500)
 		}
 		return nil
 	}
 	t.Cleanup(func() {
-		backfillCheckpoint, backfillHoldSteps = nil, 0
 		_ = os.Chmod(imports, 0o700)
 	})
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 1 {
@@ -155,7 +151,7 @@ func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
 		t.Fatalf("setup failed to reproduce the gap: %d registered, %d recorded", len(registered), len(b.Sessions))
 	}
 
-	backfillCheckpoint = nil
+	f.env.backfillCheckpoint = nil
 	if err := os.Chmod(imports, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -209,14 +205,13 @@ func TestBackfillInterruptedRegistration(t *testing.T) {
 	f, _ := newImportFixture(t)
 	signals := make(chan os.Signal, 1)
 	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
-	backfillHoldSteps = 3
-	backfillCheckpoint = func(step string) error {
+	f.env.backfillHoldSteps = 3
+	f.env.backfillCheckpoint = func(step string) error {
 		if step == "registered" && len(signals) == 0 {
 			signals <- os.Interrupt
 		}
 		return nil
 	}
-	t.Cleanup(func() { backfillCheckpoint, backfillHoldSteps = nil, 0 })
 	out, _, code := f.importRun(t, nil, false, "--yes")
 	if code != 1 || !strings.Contains(out, "Stopped.") || !strings.Contains(out, "run agent-archive backfill again with the same options to finish it") {
 		t.Fatalf("code %d:\n%s", code, out)
@@ -227,7 +222,7 @@ func TestBackfillInterruptedRegistration(t *testing.T) {
 		t.Fatalf("%d registered, batch %+v", len(partial), b)
 	}
 
-	backfillCheckpoint = nil
+	f.env.backfillCheckpoint = nil
 	f.env.Interrupts = nil
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
 		t.Fatalf("rerun: %s", errOut)

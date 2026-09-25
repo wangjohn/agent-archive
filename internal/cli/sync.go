@@ -27,7 +27,7 @@ func waitingSummary(waiting []string, next time.Time) string {
 // pass, preserving queued work on failure. It respects paused state and
 // does not implicitly resume, per the spec.
 func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	if !newCommandFlags("sync", stderr).parseFlagsOnly(args) {
+	if !env.newCommandFlags("sync", stderr).parseFlagsOnly(args) {
 		return 2
 	}
 	// Like every command: what was asked for goes to stdout; why it was not

@@ -22,7 +22,7 @@ const maxFeedbackBytes = 64 << 10
 // only privacy-filtered file content and fixed provenance reach the durable
 // request consumed by the next collector pass.
 func runFeedbackCommand(args []string, stdout, stderr io.Writer, env Env) int {
-	fs := newCommandFlags("feedback", stderr)
+	fs := env.newCommandFlags("feedback", stderr)
 	file := fs.String("file", "", "read explicit feedback from this local UTF-8 text file")
 	// Accepts the documented `feedback SESSION_ID --file PATH` form as well
 	// as flags before SESSION_ID.
