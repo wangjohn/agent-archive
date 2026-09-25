@@ -273,7 +273,7 @@ func parseDocument(src []byte) (*document, error) {
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return nil, invalid(d.src, err)
+			return nil, fmt.Errorf("%w: an object key is not a string", errInvalidConfiguration)
 		}
 		// Setup would edit one of two members that tools resolve
 		// differently (the last wins in Go and JavaScript, not everywhere),
