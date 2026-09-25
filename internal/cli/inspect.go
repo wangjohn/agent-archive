@@ -190,10 +190,7 @@ func harnessFlag(value string) (string, bool) {
 	if value == "" {
 		return "", true
 	}
-	name := canonicalHarness(value)
-	//lint:ignore LV1001 harness names are plain strings in config and archive metadata; this checks a user-typed flag against them
-	switch name {
-	case "claude", "codex", "cursor":
+	if name, known := archive.KnownHarness(value); known {
 		return name, true
 	}
 	return "", false

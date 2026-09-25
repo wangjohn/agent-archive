@@ -47,10 +47,6 @@ func TestCanonicalHarness(t *testing.T) {
 func TestHarnessAliasIsSpelledOnce(t *testing.T) {
 	allowed := map[string]string{
 		"internal/archive/harness.go": "the canonical helper",
-		// TODO(#55): NewAdapter switches on the name itself; call
-		// CanonicalHarness there once that PR, which edits adapters.go,
-		// has merged.
-		"internal/archive/adapters.go": "NewAdapter, pending #55",
 		// A folder of Claude's desktop app, not a harness name.
 		"internal/cli/capabilities.go": "a directory name",
 	}

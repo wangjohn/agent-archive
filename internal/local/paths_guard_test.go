@@ -21,9 +21,6 @@ func TestNoOtherPathContainmentCheck(t *testing.T) {
 		// display cuts the home prefix off to print ~/rest; it needs the
 		// remainder, not a yes or no.
 		"internal/backfill/render.go": "prints the remainder",
-		// TODO(#55): sameProject; switch to PathWithin once that PR, which
-		// edits handoff.go, has merged.
-		"internal/cli/handoff.go": "pending #55",
 	}
 	root := filepath.Join("..", "..")
 	fset := token.NewFileSet()

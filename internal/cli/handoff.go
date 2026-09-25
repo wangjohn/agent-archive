@@ -467,7 +467,7 @@ func sameProject(root, dir string) bool {
 	}
 	for _, a := range pathForms(root) {
 		for _, b := range pathForms(dir) {
-			if a == b || strings.HasPrefix(b, strings.TrimSuffix(a, string(filepath.Separator))+string(filepath.Separator)) {
+			if local.PathWithin(b, a) {
 				return true
 			}
 		}

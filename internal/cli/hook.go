@@ -530,11 +530,6 @@ func resolvedPath(path string) string {
 	return path
 }
 
-// canonicalHarness is archive.CanonicalHarness, for inspect.go's
-// harnessFlag. TODO(#55): once that PR, which edits inspect.go, has merged,
-// call archive.KnownHarness there and delete this.
-func canonicalHarness(harness string) string { return archive.CanonicalHarness(harness) }
-
 // provesFreshSessionStart reports whether this SessionStart is provably the
 // beginning of a conversation rather than the resumption of one that may
 // predate the project's activation.
