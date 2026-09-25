@@ -10,6 +10,7 @@ import (
 // `list --json` prints the same sessions as the table, as a versioned
 // document of their metadata sidecars, and an empty result is an empty array.
 func TestListJSONPrintsVersionedMetadataDocument(t *testing.T) {
+	t.Parallel()
 	env, _, id := publishedFixture(t)
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"list", "--json"}, nil, &out, &errOut, env); code != 0 {
@@ -52,6 +53,7 @@ func TestListJSONPrintsVersionedMetadataDocument(t *testing.T) {
 
 // show always prints JSON; it accepts --json like list and status.
 func TestShowAcceptsJSONFlag(t *testing.T) {
+	t.Parallel()
 	env, _, id := publishedFixture(t)
 	var plain, flagged, errOut bytes.Buffer
 	if code := Run([]string{"show", id}, nil, &plain, &errOut, env); code != 0 {

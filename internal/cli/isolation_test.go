@@ -22,7 +22,9 @@ import (
 //     the login session, so even `launchctl print` from a test reads the
 //     developer's real jobs, and bootstrap or bootout would change them. A
 //     test that means to drive launchctl stubs it with stubLaunchctl.
+//
 //   - The Keychain: openKeychain panics. Set Env.Keychain (newFakeKeychain).
+//
 //   - $HOME and the variables that move app and data directories: HOME is a
 //     fresh temporary directory, and AGENT_ARCHIVE_HOME, CLAUDE_CONFIG_DIR,
 //     CODEX_HOME and the AWS configuration variables are unset, so
@@ -30,17 +32,27 @@ import (
 //     there rather than in the developer's own ~/.claude, ~/.cursor,
 //     ~/.local/share/agent-archive, or ~/.aws.
 //
-// It returns a function that removes the temporary home.
+//   - $TMPDIR, and so every t.TempDir: a fresh folder of the run's own under
+//     /tmp. local.CanonicalPath lists every parent of a path to find its
+//     spelling, and macOS's per-user temporary folder can hold thousands of
+//     entries; listing it for every path was most of this package's run time.
+//
+// It returns a function that removes the temporary folders.
 func isolateProcessForTesting() func() {
-	home, err := os.MkdirTemp("", "cli-home-")
-	if err != nil {
-		panic(err)
-	}
 	must := func(err error) {
 		if err != nil {
 			panic(err)
 		}
 	}
+	parent := ""
+	if info, err := os.Stat("/tmp"); err == nil && info.IsDir() {
+		parent = "/tmp"
+	}
+	tmp, err := os.MkdirTemp(parent, "agent-archive-cli-test-")
+	must(err)
+	must(os.Setenv("TMPDIR", tmp))
+	home, err := os.MkdirTemp("", "cli-home-")
+	must(err)
 	must(os.Setenv("HOME", home))
 	for _, name := range []string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE"} {
 		must(os.Unsetenv(name))
@@ -51,7 +63,7 @@ func isolateProcessForTesting() func() {
 	openKeychain = func() (credentials.CredentialStore, error) {
 		panic("a test reached the real Keychain: set Env.Keychain (newFakeKeychain)")
 	}
-	return func() { _ = os.RemoveAll(home) }
+	return func() { _ = os.RemoveAll(home); _ = os.RemoveAll(tmp) }
 }
 
 // TestIsolationFailsClosed pins isolateProcessForTesting: every default that

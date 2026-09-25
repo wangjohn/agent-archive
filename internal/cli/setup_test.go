@@ -118,6 +118,7 @@ func setupRun(t *testing.T, env Env, input string, want int) string {
 }
 
 func TestSetupFirstTimeProviders(t *testing.T) {
+	t.Parallel()
 	for _, provider := range []string{"s3", "r2"} {
 		t.Run(provider, func(t *testing.T) {
 			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
@@ -155,6 +156,7 @@ func TestSetupFirstTimeProviders(t *testing.T) {
 }
 
 func TestSetupCancelAndResumeDraft(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	input := s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project)
@@ -172,6 +174,7 @@ func TestSetupCancelAndResumeDraft(t *testing.T) {
 }
 
 func TestSetupTruncatedInputDoesNotEnable(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	input := s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project)
@@ -182,6 +185,7 @@ func TestSetupTruncatedInputDoesNotEnable(t *testing.T) {
 }
 
 func TestSetupStorageFailureKeepsDraftAndOldSecret(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
 	env := setupTestEnv(t, home, t.TempDir(), kc, time.Now())
@@ -210,6 +214,7 @@ func TestSetupStorageFailureKeepsDraftAndOldSecret(t *testing.T) {
 }
 
 func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
@@ -231,6 +236,7 @@ func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *test
 }
 
 func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
@@ -265,6 +271,7 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 }
 
 func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	path := filepath.Join(home, "config.json")
@@ -299,6 +306,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 }
 
 func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
@@ -328,6 +336,7 @@ func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T)
 }
 
 func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("maybe\ny\n0\n-1\n30\n"), &out)
 	if yes, err := p.yesNo("Enable?", false); err != nil || !yes {
@@ -345,6 +354,7 @@ func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
 }
 
 func TestDraftStorageEditKeepsCaptureChoices(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	input := s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project)
@@ -357,6 +367,7 @@ func TestDraftStorageEditKeepsCaptureChoices(t *testing.T) {
 }
 
 func TestRestartRemovesOnlyStagedCredentials(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	kc := newFakeKeychain()
 	env := setupTestEnv(t, home, t.TempDir(), kc, time.Now())
@@ -374,6 +385,7 @@ func TestRestartRemovesOnlyStagedCredentials(t *testing.T) {
 // Without a terminal, setup and uninstall stop before asking anything, with
 // one line saying why; uninstall --yes works without one.
 func TestSetupAndUninstallNeedATerminal(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	env.IsTerminal = func(any) bool { return false }
 	for _, cmd := range []string{"setup", "uninstall"} {
@@ -409,6 +421,7 @@ func (s settingsProbeStore) Put(ctx context.Context, key string, value []byte) e
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
+	t.Parallel()
 	for _, choice := range []string{"region", "prefix"} {
 		t.Run(choice, func(t *testing.T) {
 			home := t.TempDir()

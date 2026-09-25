@@ -7,6 +7,7 @@ import "testing"
 // spellings live, so a renamed constant value would otherwise change the
 // output format without failing any test.
 func TestWireValueSpellings(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		got  string
 		want string

@@ -15,6 +15,7 @@ import (
 
 // Regression: CLI correctness review, 2026-09 (e35b8ac).
 func TestStatusChecksHooksAgainstTheInstalledExecutable(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
 	cfg, _, err := config.Load(home)
 	if err != nil {
@@ -69,6 +70,7 @@ func TestStatusChecksHooksAgainstTheInstalledExecutable(t *testing.T) {
 
 // Regression: CLI correctness review, 2026-09 (e35b8ac).
 func TestStatusExplainsWhyHookTrustIsUnknown(t *testing.T) {
+	t.Parallel()
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	var stdout, stderr bytes.Buffer
 	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
@@ -85,6 +87,7 @@ func TestStatusExplainsWhyHookTrustIsUnknown(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestStatusDetectsPartialHooks(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), 0)

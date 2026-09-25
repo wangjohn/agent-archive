@@ -32,6 +32,7 @@ func (s *privateTestStore) InspectPrivacy(ctx context.Context) storage.PrivacyRe
 }
 
 func TestPrivacyEvidenceIsScopedAndExpires(t *testing.T) {
+	t.Parallel()
 	cfg := config.Config{Storage: credentialsTestConfig()}
 	at := time.Now().UTC()
 	remote := &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}
@@ -63,6 +64,7 @@ func TestPrivacyEvidenceIsScopedAndExpires(t *testing.T) {
 }
 
 func TestSetupReviewReadsPrivacyWithEnvClock(t *testing.T) {
+	t.Parallel()
 	// Evidence collected two days ago on the frozen clock is fresh on that
 	// clock; only the wall clock would call it stale.
 	at := time.Now().UTC().Add(-48 * time.Hour)
@@ -78,6 +80,7 @@ func TestSetupReviewReadsPrivacyWithEnvClock(t *testing.T) {
 }
 
 func TestCollectionRefreshesBucketPrivacyEvidence(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
@@ -120,6 +123,7 @@ func TestCollectionRefreshesBucketPrivacyEvidence(t *testing.T) {
 }
 
 func TestSetupToleratesBackgroundPrivacyRefresh(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
@@ -144,6 +148,7 @@ func TestSetupToleratesBackgroundPrivacyRefresh(t *testing.T) {
 }
 
 func TestSetupPersistsPrivacyAndStatusNeverInspects(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)

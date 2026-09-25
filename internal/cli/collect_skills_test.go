@@ -13,6 +13,7 @@ import (
 // Today's skills attached to a session that ran before them would be false
 // evidence, so an import gets no skill observation.
 func TestSkillObserverSkipsImports(t *testing.T) {
+	t.Parallel()
 	userHome, project := t.TempDir(), t.TempDir()
 	skill := filepath.Join(userHome, ".claude", "skills", "review")
 	if err := os.MkdirAll(skill, 0o700); err != nil {
@@ -37,6 +38,7 @@ func TestSkillObserverSkipsImports(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestSkillObserverReadsUserScopeOncePerHarnessAndProjectScopePerProject(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	projectA, projectB := t.TempDir(), t.TempDir()
 	write := func(root, name, body string) {

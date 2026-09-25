@@ -17,6 +17,7 @@ import (
 // block and show the pass records no error, which is what sync's exit code
 // is made of. This checks the status wiring.)
 func TestStatusReportsTheRecordSizeLimitAsAGap(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, _, _ := publishedThroughSync(t, now)
 	reg, _ := onlyRegistration(t, home)
@@ -50,6 +51,7 @@ func TestStatusReportsTheRecordSizeLimitAsAGap(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestBlockedCaptureIsNotPendingAndStatusReportsGap(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
@@ -111,6 +113,7 @@ func TestBlockedCaptureIsNotPendingAndStatusReportsGap(t *testing.T) {
 // Applications delete their own transcripts. That is a capture gap, reported
 // as such with its own explanation, and never a collector error.
 func TestStatusReportsDeletedTranscriptAsGapNotError(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, _, path, _ := publishedThroughSync(t, now)
 	if err := os.Remove(path); err != nil {

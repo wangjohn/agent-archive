@@ -51,6 +51,7 @@ func publishedFixture(t *testing.T) (Env, *storagetest.MemoryStore, string) {
 // Like sync and pause, read-only commands report a missing setup on stderr
 // with exit 1, so a script never takes the message for a result.
 func TestListAndShowReportNotSetUp(t *testing.T) {
+	t.Parallel()
 	env := testEnv(t, t.TempDir(), time.Now())
 	for _, args := range [][]string{{"list"}, {"show", "session-1"}, {"backfill", "history"}} {
 		var out, errOut bytes.Buffer
@@ -64,6 +65,7 @@ func TestListAndShowReportNotSetUp(t *testing.T) {
 }
 
 func TestListShowsPublishedSessionMetadataOnly(t *testing.T) {
+	t.Parallel()
 	env, _, id := publishedFixture(t)
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
@@ -82,6 +84,7 @@ func TestListShowsPublishedSessionMetadataOnly(t *testing.T) {
 }
 
 func TestListFilters(t *testing.T) {
+	t.Parallel()
 	env, _, id := publishedFixture(t)
 	cases := []struct {
 		args  []string
@@ -115,6 +118,7 @@ func TestListFilters(t *testing.T) {
 }
 
 func TestListFiltersExactSkillHashFromMetadataOnly(t *testing.T) {
+	t.Parallel()
 	env, mem, id := publishedFixture(t)
 	key, err := archive.MetadataObjectKey("codex", id)
 	if err != nil {
@@ -185,6 +189,7 @@ func listedSessionIDs(out string) []string {
 }
 
 func TestListRejectsBadArguments(t *testing.T) {
+	t.Parallel()
 	env, _, _ := publishedFixture(t)
 	for _, args := range [][]string{
 		{"list", "--since", "yesterday"},
@@ -206,6 +211,7 @@ func TestListRejectsBadArguments(t *testing.T) {
 // An invalid --skill-usage value must be reported as the invalid value it is,
 // even though it also fails the "requires --skill or --skill-sha256" rule.
 func TestListReportsInvalidSkillUsageValueBeforeMissingSkillFlag(t *testing.T) {
+	t.Parallel()
 	env, _, _ := publishedFixture(t)
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"list", "--skill-usage", "bogus"}, nil, &out, &errOut, env); code != 2 {
@@ -232,6 +238,7 @@ func TestListReportsInvalidSkillUsageValueBeforeMissingSkillFlag(t *testing.T) {
 // sidecar. `list` must say that rather than print an empty result that reads
 // like an answer, and must still exit 0 with no rows.
 func TestEligibleNoUseSaysItCannotReturnSessionsYet(t *testing.T) {
+	t.Parallel()
 	env, _, id := publishedFixture(t)
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"list", "--skill", "review", "--skill-usage", "eligible_no_use"}, nil, &out, &errOut, env); code != 0 {
@@ -257,6 +264,7 @@ func TestEligibleNoUseSaysItCannotReturnSessionsYet(t *testing.T) {
 }
 
 func TestShowPrintsMetadataAndOnlyPrintsContentWithNormalizedFlag(t *testing.T) {
+	t.Parallel()
 	env, _, id := publishedFixture(t)
 
 	var out, errOut bytes.Buffer
@@ -299,6 +307,7 @@ func TestShowPrintsMetadataAndOnlyPrintsContentWithNormalizedFlag(t *testing.T) 
 }
 
 func TestShowReportsUnknownAndUnavailableSessions(t *testing.T) {
+	t.Parallel()
 	env, mem, id := publishedFixture(t)
 
 	var out, errOut bytes.Buffer
@@ -341,6 +350,7 @@ func TestShowReportsUnknownAndUnavailableSessions(t *testing.T) {
 }
 
 func TestShowRefusesAmbiguousSessionWithoutHarness(t *testing.T) {
+	t.Parallel()
 	env, mem, id := publishedFixture(t)
 	metadata, err := readSingleMetadata(t, mem)
 	if err != nil {
@@ -378,6 +388,7 @@ func TestShowRefusesAmbiguousSessionWithoutHarness(t *testing.T) {
 }
 
 func TestParseSince(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
 	cases := map[string]time.Time{
 		"2026-03-01":           time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
@@ -423,6 +434,7 @@ func readSingleMetadata(t *testing.T, mem *storagetest.MemoryStore) (archive.Met
 // `list` prints it without escape sequences, controls, or a tab or newline
 // that would break the table.
 func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
+	t.Parallel()
 	env, mem, id := publishedFixture(t)
 	key, err := archive.MetadataObjectKey("codex", id)
 	if err != nil {
@@ -468,6 +480,7 @@ func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
 // one-byte CSI to many terminals), and bidi overrides as they are; the
 // printed JSON escapes them too, and still decodes to the same names.
 func TestJSONOutputEscapesEveryControl(t *testing.T) {
+	t.Parallel()
 	env, mem, id := publishedFixture(t)
 	key, err := archive.MetadataObjectKey("codex", id)
 	if err != nil {
@@ -510,6 +523,7 @@ func TestJSONOutputEscapesEveryControl(t *testing.T) {
 // list and backfill read --since the same way; backfill then selects whole
 // local days.
 func TestSinceFormsAreShared(t *testing.T) {
+	t.Parallel()
 	loc := time.FixedZone("PDT", -7*3600)
 	now := time.Date(2026, 9, 24, 1, 30, 0, 0, loc) // 08:30 UTC
 	for value, want := range map[string]string{
@@ -536,6 +550,7 @@ func TestSinceFormsAreShared(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestShowKeepsParentReadableWhenChildIsGone(t *testing.T) {
+	t.Parallel()
 	env, remote, id := publishedFixture(t)
 	parent, err := readSingleMetadata(t, remote)
 	if err != nil {
@@ -570,6 +585,7 @@ func TestShowKeepsParentReadableWhenChildIsGone(t *testing.T) {
 // is left out of `list` with a warning on stderr; the rest is listed and
 // stdout keeps its format.
 func TestListWarnsAboutInvalidSidecarAndListsTheRest(t *testing.T) {
+	t.Parallel()
 	env, mem, id := publishedFixture(t)
 	bad := "sessions/codex/newer-session/metadata.json"
 	if err := mem.Put(context.Background(), bad, []byte(`{"schema_version":99}`)); err != nil {

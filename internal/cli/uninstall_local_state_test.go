@@ -14,6 +14,7 @@ import (
 // directory is one uninstall --delete-local-data removes. The list comes from
 // the store itself, so a directory it adds later cannot be left behind.
 func TestDeleteLocalDataRemovesEveryLocalStoreEntry(t *testing.T) {
+	t.Parallel()
 	home := filepath.Join(t.TempDir(), "agent-archive")
 	for _, entry := range state.OwnedEntries() {
 		path := filepath.Join(home, entry)
@@ -55,6 +56,7 @@ var handListedLocalState = []string{
 // The entries uninstall deletes, the store's now taken from
 // state.OwnedEntries, are the set it deleted when all were listed by hand.
 func TestDeleteLocalDataListIsTheHandListedOne(t *testing.T) {
+	t.Parallel()
 	got := slices.Compact(slices.Sorted(slices.Values(append(state.OwnedEntries(), localStateEntries...))))
 	want := slices.Compact(slices.Sorted(slices.Values(handListedLocalState)))
 	if !slices.Equal(got, want) {
@@ -67,6 +69,7 @@ func TestDeleteLocalDataListIsTheHandListedOne(t *testing.T) {
 // still holds, and leaves a user's own files in place and reported, including
 // ones named like agent-archive's but not made by it.
 func TestDeleteLocalDataRemovesOnlyItsOwnEntries(t *testing.T) {
+	t.Parallel()
 	home := filepath.Join(t.TempDir(), "agent-archive")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)

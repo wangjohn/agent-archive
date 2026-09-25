@@ -62,6 +62,7 @@ func asMainBatch(t *testing.T, home string) {
 // same options on the same day, shows in history, and is undone: its
 // sessions deleted and the projects it added excluded.
 func TestBackfillMainBatchStillContinuesAndUndoes(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	f.env.backfillHoldSteps = 3
 	stopped := false

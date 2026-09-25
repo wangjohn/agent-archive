@@ -17,6 +17,7 @@ import (
 // started a new import and left the first one partial. The batch now
 // records the value as typed, and the same value continues it on any day.
 func TestBackfillRelativeSinceContinuesNextDay(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	f.env.backfillHoldSteps = 3
 	stopped := false
@@ -54,6 +55,7 @@ func TestBackfillRelativeSinceContinuesNextDay(t *testing.T) {
 // would start another, the plan says so and gives the command that
 // finishes the interrupted one.
 func TestBackfillPointsAtAnInterruptedImport(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	stopped := false
 	f.env.backfillCheckpoint = func(step string) error {
@@ -84,6 +86,7 @@ func TestBackfillPointsAtAnInterruptedImport(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestBackfillErrorPathReconciles(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	imports := filepath.Join(f.data, "imports")
 	f.env.backfillHoldSteps = 3
@@ -130,6 +133,7 @@ func TestBackfillErrorPathReconciles(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	imports := filepath.Join(f.data, "imports")
 	f.env.backfillHoldSteps = 3
@@ -170,6 +174,7 @@ func TestBackfillBatchRebuiltFromRegistrations(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestBackfillCompletesInterruptedImportWithNothingLeft(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
 		t.Fatalf("import: %s", errOut)
@@ -202,6 +207,7 @@ func TestBackfillCompletesInterruptedImportWithNothingLeft(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestBackfillInterruptedRegistration(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	signals := make(chan os.Signal, 1)
 	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }

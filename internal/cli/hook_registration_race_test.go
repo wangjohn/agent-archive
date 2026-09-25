@@ -128,6 +128,7 @@ func TestFreshStartDuringExpiryRegistersUnderAFreshID(t *testing.T) {
 // Whatever the interleaving of a resume (or /clear) with retention forgetting
 // the session, no registration is ever left unreachable from its index.
 func TestConcurrentStartAndForgetKeepTheIndexConsistent(t *testing.T) {
+	t.Parallel()
 	const rounds = 30
 	for round := range rounds {
 		home, project := t.TempDir(), t.TempDir()

@@ -74,6 +74,7 @@ func removeRemoteSource(t *testing.T, remote *storagetest.MemoryStore, id string
 }
 
 func TestReadBackFailureBacksOffAndDoesNotFailSync(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC().Truncate(time.Second)
 	remote := storagetest.NewMemoryStore()
@@ -146,6 +147,7 @@ func TestReadBackFailureBacksOffAndDoesNotFailSync(t *testing.T) {
 }
 
 func TestReadBackMismatchIsDistinctFromTransientFailure(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	remote := storagetest.NewMemoryStore()
@@ -174,6 +176,7 @@ func TestReadBackMismatchIsDistinctFromTransientFailure(t *testing.T) {
 }
 
 func TestReadBackCapsAttemptsPerPassOldestFirst(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	remote := storagetest.NewMemoryStore()
@@ -206,6 +209,7 @@ func TestReadBackCapsAttemptsPerPassOldestFirst(t *testing.T) {
 }
 
 func TestPassStorageHealthKeepsVerifiedDespiteUnrelatedErrors(t *testing.T) {
+	t.Parallel()
 	denied := &smithy.GenericAPIError{Code: "AccessDenied", Message: "no"}
 	outage := &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: errors.New("dial tcp: timeout")}
 	local := errors.New("transcript was truncated, compacted, or rewritten")
@@ -228,6 +232,7 @@ func TestPassStorageHealthKeepsVerifiedDespiteUnrelatedErrors(t *testing.T) {
 }
 
 func TestAuthenticationStalenessSkipsPausedAndProbeRefreshesFirst(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Archive: archive.Config{Enabled: true}}
@@ -276,6 +281,7 @@ func TestAuthenticationStalenessSkipsPausedAndProbeRefreshesFirst(t *testing.T) 
 }
 
 func TestStatusOmitsEmptyAuthenticationContext(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/project", time.Now())
 	env := testEnv(t, home, time.Now())
@@ -289,6 +295,7 @@ func TestStatusOmitsEmptyAuthenticationContext(t *testing.T) {
 }
 
 func TestStatusRequiresRecordedReadbackAndInvalidatesConfiguration(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	project := t.TempDir()
@@ -353,6 +360,7 @@ func TestStatusRequiresRecordedReadbackAndInvalidatesConfiguration(t *testing.T)
 }
 
 func TestBackgroundChecksStorageWithoutSessionsAndStatusDoesNotProbe(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Archive: archive.Config{Enabled: true}}
@@ -381,6 +389,7 @@ func TestBackgroundChecksStorageWithoutSessionsAndStatusDoesNotProbe(t *testing.
 // Read-back is capped per pass. A large import must not hold a hook-captured
 // publication, the only kind that verifies an app, behind the cap.
 func TestVerificationReadsBackHookPublicationsBeforeImports(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()

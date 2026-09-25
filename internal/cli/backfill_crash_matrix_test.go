@@ -66,6 +66,7 @@ func importRaising(t *testing.T, f *backfillFixture) (string, string, int) {
 // stopped at any step and run again, end exactly where uninterrupted runs
 // end: the same projects, kept-out entries, retention, and batch records.
 func TestBackfillImportAndUndoConvergeAfterACrashAtEachStep(t *testing.T) {
+	t.Parallel()
 	clean := newCrashFixture(t)
 	if _, errOut, code := importRaising(t, clean); code != 0 {
 		t.Fatalf("clean import: %d %s", code, errOut)
@@ -96,6 +97,7 @@ func TestBackfillImportAndUndoConvergeAfterACrashAtEachStep(t *testing.T) {
 
 	for _, step := range []string{"batch saved", "committed", "registered"} {
 		t.Run("import "+step, func(t *testing.T) {
+			t.Parallel()
 			f := newCrashFixture(t)
 			crashAt(f, step)
 			if _, errOut, code := importRaising(t, f); code != 1 || !strings.Contains(errOut, "simulated crash") {
@@ -112,6 +114,7 @@ func TestBackfillImportAndUndoConvergeAfterACrashAtEachStep(t *testing.T) {
 	}
 	for _, step := range []string{"undoing", "undo marked", "undo configured", "undo recorded"} {
 		t.Run(step, func(t *testing.T) {
+			t.Parallel()
 			f := newCrashFixture(t)
 			f.env.backfillCheckpoint = nil
 			if _, errOut, code := importRaising(t, f); code != 0 {

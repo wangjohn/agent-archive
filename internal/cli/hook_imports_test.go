@@ -12,6 +12,7 @@ import (
 
 // A hook admits a new session the moment it starts, and says so.
 func TestHookRegistrationRecordsAdmissionAndOrigin(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
@@ -37,6 +38,7 @@ func TestHookRegistrationRecordsAdmissionAndOrigin(t *testing.T) {
 // B, and continues again once it is switched back to A: its objects are
 // there. A continuation never rewrites the destination ID.
 func TestHookContinuationFollowsTheAdmittedDestination(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	activated := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, "/work/widget", activated)
@@ -92,6 +94,7 @@ func TestHookContinuationFollowsTheAdmittedDestination(t *testing.T) {
 // A registration written before destination IDs existed keeps none when a
 // hook continues it, and is judged by time as before.
 func TestHookContinuationOfLegacyRegistrationKeepsNoDestinationID(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	activated := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, "/work/widget", activated)
@@ -136,6 +139,7 @@ func TestHookContinuationOfLegacyRegistrationKeepsNoDestinationID(t *testing.T) 
 // keeps the import's start, admission, and provenance, and takes the new
 // transcript path.
 func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, "/work/widget", activated)

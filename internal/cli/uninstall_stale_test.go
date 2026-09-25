@@ -17,12 +17,14 @@ import (
 // leaves no data directory behind: before, uninstall created an empty one
 // (with its lock files) to hold its locks, and kept it.
 func TestUninstallOfAStaleInstallationLeavesNoDataDirectory(t *testing.T) {
+	t.Parallel()
 	for _, purge := range []bool{false, true} {
 		name := "keep local data"
 		if purge {
 			name = "delete local data"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			scratch, userHome := t.TempDir(), t.TempDir()
 			parent := filepath.Join(scratch, "test-install")
 			home := filepath.Join(parent, "data")
@@ -67,6 +69,7 @@ func TestUninstallOfAStaleInstallationLeavesNoDataDirectory(t *testing.T) {
 // A data directory that exists keeps its lock files and itself after an
 // uninstall that keeps local data, as before.
 func TestUninstallKeepsAnExistingDataDirectory(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
 	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", true, false, false, t.TempDir()), 0)

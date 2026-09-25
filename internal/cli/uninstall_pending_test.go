@@ -61,6 +61,7 @@ func (o *onRead) Read(p []byte) (int, error) {
 // admits no registration, so it always said 0), and a session that registers
 // while the person is confirming stops the purge.
 func TestUninstallPurgeCountsPendingSessions(t *testing.T) {
+	t.Parallel()
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	must(t, err)
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, project))
@@ -91,6 +92,7 @@ func TestUninstallPurgeCountsPendingSessions(t *testing.T) {
 // Without a configuration nothing says which sessions would be uploaded, so
 // every registration with work outstanding counts.
 func TestUnpublishedSessionsWithoutConfigurationCountsAll(t *testing.T) {
+	t.Parallel()
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	must(t, err)
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, project))

@@ -62,6 +62,7 @@ func onlyCursorRegistration(t *testing.T, home string) archive.SessionRegistrati
 // The chat must register at the first prompt, wait without error until the
 // path arrives, and then publish.
 func TestCursorDesktopChatRegistersAtFirstPromptAndPublishes(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	first := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -139,6 +140,7 @@ func TestCursorDesktopChatRegistersAtFirstPromptAndPublishes(t *testing.T) {
 // transcript: that proves nothing about when the chat began, so it is declined
 // with the existing diagnostic.
 func TestCursorResumedChatIsDeclinedAtFirstPrompt(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	conversation := "5f3c2a10-0000-4000-8000-00000000d0d0"
@@ -175,6 +177,7 @@ func TestCursorResumedChatIsDeclinedAtFirstPrompt(t *testing.T) {
 // Only a path that is absolute and named <conversation_id>.jsonl is taken as
 // the chat's transcript, and once set it is never replaced.
 func TestCursorTranscriptPathMustMatchTheConversation(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	conversation := "5f3c2a10-0000-4000-8000-00000000e0e0"
@@ -213,6 +216,7 @@ func TestCursorTranscriptPathMustMatchTheConversation(t *testing.T) {
 // session that never started is still ignored, and a start without a source
 // or a transcript still proves nothing.
 func TestFirstPromptRegistrationIsCursorOnly(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -237,6 +241,7 @@ func TestFirstPromptRegistrationIsCursorOnly(t *testing.T) {
 // and the rest continue it: one registration, one archive ID, the first
 // hook's time as the start.
 func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
+	t.Parallel()
 	for i := range 10 {
 		home, project := t.TempDir(), t.TempDir()
 		setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
@@ -281,6 +286,7 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 // status reports a chat that is still waiting for its transcript as a hook
 // observed and capture pending, with no error.
 func TestCursorWaitingChatShowsInStatus(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	cfg, _, err := config.Load(home)
@@ -314,6 +320,7 @@ func TestCursorWaitingChatShowsInStatus(t *testing.T) {
 // which keeps its start time and takes the path, and no diagnostic is
 // recorded. A sessionStart on the same chat is a continuation too.
 func TestCursorLaterPromptContinuesTheRegisteredChat(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	first := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -350,6 +357,7 @@ func TestCursorLaterPromptContinuesTheRegisteredChat(t *testing.T) {
 // event: no registration, no archive ID, no request, no diagnostic. A chat
 // elsewhere under the included parent registers under the parent's root.
 func TestCursorFirstPromptHonorsNearestConfiguredProject(t *testing.T) {
+	t.Parallel()
 	home, parent := t.TempDir(), t.TempDir()
 	nested := filepath.Join(parent, "nested")
 	if err := os.MkdirAll(filepath.Join(nested, "sub"), 0o700); err != nil {
@@ -408,6 +416,7 @@ func TestCursorFirstPromptHonorsNearestConfiguredProject(t *testing.T) {
 // start that setup swallowed and is explained by the setup-in-progress
 // diagnostic; a registered chat's next prompt is not a start and records none.
 func TestCursorFirstPromptDuringSetupIsExplainedOnlyForNewChats(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -449,6 +458,7 @@ func onlyCursorRegistrationList(t *testing.T, home string) ([]archive.SessionReg
 // reports, at a prompt, a response, a stop, or a continuation: switching
 // sources would change its format mid-session.
 func TestCursorDatabaseSessionNeverAdoptsTranscriptPath(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
 	conversation := "5f3c2a10-0000-4000-8000-00000000db01"
@@ -485,6 +495,7 @@ func TestCursorDatabaseSessionNeverAdoptsTranscriptPath(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestCursorVersionDoesNotProveSessionStart(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))

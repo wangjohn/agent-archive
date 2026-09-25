@@ -18,6 +18,7 @@ import (
 )
 
 func TestSyncEndToEndFromHookThroughPublish(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dir := t.TempDir()
 	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -48,6 +49,7 @@ func TestSyncEndToEndFromHookThroughPublish(t *testing.T) {
 }
 
 func TestSyncReportsNotSetUp(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	env := testEnv(t, home, time.Now())
 	var stdout, stderr bytes.Buffer
@@ -60,6 +62,7 @@ func TestSyncReportsNotSetUp(t *testing.T) {
 }
 
 func TestSyncReportsLockContentionAsAnError(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	unlock, err := local.Lock(home)
@@ -79,6 +82,7 @@ func TestSyncReportsLockContentionAsAnError(t *testing.T) {
 }
 
 func TestSyncRunsRetentionSweepAndDeletesExpiredSession(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dir := t.TempDir()
 	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -145,6 +149,7 @@ func (f failingDeleteStore) Delete(ctx context.Context, key string) error {
 }
 
 func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dir := t.TempDir()
 	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -219,6 +224,7 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 
 // Regression: CLI correctness review, 2026-09 (e35b8ac).
 func TestSyncAndStatusGiveTheKeychainRecovery(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		err  error
 		want string

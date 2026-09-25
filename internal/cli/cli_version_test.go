@@ -8,6 +8,7 @@ import (
 // A source build reports the commit it was built from, so a bug report says
 // which code ran; a released build reports its version unchanged.
 func TestDescribeVersionNamesTheCommitOfADevBuild(t *testing.T) {
+	t.Parallel()
 	const sha = "0123456789abcdef0123456789abcdef01234567"
 	vcs := func(settings ...string) *debug.BuildInfo {
 		info := &debug.BuildInfo{}

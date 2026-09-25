@@ -9,6 +9,7 @@ import (
 // Every command taking --harness rejects an unknown app with one tidy line
 // and exit 2, before touching storage.
 func TestHarnessFlagRejectsUnknownApps(t *testing.T) {
+	t.Parallel()
 	env, _, _ := publishedFixture(t)
 	for _, args := range [][]string{
 		{"list", "--harness", "nope"},
@@ -29,6 +30,7 @@ func TestHarnessFlagRejectsUnknownApps(t *testing.T) {
 // "claude-code" names Claude, as hooks and backfill already accept, and
 // filters as "claude" does rather than matching nothing.
 func TestHarnessFlagAcceptsCanonicalAliases(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		value string
 		want  string

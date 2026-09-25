@@ -18,6 +18,7 @@ import (
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestHookChildCaptureResumeAndReadBack(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, at.Add(-time.Hour))

@@ -86,6 +86,7 @@ func runHandoff(t *testing.T, env Env, args ...string) (string, string, int) {
 }
 
 func TestHandoffRejectsBadArguments(t *testing.T) {
+	t.Parallel()
 	env := testEnv(t, t.TempDir(), time.Now())
 	for _, args := range [][]string{
 		{},
@@ -109,6 +110,7 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 // claude "$(agent-archive handoff --latest)" must not start a session whose
 // prompt is the not-set-up message: it goes to stderr, with exit 1.
 func TestHandoffReportsNotSetUp(t *testing.T) {
+	t.Parallel()
 	out, errOut, code := runHandoff(t, testEnv(t, t.TempDir(), time.Now()), "--latest")
 	if code != 1 || out != "" || !strings.Contains(errOut, "Not set up") {
 		t.Fatalf("code=%d out=%q stderr=%q", code, out, errOut)
@@ -118,6 +120,7 @@ func TestHandoffReportsNotSetUp(t *testing.T) {
 // A session on this machine is handed off from its transcript as it is now,
 // with no sync, filtered exactly as the archive would be.
 func TestHandoffReadsLocalSessionWithoutSync(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, false)
 	for _, args := range [][]string{{f.id}, {"--latest"}} {
 		out, errOut, code := runHandoff(t, f.env, args...)
@@ -139,6 +142,7 @@ func TestHandoffReadsLocalSessionWithoutSync(t *testing.T) {
 }
 
 func TestHandoffLatestNamesItsChoiceOnStderr(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, false)
 	sub := filepath.Join(f.project, "widget")
 	if err := os.Mkdir(sub, 0o700); err != nil {
@@ -154,6 +158,7 @@ func TestHandoffLatestNamesItsChoiceOnStderr(t *testing.T) {
 // The same session handed off from the local transcript and from the archive
 // renders the same conversation.
 func TestHandoffLocalAndArchiveRenderTheSameConversation(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, true)
 	localOut, errOut, code := runHandoff(t, f.env, f.id, "--source", "local")
 	if code != 0 {
@@ -186,6 +191,7 @@ func TestHandoffLocalAndArchiveRenderTheSameConversation(t *testing.T) {
 // With no session for the project, --latest lists recent archived sessions
 // from metadata only.
 func TestHandoffLatestWithoutMatchListsRecentSessions(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, true)
 	f.env.WorkingDir = func() (string, error) { return t.TempDir(), nil }
 	out, errOut, code := runHandoff(t, f.env, "--latest")
@@ -205,6 +211,7 @@ func TestHandoffLatestWithoutMatchListsRecentSessions(t *testing.T) {
 // Trimming saves the untrimmed version, names it in the footer, and prunes
 // saved handoffs older than seven days.
 func TestHandoffSavesFullVersionWhenTrimmed(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, false)
 	stale := filepath.Join(f.home, handoffDir, "old.md")
 	if err := os.MkdirAll(filepath.Dir(stale), 0o700); err != nil {
@@ -261,6 +268,7 @@ func TestHandoffSavesFullVersionWhenTrimmed(t *testing.T) {
 }
 
 func TestHandoffOutputFileIsPrivateAndNotOverwritten(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, false)
 	path := filepath.Join(t.TempDir(), "handoff.md")
 	if _, errOut, code := runHandoff(t, f.env, f.id, "--output", path); code != 0 {
@@ -281,6 +289,7 @@ func TestHandoffOutputFileIsPrivateAndNotOverwritten(t *testing.T) {
 // --file renders a transcript the archive never registered, with no setup,
 // through the same privacy filter.
 func TestHandoffFileNeedsNoSetupAndIsFiltered(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	content := `{"type":"user","uuid":"u1","sessionId":"native-claude","timestamp":"2026-01-02T00:00:00Z","cwd":"/work/repo","message":{"role":"user","content":"<system-reminder>private memory</system-reminder>Ship it with password=opensesame"}}
 {"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"native-claude","timestamp":"2026-01-02T00:00:01Z","message":{"id":"m1","role":"assistant","model":"claude-test","content":[{"type":"text","text":"Shipping."}]}}
@@ -303,6 +312,7 @@ func TestHandoffFileNeedsNoSetupAndIsFiltered(t *testing.T) {
 }
 
 func TestUninstallOwnsHandoffDirectory(t *testing.T) {
+	t.Parallel()
 	if !slices.Contains(localStateEntries, handoffDir) {
 		t.Fatalf("localStateEntries does not include %q", handoffDir)
 	}
@@ -311,6 +321,7 @@ func TestUninstallOwnsHandoffDirectory(t *testing.T) {
 // Run inside an agent, --latest skips the session running the command: it is
 // always the newest, and handing an agent its own conversation is useless.
 func TestHandoffLatestSkipsTheCallingAgentSession(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, true)
 	f.env.LookupEnv = func(key string) (string, bool) {
 		if key == "CLAUDE_CODE_SESSION_ID" {
@@ -331,6 +342,7 @@ func TestHandoffLatestSkipsTheCallingAgentSession(t *testing.T) {
 // A newer session that has only just started (empty transcript, no prompt)
 // is passed over for the older one with content, rather than failing.
 func TestHandoffLatestPassesOverSessionsWithoutPrompts(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, false)
 	fresh := filepath.Join(f.project, "fresh.jsonl")
 	if err := os.WriteFile(fresh, nil, 0o600); err != nil {
@@ -351,6 +363,7 @@ func TestHandoffLatestPassesOverSessionsWithoutPrompts(t *testing.T) {
 }
 
 func TestHandoffRejectsUnsafeSessionIDs(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, false)
 	for _, id := range []string{"../registrations/x", "a/b", "..", "."} {
 		if _, errOut, code := runHandoff(t, f.env, id); code != 2 || !strings.Contains(errOut, "not an archive session ID") {
@@ -362,6 +375,7 @@ func TestHandoffRejectsUnsafeSessionIDs(t *testing.T) {
 // When the local transcript exists but cannot be used, --source auto falls
 // back to the archive's published copy.
 func TestHandoffFallsBackToArchiveWhenLocalTranscriptIsUnusable(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, true)
 	if err := os.WriteFile(filepath.Join(f.project, "codex.jsonl"), []byte("not json at all\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -377,6 +391,7 @@ func TestHandoffFallsBackToArchiveWhenLocalTranscriptIsUnusable(t *testing.T) {
 
 // Running from a parent directory does not pick up the projects beneath it.
 func TestHandoffLatestFromAParentDirectoryDoesNotMatchChildProjects(t *testing.T) {
+	t.Parallel()
 	f := newHandoffFixture(t, true)
 	_, errOut, code := runHandoff(t, f.env, "--latest", "--project", filepath.Dir(f.project))
 	if code != 1 || !strings.Contains(errOut, "no session for") {
@@ -387,6 +402,7 @@ func TestHandoffLatestFromAParentDirectoryDoesNotMatchChildProjects(t *testing.T
 // Without setup, --file never creates the data directory, even when the
 // output is trimmed.
 func TestHandoffFileWithoutSetupDoesNotCreateTheDataDirectory(t *testing.T) {
+	t.Parallel()
 	var transcript strings.Builder
 	transcript.WriteString(`{"type":"user","uuid":"u1","timestamp":"2026-01-02T00:00:00Z","message":{"role":"user","content":"go"}}` + "\n")
 	for i := range 40 {

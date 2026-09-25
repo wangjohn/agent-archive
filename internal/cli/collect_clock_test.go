@@ -25,6 +25,7 @@ func storageClockFollows(t *testing.T, env *Env, now func() time.Time) {
 // A pass whose clock has jumped months ahead of the storage service's
 // deletes nothing and says so in status; the session and its objects stay.
 func TestPassWithAClockAheadOfStorageDeletesNothingAndSaysWhy(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, _, bucket := publishedThroughSync(t, now)
 	before, err := bucket.List(context.Background(), "")

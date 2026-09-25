@@ -59,8 +59,10 @@ func statusViewOf(t *testing.T, env Env) statusView {
 // removes the first one's hooks, in setup, status, or uninstall, whichever
 // was installed first.
 func TestSecondInstallationNeverTouchesTheFirstsHooks(t *testing.T) {
+	t.Parallel()
 	for _, order := range []string{"default first", "test first"} {
 		t.Run(order, func(t *testing.T) {
+			t.Parallel()
 			primary, secondary, userHome := twoInstallations(t)
 			first, second := primary, secondary
 			if order == "test first" {
@@ -150,6 +152,7 @@ func equalMaps(a, b map[string]string) bool {
 // under CLAUDE_CONFIG_DIR and CODEX_HOME; status and uninstall find them
 // from a shell without those variables.
 func TestRelocatedInstallationStaysSelfContained(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	claudeDir, codexDir := filepath.Join(userHome, "cfg", "claude"), filepath.Join(userHome, "cfg", "codex")
 	must(t, os.MkdirAll(claudeDir, 0700))
@@ -201,8 +204,10 @@ func TestRelocatedInstallationStaysSelfContained(t *testing.T) {
 // directory's own label, and never touches a default-label job that belongs
 // to another data directory.
 func TestSetupMovesARelocatedCollectorOffTheDefaultLabel(t *testing.T) {
+	t.Parallel()
 	for _, owner := range []string{"this", "another"} {
 		t.Run(owner, func(t *testing.T) {
+			t.Parallel()
 			home, userHome := t.TempDir(), t.TempDir()
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 			dataHome := home
@@ -239,8 +244,10 @@ func TestSetupMovesARelocatedCollectorOffTheDefaultLabel(t *testing.T) {
 // the default-label job of another directory: a sandboxed test install must
 // not reach the user's real collector.
 func TestUninstallTouchesOnlyThisDirectorysCollector(t *testing.T) {
+	t.Parallel()
 	for _, owner := range []string{"this", "another"} {
 		t.Run(owner, func(t *testing.T) {
+			t.Parallel()
 			home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 			dataHome := home
 			if owner == "another" {
@@ -281,6 +288,7 @@ func TestUninstallTouchesOnlyThisDirectorysCollector(t *testing.T) {
 // only. A sandbox that overrides $HOME (and so moves the data directory with
 // it) gets a label of its own, as does AGENT_ARCHIVE_HOME set elsewhere.
 func TestOnlyTheAccountsDefaultInstallationGetsTheDefaultLabel(t *testing.T) {
+	t.Parallel()
 	account, sandbox := t.TempDir(), t.TempDir()
 	env := Env{AccountHome: func() (string, error) { return account, nil }}
 	accountDefault := filepath.Join(account, ".local", "share", "agent-archive")
@@ -349,6 +357,7 @@ func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 
 // Uninstall leaves another installation's job running and says so.
 func TestUninstallLeavesAnotherInstallationsJob(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	env.JobState = func(string) string { return jobAnotherInstallation }
 	env.UnloadLaunchAgent = func(p string) error { t.Fatalf("unloaded %s", p); return nil }
@@ -368,6 +377,7 @@ func TestUninstallLeavesAnotherInstallationsJob(t *testing.T) {
 // When another installation runs this installation's label, status points
 // at that, not at setup, which refuses to replace the job.
 func TestStatusNamesAnotherInstallationsJob(t *testing.T) {
+	t.Parallel()
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	env.JobState = func(string) string { return jobAnotherInstallation }
 	view, err := readStatus(env)
@@ -382,6 +392,7 @@ func TestStatusNamesAnotherInstallationsJob(t *testing.T) {
 // Even a first setup refuses when launchd cannot say whether a job already
 // runs under the label.
 func TestFirstSetupRefusesAnUnknownJobState(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	env.JobState = func(string) string { return "unknown" }

@@ -17,6 +17,7 @@ import (
 // variables point in its own environment, and where setup recorded
 // installing the hooks (for a shell without them), besides the defaults.
 func TestBackfillHonorsClaudeConfigDirAndCodexHome(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 	repo := filepath.Join(f.userHome, "agent-archive")
 	claudeAlt := filepath.Join(f.root, "claude-alt")
@@ -89,6 +90,7 @@ func TestBackfillHonorsClaudeConfigDirAndCodexHome(t *testing.T) {
 // dry-run JSON, which docs/reference/json-output.md now says; no transcript
 // path or session ID is in it.
 func TestBackfillDryRunJSONStorageCheckedAndPrivacy(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 	out, _, code := f.command(t, "backfill", "--dry-run", "--json")
 	if code != 0 || !strings.Contains(out, `"storage_checked": false`) {

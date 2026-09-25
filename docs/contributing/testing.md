@@ -176,6 +176,27 @@ LaunchAgent runs) are not part of the user interface and may change.
   unchanged, and check that `go test -list '.*' ./...` prints the same names
   before and after.
 
+## Parallel tests
+
+Tests call `t.Parallel()` unless they cannot share the process: a test that
+assigns a package variable (`stubLaunchctl`, `collectSoftDeadline`,
+`hookDiagnosticsWait`), calls `t.Setenv` or `os.Chdir`, reads a process-wide
+counter (`state.PublishedStateLoads`), removes this process's Cursor
+snapshots, or orders goroutines with real sleeps stays sequential, with a
+comment saying why when it is not obvious. Go runs every sequential test
+before it releases the parallel ones, so a package variable a sequential
+test changes and restores is never seen by a parallel test. Test seams
+that vary per test belong in `Env` (`observeFlags`, `backfillCheckpoint`,
+`exitOnSignal`), not in package variables. Subtests that each build their
+own fixture call `t.Parallel()` too.
+
+Check a change for order dependence and races with
+`go test -race -count=3 -shuffle=on ./internal/cli`.
+`internal/cli`'s `TestMain` puts `$TMPDIR` (so every `t.TempDir`) in a
+folder of the run's own under `/tmp`: `local.CanonicalPath` lists each parent
+of a path, and macOS's per-user temporary folder can hold thousands of
+entries.
+
 ## Fuzzing
 
 Redaction, parsing, hook-file editing and the hook itself have fuzz targets

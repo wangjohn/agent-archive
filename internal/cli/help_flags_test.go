@@ -14,6 +14,7 @@ import (
 // commands' own, caught as each command builds its set, so a flag added
 // without help fails here.
 func TestHelpDescribesEveryFlag(t *testing.T) {
+	t.Parallel()
 	var sets []*commandFlags
 	env := testEnv(t, t.TempDir(), time.Now())
 	env.observeFlags = func(f *commandFlags) { sets = append(sets, f) }
@@ -76,6 +77,7 @@ func TestHelpDescribesEveryFlag(t *testing.T) {
 // version --help is help, not a usage error; the top-level help links the
 // documentation.
 func TestVersionHelpAndDocsLink(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{{"version", "--help"}, {"--version", "-h"}, {"help", "version"}} {
 		var out strings.Builder
 		if code := Run(args, nil, &out, io.Discard, Env{}); code != 0 || !strings.HasPrefix(out.String(), "Usage: agent-archive version") {

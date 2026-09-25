@@ -39,6 +39,7 @@ func saveImportedSession(t *testing.T, store *state.Store, now time.Time, id, pr
 // the app stays "waiting for first session", unobserved and unverified, and
 // the imports are reported on their own line.
 func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()
@@ -99,6 +100,7 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 // Imports are left out of each app's gaps and scan issues, so status counts
 // the ones that have either on the Imported line instead.
 func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()
@@ -152,6 +154,7 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 
 // Without imports, the text status has no Imported line.
 func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	project := t.TempDir()

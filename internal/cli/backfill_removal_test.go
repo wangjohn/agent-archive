@@ -12,6 +12,7 @@ import (
 // A session retention or undo forgot keeps its removal record, so backfill
 // reports it as removed instead of importing its transcript again.
 func TestBackfillArchiveStateReportsRemovalRecords(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	store, err := state.Open(home)
 	if err != nil {
@@ -50,6 +51,7 @@ func TestBackfillArchiveStateReportsRemovalRecords(t *testing.T) {
 // Hooks ignore them: a fresh start of a native session undo or retention
 // removed registers as any other start.
 func TestHookFreshStartIgnoresRemovalRecord(t *testing.T) {
+	t.Parallel()
 	for _, reason := range []state.RemovalReason{state.RemovalReasonUndo, state.RemovalReasonRetention} {
 		t.Run(string(reason), func(t *testing.T) {
 			home := t.TempDir()

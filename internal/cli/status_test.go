@@ -19,6 +19,7 @@ import (
 // Before setup, status says so and nothing else: no empty authentication,
 // no "unknown" collector.
 func TestStatusBeforeSetupIsPlain(t *testing.T) {
+	t.Parallel()
 	env := testEnv(t, t.TempDir(), time.Now())
 	var out bytes.Buffer
 	if code := Run([]string{"status"}, nil, &out, nil, env); code != 0 {
@@ -43,6 +44,7 @@ func TestStatusBeforeSetupIsPlain(t *testing.T) {
 // hours old) is not, and neither is a record whose holder died, since
 // nothing holds the lock then.
 func TestStatusReportsAStuckCollectorLock(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Now()
 	env := pairStatusEnv(t, home, userHome, now)
@@ -99,6 +101,7 @@ func TestStatusReportsAStuckCollectorLock(t *testing.T) {
 // The collector's quarantined files and unrefreshable summaries, already in
 // status --json, show in the text status too.
 func TestStatusShowsQuarantinedFilesAndUnrefreshableSummaries(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	now := time.Now()
 	env := pairStatusEnv(t, home, userHome, now)
@@ -115,6 +118,7 @@ func TestStatusShowsQuarantinedFilesAndUnrefreshableSummaries(t *testing.T) {
 }
 
 func TestStatusJSONAndTextUseObservedEvidence(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 0)
@@ -160,6 +164,7 @@ func TestStatusJSONAndTextUseObservedEvidence(t *testing.T) {
 }
 
 func TestStatusReadDoesNotCreateCollectorLayout(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/project", time.Now())
 	env := testEnv(t, home, time.Now())
@@ -177,6 +182,7 @@ func TestStatusReadDoesNotCreateCollectorLayout(t *testing.T) {
 // Unset times are left out of status --json rather than printed as the
 // zero time (0001-01-01T00:00:00Z).
 func TestStatusJSONOmitsUnsetTimes(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, _, _ := publishedThroughSync(t, now)
 	cfg, _, err := config.Load(home)
@@ -222,6 +228,7 @@ func TestStatusJSONOmitsUnsetTimes(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestStatusReportsJournalWithoutConfiguration(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	if err := local.Write(journalPath(home), setupJournal{}); err != nil {
 		t.Fatal(err)
@@ -234,6 +241,7 @@ func TestStatusReportsJournalWithoutConfiguration(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestStatusPreservesPublicationDuringRateLimitedUpdate(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
@@ -270,6 +278,7 @@ func TestStatusPreservesPublicationDuringRateLimitedUpdate(t *testing.T) {
 }
 
 func TestStatusShowsNotSetUp(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	env := testEnv(t, home, time.Now())
 	var out, errOut bytes.Buffer

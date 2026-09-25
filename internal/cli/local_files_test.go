@@ -51,16 +51,24 @@ var damagedFileCommands = []struct {
 // damage is the two shapes a file takes: bytes that are not JSON (a
 // truncated write), and JSON of another shape (a newer version's file).
 func TestDamagedLocalFilesAreNamedOrReadAround(t *testing.T) {
+	t.Parallel()
 	type damageKind struct {
 		name    string
 		content string
 	}
+	// What each command exits with on an undamaged installation. The fixture
+	// is the same for every damage and file, so it is run once per command.
+	healthy := make([]int, len(damagedFileCommands))
+	for i, command := range damagedFileCommands {
+		healthy[i], _ = runOnFixture(t, command.args, command.stdin, "", "")
+	}
 	for _, damage := range []damageKind{{"truncated", `{"version":1,"step":`}, {"other shape", `[1,2,3]`}} {
 		for _, file := range damagedLocalFiles {
-			for _, command := range damagedFileCommands {
+			for i, command := range damagedFileCommands {
 				name := damage.name + "/" + file.name + "/" + strings.Join(command.args, " ")
 				t.Run(name, func(t *testing.T) {
-					healthyCode, _ := runOnFixture(t, command.args, command.stdin, "", "")
+					t.Parallel()
+					healthyCode := healthy[i]
 					code, output := runOnFixture(t, command.args, command.stdin, file.name, damage.content)
 					if file.advisory && command.args[0] == "status" && code != healthyCode {
 						t.Fatalf("exit %d, %d when healthy:\n%s", code, healthyCode, output)
@@ -103,6 +111,7 @@ func runOnFixture(t *testing.T, args []string, stdin, file, content string) (int
 // U-20: a damaged or newer-version saved setup is named, and setup offers to
 // move it aside and go on; status names it too. Declining stops, naming it.
 func TestSetupOffersToMoveAnUnusableDraftAside(t *testing.T) {
+	t.Parallel()
 	for _, draft := range []string{`{"version":1,"step":`, `{"version":2,"step":1}`} {
 		home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 		env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
@@ -138,6 +147,7 @@ func TestSetupOffersToMoveAnUnusableDraftAside(t *testing.T) {
 // next diagnostic (it used to be read first, fail, and never heal), and by
 // setup's prune.
 func TestDamagedCaptureDiagnosticsHeal(t *testing.T) {
+	t.Parallel()
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	must(t, err)
 	home, _, _ := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, project))

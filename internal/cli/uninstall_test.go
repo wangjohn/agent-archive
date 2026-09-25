@@ -32,6 +32,7 @@ func installedFixture(t *testing.T, keychain *fakeKeychain, input string) (home,
 }
 
 func TestUninstallKeepsLocalDataByDefault(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env); code != 0 {
@@ -53,6 +54,7 @@ func TestUninstallKeepsLocalDataByDefault(t *testing.T) {
 }
 
 func TestUninstallDeclineChangesNothing(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	env.UnloadLaunchAgent = func(string) error {
 		t.Fatal("declining must not unload the LaunchAgent")
@@ -84,6 +86,7 @@ func TestUninstallDeclineChangesNothing(t *testing.T) {
 }
 
 func TestUninstallRejectsTruncatedInputInsteadOfProceeding(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	var stdout, stderr bytes.Buffer
 	code := runUninstallCommand(nil, strings.NewReader(""), &stdout, &stderr, env)
@@ -96,6 +99,7 @@ func TestUninstallRejectsTruncatedInputInsteadOfProceeding(t *testing.T) {
 }
 
 func TestUninstallFailsBeforePromptingWhenSettingsAreUnreadable(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	if err := os.WriteFile(filepath.Join(home, "config.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
@@ -116,6 +120,7 @@ func TestUninstallFailsBeforePromptingWhenSettingsAreUnreadable(t *testing.T) {
 }
 
 func TestUninstallPreservesUnrelatedHooksAndSettings(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	userHome := t.TempDir()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -156,6 +161,7 @@ func TestUninstallPreservesUnrelatedHooksAndSettings(t *testing.T) {
 }
 
 func TestUninstallDeletesStoredR2CredentialsOnly(t *testing.T) {
+	t.Parallel()
 	keychain := newFakeKeychain()
 	// A credential under some other reference stands in for anything else
 	// stored under our Keychain service; uninstall must leave it alone.
@@ -186,6 +192,7 @@ func TestUninstallDeletesStoredR2CredentialsOnly(t *testing.T) {
 }
 
 func TestUninstallWithS3NeverOpensKeychain(t *testing.T) {
+	t.Parallel()
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	env.Keychain = func() (credentials.CredentialStore, error) {
 		t.Fatal("an S3 configuration references no Keychain item; uninstall must not open Keychain")
@@ -201,6 +208,7 @@ func TestUninstallWithS3NeverOpensKeychain(t *testing.T) {
 }
 
 func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	userHome := t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
@@ -245,6 +253,7 @@ func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
 }
 
 func TestUninstallRefusesToRemoveTheUserHome(t *testing.T) {
+	t.Parallel()
 	userHome := t.TempDir()
 	env := setupTestEnv(t, userHome, userHome, newFakeKeychain(), time.Now())
 	var stdout, stderr bytes.Buffer
@@ -260,6 +269,7 @@ func TestUninstallRefusesToRemoveTheUserHome(t *testing.T) {
 }
 
 func TestUninstallReportsBusyCollectorAndKeepsLocalState(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	unlock, err := local.Lock(home)
 	if err != nil {
@@ -280,6 +290,7 @@ func TestUninstallReportsBusyCollectorAndKeepsLocalState(t *testing.T) {
 }
 
 func TestUsageListsUninstall(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	if code := Run([]string{"--help"}, nil, &out, nil, Env{}); code != 0 {
 		t.Fatalf("code=%d", code)
@@ -290,6 +301,7 @@ func TestUsageListsUninstall(t *testing.T) {
 }
 
 func TestUninstallLeavesFilesItDidNotCreate(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	// A user who pointed AGENT_ARCHIVE_HOME at a directory of their own.
 	foreign := filepath.Join(home, "my-notes.txt")
@@ -326,6 +338,7 @@ func TestUninstallLeavesFilesItDidNotCreate(t *testing.T) {
 // --delete-local-data must remove it as agent-archive's own state rather than
 // report it as a leftover.
 func TestUninstallDeleteLocalDataRemovesTheMetadataCache(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	cacheDir := filepath.Join(home, "cache", "metadata")
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
@@ -347,6 +360,7 @@ func TestUninstallDeleteLocalDataRemovesTheMetadataCache(t *testing.T) {
 }
 
 func TestUninstallCannotResumeRemovedIntegrations(t *testing.T) {
+	t.Parallel()
 	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()))
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env); code != 0 {
@@ -363,6 +377,7 @@ func TestUninstallCannotResumeRemovedIntegrations(t *testing.T) {
 // unparsable file of an app that was never selected is reported and left
 // alone instead of blocking the collector's removal.
 func TestUninstallSkipsAnUnparsableFileOfAnUnselectedApp(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	cursor := filepath.Join(userHome, ".cursor", "hooks.json")
 	must(t, os.MkdirAll(filepath.Dir(cursor), 0700))
@@ -395,6 +410,7 @@ func TestUninstallSkipsAnUnparsableFileOfAnUnselectedApp(t *testing.T) {
 // A hook file edited while uninstall runs is reported as such, with uninstall
 // (not setup) as the command to rerun.
 func TestUninstallConcurrentEditNamesUninstall(t *testing.T) {
+	t.Parallel()
 	_, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	settings := filepath.Join(userHome, ".claude", "settings.json")
 	jobState := env.JobState
@@ -416,6 +432,7 @@ func TestUninstallConcurrentEditNamesUninstall(t *testing.T) {
 //
 // Regression: hook ownership review, 2026-09 (1a9420b).
 func TestUninstallCleansTheLegacyPathToo(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	claudeDir := filepath.Join(userHome, "cfg")
 	must(t, os.MkdirAll(claudeDir, 0700))

@@ -17,6 +17,7 @@ import (
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestStatusAttributesClaudeRecordVersionToVerifiedCapture(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"claude"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
@@ -70,6 +71,7 @@ func TestStatusAttributesClaudeRecordVersionToVerifiedCapture(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestStatusSurvivesCorruptApplicationVersions(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true}}

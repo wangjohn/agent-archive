@@ -251,6 +251,7 @@ func checkGolden(t *testing.T, name string, got []byte) {
 }
 
 func TestBackfillGolden(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 	cases := []struct {
 		name string
@@ -285,6 +286,7 @@ func TestBackfillGolden(t *testing.T) {
 // Cursor's database, are byte-for-byte unchanged, with no -journal, -wal, or
 // -shm file created beside the database.
 func TestBackfillDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 	cursorDir := filepath.Dir(backfill.CursorStateDatabase(f.userHome))
 	before, cursorBefore := snapshotTree(t, f.data), snapshotTree(t, cursorDir)
@@ -305,6 +307,7 @@ func TestBackfillDryRunWritesNothing(t *testing.T) {
 // and prints its path: it is counted on one "Not imported" line, and the
 // rest of the plan is shown.
 func TestBackfillUnreadableFolder(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads any folder")
 	}
@@ -378,6 +381,7 @@ func snapshotTree(t *testing.T, dir string) string {
 }
 
 func TestBackfillRefusals(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 
 	if _, errOut, code := f.run(t); code != 1 || !strings.Contains(errOut, "needs a terminal") {
@@ -422,6 +426,7 @@ func TestBackfillRefusals(t *testing.T) {
 }
 
 func TestBackfillHelp(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	if code := Run([]string{"backfill", "--help"}, nil, &out, nil, Env{}); code != 0 || !strings.Contains(out.String(), "Usage: agent-archive backfill") {
 		t.Fatalf("code %d: %s", code, out.String())
@@ -435,6 +440,7 @@ func TestBackfillHelp(t *testing.T) {
 // Classify reports a registration the configuration no longer accepts as
 // registered_not_admitted.
 func TestBackfillArchiveState(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 	cfg, _, err := config.Load(f.data)
 	if err != nil {

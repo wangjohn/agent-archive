@@ -69,6 +69,7 @@ func changeBucketTo(t *testing.T, env Env, home, userHome, bucket string) (confi
 // status, setup says what happens to it, and after the change it falls behind
 // the new boundary like any unpublished session.
 func TestWaitingCursorChatDoesNotBlockADestinationChange(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, userHome, project := cursorSetup(t, now)
 	conversation := "5f3c2a10-0000-4000-8000-00000000cccc"
@@ -109,6 +110,7 @@ func TestWaitingCursorChatDoesNotBlockADestinationChange(t *testing.T) {
 // A chat that has its transcript and has not published yet is real pending
 // work; it still blocks a destination change until it is synced.
 func TestCursorChatWithATranscriptStillBlocksADestinationChange(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, userHome, project := cursorSetup(t, now)
 	conversation := "5f3c2a10-0000-4000-8000-00000000dddd"
@@ -134,6 +136,7 @@ func TestCursorChatWithATranscriptStillBlocksADestinationChange(t *testing.T) {
 // is not accepted and does not hold setup at B; switching back to A accepts
 // it again, pending work included, because its objects are in A.
 func TestSwitchingBackToADestinationAcceptsItsSessionsAgain(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, userHome, project := cursorSetup(t, now)
 	conversation := "5f3c2a10-0000-4000-8000-00000000eeee"
@@ -178,6 +181,7 @@ func TestSwitchingBackToADestinationAcceptsItsSessionsAgain(t *testing.T) {
 // is uploaded it is pending, and it blocks a destination change like any
 // pending session rather than being left behind with a wrong warning.
 func TestImportedCursorDatabaseChatBlocksADestinationChange(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, userHome, project := cursorSetup(t, now)
 	cfg, _, _ := config.Load(home)
@@ -213,6 +217,7 @@ func (s failingUpdateStore) Put(context.Context, string, []byte) error { return 
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestFailedScheduledUpdateBlocksDestinationSwitchUntilRetry(t *testing.T) {
+	t.Parallel()
 	home, dir := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, dir, now.Add(-time.Hour))

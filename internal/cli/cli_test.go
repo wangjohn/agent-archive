@@ -66,6 +66,7 @@ func credentialsTestConfig() credentials.Config {
 }
 
 func TestHelpAndVersion(t *testing.T) {
+	t.Parallel()
 	var out bytes.Buffer
 	if code := Run([]string{"--help"}, nil, &out, nil, Env{}); code != 0 {
 		t.Fatalf("code=%d", code)
@@ -84,6 +85,7 @@ func TestHelpAndVersion(t *testing.T) {
 }
 
 func TestUnknownCommandAndNoArgs(t *testing.T) {
+	t.Parallel()
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"bogus"}, nil, &out, &errOut, Env{}); code != 2 {
 		t.Fatalf("code=%d", code)

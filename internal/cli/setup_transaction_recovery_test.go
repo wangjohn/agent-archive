@@ -19,6 +19,7 @@ import (
 // holds for a recovery record that cannot be read at all, which
 // --abandon-recovery then moves aside.
 func TestRecoveryBlockedByLaunchctlAdvertisesAbandon(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"restart", "stop"} {
 		t.Run(failure, func(t *testing.T) {
 			home, userHome := t.TempDir(), t.TempDir()
@@ -41,6 +42,7 @@ func TestRecoveryBlockedByLaunchctlAdvertisesAbandon(t *testing.T) {
 }
 
 func TestUnreadableRecoveryRecordHasAWayOut(t *testing.T) {
+	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	must(t, os.WriteFile(journalPath(home), []byte(`{"changes":[`), 0o600))
@@ -86,6 +88,7 @@ func interruptedSetupWithExternalEdit(t *testing.T) (home, userHome, settings st
 // journal and both ways out, and setup --abandon-recovery gets the user
 // unstuck without touching the edited file.
 func TestInterruptedSetupHasAWayOut(t *testing.T) {
+	t.Parallel()
 	home, _, settings, env := interruptedSetupWithExternalEdit(t)
 	edited, _ := os.ReadFile(settings)
 	run := func(input string, args ...string) (int, string) {
@@ -125,6 +128,7 @@ func TestInterruptedSetupHasAWayOut(t *testing.T) {
 //
 // Regression: hook ownership review, 2026-09 (1a9420b).
 func TestRecoveryStopsOnAnEditedRetiredJob(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	old := filepath.Join(userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
 	plist, _ := hooks.LaunchAgent("/opt/old/agent-archive", home, hooks.LaunchLabel)

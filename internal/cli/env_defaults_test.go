@@ -90,6 +90,7 @@ func TestUnloadLaunchAgentBootsOutOnlyItsOwnJob(t *testing.T) {
 // A label is not proof of ownership: launchd reports the plist it loaded a
 // job from, and a job loaded from any other file is another installation's.
 func TestParseJobStateComparesTheLoadedPlist(t *testing.T) {
+	t.Parallel()
 	ours := filepath.Join(t.TempDir(), "com.agent-archive.collector.plist")
 	for _, tc := range []struct {
 		output string

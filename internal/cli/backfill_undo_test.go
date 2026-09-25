@@ -160,6 +160,7 @@ func historyLine(t *testing.T, f *backfillFixture, id string) string {
 // projects and apps the import added are taken back. A later backfill skips
 // the sessions unless --include-removed.
 func TestBackfillUndoGolden(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	parents, children := importRegistrations(t, f.data, firstImport)
 	if len(parents) != 12 || len(children) != 2 {
@@ -290,6 +291,7 @@ func TestBackfillUndoGolden(t *testing.T) {
 // exclusion if the import added it. A project that was already included
 // stays included. A later undo of the rest finishes the import.
 func TestBackfillUndoProject(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	levenshtein := filepath.Join(f.userHome, "levenshtein")
 	all, allChildren := importRegistrations(t, f.data, firstImport)
@@ -398,6 +400,7 @@ func TestBackfillUndoProject(t *testing.T) {
 // A failed delete leaves that session registered and in the bucket, and undo
 // goes on with the others; running undo again finishes the job.
 func TestBackfillUndoPartialFailure(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	parents, _ := importRegistrations(t, f.data, firstImport)
 	failing := parents[0]
@@ -438,6 +441,7 @@ func TestBackfillUndoPartialFailure(t *testing.T) {
 // A session resumed after the import is deleted with its newer content,
 // every source it published included, and the plan counts it as resumed.
 func TestBackfillUndoResumedSession(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	store := state.OpenReadOnly(f.data)
 	id, found, _ := store.ArchiveSessionID("c-lev-1")
@@ -502,6 +506,7 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 // republished by a rescan with no hook evidence, is counted as resumed: its
 // transcript was written after the import.
 func TestBackfillUndoResumedWithoutHooks(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	parents, _ := importRegistrations(t, f.data, firstImport)
 	var reg archive.SessionRegistration
@@ -553,6 +558,7 @@ func TestBackfillUndoResumedWithoutHooks(t *testing.T) {
 // A session resumed while the prompt is open is still removed: the person
 // confirmed deleting it.
 func TestBackfillUndoResumedDuringPrompt(t *testing.T) {
+	t.Parallel()
 	f, _ := newUndoFixture(t)
 	parents, _ := importRegistrations(t, f.data, firstImport)
 	var withFile archive.SessionRegistration
@@ -575,6 +581,7 @@ func TestBackfillUndoResumedDuringPrompt(t *testing.T) {
 // Undo holds collector.lock while it removes sessions, so no collector pass
 // can republish one mid-undo.
 func TestBackfillUndoHoldsCollectorLock(t *testing.T) {
+	t.Parallel()
 	f, _ := newUndoFixture(t)
 	checked := false
 	f.env.backfillCheckpoint = func(step string) error {
@@ -606,6 +613,7 @@ func TestBackfillUndoHoldsCollectorLock(t *testing.T) {
 // recorded a destination ID, the same destination switched back to after the
 // import, which DestinationSince records.
 func TestBackfillUndoPreviousDestination(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		legacy bool
@@ -621,6 +629,7 @@ func TestBackfillUndoPreviousDestination(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f, bucket := newUndoFixture(t)
 			if tc.legacy {
 				stripDestinationIDs(t, f.data)
@@ -667,6 +676,7 @@ func TestBackfillUndoPreviousDestination(t *testing.T) {
 // again, so undo deletes them there even though DestinationSince moved past
 // the import.
 func TestBackfillUndoSwitchedBackDeletesFromTheBucket(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	parents, children := importRegistrations(t, f.data, firstImport)
 	cfg, _, _ := config.Load(f.data)
@@ -715,6 +725,7 @@ func stripDestinationIDs(t *testing.T, home string) {
 // Declining, running out of input, and having no terminal without --yes all
 // change nothing, locally or in the bucket; so do refusals.
 func TestBackfillUndoChangesNothingUnlessConfirmed(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	before := snapshotAll(t, f, bucket.MemoryStore)
 	config0, _ := os.ReadFile(filepath.Join(f.data, "config.json"))
@@ -778,6 +789,7 @@ func TestBackfillUndoChangesNothingUnlessConfirmed(t *testing.T) {
 // A failed storage check stops before the prompt and changes nothing; a
 // Keychain failure says how to fix it.
 func TestBackfillUndoStorageCheckFails(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	before := snapshotAll(t, f, bucket.MemoryStore)
 	config0 := mustRead(t, filepath.Join(f.data, "config.json"))
@@ -815,6 +827,7 @@ func mustRead(t *testing.T, path string) []byte {
 // A session the import gained while the prompt was open (the collector
 // registered a subagent, say) stops the undo before anything is removed.
 func TestBackfillUndoSelectionGrew(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	parents, _ := importRegistrations(t, f.data, firstImport)
 	// The late subagent is modelled on a transcript-file parent: a Cursor
@@ -864,6 +877,7 @@ func TestBackfillUndoSelectionGrew(t *testing.T) {
 // ID, which may come before or after the flags. An app another import still
 // needs stays in ImportedHarnesses.
 func TestBackfillUndoLatestByDefault(t *testing.T) {
+	t.Parallel()
 	const secondImport = "2026-09-23-2"
 	f, bucket := newUndoFixture(t, "--harness", "codex")
 	if _, errOut, code := f.importRun(t, nil, false, "--yes"); code != 0 {
@@ -923,6 +937,7 @@ func TestBackfillUndoLatestByDefault(t *testing.T) {
 // Undo selects sessions by their registrations: an ID the batch file lists
 // that was never registered is ignored, and the import is still undone.
 func TestBackfillUndoIgnoresUnregisteredBatchEntries(t *testing.T) {
+	t.Parallel()
 	f, _ := newUndoFixture(t)
 	b, _ := loadBatch(t, f.data)
 	b.Sessions = append(b.Sessions, "never-registered")
@@ -942,6 +957,7 @@ func TestBackfillUndoIgnoresUnregisteredBatchEntries(t *testing.T) {
 // A project undo excluded, and setup then included again, stays included
 // when a later undo of the same import finishes the sessions.
 func TestBackfillUndoKeepsReincludedProject(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	levenshtein := filepath.Join(f.userHome, "levenshtein")
 	parents, _ := importRegistrations(t, f.data, firstImport)
@@ -985,6 +1001,7 @@ func TestBackfillUndoKeepsReincludedProject(t *testing.T) {
 // it is found after confirming and when it lands just before the
 // configuration is written. Either way nothing is removed or recorded.
 func TestBackfillUndoConfigChanged(t *testing.T) {
+	t.Parallel()
 	change := func(t *testing.T, home string) {
 		t.Helper()
 		cfg, _, _ := config.Load(home)
@@ -995,6 +1012,7 @@ func TestBackfillUndoConfigChanged(t *testing.T) {
 	}
 	for _, at := range []string{"prompt", "commit"} {
 		t.Run(at, func(t *testing.T) {
+			t.Parallel()
 			f, bucket := newUndoFixture(t)
 			before := bucketSnapshot(t, bucket.MemoryStore)
 			stdin := &onFirstRead{r: strings.NewReader("y\n"), before: func() {
@@ -1039,6 +1057,7 @@ func TestBackfillUndoConfigChanged(t *testing.T) {
 // the apps removed, and the import marked undone, while every session stays
 // registered for a rerun.
 func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
+	t.Parallel()
 	f, bucket := newUndoFixture(t)
 	bucket.reset("sessions/")
 	_, errOut, code := f.undoRun(t, nil, false, "--yes")
@@ -1069,6 +1088,7 @@ func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
 // An undone import is never continued: a later backfill with the same
 // options starts a new one.
 func TestBackfillUndoneImportNotContinued(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	f.env.backfillCheckpoint = func(step string) error {
 		if step == "registered" {

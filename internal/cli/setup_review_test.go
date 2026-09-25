@@ -15,6 +15,7 @@ import (
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestSetupShowsVersionsBeforeActivationAndDiscoversOnce(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
 	calls := 0
@@ -41,6 +42,7 @@ func TestSetupShowsVersionsBeforeActivationAndDiscoversOnce(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
@@ -61,6 +63,7 @@ func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestReviewDiscoveriesKeepsUndetectedAbsentApps(t *testing.T) {
+	t.Parallel()
 	got := reviewDiscoveries(map[string]applicationDiscovery{
 		"codex":  {VersionState: "absent"},
 		"claude": {VersionState: "absent"},
@@ -74,6 +77,7 @@ func TestReviewDiscoveriesKeepsUndetectedAbsentApps(t *testing.T) {
 }
 
 func TestRetentionReductionShowsImpactBeforeConfirmation(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
@@ -100,6 +104,7 @@ func TestRetentionReductionShowsImpactBeforeConfirmation(t *testing.T) {
 //
 // Regression: hook ownership review, 2026-09 (1a9420b).
 func TestSetupReviewWarnsWhenHookFilesMove(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	elsewhere := filepath.Join(userHome, "elsewhere")
 	must(t, os.MkdirAll(elsewhere, 0700))
@@ -121,6 +126,7 @@ func TestSetupReviewWarnsWhenHookFilesMove(t *testing.T) {
 //
 // Regression: hook ownership second review, 2026-09 (ffee0e3).
 func TestSetupReviewMoveWarningForUnrecordedHookFiles(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	cfg, _, _ := config.Load(home)
 	cfg.HookFiles = nil
@@ -136,6 +142,7 @@ func TestSetupReviewMoveWarningForUnrecordedHookFiles(t *testing.T) {
 }
 
 func TestShortSetupAndReviewEdits(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		edits  string
@@ -148,6 +155,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 		{"folder", "edit\nprefix\n../invalid\narchive/\ny\n", 2, 90, "archive/"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home, project := t.TempDir(), t.TempDir()
 			project, _ = filepath.EvalSymlinks(project)
 			if err := os.Mkdir(filepath.Join(project, ".git"), 0700); err != nil {
@@ -180,6 +188,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 }
 
 func TestReviewEditCancellationDoesNotInstall(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		ending string

@@ -50,6 +50,7 @@ func onlyRegistration(t *testing.T, home string) (archive.SessionRegistration, b
 // project's already-published sessions from ageing out of the bucket, even
 // with a hook request outstanding that the collector will never process.
 func TestSyncStillExpiresSessionsOfAnExcludedProject(t *testing.T) {
+	t.Parallel()
 	now := time.Now().UTC()
 	env, home, _, bucket := publishedThroughSync(t, now)
 	storageClockFollows(t, &env, func() time.Time { return env.Now() })
@@ -87,6 +88,7 @@ func TestSyncStillExpiresSessionsOfAnExcludedProject(t *testing.T) {
 // current bucket again and retention deletes them there. One without an ID
 // (written before the ID existed) is judged by time, as before.
 func TestSyncPrunesPreviousDestinationSessionsWithoutTouchingTheBucket(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name       string
 		change     func(cfg *config.Config, now time.Time)
@@ -106,6 +108,7 @@ func TestSyncPrunesPreviousDestinationSessionsWithoutTouchingTheBucket(t *testin
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			now := time.Now().UTC()
 			env, home, _, bucket := publishedThroughSync(t, now)
 			storageClockFollows(t, &env, func() time.Time { return env.Now() })

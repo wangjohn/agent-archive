@@ -22,6 +22,7 @@ import (
 // names the quarantined file in status, and keeps collector-error.log (which
 // launchd appends to and never rotates) bounded.
 func TestCollectPassReportsQuarantinedStateAndTrimsErrorLog(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dir := t.TempDir()
 	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -94,6 +95,7 @@ func theRegistration(t *testing.T, home string) archive.SessionRegistration {
 // sudo run, say) fails only its own session: read-back verification skips
 // it, and the retention sweep still runs.
 func TestCollectPassSweepsDespiteUnreadableRegistration(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads unreadable files")
 	}
@@ -161,6 +163,7 @@ func TestCollectPassSoftDeadlineStartsNoNewSession(t *testing.T) {
 // reference recorded at upload, so a cached bundle this build can no longer
 // serialize (a source schema bump) still verifies.
 func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, remote := collectFixture(t, now)
 	if result, err := runOnePass(env, false); err != nil || len(result.Published) != 1 {
@@ -196,6 +199,7 @@ func TestReadBackUsesRecordedSourceAfterSchemaBump(t *testing.T) {
 // cannot be read) is reported, but only after the retention sweep has run:
 // another, expired session is still cleaned up in the same pass.
 func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
+	t.Parallel()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads unreadable files")
 	}
@@ -265,6 +269,7 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 // Read-back verification works within the pass's deadline: with no time
 // left, a due read-back is deferred to the next pass, not attempted.
 func TestReadBackDefersOnceThePassDeadlineHasPassed(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	home, env, remote := collectFixture(t, now)
 	if result, err := runOnePass(env, false); err != nil || len(result.Published) != 1 {
@@ -290,6 +295,7 @@ func TestReadBackDefersOnceThePassDeadlineHasPassed(t *testing.T) {
 }
 
 func TestCollectorKeepsLastPublicationOnUnchangedPass(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now()
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
@@ -313,6 +319,7 @@ func TestCollectorKeepsLastPublicationOnUnchangedPass(t *testing.T) {
 }
 
 func TestCollectCommandSilentlyNoopsWhenPausedOrNotSetUp(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	env := testEnv(t, home, time.Now())
 	var out, errOut bytes.Buffer
@@ -330,6 +337,7 @@ func TestCollectCommandSilentlyNoopsWhenPausedOrNotSetUp(t *testing.T) {
 }
 
 func TestCollectCommandRunsQuietlyOnSuccess(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	dir := t.TempDir()
 	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -360,6 +368,7 @@ func TestCollectCommandRunsQuietlyOnSuccess(t *testing.T) {
 }
 
 func TestCollectCommandRecordsPreflightFailureInStatus(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 

@@ -18,6 +18,7 @@ import (
 )
 
 func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"codex", "claude", "cursor"} {
 		profile := captureCapabilityProfile(name)
 		if profile.Transcript.State != capabilityDocumented {
@@ -46,6 +47,7 @@ func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
 }
 
 func TestInstalledVersionSupportNeedsMatchingVerifiedCapture(t *testing.T) {
+	t.Parallel()
 	discovery := applicationDiscovery{Installed: true, Version: "agent 1.2.3", VersionState: "observed"}
 	if got := installedVersionSupport(discovery, nil); got != "unverified" {
 		t.Fatal(got)
@@ -59,6 +61,7 @@ func TestInstalledVersionSupportNeedsMatchingVerifiedCapture(t *testing.T) {
 }
 
 func TestNormalizedVersionKeepsEveryComponentAndFallsBack(t *testing.T) {
+	t.Parallel()
 	cases := map[string]string{
 		"1.2.3.4":            "1.2.3.4",
 		"v1.2.3":             "1.2.3",
@@ -78,6 +81,7 @@ func TestNormalizedVersionKeepsEveryComponentAndFallsBack(t *testing.T) {
 }
 
 func TestInstalledVersionSupportReportsWhyUnverified(t *testing.T) {
+	t.Parallel()
 	cli := applicationDiscovery{Installed: true, Version: "1.2.3", VersionKind: versionKindCLI, VersionState: "observed"}
 	if state, reason := installedVersionSupportDetail(cli, nil); state != "unverified" || reason != supportReasonNoVerifiedCapture {
 		t.Fatalf("%s %s", state, reason)
@@ -106,6 +110,7 @@ func TestInstalledVersionSupportReportsWhyUnverified(t *testing.T) {
 }
 
 func TestDiscoverCommandVersionTriesEveryPresentCandidate(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("shell scripts")
 	}
@@ -135,6 +140,7 @@ func TestDiscoverCommandVersionTriesEveryPresentCandidate(t *testing.T) {
 }
 
 func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
+	t.Parallel()
 	userHome := t.TempDir()
 	root := filepath.Join(userHome, "Library", "Application Support", "Claude", "claude-code")
 	for _, dir := range []string{"2.1.99", "2.1.275", "2.1.280", "2.1.100", "not-a-version", "backup-2.1.300", "2.1.300.bak"} {
@@ -159,6 +165,7 @@ func TestClaudeDesktopBundledCLIsNewestVersionFirst(t *testing.T) {
 }
 
 func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
+	t.Parallel()
 	userHome := t.TempDir()
 	bundled := filepath.Join(userHome, "Library", "Application Support", "Claude", "claude-code", "2.1.280")
 	if err := os.MkdirAll(bundled, 0o755); err != nil {
@@ -189,6 +196,7 @@ func TestVersionCandidatesPreferStandaloneOverBundled(t *testing.T) {
 }
 
 func TestCompareDottedVersions(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		a    string
 		b    string
@@ -207,6 +215,7 @@ func TestCompareDottedVersions(t *testing.T) {
 }
 
 func TestVersionDirPatternIsAnchored(t *testing.T) {
+	t.Parallel()
 	for name, want := range map[string]bool{"2.1.280": true, "0.155.0-alpha.9.2": true, "backup-2.1.300": false, "2.1.300.bak": false, "v2.1.300": false, "2": false} {
 		if got := versionDirPattern.MatchString(name); got != want {
 			t.Fatalf("%q: got %v want %v", name, got, want)
@@ -216,6 +225,7 @@ func TestVersionDirPatternIsAnchored(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	at := time.Now().UTC()
 	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
@@ -261,6 +271,7 @@ func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) 
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestMissingVersionDiscoveryIsUnknown(t *testing.T) {
+	t.Parallel()
 	if got := installedVersionSupport(applicationDiscovery{}, nil); got != "unknown" {
 		t.Fatal(got)
 	}

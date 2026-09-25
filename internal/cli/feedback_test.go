@@ -15,6 +15,7 @@ import (
 )
 
 func TestFeedbackFileIsFilteredBeforeRequestPersistence(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
@@ -59,6 +60,7 @@ func TestFeedbackFileIsFilteredBeforeRequestPersistence(t *testing.T) {
 }
 
 func TestFeedbackRejectsMissingUnknownAndOversizeInput(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now()
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
@@ -75,6 +77,7 @@ func TestFeedbackRejectsMissingUnknownAndOversizeInput(t *testing.T) {
 }
 
 func TestFeedbackRejectsSessionExcludedByCurrentSetup(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
@@ -114,6 +117,7 @@ func TestFeedbackRejectsSessionExcludedByCurrentSetup(t *testing.T) {
 
 // Feedback queued while capture is paused says when it will be published.
 func TestFeedbackWhilePausedSaysWhen(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	env := testEnv(t, home, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))

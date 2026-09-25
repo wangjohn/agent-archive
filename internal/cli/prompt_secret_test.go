@@ -10,6 +10,7 @@ import (
 
 // This child is only launched under a pseudo-terminal by the test below.
 func TestSecretTerminalChild(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("ARCHIVE_SECRET_TEST_CHILD") != "1" {
 		t.Skip("subprocess helper")
 	}
@@ -21,6 +22,7 @@ func TestSecretTerminalChild(t *testing.T) {
 }
 
 func TestSecretInputDisablesTerminalEcho(t *testing.T) {
+	t.Parallel()
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("PTY harness requires Python 3")
@@ -62,6 +64,7 @@ finally:
 }
 
 func TestSecretInterruptRestoresTerminalEcho(t *testing.T) {
+	t.Parallel()
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("PTY harness requires Python 3")

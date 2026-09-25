@@ -152,6 +152,7 @@ func loadBatch(t *testing.T, home string) (backfill.Batch, []byte) {
 // everything the import leaves behind. A second run then imports and writes
 // nothing.
 func TestBackfillImportGolden(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	out, errOut, code := f.importRun(t, strings.NewReader("y\n"), true)
 	if code != 0 {
@@ -269,6 +270,7 @@ func TestBackfillImportGolden(t *testing.T) {
 
 // list marks imports and filters on them; show prints their provenance.
 func TestBackfillListAndShow(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--harness", "claude", "--project", filepath.Join(f.userHome, "levenshtein")); code != 0 {
 		t.Fatalf("import: %s", errOut)
@@ -306,6 +308,7 @@ func TestBackfillListAndShow(t *testing.T) {
 // Declining, in any of its forms, changes nothing, locally or in the bucket.
 // So does running out of input at the prompt.
 func TestBackfillDeclineChangesNothing(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	before := snapshotAll(t, f, bucket)
 	config0, err := os.ReadFile(filepath.Join(f.data, "config.json"))
@@ -333,6 +336,7 @@ func TestBackfillDeclineChangesNothing(t *testing.T) {
 
 // Without a terminal, only --yes imports; otherwise nothing is even read.
 func TestBackfillNoTerminalRefuses(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	before := snapshotAll(t, f, bucket)
 	out, errOut, code := f.importRun(t, strings.NewReader("y\n"), false)
@@ -345,6 +349,7 @@ func TestBackfillNoTerminalRefuses(t *testing.T) {
 // edit asks for a retention period, shows the plan again with the new
 // deletion date, and commits the retention with the import.
 func TestBackfillEditRetention(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	out, errOut, code := f.importRun(t, strings.NewReader("edit\n365\ny\n"), true, "--background")
 	if code != 0 {
@@ -363,6 +368,7 @@ func TestBackfillEditRetention(t *testing.T) {
 // A failed storage check stops before the prompt and changes nothing; a
 // Keychain failure says how to fix it.
 func TestBackfillStorageCheckFails(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	before := snapshotAll(t, f, bucket)
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return failingPutStore{bucket}, nil }
@@ -403,6 +409,7 @@ func (o *onFirstRead) Read(p []byte) (int, error) {
 // a pause, and an import refuses to start while paused or while setup needs
 // recovery. A bucket privacy refresh by the collector is not a change.
 func TestBackfillConcurrentChanges(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		change func(t *testing.T, home string)
@@ -496,6 +503,7 @@ func TestBackfillConcurrentChanges(t *testing.T) {
 // backfill again finishes the same import: one batch, each project added
 // once, each session registered once.
 func TestBackfillCrashConverges(t *testing.T) {
+	t.Parallel()
 	for _, crash := range []struct {
 		name     string
 		at       string
@@ -503,6 +511,7 @@ func TestBackfillCrashConverges(t *testing.T) {
 		projects int
 	}{{"inside commit", "batch saved", 1, 1}, {"after commit", "committed", 1, 5}, {"between holds", "registered", 2, 5}} {
 		t.Run(crash.name, func(t *testing.T) {
+			t.Parallel()
 			f, _ := newImportFixture(t)
 			calls := 0
 			f.env.backfillHoldSteps = 3
@@ -574,6 +583,7 @@ func TestBackfillCrashConverges(t *testing.T) {
 // pending links. The collector then registers each child with the parent's
 // import fields and no SubagentStop lifecycle evidence.
 func TestBackfillSubagentsInheritImport(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	out, errOut, code := f.importRun(t, nil, false, "--yes", "--background", "--project", filepath.Join(f.userHome, "agent-archive"), "--harness", "claude")
 	if code != 0 {
@@ -658,6 +668,7 @@ func requestFor(store *state.Store, id string) (state.Request, bool, error) {
 // TestSecondInterruptRemovesSnapshotsAndExits); it lets go when the command
 // ends.
 func TestBackfillInterruptedUpload(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	signals := make(chan os.Signal, 1)
 	var mu sync.Mutex
@@ -736,6 +747,7 @@ func (b *syncBuffer) String() string {
 
 // uninstall --delete-local-data removes the import batches too.
 func TestUninstallDeleteLocalDataRemovesImports(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, false, false, t.TempDir()))
 	if err := backfill.SaveBatch(home, backfill.Batch{ID: firstImport, StartedAt: backfillNow}); err != nil {
 		t.Fatal(err)

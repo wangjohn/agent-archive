@@ -46,6 +46,7 @@ func statusJSON(t *testing.T, env Env) map[string]any {
 // Once it is moved or deleted, the hook configuration still matches exactly,
 // but every hook and every scheduled collection fails.
 func TestStatusReportsAMovedOrDeletedBinaryAsBroken(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		break_  func(t *testing.T, path string)
@@ -71,6 +72,7 @@ func TestStatusReportsAMovedOrDeletedBinaryAsBroken(t *testing.T) {
 		}, "not executable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, _, env, installed := installedWithBinary(t)
 			tc.break_(t, installed)
 
@@ -114,6 +116,7 @@ func TestStatusReportsAMovedOrDeletedBinaryAsBroken(t *testing.T) {
 // Pausing collection does not stop the apps from running hooks that now fail,
 // so the moved binary still decides the next action.
 func TestMovedBinaryOutranksPause(t *testing.T) {
+	t.Parallel()
 	home, _, env, installed := installedWithBinary(t)
 	if _, err := config.SetPaused(home, true); err != nil {
 		t.Fatal(err)
@@ -133,6 +136,7 @@ func TestMovedBinaryOutranksPause(t *testing.T) {
 // After uninstall there are no hooks left to break: deleting the binary then
 // is the expected last step, not a fault.
 func TestUninstalledArchiveDoesNotReportTheDeletedBinary(t *testing.T) {
+	t.Parallel()
 	home, _, env, installed := installedWithBinary(t)
 	cfg, _, _ := config.Load(home)
 	cfg.Archive.Enabled = false
@@ -160,6 +164,7 @@ func TestUninstalledArchiveDoesNotReportTheDeletedBinary(t *testing.T) {
 // in place). Only the background is broken then, and the next action names
 // the path the LaunchAgent actually runs.
 func TestBackgroundAloneBrokenWhenTheLaunchAgentRunsAMissingFile(t *testing.T) {
+	t.Parallel()
 	home, userHome, env, _ := installedWithBinary(t)
 	stale := filepath.Join(t.TempDir(), "old", "agent-archive")
 	plist, err := hooks.LaunchAgent(stale, home, launchLabel(env.installation(home, userHome).collectorPlist()))

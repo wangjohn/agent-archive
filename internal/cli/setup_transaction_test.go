@@ -14,6 +14,7 @@ import (
 )
 
 func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.LoadLaunchAgent = func(string) error { return errors.New("bootstrap failed") }
@@ -31,6 +32,7 @@ func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestResumeDraftLeftAfterDestinationCommitPreservesOwnership(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)

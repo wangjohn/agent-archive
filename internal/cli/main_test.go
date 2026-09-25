@@ -11,16 +11,16 @@ import (
 // leftover copies, in a temporary folder of the test run's own, never the
 // user's real snapshot folder, which a live collector may be using.
 func TestMain(m *testing.M) {
+	restore := isolateProcessForTesting() // see isolation_test.go
 	dir, err := os.MkdirTemp("", "cli-snapshots-")
 	if err != nil {
 		panic(err)
 	}
 	cursorstore.SnapshotTempDirForTesting = dir
-	restore := isolateProcessForTesting() // see isolation_test.go
 	code := m.Run()
-	restore()
 	// A folder left behind holds only this run's copies; the run's result
 	// stands either way.
 	_ = os.RemoveAll(dir)
+	restore()
 	os.Exit(code)
 }

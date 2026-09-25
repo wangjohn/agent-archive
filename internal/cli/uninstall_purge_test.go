@@ -26,6 +26,7 @@ func (k *failingDeleteKeychain) Delete(context.Context, string) error { return k
 
 // Regression: CLI correctness review, 2026-09 (e35b8ac).
 func TestUninstallPurgeLeavesNoFilesOrDirectory(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
 	var stdout, stderr bytes.Buffer
 	if code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env); code != 0 {
@@ -49,6 +50,7 @@ func TestUninstallPurgeLeavesNoFilesOrDirectory(t *testing.T) {
 //
 // Regression: CLI correctness review, 2026-09 (e35b8ac).
 func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "test-profile", true, true, false, t.TempDir()))
 	store, err := state.Open(home)
 	if err != nil {
@@ -96,6 +98,7 @@ func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
 //
 // Regression: CLI correctness review, 2026-09 (e35b8ac).
 func TestUninstallPurgeContinuesPastKeychainFailure(t *testing.T) {
+	t.Parallel()
 	for name, keychainFor := range map[string]func(*fakeKeychain) (credentials.CredentialStore, error){
 		"delete refused": func(k *fakeKeychain) (credentials.CredentialStore, error) {
 			return &failingDeleteKeychain{fakeKeychain: k, deleteErr: credentials.ErrKeychainLocked}, nil
@@ -105,6 +108,7 @@ func TestUninstallPurgeContinuesPastKeychainFailure(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			keychain := newFakeKeychain()
 			home, _, env := installedFixture(t, keychain, r2SetupInput(t.TempDir(), "supersecret"))
 			cfg, _, _ := config.Load(home)
@@ -148,6 +152,7 @@ func TestUninstallPurgeContinuesPastKeychainFailure(t *testing.T) {
 }
 
 func TestUninstallPurgeRequiresSecondConfirmation(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()))
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"uninstall", "--delete-local-data"}, strings.NewReader("y\nn\n"), &out, &errOut, env); code != 0 {
@@ -160,6 +165,7 @@ func TestUninstallPurgeRequiresSecondConfirmation(t *testing.T) {
 }
 
 func TestPurgeConfirmationDoesNotBlockCapture(t *testing.T) {
+	t.Parallel()
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()))
 	input := &checkingReader{Reader: strings.NewReader("y\nn\n"), check: func() {
 		// Prompts may wait indefinitely; only the wizard lock may be held here.

@@ -17,6 +17,7 @@ import (
 //
 // Regression: hook ownership review, 2026-09 (1a9420b).
 func TestConfigWithoutRecordedHookFilesUsesTheLegacyPaths(t *testing.T) {
+	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
 	cfg, _, _ := config.Load(home)
 	cfg.HookFiles = nil

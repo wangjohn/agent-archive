@@ -11,6 +11,7 @@ import (
 )
 
 func TestPauseBusyMakesNoFalseClaimAndDoesNotLoseConfig(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/project", time.Now())
 	env := testEnv(t, home, time.Now())
@@ -37,6 +38,7 @@ func TestPauseBusyMakesNoFalseClaimAndDoesNotLoseConfig(t *testing.T) {
 }
 
 func TestPauseBlocksSyncAndResumeUnblocksIt(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	env := testEnv(t, home, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))

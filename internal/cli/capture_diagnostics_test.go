@@ -56,6 +56,7 @@ func storedRoots(t *testing.T, home string) map[string]bool {
 // included from the configuration it read during setup's transaction; setup
 // then committed the exclusion and pruned; only then does the hook write.
 func TestPrunedProjectDiagnosticIsNotResurrectedByAStaleHook(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	twoProjectConfig(t, home, "/work/kept", "/work/excluded")
@@ -185,6 +186,7 @@ func TestSetupPruneAndHookDiagnosticRaceNeverResurrects(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestExcludedProjectLeavesNoDiagnostic(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
@@ -199,6 +201,7 @@ func TestExcludedProjectLeavesNoDiagnostic(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestResumeBeforeActivationRecordsActivationDiagnostic(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	at := time.Now().UTC()
 	setUpTestConfig(t, home, "/work/widget", at.Add(time.Hour))
@@ -214,6 +217,7 @@ func TestResumeBeforeActivationRecordsActivationDiagnostic(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestExcludedProjectDiagnosticLeavesStatus(t *testing.T) {
+	t.Parallel()
 	home := t.TempDir()
 	at := time.Now().UTC()
 	env := testEnv(t, home, at)
@@ -240,6 +244,7 @@ func TestExcludedProjectDiagnosticLeavesStatus(t *testing.T) {
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestSetupExcludingProjectPrunesStoredDiagnostic(t *testing.T) {
+	t.Parallel()
 	home, first, second := t.TempDir(), t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)

@@ -17,6 +17,7 @@ import (
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestBackfillHistoryStates(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	done := backfillNow.UTC()
 	for i, b := range []backfill.Batch{
@@ -65,6 +66,7 @@ func TestBackfillHistoryStates(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestBackfillAllImportsUnreadable(t *testing.T) {
+	t.Parallel()
 	f, _ := newImportFixture(t)
 	if err := os.MkdirAll(filepath.Join(f.data, "imports"), 0o700); err != nil {
 		t.Fatal(err)

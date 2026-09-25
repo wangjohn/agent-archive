@@ -56,6 +56,7 @@ func TestGitCheckoutAboveTheDataDirectoryIsNamed(t *testing.T) {
 // a paused sync, like any sync that did not run, says why on stderr and
 // exits 1.
 func TestSyncNamesTheLockHolderAndReportsOnStderr(t *testing.T) {
+	t.Parallel()
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	must(t, err)
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, project))

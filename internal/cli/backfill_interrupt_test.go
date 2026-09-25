@@ -74,6 +74,7 @@ func TestPlanningInterruptCancelsAndSecondOneExits(t *testing.T) {
 // B-24: exitOnSignal removes this process's copies of Cursor's database
 // before it exits, with the shell's status for the signal.
 func TestExitOnSignalRemovesSnapshotsThenExits(t *testing.T) {
+	t.Parallel()
 	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129} {
 		var steps []string
 		exitAfterSignal(sig, func() { steps = append(steps, "remove") }, func(code int) { steps = append(steps, fmt.Sprintf("exit %d", code)) })
@@ -126,6 +127,7 @@ func TestBackfillPlanningStopsOnInterrupt(t *testing.T) {
 // A Ctrl-C already waiting when planning starts has cancelled the context by
 // the time interruptibleContext returns, before any planning.
 func TestPlanningInterruptAlreadyPending(t *testing.T) {
+	t.Parallel()
 	signals := make(chan os.Signal, 1)
 	signals <- os.Interrupt
 	stops := 0
@@ -143,6 +145,7 @@ func TestPlanningInterruptAlreadyPending(t *testing.T) {
 
 // Without a signal, stop ends the watch and cancels the context.
 func TestPlanningInterruptStopWithoutSignal(t *testing.T) {
+	t.Parallel()
 	signals := make(chan os.Signal, 1)
 	stops := 0
 	env := Env{Interrupts: func() (<-chan os.Signal, func()) { return signals, func() { stops++ } }}
@@ -159,6 +162,7 @@ func TestPlanningInterruptStopWithoutSignal(t *testing.T) {
 // B-24: every backfill command, history, undo, and --dry-run included,
 // first sweeps copies of Cursor's database a killed process left behind.
 func TestEveryBackfillCommandSweepsStaleSnapshots(t *testing.T) {
+	t.Parallel()
 	f := newBackfillFixture(t)
 	root := filepath.Join(cursorstore.SnapshotTempDirForTesting, fmt.Sprintf("agent-archive-cursor-%d", os.Getuid()))
 	for _, args := range [][]string{{"backfill", "history"}, {"backfill", "undo", "--yes"}, {"backfill", "--dry-run", "--json"}} {

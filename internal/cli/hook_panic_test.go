@@ -12,6 +12,7 @@ import (
 // would block the user's prompt in Claude Code. The failure is reported on
 // stderr and left as a content-free diagnostic for status.
 func TestHookRecoversFromAPanicAndExitsZero(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	setUpTestConfig(t, home, project, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	env := testEnv(t, home, time.Now())

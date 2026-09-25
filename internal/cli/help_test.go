@@ -12,6 +12,7 @@ import (
 // IMPORT_ID) as the only ID placeholders, and has no undocumented option
 // lines: each "--flag VALUE" line has a description.
 func TestHelpTextIsConsistent(t *testing.T) {
+	t.Parallel()
 	stale := regexp.MustCompile(`\bID\b|<archive-session-id>|<id>`)
 	for cmd, help := range commandHelp {
 		if !strings.HasPrefix(help, "Usage: agent-archive "+cmd) {
@@ -39,6 +40,7 @@ func TestHelpTextIsConsistent(t *testing.T) {
 // backfill undo and backfill history have help of their own, whichever way
 // it is asked for.
 func TestSubcommandHelp(t *testing.T) {
+	t.Parallel()
 	for _, sub := range []string{"undo", "history"} {
 		for _, args := range [][]string{{"backfill", sub, "--help"}, {"help", "backfill", sub}, {"backfill", sub, "-h"}} {
 			var out bytes.Buffer
@@ -50,6 +52,7 @@ func TestSubcommandHelp(t *testing.T) {
 }
 
 func TestEveryPublicHelpIsReadOnly(t *testing.T) {
+	t.Parallel()
 	env := Env{Home: func() (string, error) { t.Fatal("help accessed runtime"); return "", nil }}
 	for cmd := range commandHelp {
 		name := strings.Fields(cmd)
@@ -76,6 +79,7 @@ func TestEveryPublicHelpIsReadOnly(t *testing.T) {
 // reports a bad one the same way: one line on stderr naming the problem
 // and the command's help, exit 2, and never the flag package's usage dump.
 func TestCommandsRejectUnknownArguments(t *testing.T) {
+	t.Parallel()
 	env := testEnv(t, t.TempDir(), time.Now())
 	for _, tc := range []struct {
 		args []string

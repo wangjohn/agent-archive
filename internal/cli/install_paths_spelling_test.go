@@ -19,6 +19,7 @@ import (
 // two background jobs. A symlinked spelling already worked; both do now,
 // for the default directory and any other.
 func TestEverySpellingOfADataDirectoryIsOneInstallation(t *testing.T) {
+	t.Parallel()
 	account, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +81,7 @@ func caseInsensitiveVolume(t *testing.T, dir string) bool {
 // resolved. A changed label would leave the old job running beside a new
 // one.
 func TestExistingInstallationsKeepTheirLabel(t *testing.T) {
+	t.Parallel()
 	account, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +121,7 @@ func TestExistingInstallationsKeepTheirLabel(t *testing.T) {
 // job under the old label, as it retires one under the default label, so
 // one directory never has two background jobs.
 func TestSetupRetiresTheJobOfAnotherCaseSpelling(t *testing.T) {
+	t.Parallel()
 	base := t.TempDir()
 	if !caseInsensitiveVolume(t, base) {
 		t.Skip("case-sensitive volume: another case is another directory")

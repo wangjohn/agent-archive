@@ -17,6 +17,7 @@ import (
 )
 
 func TestCollectionIncludesSkillHistoryAndExplicitFeedback(t *testing.T) {
+	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))

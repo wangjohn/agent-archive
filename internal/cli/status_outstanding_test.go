@@ -18,6 +18,7 @@ import (
 // for the upload interval was pending to setup but not to status's imports
 // line.
 func TestEveryPendingCountAgrees(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	bundle := func(reg archive.SessionRegistration) archive.SourceBundle {
 		return archive.SourceBundle{ArchiveSessionID: reg.ArchiveSessionID, Capture: archive.SourceCapture{Harness: reg.Harness, CapturedAt: now.Add(-time.Hour)}}
@@ -98,6 +99,7 @@ func TestEveryPendingCountAgrees(t *testing.T) {
 		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 			cfg := pairTestConfig(now, []string{"codex"}, project)
 			if err := config.Save(home, cfg); err != nil {

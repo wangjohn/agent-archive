@@ -36,6 +36,7 @@ func TestAWSProfileDiscoveryReadsSettingsWithoutRunningCredentials(t *testing.T)
 }
 
 func TestAWSProfileSwitchDoesNotReuseOldRegion(t *testing.T) {
+	t.Parallel()
 	cfg := credentials.Config{AWSProfile: "old", Region: "us-east-1"}
 	env := Env{AWSProfiles: func() ([]AWSProfile, error) { return []AWSProfile{{"new", ""}}, nil }}
 	var out bytes.Buffer
@@ -46,6 +47,7 @@ func TestAWSProfileSwitchDoesNotReuseOldRegion(t *testing.T) {
 }
 
 func TestPickAWSProfileByNumberOrName(t *testing.T) {
+	t.Parallel()
 	names := []string{"default", "work"}
 	for input, want := range map[string]string{"2\n": "work", "\n": "default", "other\n": "other"} {
 		var out bytes.Buffer

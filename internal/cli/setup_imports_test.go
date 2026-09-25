@@ -18,6 +18,7 @@ import (
 // over from the committed configuration, never from a draft, and drops an
 // app once setup installs its hooks.
 func TestSetupCarriesImportedHarnessesFromCommittedState(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	now := time.Now().UTC()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
@@ -79,6 +80,7 @@ func TestSetupCarriesImportedHarnessesFromCommittedState(t *testing.T) {
 // Setup's review lists the apps that have only imported sessions, and its
 // app edit step offers to stop publishing each one's imports.
 func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
+	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
 	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
@@ -131,6 +133,7 @@ func TestSetupShowsImportedOnlyAppsAndCanStopPublishingThem(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestSetupAfterImportWithMissingFolders(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
 		t.Fatalf("import: %s", errOut)
@@ -196,6 +199,7 @@ func TestSetupAfterImportWithMissingFolders(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestSetupGroupsBackfilledProjects(t *testing.T) {
+	t.Parallel()
 	existing := []archive.ProjectActivation{
 		{ProjectID: "p-mine", Root: "/work/mine", Included: true},
 		{ProjectID: "p-1", Root: "/work/imported-1", Included: true},
@@ -234,6 +238,7 @@ func TestSetupGroupsBackfilledProjects(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestSetupKeepsExclusions(t *testing.T) {
+	t.Parallel()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -265,6 +270,7 @@ func TestSetupKeepsExclusions(t *testing.T) {
 //
 // Regression: backfill B3 review, 2026-09 (e589f65).
 func TestSetupDraftKeepsBackfilledProjects(t *testing.T) {
+	t.Parallel()
 	f, bucket := newImportFixture(t)
 	before, _, _ := config.Load(f.data)
 	if err := local.Write(filepath.Join(f.data, "setup-draft.json"), setupDraft{Version: 1, Step: 2, Config: before}); err != nil {
