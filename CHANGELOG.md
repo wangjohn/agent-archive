@@ -53,10 +53,12 @@ can list them, inspect them, and hand one to another agent.
   and more. Unquoted values are redacted to the end of the line, YAML block
   values whole, and URL passwords holding `@` or `/` whole; so are the
   string values of a credential-named object or array
-  (`"secret": {"value": …}`) and the `value:` of a Kubernetes `env` entry
+  (`"secret": {"value": …}`), of a YAML mapping under a credential key
+  (`secrets:` then `db: …`), and the `value:` of a Kubernetes `env` entry
   named like a credential, also in a file an agent read through a tool that
-  numbers its lines. A PEM BEGIN line with no END no longer swallows the
-  rest of a file. Sessions whose
+  numbers its lines; URL-encoded assignments (`password%3D…`) are covered
+  too. A PEM BEGIN line with no END no longer swallows the rest of a file,
+  and a private key read in two parts is redacted in both. Sessions whose
   transcripts are still on your Mac are refiltered automatically; earlier
   snapshots stay in your bucket until they expire, unless you
   [delete them](docs/security/privacy.md#after-a-filter-upgrade). See the
@@ -65,7 +67,10 @@ can list them, inspect them, and hand one to another agent.
   carriage return (progress bars) no longer ends a block quote early, and
   terminal escape sequences (colors, OSC 52 clipboard writes, OSC 8 links)
   and bidirectional overrides are removed from every field of `handoff`
-  output, Markdown and JSON. In a Cursor plain-text transcript, a role
+  output, Markdown and JSON. `list` prints bucket names without control
+  characters, and the JSON that `show`, `list --json`, `status --json`,
+  and `handoff --json` print escapes C1 controls and bidi overrides as
+  `\u` escapes. In a Cursor plain-text transcript, a role
   header must be in the case of the transcript's first header (`user:` or
   `User:`), so a line in the other case is content, and a YAML `user:` line
   in tool output no longer starts a Person turn when sections are

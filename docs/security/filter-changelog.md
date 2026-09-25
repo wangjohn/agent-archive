@@ -47,7 +47,12 @@ version 0.11.0 go with it. Every format changes.
   object or array (`"secret": {"value": …}`, `"passwords": [ … ]`, in
   JSON, Python, JavaScript, or JSON escaped in a string, over several lines)
   has every string value in it redacted, keeping keys and descriptive
-  values such as `type`. A YAML entry whose `name:` is a credential has its
+  values such as `type`. So does a YAML mapping or sequence under a
+  credential key (`secrets:` then `db: …`, `password:` then `value: …`,
+  `passwords:` then `- …`), at any depth, keeping its keys and comments. A
+  URL-encoded assignment in a nested query string or form body
+  (`password%3D…`, `api_token%3A…`) has its value redacted up to an encoded
+  `&` or `,`. A YAML entry whose `name:` is a credential has its
   sibling `value:` redacted (a Kubernetes `env` list), as does a one-line
   `{"name": "Authorization", "value": …}`. Structured data already dropped
   these whole.
@@ -85,8 +90,16 @@ version 0.11.0 go with it. Every format changes.
   through the decoration a display adds (line numbers from the Claude Code
   Read tool, `cat -n`, or `grep -n`; diff, quote, and comment markers;
   string quotes in source code), or, failing that, when it holds a base64
-  run of 48 characters or more; code between two constants that name the
-  armor lines is kept.
+  run of 48 characters or more (unless another BEGIN line, such as a
+  certificate's, is between); code between two constants that name the
+  armor lines is kept. A key cut short keeps no line with a 48-character
+  base64 run (`cat -A`, `grep -rn` output) and no body written on its
+  BEGIN line. A key split between two strings (a file read in two parts,
+  a tool result in chunks) has the body above its END line redacted in the
+  second string too. Certificates and public keys are kept.
+- **A flag at the start of a later line** (`mysql \` then `--password x`)
+  is redacted; filter 10's flag pattern matched only at the start of the
+  string or after a space.
 - **Cursor text headers in one case** (A-20). A role header is a role and a
   colon at column 0, in the case of the transcript's first header: lower
   case (`user:`) or capitalized (`User:`). A line in the other case is
@@ -130,8 +143,12 @@ Known trade-offs, chosen toward the secret:
 The patterns run line by line, and only on lines holding a word every
 match needs (a credential word, a program name, a token prefix), which
 keeps filtering a large transcript within about twice filter 10's time
-(filter 11 as first written was about eight times slower). A test and a fuzz
-target check that this never finds less than matching the whole string.
+(filter 11 as first written was about eight times slower). A fuzz target
+checks that the whole redaction, gated this way, equals the same redaction
+run over the whole string with no gate
+(`FuzzGatedRedactionMatchesWhole`), and a test proves from each parsed
+pattern that every match holds one of its needles
+(`TestPatternNeedlesAreRequired`).
 
 Snapshots filtered before the upgrade stay in the bucket until the session
 expires; see [after a filter upgrade](privacy.md#after-a-filter-upgrade) to

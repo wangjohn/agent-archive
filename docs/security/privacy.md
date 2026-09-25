@@ -384,11 +384,15 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   `PRIVATE KEY BLOCK-----`) through the next `-----END … -----` when
   everything between is key body (each line possibly numbered, marked as a
   diff, quote, or comment, or quoted as a string in source code), or holds a
-  base64 run of 48 characters or more; when the END line is missing (a key cut
-  off by a truncated record), through the base64 lines that follow the
-  BEGIN line (filter 11; filter 10 took everything to the end of the string,
-  so source code that names the BEGIN line lost the rest of the file).
-  Certificates and public keys are not redacted.
+  base64 run of 48 characters or more (and no other BEGIN line); when the END
+  line is missing (a key cut off by a truncated record), through the base64
+  lines that follow the BEGIN line, a line with a 48-character base64 run
+  counting as one (filter 11; filter 10 took everything to the end of the
+  string, so source code that names the BEGIN line lost the rest of the
+  file). When the BEGIN line is missing (a key read in two parts, or a tool
+  result in chunks), the base64 lines right above an END line that starts
+  its line are redacted with it. Certificates and public keys are not
+  redacted.
 - JWTs: three base64url segments, the first beginning with `eyJ`.
 - URL userinfo: in `scheme://user:pass@host` (or `scheme://user@host`) the
   userinfo is replaced and the scheme and host are kept. The userinfo ends
@@ -405,7 +409,13 @@ right-hand side redacted; so do a saved directory in a `*_PWD` variable
 (`ORIG_PWD=$(pwd)`), a path to a credentials file
 (`GOOGLE_APPLICATION_CREDENTIALS=/path/key.json`), a one-item list
 (`password: [required]`, taken for a bracketed value), and the word after a
-flag in prose (`pass --token flag`). This is accepted rather
+flag in prose (`pass --token flag`). Every scalar under a YAML key named
+like a credential is redacted, so references to secrets lose their names
+too: Docker Compose `secrets:` then `- db_password`, or `file:
+./db_password.txt` under it. Between a private key's BEGIN and END lines,
+any text with a 48-character base64 run is taken as the key, so code
+between two constants that name the armor lines is redacted when it holds
+a long hash. This is accepted rather
 than narrowed, because the cost of a missed credential is higher than the
 cost of a redacted identifier in an archived transcript; a reader sees the
 `sensitive_content_redacted` gap and can consult the original source if it
@@ -431,8 +441,9 @@ Known misses.
   is a structure and is not replaced as text. Its string values are
   redacted (above), but an unquoted value inside it (a YAML flow mapping
   `{user: me, pass: x}` aside from its own credential names, a number such
-  as a PIN) is caught only by its own name or shape, as is a secret in a
-  YAML mapping under a credential key (`secrets:` then `github: …`).
+  as a PIN) is caught only by its own name or shape. A YAML mapping or
+  sequence written over the lines below a credential key (`secrets:` then
+  `github: …`) is redacted value by value (filter 11).
 - For the same reason, an unquoted value that begins with `[` or `{` but is
   not a single closed token is kept whole: `password=[Kx9!q2Lm`,
   `password={secret`, `password=[admin:hunter2]`, `password=[a b]realsecret`.
@@ -450,8 +461,16 @@ Known misses.
   zero-width space, or a leetspeak name (`p4ssword=`) is not recognized;
   nor is a secret piped into a command (`echo … | docker login
   --password-stdin`, `sudo -S`), a form label in another language (`Mot de
-  passe`), or a URL-encoded assignment (`password%3D…`). A YAML value on the lines below its key is (filter 11), unless
-  its first line reads as a mapping entry (`correct horse: battery`).
+  passe`). A URL-encoded assignment (`password%3D…`, `token%3A…`) is
+  recognized (filter 11), but not one encoded twice (`password%253D…`) or
+  in another encoding (base64, HTML entities). A YAML value on the lines
+  below its key is recognized (filter 11); when its first line reads as a
+  mapping entry (`correct horse: battery`), each value is redacted and the
+  keys are kept.
+- The middle part of a private key split into three or more strings (no
+  BEGIN or END line in it) has no marker and is kept, as is a key in a
+  format with no armor lines (PuTTY `.ppk`, a JWK's `"d"`, a raw base64
+  file) unless its name or shape is recognized.
 - Text glued after a closing quote is taken with the value (filter 10) only
   up to a closing `]`, `}`, or `)`, which usually closes the structure
   around the value (`{"password":"abc"}`, `f(PASSWORD="abc")`) and must stay.
