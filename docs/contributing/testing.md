@@ -98,9 +98,11 @@ In Go tests, everything goes through injection:
   `status`, `sync`, `setup`) stay in `internal/cli`.
 - `internal/setupjournal` (setup's journal, rollback and recovery) reaches
   launchd only through the `Launchd` it is passed, so its tests pass a
-  `fakeLaunchd` and cannot reach launchctl; its `TestMain` isolates the
-  process as `internal/capture`'s does. Tests that run `setup` itself stay
-  in `internal/cli`.
+  `fakeLaunchd` (or `launchdSim`, which answers as launchd and cli's
+  ownership check do: a label loaded from another plist is never stopped,
+  and bootstrap and bootout can fail) and cannot reach launchctl; its
+  `TestMain` isolates the process as `internal/capture`'s does. Tests that
+  run `setup` itself stay in `internal/cli`.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in
