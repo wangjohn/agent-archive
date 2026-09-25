@@ -90,8 +90,16 @@ hooks.
 - **A LaunchAgent**, `~/Library/LaunchAgents/com.agent-archive.collector.plist`,
   which runs the collector every 60 seconds.
 - **Local state** in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`;
-  see [local state](../reference/local-state.md)), and R2 credentials in the
-  Keychain under the service `agent-archive`.
+  see [local state](../reference/local-state.md)), private to your account.
+  It holds registrations, frozen uploads, and caches; transcripts are read in
+  place, not copied, except a Cursor database copy that exists only while a
+  read of it is in progress.
+- **A Keychain item** (service `agent-archive`) for R2 credentials. S3
+  credentials stay in your AWS profile.
+
+`agent-archive uninstall` removes the hooks and the LaunchAgent;
+`--delete-local-data` also removes the local state and the Keychain item.
+Neither touches the bucket ([uninstall](uninstall.md)).
 
 Only the account's own default installation, in `~/.local/share/agent-archive`
 under the home directory macOS records for your account, uses the launchd

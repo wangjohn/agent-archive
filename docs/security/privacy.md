@@ -217,22 +217,10 @@ the noncurrent versions too, or add a lifecycle rule that expires them.
 
 ## What changes on your Mac
 
-- The hook files of the apps you include: `~/.claude/settings.json` (or
-  `$CLAUDE_CONFIG_DIR/settings.json`), `~/.codex/hooks.json` (or
-  `$CODEX_HOME/hooks.json`), and `~/.cursor/hooks.json`. Only the `hooks`
-  entry is changed; uninstall restores the rest byte for byte.
-- `~/Library/LaunchAgents/com.agent-archive.collector.plist`, which runs the
-  collector every 60 seconds.
-- Local state in `~/.local/share/agent-archive` (or `AGENT_ARCHIVE_HOME`),
-  private to your account: see [local state](../reference/local-state.md).
-  It holds registrations, frozen uploads, and caches; transcripts are read in
-  place, not copied, except a Cursor database copy that exists only while a
-  read of it is in progress.
-- A Keychain item (service `agent-archive`) for R2 credentials.
-
-`agent-archive uninstall` removes the hooks and the LaunchAgent;
-`--delete-local-data` also removes the local state and Keychain item. Neither
-touches the bucket.
+The `hooks` entry of each included app's settings file, one LaunchAgent,
+local state private to your account (transcripts are read in place, not
+copied), and, for R2, one Keychain item. The full list, and what uninstall
+removes, is in [setup](../getting-started/setup.md#what-setup-changes-on-your-mac).
 
 ## Filter rules
 
