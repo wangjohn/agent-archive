@@ -139,6 +139,8 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 // (collecting IDs, carrying it to a subagent) is allowed.
 func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 	membership := map[string]bool{"Contains": true, "ContainsFunc": true, "Index": true, "IndexFunc": true, "EqualFold": true, "Compare": true, "HasPrefix": true, "HasSuffix": true}
+	skipDirs := map[string]bool{"testdata": true, "vendor": true}
+	emptyLiterals := map[string]bool{`""`: true, "``": true}
 	var offenders []string
 	root := filepath.Join("..", "..")
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -146,7 +148,7 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			if name := d.Name(); name == "testdata" || name == "vendor" || strings.HasPrefix(name, ".") && path != root {
+			if name := d.Name(); skipDirs[name] || strings.HasPrefix(name, ".") && path != root {
 				return filepath.SkipDir
 			}
 			return nil
@@ -165,7 +167,7 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 		}
 		isEmpty := func(e ast.Expr) bool {
 			lit, ok := ast.Unparen(e).(*ast.BasicLit)
-			return ok && lit.Kind == token.STRING && (lit.Value == `""` || lit.Value == "``")
+			return ok && lit.Kind == token.STRING && emptyLiterals[lit.Value]
 		}
 		flag := func(n ast.Node, how string) {
 			offenders = append(offenders, fset.Position(n.Pos()).String()+": "+how)
