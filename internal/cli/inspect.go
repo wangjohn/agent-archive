@@ -48,7 +48,9 @@ const eligibleNoUseUnavailableMessage = "--skill-usage eligible_no_use cannot re
 // a scheduled `_collect` and while collection is paused. found is false,
 // with a nil error, when setup has never run.
 func openReadOnlyStore(env Env) (storage.ObjectStore, bool, error) {
-	home, err := env.home()
+	// Read-only: before setup there is nothing to read, and no data
+	// directory is created just to say so.
+	home, err := env.readHome()
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve home: %w", err)
 	}
@@ -231,7 +233,7 @@ func listCache(env Env, disabled bool) *reader.MetadataCache {
 	if disabled {
 		return nil
 	}
-	home, err := env.home()
+	home, err := env.readHome()
 	if err != nil {
 		return nil
 	}

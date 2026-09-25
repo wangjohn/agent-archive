@@ -5,7 +5,12 @@ Run `agent-archive` for a short command guide, or `agent-archive COMMAND
 options and examples. Help never activates hooks, reads credentials, or
 changes state. Invalid flags fail before a command starts, with one line
 naming the problem. Exit codes: 0 for success and help, 1 for an operational
-failure, 2 for a usage error.
+failure, 2 for a usage error. What a command was asked for goes to stdout;
+why it did not do it, or not all of it, goes to stderr with exit 1. A `sync`
+that is paused, finds another command running, or fails for some sessions
+counts: its summary line stays on stdout, and each failed session, or the
+reason nothing ran, is on stderr. Commands that need setup and find none say
+so without creating the data directory.
 
 ## Everyday commands
 
@@ -21,7 +26,20 @@ failure, 2 for a usage error.
   Waiting work is saved locally and uploaded by the next pass after that
   time; `status` counts it under Pending.
 - `pause` persists until `resume`. If work is still running, the command
-  reports that no settings changed and asks you to retry after it finishes.
+  reports that no settings changed, names the command holding the collector
+  lock (and its process ID), and asks you to retry after it finishes. `sync`,
+  `setup`, and `uninstall` name it the same way.
+- A local file that cannot be read is named, with a way out. `status` reports
+  around the ones it can do without (collector status, storage health,
+  capture diagnostics, a single session's records) with a warning, and the
+  collector or the next hook replaces them. `setup` offers to move a damaged
+  or newer-version saved setup aside (renamed `*.corrupt`), and
+  `setup --abandon-recovery` does the same for a damaged recovery record. A
+  damaged `config.json` stops every command, which names it; restore it from
+  a backup, or move it aside and run `setup` again.
+- If your home folder is itself a Git checkout (a dotfiles repository, say),
+  every command stops and names it: the archive's data never goes inside a
+  checkout. Set `AGENT_ARCHIVE_HOME` to a directory outside it.
 - Sessions registered before a pause catch up after `resume`, including
   activity written during the pause. New sessions begun while paused are not
   imported.
