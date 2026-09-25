@@ -21,7 +21,7 @@ import (
 // never taken from a command argument, which other processes can read.
 const (
 	envR2AccessKeyID     = "AGENT_ARCHIVE_R2_ACCESS_KEY_ID"
-	envR2SecretAccessKey = "AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY"
+	envR2SecretAccessKey = "AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY" //nolint:gosec // G101: a variable's name, not a credential.
 )
 
 // setupOptions are setup's answers given as flags, for setup --yes.
@@ -105,7 +105,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if err = recoverSetup(home, env); err != nil {
 		return err
 	}
-	existing, found, err := config.Load(home)
+	existing, _, err := config.Load(home)
 	if err != nil {
 		return err
 	}
@@ -146,27 +146,13 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	draft := setupDraft{Version: draftFormat, Config: cfg, Step: 2}
 	discard := func(failure error) error {
 		if e := discardDraft(home, draft, existing, env); e != nil {
-			return fmt.Errorf("%w (and the staged R2 key could not be removed: %v)", failure, e)
+			return fmt.Errorf("%w (and the staged R2 key could not be removed: %w)", failure, e)
 		}
 		return failure
 	}
 	if secret.SecretAccessKey != "" {
-		keychain, e := env.keychain()
-		if e != nil {
-			return fmt.Errorf("open Keychain: %w", e)
-		}
-		id, e := local.ID()
-		if e != nil {
-			return e
-		}
-		cfg.Storage.R2CredentialRef = "setup-" + id
-		draft.Config.Storage = cfg.Storage
-		draft.CredentialRef, draft.StagedRefs = cfg.Storage.R2CredentialRef, []string{cfg.Storage.R2CredentialRef}
-		if e = local.Write(draftPath(home), draft); e != nil {
-			return e
-		}
-		if e = keychain.Save(context.Background(), cfg.Storage.R2CredentialRef, secret); e != nil {
-			return discard(fmt.Errorf("save the R2 key: %w", e))
+		if err = stageR2Key(home, &cfg, &draft, secret, env); err != nil {
+			return discard(err)
 		}
 	} else if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
 		return fmt.Errorf("the stored R2 key can't be read from the Keychain; pass --r2-access-key-id and the secret (see agent-archive setup --help)")
@@ -182,12 +168,10 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	}
 	terminal.Println(out, p.style.green("✓ Connected."))
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
-	if found {
-		// Only a reconfiguration has anything to warn about here; a refusal
-		// (pending sessions at the old destination) stops it.
-		if err = reviewChanges(home, existing, cfg, p, env); err != nil {
-			return discard(err)
-		}
+	// A reconfiguration's warnings, or its refusal (sessions pending at the
+	// old destination).
+	if err = reviewChanges(home, existing, cfg, p, env); err != nil {
+		return discard(err)
 	}
 	terminal.Printf(out, "Apps: %s. Projects: %d. Storage: %s bucket %s.\n", appList(cfg.Harnesses), includedProjects(cfg.Archive.Projects), providerName(cfg.Storage.Provider), cfg.Storage.Bucket)
 	printReviewPrivacy(p, cfg)
@@ -195,6 +179,30 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		return discard(err)
 	}
 	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt)
+}
+
+// stageR2Key saves a new R2 key in the Keychain under a fresh reference,
+// which it sets in cfg. The reference is written to draft's file first, so
+// a run stopped in between leaves a setup that can be discarded.
+func stageR2Key(home string, cfg *config.Config, draft *setupDraft, secret credentials.R2Credentials, env Env) error {
+	keychain, err := env.keychain()
+	if err != nil {
+		return fmt.Errorf("open Keychain: %w", err)
+	}
+	id, err := local.ID()
+	if err != nil {
+		return err
+	}
+	cfg.Storage.R2CredentialRef = "setup-" + id
+	draft.Config.Storage = cfg.Storage
+	draft.CredentialRef, draft.StagedRefs = cfg.Storage.R2CredentialRef, []string{cfg.Storage.R2CredentialRef}
+	if err = local.Write(draftPath(home), draft); err != nil {
+		return err
+	}
+	if err = keychain.Save(context.Background(), cfg.Storage.R2CredentialRef, secret); err != nil {
+		return fmt.Errorf("save the R2 key: %w", err)
+	}
+	return nil
 }
 
 // providerName is how setup names a storage provider.
@@ -206,7 +214,8 @@ func providerName(provider string) string {
 }
 
 // setupApps sets cfg's apps from --apps, or else keeps the saved apps, or
-// else takes the detected ones. An app it includes is no longer declined.
+// else takes the detected ones. As in interactive setup, an app it includes
+// is no longer declined, and one --apps leaves out of the saved apps is.
 func setupApps(cfg *config.Config, apps string, detected []string) error {
 	var chosen []string
 	switch {
@@ -236,7 +245,7 @@ func setupApps(cfg *config.Config, apps string, detected []string) error {
 	for _, app := range allHarnesses {
 		if containsString(chosen, app) {
 			ordered = append(ordered, app)
-		} else if containsString(cfg.DeclinedHarnesses, app) {
+		} else if containsString(cfg.DeclinedHarnesses, app) || containsString(cfg.Harnesses, app) {
 			declined = append(declined, app)
 		}
 	}
@@ -250,7 +259,7 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) error {
 	for _, path := range paths {
 		root, err := projectDir(path, userHome)
 		if err != nil {
-			return fmt.Errorf("--project %s", err)
+			return fmt.Errorf("--project %w", err)
 		}
 		included := false
 		for i := range cfg.Archive.Projects {

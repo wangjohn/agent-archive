@@ -110,7 +110,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return 0
 	}
 	if opts.given() && !opts.yes {
-		return fs.usageError("--provider, --project, and the other answers apply without questions; add --yes, or run agent-archive setup alone to be asked")
+		return fs.usageError("answers given as flags need --yes (or run agent-archive setup alone to be asked)")
 	}
 	if opts.yes {
 		if err := setupWithoutQuestions(opts, stdin, stdout, stderr, env); err != nil {

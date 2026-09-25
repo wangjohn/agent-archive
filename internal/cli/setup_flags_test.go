@@ -95,6 +95,14 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 	if includedProjects(next.Archive.Projects) != 2 || next.Storage != cfg.Storage || next.MachineID != cfg.MachineID {
 		t.Fatalf("rerun config %+v", next)
 	}
+
+	// Switching apps declines the one left out, so setup does not offer it
+	// again.
+	setupYes(t, env, "", 0, "--yes", "--apps", "codex")
+	next, _, _ = config.Load(home)
+	if !reflect.DeepEqual(next.Harnesses, []string{"codex"}) || !reflect.DeepEqual(next.DeclinedHarnesses, []string{"cursor"}) {
+		t.Fatalf("apps %v declined %v", next.Harnesses, next.DeclinedHarnesses)
+	}
 }
 
 // A missing or contradictory answer is refused before anything changes.
@@ -107,7 +115,7 @@ func TestSetupYesRefusesMissingAnswers(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"no yes", 2, []string{"--provider", "s3"}, "add --yes"},
+		{"no yes", 2, []string{"--provider", "s3"}, "need --yes"},
 		{"no storage", 1, []string{"--yes", "--project", project, "--apps", "codex"}, "pass --provider"},
 		{"no project", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "r", "--apps", "codex"}, "pass --project"},
 		{"no apps found", 1, []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "r", "--project", project}, "pass --apps"},
