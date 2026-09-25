@@ -4,8 +4,11 @@
 #   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
 #
 # Downloads the signed, notarized binary for this Mac's architecture from
-# GitHub Releases, verifies it against the release's SHA256SUMS, and installs
-# it as `agent-archive`. It never runs setup and never needs sudo.
+# GitHub Releases, checks it against the release's SHA256SUMS (which catches
+# a damaged download, not a tampered release, since both come from the same
+# place), checks that it is signed with this project's Developer ID (which
+# does catch a binary someone else built), and installs it as
+# `agent-archive`. It never runs setup and never needs sudo.
 #
 # Environment:
 #   AGENT_ARCHIVE_VERSION      release tag to install, e.g. v0.1.0 (default: latest)
@@ -18,12 +21,22 @@
 # cut off partway through runs nothing.
 set -eu
 
+# The Apple Developer Team ID that signs release binaries. The release
+# workflow refuses to publish unless it equals the signing team (the
+# APPLE_TEAM_ID secret), so the two cannot drift. Empty until the first
+# signed release: until then there is nothing this script can install.
+team_id=""
+
 main() {
   repo_url="https://github.com/wangjohn/agent-archive"
 
   if [ "$(uname -s)" != "Darwin" ]; then
     fail "agent-archive supports macOS only (this system reports $(uname -s))."
   fi
+
+  # Before downloading anything: without a pinned team there is nothing
+  # this script could accept.
+  check_team_id
 
   arch="$(detect_arch)"
   asset="agent-archive-darwin-${arch}"
@@ -56,6 +69,8 @@ main() {
     fail "checksum mismatch for ${asset}: expected ${expected}, got ${actual}."
   fi
   say "Checksum verified"
+  verify_signature "${tmp}/${asset}"
+  say "Signature verified (Developer ID, team ${team_id})"
 
   mkdir -p "$install_dir"
   # Stage beside the target, then rename over it: replacing the file (a new
@@ -97,6 +112,26 @@ detect_arch() {
       fi
       ;;
     *) fail "unsupported architecture: $(uname -m)" ;;
+  esac
+}
+
+# verify_signature requires a valid, strict code signature from a Developer
+# ID Application certificate that Apple issued to this project's team: the
+# standard Developer ID designated requirement, with the team pinned.
+verify_signature() {
+  check_team_id
+  requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"${team_id}\""
+  if ! codesign --verify --strict -R="$requirement" "$1" 2>/dev/null; then
+    fail "${asset} is not signed by the agent-archive Developer ID (team ${team_id}); not installing it."
+  fi
+}
+
+check_team_id() {
+  if [ -z "$team_id" ]; then
+    fail "this install script names no signing team yet, so there is no signed release to install. Build from source instead: https://github.com/wangjohn/agent-archive/blob/main/docs/getting-started/install.md"
+  fi
+  case "$team_id" in
+    *[!A-Z0-9]*) fail "invalid signing team ID in this script: ${team_id}" ;;
   esac
 }
 

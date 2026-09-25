@@ -3,8 +3,13 @@ on:
   push:
     tags:
       - 'v*.*.*'
-permissions:
-  contents: write
+# Each job asks for what it needs. Only the publish job can write to the
+# repository, and only it can see the Apple signing secrets, which live in
+# the protected `release` environment.
+permissions: {}
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   build:
     # Both Intel and ARM64 binaries are cross-compiled from one macOS
@@ -13,10 +18,32 @@ jobs:
     # present on GitHub's macOS runners, cross-compiles cgo for both
     # architectures without a separate machine per arch.
     runs-on: macos-14
+    permissions:
+      contents: read
+    env:
+      # The tag, passed to scripts through the environment and never
+      # expanded into a script's text.
+      VERSION: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Full history, so the tag can be checked against main.
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Require a vX.Y.Z tag on a commit in main
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tags must be vX.Y.Z; got a tag that is not"
+            exit 1
+          fi
+          # fetch-depth 0 fetched every branch, so origin/main is main as of
+          # this run.
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::the tagged commit is not on main; tag a commit that has been merged"
+            exit 1
+          fi
+
       # The Go version is pinned here rather than read from go.mod, so CI
       # never depends on how setup-go picks a toolchain. It must match
       # go.mod's toolchain line; the next step checks that.
@@ -31,6 +58,62 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
 
+      # The same gate as a pull request's test job: nothing is built for
+      # release from a commit whose tests fail on this runner.
+      - name: Test
+        run: |
+          go vet ./...
+          go test -race ./...
+          python3 scripts/test_release_signing.py
+          python3 scripts/test_install.py
+          python3 scripts/test_purge_recipe.py
+
+      - name: Build
+        run: ./scripts/build-release.sh
+
+      - name: Verify build reports the release version
+        run: |
+          # A build error here would otherwise only surface once a user runs
+          # `--version` on an already-published binary. The arm64 binary
+          # runs natively on this runner; the amd64 one is cross-compiled,
+          # so its embedded version string is checked instead of executing
+          # it under Rosetta, which this runner may not have installed.
+          got="$(./dist/agent-archive-darwin-arm64 --version 2>&1 || true)"
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::agent-archive --version (arm64) reported '$got', expected '$VERSION'"
+            exit 1
+          fi
+          if ! strings dist/agent-archive-darwin-amd64 | grep -qxF "$VERSION"; then
+            echo "::error::agent-archive-darwin-amd64 does not embed version '$VERSION'"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned
+          path: |
+            dist/agent-archive-darwin-amd64
+            dist/agent-archive-darwin-arm64
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: macos-14
+    # Holds the Apple secrets. Configure it with required reviewers so a
+    # pushed tag cannot sign and publish on its own.
+    environment: release
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # build provenance attestation
+      attestations: write # build provenance attestation
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Require release signing configuration
         env:
           APPLE_SIGNING_ENABLED: ${{ vars.APPLE_SIGNING_ENABLED }}
@@ -42,42 +125,16 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: ./scripts/check-release-signing.sh
 
-      - name: Derive version from tag
-        id: version
-        run: |
-          # The tag is "vX.Y.Z", which is also what `agent-archive --version`
-          # will report once built with it.
-          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-
-      - name: Build
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: ./scripts/build-release.sh
-
-      - name: Verify build reports the release version
-        run: |
-          # A build error here would otherwise only surface once a user runs
-          # `--version` on an already-published binary. The arm64 binary
-          # runs natively on this runner; the amd64 one is cross-compiled,
-          # so its embedded version string is checked instead of executing
-          # it under Rosetta, which this runner may not have installed.
-          want="${{ steps.version.outputs.version }}"
-          got="$(./dist/agent-archive-darwin-arm64 --version 2>&1 || true)"
-          if [ "$got" != "$want" ]; then
-            echo "::error::agent-archive --version (arm64) reported '$got', expected '$want'"
-            exit 1
-          fi
-          if ! strings dist/agent-archive-darwin-amd64 | grep -qx "$want"; then
-            echo "::error::agent-archive-darwin-amd64 does not embed version '$want'"
-            exit 1
-          fi
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned
+          path: dist
 
       - name: Import signing certificate
         id: signing
         env:
           APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           KEYCHAIN_PASSWORD: ${{ github.run_id }}
         run: |
           keychain="release-signing.keychain-db"
@@ -91,15 +148,22 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain"
           security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
           rm -f "$cert_path"
-          echo "identity=$APPLE_SIGNING_IDENTITY" >> "$GITHUB_OUTPUT"
           echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
 
       - name: Codesign
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          # The same Developer ID requirement install.sh checks, so a
+          # release that install.sh would refuse is never published.
+          requirement="anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = \"${APPLE_TEAM_ID}\""
           for binary in dist/agent-archive-darwin-amd64 dist/agent-archive-darwin-arm64; do
+            chmod 755 "$binary"
             codesign --force --options runtime --timestamp \
-              --sign "${{ steps.signing.outputs.identity }}" "$binary"
-            codesign --verify --verbose "$binary"
+              --sign "$APPLE_SIGNING_IDENTITY" "$binary"
+            codesign --verify --strict --verbose "$binary"
+            codesign --verify --strict -R="$requirement" "$binary"
           done
 
       - name: Notarize
@@ -124,16 +188,27 @@ jobs:
 
       - name: Clean up signing keychain
         if: ${{ always() && steps.signing.outcome == 'success' }}
-        run: security delete-keychain "${{ steps.signing.outputs.keychain }}" || true
+        env:
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+        run: security delete-keychain "$KEYCHAIN" || true
 
       - name: Recompute checksums after signing
         run: |
           cd dist
           shasum -a 256 agent-archive-darwin-amd64 agent-archive-darwin-arm64 > SHA256SUMS
 
+      # Records, signed by GitHub, that these exact bytes came from this
+      # workflow run at this commit. Check one with:
+      #   gh attestation verify agent-archive-darwin-arm64 --repo wangjohn/agent-archive
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/agent-archive-darwin-amd64
+            dist/agent-archive-darwin-arm64
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: agent-archive-${{ steps.version.outputs.version }}
+          name: agent-archive-${{ github.ref_name }}
           path: |
             dist/agent-archive-darwin-amd64
             dist/agent-archive-darwin-arm64
@@ -144,9 +219,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "agent-archive ${{ steps.version.outputs.version }}" \
-            --notes "See CHANGELOG.md for what changed, docs/getting-started/install.md for installation, and SHA256SUMS below for checksums." \
+          gh release create "$VERSION" --verify-tag \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "agent-archive $VERSION" \
+            --notes "See CHANGELOG.md for what changed, docs/getting-started/install.md for installation, and SHA256SUMS below for checksums. Verify a binary's build provenance with: gh attestation verify <file> --repo $GITHUB_REPOSITORY" \
             dist/agent-archive-darwin-amd64 \
             dist/agent-archive-darwin-arm64 \
             dist/SHA256SUMS

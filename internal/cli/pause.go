@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -12,39 +13,51 @@ import (
 // across restarts and stops new scheduled collection, uploads, and remote
 // cleanup without deleting any existing configuration or archived data.
 func runPauseCommand(stdout, stderr io.Writer, env Env, paused bool) int {
-	home, err := env.home()
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: resolve home: %v\n", err)
+	command := "resume"
+	if paused {
+		command = "pause"
+	}
+	fail := func(format string, args ...any) int {
+		terminal.Printf(stderr, "agent-archive: %s: %s\n", command, fmt.Sprintf(format, args...))
 		return 1
 	}
-	unlock, err := lockCollector(home, "pause", env.now())
+	// Read-only checks first, so a command that cannot run leaves no data
+	// directory behind.
+	home, err := env.readHome()
 	if err != nil {
-		terminal.Println(stderr, "Another archive operation is finishing. No settings changed; retry this command when it completes.")
-		return 1
+		return fail("resolve the data directory: %v", err)
+	}
+	if transactionPending(home) {
+		return fail("no settings changed: %s", recoveryPending(home))
+	}
+	if _, found, err := config.Load(home); err != nil {
+		return fail("%v", err)
+	} else if !found {
+		return fail("%v", errNotSetUp)
+	}
+	unlock, err := lockCollector(home, command, env.now())
+	if err != nil {
+		return fail("%s holds the collector lock. No settings changed; retry when it finishes", lockHolder(home))
 	}
 	defer unlock()
 	releaseHooks, err := local.NamedLock(home, "hooks.lock")
 	if err != nil {
-		terminal.Println(stderr, "A hook is finishing. Retry this command.")
-		return 1
+		return fail("a hook is finishing. No settings changed; retry")
 	}
 	defer releaseHooks()
+	// Again under the locks: setup or uninstall may have finished meanwhile.
 	if transactionPending(home) {
-		terminal.Printf(stderr, "No settings changed: %s.\n", recoveryPending(home))
-		return 1
+		return fail("no settings changed: %s", recoveryPending(home))
 	}
 	cfg, found, err := config.Load(home)
 	if err != nil {
-		terminal.Printf(stderr, "Cannot read settings: %v\n", err)
-		return 1
+		return fail("%v", err)
 	}
 	if found && !cfg.Archive.Enabled {
-		terminal.Println(stderr, "Integrations are not installed. Run agent-archive setup to reinstall.")
-		return 1
+		return fail("integrations are not installed. Run agent-archive setup to reinstall")
 	}
 	if _, err := config.SetPaused(home, paused); err != nil {
-		terminal.Printf(stderr, "agent-archive: %v\n", err)
-		return 1
+		return fail("%v", err)
 	}
 	if paused {
 		terminal.Println(stdout, "Paused. Run `agent-archive resume` to continue. Already registered sessions can catch up, including activity written during the pause.")

@@ -29,9 +29,18 @@ jobs:
           go version
           go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
       - run: go test -race ./...
+      # The run above uses the race detector, under which the wall-clock
+      # assertions of the performance tests are skipped (the detector slows
+      # filtering by an order of magnitude). This plain run makes them count,
+      # at their documented size. See docs/contributing/testing.md.
+      - name: Performance assertions (no race detector)
+        run: go test -count=1 -run 'StayFast|FiveMegabyte' ./internal/collector ./internal/archive
+        env:
+          AGENT_ARCHIVE_PERF: '1'
       - run: go vet ./...
       - run: python3 scripts/test_release_signing.py
       - run: python3 scripts/test_install.py
+      - run: python3 scripts/test_purge_recipe.py
 
   lint:
     # macOS, the platform the tool ships for, so the cgo Keychain code is

@@ -1,0 +1,27 @@
+name: Security contact request
+description: Ask for a private channel to report a vulnerability or a conduct problem. Only if private vulnerability reporting isn't available.
+title: Security contact request
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This issue is public. Do not describe the problem here**: no details, affected files, versions, payloads, or hints, not even in the title.
+
+        First try [Security → Report a vulnerability](https://github.com/wangjohn/agent-archive/security/advisories/new). Use this form only if that page says private reporting isn't enabled.
+
+        After you submit it, the maintainer opens a private draft security advisory, adds your GitHub account to it, and replies here when it's ready. You then report there, privately. See [SECURITY.md](https://github.com/wangjohn/agent-archive/blob/main/SECURITY.md).
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirm
+      options:
+        - label: I have left every detail of the problem out of this issue.
+          required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What it's about
+      description: Optional. This is all you should say about it here.
+      options:
+        - A security problem
+        - A code of conduct report

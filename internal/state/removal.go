@@ -79,10 +79,14 @@ func (s *Store) Removal(harness, nativeSessionID string) (RemovalRecord, bool, e
 	}
 	var record RemovalRecord
 	err := local.Read(removalPath(s.home, harness, nativeSessionID), &record)
-	if errors.Is(err, os.ErrNotExist) {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return RemovalRecord{}, false, nil
-	}
-	if err != nil {
+	case IsUndecodable(err):
+		// The record exists, so the session was removed; only why is lost
+		// (readAsRemoved). The reason is left empty rather than guessed.
+		return RemovalRecord{Harness: harness}, true, nil
+	case err != nil:
 		return RemovalRecord{}, false, fmt.Errorf("read removal record: %w", err)
 	}
 	return record, true, nil

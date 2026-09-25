@@ -45,6 +45,9 @@ import (
 // what the published source bundle itself already contains.
 type Store struct {
 	home string
+	// collectorPass marks a Store from ForCollectorPass, which may move a
+	// corrupt collector-owned file aside.
+	collectorPass bool
 }
 
 // OpenReadOnly returns a handle to an existing local store under
@@ -79,12 +82,13 @@ var storeDirs = []string{"registrations", "requests", "request-locks", "publishe
 var lazyStoreDirs = []string{"superseded", "forgotten", refreshSkipDir}
 
 // OwnedEntries lists every top-level entry a Store can create under its
-// home: its directories and its status file. Uninstall deletes a data
+// home: its directories, its status file, and the storage clock reading
+// retention caches. Uninstall deletes a data
 // directory entry by entry and must know all of them; a test there checks
 // its list against this one, so a new directory cannot be left behind.
 func OwnedEntries() []string {
 	entries := append(append([]string{}, storeDirs...), lazyStoreDirs...)
-	return append(entries, "status.json")
+	return append(entries, "status.json", storageClockFile)
 }
 
 func safeFileComponent(value string) bool {
@@ -313,6 +317,10 @@ func (s *Store) saveRequest(archiveSessionID, reason string, requestedAt time.Ti
 	// the registration up before taking the lock may be writing for a session
 	// that is gone now; its request would be an orphan nothing ever reads.
 	if _, err := os.Stat(s.registrationPath(archiveSessionID)); errors.Is(err, os.ErrNotExist) {
+		// Taking the lock created its file; a session that is not registered
+		// must not keep one (a rejected subagent notifying a forgotten
+		// parent did). Unlinking it while held is safe (local.NamedLock).
+		_ = os.Remove(filepath.Join(s.home, requestLockName(archiveSessionID)))
 		return ErrSessionNotRegistered
 	} else if err != nil {
 		return fmt.Errorf("check registration %q: %w", archiveSessionID, err)
@@ -525,16 +533,31 @@ func (s *Store) SavePending(id string, pending PendingPublication) error {
 // LoadPending returns a session's outstanding publication transaction, if
 // any. Decoding it reads the whole compressed source; HasPending answers
 // whether one exists without that cost.
+//
+// In a collector pass, a pending publication that no longer decodes is moved
+// aside (the error wraps ErrQuarantined, once) and the session carries on as
+// if it had none; see quarantineInPass.
 func (s *Store) LoadPending(id string) (PendingPublication, bool, error) {
+	if !safeFileComponent(id) {
+		return PendingPublication{}, false, errors.New("archive session ID is not a safe file name component")
+	}
 	var pending PendingPublication
-	err := local.Read(s.pendingPath(id), &pending)
-	if errors.Is(err, os.ErrNotExist) {
-		return PendingPublication{}, false, nil
-	}
+	found, err := s.readOwned(s.pendingPath(id), &pending)
 	if err != nil {
-		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, err)
+		return PendingPublication{}, false, fmt.Errorf("read pending publication %q: %w", id, s.afterLoss(id, err))
 	}
-	return pending, true, nil
+	return pending, found, nil
+}
+
+// afterLoss follows a collector-owned file of the session being moved aside:
+// the session is no longer settled at what that file recorded, so its scan
+// signature goes and the next pass scans it. err is returned as is, with any
+// failure to do so.
+func (s *Store) afterLoss(id string, err error) error {
+	if !errors.Is(err, ErrQuarantined) {
+		return err
+	}
+	return errors.Join(err, s.RemoveScanSignature(id))
 }
 
 // HasPending reports whether a publication is still outstanding for a session
@@ -632,8 +655,13 @@ func (s *Store) ScanPending(id string) (bool, error) {
 	}
 	var pending bool
 	err := local.Read(filepath.Join(s.home, "pending-scans", id+".json"), &pending)
-	if os.IsNotExist(err) {
+	switch {
+	case os.IsNotExist(err):
 		return false, nil
+	case IsUndecodable(err):
+		// The journal exists, so a scan was started; that it no longer
+		// decodes changes nothing (readAsPending). The next scan rewrites it.
+		return true, nil
 	}
 	return pending, err
 }
@@ -676,9 +704,16 @@ type ScanSignature struct {
 	Failed      bool   `json:"failed,omitempty"`
 	FailedError string `json:"failed_error,omitempty"`
 	// FailedMaxBytes and FailedRecordLimit are the size limits the failed
-	// read ran under; the failure stands only while they do.
+	// read, or the size-limit gap (Blocked), ran under; the failure or gap
+	// stands only while they do.
 	FailedMaxBytes    int64 `json:"failed_max_bytes,omitempty"`
 	FailedRecordLimit int64 `json:"failed_record_limit,omitempty"`
+	// Blocked marks a scan that ended in a recorded capture gap (see
+	// CacheStatusBlocked) at this source state, so an unchanged source is
+	// skipped rather than read again to reach the same gap. For
+	// BlockedReasonTranscriptMissing the state is the source's absence: the
+	// signature holds while the source is still missing.
+	Blocked BlockedReason `json:"blocked,omitempty"`
 }
 
 // CursorSignature is the Cursor chat state the signature was recorded at.

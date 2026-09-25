@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -24,7 +25,7 @@ func TestDuplicateKeepsTheImportableCopy(t *testing.T) {
 		good[id] = tr.write(filepath.Join("home", claudeFile("a", id)), claudeTranscript(id, repo, start))
 	}
 	big := tr.write(filepath.Join("home", claudeFile("b", "too-large")), claudeTranscript("too-large", repo, start))
-	if err := os.Truncate(big, archive.MaxRecordBytes+1); err != nil {
+	if err := os.Truncate(big, collector.DefaultMaxRawTranscriptBytes+1); err != nil {
 		t.Fatal(err)
 	}
 	summary := `{"type":"summary","summary":"recap","leafUuid":"x","cwd":"` + repo + `"}` + "\n"

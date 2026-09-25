@@ -6,7 +6,7 @@
 #
 # Usage: VERSION=v1.2.3 scripts/build-release.sh
 # VERSION defaults to "dev" (a build that reports `agent-archive --version`
-# as "dev", never suitable for release).
+# as "dev-<commit>", never suitable for release).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

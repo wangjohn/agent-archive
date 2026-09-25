@@ -26,7 +26,7 @@ Not imported:
    1  with IDs that do not match the file
    1  with no conversation
    1  in a format the archive cannot read safely
-   1  larger than 64 MiB
+   1  over the size limit
    1  Claude Code session whose start time could not be determined
    1  starting in the future (check the clock)
    1  subagent transcript that can't be imported

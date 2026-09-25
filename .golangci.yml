@@ -2,8 +2,9 @@
 # .github/workflows/test.yml; run the same version locally:
 #
 #   go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
-#   golangci-lint run                     # what CI blocks on
-#   golangci-lint run --enable-only=revive # doc-comment debt (see below)
+#   golangci-lint run --disable=revive    # what CI blocks on
+#   golangci-lint run --enable-only=revive --new-from-merge-base=origin/main   # doc comments, new code only
+#   golangci-lint run --enable-only=revive # all doc-comment debt (see below)
 #
 # Doc comments on exported identifiers (revive's `exported` rule) are required
 # of new and changed code only: CI runs revive with --new-from-merge-base, and
@@ -37,6 +38,15 @@ linters:
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/state/statetest
               desc: test helpers only; production code saves through state.Published
+        # Retention deletes; the collector publishes. Retention's whole-session
+        # delete lives in retention itself, so it never needs the collector.
+        retention-does-not-import-collector:
+          files:
+            - "**/internal/retention/*.go"
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/collector
+              desc: retention deletes through its own DeleteWholeSession
     revive:
       rules:
         - name: exported

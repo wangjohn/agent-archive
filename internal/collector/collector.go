@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -52,9 +53,12 @@ type Options struct {
 	// installed skill inventory. The collector merges stable observations
 	// without letting a new polling timestamp manufacture a new snapshot.
 	SupplementalEvidence func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error)
-	// MaxTranscriptBytes caps the transcript size the collector will read. A
-	// larger transcript is recorded as a capture gap (CacheStatusBlocked with
-	// BlockedReasonTranscriptTooLarge) rather than an error. Zero uses
+	// MaxTranscriptBytes caps the size of a transcript after filtering: what
+	// the published bundle carries. A larger one is recorded as a capture gap
+	// (CacheStatusBlocked with BlockedReasonTranscriptTooLarge) rather than
+	// an error. The raw transcript may be rawSizeFactor times larger, since
+	// the bulk of a long session is tool output the filter drops; past that
+	// it is the same gap without being read. Zero uses
 	// DefaultMaxTranscriptBytes.
 	MaxTranscriptBytes int64
 	// Progress, when set, is called after each session the pass processes,
@@ -78,11 +82,32 @@ type Progress struct {
 	Published        bool
 }
 
-// DefaultMaxTranscriptBytes is the transcript size ceiling when
-// Options.MaxTranscriptBytes is zero.
-// It is defined from archive.MaxRecordBytes so the two cannot drift: any
-// record inside a transcript the collector accepts can be read.
+// DefaultMaxTranscriptBytes is the filtered transcript size ceiling when
+// Options.MaxTranscriptBytes is zero. It is archive.MaxRecordBytes, so a
+// published bundle stays well inside what a reader decompresses by default.
 const DefaultMaxTranscriptBytes int64 = archive.MaxRecordBytes
+
+// rawSizeFactor is how much larger than the filtered size limit a raw
+// transcript may be. The filter streams, one record at a time (each bounded
+// by recordLimit), so memory follows what it keeps rather than the file's
+// size; the factor bounds the read itself, and what a read that keeps
+// nearly everything can hold before the filtered limit is checked.
+const rawSizeFactor = 4
+
+// DefaultMaxRawTranscriptBytes is the raw transcript size past which the
+// collector, with its default limits, records a transcript as too large
+// without reading it. Under it a transcript can still be too large once
+// filtered, or hold one record over the record size limit: FilterTranscriptFile
+// reports both.
+const DefaultMaxRawTranscriptBytes = DefaultMaxTranscriptBytes * rawSizeFactor
+
+// maxRawBytes is the raw size ceiling for a filtered size limit.
+func maxRawBytes(maxFiltered int64) int64 {
+	if maxFiltered > (1<<62)/rawSizeFactor {
+		return 1 << 62
+	}
+	return maxFiltered * rawSizeFactor
+}
 
 // recordLimit is the largest single transcript record the collector reads,
 // archive.MaxRecordBytes; a variable only so a test can lower it.
@@ -138,6 +163,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return Result{}, errors.New("machine ID is required")
 	}
 	now := opts.now()
+	// The caller holds the collector lock, so this pass is the only writer
+	// of the files it owns and may move a corrupt one aside.
+	local = local.ForCollectorPass()
 	local.RemoveStaleTemps()
 	p := &pass{
 		ctx:    ctx,
@@ -186,6 +214,13 @@ type pass struct {
 	// unreadable holds the sessions this pass must leave alone: their state
 	// could not be read, so there is nothing safe to act on.
 	unreadable map[string]bool
+	// registered holds every session registered, readable or not.
+	registered map[string]bool
+	// parents caches the summaries of subagents' parents (see linkOwed).
+	parents map[string]state.PublishedSummary
+	// sizeLimited lists the sessions sitting in a size-limit gap, which
+	// status reports: capture of them has stopped.
+	sizeLimited []string
 	// pending counts the sessions left with outstanding work.
 	pending int
 	result  Result
@@ -207,9 +242,18 @@ func (p *pass) loadWork() error {
 	// A session whose registration could not be read is left for the next
 	// pass like any other outstanding work.
 	p.pending = len(registrationIssues)
+	registered := make(map[string]bool, len(registrations)+len(registrationIssues))
+	for _, reg := range registrations {
+		registered[reg.ArchiveSessionID] = true
+	}
 	for id, issue := range registrationIssues {
 		addError(p.result.Errors, id, issue)
+		registered[id] = !errors.Is(issue, state.ErrQuarantined)
 	}
+	// Lock files of sessions and candidates that are gone go now, while the
+	// registrations just listed say which those are.
+	p.local.RemoveOrphanedLocks(registered)
+	p.registered, p.parents = registered, map[string]state.PublishedSummary{}
 	for id, issue := range requestIssues {
 		addError(p.result.Errors, id, issue)
 		// A quarantined request is gone, and the session carries on without
@@ -258,7 +302,7 @@ func (p *pass) fail(id string, err error) {
 }
 
 // scan gives one session its turn in the pass: skip it if nothing about it
-// changed, otherwise scan it (processSession) and account for the outcome.
+// changed, otherwise scan it (sessionScan.run) and account for the outcome.
 func (p *pass) scan(reg archive.SessionRegistration) {
 	id := reg.ArchiveSessionID
 	p.result.Scanned++
@@ -287,6 +331,9 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	}
 	scan := newSessionScan(p.ctx, p.local, p.remote, reg, req, published, p.now, p.opts)
 	outcome, err := scan.run()
+	for _, warning := range scan.warnings {
+		addError(p.result.Errors, id, warning)
+	}
 	if err != nil && p.ctx.Err() != nil {
 		// The pass ran out of time (or was cancelled) with this session in
 		// flight. That is not the session failing: its pending publication
@@ -299,6 +346,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		p.fail(id, err)
 		return
 	}
+	p.noteGap(id, scan.gap)
 	p.finishScan(id)
 	switch outcome {
 	case outcomePublished:
@@ -316,56 +364,6 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		p.result.Skipped = append(p.result.Skipped, id)
 	}
 	p.opts.progress(id, outcome == outcomePublished)
-}
-
-// skipUnchanged ends a session's turn without reading anything when the
-// scan signature shows nothing changed. done reports that it did. A hook
-// request always means a read, except on a Cursor database chat whose last
-// read failed at the state it is still in: reading it again would copy the
-// database only to fail the same way.
-func (p *pass) skipUnchanged(reg archive.SessionRegistration, req state.Request) (done bool) {
-	id := reg.ArchiveSessionID
-	if req.Token != "" && reg.SourceKind != archive.SourceKindCursorSQLite {
-		return false
-	}
-	unchanged, err := unchangedSinceLastScan(p.ctx, p.local, reg, p.opts)
-	if err != nil {
-		p.fail(id, fmt.Errorf("check transcript for changes: %w", err))
-		return true
-	}
-	failed, failure := false, ""
-	if unchanged {
-		if failed, failure, err = rememberedFailure(p.local, reg); err != nil {
-			p.fail(id, fmt.Errorf("check transcript for changes: %w", err))
-			return true
-		}
-	}
-	switch {
-	case !unchanged, req.Token != "" && !failed:
-		return false
-	case failure != "":
-		// Not read again, but still a failure: reported as one on every
-		// pass, as if the read had been repeated. A hook request stays
-		// queued, as it does for a transcript file the filter refuses: its
-		// evidence is the only copy, and the chat's next change reads the
-		// chat again with it.
-		p.fail(id, unchangedSinceFailureError{message: failure})
-		return true
-	}
-	// Settled, or a recorded gap (a size limit) at the same state. A request
-	// on the gap is completed without a read, as a block completes it: the
-	// chat is still over the limit, and the gap stands until the chat
-	// changes.
-	if req.Token != "" {
-		if _, err := p.local.CompleteRequest(id, req.Token); err != nil {
-			p.fail(id, fmt.Errorf("complete a request on an unchanged gap: %w", err))
-			return true
-		}
-	}
-	// Nothing to read, nothing to compare, nothing to journal.
-	p.result.Skipped = append(p.result.Skipped, id)
-	p.opts.progress(id, false)
-	return true
 }
 
 // finishScan clears the scan journal once the session owes no further work,
@@ -401,10 +399,17 @@ func (p *pass) saveStatus() error {
 	if len(p.result.Published) > 0 {
 		lastPublishedAt = p.now.UTC()
 	}
-	var lastError string
+	var problems []string
 	if len(p.result.Errors) > 0 {
-		lastError = fmt.Sprintf("%d session(s) failed to scan or publish", len(p.result.Errors))
+		problems = append(problems, fmt.Sprintf("%d session(s) failed to scan or publish", len(p.result.Errors)))
 	}
+	// A size-limit gap is not a failure, but capture of the session has
+	// stopped at its last snapshot, which status must say rather than look
+	// healthy.
+	if len(p.sizeLimited) > 0 {
+		problems = append(problems, fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", len(p.sizeLimited)))
+	}
+	lastError := strings.Join(problems, "; ")
 	status := state.Status{
 		LastScanAt:             p.now.UTC(),
 		PendingCount:           p.pending,
@@ -460,107 +465,4 @@ func harnessAdapterVersion(harness string) (string, bool) {
 		return "", false
 	}
 	return adapter.Version(), true
-}
-
-// unchangedSinceLastScan answers the spec's "transcript changed?" question
-// without opening, reading, parsing, or journaling anything: one stat of the
-// transcript plus two tiny local files. It is the difference between a pass
-// costing time proportional to every session this machine has ever registered
-// and one costing time proportional to the sessions that actually moved.
-//
-// It says yes only when all of the following hold, because each of them is a
-// way an unchanged file can still owe work:
-//
-//   - The last completed scan left a signature (see ScanSignature). A blocked
-//     session has none, so a capture gap is always re-evaluated.
-//   - The transcript is a regular file whose size and nanosecond modification
-//     time both still match that signature.
-//   - The parser, filter, and adapter versions still match, so an upgrade
-//     re-derives every session instead of skipping it.
-//   - No publication is pending and no interrupted scan is journaled.
-//   - The session is not a subagent, whose publication also notifies a parent.
-//
-// The caller has already established that no hook request is pending.
-//
-// The residual risk is a transcript rewritten in place to exactly its previous
-// byte length within the same nanosecond. Nanosecond mtimes make that
-// essentially unreachable for a real application, but it is not a proof, so a
-// Cursor text transcript — which has no per-record timestamps and is compared
-// by prefix, making a silent in-place edit hardest to detect downstream — is
-// never skipped on a stat alone.
-//
-// A Cursor database chat is identified by its cursorstore.Signature instead
-// of a stat (see sourceReader).
-//
-// A Cursor chat whose last read failed in a way reading it again can't fix
-// (see rememberFailedRead) is also "unchanged" while its signature and the
-// versions match, although that failed scan is still journaled; Run reports
-// its failure again without reading it.
-func unchangedSinceLastScan(ctx context.Context, local *state.Store, reg archive.SessionRegistration, opts Options) (bool, error) {
-	if reg.ParentSessionID != "" {
-		return false, nil
-	}
-	reader, ok := newSourceReader(reg, opts)
-	if !ok {
-		return false, nil
-	}
-	signature, found, err := local.LoadScanSignature(reg.ArchiveSessionID)
-	if err != nil || !found {
-		return false, err
-	}
-	if signature.SourceFormat == cursorTextSourceFormat {
-		return false, nil
-	}
-	adapterVersion, known := harnessAdapterVersion(reg.Harness.Name)
-	if !known {
-		return false, nil
-	}
-	if signature.ParserVersion != opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion {
-		return false, nil
-	}
-	if signature.Failed && (signature.FailedMaxBytes != opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
-		return false, nil
-	}
-	observed, ok := reader.Signature(ctx)
-	if !ok || !observed.matches(signature) {
-		return false, nil
-	}
-	if !signature.Failed {
-		if scanPending, err := local.ScanPending(reg.ArchiveSessionID); err != nil || scanPending {
-			return false, err
-		}
-	}
-	pending, err := local.HasPending(reg.ArchiveSessionID)
-	if err != nil || pending {
-		return false, err
-	}
-	return true, nil
-}
-
-// rememberedFailure reports whether unchangedSinceLastScan skipped a session
-// on a remembered failure (see rememberFailedRead), and that failure's text:
-// "" for a recorded gap.
-func rememberedFailure(local *state.Store, reg archive.SessionRegistration) (failed bool, message string, err error) {
-	if reg.SourceKind != archive.SourceKindCursorSQLite {
-		return false, "", nil
-	}
-	signature, found, err := local.LoadScanSignature(reg.ArchiveSessionID)
-	if err != nil || !found || !signature.Failed {
-		return false, "", err
-	}
-	return true, signature.FailedError, nil
-}
-
-// recordScanSignature marks a session settled at the transcript bytes this
-// scan consumed, so the next pass can skip it. It is written only at an exit
-// that owes no further work.
-func recordScanSignature(local *state.Store, reg archive.SessionRegistration, observed sourceState, bundle archive.SourceBundle, opts Options) error {
-	return local.SaveScanSignature(reg.ArchiveSessionID, state.ScanSignature{
-		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
-		ParserVersion: opts.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
-		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
-		SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
-		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,
-		CursorMessageRows: observed.cursor.MessageRows, CursorLastMessageHash: observed.cursor.LastMessageHash,
-	})
 }

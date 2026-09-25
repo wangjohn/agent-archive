@@ -18,15 +18,24 @@ import (
 // hook-provided transcript path can point to either format depending on
 // version, and the collector has no other way to tell which one it has
 // until it tries. Any other adapter, or any other kind of filter failure,
-// is returned as-is with no retry. A transcript larger than maxBytes yields
-// an error wrapping errTranscriptTooLarge.
+// is returned as-is with no retry. A transcript whose filtered records come
+// to more than maxBytes, or whose raw file is more than maxRawBytes(maxBytes),
+// yields an error wrapping errTranscriptTooLarge.
 var errTranscriptTooLarge = errors.New("transcript exceeds collection limit")
 
 // errRecordTooLarge means one record of the transcript is longer than
-// recordLimit. With the defaults it cannot occur, since a transcript over the
-// same limit is refused whole first; it can when Options.MaxTranscriptBytes
-// is raised above archive.MaxRecordBytes.
+// recordLimit.
 var errRecordTooLarge = errors.New("transcript record exceeds the record size limit")
+
+// checkFilteredSize is errTranscriptTooLarge for filtered records over
+// maxBytes: the size limit applies to what is kept, not to the tool output
+// the filter drops.
+func checkFilteredSize(filtered archive.FilteredTranscript, maxBytes int64) error {
+	if size := int64(filtered.Boundary.RetainedBytes); size > maxBytes {
+		return fmt.Errorf("%w of %d bytes after filtering (%d bytes)", errTranscriptTooLarge, maxBytes, size)
+	}
+	return nil
+}
 
 // transcriptFileInfo is the identity of the exact file bytes one scan read:
 // its size and its modification time at nanosecond resolution. Second
@@ -56,8 +65,8 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	// seen as a change by the next pass, which is the conservative direction.
 	stat := statTranscript(info)
 	boundary := info.Size()
-	if boundary > maxBytes {
-		return archive.FilteredTranscript{}, stat, fmt.Errorf("%w of %d bytes", errTranscriptTooLarge, maxBytes)
+	if raw := maxRawBytes(maxBytes); boundary > raw {
+		return archive.FilteredTranscript{}, stat, fmt.Errorf("%w of %d bytes before filtering", errTranscriptTooLarge, raw)
 	}
 	if boundary < 0 {
 		return archive.FilteredTranscript{}, stat, errors.New("transcript has invalid size")
@@ -72,7 +81,7 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	limited := &recordLimitReader{r: io.NewSectionReader(file, 0, jsonBoundary), limit: recordLimit}
 	filtered, err := adapter.FilterJSONL(limited)
 	if err == nil {
-		return filtered, stat, nil
+		return filtered, stat, checkFilteredSize(filtered, maxBytes)
 	}
 	if limited.exceeded || errors.Is(err, archive.ErrRecordTooLarge) {
 		return archive.FilteredTranscript{}, stat, errRecordTooLarge
@@ -82,8 +91,7 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 		return archive.FilteredTranscript{}, stat, err
 	}
 	// A plain-text transcript is one unit, bounded like one record: over the
-	// limit it is the same recorded gap, not a per-pass error. (With the
-	// defaults the transcript size check above sees it first.)
+	// limit it is the same recorded gap, not a per-pass error.
 	if boundary > recordLimit {
 		return archive.FilteredTranscript{}, stat, errRecordTooLarge
 	}
@@ -91,7 +99,10 @@ func filterTranscript(adapter archive.Adapter, reg archive.SessionRegistration, 
 	if errors.Is(err, archive.ErrRecordTooLarge) {
 		return archive.FilteredTranscript{}, stat, errRecordTooLarge
 	}
-	return filtered, stat, err
+	if err != nil {
+		return filtered, stat, err
+	}
+	return filtered, stat, checkFilteredSize(filtered, maxBytes)
 }
 
 // errNotRegularFile means a hook-supplied transcript path names something

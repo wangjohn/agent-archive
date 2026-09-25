@@ -260,7 +260,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 			sessions[key] = append(sessions[key], w)
 		}
 		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)
-		w.tooLarge = w.t.size > archive.MaxRecordBytes
+		w.tooLarge = w.t.size > collector.DefaultMaxRawTranscriptBytes
 	}
 	for _, group := range sessions {
 		if len(group) > 1 {
@@ -325,7 +325,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		}
 	}
 	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
-		if s.sub.Bytes > archive.MaxRecordBytes {
+		if s.sub.Bytes > collector.DefaultMaxRawTranscriptBytes {
 			s.skipped = true
 			return
 		}
@@ -456,7 +456,7 @@ func runAdapter(env Environment, w *work) {
 		switch {
 		case isNotExist(err) || isNotExist(statErr):
 			w.vanished = true
-		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > archive.MaxRecordBytes):
+		case errors.Is(err, archive.ErrRecordTooLarge) || (statErr == nil && info.Size() > collector.DefaultMaxRawTranscriptBytes):
 			// One record over the limit, or a file that grew past it since
 			// discovery: the collector blocks it as too large.
 			w.tooLarge = true

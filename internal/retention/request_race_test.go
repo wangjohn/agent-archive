@@ -122,7 +122,7 @@ func TestConcurrentHookRequestIsNeverLostToExpiry(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			_, sweepErr = Sweep(context.Background(), local, memory, Options{Now: func() time.Time { return expiry }, SessionMaxAge: retentionWindow})
+			_, sweepErr = Sweep(context.Background(), local, memory, agreeing(Options{Now: func() time.Time { return expiry }, SessionMaxAge: retentionWindow}))
 		}()
 		evidence := finalResponse(t, expiry)
 		go func() {

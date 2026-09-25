@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -71,15 +72,18 @@ Find sessions using metadata; does not download conversation content.
   --skill NAME                   Filter by skill
   --skill-sha256 HEX             Filter by exact lowercase skill SHA-256
   --skill-usage used|available|eligible_no_use
+                                 How --skill matches (default used).
                                  eligible_no_use cannot return sessions yet:
                                  no parser version records both a complete
                                  eligible-skill set and complete use
                                  observation, so non-use is never proven. The
                                  value stays accepted for forward compatibility.
   --since DATE|TIME|AGE          Captured at or after a date (2026-01-31,
-                                 midnight UTC), an RFC 3339 time, or an age
-                                 (7d, 12h)
-  --complete                     Require complete parser coverage
+                                 from midnight UTC; backfill's --since uses
+                                 your local day), an RFC 3339 time, or an
+                                 age (7d, 12h)
+  --complete                     Require complete parser coverage and no
+                                 capture gaps
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
   --no-cache                     Download every metadata sidecar instead of
@@ -95,9 +99,13 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
 	"show": `Usage: agent-archive show SESSION_ID [--harness NAME] [--normalized] [--json]
 
-Print session metadata as JSON (--json is accepted, as for list and status). An imported session also shows origin,
-imported_at, and started_at_source. --normalized explicitly downloads and
-verifies its source bundle and prints conversation content as well.
+Print session metadata as JSON (--json is accepted, as for list and status).
+An imported session also shows origin, imported_at, and started_at_source.
+  --harness NAME        The session's app, if the same SESSION_ID exists under
+                        more than one
+  --normalized          Also download and verify the source bundle, and print
+                        conversation content as well
+  --json                JSON, the default and only format
 Example: agent-archive show SESSION_ID --normalized
 `,
 	"handoff": `Usage: agent-archive handoff SESSION_ID|--latest|--file PATH [options]
@@ -123,7 +131,8 @@ waiting for a sync; otherwise it is downloaded from the archive.
   --format markdown|json
                         markdown (default) prints the prompt; json prints
                         the structured handoff document it is rendered from
-  --output FILE         Write to FILE (mode 0600); --force replaces it
+  --output FILE         Write to FILE (mode 0600) instead of printing it
+  --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
@@ -139,9 +148,10 @@ confirm. Projects the import needs are added to capture. Prints project
 folders and counts only, never conversation content.
   --harness NAME        Only claude, codex, or cursor (repeatable)
   --project DIR         Only this project; it need not still exist (repeatable)
-  --since DATE|TIME|AGE Sessions started on or after this local day: a date
-                        (2026-09-01), an RFC 3339 time, or an age (7d, 12h);
-                        a time or age selects from the start of its day
+  --since DATE|TIME|AGE Sessions started on or after this local day (list's
+                        --since uses UTC): a date (2026-09-01), an RFC 3339
+                        time, or an age (7d, 12h); a time or age selects
+                        from the start of its local day
   --until DATE|TIME|AGE Sessions started on or before this local day
   --include-home        Include sessions run from the home folder
   --include-temp        Include sessions run from temporary directories
@@ -170,6 +180,11 @@ Hook-captured sessions and the apps' own files are never touched.
   --project DIR         Only this project's sessions from the import
   --yes                 Skip the confirmation (required without a terminal)
 Example: agent-archive backfill undo --project ~/src/old-experiment
+`,
+	"version": `Usage: agent-archive version
+
+Print the installed version (also: agent-archive --version, -v).
+Example: agent-archive --version
 `,
 	"feedback": `Usage: agent-archive feedback SESSION_ID --file PATH
 
@@ -200,8 +215,12 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 	}
 	//lint:ignore LV1001 cmd is raw argv; these are the spellings that ask for the version
 	if cmd == "version" || cmd == "--version" || cmd == "-v" {
+		if len(args) == 2 && isHelpFlag(args[1]) {
+			terminal.Print(out, commandHelp["version"])
+			return true, 0
+		}
 		if len(args) != 1 {
-			terminal.Println(errOut, "--version takes no arguments.")
+			terminal.Printf(errOut, "agent-archive: version: unexpected argument %q; run agent-archive version --help\n", args[1])
 			return true, 2
 		}
 		return false, 0
@@ -216,17 +235,24 @@ func commandPreflight(args []string, out, errOut io.Writer) (bool, int) {
 			help = sub
 		}
 	}
-	for _, arg := range args[1:] {
-		//lint:ignore LV1001 arg is raw argv, checked for a help flag
-		if arg == "--help" || arg == "-h" || arg == "-help" {
-			terminal.Print(out, help)
-			return true, 0
-		}
+	if slices.ContainsFunc(args[1:], isHelpFlag) {
+		terminal.Print(out, help)
+		return true, 0
 	}
 	// Each command's own flag set is the one source of truth for its
 	// arguments, and it validates them before any I/O.
 	return false, 0
 }
+
+// isHelpFlag reports whether a raw argument asks for help.
+func isHelpFlag(arg string) bool {
+	//lint:ignore LV1001 arg is raw argv, checked for a help flag
+	return arg == "--help" || arg == "-h" || arg == "-help"
+}
+
+// onNewCommandFlags, when set (only by tests), sees every command flag set
+// as it is made, so a test can check each flag against the help text.
+var onNewCommandFlags func(*commandFlags)
 
 // commandFlags is a public command's flag set. Every command reports a bad
 // command line the same way, through usageError: one line on stderr naming
@@ -244,7 +270,11 @@ func newCommandFlags(command string, errOut io.Writer) *commandFlags {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	return &commandFlags{FlagSet: fs, errOut: errOut}
+	flags := &commandFlags{FlagSet: fs, errOut: errOut}
+	if onNewCommandFlags != nil {
+		onNewCommandFlags(flags)
+	}
+	return flags
 }
 
 // usageError reports a problem with the command line and returns exit

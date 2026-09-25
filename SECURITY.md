@@ -12,16 +12,19 @@ Report privately through GitHub:
 (a private security advisory). Please don't open a public issue, discussion,
 or pull request for a vulnerability.
 
-Include what you found, the version or commit, how to reproduce it (a
-synthetic transcript or payload is ideal — never send real session content
-or credentials), and what an attacker gains.
+Include what you found, the version (`agent-archive --version`, which for a
+source build names the commit), how to reproduce it (a synthetic transcript
+or payload is ideal — never send real session content or credentials), and
+what an attacker gains.
 
-If that link says private reporting isn't enabled, don't describe the
-problem publicly. Open an issue with the **Bug report** template titled
-"Security contact request", say only that you have a security report and how
-to reach you, and leave out every detail of the problem; the maintainer
-([@wangjohn](https://github.com/wangjohn)) will contact you and arrange a
-private channel.
+If that link says private reporting isn't enabled (it is being turned on
+for this repository), don't describe the problem anywhere public. Open an
+issue with the
+**[Security contact request](https://github.com/wangjohn/agent-archive/issues/new?template=security-contact.yml)**
+template instead. It asks nothing about the problem, only confirms that you
+have a report; the maintainer ([@wangjohn](https://github.com/wangjohn))
+then opens a private draft security advisory, adds your GitHub account to
+it, and you continue there.
 
 ## What to expect
 

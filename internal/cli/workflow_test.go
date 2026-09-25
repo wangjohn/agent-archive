@@ -79,12 +79,15 @@ func TestPauseBlocksSyncAndResumeUnblocksIt(t *testing.T) {
 		t.Fatalf("code=%d", code)
 	}
 
+	// A sync that did no work says why on stderr and exits 1, like every
+	// command that did not do what it was asked.
 	out.Reset()
-	if code := runSyncCommand(nil, &out, &errOut, env); code != 0 {
-		t.Fatalf("paused sync should exit 0, not fail: code=%d", code)
+	errOut.Reset()
+	if code := runSyncCommand(nil, &out, &errOut, env); code != 1 || out.Len() != 0 {
+		t.Fatalf("paused sync: code=%d stdout=%s", code, out.String())
 	}
-	if !strings.Contains(out.String(), "paused") {
-		t.Fatalf("sync should say it's paused, not just do nothing silently: %s", out.String())
+	if !strings.Contains(errOut.String(), "paused") {
+		t.Fatalf("sync should say it's paused, not just do nothing silently: %s", errOut.String())
 	}
 
 	out.Reset()
@@ -158,7 +161,7 @@ func TestSyncReportsLockContentionAsAnError(t *testing.T) {
 	if code := runSyncCommand(nil, &out, &errOut, env); code != 1 {
 		t.Fatalf("code=%d", code)
 	}
-	if !strings.Contains(errOut.String(), "already running") {
+	if !strings.Contains(errOut.String(), "holds the collector lock; retry when it finishes") {
 		t.Fatalf("stderr=%s", errOut.String())
 	}
 }
@@ -210,6 +213,7 @@ func TestSyncRunsRetentionSweepAndDeletesExpiredSession(t *testing.T) {
 
 	// Two days later, well past the 1-day retention window.
 	later := now.Add(48 * time.Hour)
+	storageClockFollows(t, func() time.Time { return later })
 	env2 := env
 	env2.Now = func() time.Time { return later }
 	stdout.Reset()
@@ -301,6 +305,7 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 	// Two days later, well past the 1-day retention window, but every
 	// delete this pass attempts now fails.
 	later := now.Add(48 * time.Hour)
+	storageClockFollows(t, func() time.Time { return later })
 	env2 := env
 	env2.Now = func() time.Time { return later }
 	env2.OpenStore = func(config.Config) (storage.ObjectStore, error) {
@@ -312,8 +317,8 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected sync to report the retention failure as an error: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "retention:") {
-		t.Fatalf("expected sync's report to mention the retention failure: stdout=%s", stdout.String())
+	if !strings.Contains(stderr.String(), "retention:") {
+		t.Fatalf("expected sync's report to mention the retention failure: stderr=%s", stderr.String())
 	}
 
 	store, err := state.Open(home)

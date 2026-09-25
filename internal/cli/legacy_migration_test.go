@@ -17,8 +17,12 @@ const legacyPlist = `<?xml version="1.0"?><plist><dict><key>Label</key><string>c
 func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "success", true: "rollback"}[fail], func(t *testing.T) {
-			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+			// The prototype's job is retired by the account's default
+			// installation (see TestTestInstallationLeavesPrototypeAlone).
+			account, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+			home := filepath.Join(account, ".local", "share", "agent-archive")
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			env.AccountHome = func() (string, error) { return account, nil }
 			path := filepath.Join(userHome, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
 			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 				t.Fatal(err)
@@ -158,5 +162,37 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 	// Recovery is idempotent once the journal is gone.
 	if err := recoverSetup(home, env); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A second or test installation (here: AGENT_ARCHIVE_HOME elsewhere, in the
+// same HOME) leaves the prototype's job and hooks alone: they are the
+// account's, and the default installation retires them.
+func TestTestInstallationLeavesPrototypeAlone(t *testing.T) {
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	path := filepath.Join(userHome, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
+	must(t, os.MkdirAll(filepath.Dir(path), 0700))
+	must(t, os.WriteFile(path, []byte(legacyPlist), 0600))
+	prototype := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"python old.py hook","statusMessage":"Recording private skill-run evidence"}]}]}}`
+	settings := filepath.Join(userHome, ".claude", "settings.json")
+	must(t, os.MkdirAll(filepath.Dir(settings), 0700))
+	must(t, os.WriteFile(settings, []byte(prototype), 0600))
+	env.JobState = func(p string) string {
+		if p == path {
+			return "loaded"
+		}
+		return "missing"
+	}
+	env.UnloadLaunchAgent = func(p string) error {
+		t.Errorf("unloaded %s", p)
+		return nil
+	}
+	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", false, true, false, project), 0)
+	if data, err := os.ReadFile(path); err != nil || string(data) != legacyPlist {
+		t.Fatalf("prototype job changed: %v", err)
+	}
+	if data, _ := os.ReadFile(settings); !strings.Contains(string(data), "old.py") {
+		t.Fatalf("prototype hook removed:\n%s", data)
 	}
 }
