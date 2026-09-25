@@ -33,7 +33,7 @@ func Imports(tb testing.TB, importPath string) (direct, all []string) {
 
 func goList(tb testing.TB, args ...string) []string {
 	tb.Helper()
-	out, err := exec.Command("go", append([]string{"list"}, args...)...).Output()
+	out, err := exec.CommandContext(tb.Context(), "go", append([]string{"list"}, args...)...).Output()
 	if err != nil {
 		tb.Fatalf("go list %s: %v", strings.Join(args, " "), err)
 	}
