@@ -123,12 +123,6 @@ type ListOptions struct {
 	Skipped func(SkippedSidecar)
 }
 
-// ListMetadata reads only metadata sidecars and applies filters without
-// downloading transcript bundles.
-func ListMetadata(ctx context.Context, store storage.ObjectStore, prefix string, filter Filter) ([]archive.Metadata, error) {
-	return ListMetadataWithOptions(ctx, store, prefix, filter, ListOptions{})
-}
-
 // ListMetadataWithOptions is ListMetadata with an optional local cache. A
 // harness filter narrows the listing to that harness's own prefix, keys which
 // are not sidecars are skipped before any download, and sidecars are read with

@@ -305,11 +305,6 @@ func boundedVersionCommand(argv ...string) (string, bool) {
 	return value, true
 }
 
-func installedVersionSupport(discovery applicationDiscovery, verifiedVersions []string) string {
-	state, _ := installedVersionSupportDetail(discovery, verifiedVersions)
-	return state
-}
-
 // installedVersionSupportDetail reports the support state and, when it is
 // unverified, a reason code saying why the installed version is not matched by
 // a verified capture.

@@ -1342,10 +1342,3 @@ func isHiddenRole(value string) bool {
 		return false
 	}
 }
-
-// IsFilterError supports callers which need to retain a previous source bundle
-// when a new native format cannot be safely filtered.
-func IsFilterError(err error) bool {
-	var target *FilterError
-	return errors.As(err, &target)
-}
