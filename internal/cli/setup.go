@@ -869,8 +869,13 @@ func withBackfilledProjects(draft, committed []archive.ProjectActivation, backfi
 	return draft
 }
 
-// backfilledProjects is the set of project IDs any backfill import added.
-// An unreadable batch file leaves its projects out, so they are asked about
+// backfilledProjects is the set of project IDs any backfill import added:
+// the projects it imported into, and the folders inside an added plain
+// folder it added excluded (ProjectsKeptOut). A kept-out entry must never
+// be dropped while the folder around it is included: that folder would
+// then capture it. So a resumed draft carries it (withBackfilledProjects),
+// and declining it in setup excludes it rather than removing it. An
+// unreadable batch file leaves its projects out, so they are asked about
 // one by one, as before imports existed.
 func backfilledProjects(env Env) map[string]bool {
 	out := map[string]bool{}
@@ -880,7 +885,7 @@ func backfilledProjects(env Env) map[string]bool {
 	}
 	batches, _ := backfill.LoadBatches(home)
 	for _, b := range batches {
-		for _, id := range b.ProjectsAdded {
+		for _, id := range slices.Concat(b.ProjectsAdded, b.ProjectsKeptOut) {
 			out[id] = true
 		}
 	}

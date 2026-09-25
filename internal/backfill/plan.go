@@ -65,6 +65,9 @@ type Plan struct {
 	// fully listed; the plan then can't tell which of the database's chats
 	// have transcripts, so it does not read the database.
 	cursorIncomplete bool
+	// nested holds, for each project the plan adds that would capture its
+	// subfolders, the folders inside it the import keeps out (see nested.go).
+	nested map[string]nestedFolders
 }
 
 // Destination names the bucket imports go to.
@@ -139,7 +142,13 @@ func markDuplicates(env Environment, group []*work) {
 	if len(live) < 2 {
 		return
 	}
-	active := filepath.Join(env.Home, ".codex", "sessions") + string(filepath.Separator)
+	var active []string
+	for _, dir := range env.codexDirs() {
+		active = append(active, filepath.Join(dir, "sessions")+string(filepath.Separator))
+	}
+	isActive := func(path string) bool {
+		return slices.ContainsFunc(active, func(prefix string) bool { return strings.HasPrefix(path, prefix) })
+	}
 	sort.SliceStable(live, func(i, j int) bool {
 		a, b := live[i], live[j]
 		if a.importable() != b.importable() {
@@ -148,7 +157,7 @@ func markDuplicates(env Environment, group []*work) {
 		if a.t.identityMismatch != b.t.identityMismatch {
 			return !a.t.identityMismatch
 		}
-		if aActive, bActive := strings.HasPrefix(a.t.path, active), strings.HasPrefix(b.t.path, active); aActive != bActive {
+		if aActive, bActive := isActive(a.t.path), isActive(b.t.path); aActive != bActive {
 			return aActive
 		}
 		if a.t.size != b.t.size {
@@ -373,6 +382,9 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	}
 
 	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
+		return Plan{}, err
+	}
+	if err := planNested(ctx, r, &plan); err != nil {
 		return Plan{}, err
 	}
 	sort.SliceStable(plan.Candidates, func(i, j int) bool {

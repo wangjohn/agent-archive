@@ -81,7 +81,11 @@ command and process ID.
 ## `backfill --dry-run --json` and `handoff --format json`
 
 `backfill --dry-run --json` prints the import plan (projects, counts per
-app, skip reasons, retention date) with no paths or session IDs.
+app, skip reasons, retention date). It holds no transcript paths, session
+IDs, or content, but project folders are absolute paths: `projects[].root`,
+`projects[].kept_out`, `projects[].kept_out_unchecked`, and `filters.projects`. `storage_checked` is always
+`false`, because a dry run writes nothing and the storage check writes a test
+object; only an import checks storage, before it asks.
 `handoff --format json` prints the handoff document. Both follow the same
 add-only rule but are not yet versioned documents; prefer the text output for
 anything a person reads.

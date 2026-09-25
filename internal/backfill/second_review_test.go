@@ -188,7 +188,7 @@ func TestUnreadableFolderIsCounted(t *testing.T) {
 	}
 	var text, js bytes.Buffer
 	RenderText(&text, p)
-	if err := RenderJSON(&js, p, false); err != nil {
+	if err := RenderJSON(&js, p); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(text.String(), "   2  folders in the app stores could not be read\n") || !strings.Contains(js.String(), `"unreadable_folders": 2`) {
@@ -248,7 +248,7 @@ func TestUnreadableStoreIsNamed(t *testing.T) {
 			}
 			var text, js bytes.Buffer
 			RenderText(&text, p)
-			if err := RenderJSON(&js, p, false); err != nil {
+			if err := RenderJSON(&js, p); err != nil {
 				t.Fatal(err)
 			}
 			if !strings.Contains(text.String(), "\n      "+tc.line+"\n") || !strings.Contains(js.String(), `"unreadable_stores": [`+"\n"+`    "`+tc.app+`"`) {

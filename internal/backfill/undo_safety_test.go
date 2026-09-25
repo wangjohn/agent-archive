@@ -191,7 +191,8 @@ func TestUndoKeepsAProjectAnotherImportStillNeeds(t *testing.T) {
 		}
 	}
 	undone := fixedNow.UTC()
-	a.UndoneAt, a.ProjectsExcluded, a.ProjectsKept = &undone, []string{q}, plan.KeptProjectIDs()
+	a.UndoneAt, a.ProjectsExcluded = &undone, []string{q}
+	a.RecordKept(plan.KeepProjects)
 
 	plan, err = PlanUndo(env, f.store, cfg, []Batch{a, b}, b, "")
 	if err != nil {

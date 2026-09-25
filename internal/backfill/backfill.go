@@ -170,8 +170,14 @@ type Filters struct {
 	Projects  []string
 	// Since and Until are local dates, YYYY-MM-DD, compared inclusively with
 	// the session's start.
-	Since          string
-	Until          string
+	Since string
+	Until string
+	// SinceArg and UntilArg are the --since and --until values as typed
+	// when they are relative (an age such as 30d), which name a different
+	// day each day: an interrupted import is continued by the same value,
+	// not the same day (see BatchFilters). "" for a date, a time, or none.
+	SinceArg       string
+	UntilArg       string
 	IncludeHome    bool
 	IncludeTemp    bool
 	IncludeRemoved bool
@@ -243,6 +249,12 @@ func canonicalHarness(name string) string {
 type Environment struct {
 	// Home is the user's home directory, where the apps keep their stores.
 	Home string
+	// ClaudeDirs and CodexDirs are the folders Claude Code and Codex keep
+	// their sessions in: ~/.claude and ~/.codex, and any other folder
+	// CLAUDE_CONFIG_DIR or CODEX_HOME names, now or when setup ran. Nil
+	// means the default one under Home.
+	ClaudeDirs []string
+	CodexDirs  []string
 	// TempDirs are the temporary directories (rule 6 of project resolution).
 	// Nil means DefaultTempDirs; the CLI adds $TMPDIR.
 	TempDirs []string
@@ -339,6 +351,20 @@ func (e Environment) fileCreated(path string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return info.ModTime(), nil
+}
+
+func (e Environment) claudeDirs() []string {
+	if e.ClaudeDirs != nil {
+		return e.ClaudeDirs
+	}
+	return []string{filepath.Join(e.Home, ".claude")}
+}
+
+func (e Environment) codexDirs() []string {
+	if e.CodexDirs != nil {
+		return e.CodexDirs
+	}
+	return []string{filepath.Join(e.Home, ".codex")}
 }
 
 func (e Environment) tempDirs() []string {

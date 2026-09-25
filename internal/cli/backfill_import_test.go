@@ -652,7 +652,11 @@ func requestFor(store *state.Store, id string) (state.Request, bool, error) {
 }
 
 // Ctrl-C during the upload stops after the session in flight; the rest stay
-// registered, with their requests, for the background collector.
+// registered, with their requests, for the background collector. The watch
+// says so at once, even in the middle of a long upload, and keeps watching,
+// so a second Ctrl-C can still clean up before quitting (see
+// TestSecondInterruptRemovesSnapshotsAndExits); it lets go when the command
+// ends.
 func TestBackfillInterruptedUpload(t *testing.T) {
 	f, _ := newImportFixture(t)
 	signals := make(chan os.Signal, 1)
@@ -672,34 +676,34 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 		}
 		return signals, func() { record("watch stopped") }
 	}
+	out := &syncBuffer{}
+	const notice = "Stopping after the current session; press Ctrl-C again to quit."
 	backfillCheckpoint = func(step string) error {
 		if step != "uploading" {
 			return nil
 		}
 		signals <- os.Interrupt
-		// The watch stops on the first Ctrl-C itself, not when the command
-		// next looks, which can be a whole upload later.
-		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
-			mu.Lock()
-			n := len(events)
-			mu.Unlock()
-			if n > 1 {
-				break
-			}
+		// The notice comes from the watch itself, not when the command next
+		// looks, which can be a whole upload later.
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && !strings.Contains(out.String(), notice); {
+			time.Sleep(5 * time.Millisecond)
 		}
 		record("upload starts")
 		return nil
 	}
 	t.Cleanup(func() { backfillCheckpoint = nil })
-	out, errOut, code := f.importRun(t, nil, false, "--yes")
-	if strings.Join(events, ", ") != "planning watch stopped, watch stopped, upload starts" {
-		t.Errorf("events %v: the first Ctrl-C must hand the next one back at once, and only once", events)
+	env := f.env
+	env.IsTerminal = func(any) bool { return false }
+	var errOut bytes.Buffer
+	code := Run([]string{"backfill", "--yes"}, nil, out, &errOut, env)
+	if strings.Join(events, ", ") != "planning watch stopped, upload starts, watch stopped" {
+		t.Errorf("events %v", events)
 	}
-	if !strings.Contains(out, "Stopping after the current session; press Ctrl-C again to quit.") {
-		t.Errorf("no notice of the stop:\n%s", out)
+	if !strings.Contains(out.String(), notice) {
+		t.Errorf("no notice of the stop:\n%s", out.String())
 	}
-	if code != 0 || !strings.Contains(out, "Stopped. The remaining 12 sessions will be uploaded by the background collector.") || !strings.Contains(out, "list --imported") {
-		t.Fatalf("code %d, %s\n%s", code, errOut, out)
+	if code != 0 || !strings.Contains(out.String(), "Stopped. The remaining 12 sessions will be uploaded by the background collector.") || !strings.Contains(out.String(), "list --imported") {
+		t.Fatalf("code %d, %s\n%s", code, errOut.String(), out.String())
 	}
 	parents, _ := importRegistrations(t, f.data, firstImport)
 	store := state.OpenReadOnly(f.data)
@@ -711,6 +715,24 @@ func TestBackfillInterruptedUpload(t *testing.T) {
 	if len(parents) != 12 {
 		t.Fatalf("%d registered", len(parents))
 	}
+}
+
+// syncBuffer is a bytes.Buffer a test can read while a command writes it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // uninstall --delete-local-data removes the import batches too.

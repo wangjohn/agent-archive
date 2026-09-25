@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -36,24 +37,39 @@ type Batch struct {
 	ProjectsAdded []string `json:"projects_added"`
 	// AppsAdded are the apps the import added to ImportedHarnesses.
 	AppsAdded []string `json:"apps_added"`
+	// ProjectsKeptOut are the projects the import added excluded: folders
+	// inside a plain folder it added (repositories, app folders) that the
+	// new project would otherwise capture. Undo removes each again once
+	// nothing included contains it.
+	ProjectsKeptOut []string `json:"projects_kept_out,omitempty"`
 	// Sessions are the archive session IDs the import registered.
 	Sessions []string `json:"sessions"`
 	// Subagents are the archive session IDs given to the imported sessions'
 	// subagent transcripts. Each registers when the collector validates it.
 	Subagents []string `json:"subagents"`
+	// Retention is set when the import raised the archive-wide retention
+	// (the prompt's edit): undo restores the earlier value.
+	Retention *RetentionChange `json:"retention,omitempty"`
 	// UndoneAt is when `backfill undo` last started removing the import. It
 	// is written before anything is removed, so an import undone even in
 	// part is never continued; history says whether anything of it is left.
 	UndoneAt *time.Time `json:"undone_at,omitempty"`
-	// ProjectsExcluded are the added projects undo has excluded. Undo never
-	// excludes one of them again, so a project setup included again stays
-	// included.
+	// ProjectsExcluded are the projects this import's undo has excluded. No
+	// undo, of this import or any other, excludes one of them again: once an
+	// undo has excluded a project, only setup can include it again, and a
+	// project setup included stays included.
 	ProjectsExcluded []string `json:"projects_excluded,omitempty"`
 	// ProjectsKept are projects undo left included although this import
 	// added them (or took them over from an earlier undo that kept them),
 	// because another import's sessions were still there. The undo of the
-	// last import with sessions there excludes them (see PlanUndo).
+	// last of those imports with sessions there excludes them (see
+	// PlanUndo).
 	ProjectsKept []string `json:"projects_kept,omitempty"`
+	// ProjectsKeptFor names, for each project in ProjectsKept, the imports
+	// that still had sessions there when undo kept it: only their undos take
+	// it over. A batch written before this field has no entry, and then any
+	// import with sessions there takes it over.
+	ProjectsKeptFor map[string][]string `json:"projects_kept_for,omitempty"`
 }
 
 // BatchFilters are the filters and --include-* flags a batch was run with.
@@ -63,6 +79,8 @@ type BatchFilters struct {
 	ProjectIDs     []string `json:"project_ids"`
 	Since          string   `json:"since,omitempty"`
 	Until          string   `json:"until,omitempty"`
+	SinceArg       string   `json:"since_arg,omitempty"`
+	UntilArg       string   `json:"until_arg,omitempty"`
 	IncludeHome    bool     `json:"include_home"`
 	IncludeTemp    bool     `json:"include_temp"`
 	IncludeRemoved bool     `json:"include_removed"`
@@ -75,7 +93,7 @@ func (p Plan) BatchFilters() BatchFilters {
 	f := p.Filters
 	out := BatchFilters{
 		Harnesses: []string{}, ProjectIDs: []string{},
-		Since: f.Since, Until: f.Until,
+		Since: f.Since, Until: f.Until, SinceArg: f.SinceArg, UntilArg: f.UntilArg,
 		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
 	}
 	for _, h := range f.Harnesses {
@@ -100,7 +118,7 @@ func (b *Batch) Reconcile(store *state.Store) error {
 	}
 	parents := map[string]bool{}
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID {
+		if !InBatch(reg, b.ID) {
 			continue
 		}
 		if reg.ParentSessionID != "" {
@@ -136,16 +154,120 @@ func (b *Batch) Continues(filters BatchFilters, destinationID string) bool {
 
 func (f BatchFilters) equal(o BatchFilters) bool {
 	return slices.Equal(f.Harnesses, o.Harnesses) && slices.Equal(f.ProjectIDs, o.ProjectIDs) &&
-		f.Since == o.Since && f.Until == o.Until &&
+		sameBound(f.Since, f.SinceArg, o.Since, o.SinceArg) && sameBound(f.Until, f.UntilArg, o.Until, o.UntilArg) &&
 		f.IncludeHome == o.IncludeHome && f.IncludeTemp == o.IncludeTemp && f.IncludeRemoved == o.IncludeRemoved
+}
+
+// sameBound reports whether two runs' --since (or --until) values match. Two
+// relative values match when typed alike, whichever day they name now, so
+// `--since 30d` continues yesterday's interrupted `--since 30d`; otherwise
+// the days they name are compared, as for a batch that recorded none.
+func sameBound(day, arg, otherDay, otherArg string) bool {
+	if arg != "" && otherArg != "" {
+		return arg == otherArg
+	}
+	return day == otherDay
+}
+
+// Flags are the options a run with these filters is typed with, for
+// telling the person how to continue an import: each --project is named by
+// the configured root with project, the plan's own spelling; ok is false
+// when one of them is no longer configured.
+func (f BatchFilters) Flags(p Plan, projectRoot func(id string) (string, bool)) (flags string, ok bool) {
+	var out []string
+	for _, h := range f.Harnesses {
+		out = append(out, "--harness "+h)
+	}
+	for _, id := range f.ProjectIDs {
+		root, found := projectRoot(id)
+		if !found {
+			return "", false
+		}
+		out = append(out, "--project "+shellWord(p.display(root)))
+	}
+	for _, bound := range []struct {
+		flag string
+		day  string
+		arg  string
+	}{{"--since", f.Since, f.SinceArg}, {"--until", f.Until, f.UntilArg}} {
+		switch {
+		case bound.arg != "":
+			out = append(out, bound.flag+" "+shellWord(bound.arg))
+		case bound.day != "":
+			out = append(out, bound.flag+" "+bound.day)
+		}
+	}
+	for _, include := range []struct {
+		flag string
+		set  bool
+	}{{"--include-home", f.IncludeHome}, {"--include-temp", f.IncludeTemp}, {"--include-removed", f.IncludeRemoved}} {
+		if include.set {
+			out = append(out, include.flag)
+		}
+	}
+	return strings.Join(out, " "), true
+}
+
+// shellWord quotes s for a shell when it holds anything but plain path
+// characters.
+func shellWord(s string) string {
+	for _, c := range s {
+		if !plainShellRune(c) {
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
+}
+
+// plainShellRune reports whether c needs no quoting in a shell word.
+func plainShellRune(c rune) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	return strings.ContainsRune("~/._-+:@", c)
 }
 
 func batchDir(home string) string { return filepath.Join(home, "imports") }
 
+// batchIDPattern is the form OpenBatch gives an import ID: its local date
+// and the day's count from 1.
+var batchIDPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}-[1-9][0-9]{0,5}$`)
+
+// ValidBatchID reports whether id has the form OpenBatch gives import IDs.
+// An empty ID never does.
+func ValidBatchID(id string) bool { return batchIDPattern.MatchString(id) }
+
+// InBatch reports whether reg was registered by the import id: backfill
+// registered it (Imported), and it carries that import's ID. It is the only
+// test of whether a registration belongs to an import, so a batch with a
+// missing or empty ID, or a hook registration that carries an ID, never
+// pulls a hook-captured session into an import's undo, upload, or history.
+// TestImportBatchComparedOnlyThroughInBatch holds every caller to it.
+func InBatch(reg archive.SessionRegistration, id string) bool {
+	return id != "" && reg.Imported() && reg.ImportBatch == id
+}
+
+// validate checks what LoadBatches relies on in a batch read from the file
+// named stem.json: an ID of the form OpenBatch gives, that file's own name,
+// and a start time.
+func (b *Batch) validate(stem string) error {
+	switch {
+	case !ValidBatchID(b.ID):
+		return errors.New("it has no valid import ID")
+	case b.ID != stem:
+		return fmt.Errorf("its import ID %q does not match its file name", b.ID)
+	case b.StartedAt.IsZero():
+		return errors.New("it has no start time")
+	}
+	return nil
+}
+
 func batchPath(home, id string) string { return filepath.Join(batchDir(home), id+".json") }
 
 // LoadBatches returns every readable import batch, oldest first. A batch
-// file that cannot be read is left out and named in err, which is returned
+// file that cannot be read, or does not hold a valid batch (see validate),
+// is left out and named in err, which is returned
 // alongside the batches that could be read: a caller that only reports on
 // imports can go on, one that must see every batch treats err as fatal.
 func LoadBatches(home string) ([]Batch, error) {
@@ -163,8 +285,13 @@ func LoadBatches(home string) ([]Batch, error) {
 			continue
 		}
 		var b Batch
+		stem := strings.TrimSuffix(e.Name(), ".json")
 		if err := local.Read(filepath.Join(batchDir(home), e.Name()), &b); err != nil {
-			unreadable = append(unreadable, fmt.Errorf("read import %q: %w", strings.TrimSuffix(e.Name(), ".json"), err))
+			unreadable = append(unreadable, fmt.Errorf("read import %q: %w", stem, err))
+			continue
+		}
+		if err := b.validate(stem); err != nil {
+			unreadable = append(unreadable, fmt.Errorf("read import %q: %w", stem, err))
 			continue
 		}
 		out = append(out, b)
@@ -180,8 +307,8 @@ func LoadBatches(home string) ([]Batch, error) {
 
 // SaveBatch durably writes b, replacing any earlier version.
 func SaveBatch(home string, b Batch) error {
-	if b.ID == "" || strings.ContainsAny(b.ID, `/\`) {
-		return errors.New("import ID is required")
+	if !ValidBatchID(b.ID) {
+		return fmt.Errorf("import ID %q is not valid", b.ID)
 	}
 	if err := local.Write(batchPath(home, b.ID), b); err != nil {
 		return fmt.Errorf("save import %s: %w", b.ID, err)
@@ -244,10 +371,19 @@ func OpenBatch(home string, store *state.Store, filters BatchFilters, destinatio
 	}, nil
 }
 
-// AddChanges records the projects and apps a run added to the configuration.
-func (b *Batch) AddChanges(projectIDs, apps []string) {
-	b.ProjectsAdded = addUnique(b.ProjectsAdded, projectIDs...)
-	b.AppsAdded = addUnique(b.AppsAdded, apps...)
+// AddChanges records what a run changed in the configuration. A continued
+// import keeps the retention it first changed from.
+func (b *Batch) AddChanges(c ConfigChanges) {
+	b.ProjectsAdded = addUnique(b.ProjectsAdded, c.ProjectIDs...)
+	b.AppsAdded = addUnique(b.AppsAdded, c.Apps...)
+	b.ProjectsKeptOut = addUnique(b.ProjectsKeptOut, c.KeptOut...)
+	if c.Retention != nil {
+		change := *c.Retention
+		if b.Retention != nil {
+			change.From = b.Retention.From
+		}
+		b.Retention = &change
+	}
 }
 
 // AddSessions records sessions and subagents a run registered.

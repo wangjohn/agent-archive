@@ -12,6 +12,8 @@ Not a repository:
 Claude desktop scratch chats                2      –       –      2  will be added
   Chats started without a folder. New ones will be captured too.
 ~/old-notes (folder no longer exists)       1      –       –      1  will be added
+  Every future session in a folder under it that isn't in a nearer project
+  will be captured too.
 
 Total: 12 sessions (plus 2 subagent transcripts), 8 KB,
        started 2026-09-17 to 2026-09-22.

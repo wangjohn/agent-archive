@@ -146,8 +146,44 @@ func snapshotInUse(dir string) bool {
 // it.
 const abandonedSnapshotAge = time.Minute
 
+// ownSnapshots are the snapshot directories this process's Readers created
+// and have not closed yet.
+var ownSnapshots = struct {
+	sync.Mutex
+	dirs map[string]bool
+}{dirs: map[string]bool{}}
+
+func trackSnapshot(dir string) {
+	ownSnapshots.Lock()
+	defer ownSnapshots.Unlock()
+	ownSnapshots.dirs[dir] = true
+}
+
+func untrackSnapshot(dir string) {
+	ownSnapshots.Lock()
+	defer ownSnapshots.Unlock()
+	delete(ownSnapshots.dirs, dir)
+}
+
+// RemoveOwnSnapshots removes every snapshot directory this process's
+// Readers created and have not closed, even one a backup is still writing
+// into. It is for a process about to exit on a signal (a second Ctrl-C,
+// SIGTERM, SIGHUP), whose Readers will never be closed: without it the copy
+// of every Cursor chat would stay in the temporary folder until a later
+// sweep. A Reader whose directory it removed fails its reads afterwards.
+func RemoveOwnSnapshots() {
+	ownSnapshots.Lock()
+	defer ownSnapshots.Unlock()
+	for dir := range ownSnapshots.dirs {
+		_ = os.RemoveAll(dir)
+		delete(ownSnapshots.dirs, dir)
+	}
+}
+
 // RemoveStaleSnapshots removes snapshot directories a killed process left
-// behind, so a copy of Cursor's chats does not outlive its read. A locked
+// behind, so a copy of Cursor's chats does not outlive its read. Every
+// backfill command calls it first, and the collector calls it when it reads
+// Cursor's database; any other long-running reader should too. A locked
 // one belongs to a read in progress and is left alone. An unlocked one whose
 // lock file is over abandonedSnapshotAge old was abandoned and is removed; one
 // without a lock file may belong to a read that is just starting, so it is

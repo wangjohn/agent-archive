@@ -155,3 +155,40 @@ func TestSnapshotRootErrorSaysWhatToDo(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+// Regression: 2026-09 review B-24. A process about to exit on a second
+// Ctrl-C, SIGTERM, or SIGHUP never closes its Readers; RemoveOwnSnapshots
+// removes the copies they hold, locked or not, and leaves other processes'
+// alone. A Reader closed normally is no longer tracked.
+func TestRemoveOwnSnapshotsRemovesThisProcessCopies(t *testing.T) {
+	root := useTempSnapshots(t)
+	path := StateDatabase(t.TempDir())
+	startWriter(t, path).put(chatRows())
+	closed := NewReader(path)
+	if _, _, err := closed.ReadComposer(context.Background(), "c"); err != nil {
+		t.Fatal(err)
+	}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	leaked := NewReader(path)
+	if _, _, err := leaked.ReadComposer(context.Background(), "c"); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(root, snapshotPrefix+"another-process")
+	if err := os.Mkdir(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 2 {
+		t.Fatalf("snapshot directories %v, %v", entries, err)
+	}
+	RemoveOwnSnapshots()
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 || entries[0].Name() != filepath.Base(other) {
+		t.Fatalf("after: %v, %v", entries, err)
+	}
+	// Closing the Reader afterwards is harmless.
+	if err := leaked.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
