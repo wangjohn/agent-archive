@@ -93,7 +93,7 @@ In Go tests, everything goes through injection:
   argument and cannot import launchctl, the Keychain, or the network
   (`TestCaptureImportBoundary`); its `TestMain` still gives its tests a
   temporary `HOME`, unsets the same variables, and keeps `$TMPDIR` in a
-  folder of the run's own (see its `isolation_test.go`). Its tests call
+  folder of the run's own (`internal/testutil/isolation`). Its tests call
   `capture.HandleEvent` directly; tests that go through a command (`_hook`,
   `status`, `sync`, `setup`) stay in `internal/cli`.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
