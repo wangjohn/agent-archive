@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -220,7 +221,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 // waits for a pending setup and for resume: pause suspends remote cleanup.
 func undoRefusal(home string, cfg config.Config) string {
 	switch {
-	case transactionPending(home):
+	case setupjournal.TransactionPending(home):
 		return "setup needs recovery; run agent-archive setup first. Nothing was changed."
 	case cfg.Paused:
 		return errPaused.Error() + ". Nothing was changed."

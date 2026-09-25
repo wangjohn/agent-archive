@@ -461,7 +461,7 @@ matching rule wins.
    [Discovery](#discovery).
 2. **Configured project.** If a configured project owns the directory, use
    it. "Owns" means the nearest configured ancestor on resolved paths, the
-   same rule hooks use (`configuredProjectActivationFor`). If that project is
+   same rule hooks use (`capture.ConfiguredProjectActivationFor`). If that project is
    excluded, skip with `excluded_project`. An exclusion always beats the
    default.
 3. **Worktree.** If walking up from the directory finds a `.git` file, follow
@@ -760,7 +760,7 @@ a hook or backfill registered it.
 
 The lock order stays `setup.lock` → `collector.lock` → `hooks.lock`. A hook
 waits at most one second for `hooks.lock`, then drops its event
-([hook.go:119](../../internal/cli/hook.go)). So backfill holds `hooks.lock` for
+([capture/hook.go:128](../../internal/capture/hook.go)). So backfill holds `hooks.lock` for
 only a few milliseconds at a time.
 
 1. **Plan.** No locks. Record a fingerprint of the configuration: a hash of
@@ -965,7 +965,7 @@ transcript.
 | Area | Change |
 |---|---|
 | `internal/archive/types.go` | New fields and `Admitted()`. B1b adds `DestinationID`; phase 2 adds `SourceKind` and `SourceKey`. |
-| `internal/config`, `internal/cli/hook.go` | `ImportedHarnesses` and `AcceptSession` via `Admitted()`. Hooks set `AdmittedAt` and `Origin`. |
+| `internal/config`, `internal/capture/hook.go` | `ImportedHarnesses` and `AcceptSession` via `Admitted()`. Hooks set `AdmittedAt` and `Origin`. |
 | `internal/retention` | `Admitted()`, removal records, and a shared `deleteWholeSession` |
 | `internal/collector` | Origin-aware skill observer and subagent lifecycle, `Progress`, oldest-first ordering. Phase 2: `sourceReader` (file and cursor-sqlite), remembered read failures, rewritten Cursor chats republished with a gap, `FilterCursorChat` for the plan |
 | `internal/cursorstore` (phase 2) | Read-only access to Cursor's `state.vscdb`: the in-place listing, one-snapshot `Reader`, `ReadSignature`, and the snapshot directory |
@@ -1004,7 +1004,7 @@ transcript.
   - A second run is a no-op.
   - A configuration change during the prompt aborts, and pause refuses.
   - A hook fired mid-registration succeeds within its one-second wait (real
-    flock, as in `capture_diagnostics_test.go`).
+    flock, as in `internal/capture/diagnostics_test.go`).
   - Crashes injected between steps converge on rerun.
   - Subagents inherit the import fields and carry no hook lifecycle evidence.
   - Hook metadata is byte-identical to before.

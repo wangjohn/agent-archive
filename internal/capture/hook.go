@@ -1,11 +1,16 @@
-package cli
+// Package capture is the hook runtime: what `agent-archive _hook` does with
+// one lifecycle event an app sends. It classifies the event, admits a new
+// session (a provably fresh start in an included, activated project) or
+// continues a registered one, records lifecycle and final-response evidence
+// and subagent links as local requests, and leaves a content-free diagnostic
+// when a start is declined. It never touches the network or writes to
+// stdout, and every wait it can make is bounded: the command around it (in
+// internal/cli) owns flag parsing, the exit code, and panic recovery.
+package capture
 
 import (
-	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,64 +19,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
-	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// runHookCommand implements the hidden `_hook` entry point hooks.Merge
-// installs into each harness's own hook configuration. A hook has a short
-// timeout (2s, per hooks.Merge) and must never block the user's turn, so
-// this always exits 0; a problem is reported to stderr only, matching the
-// spec's failure table ("Hook cannot write a request: task continues,
-// diagnostic is available outside model context"). That includes a panic:
-// Go exits 2 on one, which Claude Code treats as a blocking error (it
-// erases the prompt on UserPromptSubmit and feeds the stack trace to the
-// model on Stop), so a panic is recovered, recorded, and exits 0 too.
-func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (code int) {
-	var (
-		home    string
-		harness = new(string)
-		payload map[string]any
-	)
-	defer func() {
-		if r := recover(); r != nil {
-			terminal.Printf(stderr, "agent-archive: hook: internal error: %v\n", r)
-			recordHookFailure(home, *harness, payload)
-			code = 0
-		}
-	}()
-	fs := flag.NewFlagSet("_hook", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	harness = fs.String("harness", "", "harness name (codex, claude, cursor)")
-	if err := fs.Parse(args); err != nil {
-		return 0
-	}
-	// A hook that sends no or malformed JSON is treated as a no-op, not an
-	// error: some hook events (per the harness's own docs) carry no useful
-	// fields at all, and we must never fail loudly on the harness's input.
-	_ = json.NewDecoder(stdin).Decode(&payload)
-
-	// Resolved without creating it: a hook left behind after the data
-	// directory was deleted has nothing to record and must not recreate it.
-	home, err := env.readHome()
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: hook: resolve home: %v\n", err)
-		return 0
-	}
-	if _, err := os.Stat(home); errors.Is(err, os.ErrNotExist) {
-		return 0
-	}
-	if err := handleHookEvent(home, *harness, payload, env.now()); err != nil {
-		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
-	}
-	return 0
-}
-
-// recordHookFailure leaves a content-free hook_failed diagnostic for status
+// RecordFailure leaves a content-free hook_failed diagnostic for status
 // after a recovered panic, under the same rule as every diagnostic: only for
 // an included project. It is best effort, and a failure of its own
 // (including another panic) is dropped: the hook must still exit 0.
-func recordHookFailure(home, harness string, payload map[string]any) {
+func RecordFailure(home, harness string, payload map[string]any) {
 	defer func() { _ = recover() }()
 	if home == "" {
 		return
@@ -80,13 +36,13 @@ func recordHookFailure(home, harness string, payload map[string]any) {
 	if err != nil || !found || !cfg.Archive.Enabled {
 		return
 	}
-	project, owned := configuredProjectActivationFor(cfg, projectRoot(payload))
+	project, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
 	if !owned || !project.Included {
 		return
 	}
 	// The real clock: the injected one may be what failed.
-	_ = recordCaptureDiagnostic(home, captureDiagnostic{
-		Code: diagnosticHookFailed, Harness: archive.CanonicalHarness(harness),
+	_ = RecordDiagnostic(home, Diagnostic{
+		Code: DiagnosticHookFailed, Harness: archive.CanonicalHarness(harness),
 		ProjectRoot: project.Root, ObservedAt: time.Now(),
 	})
 }
@@ -151,7 +107,13 @@ func classifyHookEvent(harness, eventName string) hookEventKind {
 	return hookEventIgnored
 }
 
-func handleHookEvent(home, harness string, payload map[string]any, now time.Time) error {
+// HandleEvent records one hook event: payload is what harness sent on stdin,
+// home the data directory, and now the event's time. An event the harness
+// sends that capture does not use, a missing or disabled configuration, and
+// a paused archive are no-ops. While setup's transaction is open a start is
+// only explained by a diagnostic. Otherwise the event is handled under
+// hooks.lock, which it waits at most a second for.
+func HandleEvent(home, harness string, payload map[string]any, now time.Time) error {
 	if payload == nil {
 		return nil
 	}
@@ -160,7 +122,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	if kind == hookEventIgnored {
 		return nil
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
 	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", time.Second)
@@ -169,7 +131,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	}
 	defer unlock()
 	// Setup may have started while this hook was waiting for the lock.
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
 	cfg, found, err := config.Load(home)
@@ -194,7 +156,7 @@ func handleHookEvent(home, harness string, payload map[string]any, now time.Time
 	case hookEventTurnStart:
 		registered := true
 		if archive.CanonicalHarness(harness) == "cursor" {
-			registered, err = hasRegistration(store, nativeSessionID)
+			registered, err = HasRegistration(store, nativeSessionID)
 			if err != nil {
 				return err
 			}
@@ -238,7 +200,7 @@ func startsCapture(kind hookEventKind, harness string) bool {
 // never waits for it. The write takes only diagnostics.lock, for at most
 // hookDiagnosticsWait, and drops the diagnostic on timeout: losing one
 // bounded, content-free diagnostic is better than holding up the user's turn
-// behind an installation. recordCaptureDiagnostic rechecks inclusion under
+// behind an installation. RecordDiagnostic rechecks inclusion under
 // that lock, so a project setup has just excluded and pruned stays pruned.
 func recordSetupInProgress(home string, kind hookEventKind, harness string, payload map[string]any, now time.Time) error {
 	if !startsCapture(kind, harness) {
@@ -259,19 +221,19 @@ func recordSetupInProgress(home string, kind hookEventKind, harness string, payl
 		if nativeSessionID == "" {
 			return nil
 		}
-		registered, err := hasRegistration(state.OpenReadOnly(home), nativeSessionID)
+		registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID)
 		if err != nil || registered {
 			return err
 		}
 	}
 	// Same rule as every other diagnostic: an excluded project, or a directory
 	// belonging to no configured project, never leaves its path on disk.
-	project, owned := configuredProjectActivationFor(cfg, projectRoot(payload))
+	project, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
 	if !owned || !project.Included {
 		return nil
 	}
-	return recordCaptureDiagnostic(home, captureDiagnostic{
-		Code: diagnosticSetupInProgress, Harness: archive.CanonicalHarness(harness),
+	return RecordDiagnostic(home, Diagnostic{
+		Code: DiagnosticSetupInProgress, Harness: archive.CanonicalHarness(harness),
 		ProjectRoot: project.Root, ObservedAt: now,
 	})
 }
@@ -299,9 +261,9 @@ func handleSessionActivity(store *state.Store, harness, nativeSessionID, eventNa
 	return saveLifecycleEvidence(store, archiveID, harness, strings.ToLower(eventName), payload, now)
 }
 
-// hasRegistration reports whether a native session already has an accepted
+// HasRegistration reports whether a native session already has an accepted
 // registration. An index entry without a registration does not count.
-func hasRegistration(store *state.Store, nativeSessionID string) (bool, error) {
+func HasRegistration(store *state.Store, nativeSessionID string) (bool, error) {
 	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
 	if err != nil {
 		return false, fmt.Errorf("look up archive session ID: %w", err)
@@ -337,7 +299,7 @@ func cursorTranscriptPath(payload map[string]any, conversationID string) string 
 // replaced, whatever a later payload says. The write goes through
 // UpdateRegistration, under the lock retention forgets a session with, so a
 // chat forgotten meanwhile is not written back without its index entry; that
-// is reported as state.ErrSessionNotRegistered, which handleHookEvent
+// is reported as state.ErrSessionNotRegistered, which HandleEvent
 // treats as the quiet outcome of the race.
 func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistration, harness string, payload map[string]any) error {
 	// A chat read from Cursor's database never switches to a file.
@@ -378,7 +340,7 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, harn
 	// that owns it and register under the configured spelling, so the project
 	// ID, the activation boundary, and later continuations all agree with the
 	// configuration rather than with the directory the user happened to be in.
-	owner, owned := configuredProjectActivationFor(cfg, projectRoot(payload))
+	owner, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
 	root := projectRoot(payload)
 	if owned {
 		root = owner.Root
@@ -443,14 +405,14 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, harn
 	// a project that is not yet active cannot capture any start, so check
 	// activation before asking whether this start is provably fresh.
 	if !cfg.Archive.Eligible(root, now) {
-		return recordCaptureDiagnostic(home, captureDiagnostic{
-			Code: diagnosticPreActivationStart, Harness: archive.CanonicalHarness(harness),
+		return RecordDiagnostic(home, Diagnostic{
+			Code: DiagnosticPreActivationStart, Harness: archive.CanonicalHarness(harness),
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
 	if !provesFreshSessionStart(harness, payload) {
-		return recordCaptureDiagnostic(home, captureDiagnostic{
-			Code: diagnosticUnknownSessionStart, Harness: archive.CanonicalHarness(harness),
+		return RecordDiagnostic(home, Diagnostic{
+			Code: DiagnosticUnknownSessionStart, Harness: archive.CanonicalHarness(harness),
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
@@ -495,7 +457,7 @@ var (
 	errSessionIdentityConflict = errors.New("session identity conflicts with the accepted registration")
 )
 
-// configuredProjectActivationFor returns the configured project that owns
+// ConfiguredProjectActivationFor returns the configured project that owns
 // root: the project whose root is root itself or its nearest configured
 // ancestor, comparing resolved paths so a symlinked checkout still maps to the
 // project it was registered under. The nearest ancestor wins, so a project
@@ -503,7 +465,7 @@ var (
 // decision). Excluded projects take part in the match: an excluded project
 // nested in an included one must stay excluded rather than falling through to
 // its parent.
-func configuredProjectActivationFor(cfg config.Config, root string) (archive.ProjectActivation, bool) {
+func ConfiguredProjectActivationFor(cfg config.Config, root string) (archive.ProjectActivation, bool) {
 	if root == "" {
 		return archive.ProjectActivation{}, false
 	}
@@ -523,7 +485,7 @@ func configuredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 // configuredProjectFor returns the owning project's configured root spelling,
 // which is what registrations store.
 func configuredProjectFor(cfg config.Config, root string) (string, bool) {
-	project, found := configuredProjectActivationFor(cfg, root)
+	project, found := ConfiguredProjectActivationFor(cfg, root)
 	return project.Root, found
 }
 

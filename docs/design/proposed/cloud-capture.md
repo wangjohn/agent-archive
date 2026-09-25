@@ -49,7 +49,7 @@ Probes ran as one-off routines on the default Anthropic cloud environment, Claud
 
 - The VM is Ubuntu 24.04 x86_64, running as root with `HOME=/root` and `CLAUDE_CODE_REMOTE=true`. `agent-archive` builds there with Go 1.24 (`linux/amd64`) and `status` runs.
 - Repository hooks fired for `SessionStart`, `UserPromptSubmit`, `SubagentStop` and `Stop`. `SessionEnd` could not be observed, because it runs after the last turn.
-- `SessionStart` arrived with `source: "startup"` and a transcript that existed with 0 bytes, so the existing fresh-start proof in `provesFreshSessionStart` passes unchanged.
+- `SessionStart` arrived with `source: "startup"` and a transcript that existed with 0 bytes, so the existing fresh-start proof in `provesFreshSessionStart` (`internal/capture`) passes unchanged.
 - `transcript_path` was always absolute, and its basename equalled `session_id`. At `Stop` the transcript already contained the final assistant records.
 - `SubagentStop` carried `agent_transcript_path` at `…/<session_id>/subagents/agent-<id>.jsonl`, and the file existed. That is the layout the Claude child capture already expects.
 - The transcript contains record types the Claude adapter does not allow (`atis-latch`, `attachment`, `last-prompt`, `queue-operation`) and new top-level keys (`wireToolInputs`, `turnOrigin`, `atis`, `classifierBoundary`, `apiBlockIndex`, `queueSkipAttachments`, `rendered`, `sourceToolAssistantUUID`). Today these are dropped with `unknown_record_type` and `unknown_field_omitted` gaps, so nothing fails, but coverage is incomplete.

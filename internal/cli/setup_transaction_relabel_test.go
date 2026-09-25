@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 // fakeLaunchd answers launchctl print, bootstrap, and bootout for one test
@@ -193,7 +194,7 @@ func TestFailedSetupRestoresEveryRetiredJob(t *testing.T) {
 	if _, running := launchd.loaded[launchLabel(paths[1])]; running {
 		t.Errorf("%s was not running and was started", paths[1])
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		t.Fatalf("the setup journal remains after a complete rollback:\n%s", &errOut)
 	}
 }

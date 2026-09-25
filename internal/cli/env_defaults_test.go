@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 // loadLaunchAgent bootstraps the plist into this user's GUI session and
@@ -99,7 +101,7 @@ func TestParseJobStateComparesTheLoadedPlist(t *testing.T) {
 	}{
 		{"gui/501/com.agent-archive.collector = {\n\tpath = " + ours + "\n\tstate = running\n}", nil, "running"},
 		{"\tstate = waiting\n\tpath = " + ours + "\n", nil, "loaded"},
-		{"\tpath = /Users/someone/Library/LaunchAgents/com.agent-archive.collector.plist\n\tstate = running\n", nil, jobAnotherInstallation},
+		{"\tpath = /Users/someone/Library/LaunchAgents/com.agent-archive.collector.plist\n\tstate = running\n", nil, setupjournal.JobAnotherInstallation},
 		{"\tstate = running\n", nil, "unknown"},
 		{"Could not find service \"x\" in domain for user gui: 501", fmt.Errorf("exit status 113"), "missing"},
 		{"boom", fmt.Errorf("exit status 1"), "unknown"},

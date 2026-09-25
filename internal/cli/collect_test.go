@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -29,7 +30,7 @@ func TestCollectPassReportsQuarantinedStateAndTrimsErrorLog(t *testing.T) {
 	transcript := writeCodexTranscript(t, dir)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
-	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "registrations", "broken.json"), []byte(`{"archive_session_id":`), 0o600); err != nil {
@@ -73,7 +74,7 @@ func collectFixture(t *testing.T, now time.Time) (home string, env Env, remote *
 	dir := t.TempDir()
 	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": writeCodexTranscript(t, dir)}
-	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 	remote = storagetest.NewMemoryStore()
@@ -229,7 +230,7 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-2", "cwd": dir, "transcript_path": writeCodexTranscript(t, dir)}
-	if err := handleHookEvent(home, "codex", payload, later); err != nil {
+	if err := capture.HandleEvent(home, "codex", payload, later); err != nil {
 		t.Fatal(err)
 	}
 	env.Now = func() time.Time { return later }
@@ -300,7 +301,7 @@ func TestCollectorKeepsLastPublicationOnUnchangedPass(t *testing.T) {
 	now := time.Now()
 	setUpTestConfig(t, home, project, now.Add(-time.Hour))
 	env := testEnv(t, home, now)
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "one", "cwd": project, "transcript_path": writeCodexTranscript(t, project)}, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "one", "cwd": project, "transcript_path": writeCodexTranscript(t, project)}, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runOnePass(env, false); err != nil {
@@ -344,7 +345,7 @@ func TestCollectCommandRunsQuietlyOnSuccess(t *testing.T) {
 	transcript := writeCodexTranscript(t, dir)
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
-	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
 
