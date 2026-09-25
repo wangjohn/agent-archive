@@ -10,11 +10,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/hooks"
 )
 
+// vaultHelper is the credential_process program awsFixture's profile runs.
+const vaultHelper = "vault-helper"
+
 // awsFixture is an AWS config file outside ~/.aws, as AWS_CONFIG_FILE
-// names one, whose profile "vault" gets credentials by running helper, and
-// a directory (not on launchd's PATH) holding helper.
-func awsFixture(t *testing.T, helper string) (configFile, credentialsFile, binDir string) {
+// names one, whose profile "vault" gets credentials by running
+// vaultHelper, and a directory (not on launchd's PATH) holding it.
+func awsFixture(t *testing.T) (configFile, credentialsFile, binDir string) {
 	t.Helper()
+	helper := vaultHelper
 	dir := t.TempDir()
 	configFile = filepath.Join(dir, "aws config")
 	credentialsFile = filepath.Join(dir, "aws credentials")
@@ -63,7 +67,7 @@ func collectorPlistEnvironment(t *testing.T, env Env, home, userHome string) (ma
 func TestSetupGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
-	configFile, credentialsFile, binDir := awsFixture(t, "vault-helper")
+	configFile, credentialsFile, binDir := awsFixture(t)
 	caBundle := filepath.Join(filepath.Dir(configFile), "corporate-ca.pem")
 	if err := os.WriteFile(caBundle, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -144,12 +148,26 @@ func TestSetupGivesAnR2CollectorOnlyItsDataDirectory(t *testing.T) {
 func TestSetupWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
-	configFile, _, _ := awsFixture(t, "vault-helper")
+	configFile, _, _ := awsFixture(t)
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": "/usr/bin:/bin"})
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "vault", true, false, false, t.TempDir()), 0)
 	if !strings.Contains(output, `AWS profile "vault" gets its credentials by running vault-helper, which the background collector cannot find on its PATH`) {
 		t.Fatalf("setup did not warn about the credential_process:\n%s", output)
+	}
+}
+
+// setup --yes gives the same warning.
+func TestSetupYesWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	configFile, _, _ := awsFixture(t)
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": "/usr/bin:/bin"})
+	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+	output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "test-bucket", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir())
+	if !strings.Contains(output, `AWS profile "vault" gets its credentials by running vault-helper, which the background collector cannot find on its PATH`) {
+		t.Fatalf("setup --yes did not warn about the credential_process:\n%s", output)
 	}
 }
 
@@ -187,7 +205,7 @@ func TestStatusReportsWhenTheCollectorCannotLoadTheProfile(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			home, userHome := t.TempDir(), t.TempDir()
-			configFile, _, binDir := awsFixture(t, "vault-helper")
+			configFile, _, binDir := awsFixture(t)
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 			env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": binDir + ":/usr/bin:/bin"})
 			setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "vault", true, false, false, t.TempDir()), 0)
@@ -250,30 +268,21 @@ func TestCommandProgram(t *testing.T) {
 }
 
 // setup --yes installs the same collector as interactive setup: it records
-// the AWS settings the storage check ran with, and says when the profile's
-// credential_process is not a program the collector can find.
+// the AWS settings the storage check ran with, and does not warn about a
+// credential_process the collector can find.
 func TestSetupYesGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 	t.Parallel()
-	for name, onPath := range map[string]bool{"helper on PATH": true, "helper not on PATH": false} {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			home, userHome := t.TempDir(), t.TempDir()
-			configFile, _, binDir := awsFixture(t, "vault-helper")
-			path := "/usr/bin:/bin"
-			if onPath {
-				path = binDir + ":" + path
-			}
-			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-			env = withEnvironment(env, map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": path})
-			output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex")
-			warned := strings.Contains(output, `AWS profile "vault" gets its credentials by running vault-helper, which the background collector cannot find on its PATH`)
-			if warned == onPath {
-				t.Fatalf("warned=%v with the helper on PATH=%v:\n%s", warned, onPath, output)
-			}
-			environment, _ := collectorPlistEnvironment(t, env, home, userHome)
-			if environment["AWS_CONFIG_FILE"] != configFile || environment["PATH"] != collectorPath(path) {
-				t.Fatalf("collector environment %v", environment)
-			}
-		})
+	home, userHome := t.TempDir(), t.TempDir()
+	configFile, _, binDir := awsFixture(t)
+	path := binDir + ":/usr/bin:/bin"
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": path})
+	output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex")
+	if strings.Contains(output, "cannot find") {
+		t.Fatalf("setup --yes warned about a helper the collector can find:\n%s", output)
+	}
+	environment, _ := collectorPlistEnvironment(t, env, home, userHome)
+	if environment["AWS_CONFIG_FILE"] != configFile || environment["PATH"] != collectorPath(path) {
+		t.Fatalf("collector environment %v", environment)
 	}
 }
