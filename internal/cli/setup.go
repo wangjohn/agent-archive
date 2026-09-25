@@ -478,6 +478,17 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env) er
 	return nil
 }
 
+// storedCredentialReadable reports whether the Keychain item ref can be
+// loaded now, without any Keychain prompt.
+func storedCredentialReadable(env Env, ref string) bool {
+	kc, err := env.keychain()
+	if err != nil {
+		return false
+	}
+	_, err = kc.Load(context.Background(), ref)
+	return err == nil
+}
+
 func promptStorage(p *prompter, existing credentials.Config, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
 	var secret credentials.R2Credentials
@@ -488,8 +499,11 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 	}
 	choice, err := p.menu("Where should sessions be stored?", firstNonEmpty(existing.Provider, "r2"), providers...)
 	for err == nil && choice == "help" {
-		terminal.Println(p.out, "Cloudflare R2: create a private bucket and bucket-scoped Object Read & Write credentials. Keep public access disabled.")
-		terminal.Println(p.out, "https://developers.cloudflare.com/r2/get-started/s3/")
+		terminal.Println(p.out, "Cloudflare R2, in the dashboard at https://dash.cloudflare.com:")
+		terminal.Println(p.out, "  1. R2 Object Storage > Create bucket. Leave public access off.")
+		terminal.Println(p.out, "  2. Manage API tokens > Create API token: Object Read & Write, applied to only that bucket.")
+		terminal.Println(p.out, "     Copy the Access Key ID and Secret Access Key.")
+		terminal.Println(p.out, "  3. Copy the Account ID from the R2 overview page.")
 		terminal.Println(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
 		terminal.Println(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
 		terminal.Println(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
@@ -527,9 +541,16 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 		}
 		reuse := false
 		if cfg.R2CredentialRef != "" {
-			reuse, err = p.yesNo("Keep stored R2 credentials?", true)
-			if err != nil {
-				return cfg, secret, false, err
+			// A rebuilt or reinstalled binary can lose access to the item it
+			// stored; offering to keep it would only fail after the
+			// questions, so ask for the key again right away.
+			if storedCredentialReadable(env, cfg.R2CredentialRef) {
+				reuse, err = p.yesNo("Keep stored R2 credentials?", true)
+				if err != nil {
+					return cfg, secret, false, err
+				}
+			} else {
+				terminal.Println(p.out, "The stored R2 credentials can't be read from the Keychain; enter them again.")
 			}
 		}
 		if !reuse {

@@ -307,7 +307,7 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3\nbucket\nprofile\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }})
-	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), "https://developers.cloudflare.com/") {
+	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), "Manage API tokens") {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }

@@ -214,6 +214,30 @@ func TestSetupStorageFailureKeepsDraftAndOldSecret(t *testing.T) {
 	}
 }
 
+// After a rebuild the Keychain can refuse the stored R2 item. Choosing
+// storage again asks for the key right away, and one run fixes it.
+func TestSetupStorageReasksForAnUnreadableStoredCredential(t *testing.T) {
+	t.Parallel()
+	home, project := t.TempDir(), t.TempDir()
+	kc := newFakeKeychain()
+	env := setupTestEnv(t, home, t.TempDir(), kc, time.Now())
+	setupRun(t, env, r2SetupInput(project, "old-private-value"), 0)
+	old, _, _ := config.Load(home)
+	if err := kc.Delete(context.Background(), old.Storage.R2CredentialRef); err != nil {
+		t.Fatal(err)
+	}
+	// No answer to "Keep stored R2 credentials?": the key is asked for next.
+	output := setupRun(t, env, "storage\nr2\ntest-bucket\n0123456789abcdef0123456789abcdef\nACCESS2\nnew-private-value\ny\n", 0)
+	if strings.Contains(output, "Keep stored R2 credentials?") || !strings.Contains(output, "can't be read from the Keychain") {
+		t.Fatalf("setup offered the unreadable credential:\n%s", output)
+	}
+	current, _, _ := config.Load(home)
+	secret, err := kc.Load(context.Background(), current.Storage.R2CredentialRef)
+	if err != nil || secret.SecretAccessKey != "new-private-value" {
+		t.Fatalf("new credential not stored: %v", err)
+	}
+}
+
 func TestSetupReconfigurePreservesPauseIdentityActivationAndRemovesHooks(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
