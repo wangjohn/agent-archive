@@ -26,8 +26,9 @@ const (
 	// evidence embeds the bodies of the skills installed when it ran, so an
 	// uncapped body is repeated in every bundle. The inventory entry (name,
 	// sha256, scope) and the recorded original size stay complete, and the
-	// sha256 remains the hash of the whole original file. Moving bodies to
-	// content-addressed objects is deferred.
+	// sha256 remains the hash of the whole file (redacted, see
+	// ObserveSkills). Moving bodies to content-addressed objects is
+	// deferred.
 	maxSnapshotBodyBytes = 16 << 10
 )
 
@@ -200,9 +201,14 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 			name = parsed
 			payload["name"] = name
 		}
-		digest := sha256.Sum256(original)
+		// The hash is of the whole file with its credentials redacted, not
+		// of the original bytes: uploaded beside the redacted snapshot, a
+		// hash of the original would let whoever holds the bucket confirm a
+		// guess at a redacted secret. A file with nothing to redact hashes
+		// to its own SHA-256, so `list --skill-sha256` still matches it.
+		digest := sha256.Sum256([]byte(archive.RedactText(string(original))))
 		hash := hex.EncodeToString(digest[:])
-		payload["sha256"] = hash // hash of original bytes, before filtering
+		payload["sha256"] = hash
 		body := string(original)
 		if len(body) > maxSnapshotBodyBytes {
 			body = archive.TruncateUTF8(body, maxSnapshotBodyBytes)

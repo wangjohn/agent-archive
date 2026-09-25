@@ -153,6 +153,20 @@ func TestSetupWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
 	}
 }
 
+// setup --yes gives the same warning.
+func TestSetupYesWarnsWhenTheCollectorCannotRunTheCredentialProcess(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	configFile, _, _ := awsFixture(t, "vault-helper")
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": configFile, "PATH": "/usr/bin:/bin"})
+	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+	output := setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "test-bucket", "--aws-profile", "vault", "--region", "us-east-1", "--project", t.TempDir())
+	if !strings.Contains(output, `AWS profile "vault" gets its credentials by running vault-helper, which the background collector cannot find on its PATH`) {
+		t.Fatalf("setup --yes did not warn about the credential_process:\n%s", output)
+	}
+}
+
 // status reads the environment the collector actually has, so it reports
 // when that environment no longer loads the profile: a helper removed, an
 // AWS file moved, or an older LaunchAgent that set no PATH.

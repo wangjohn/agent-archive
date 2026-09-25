@@ -73,7 +73,8 @@ recursively. Codex and Cursor subagents are not captured yet.
 
 During initial capture or new session activity, the background collector
 checks known skill directories for the app. It records installed skills,
-original instruction hashes, filtered instruction copies, and observation
+instruction hashes (SHA-256 of each SKILL.md with its credentials
+redacted), filtered instruction copies, and observation
 times. These observations do not prove that the app discovered a skill, made
 it eligible, or used that exact version in an earlier turn. Oversized,
 truncated, nested, unreadable, and uninspected content is marked as a

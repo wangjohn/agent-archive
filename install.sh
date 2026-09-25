@@ -54,7 +54,8 @@ main() {
   target="${install_dir}/agent-archive"
 
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT INT TERM
+  trap 'rm -rf "$tmp"' EXIT
+  trap 'exit 130' INT TERM
 
   say "Downloading ${asset} (${version:-latest})"
   download "${base}/${asset}" "${tmp}/${asset}"

@@ -2,6 +2,7 @@
 import hashlib
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import tempfile
@@ -9,6 +10,11 @@ import unittest
 
 INSTALL_SH = Path(__file__).resolve().parent.parent / 'install.sh'
 TEAM = 'SYNTH12345'
+
+
+def with_team(script, team):
+    """script with its team_id line naming team, whatever it named before."""
+    return re.sub(r'^team_id="[A-Z0-9]*"$', f'team_id="{team}"', script, count=1, flags=re.M)
 DEVELOPER_ID_REQUIREMENT = (
     'anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists '
     'and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
@@ -47,7 +53,7 @@ class InstallScriptTest(unittest.TestCase):
         # The shipped script names no team until the first release; the
         # tests run a copy that names the synthetic one.
         self.install_sh = self.root / 'install.sh'
-        self.install_sh.write_text(INSTALL_SH.read_text().replace('team_id=""', f'team_id="{TEAM}"', 1))
+        self.install_sh.write_text(with_team(INSTALL_SH.read_text(), TEAM))
         self.codesign_log = self.root / 'codesign.log'
 
     def write_sums(self, override=None):

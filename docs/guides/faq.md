@@ -75,8 +75,7 @@ a capture gap issue; a fix comes as a new adapter or filter version, and
 sessions whose transcripts are still on your Mac are refiltered then.
 
 **Which app versions work?**
-See the tested versions in the [README](../../README.md#supported-platforms)
-and [capture capabilities](../reference/capture-capabilities.md). A version
+See the [tested app versions](../reference/capture-capabilities.md#tested-app-versions). A version
 agent-archive hasn't seen is reported as `unverified` rather than assumed to
 work.
 

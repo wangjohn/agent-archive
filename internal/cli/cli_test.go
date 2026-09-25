@@ -112,6 +112,26 @@ func TestUnknownCommandAndNoArgs(t *testing.T) {
 	}
 }
 
+// With no arguments, a Mac that is not set up is told to run setup first;
+// one that is set up sees only the command list.
+func TestNoArgsSaysWhenNotSetUp(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	var out bytes.Buffer
+	if code := Run(nil, nil, &out, nil, env); code != 0 || !strings.HasPrefix(out.String(), "Not set up yet — run agent-archive setup.\n\nAgent Archive") {
+		t.Fatalf("exit %d\n%s", code, &out)
+	}
+	if _, err := os.Stat(filepath.Join(home, "config.json")); !os.IsNotExist(err) {
+		t.Fatal("printing help wrote the data directory")
+	}
+	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", true, false, false, t.TempDir()), 0)
+	out.Reset()
+	if code := Run(nil, nil, &out, nil, env); code != 0 || !strings.HasPrefix(out.String(), "Agent Archive") {
+		t.Fatalf("exit %d\n%s", code, &out)
+	}
+}
+
 // must fails the test on a fixture setup error.
 func must(t *testing.T, err error) {
 	t.Helper()
