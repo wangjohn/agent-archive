@@ -8,8 +8,8 @@ naming the problem. Exit codes: 0 for success and help, 1 for an operational
 failure, 2 for a usage error. What a command was asked for goes to stdout;
 why it did not do it, or not all of it, goes to stderr with exit 1. A `sync`
 that is paused, finds another command running, or fails for some sessions
-counts: its summary line stays on stdout, and each failed session, or the
-reason nothing ran, is on stderr. Commands that need setup and find none say
+exits 1: its summary line, if it ran, stays on stdout, and each failed
+session, or the reason nothing ran, is on stderr. Commands that need setup and find none say
 so without creating the data directory.
 
 ## Everyday commands

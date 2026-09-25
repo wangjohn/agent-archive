@@ -72,12 +72,15 @@ is no tagged release yet: build from source (see the
   working unchanged. Only the default installation retires the prototype's
   job and hooks.
 - What a command was asked for goes to stdout, and why it did not do it (or
-  not all of it) to stderr with exit 1: a paused `sync` now exits 1, and
+  not all of it) to stderr with exit 1. **Behavior change:** a paused `sync`
+  now exits 1 (it exited 0; the background collector is unaffected), and
   per-session sync failures go to stderr. `sync`, `pause`, `setup`, and
   `uninstall` name the command holding the collector lock instead of
   "another sync is already running".
-- Uninstall deletes a hook file setup created once nothing is left in it
-  (Cursor's `{"version": 1}` included), unless it is a symlink.
+- Uninstall deletes a hook file that removing its hooks leaves empty
+  (`{}`, or Cursor's `{"version": 1}` alone), as when setup created it,
+  unless it is a symlink. A file that was already `{}` before setup is
+  deleted too; to the apps, an empty file and no file mean the same.
 - Help: `version --help` shows help instead of failing, `handoff --force` and
   the `show` options have lines of their own, `list --skill-usage` states its
   default, `list --complete` says it also excludes capture gaps, both
