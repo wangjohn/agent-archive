@@ -461,7 +461,7 @@ matching rule wins.
    [Discovery](#discovery).
 2. **Configured project.** If a configured project owns the directory, use
    it. "Owns" means the nearest configured ancestor on resolved paths, the
-   same rule hooks use (`configuredProjectActivationFor`). If that project is
+   same rule hooks use (`capture.ConfiguredProjectActivationFor`). If that project is
    excluded, skip with `excluded_project`. An exclusion always beats the
    default.
 3. **Worktree.** If walking up from the directory finds a `.git` file, follow
