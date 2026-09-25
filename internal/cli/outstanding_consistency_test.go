@@ -80,6 +80,16 @@ func TestEveryPendingCountAgrees(t *testing.T) {
 			t.Helper()
 			cache(t, s, reg, state.CacheStatusDeclined)
 		}, false},
+		{"request queued in another destination", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
+			t.Helper()
+			reg.DestinationID = "another-destination"
+			if err := s.SaveRegistration(reg); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.SaveRequest(reg.ArchiveSessionID, "stop", now); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
 		{"blocked", func(t *testing.T, s *state.Store, reg archive.SessionRegistration) {
 			t.Helper()
 			if err := statetest.SaveBlocked(s, reg.ArchiveSessionID, bundle(reg), now.Add(-time.Hour), state.BlockedReasonTranscriptMissing); err != nil {
@@ -99,6 +109,9 @@ func TestEveryPendingCountAgrees(t *testing.T) {
 			}
 			reg := saveImportedSession(t, store, now, "imported", project)
 			tc.setup(t, store, reg)
+			if reg, _, err = store.LoadRegistration(reg.ArchiveSessionID); err != nil {
+				t.Fatal(err)
+			}
 			want := 0
 			if tc.pending {
 				want = 1
