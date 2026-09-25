@@ -115,7 +115,7 @@ linters:
         linters: [gosec]
       # md5 here is the S3 ETag of an object, used to compare content with
       # what the bucket reports, never as a security primitive.
-      - path: internal/(storage/hash|reader/cache)\.go
+      - path: internal/(storage/storagetest/memory|reader/cache)\.go
         text: G501
         linters: [gosec]
 
