@@ -372,7 +372,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 			return err
 		}
 	}
-	relabeled, err := planRelabel(home, userHome, env)
+	relabeled, err := planRelabel(env.installation(home, userHome).previousCollectorPlists(), env)
 	if err != nil {
 		return err
 	}
@@ -382,7 +382,15 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
 	}
 	journal := setupJournal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
-	if err = local.Write(setupjournal.JournalPath(home), journal); err != nil {
+	return commitSetup(home, journal, env)
+}
+
+// commitSetup records journal, then makes the changes it holds: it stops the
+// collector when it was loaded, applies every file change, retires the jobs
+// the journal retires, and starts the collector. A failure on the way puts
+// everything back from the journal (restoreSetup); success removes it.
+func commitSetup(home string, journal setupJournal, env Env) error {
+	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		return err
 	}
 	fail := func(cause error) error {
@@ -392,25 +400,25 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		return fmt.Errorf("previous installation restored: %w", cause)
 	}
 	if journal.WasLoaded {
-		if err = env.unloadLaunchAgent(plistPath); err != nil {
+		if err := env.unloadLaunchAgent(journal.Plist); err != nil {
 			return fail(fmt.Errorf("stop previous collector: %w", err))
 		}
 	}
-	if err = hooks.Apply(changes); err != nil {
+	if err := hooks.Apply(journal.Changes); err != nil {
 		return fail(err)
 	}
-	if err = retireLegacyJob(journal.Legacy, env); err != nil {
+	if err := retireLegacyJob(journal.Legacy, env); err != nil {
 		return fail(err)
 	}
 	for _, job := range journal.relabeled() {
-		if err = retireLegacyJob(job, env); err != nil {
+		if err := retireLegacyJob(job, env); err != nil {
 			return fail(fmt.Errorf("retire the %s: %w", relabeledJobName, err))
 		}
 	}
-	if err = env.loadLaunchAgent(plistPath); err != nil {
+	if err := env.loadLaunchAgent(journal.Plist); err != nil {
 		return fail(fmt.Errorf("start background collector: %w", err))
 	}
-	if err = os.Remove(setupjournal.JournalPath(home)); err != nil {
+	if err := os.Remove(setupjournal.JournalPath(home)); err != nil {
 		return fail(err)
 	}
 	return nil
@@ -578,6 +586,14 @@ func abandonRecovery(out io.Writer, env Env) error {
 }
 
 func recoverSetup(home string, env Env) error {
+	return recoverJournal(home, env, func() (func(), error) { return lockCollector(home, "setup", env.now()) })
+}
+
+// recoverJournal puts back the setup an interrupted journal in home records,
+// if there is one. It reads the journal first, then takes the collector lock
+// (lockCollector) and hooks.lock, so nothing runs a pass or a hook while
+// files are restored.
+func recoverJournal(home string, env Env, lockCollector func() (func(), error)) error {
 	var journal setupJournal
 	err := local.Read(setupjournal.JournalPath(home), &journal)
 	if os.IsNotExist(err) {
@@ -589,7 +605,7 @@ func recoverSetup(home string, env Env) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", setupjournal.JournalPath(home), err)
 	}
-	unlock, err := lockCollector(home, "setup", env.now())
+	unlock, err := lockCollector()
 	if err != nil {
 		return err
 	}
@@ -602,11 +618,12 @@ func recoverSetup(home string, env Env) error {
 	return restoreSetup(home, journal, env)
 }
 
-// planRelabel prepares retiring every collector earlier releases installed
-// for home under other labels (previousCollectorPlists).
-func planRelabel(home, userHome string, env Env) ([]*legacyJob, error) {
+// planRelabel prepares retiring the collectors earlier releases installed
+// for this data directory under other labels: plists, from
+// previousCollectorPlists.
+func planRelabel(plists []string, env Env) ([]*legacyJob, error) {
 	var jobs []*legacyJob
-	for _, path := range env.installation(home, userHome).previousCollectorPlists() {
+	for _, path := range plists {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return nil, err
