@@ -95,9 +95,10 @@ func TestUnpublishedSessionsWithoutConfigurationCountsAll(t *testing.T) {
 	must(t, err)
 	home, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, project))
 	startSession(t, env, project, "sess-1")
-	cfg := mustConfig(t, home)
 	must(t, os.Remove(filepath.Join(home, "config.json")))
-	if n, unreadable := unpublishedSessions(home, cfg, false); n != 1 || len(unreadable) != 0 {
+	// What uninstall loads when there is no config.json: a zero configuration,
+	// which on its own admits no registration.
+	if n, unreadable := unpublishedSessions(home, config.Config{}, false); n != 1 || len(unreadable) != 0 {
 		t.Fatalf("unpublished = %d, %v", n, unreadable)
 	}
 }
