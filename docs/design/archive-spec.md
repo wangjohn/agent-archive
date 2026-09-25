@@ -37,7 +37,7 @@ Support `--help` and `--version`. Keep background-worker and hook entry points i
 
 The onboarding sequence is download → select applications/projects → connect storage → review and enable → verify real capture.
 
-The implemented CLI refinement is described in [the setup and CLI plan](../history/cli-plan.md). Setup saves non-secret drafts between completed steps, offers focused edits on rerun, and finishes configuration while app verification is pending. Command help is side-effect-free. Status supports human-readable and versioned JSON output. Uninstall keeps local evidence and credentials unless `--delete-local-data` is explicitly confirmed.
+Setup saves non-secret drafts between completed steps, offers focused edits on rerun, and finishes configuration while app verification is pending. Command help is side-effect-free. Status supports human-readable and versioned JSON output. Uninstall keeps local evidence and credentials unless `--delete-local-data` is explicitly confirmed.
 
 The three user-facing steps are choose apps and projects, connect storage, and
 review. Detected apps are offered together; declining opens individual choices.

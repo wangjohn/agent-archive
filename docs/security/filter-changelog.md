@@ -5,6 +5,64 @@ rules, as a whole, are in [privacy](privacy.md); version numbers and bump
 rules are in [versions](../reference/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 12
+
+Adapter version 0.12.0 goes with it; the parser is unchanged.
+
+- **Private keys encoded in base64.** A PEM block encoded in base64 whole,
+  as kubeconfig's `client-key-data` holds a client's private key, is
+  redacted wherever it appears (`cat ~/.kube/config`, `kubectl config view
+  --raw`). Certificates encoded the same way are redacted too.
+- **Docker registry logins shown as text.** The `"auth"` and
+  `"identitytoken"` values of Docker's `config.json`, base64 of
+  `user:password`, were dropped only when the file was parsed as JSON. They
+  are now redacted in text as well: a file read with line numbers, or JSON
+  following other command output.
+- **Groq and xAI keys by their prefix.** `gsk_` followed by 48 or more
+  letters and digits (Groq writes 52) and `xai-` followed by 70 or more
+  (xAI writes 80) are redacted wherever they appear, whatever holds them
+  (`GROQ=gsk_…`). Before, only a credential-named variable (`GROQ_API_KEY=`)
+  was caught.
+- **Access key IDs by name.** `access key id` joins the credential
+  vocabulary, so `R2_ACCESS_KEY_ID=…`, `AWS_ACCESS_KEY_ID=…`,
+  `"accessKeyId": …`, and `Access Key ID: …` have their values redacted.
+  An access key ID is an identifier rather than a secret, but AWS's were
+  already redacted by their `AKIA…` shape and a tool argument named
+  `access_key_id` was already dropped; an R2 access key ID, 32 hex
+  characters with no prefix, is the ID of the account's API token and
+  passed through.
+- **`.pgpass` passwords.** The password of a `host:port:database:user:
+  password` line is redacted to the end of its line (or its closing quote,
+  in `echo '…'`), after a line number or a diff marker too: anywhere when
+  the port is 5432, 6432, or `*`, as the Claude Code Read tool shows the
+  file, and with any port of two or more digits in a string that mentions
+  `.pgpass` or `PGPASSFILE` (`cat ~/.pgpass`, a heredoc into it, grep's
+  `.pgpass.bak:` prefix). A host that is all digits (a timestamp) is not a
+  line of the file.
+- **Wallet seed phrases.** 12 to 24 words of three to eight letters after a
+  name holding `mnemonic` (`MNEMONIC="…"`, `mnemonic: …`, `--mnemonic
+  "…"`, `"wallet_mnemonic": "…"`), separated by spaces or commas or written
+  as an array, are redacted, and so are exactly 12, 15, 18, 21, or 24 such
+  words after a name holding `seed` (`SEED=…`, `wallet seed: …`). `seed
+  phrase` and `recovery phrase` join the credential vocabulary
+  (`SEED_PHRASE=…`, `Secret Recovery Phrase: …`), so their values are
+  redacted whatever they hold, and tool arguments with those names are
+  dropped.
+- **Skill hashes are of the redacted text.** A skill snapshot's `sha256`,
+  and the inventory's, was the SHA-256 of the original `SKILL.md`, uploaded
+  beside its redacted body, so whoever holds the bucket could confirm a
+  guess at a redacted secret. It is now the SHA-256 of the whole file with
+  its credentials redacted, which for a file with nothing to redact is its
+  own SHA-256. Sessions archived earlier keep the old hashes.
+- **No crash on a YAML entry with two credential names.** `name:
+  DB_PASSWORD` then `name: API_TOKEN` then `value: …` found the one value
+  twice, and redacting it twice over panicked.
+- **Faster URL scan, same output.** Finding the userinfo of URLs glued
+  into one long token (`http://x` repeated with no space) read the rest of
+  the token again for each URL: 1.6 MB took about a minute. It now reads
+  the text once. The redacted output is unchanged, which a test checks
+  against the previous scan.
+
 ## Source filter version 11
 
 Filter 11 closes the shapes next to ones filter 9 and 10 fixed, from the

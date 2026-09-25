@@ -1,0 +1,2 @@
+go test fuzz v1
+string("  nAme:PASS\n  nAme:PASS\n  value:0")

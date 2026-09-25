@@ -105,6 +105,17 @@ func redactSensitive(value string) (string, bool) {
 	return value, redacted
 }
 
+// RedactText returns text with every credential the filter recognizes in a
+// string replaced by [REDACTED], and nothing else changed: there is no
+// length cap, so a digest of the result covers all of the text. A producer
+// that records a digest beside something it uploads filtered hashes this,
+// never the original, so the digest cannot confirm a guess at a redacted
+// secret.
+func RedactText(text string) string {
+	out, _ := redactSensitive(text)
+	return out
+}
+
 // maxRedactPasses bounds redactSensitive's passes. Every pass is complete,
 // so the result is redacted however many ran.
 const maxRedactPasses = 4
@@ -134,6 +145,7 @@ func redactOnce(value string, prepare func(string) needleText) (string, bool) {
 	for _, pattern := range credentialContextPatterns {
 		apply(redactMatches(pattern, text, true))
 	}
+	apply(redactPgpassLines(text))
 	apply(redactYAMLBlockValues(text))
 	apply(redactCredentialEntryValues(text))
 	apply(redactCredentialStructures(text))
@@ -232,6 +244,7 @@ func redactAssignments(t needleText) (string, bool) {
 func appendAssignmentSpans(spans []valueSpan, s string, lineStart, lineEnd int) []valueSpan {
 	nameGroup := credentialAssignment.SubexpIndex("name")
 	valueGroup := credentialAssignment.SubexpIndex("value")
+	quotes := &quoteScanner{s: s, pos: lineStart}
 	for pos := lineStart; pos < lineEnd; {
 		match := credentialAssignment.FindStringSubmatchIndex(s[pos:lineEnd])
 		if match == nil {
@@ -245,7 +258,7 @@ func appendAssignmentSpans(spans []valueSpan, s string, lineStart, lineEnd int) 
 		}
 		nameStart, nameEnd := pos+match[2*nameGroup], pos+match[2*nameGroup+1]
 		start, end := pos+match[2*valueGroup], pos+match[2*valueGroup+1]
-		end = assignmentValueEnd(s, nameStart, nameEnd, start, end)
+		end = assignmentValueEnd(s, quotes, nameStart, nameEnd, start, end)
 		if end < 0 {
 			pos += match[1]
 			continue
@@ -260,8 +273,8 @@ func appendAssignmentSpans(spans []valueSpan, s string, lineStart, lineEnd int) 
 
 // assignmentValueEnd returns where the value of one credential assignment
 // ends, or -1 when the value is not a secret. start and end are the value
-// as credentialAssignment matched it.
-func assignmentValueEnd(s string, nameStart, nameEnd, start, end int) int {
+// as credentialAssignment matched it; quotes scans s.
+func assignmentValueEnd(s string, quotes *quoteScanner, nameStart, nameEnd, start, end int) int {
 	bare := strings.TrimLeft(s[start:end], "=")
 	valueStart := end - len(bare)
 	urlParam := nameStart > 0 && (s[nameStart-1] == '?' || s[nameStart-1] == '&')
@@ -276,7 +289,7 @@ func assignmentValueEnd(s string, nameStart, nameEnd, start, end int) int {
 		}
 		// A glued tail stops at the closing quote of a string the
 		// assignment sits in, as an unquoted value does.
-		if quote := assignmentQuoteContext(s, nameStart, nameEnd); quote != 0 {
+		if quote := quotes.context(nameStart, nameEnd); quote != 0 {
 			if at := strings.IndexByte(s[start:end], quote); at >= 0 {
 				end = start + at
 			}
@@ -286,7 +299,7 @@ func assignmentValueEnd(s string, nameStart, nameEnd, start, end int) int {
 	if urlParam {
 		end = urlParamEnd(s, start)
 	} else {
-		end = unquotedValueEnd(s, start, assignmentQuoteContext(s, nameStart, nameEnd), strings.ToLower(s[nameStart:nameEnd]))
+		end = unquotedValueEnd(s, start, quotes.context(nameStart, nameEnd), strings.ToLower(s[nameStart:nameEnd]))
 	}
 	end = backOffEscapes(s, start, end)
 	if end <= valueStart || isNonSecretValue(s[valueStart:end]) {
@@ -357,34 +370,49 @@ func valueBoundary(t string) bool {
 	return assignmentStart.MatchString(t)
 }
 
-// assignmentQuoteContext returns the quote character of a string the
-// assignment whose name spans s[nameStart:nameEnd] sits in, or 0. A quoted
-// name's own opening quote (`"password": …`) is not such a string; a quote
-// before an unquoted name (`["TOKEN=abc"]`, a backticked “ `PASS=x` “) is.
-func assignmentQuoteContext(s string, nameStart, nameEnd int) byte {
-	lineStart := strings.LastIndexAny(s[:nameStart], "\n\r") + 1
-	prefix := s[lineStart:nameStart]
-	if nameEnd < len(s) && strings.IndexByte("\"'\\", s[nameEnd]) >= 0 {
-		prefix = strings.TrimRight(prefix, "\"'\\")
-	}
-	return enclosingQuote(prefix)
+// quoteScanner tracks which quote, if any, is open at a position in s, on
+// that position's line. Assignments on a line are checked in order, so it
+// resumes where the last check stopped rather than rescanning the line: a
+// long line with many assignments (minified code) stays linear.
+type quoteScanner struct {
+	s     string
+	pos   int  // a position whose state is known: the start of a line, or where the last scan stopped
+	quote byte // the quote open at pos, or 0
 }
 
-// enclosingQuote returns the quote character of a string left open at the
-// end of prefix (the text of a line before a credential name), or 0 when
-// none is.
-func enclosingQuote(prefix string) byte {
-	var quote byte
-	for i := range len(prefix) {
-		c := prefix[i]
-		switch {
-		case quote == 0 && (c == '"' || c == '\'' || c == '`'):
-			quote = c
-		case quote != 0 && c == quote:
-			quote = 0
+// context returns the quote character of a string the assignment whose name
+// spans s[nameStart:nameEnd] sits in, or 0. A quoted name's own opening
+// quote (`"password": …`) is not such a string; a quote before an unquoted
+// name (`["TOKEN=abc"]`, a backticked “ `PASS=x` “) is.
+func (q *quoteScanner) context(nameStart, nameEnd int) byte {
+	end := nameStart
+	if nameEnd < len(q.s) && strings.IndexByte("\"'\\", q.s[nameEnd]) >= 0 {
+		for end > 0 && strings.IndexByte("\"'\\", q.s[end-1]) >= 0 {
+			end--
 		}
 	}
-	return quote
+	return q.openAt(end)
+}
+
+// openAt returns the quote character of a string left open at end, within
+// end's line, or 0 when none is.
+func (q *quoteScanner) openAt(end int) byte {
+	if end < q.pos {
+		q.pos, q.quote = strings.LastIndexAny(q.s[:end], "\n\r")+1, 0
+	}
+	for i := q.pos; i < end; i++ {
+		c := q.s[i]
+		switch {
+		case c == '\n' || c == '\r':
+			q.quote = 0
+		case q.quote == 0 && (c == '"' || c == '\'' || c == '`'):
+			q.quote = c
+		case q.quote != 0 && c == q.quote:
+			q.quote = 0
+		}
+	}
+	q.pos = end
+	return q.quote
 }
 
 // urlParamEnd returns where a URL query parameter's value starting at start

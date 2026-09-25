@@ -64,12 +64,13 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
 	input := strings.Join([]string{"y", project, "", "s3", "test-bucket", "profile", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
-	for _, unwanted := range []string{"Detected settings", "capture policy", "Include Cursor?", "Include Codex?"} {
+	// The Sessions row is left out while it shows the default.
+	for _, unwanted := range []string{"Detected settings", "capture policy", "Include Cursor?", "Include Codex?", "All new sessions, with or without skills"} {
 		if strings.Contains(output, unwanted) {
 			t.Fatalf("unexpected %q in %s", unwanted, output)
 		}
 	}
-	for _, want := range []string{"Include Codex and Claude Code?", "All new sessions, with or without skills", "90 days, then deleted automatically", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
+	for _, want := range []string{"Include Codex and Claude Code?", "90 days, then deleted automatically", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q in %s", want, output)
 		}
@@ -217,7 +218,7 @@ func TestReviewEditNeverOffersFoundApps(t *testing.T) {
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"cursor"}, DeclinedHarnesses: []string{"codex", "claude"}}}
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\ny\n"), &out)
-	if err := editSetupReview(p, &draft, t.TempDir(), nil); err != nil {
+	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Also found") || !strings.Contains(out.String(), "Change which apps are included?") {
@@ -257,7 +258,7 @@ func TestReviewEditRemovalIsNotOfferedAgain(t *testing.T) {
 	t.Parallel()
 	draft := setupDraft{Config: config.Config{Harnesses: []string{"codex", "claude"}}}
 	p := newPrompter(strings.NewReader("apps\ny\nn\ny\nn\n"), &bytes.Buffer{})
-	if err := editSetupReview(p, &draft, t.TempDir(), nil); err != nil {
+	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(draft.Config.Harnesses, []string{"claude"}) || !reflect.DeepEqual(draft.Config.DeclinedHarnesses, []string{"codex"}) {
@@ -280,7 +281,7 @@ func TestSetupReviewShowsDeclinedApps(t *testing.T) {
 	var out bytes.Buffer
 	showSetupReview(newPrompter(strings.NewReader(""), &out), next, old, true, nil)
 	got := out.String()
-	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again)") || strings.Contains(got, "Nothing above differs") {
+	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)") || strings.Contains(got, "Nothing above differs") {
 		t.Fatalf("declining found apps not shown as a change:\n%s", got)
 	}
 }
@@ -297,7 +298,7 @@ func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
 	var cfg config.Config
 	var out bytes.Buffer
-	err := chooseCapture(newPrompter(strings.NewReader("y\nn\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env)
+	err := chooseCapture(newPrompter(strings.NewReader("y\nn\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
 	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
@@ -307,7 +308,7 @@ func TestStorageHelpReturnsToSelection(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
 	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3\nbucket\nprofile\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }})
-	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), "https://developers.cloudflare.com/") {
+	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), "Manage API tokens") {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }
@@ -324,7 +325,7 @@ func TestManualProjectsExpandInjectedHomeAndDeduplicateSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, home)
+	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, nil, home)
 	canonical, _ := filepath.EvalSymlinks(project)
 	if err != nil || len(projects) != 1 || projects[0].Root != canonical {
 		t.Fatalf("projects=%+v err=%v", projects, err)
