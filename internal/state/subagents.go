@@ -149,10 +149,18 @@ func (s *Store) AcknowledgeSubagentCandidate(expected SubagentCandidate) error {
 	return s.removeSubagentCandidate(expected.ArchiveSessionID)
 }
 
+// removeSubagentCandidate removes a candidate and then its lock file, under
+// that lock. Unlinking a held lock file is safe (see local.NamedLock): a
+// writer waiting on it retries on a fresh file. Without this every
+// candidate ever seen, the rejected ones above all, left a lock file behind
+// for good.
 func (s *Store) removeSubagentCandidate(id string) error {
 	err := os.Remove(s.subagentCandidatePath(id))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove subagent candidate: %w", err)
+	}
+	if err := os.Remove(filepath.Join(s.home, subagentLockName(id))); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove subagent candidate lock: %w", err)
 	}
 	return nil
 }

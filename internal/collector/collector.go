@@ -210,9 +210,17 @@ func (p *pass) loadWork() error {
 	// A session whose registration could not be read is left for the next
 	// pass like any other outstanding work.
 	p.pending = len(registrationIssues)
+	registered := make(map[string]bool, len(registrations)+len(registrationIssues))
+	for _, reg := range registrations {
+		registered[reg.ArchiveSessionID] = true
+	}
 	for id, issue := range registrationIssues {
 		addError(p.result.Errors, id, issue)
+		registered[id] = !errors.Is(issue, state.ErrQuarantined)
 	}
+	// Lock files of sessions and candidates that are gone go now, while the
+	// registrations just listed say which those are.
+	p.local.RemoveOrphanedLocks(registered)
 	for id, issue := range requestIssues {
 		addError(p.result.Errors, id, issue)
 		// A quarantined request is gone, and the session carries on without

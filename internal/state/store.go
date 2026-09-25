@@ -316,6 +316,10 @@ func (s *Store) saveRequest(archiveSessionID, reason string, requestedAt time.Ti
 	// the registration up before taking the lock may be writing for a session
 	// that is gone now; its request would be an orphan nothing ever reads.
 	if _, err := os.Stat(s.registrationPath(archiveSessionID)); errors.Is(err, os.ErrNotExist) {
+		// Taking the lock created its file; a session that is not registered
+		// must not keep one (a rejected subagent notifying a forgotten
+		// parent did). Unlinking it while held is safe (local.NamedLock).
+		_ = os.Remove(filepath.Join(s.home, requestLockName(archiveSessionID)))
 		return ErrSessionNotRegistered
 	} else if err != nil {
 		return fmt.Errorf("check registration %q: %w", archiveSessionID, err)

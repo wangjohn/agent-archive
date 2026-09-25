@@ -349,6 +349,54 @@ func (s *Store) QuarantinedFiles() []string {
 	return out
 }
 
+// RemoveOrphanedLocks removes the lock files under request-locks/ whose
+// session or subagent candidate no longer exists: a request lock with no
+// registration (other than those in keep, registrations that exist but could
+// not be read), and a subagent lock with no candidate. Each is removed only
+// while this caller holds it, after checking again, so a writer that is
+// about to use it retries on a fresh file (see local.NamedLock). Best
+// effort: a lock still held, or one that cannot be removed, waits for the
+// next pass.
+func (s *Store) RemoveOrphanedLocks(keep map[string]bool) {
+	dir := filepath.Join(s.home, "request-locks")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".lock") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".lock")
+		owner := s.registrationPath(id)
+		if candidate, ok := strings.CutPrefix(id, "subagent-"); ok {
+			owner = s.subagentCandidatePath(candidate)
+		} else if keep[id] {
+			continue
+		}
+		if !safeFileComponent(id) || exists(owner) {
+			continue
+		}
+		unlock, err := local.NamedLock(s.home, filepath.Join("request-locks", name))
+		if err != nil {
+			continue
+		}
+		if !exists(owner) {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+		unlock()
+	}
+}
+
+// exists reports whether path names anything; an error other than "does not
+// exist" counts as existing, the conservative answer for a caller about to
+// remove something because it is gone.
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
 // staleTempAge is how old an atomic-write temporary file (see
 // local.RemoveStaleTemps) must be before a pass removes it. A write takes
 // well under a second, so anything this old was left by a process that
