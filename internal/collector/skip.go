@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -125,17 +126,23 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
 		return false, signature, nil
 	}
-	observed, observeErr := reader.Signature(p.ctx)
-	switch {
-	case signature.Blocked == state.BlockedReasonTranscriptMissing:
-		if !errors.Is(observeErr, os.ErrNotExist) {
-			return false, signature, nil
-		}
-	case observeErr != nil || !observed.matches(signature):
+	if !sourceStillAt(p.ctx, reader, signature) {
 		return false, signature, nil
 	}
 	unchanged, _, err = p.owesNothing(id, signature.Failed)
 	return unchanged, signature, err
+}
+
+// sourceStillAt reports whether the source is still in the state signature
+// records: the same stat (or Cursor chat signature), or, for a gap recorded
+// at a missing transcript, still missing. A source that cannot be observed
+// for any other reason is not.
+func sourceStillAt(ctx context.Context, reader sourceReader, signature state.ScanSignature) bool {
+	observed, err := reader.Signature(ctx)
+	if signature.Blocked == state.BlockedReasonTranscriptMissing {
+		return errors.Is(err, os.ErrNotExist)
+	}
+	return err == nil && observed.matches(signature)
 }
 
 // owesNothing reports that a session has no publication pending and, unless

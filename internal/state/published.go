@@ -163,20 +163,21 @@ func (s PublishedSummary) LinksPublished(child string) bool {
 // summary derives the state's PublishedSummary.
 func (p publishedState) summary() PublishedSummary {
 	_, lastPublishedAt, published := p.resolveLastPublished()
-	out := PublishedSummary{
-		Harness: p.Bundle.Capture.Harness.Name,
-		Status:  p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt,
-		Published: published, LastPublishedAt: lastPublishedAt,
-	}
+	var ageFrom time.Time
 	if clamp := p.ageClampFor(p.Bundle); clamp != nil {
-		out.AgeFrom = clamp.At
+		ageFrom = clamp.At
 	}
+	var linked []string
 	for _, link := range p.Bundle.LinkedSessions {
-		if link.Status == archive.LinkedSessionPublished && !slices.Contains(out.LinkedPublished, link.SessionID) {
-			out.LinkedPublished = append(out.LinkedPublished, link.SessionID)
+		if link.Status == archive.LinkedSessionPublished && !slices.Contains(linked, link.SessionID) {
+			linked = append(linked, link.SessionID)
 		}
 	}
-	return out
+	return PublishedSummary{
+		Harness: p.Bundle.Capture.Harness.Name,
+		Status:  p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt, AgeFrom: ageFrom,
+		Published: published, LastPublishedAt: lastPublishedAt, LinkedPublished: linked,
+	}
 }
 
 type publishedSnapshot struct {
