@@ -30,6 +30,7 @@ below are grouped by who they are for.
 
 | Doc | For |
 | --- | --- |
+| [CLI reference](reference/cli.md) | Every command, its help, its flags, and the exit codes (generated from the CLI). |
 | [Configuration](reference/configuration.md) | `config.json` fields and environment variables. |
 | [Bucket layout](reference/bucket-layout.md) | Object keys and how objects change. |
 | [Local state](reference/local-state.md) | Every file in the data directory. |
@@ -48,6 +49,7 @@ below are grouped by who they are for.
 | [Architecture](contributing/architecture.md) | How the pieces fit, and the package map. |
 | [Testing](contributing/testing.md) | Tests, lint, fuzzing, and a sandbox that never touches your real Mac. |
 | [Adding an adapter](contributing/adding-an-adapter.md) | Supporting another coding agent. |
+| [Session admission](contributing/session-admission.md) | How a registration's start and admission times drive each boundary check, and the guard tests. |
 | [Releasing](maintainers/releasing.md) | Tagging, signing, and notarization (maintainers). |
 
 ## Design and history

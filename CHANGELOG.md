@@ -89,6 +89,8 @@ can list them, inspect them, and hand one to another agent.
 
 - `--version` on a build from source prints the commit, `dev-<commit>`
   (with `-dirty` for uncommitted changes), instead of just `dev`.
+- A [CLI reference](docs/reference/cli.md) with every command, its help, its
+  flags, and the exit codes, generated from the CLI itself.
 - A [glossary](docs/reference/glossary.md) of the terms agent-archive uses,
   a [tested versions](docs/reference/capture-capabilities.md#tested-app-versions)
   table, and docs for deleting the archive from the bucket (everything, one
@@ -327,6 +329,9 @@ can list them, inspect them, and hand one to another agent.
   `go test -race ./internal/cli` takes about a minute instead of eight. One
   `-update` flag rewrites every golden file (`go test ./... -update`). No
   default test can reach the real Keychain.
+- Tests fail when the docs quote a command or flag the CLI does not accept,
+  or when the CLI reference is stale; facts written in several docs now have
+  one page the others link to.
 
 - Lint (golangci-lint), `govulncheck`, Dependabot, SHA-pinned Actions, and
   issue and PR templates (#38).

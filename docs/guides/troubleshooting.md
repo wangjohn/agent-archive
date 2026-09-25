@@ -4,13 +4,9 @@ Run `agent-archive` for a short command guide, or `agent-archive COMMAND
 --help` (or `agent-archive help COMMAND`, including `help backfill undo`) for
 options and examples. Help never activates hooks, reads credentials, or
 changes state. Invalid flags fail before a command starts, with one line
-naming the problem. Exit codes: 0 for success and help, 1 for an operational
-failure, 2 for a usage error. What a command was asked for goes to stdout;
-why it did not do it, or not all of it, goes to stderr with exit 1. A `sync`
-that is paused, finds another command running, or fails for some sessions
-exits 1: its summary line, if it ran, stays on stdout, and each failed
-session, or the reason nothing ran, is on stderr. Commands that need setup and find none say
-so without creating the data directory.
+naming the problem. Every command's options and the exit codes are in the
+[CLI reference](../reference/cli.md#exit-codes). Commands that need setup and
+find none say so without creating the data directory.
 
 ## Everyday commands
 

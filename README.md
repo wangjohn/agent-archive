@@ -39,8 +39,8 @@ no account, hosted service, or telemetry.
   read the bucket can read your sessions. Use narrow credentials
   ([bucket permissions](docs/security/bucket-permissions.md)).
 - **On your Mac,** it edits the `hooks` entry of each app's settings file,
-  adds one LaunchAgent, and keeps its state in `~/.local/share/agent-archive`.
-  R2 secrets are in the Keychain.
+  adds one LaunchAgent, and keeps its state in `~/.local/share/agent-archive`
+  ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-mac)).
 
 Details, and where the protections stop: [privacy](docs/security/privacy.md).
 
@@ -136,8 +136,8 @@ agent-archive uses.
 
 Run `agent-archive` or `agent-archive help` for a short guide, `agent-archive
 help COMMAND` or `agent-archive COMMAND --help` for options and examples, and
-`agent-archive --version` for the version. Commands exit 0 on success, 1 when
-something failed, and 2 for a usage error.
+`agent-archive --version` for the version. Every command, flag, and exit
+code is in the [CLI reference](docs/reference/cli.md).
 
 ## Supported platforms
 
