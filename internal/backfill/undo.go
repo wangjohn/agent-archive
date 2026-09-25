@@ -13,6 +13,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -329,7 +330,7 @@ func keptOutToRemove(env Environment, cfg config.Config, regs []archive.SessionR
 		resolved := env.resolved(g.Root)
 		covered := slices.ContainsFunc(cfg.Archive.Projects, func(q archive.ProjectActivation) bool {
 			return q.ProjectID != g.ProjectID && q.Included && !excluding[q.ProjectID] &&
-				(pathWithin(g.Root, q.Root) || pathWithin(resolved, env.resolved(q.Root)))
+				(local.PathWithin(g.Root, q.Root) || local.PathWithin(resolved, env.resolved(q.Root)))
 		})
 		if !covered {
 			out = append(out, g)

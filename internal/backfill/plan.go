@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // Plan is everything one backfill run found and decided. It is the input the
@@ -144,10 +145,10 @@ func markDuplicates(env Environment, group []*work) {
 	}
 	var active []string
 	for _, dir := range env.codexDirs() {
-		active = append(active, filepath.Join(dir, "sessions")+string(filepath.Separator))
+		active = append(active, filepath.Join(dir, "sessions"))
 	}
 	isActive := func(path string) bool {
-		return slices.ContainsFunc(active, func(prefix string) bool { return strings.HasPrefix(path, prefix) })
+		return slices.ContainsFunc(active, func(dir string) bool { return local.PathWithin(path, dir) })
 	}
 	sort.SliceStable(live, func(i, j int) bool {
 		a, b := live[i], live[j]

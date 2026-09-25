@@ -507,7 +507,7 @@ func configuredProjectActivationFor(cfg config.Config, root string) (archive.Pro
 	bestLen, found := -1, false
 	for _, project := range cfg.Archive.Projects {
 		configured := resolvedPath(project.Root)
-		if !pathWithin(candidate, configured) || len(configured) <= bestLen {
+		if !local.PathWithin(candidate, configured) || len(configured) <= bestLen {
 			continue
 		}
 		best, bestLen, found = project, len(configured), true
@@ -528,17 +528,6 @@ func resolvedPath(path string) string {
 		return resolved
 	}
 	return path
-}
-
-// pathWithin reports whether path is root or lies beneath it.
-func pathWithin(path, root string) bool {
-	if path == root {
-		return true
-	}
-	if !strings.HasSuffix(root, string(filepath.Separator)) {
-		root += string(filepath.Separator)
-	}
-	return strings.HasPrefix(path, root)
 }
 
 // canonicalHarness is archive.CanonicalHarness, for inspect.go's

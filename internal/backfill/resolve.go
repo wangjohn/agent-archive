@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // resolution is where one working directory is imported, or why it is not.
@@ -87,20 +88,9 @@ func uniquePaths(paths ...string) []string {
 	return out
 }
 
-// pathWithin reports whether path is root or lies beneath it, lexically.
-func pathWithin(path, root string) bool {
-	if path == root {
-		return true
-	}
-	if !strings.HasSuffix(root, string(filepath.Separator)) {
-		root += string(filepath.Separator)
-	}
-	return strings.HasPrefix(path, root)
-}
-
 func withinAny(path string, roots []string) bool {
 	for _, root := range roots {
-		if pathWithin(path, root) {
+		if local.PathWithin(path, root) {
 			return true
 		}
 	}
@@ -216,7 +206,7 @@ func (r *resolver) configured(dir string) (resolution, bool) {
 
 // homeOrAbove reports whether dir is home or one of its ancestors.
 func (r *resolver) homeOrAbove(dir string) bool {
-	return pathWithin(r.home, dir) || pathWithin(r.homeRaw, dir)
+	return local.PathWithin(r.home, dir) || local.PathWithin(r.homeRaw, dir)
 }
 
 // homeRule is rule 7 for home or a folder above it. Only home itself can
@@ -238,7 +228,7 @@ func (r *resolver) configuredOwner(dir string) (project archiveProject, found bo
 	bestLen := -1
 	for _, p := range r.cfg.Archive.Projects {
 		configured := r.env.resolved(p.Root)
-		if !pathWithin(dir, configured) || len(configured) <= bestLen {
+		if !local.PathWithin(dir, configured) || len(configured) <= bestLen {
 			continue
 		}
 		project, bestLen, found = archiveProject{Root: p.Root, Included: p.Included}, len(configured), true

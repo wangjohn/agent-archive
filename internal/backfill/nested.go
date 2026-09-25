@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // A plain folder the import adds as a project (ProjectKindDirectory, or a
@@ -81,11 +83,11 @@ func privacyProtectedFolders(env Environment) []string {
 func protectedOutside(path, root string, protected []string) bool {
 	nearest := ""
 	for _, folder := range protected {
-		if pathWithin(path, folder) && len(folder) > len(nearest) {
+		if local.PathWithin(path, folder) && len(folder) > len(nearest) {
 			nearest = folder
 		}
 	}
-	return nearest != "" && !pathWithin(root, nearest)
+	return nearest != "" && !local.PathWithin(root, nearest)
 }
 
 // capturesSubfolders reports whether adding a project of this kind makes
@@ -187,7 +189,7 @@ func planNested(ctx context.Context, r *resolver, plan *Plan) error {
 func capturedAnyway(r *resolver, summaries []ProjectSummary, s ProjectSummary) bool {
 	nearest, included, scanned := "", false, false
 	consider := func(root string, isIncluded, isScanned bool) {
-		if root == s.Root || !pathWithin(s.Root, root) || len(root) <= len(nearest) {
+		if root == s.Root || !local.PathWithin(s.Root, root) || len(root) <= len(nearest) {
 			return
 		}
 		nearest, included, scanned = root, isIncluded, isScanned
