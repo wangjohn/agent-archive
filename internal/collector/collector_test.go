@@ -744,6 +744,8 @@ func TestRunUpgradesAndCompletesLegacyTokenlessRequest(t *testing.T) {
 	}
 }
 
+// A raw transcript past the raw ceiling is refused on its size alone, without
+// being read.
 func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "large.jsonl")
@@ -751,7 +753,8 @@ func TestRunRejectsTranscriptAboveCollectionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Truncate(DefaultMaxTranscriptBytes + 1); err != nil {
+	// Sparse: no disk space, and a read of it would take seconds.
+	if err := file.Truncate(maxRawBytes(DefaultMaxTranscriptBytes) + 1); err != nil {
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {
@@ -844,7 +847,7 @@ func TestRunOversizeTranscriptBlocksOnceAndRetainsSnapshot(t *testing.T) {
 		t.Fatalf("published cache rewritten on a no-op pass: err=%v", err)
 	}
 	status, err := local.LoadStatus()
-	if err != nil || status.LastError != "" || status.PendingCount != 0 {
+	if err != nil || !strings.Contains(status.LastError, "size limit") || status.PendingCount != 0 {
 		t.Fatalf("blocked session reported as pending or failed: %+v err=%v", status, err)
 	}
 

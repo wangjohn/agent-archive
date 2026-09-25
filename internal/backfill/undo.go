@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
-	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
+	"github.com/wangjohn/agent-archive/internal/retention"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -469,7 +469,7 @@ func (p UndoPlan) Remove(ctx context.Context, store *state.Store, bucket storage
 	for _, s := range p.Sessions {
 		reg := s.Registration
 		if s.InCurrentDestination {
-			if err := collector.DeleteWholeSession(ctx, bucket, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
+			if err := retention.DeleteWholeSession(ctx, bucket, reg.Harness.Name, reg.ArchiveSessionID); err != nil {
 				result.Failed[reg.ArchiveSessionID] = fmt.Errorf("delete from the bucket: %w", err)
 				continue
 			}

@@ -18,6 +18,14 @@ line tools on macOS; elsewhere a stub is built. `go test ./...` also runs
 `internal/doclinks`, which fails on a broken relative link or `#anchor` in
 any Markdown file.
 
+Performance tests check what a pass costs on every run (published-state
+decodes and local writes, counted, not timed). Their wall-clock targets run
+only at full size in a plain build, which CI does in a step of its own:
+
+```sh
+AGENT_ARCHIVE_PERF=1 go test -count=1 -run 'StayFast|FiveMegabyte' ./internal/collector ./internal/archive
+```
+
 ## Levenshtein checks
 
 The `verify` job (`levenshtein.yml`) runs the shared checks from

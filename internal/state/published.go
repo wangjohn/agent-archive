@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -74,6 +76,12 @@ func (r BlockedReason) Recoverable() bool { return r == BlockedReasonTranscriptM
 // when that happened, and why the bundle is in the state it's in. It is the
 // JSON of published/<id>.json.
 type publishedState struct {
+	// Summary restates, ahead of everything else in the file, the few facts
+	// a caller that is not scanning the session needs (see
+	// LoadPublishedSummary), so they can be read without decoding the source
+	// bundles that follow. write keeps it in step; state written before it
+	// existed has none and is decoded in full instead.
+	Summary       *PublishedSummary    `json:"summary,omitempty"`
 	MetadataBytes []byte               `json:"metadata_bytes,omitempty"`
 	Bundle        archive.SourceBundle `json:"bundle"`
 	PublishedAt   time.Time            `json:"published_at"`
@@ -94,6 +102,82 @@ type publishedState struct {
 	// LastPublished survives a newer rate-limited or declined candidate so
 	// compaction checks and retention always have the actual remote baseline.
 	LastPublished *publishedSnapshot `json:"last_published,omitempty"`
+	// AgeFrom, when set, is when retention counts the cached bundle as
+	// captured instead of its own CapturedAt, which was stamped by a clock
+	// that was ahead (see Published.ClampAgeFrom).
+	AgeFrom *ageClamp `json:"age_from,omitempty"`
+}
+
+// ageClamp is a retention age recorded for one capture: At stands in for the
+// capture time For, and for no other.
+type ageClamp struct {
+	At  time.Time `json:"at"`
+	For time.Time `json:"for"`
+}
+
+// ageClampFor returns the clamp when it was recorded for bundle's capture.
+func (p publishedState) ageClampFor(bundle archive.SourceBundle) *ageClamp {
+	if p.AgeFrom != nil && p.AgeFrom.For.Equal(bundle.Capture.CapturedAt) {
+		return p.AgeFrom
+	}
+	return nil
+}
+
+// PublishedSummary is what a session's published state says about the
+// session without its source bundles: enough for retention, for a subagent
+// looking for its link in its parent, and for status.
+type PublishedSummary struct {
+	// Harness is the cached bundle's harness: the one its objects are under.
+	Harness string `json:"harness,omitempty"`
+	// Status is the cached bundle's status, and BlockedReason why it is
+	// blocked when it is.
+	Status        CacheStatus   `json:"status"`
+	BlockedReason BlockedReason `json:"blocked_reason,omitempty"`
+	// CapturedAt is the cached bundle's capture time. AgeFrom, when set, is
+	// the time retention ages it from instead (see Published.ClampAgeFrom).
+	CapturedAt time.Time `json:"captured_at,omitzero"`
+	AgeFrom    time.Time `json:"age_from,omitzero"`
+	// Published reports that a publication was ever recorded, and
+	// LastPublishedAt when the last one was.
+	Published       bool      `json:"published"`
+	LastPublishedAt time.Time `json:"last_published_at,omitzero"`
+	// LinkedPublished lists the sessions the cached bundle links to as
+	// published: a parent's published subagents.
+	LinkedPublished []string `json:"linked_published,omitempty"`
+}
+
+// RetentionAge is the time retention ages the session from: AgeFrom when a
+// clamp is recorded, otherwise the capture time.
+func (s PublishedSummary) RetentionAge() time.Time {
+	if !s.AgeFrom.IsZero() {
+		return s.AgeFrom
+	}
+	return s.CapturedAt
+}
+
+// LinksPublished reports whether the cached bundle links child as published.
+func (s PublishedSummary) LinksPublished(child string) bool {
+	return slices.Contains(s.LinkedPublished, child)
+}
+
+// summary derives the state's PublishedSummary.
+func (p publishedState) summary() PublishedSummary {
+	_, lastPublishedAt, published := p.resolveLastPublished()
+	var ageFrom time.Time
+	if clamp := p.ageClampFor(p.Bundle); clamp != nil {
+		ageFrom = clamp.At
+	}
+	var linked []string
+	for _, link := range p.Bundle.LinkedSessions {
+		if link.Status == archive.LinkedSessionPublished && !slices.Contains(linked, link.SessionID) {
+			linked = append(linked, link.SessionID)
+		}
+	}
+	return PublishedSummary{
+		Harness: p.Bundle.Capture.Harness.Name,
+		Status:  p.Status, BlockedReason: p.BlockedReason, CapturedAt: p.Bundle.Capture.CapturedAt, AgeFrom: ageFrom,
+		Published: published, LastPublishedAt: lastPublishedAt, LinkedPublished: linked,
+	}
 }
 
 type publishedSnapshot struct {
@@ -220,7 +304,7 @@ func (p publishedState) next(bundle archive.SourceBundle, publishedAt time.Time,
 	if len(metadata) == 0 {
 		metadata = p.MetadataBytes
 	}
-	return publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata}
+	return publishedState{Bundle: bundle, PublishedAt: publishedAt, Status: status, BlockedReason: reason, PreBlockStatus: preBlock, DeferredHookEvidence: held, LastPublished: last, MetadataBytes: metadata, AgeFrom: p.ageClampFor(bundle)}
 }
 
 // Published is one session's published state, read from published/<id>.json
@@ -258,19 +342,22 @@ func (s *Store) LoadPublishedState(archiveSessionID string) (*Published, error) 
 	}
 	publishedStateLoads.Add(1)
 	p := &Published{store: s, id: archiveSessionID}
-	err := local.Read(s.publishedPath(archiveSessionID), &p.state)
-	switch {
-	case err == nil:
-		p.found = true
-	case errors.Is(err, os.ErrNotExist):
+	found, err := s.readOwned(s.publishedPath(archiveSessionID), &p.state)
+	if err != nil {
+		// In a collector pass a corrupt file was moved aside: reported once,
+		// then the session is one that never published (quarantineInPass).
+		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, s.afterLoss(archiveSessionID, err))
+	}
+	p.found = found
+	if !found {
 		p.state = publishedState{}
-	default:
-		return nil, fmt.Errorf("read published state %q: %w", archiveSessionID, err)
 	}
 	return p, nil
 }
 
 func (p *Published) write(next publishedState) error {
+	summary := next.summary()
+	next.Summary = &summary
 	if err := local.Write(p.store.publishedPath(p.id), next); err != nil {
 		return err
 	}
@@ -280,6 +367,75 @@ func (p *Published) write(next publishedState) error {
 
 // Found reports whether anything has been saved for the session.
 func (p *Published) Found() bool { return p.found }
+
+// Summary returns the state's PublishedSummary (see LoadPublishedSummary).
+func (p *Published) Summary() PublishedSummary { return p.state.summary() }
+
+// ClampAgeFrom records at as the time retention ages the cached bundle from,
+// in place of a capture time that was stamped by a clock running ahead. Only
+// an earlier time is recorded, and only for the capture cached now: the next
+// capture, stamped by a clock that is right again, needs none.
+func (p *Published) ClampAgeFrom(at time.Time) error {
+	if !p.found {
+		return fmt.Errorf("read published state %q: %w", p.id, os.ErrNotExist)
+	}
+	capturedAt := p.state.Bundle.Capture.CapturedAt
+	if current := p.state.ageClampFor(p.state.Bundle); (current != nil && !at.Before(current.At)) || !at.Before(capturedAt) {
+		return nil
+	}
+	next := p.state
+	next.AgeFrom = &ageClamp{At: at.UTC(), For: capturedAt}
+	return p.write(next)
+}
+
+// LoadPublishedSummary reads a session's PublishedSummary. found is false
+// when nothing has been saved for the session. It reads only the summary at
+// the head of the file, not the source bundles after it, so it costs about as
+// much as a stat; state written before the summary existed is decoded in
+// full.
+func (s *Store) LoadPublishedSummary(archiveSessionID string) (summary PublishedSummary, found bool, err error) {
+	if !safeFileComponent(archiveSessionID) {
+		return PublishedSummary{}, false, errors.New("archive session ID is not a safe file name component")
+	}
+	if summary, ok := readLeadingSummary(s.publishedPath(archiveSessionID)); ok {
+		return summary, true, nil
+	}
+	p, err := s.LoadPublishedState(archiveSessionID)
+	if err != nil || !p.found {
+		return PublishedSummary{}, false, err
+	}
+	// State from before the summary existed is rewritten with one, once, by
+	// the collector pass that owns it; until then every read would decode it
+	// in full. A failed rewrite only leaves that cost for the next read.
+	if s.collectorPass {
+		_ = p.write(p.state)
+	}
+	return p.Summary(), true, nil
+}
+
+// readLeadingSummary decodes the summary that write puts first in a
+// published state file. ok is false when there is none to trust: no file,
+// an older file without one, or anything unexpected, all of which the
+// caller answers with a full decode.
+func readLeadingSummary(path string) (summary PublishedSummary, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return PublishedSummary{}, false
+	}
+	defer func() { _ = f.Close() }()
+	decoder := json.NewDecoder(bufio.NewReaderSize(f, 4096))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return PublishedSummary{}, false
+	}
+	if key, err := decoder.Token(); err != nil || key != "summary" {
+		return PublishedSummary{}, false
+	}
+	var head *PublishedSummary
+	if err := decoder.Decode(&head); err != nil || head == nil {
+		return PublishedSummary{}, false
+	}
+	return *head, true
+}
 
 // Cached returns the bundle a scan compares against and why it is there:
 // the last publication, or a newer candidate (rate limited, declined,
