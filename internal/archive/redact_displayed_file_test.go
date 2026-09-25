@@ -63,3 +63,59 @@ func TestPrivateKeyInADisplayedFileIsRedacted(t *testing.T) {
 		t.Errorf("numbered code naming the armor lines was redacted: %q", out)
 	}
 }
+
+// A key cut off or split has no END line, or no BEGIN line: a file read in
+// two parts, a tool result in chunks, `cat -A` or `grep -rn` output cut
+// short, a one-line key cut short. Each part's key lines are redacted.
+// Certificates and public keys, next to a key or alone, are kept.
+func TestPartialPrivateKeyIsRedacted(t *testing.T) {
+	b64 := func(n int, seed string) string { return strings.Repeat(seed, n/len(seed)+1)[:n] }
+	l1, l2, l3 := b64(64, "MIIEpAIBAAKCAQEA7syn"), b64(64, "QkFTRTY0c3ludGhldGlj"), b64(40, "c3ludGhldGljdGhpcmRs")+"=="
+	// Split so secret scanners do not take this file for a key.
+	begin, end := "-----BEGIN RSA "+"PRIVATE KEY-----", "-----END RSA "+"PRIVATE KEY-----"
+	cases := map[string]string{
+		"cat -A cut short":    begin + "$\n" + l1 + "$\n" + l2 + "$\n",
+		"grep -rn cut short":  "key.pem:1:" + begin + "\nkey.pem:2:" + l1 + "\nkey.pem:3:" + l2,
+		"one line cut short":  `"` + begin + " " + l1 + " " + l2,
+		"second part":         l2 + "\n" + l3 + "\n" + end + "\n",
+		"second part read":    "    27→" + l1 + "\n    28→" + l2 + "\n    29→" + l3 + "\n    30→" + end + "\n",
+		"second part escaped": `{"output": "` + l1 + `\n` + l2 + `\n` + end + `\n"}`,
+		"second part crlf":    "  " + l1 + "\r\n  " + l2 + "\r\n  " + end + "\r\n",
+	}
+	for name, in := range cases {
+		out, hit := redactSensitive(in)
+		if !hit || strings.Contains(out, l1[:24]) || strings.Contains(out, l2[:24]) {
+			t.Errorf("%s: key body survived (hit=%v): %q", name, hit, out)
+		}
+		if again, _ := redactSensitive(out); again != out {
+			t.Errorf("%s: not idempotent: %q then %q", name, out, again)
+		}
+	}
+	// A second part keeps the text before the key and its display decoration.
+	if out, _ := redactSensitive("    27→" + l1 + "\n    28→" + end); out != "    27→[REDACTED]" {
+		t.Errorf("second part read: %q", out)
+	}
+	cert := "-----BEGIN CERTIFICATE-----\n" + l1 + "\n" + l2 + "\n-----END CERTIFICATE-----"
+	public := "-----BEGIN PUBLIC KEY-----\n" + l1 + "\n" + l2 + "\n-----END PUBLIC KEY-----"
+	for name, in := range map[string]string{
+		"certificate": cert,
+		"public key":  public,
+		"ssh public":  "ssh-rsa " + l1 + l2 + " me@host",
+		// A line of code above an END line is not a key's body.
+		"code tail": "func footer() string {\n\treturn `\n" + end + "`\n}",
+	} {
+		if out, hit := redactSensitive(in); hit || out != in {
+			t.Errorf("%s was redacted: %q", name, out)
+		}
+	}
+	// A key cut short, then a certificate, then another key: both keys go,
+	// the certificate stays.
+	in := begin + "\n" + l1 + "\n" + cert + "\n" + begin + "\n" + l3 + "\n" + end
+	out, _ := redactSensitive(in)
+	if strings.Contains(out, l3[:24]) || !strings.Contains(out, cert) {
+		t.Errorf("key, certificate, key: %q", out)
+	}
+	if rest := strings.Replace(out, cert, "", 1); strings.Contains(rest, l1[:24]) {
+		t.Errorf("key cut short before a certificate survived: %q", out)
+	}
+}

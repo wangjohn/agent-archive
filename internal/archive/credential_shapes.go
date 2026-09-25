@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // A credential assignment is a name that says it holds a credential, a
@@ -429,6 +430,10 @@ const maxPEMFallbackBytes = 16 * 1024
 // truncated record), through the base64 lines that follow the BEGIN line.
 // Filter 10 took everything after a BEGIN line with no END line, so source
 // code that merely mentions the BEGIN line lost the rest of the file.
+//
+// A key split between two strings (a file read in two parts, a tool result
+// cut into chunks) leaves the second string with body lines and an END line
+// but no BEGIN line; those body lines are redacted too (see keyTailStart).
 func redactPrivateKeyBlocks(s string) (string, bool) {
 	var out strings.Builder
 	pos, hit := 0, false
@@ -448,11 +453,12 @@ func redactPrivateKeyBlocks(s string) (string, bool) {
 		out.WriteString(redactedMarker)
 		pos, hit = end, true
 	}
-	if !hit {
-		return s, false
+	if hit {
+		out.WriteString(s[pos:])
+		s = out.String()
 	}
-	out.WriteString(s[pos:])
-	return out.String(), true
+	tails, tailHit := redactKeyTails(s)
+	return tails, hit || tailHit
 }
 
 // privateKeyBlockEnd returns the index just past a private key block whose
@@ -461,19 +467,28 @@ func privateKeyBlockEnd(s string, from int) int {
 	if loc := pemEnd.FindStringIndex(s[from:]); loc != nil {
 		body := s[from : from+loc[0]]
 		// A body in a form pemLineCore does not know still holds the key's
-		// long base64 lines: fail closed and take the block.
-		if isPEMBody(body) || (len(body) <= maxPEMFallbackBytes && longestBase64Run(body) >= minPEMFallbackRun) {
+		// long base64 lines: fail closed and take the block, unless another
+		// block (a certificate) starts inside it, so a key cut short does
+		// not take the certificate after it along to a later key's END.
+		if isPEMBody(body) || (len(body) <= maxPEMFallbackBytes && longestBase64Run(body) >= minPEMFallbackRun && !strings.Contains(body, "-----BEGIN ")) {
 			return from + loc[1]
 		}
 	}
 	// No END line: the BEGIN line must end where it is (but for a closing
 	// decoration), then take the body lines that follow, stopping at the
-	// first line that is not one.
+	// first line that is not one. A key written on one line, its body after
+	// the BEGIN line (`"-----BEGIN … KEY----- MIIE…`), is taken to the end
+	// of that line.
 	lineEnd, next := pemLineEnd(s, from)
-	if strings.TrimSpace(pemLineSuffix.ReplaceAllString(s[from:lineEnd], "")) != "" || next < 0 {
+	end, body := -1, 0
+	// Punctuation alone after it (`cat -A`'s `$`, a closing `")`) is a
+	// decoration too; the body lines must then still be there.
+	switch rest := strings.TrimSpace(pemLineSuffix.ReplaceAllString(s[from:lineEnd], "")); {
+	case longestBase64Run(rest) >= minPEMFallbackRun:
+		end, body = from+len(strings.TrimRight(pemLineSuffix.ReplaceAllString(s[from:lineEnd], ""), " \t")), longestBase64Run(rest)
+	case strings.IndexFunc(rest, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0:
 		return -1
 	}
-	end, body := -1, 0
 	for pos := next; pos >= 0 && pos < len(s); {
 		lineEnd, next = pemLineEnd(s, pos)
 		line := s[pos:lineEnd]
@@ -483,6 +498,11 @@ func privateKeyBlockEnd(s string, from int) int {
 		case core == "" || pemHeader.MatchString(core):
 		case isBase64Line(core):
 			body += len(core)
+			end = pos + coreEnd
+		case longestBase64Run(core) >= minPEMFallbackRun:
+			// A key line decorated in a way pemLineCore does not know
+			// (`cat -A`'s `$`, `grep -rn`'s file name): fail closed.
+			body += longestBase64Run(core)
 			end = pos + coreEnd
 		default:
 			// A key cut off inside a line (`…base64"` at the end of a JSON
@@ -500,6 +520,117 @@ func privateKeyBlockEnd(s string, from int) int {
 		return -1
 	}
 	return end
+}
+
+// redactKeyTails redacts, with its END line, the body of every private key
+// whose END line has no BEGIN line before it in s: the base64 lines right
+// above the END line (see keyTailStart). What remains after
+// redactPrivateKeyBlocks has no key an END line closes, so an END line left
+// is either such a tail or code that names the armor line.
+func redactKeyTails(s string) (string, bool) {
+	matches := pemEnd.FindAllStringIndex(s, -1)
+	if matches == nil {
+		return s, false
+	}
+	var out strings.Builder
+	last, hit := 0, false
+	for _, loc := range matches {
+		start := keyTailStart(s, last, loc[0])
+		if start < 0 {
+			continue
+		}
+		out.WriteString(s[last:start])
+		out.WriteString(redactedMarker)
+		last, hit = loc[1], true
+	}
+	if !hit {
+		return s, false
+	}
+	out.WriteString(s[last:])
+	return out.String(), true
+}
+
+// keyTailStart returns where the body of a key whose END line starts at
+// endAt begins, reading no further back than floor, or -1 when it is not
+// the end of a key: the END line must start its line (but for a display's
+// decoration, pemLinePrefix), and the lines right above it must hold at
+// least minPEMBodyBytes of key body, read as privateKeyBlockEnd reads the
+// lines after a BEGIN line. The first body line's decoration is kept.
+func keyTailStart(s string, floor, endAt int) int {
+	floor = max(floor, endAt-maxPEMFallbackBytes)
+	type lineSpan struct{ start, end int }
+	var lines []lineSpan
+	endLineStart := -1
+	for pos := floor; pos >= 0 && pos <= endAt; {
+		lineEnd, next := pemLineEnd(s, pos)
+		if next < 0 || next > endAt {
+			endLineStart = pos
+			break
+		}
+		lines = append(lines, lineSpan{pos, lineEnd})
+		pos = next
+	}
+	if endLineStart < 0 {
+		return -1
+	}
+	if lead := s[endLineStart:endAt]; len(pemLinePrefix.FindString(lead)) != len(lead) {
+		return -1
+	}
+	start, body := -1, 0
+scan:
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := s[lines[i].start:lines[i].end]
+		coreStart, coreEnd := pemLineCore(line)
+		core := line[coreStart:coreEnd]
+		switch {
+		case core == "" || pemHeader.MatchString(core):
+		case isBase64Line(core):
+			body += len(core)
+			start = lines[i].start + coreStart
+		case longestBase64Run(core) >= minPEMFallbackRun:
+			body += longestBase64Run(core)
+			start = lines[i].start + coreStart + firstBase64Run(core, minPEMFallbackRun)
+		default:
+			// The first line read may start inside a key line after other
+			// text (`{"output": "…base64`): its base64 suffix is body.
+			if suffix := base64Suffix(core); len(suffix) >= 4 && i == 0 {
+				body += len(suffix)
+				start = lines[i].start + coreEnd - len(suffix)
+			}
+			break scan
+		}
+	}
+	if body < minPEMBodyBytes {
+		return -1
+	}
+	return start
+}
+
+// firstBase64Run returns where the first run of at least n base64
+// characters in s starts, or 0 when there is none.
+func firstBase64Run(s string, n int) int {
+	run := 0
+	for i := range len(s) {
+		if !isBase64Byte(s[i]) {
+			run = 0
+			continue
+		}
+		if run++; run >= n {
+			return i + 1 - run
+		}
+	}
+	return 0
+}
+
+// base64Suffix returns the longest suffix of line made of base64
+// characters.
+func base64Suffix(line string) string {
+	for i := len(line) - 1; i >= 0; i-- {
+		if !isBase64Byte(line[i]) {
+			return line[i+1:]
+		}
+	}
+	return line
 }
 
 // pemLinePrefix and pemLineSuffix match what a display of a file puts

@@ -15,6 +15,16 @@ import (
 // of TestFilterV9LeavesNonCredentialNamesUnchanged.
 func FuzzRedactSensitive(f *testing.F) {
 	f.Add("DB_PASSWORD=hunter2")
+	for _, s := range gateSeeds() {
+		f.Add(s)
+	}
+	// Private keys cut short or split (see TestPartialPrivateKeyIsRedacted).
+	begin, end := "-----BEGIN RSA "+"PRIVATE KEY-----", "-----END RSA "+"PRIVATE KEY-----"
+	body := "MIIEpAIBAAKCAQEA7synMIIEpAIBAAKCAQEA7synMIIEpAIBAAKCAQEA7synMIIE"
+	f.Add("  3→" + body + "\n  4→" + body + "\n  5→" + end + "\n")
+	f.Add(`{"output": "` + body + `\n` + end + `\n"}`)
+	f.Add("key.pem:1:" + begin + "$\nkey.pem:2:" + body + "$\n")
+	f.Add(`"` + begin + " " + body + " " + body)
 	f.Fuzz(func(t *testing.T, in string) {
 		once, _ := redactSensitive(in)
 		twice, _ := redactSensitive(once)
