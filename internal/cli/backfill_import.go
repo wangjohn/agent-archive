@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"text/tabwriter"
 	"time"
 
@@ -81,9 +80,10 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 	}
 
 	// Ctrl-C from here on stops between registration holds, or before the
-	// next session uploads. After the first, a second one quits at once.
+	// next session uploads. A second one, or SIGTERM or SIGHUP, quits at
+	// once, after removing any copy of Cursor's database this process made.
 	stdout = &lockedWriter{w: stdout}
-	interrupt := newInterruption(env, stdout)
+	interrupt := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", func() {})
 	defer interrupt.release()
 
 	// Step 5: register, in short holds of hooks.lock.
@@ -185,43 +185,6 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	}
 	terminal.Printf(stdout, "\nImport %s, which was interrupted, is complete: %s registered.\n", last.ID, countNoun(len(last.Sessions), "session"))
 	return nil
-}
-
-// interruption watches for Ctrl-C. The first one is recorded and stops the
-// watch at once, even in the middle of a long upload, so a second one ends
-// the process as usual.
-type interruption struct {
-	stop   func()
-	done   chan struct{}
-	exited chan struct{}
-	seen   atomic.Bool
-}
-
-func newInterruption(env Env, out io.Writer) *interruption {
-	signals, stop := env.interrupts()
-	i := &interruption{stop: releaseOnce(stop), done: make(chan struct{}), exited: make(chan struct{})}
-	go func() {
-		defer close(i.exited)
-		select {
-		case <-signals:
-			i.seen.Store(true)
-			i.stop()
-			terminal.Println(out, "Stopping after the current session; press Ctrl-C again to quit.")
-		case <-i.done:
-		}
-	}()
-	return i
-}
-
-// requested reports whether Ctrl-C has been pressed. It never blocks.
-func (i *interruption) requested() bool { return i.seen.Load() }
-
-// release ends the watch and waits for it, so nothing is written after
-// the command returns. It is called once.
-func (i *interruption) release() {
-	close(i.done)
-	<-i.exited
-	i.stop()
 }
 
 // lockedWriter serializes writes, so the interruption's message never
@@ -348,7 +311,7 @@ const uploadBusyGiveUp = 2 * time.Minute
 // session of the batch has work left or a pass makes no progress. Ctrl-C
 // ends the pass after the session in flight; what is left is uploaded by
 // the background collector.
-func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *interruption) int {
+func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *signalWatch) int {
 	sizes := map[string]int64{}
 	for _, c := range plan.Candidates {
 		size := c.Bytes

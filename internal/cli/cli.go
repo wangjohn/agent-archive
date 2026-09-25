@@ -15,6 +15,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
@@ -93,8 +94,9 @@ type Env struct {
 	// terminal. backfill asks for confirmation only on one, and redraws its
 	// progress line only on one. Defaults to checking the file descriptor.
 	IsTerminal func(any) bool
-	// Interrupts delivers Ctrl-C while backfill uploads, and stop ends the
-	// delivery. Defaults to os/signal for os.Interrupt.
+	// Interrupts delivers the signals that stop backfill while it plans,
+	// registers, and uploads, and stop ends the delivery. Defaults to
+	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
 	Interrupts func() (signals <-chan os.Signal, stop func())
 }
 
@@ -110,8 +112,8 @@ func (e Env) interrupts() (<-chan os.Signal, func()) {
 	if e.Interrupts != nil {
 		return e.Interrupts()
 	}
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt)
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	return signals, func() { signal.Stop(signals) }
 }
 

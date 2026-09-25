@@ -95,6 +95,7 @@ func (r *Reader) Close() error {
 	if dir == "" {
 		return nil
 	}
+	defer untrackSnapshot(dir)
 	err := os.RemoveAll(dir)
 	if lock != nil {
 		// Released only after the copy is gone.
@@ -265,6 +266,7 @@ func (r *Reader) snapshot(ctx context.Context, src source) error {
 		return errors.New("create a Cursor database snapshot directory")
 	}
 	r.snapDir = dir
+	trackSnapshot(dir)
 	if r.lock, err = lockSnapshot(dir); err != nil {
 		return errors.New("lock a Cursor database snapshot directory")
 	}

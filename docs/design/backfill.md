@@ -80,7 +80,13 @@ in both cases. It exits `0` when the import completes, when there is nothing to
 import, or when the person declines; `2` on a usage error (an unknown flag or
 app, a bad date, `--json` without `--dry-run`); and `1` on any other failure.
 Ctrl-C during registration exits `1`, because the import is incomplete until a
-rerun; Ctrl-C during upload exits `0`, because the collector finishes it.
+rerun; Ctrl-C during upload exits `0`, because the collector finishes it. The
+first Ctrl-C, in planning, registration, or upload, prints that it is
+stopping. A second Ctrl-C, or SIGTERM or SIGHUP at any point, exits at once
+with the shell's status for the signal (130, 143, 129), after
+`cursorstore.RemoveOwnSnapshots` removes the database copies this process's
+Readers hold (the one-step backup can't be interrupted, and those Readers
+are never closed).
 
 The storage check (step 2 of [Registration and
 concurrency](#registration-and-concurrency)) writes, reads, and deletes one
@@ -804,8 +810,11 @@ results the file lacks. Phase 2 still imports only chats that have no file:
    and each removes its copy when it ends; a copy that can't be removed
    fails the pass or the plan. Each snapshot directory holds an `flock`
    while its Reader uses it; directories older than an hour whose lock is
-   free (a killed process's) are swept at the start of a pass and on a
-   Reader's first read. With
+   free (a killed process's) are swept at the start of a pass, on a
+   Reader's first read, and at the start of every `backfill` command
+   (`history`, `undo`, and `--dry-run` included), through
+   `cursorstore.RemoveStaleSnapshots`. An unlocked directory whose lock file
+   is over a minute old is a killed process's and goes at once. With
    Cursor closed, the backup API would create `-wal` next to the source, so
    a chat is read in place as the listing is: `immutable=1`, then size,
    modification time, inode, header, and side files must be unchanged, and

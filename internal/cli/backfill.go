@@ -7,12 +7,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -46,6 +50,10 @@ func backfillDay(value string, now time.Time) (string, error) {
 // imports them (see docs/design/backfill.md). `--dry-run
 // [--json]` prints the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+	// A copy of Cursor's database a killed backfill or collector left in the
+	// temporary folder goes first, whatever this command is (history, undo,
+	// and --dry-run included). A copy in use is never removed.
+	cursorstore.RemoveStaleSnapshots()
 	if len(args) > 0 && args[0] == "history" {
 		return runBackfillHistory(args[1:], stdout, stderr, env)
 	}
@@ -130,8 +138,9 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	}
 	// Ctrl-C during planning cancels it, so the plan's copy of Cursor's
 	// database is removed on the way out instead of left in the temporary
-	// folder. A second Ctrl-C quits at once.
-	planCtx, stopPlanning := interruptibleContext(env)
+	// folder. A second Ctrl-C, SIGTERM, or SIGHUP quits at once, removing
+	// the copy first.
+	planCtx, stopPlanning := interruptibleContext(env, stderr)
 	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome), newArchiveState(home, cfg), cfg, filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
@@ -204,36 +213,88 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	return importPlan(env, stdout, stderr, home, plan, configFingerprint(cfg), *background)
 }
 
-// interruptibleContext returns a context that the first Ctrl-C cancels. The
-// watch stops at that first one, so a second ends the process as usual. stop
-// ends the watch and waits for it; it is called once.
-func interruptibleContext(env Env) (context.Context, func()) {
+// interruptibleContext returns a context that the first Ctrl-C cancels,
+// saying on out that it is stopping. A second Ctrl-C, or SIGTERM or SIGHUP
+// at any point, ends the process at once, after removing this process's
+// copies of Cursor's database (see watchSignals). stop ends the watch and
+// waits for it; it is called once.
+func interruptibleContext(env Env, out io.Writer) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
-	signals, stopSignals := env.interrupts()
-	stopSignals = releaseOnce(stopSignals)
-	// A Ctrl-C already waiting cancels before planning starts.
-	select {
-	case <-signals:
-		stopSignals()
+	watch := watchSignals(env, out, "agent-archive: backfill: stopping; press Ctrl-C again to quit.", cancel)
+	return ctx, func() {
+		watch.release()
 		cancel()
+	}
+}
+
+// exitOnSignal ends the process on a signal that stops backfill at once: a
+// second Ctrl-C, or SIGTERM or SIGHUP. It first removes the copies of
+// Cursor's database this process made, which the Readers holding them would
+// otherwise never close: a copy of every chat left in the temporary folder
+// until a later sweep. The exit status is the shell's for the signal. A test
+// replaces it.
+var exitOnSignal = func(sig os.Signal) {
+	cursorstore.RemoveOwnSnapshots()
+	code := 1
+	if s, ok := sig.(syscall.Signal); ok {
+		code = 128 + int(s)
+	}
+	os.Exit(code)
+}
+
+// signalWatch watches, while backfill works, for the signals env.interrupts
+// delivers: Ctrl-C, SIGTERM, and SIGHUP. The first Ctrl-C calls onFirst and
+// says so on out, and the work stops at its next safe point. A second
+// Ctrl-C, or a SIGTERM or SIGHUP (sent by a closing terminal or a process
+// manager, which will not wait), calls exitOnSignal.
+type signalWatch struct {
+	stop   func()
+	done   chan struct{}
+	exited chan struct{}
+	seen   atomic.Bool
+}
+
+func watchSignals(env Env, out io.Writer, message string, onFirst func()) *signalWatch {
+	signals, stop := env.interrupts()
+	w := &signalWatch{stop: releaseOnce(stop), done: make(chan struct{}), exited: make(chan struct{})}
+	handle := func(sig os.Signal) {
+		if sig == os.Interrupt && w.seen.CompareAndSwap(false, true) {
+			onFirst()
+			terminal.Println(out, message)
+			return
+		}
+		w.seen.Store(true)
+		exitOnSignal(sig)
+	}
+	// A signal already waiting is handled before the work starts.
+	select {
+	case sig := <-signals:
+		handle(sig)
 	default:
 	}
-	done, exited := make(chan struct{}), make(chan struct{})
 	go func() {
-		defer close(exited)
-		select {
-		case <-signals:
-			stopSignals()
-			cancel()
-		case <-done:
+		defer close(w.exited)
+		for {
+			select {
+			case sig := <-signals:
+				handle(sig)
+			case <-w.done:
+				return
+			}
 		}
 	}()
-	return ctx, func() {
-		close(done)
-		<-exited
-		stopSignals()
-		cancel()
-	}
+	return w
+}
+
+// requested reports whether a stop was asked for. It never blocks.
+func (w *signalWatch) requested() bool { return w.seen.Load() }
+
+// release ends the watch and waits for it, so nothing is written after the
+// command returns. It is called once.
+func (w *signalWatch) release() {
+	close(w.done)
+	<-w.exited
+	w.stop()
 }
 
 // importRefusal says why an import cannot start now, or "".
