@@ -277,9 +277,37 @@ can list them, inspect them, and hand one to another agent.
   registered.
 - `backfill --dry-run --json`: the JSON reference now says it holds project
   folders, and that `storage_checked` is always `false` in a dry run.
+- Every count of pending sessions agrees: `status`'s pending count and its
+  imported "waiting to upload", `backfill`'s upload progress and history,
+  setup's check before changing storage, and uninstall's warning. A
+  published session whose update is waiting for the upload interval, or
+  that has a request queued, is pending in all of them. See
+  [local state](docs/reference/local-state.md#sessions-internalstate).
+- `backfill --harness Claude` (any case) is accepted, like `claude`.
+- Setup stops right after you choose an app whose hook file holds another
+  installation's hooks, before the storage questions, and keeps your
+  answers; before, it asked every question first.
+- Another spelling of the data directory (another case of its name on a
+  case-insensitive volume) is the same installation: it no longer gets a
+  background job of its own.
+- Uninstalling an installation whose data directory is already gone no
+  longer creates an empty one.
+- A copy of Cursor's database left by a killed backfill is removed by the
+  next collector pass, even on a Mac with no Cursor database chat to read.
+- Backfill recognizes Codex desktop's workspaces without looking inside
+  `~/Documents`, so macOS no longer asks a terminal without access to
+  Documents for it on every plan.
 
 ### Internal
 
+- One definition of a pending session (`state.Store.Outstanding`), one
+  harness-name helper (`archive.CanonicalHarness`), one path containment
+  check (`local.PathWithin`), and one spelling of a location
+  (`local.CanonicalPath`, `local.SameLocation`), each with a guard test
+  that fails on a new copy. A registration's import ID can only be matched
+  through `SessionRegistration.InBatch`, enforced by the compiler.
+  Read-back of publications decodes only the sessions due for one. A fuzz
+  target for the hook itself (`FuzzHookPayload`).
 - `internal/cli` tests fail closed: `TestMain` gives them a temporary `HOME`
   and stand-ins for launchctl and the Keychain that stop the test, and
   `testEnv` fails every side-effecting call a test did not set up. The
