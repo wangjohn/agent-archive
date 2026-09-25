@@ -6,9 +6,10 @@ agent-archive setup
 
 Setup has three steps: choose apps and projects, connect storage, then review
 and start. You need an existing private Cloudflare R2 or Amazon S3 bucket
-(see [bucket permissions](../security/bucket-permissions.md) for the least
-access it needs). Type `help` at the storage prompt for provider
-instructions. Setup asks questions, so it needs a terminal: without one it
+([create one](bucket.md); [bucket permissions](../security/bucket-permissions.md)
+has the least access it needs). Run it from inside a project you want
+archived, so setup can offer it. Type `help` at the storage prompt for
+provider instructions. Setup asks questions, so it needs a terminal: without one it
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API.
 

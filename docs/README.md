@@ -8,6 +8,7 @@ below are grouped by who they are for.
 | Doc | For |
 | --- | --- |
 | [Install](getting-started/install.md) | Building from source (pre-release) or installing a release. |
+| [Create a bucket](getting-started/bucket.md) | A private R2 or S3 bucket and an access key, step by step. |
 | [Setup](getting-started/setup.md) | Choosing apps and projects, connecting a bucket, and what setup changes. |
 | [Uninstall](getting-started/uninstall.md) | Removing hooks, the collector, local data, and the binary; deleting the archive in the bucket; downgrading. |
 | [Backfill](guides/backfill.md) | Importing sessions already on your Mac, and undoing an import. |
@@ -52,7 +53,7 @@ below are grouped by who they are for.
 | [Session admission](contributing/session-admission.md) | How a registration's start and admission times drive each boundary check, and the guard tests. |
 | [Releasing](maintainers/releasing.md) | Tagging, signing, and notarization (maintainers). |
 
-## Design and history
+## Design
 
 Design documents explain why things are the way they are; each says how far
 it is implemented.
@@ -60,11 +61,3 @@ it is implemented.
 - [Archive design](design/archive-spec.md), the original product and engineering specification.
 - [Handoff design](design/handoff.md) and [backfill design](design/backfill.md).
 - Proposed, not implemented: [cloud capture](design/proposed/cloud-capture.md).
-
-The history folder keeps working records for context. They are not
-maintained: the [implementation ledger](history/implementation-ledger.md),
-the [CLI plan](history/cli-plan.md), the
-[audit remediation plan](history/audit-remediation-plan.md) and its
-[acceptance record](history/remediation-acceptance.md), the
-[gap plan](history/gap-implementation-plan.md), and the
-[backfill implementation plan](history/backfill-implementation-plan.md).

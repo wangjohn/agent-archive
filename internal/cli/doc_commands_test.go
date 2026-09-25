@@ -42,7 +42,7 @@ func docCommandSources(t *testing.T) []string {
 				return err
 			}
 			if d.IsDir() {
-				if slash := filepath.ToSlash(path); strings.HasSuffix(slash, "docs/history") || strings.HasSuffix(slash, "docs/design/proposed") {
+				if slash := filepath.ToSlash(path); strings.HasSuffix(slash, "docs/design/proposed") {
 					return filepath.SkipDir
 				}
 				return nil
