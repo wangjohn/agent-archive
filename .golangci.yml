@@ -194,17 +194,11 @@ linters:
       - path: internal/retention/retention\.go
         text: sweepSession
         linters: [funlen, gocyclo]
-      - path: internal/cli/status\.go
-        text: readStatus
-        linters: [funlen, gocyclo]
       - path: internal/cli/setup\.go
         text: "`setup`|'setup'"
         linters: [funlen, gocyclo]
       - path: internal/cli/setup_transaction\.go
         text: applySetup
-        linters: [funlen, gocyclo]
-      - path: internal/cli/uninstall\.go
-        text: "`uninstall`|'uninstall'"
         linters: [funlen, gocyclo]
       - path: internal/cli/collect\.go
         text: runPass
