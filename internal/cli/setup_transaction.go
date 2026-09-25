@@ -24,7 +24,7 @@ import (
 type setupJournal struct {
 	Legacy *legacyJob `json:"legacy,omitempty"`
 	// Relabeled is the collector an earlier release installed for this
-	// data directory under the default label (see previousCollectorPlist);
+	// data directory under another label (see previousCollectorPlist);
 	// setup retires it in favor of the directory's own label.
 	Relabeled *legacyJob     `json:"relabeled,omitempty"`
 	Changes   []hooks.Change `json:"changes"`
@@ -594,7 +594,8 @@ func recoverSetup(home string, env Env) error {
 }
 
 // planRelabel prepares retiring the collector an earlier release installed
-// for home under the default label, or returns nil when there is none.
+// for home under another label (previousCollectorPlist), or returns nil
+// when there is none.
 func planRelabel(home, userHome string, env Env) (*legacyJob, error) {
 	path := env.installation(home, userHome).previousCollectorPlist()
 	if path == "" {
