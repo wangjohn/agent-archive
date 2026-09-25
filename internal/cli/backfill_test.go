@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -396,7 +397,7 @@ func TestBackfillRefusals(t *testing.T) {
 	if _, err := config.SetPaused(f.data, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(journalPath(f.data), []byte("{}"), 0o600); err != nil {
+	if err := os.WriteFile(setupjournal.JournalPath(f.data), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if out, errOut, code := f.run(t, "--dry-run"); code != 0 || !strings.Contains(out, "Dry run: nothing was changed.") {

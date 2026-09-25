@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/evidence"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/retention"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -143,7 +144,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	}
 	defer unlock()
 	pruneHandoffs(home, env.now())
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		return collector.Result{}, errors.New(recoveryPending(home))
 	}
 	cfg, found, err = config.Load(home)

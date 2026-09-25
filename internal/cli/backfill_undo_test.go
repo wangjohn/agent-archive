@@ -17,9 +17,11 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -460,7 +462,7 @@ func TestBackfillUndoResumedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumedAt := backfillNow.Add(time.Hour)
-	if err := handleHookEvent(f.data, "claude", map[string]any{
+	if err := capture.HandleEvent(f.data, "claude", map[string]any{
 		"hook_event_name": "Stop", "session_id": "c-lev-1", "cwd": reg.ProjectRoot, "transcript_path": reg.TranscriptPath,
 		"last_assistant_message": "Done again.",
 	}, resumedAt); err != nil {
@@ -770,7 +772,7 @@ func TestBackfillUndoChangesNothingUnlessConfirmed(t *testing.T) {
 	if _, err := config.SetPaused(f.data, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(journalPath(f.data), []byte("{}"), 0o600); err != nil {
+	if err := os.WriteFile(setupjournal.JournalPath(f.data), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	before, config0 = snapshotAll(t, f, bucket.MemoryStore), mustRead(t, filepath.Join(f.data, "config.json"))

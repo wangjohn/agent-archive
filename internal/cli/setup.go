@@ -13,9 +13,11 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -115,9 +117,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	if err := setup(stdin, stdout, stderr, env); err != nil {
 		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
-		var blocked *recoveryBlockedError
+		var blocked *setupjournal.RecoveryBlockedError
 		if errors.As(err, &blocked) {
-			terminal.Println(stderr, blocked.guidance())
+			terminal.Println(stderr, blocked.Guidance())
 			return 1
 		}
 		var other *otherInstallationError
@@ -415,7 +417,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		// The configuration is committed; a diagnostic for a project that
 		// was just excluded is stale local state, not a reason to fail.
-		if e := pruneCaptureDiagnostics(home, draft.Config.Archive.Projects); e != nil {
+		if e := capture.PruneDiagnostics(home, draft.Config.Archive.Projects); e != nil {
 			terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
 		}
 		terminal.Println(out, "\nConfiguration saved.")
