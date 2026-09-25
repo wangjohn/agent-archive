@@ -104,9 +104,9 @@ func TestOrphanIsKeptWhileTheClockIsAhead(t *testing.T) {
 	local := newTestStore(t)
 	store := storage.NewMemoryStore()
 	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
-	publishTwice(t, local, store, "s1", t.TempDir(), t0)
-	corruptFile(t, local, "registrations/s1.json")
-	if r := collect(t, local, store, t0.Add(time.Hour)); !errors.Is(r.Errors["s1"], state.ErrQuarantined) {
+	publishTwice(t, local, store, "orphan", t.TempDir(), t0)
+	corruptFile(t, local, "registrations/orphan.json")
+	if r := collect(t, local, store, t0.Add(time.Hour)); !errors.Is(r.Errors["orphan"], state.ErrQuarantined) {
 		t.Fatalf("errors = %v", r.Errors)
 	}
 	at := t0.Add(retentionWindow + time.Hour)
@@ -115,7 +115,7 @@ func TestOrphanIsKeptWhileTheClockIsAhead(t *testing.T) {
 	if err != nil || len(result.DeletedSessions) != 0 || !errors.Is(result.Held, ErrClockAhead) {
 		t.Fatalf("%#v %v", result, err)
 	}
-	if sessionObjects(t, store, "s1") == 0 {
+	if sessionObjects(t, store, "orphan") == 0 {
 		t.Fatal("a clock ahead deleted an orphan's objects")
 	}
 	if orphans, err := local.OrphanedSessions(nil); err != nil || len(orphans) != 1 {

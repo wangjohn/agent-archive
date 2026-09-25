@@ -16,7 +16,7 @@ import (
 
 // agreeing gives opts a storage clock that reads exactly what its Now does,
 // the way a test moves time forward on both at once. Without it the storage
-// clock is the probe of a MemoryStore, which reads the real time.
+// clock is the probe of a MemoryStore, which reads the wallNow time.
 func agreeing(opts Options) Options {
 	if opts.ServerClock == nil {
 		opts.ServerClock = func(context.Context) (time.Time, error) { return opts.now(), nil }
@@ -104,7 +104,7 @@ func TestClockThatAgreesWithStorageExpiresAsBefore(t *testing.T) {
 	store := storage.NewMemoryStore()
 	t0 := time.Now().UTC().Add(-100 * 24 * time.Hour)
 	publishTwice(t, local, store, "s1", t.TempDir(), t0)
-	// Now is the real time here, as is the MemoryStore's clock: the default
+	// Now is the wallNow time here, as is the MemoryStore's clock: the default
 	// probe runs and agrees.
 	result, err := Sweep(context.Background(), local, store, Options{SessionMaxAge: 90 * 24 * time.Hour})
 	if err != nil || len(result.Errors) != 0 || result.Held != nil || len(result.DeletedSessions) != 1 {
@@ -366,9 +366,9 @@ func TestSweepWithNothingDueDoesNotProbe(t *testing.T) {
 func TestHeldClockIsNotProbedEveryPass(t *testing.T) {
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
-	real := time.Now().UTC()
-	publishTwice(t, local, store, "s1", t.TempDir(), real.Add(-100*24*time.Hour))
-	ahead := real.Add(365 * 24 * time.Hour)
+	wallNow := time.Now().UTC()
+	publishTwice(t, local, store, "s1", t.TempDir(), wallNow.Add(-100*24*time.Hour))
+	ahead := wallNow.Add(365 * 24 * time.Hour)
 	for pass := range 30 {
 		at := ahead.Add(time.Duration(pass) * time.Minute)
 		result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return at }, SessionMaxAge: 90 * 24 * time.Hour})
@@ -397,10 +397,10 @@ func TestHeldClockIsNotProbedEveryPass(t *testing.T) {
 func TestFailedProbeIsNotRetriedEveryPass(t *testing.T) {
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore(), failPut: true}
-	real := time.Now().UTC()
-	publishTwice(t, local, store, "s1", t.TempDir(), real.Add(-100*24*time.Hour))
+	wallNow := time.Now().UTC()
+	publishTwice(t, local, store, "s1", t.TempDir(), wallNow.Add(-100*24*time.Hour))
 	for pass := range 5 {
-		at := real.Add(time.Duration(pass) * time.Minute)
+		at := wallNow.Add(time.Duration(pass) * time.Minute)
 		result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return at }, SessionMaxAge: 90 * 24 * time.Hour})
 		if err != nil || !errors.Is(result.Held, ErrClockUnverified) || len(result.DeletedSessions) != 0 {
 			t.Fatalf("pass %d: %#v %v", pass, result, err)
@@ -418,14 +418,14 @@ func TestAgreeingReadingDoesNotCoverALaterJump(t *testing.T) {
 	local := newTestStore(t)
 	store := &probeCountingStore{MemoryStore: storage.NewMemoryStore()}
 	dir := t.TempDir()
-	real := time.Now().UTC()
-	publishTwice(t, local, store, "old", dir, real.Add(-100*24*time.Hour))
+	wallNow := time.Now().UTC()
+	publishTwice(t, local, store, "old", dir, wallNow.Add(-100*24*time.Hour))
 	result, err := Sweep(context.Background(), local, store, Options{SessionMaxAge: 90 * 24 * time.Hour})
 	if err != nil || result.Held != nil || len(result.DeletedSessions) != 1 || store.probes != 1 {
 		t.Fatalf("%#v %v probes=%d", result, err, store.probes)
 	}
-	publishTwice(t, local, store, "recent", dir, real)
-	ahead := real.Add(365 * 24 * time.Hour)
+	publishTwice(t, local, store, "recent", dir, wallNow)
+	ahead := wallNow.Add(365 * 24 * time.Hour)
 	result, err = Sweep(context.Background(), local, store, Options{Now: func() time.Time { return ahead }, SessionMaxAge: 90 * 24 * time.Hour})
 	if err != nil || !errors.Is(result.Held, ErrClockAhead) || len(result.DeletedSessions) != 0 || store.probes != 2 {
 		t.Fatalf("a jump after an agreeing reading: %#v %v probes=%d", result, err, store.probes)
