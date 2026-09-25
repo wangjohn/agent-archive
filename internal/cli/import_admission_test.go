@@ -27,7 +27,7 @@ func TestHookRegistrationRecordsAdmissionAndOrigin(t *testing.T) {
 		t.Fatalf("regs=%#v err=%v", regs, err)
 	}
 	reg := regs[0]
-	if !reg.SessionStartedAt.Equal(now) || !reg.AdmittedAt.Equal(now) || reg.Origin != archive.SessionOriginHook || reg.StartedAtSource != archive.StartedAtSourceHook || reg.ImportBatch != "" || reg.Imported() {
+	if !reg.SessionStartedAt.Equal(now) || !reg.AdmittedAt.Equal(now) || reg.Origin != archive.SessionOriginHook || reg.StartedAtSource != archive.StartedAtSourceHook || !reg.ImportBatch.IsZero() || reg.Imported() {
 		t.Fatalf("reg=%#v", reg)
 	}
 	cfg, _, _ := config.Load(home)
@@ -152,7 +152,7 @@ func TestHookResumeOfImportKeepsProvenanceAndUpdatesPath(t *testing.T) {
 			ArchiveSessionID: id, NativeSessionID: "native-1", ProjectID: archive.ProjectID("/work/widget"), ProjectRoot: "/work/widget",
 			Harness: archive.Harness{Name: "claude"}, TranscriptPath: "/tmp/old.jsonl",
 			SessionStartedAt: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC), RegisteredAt: importedAt,
-			AdmittedAt: importedAt, Origin: archive.SessionOriginImport, StartedAtSource: archive.StartedAtSourceTranscript, ImportBatch: "2026-09-01-1",
+			AdmittedAt: importedAt, Origin: archive.SessionOriginImport, StartedAtSource: archive.StartedAtSourceTranscript, ImportBatch: archive.NewImportBatch("2026-09-01-1"),
 		}
 	})
 	if err != nil {

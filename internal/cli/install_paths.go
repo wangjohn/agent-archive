@@ -27,27 +27,19 @@ func (e Env) installation(home, userHome string) installation {
 
 // defaultDataHome is the data directory of the account's own default
 // installation: ~/.local/share/agent-archive under the account's real home,
-// with its symlinks resolved as local.Home resolves them.
+// spelled canonically (local.CanonicalPath).
 func (in installation) defaultDataHome() string {
-	return canonicalPath(filepath.Join(in.accountHome, ".local", "share", "agent-archive"))
+	return local.CanonicalPath(filepath.Join(in.accountHome, ".local", "share", "agent-archive"))
 }
 
-// canonicalPath is path with its existing symlinks resolved, as local.Home
-// resolves the data directory, so two spellings of one directory compare
-// equal.
-func canonicalPath(path string) string {
-	if resolved, err := local.ResolveExistingSymlinks(path); err == nil {
-		return resolved
-	}
-	return filepath.Clean(path)
-}
-
-// isDefault reports whether this is the account's default installation.
-// Anything else (AGENT_ARCHIVE_HOME set elsewhere, or a sandbox that
-// overrides $HOME and so moves the data directory with it) is not, and gets
-// labels and hook commands of its own.
+// isDefault reports whether this is the account's default installation,
+// however its directory is spelled (a symlink, or another case on a
+// case-insensitive volume): the same test hooks use to tell installations
+// apart (local.SameLocation). Anything else (AGENT_ARCHIVE_HOME set
+// elsewhere, or a sandbox that overrides $HOME and so moves the data
+// directory with it) is not, and gets labels and hook commands of its own.
 func (in installation) isDefault() bool {
-	return in.accountHome != "" && canonicalPath(in.home) == in.defaultDataHome()
+	return in.accountHome != "" && local.SameLocation(in.home, in.defaultDataHome())
 }
 
 // hook is what setup installs into the apps' hook files: a non-default data
@@ -127,7 +119,7 @@ func (in installation) label() string {
 	if in.isDefault() {
 		return hooks.LaunchLabel
 	}
-	return hooks.CollectorLabel(canonicalPath(in.home), "")
+	return hooks.CollectorLabel(local.CanonicalPath(in.home), "")
 }
 
 // collectorPlist is the LaunchAgent path of the background collector; its
@@ -142,38 +134,64 @@ func launchLabel(plist string) string {
 	return strings.TrimSuffix(filepath.Base(plist), ".plist")
 }
 
-// previousCollectorPlist is the LaunchAgent an earlier release installed
-// under the default label for a non-default data directory, before labels
-// were derived from the directory: "" unless that plist exists and runs the
-// collector for this data directory. A plist for any other directory is
-// never returned, so another installation's is never touched.
-func (in installation) previousCollectorPlist() string {
-	if in.isDefault() {
-		return ""
-	}
-	path := filepath.Join(in.userHome, "Library", "LaunchAgents", hooks.LaunchLabel+".plist")
-	data, err := os.ReadFile(path)
+// previousCollectorPlists are the LaunchAgents earlier releases installed
+// for this data directory under labels other than its own: every collector
+// plist (a label hooks.CollectorLabel can produce) that runs the collector
+// for this data directory. Earlier releases used two other labels. The
+// default one, which releases before labels were derived from the directory
+// gave a non-default data directory. And the label derived from the
+// directory as spelled (its symlinks resolved but not its case), which
+// releases before CanonicalPath gave a directory spelled in another case
+// than it is listed in, the default directory included; setup run with two
+// such spellings left one job for each. A plist for any other directory is
+// never returned, so another installation's is never touched, and stopping
+// the job one defines still needs launchd to have loaded it from that very
+// file (unloadLaunchAgent).
+func (in installation) previousCollectorPlists() []string {
+	dir := filepath.Join(in.userHome, "Library", "LaunchAgents")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return ""
+		return nil
 	}
-	dataHome, err := hooks.LaunchAgentDataHome(data)
-	if err != nil || dataHome == "" {
-		return ""
+	own := in.label()
+	var found []string
+	for _, entry := range entries {
+		label, ok := strings.CutSuffix(entry.Name(), ".plist")
+		if !ok || label == own || !isCollectorLabel(label) {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		dataHome, err := hooks.LaunchAgentDataHome(data)
+		if err != nil || dataHome == "" || !local.SameLocation(dataHome, in.home) {
+			continue
+		}
+		found = append(found, path)
 	}
-	if canonicalPath(dataHome) != canonicalPath(in.home) {
-		return ""
+	return found
+}
+
+// isCollectorLabel reports whether label is one hooks.CollectorLabel
+// produces: the default label, or it followed by 12 hex digits.
+func isCollectorLabel(label string) bool {
+	if label == hooks.LaunchLabel {
+		return true
 	}
-	return path
+	suffix, ok := strings.CutPrefix(label, hooks.LaunchLabel+".")
+	return ok && len(suffix) == 12 && strings.Trim(suffix, "0123456789abcdef") == ""
 }
 
 // installedCollectorPlist is the LaunchAgent status reports on: the one for
 // this installation's own label, or else one an earlier release installed
-// for it under the default label.
+// for it under another label.
 func (in installation) installedCollectorPlist() string {
 	current := in.collectorPlist()
 	if _, err := os.Stat(current); err != nil {
-		if previous := in.previousCollectorPlist(); previous != "" {
-			return previous
+		if previous := in.previousCollectorPlists(); len(previous) > 0 {
+			return previous[0]
 		}
 	}
 	return current

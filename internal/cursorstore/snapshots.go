@@ -182,8 +182,8 @@ func RemoveOwnSnapshots() {
 
 // RemoveStaleSnapshots removes snapshot directories a killed process left
 // behind, so a copy of Cursor's chats does not outlive its read. Every
-// backfill command calls it first, and the collector calls it when it reads
-// Cursor's database; any other long-running reader should too. A locked
+// backfill command calls it first, and the collector at the start of every
+// pass; any other long-running reader should too. A locked
 // one belongs to a read in progress and is left alone. An unlocked one whose
 // lock file is over abandonedSnapshotAge old was abandoned and is removed; one
 // without a lock file may belong to a read that is just starting, so it is

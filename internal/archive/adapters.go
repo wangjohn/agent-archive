@@ -67,12 +67,12 @@ const DefaultParserVersion = "0.11.0"
 
 // NewAdapter returns a privacy-first adapter by canonical harness name.
 func NewAdapter(name string) (Adapter, error) {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "codex":
+	switch CanonicalHarness(name) {
+	case HarnessCodex:
 		return CodexAdapter{}, nil
-	case "claude", "claude-code":
+	case HarnessClaude:
 		return ClaudeAdapter{}, nil
-	case "cursor":
+	case HarnessCursor:
 		return CursorAdapter{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported archive adapter %q", name)

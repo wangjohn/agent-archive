@@ -103,8 +103,10 @@ environment. That directory is also how each installation recognizes its own
 hooks: setup replaces and uninstall removes only handlers whose command runs
 with this installation's data directory, and leaves another installation's
 alone. If an app's hook file already holds another installation's hooks,
-setup names that installation and installs nothing beside it (two
-installations would each capture every session), and `status` reports it;
+setup names that installation before its first question and installs
+nothing beside it (two installations would each capture every session): if
+you choose that app, setup stops right after the apps and projects step,
+before asking about storage, and keeps your answers. `status` reports it too;
 uninstall that installation first, or give the new one its own `HOME` (or
 `CLAUDE_CONFIG_DIR` and `CODEX_HOME`) so the apps' hook files are separate
 too. Before stopping a job, setup and uninstall check that launchd loaded it

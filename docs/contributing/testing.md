@@ -154,7 +154,7 @@ LaunchAgent runs) are not part of the user interface and may change.
 
 ## Fuzzing
 
-Redaction, parsing and hook-file editing have fuzz targets
+Redaction, parsing, hook-file editing and the hook itself have fuzz targets
 (`go test -list Fuzz ./...`). In `internal/archive`:
 
 | Target | Input | Properties |
@@ -177,6 +177,12 @@ In `internal/hooks`:
 | `FuzzMergeRemove` | any hook file Merge accepts, per harness | merging twice changes nothing; Remove takes out exactly what Merge added |
 | `FuzzCommandDataHome` | any data directory | the hook command reads back the directory it was built with |
 
+In `internal/cli`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzHookPayload` | an app name and up to eight hook payloads, run in turn against a fresh data directory set up for all three apps | every run exits 0 without a panic, and nothing outside the data directory (the project folder, `HOME`) changes |
+
 Their seeds come from the fixtures in `testdata/` and from
 `testdata/fuzz/<target>/`, and plain `go test` runs them. CI runs every target
 in every package for 30 seconds on every pull request (the `fuzz` job in
@@ -189,5 +195,4 @@ go test ./internal/archive -run '^$' -fuzz '^FuzzFilterJSONL$' -fuzztime 2m -fuz
 ```
 
 A failing input is written to `testdata/fuzz/<target>/`; keep it there as a
-seed once it is fixed. Hook payload parsing lives in `internal/cli` and has
-no fuzz target yet.
+seed once it is fixed.

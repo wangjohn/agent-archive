@@ -167,6 +167,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
 	local.RemoveStaleTemps()
+	// A copy of Cursor's database a killed collector or backfill left
+	// behind goes on every pass, whether or not this one reads Cursor.
+	cursorstore.RemoveStaleSnapshots()
 	p := &pass{
 		ctx:    ctx,
 		local:  local,
@@ -347,7 +350,7 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 		return
 	}
 	p.noteGap(id, scan.gap)
-	p.finishScan(id)
+	p.finishScan(reg)
 	switch outcome {
 	case outcomePublished:
 		p.result.Published = append(p.result.Published, id)
@@ -366,18 +369,23 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 	p.opts.progress(id, outcome == outcomePublished)
 }
 
-// finishScan clears the scan journal once the session owes no further work,
-// and counts it as pending otherwise. The session's own outcome stands
-// whatever happens here: a publication has reached storage even if this
-// bookkeeping fails, and the next pass redoes it.
-func (p *pass) finishScan(id string) {
-	_, requestPending, requestErr := p.local.LoadRequest(id)
-	uploadPending, uploadErr := p.local.HasPending(id)
+// finishScan clears the scan journal once the session owes no further work
+// (state.Outstanding's OwedAfterScan), and counts it as pending otherwise.
+// The session's own outcome stands whatever happens here: a publication has
+// reached storage even if this bookkeeping fails, and the next pass redoes
+// it.
+func (p *pass) finishScan(reg archive.SessionRegistration) {
+	id := reg.ArchiveSessionID
+	_, requested, err := p.local.LoadRequest(id)
+	var owed state.Outstanding
+	if err == nil {
+		owed, err = p.local.Outstanding(reg, requested)
+	}
 	switch {
-	case requestErr != nil || uploadErr != nil:
-		addError(p.result.Errors, id, fmt.Errorf("check outstanding work: %w", errors.Join(requestErr, uploadErr)))
+	case err != nil:
+		addError(p.result.Errors, id, fmt.Errorf("check outstanding work: %w", err))
 		p.pending++
-	case !requestPending && !uploadPending:
+	case !owed.OwedAfterScan():
 		if err := p.local.SetScanPending(id, false); err != nil {
 			addError(p.result.Errors, id, fmt.Errorf("complete pending scan: %w", err))
 			p.pending++

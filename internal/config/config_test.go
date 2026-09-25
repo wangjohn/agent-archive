@@ -109,7 +109,7 @@ func TestLegacyRegistrationDecodesAsHookAndKeepsItsBoundary(t *testing.T) {
 	if err := json.Unmarshal(legacy, &reg); err != nil {
 		t.Fatal(err)
 	}
-	if reg.Imported() || reg.Origin != "" || !reg.AdmittedAt.IsZero() || reg.StartedAtSource != "" || reg.ImportBatch != "" || reg.DestinationID != "" {
+	if reg.Imported() || reg.Origin != "" || !reg.AdmittedAt.IsZero() || reg.StartedAtSource != "" || !reg.ImportBatch.IsZero() || reg.DestinationID != "" {
 		t.Fatalf("legacy registration decoded with import fields: %#v", reg)
 	}
 	if !reg.Admitted().Equal(reg.SessionStartedAt) {

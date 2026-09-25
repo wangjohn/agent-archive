@@ -476,7 +476,14 @@ matching rule wins.
    scratch chats) or `~/Documents/Codex/` (Codex desktop's dated workspaces,
    `<date>/<name>`) becomes that one folder as a project, unless rule 3 or 4
    already found a repository inside it. Because the nearest ancestor wins,
-   future chats there are captured too, and the plan says so.
+   future chats there are captured too, and the plan says so. macOS asks
+   before an app looks inside `~/Documents`, so the plan matches
+   `~/Documents/Codex/` as spelled (under home as given and with its
+   symlinks resolved) and doesn't look inside Documents for it: a plan with
+   no session and no configured project in Documents never touches it, and
+   a terminal without Documents access gets no prompt. Only when a
+   configured project is already in Documents is the folder's own symlink
+   resolved, as before.
 6. **Temporary directories.** `/tmp`, `/private/tmp`, `/var/folders`, and
    `$TMPDIR` are skipped with `temporary_directory`. With `--include-temp`,
    each directory becomes its own project. These sessions are mostly tool
@@ -588,9 +595,11 @@ Claude adapter processed 519 MB of real transcripts at these rates:
 Eight workers read 5 GB of history in about 30 seconds, and using every core
 would cost the person's machine more than it saves. Upload, which is sequential
 and network-bound, is the slower phase either way. Memory stays small because
-the adapter streams. The only guard needed stops two files near the 64 MiB
-limit from being read at once: workers share a 128 MiB cap on transcript bytes
-being read at the same time, so a file that doesn't fit waits for room.
+the adapter streams. The only guard needed stops several large files from
+being read at once: workers share a 128 MiB cap on transcript bytes being
+read at the same time, so a file that doesn't fit waits for room, and one
+larger than the cap (a raw transcript may be up to 256 MiB, below) runs
+alone.
 
 | | Claude Code | Codex | Cursor |
 |---|---|---|---|
@@ -652,7 +661,8 @@ the variables still finds them. A session in two of these folders is a
     for the whole plan, so at most one snapshot of the database (below), and
     filtered with the collector's own code
     (`collector.FilterCursorChat`), so `empty`, `unsafe_format`, and
-    `too_large` (its rows together over 64 MiB, or one row over the record
+    `too_large` (its rows together over 256 MiB before filtering, what the
+    filter keeps of them over 64 MiB, or one row over the 64 MiB record
     limit) are what capture would decide. Its size is its rows' bytes. Its
     project is the folder `workspaceIdentifier.uri` names, then the
     `folder` of `workspaceStorage/<workspaceIdentifier.id>/workspace.json`,
@@ -709,9 +719,18 @@ several reasons apply, the first in this list wins.
 | `above_home` | — |
 | `temporary_directory` | `--include-temp` |
 | `project_unknown`, `worktree_unresolved`, `identity_mismatch` | — |
-| `empty`, `unsafe_format`, `too_large` (over 64 MiB) | — |
+| `empty`, `unsafe_format`, `too_large` (see below) | — |
 | `start_unknown` (no record timestamp for Claude Code and Codex; no `createdAt` for a Cursor database chat) | — |
 | `start_in_future` | — |
+
+`too_large` uses capture's limits, so an import never skips a session the
+collector would capture, or the reverse. The 64 MiB limit applies to what
+the privacy filter keeps, not to the raw transcript, whose bulk is tool
+output the filter drops. A transcript is too large when the raw file is over
+256 MiB (four times the limit; such a file is not read at all), when what
+the filter keeps of it is over 64 MiB, or when one record in it is over the
+64 MiB record limit. A Cursor database chat is measured the same way, its
+rows standing in for the file.
 
 `cursor_database_only`, phase 1's placeholder for chats only Cursor's
 database holds, is retired: those chats are now imported (phase 2). When the

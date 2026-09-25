@@ -69,7 +69,7 @@ func TestImportedSessionMetadataRecordsProvenanceAndGap(t *testing.T) {
 	reg := registration(t, path)
 	importedAt := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 	reg.AdmittedAt, reg.RegisteredAt = importedAt, importedAt
-	reg.Origin, reg.StartedAtSource, reg.ImportBatch = archive.SessionOriginImport, archive.StartedAtSourceTranscript, "2026-09-23-1"
+	reg.Origin, reg.StartedAtSource, reg.ImportBatch = archive.SessionOriginImport, archive.StartedAtSourceTranscript, archive.NewImportBatch("2026-09-23-1")
 	if err := local.SaveRegistration(reg); err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			parent := archive.SessionRegistration{
 				ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project",
 				Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: parentStart, RegisteredAt: tc.admittedAt,
-				AdmittedAt: tc.admittedAt, Origin: tc.origin, ImportBatch: tc.batch, StartedAtSource: startedAtSource,
+				AdmittedAt: tc.admittedAt, Origin: tc.origin, ImportBatch: archive.NewImportBatch(tc.batch), StartedAtSource: startedAtSource,
 				// The destination configured below: a zero storage.
 				DestinationID: config.Config{}.DestinationID(),
 			}
@@ -182,7 +182,7 @@ func TestSubagentInheritsAdmissionAndOnlyHookChildrenGetLifecycleEvidence(t *tes
 			if err != nil || !found {
 				t.Fatalf("child not registered: found=%v err=%v", found, err)
 			}
-			if !child.AdmittedAt.Equal(parent.AdmittedAt) || child.Origin != parent.Origin || child.ImportBatch != parent.ImportBatch || child.DestinationID != parent.DestinationID {
+			if !child.AdmittedAt.Equal(parent.AdmittedAt) || child.Origin != parent.Origin || child.ImportBatch.Recorded() != parent.ImportBatch.Recorded() || child.DestinationID != parent.DestinationID {
 				t.Fatalf("child did not inherit admission: %#v", child)
 			}
 			if !child.SessionStartedAt.Equal(parentStart.Add(2 * time.Minute)) {
@@ -383,7 +383,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 			parent := archive.SessionRegistration{
 				ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project",
 				Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: parentStart, RegisteredAt: importedAt,
-				AdmittedAt: importedAt, Origin: tc.origin, StartedAtSource: startedAtSource, ImportBatch: importBatch,
+				AdmittedAt: importedAt, Origin: tc.origin, StartedAtSource: startedAtSource, ImportBatch: archive.NewImportBatch(importBatch),
 			}
 			if err := local.SaveRegistration(parent); err != nil {
 				t.Fatal(err)

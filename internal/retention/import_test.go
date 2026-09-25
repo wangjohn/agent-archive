@@ -21,7 +21,7 @@ var (
 func importedRegistration(id, transcriptPath string) archive.SessionRegistration {
 	reg := registration(id, transcriptPath)
 	reg.SessionStartedAt, reg.RegisteredAt, reg.AdmittedAt = longAgoStart, importedAt, importedAt
-	reg.Origin, reg.StartedAtSource, reg.ImportBatch = archive.SessionOriginImport, archive.StartedAtSourceTranscript, "2026-09-23-1"
+	reg.Origin, reg.StartedAtSource, reg.ImportBatch = archive.SessionOriginImport, archive.StartedAtSourceTranscript, archive.NewImportBatch("2026-09-23-1")
 	return reg
 }
 

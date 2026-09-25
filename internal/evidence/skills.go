@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 const (
@@ -108,12 +109,12 @@ func skillRoots(options SkillOptions) []skillRoot {
 		}
 		roots = append(roots, skillRoot{path: path, scope: scope, project: project})
 	}
-	switch strings.ToLower(strings.TrimSpace(options.Harness)) {
+	switch archive.CanonicalHarness(options.Harness) {
 	case "codex":
 		addUser(".agents/skills", "user_agents")
 		addUser(".codex/skills", "user_codex_legacy")
 		addProject(".agents/skills", "project_agents")
-	case "claude", "claude-code":
+	case archive.HarnessClaude:
 		addUser(".claude/skills", "user_claude")
 		addProject(".claude/skills", "project_claude")
 	case "cursor":
@@ -311,18 +312,9 @@ func (b skillBounds) allow(resolved string) bool {
 		// links (.claude/skills -> .. makes the root the project itself), so
 		// "inside the skill root" admits nothing more for it: only a file
 		// named SKILL.md, inside the project.
-		return named && within(b.project, resolved)
+		return named && local.PathWithin(resolved, b.project)
 	}
-	return named || within(b.root, resolved)
-}
-
-// within reports whether path lies inside dir; nothing lies inside "".
-func within(dir, path string) bool {
-	if dir == "" {
-		return false
-	}
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	return named || local.PathWithin(resolved, b.root)
 }
 
 // sameDirectory reports whether a and b are the same directory, compared

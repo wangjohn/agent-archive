@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // twoInstallations is the account's default installation and a test one
@@ -76,7 +77,7 @@ func TestSecondInstallationNeverTouchesTheFirstsHooks(t *testing.T) {
 			output := setupRun(t, second, s3SetupInput("b", "us-east-1", "p", true, true, true, t.TempDir()), 1)
 			wantOwner := "the installation in " + firstHome
 			if order == "default first" {
-				wantOwner = "the default installation in " + canonicalPath(firstHome)
+				wantOwner = "the default installation in " + local.CanonicalPath(firstHome)
 			}
 			if !strings.Contains(output, wantOwner) || !strings.Contains(output, "agent-archive uninstall") || !strings.Contains(output, "own HOME") || strings.Count(output, wantOwner) != 6 {
 				t.Fatalf("setup output does not name the other installation:\n%s", output)

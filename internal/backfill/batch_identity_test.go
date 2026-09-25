@@ -104,7 +104,7 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 				return archive.SessionRegistration{
 					ArchiveSessionID: id, NativeSessionID: native, ProjectID: archive.ProjectID(root), ProjectRoot: root,
 					Harness: archive.Harness{Name: "claude"}, SessionStartedAt: fixedNow.Add(-2 * time.Hour),
-					RegisteredAt: fixedNow, AdmittedAt: fixedNow, Origin: origin, ImportBatch: batch, DestinationID: "dest",
+					RegisteredAt: fixedNow, AdmittedAt: fixedNow, Origin: origin, ImportBatch: archive.NewImportBatch(batch), DestinationID: "dest",
 				}
 			}); err != nil {
 				t.Fatal(err)
@@ -121,7 +121,7 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, s := range plan.Sessions {
-				if s.Registration.Origin != archive.SessionOriginImport || s.Registration.ImportBatch != b.ID {
+				if s.Registration.Origin != archive.SessionOriginImport || s.Registration.ImportBatch.Recorded() != b.ID {
 					t.Fatalf("round %d: undo of %s selected %+v", round, b.ID, s.Registration)
 				}
 			}
@@ -130,14 +130,21 @@ func TestPlanUndoSelectsOnlyProvablyImportedRegistrations(t *testing.T) {
 }
 
 // Guard (B-23 hardening): every test of a registration's import ID in
-// production code goes through InBatch, so no caller can select a
-// hook-captured session, or everything with an empty ID, by testing the
-// field itself. It parses every non-test Go file in the module and flags
-// the field as an operand of == or != (except against "", which asks
-// whether there is an ID at all), as a switch tag, as a map index, or as
-// an argument to a membership or comparison function. Copying the field
-// (collecting IDs, carrying it to a subagent) is allowed.
+// production code goes through SessionRegistration.InBatch, so no caller
+// can select a hook-captured session, or everything with an empty ID, by
+// testing the ID itself. The compiler does most of it: archive.ImportBatch
+// is not a string and cannot be compared with ==, even once copied into a
+// variable. What is left is its one way out, Recorded(): this test allows
+// it only in the files listed below, and flags it, or the field, anywhere as
+// an operand of == or != (except against "", which asks whether there is an
+// ID at all), as a switch tag, as a map index, or as an argument to a
+// membership or comparison function.
 func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
+	// file -> why it reads the recorded ID.
+	recordedAllowed := map[string]string{
+		"internal/backfill/batch.go": "lists the IDs in use, so a new import picks another",
+		"internal/backfill/undo.go":  "names the import a kept project belongs to",
+	}
 	membership := map[string]bool{"Contains": true, "ContainsFunc": true, "Index": true, "IndexFunc": true, "EqualFold": true, "Compare": true, "HasPrefix": true, "HasSuffix": true}
 	skipDirs := map[string]bool{"testdata": true, "vendor": true}
 	emptyLiterals := map[string]bool{`""`: true, "``": true}
@@ -162,9 +169,17 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 			return err
 		}
 		isField := func(e ast.Expr) bool {
-			sel, ok := ast.Unparen(e).(*ast.SelectorExpr)
+			e = ast.Unparen(e)
+			if call, ok := e.(*ast.CallExpr); ok {
+				if fun, ok := call.Fun.(*ast.SelectorExpr); ok && fun.Sel.Name == "Recorded" {
+					e = fun.X
+				}
+			}
+			sel, ok := e.(*ast.SelectorExpr)
 			return ok && sel.Sel.Name == "ImportBatch"
 		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
 		isEmpty := func(e ast.Expr) bool {
 			lit, ok := ast.Unparen(e).(*ast.BasicLit)
 			return ok && lit.Kind == token.STRING && emptyLiterals[lit.Value]
@@ -173,11 +188,15 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 			offenders = append(offenders, fset.Position(n.Pos()).String()+": "+how)
 		}
 		for _, decl := range file.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "InBatch" && fn.Recv == nil && file.Name.Name == "backfill" {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "InBatch" && fn.Recv != nil && file.Name.Name == "archive" {
 				continue
 			}
 			ast.Inspect(decl, func(n ast.Node) bool {
 				switch n := n.(type) {
+				case *ast.SelectorExpr:
+					if n.Sel.Name == "Recorded" && isField(n.X) && recordedAllowed[rel] == "" {
+						flag(n, "read with Recorded() outside the files allowed to")
+					}
 				case *ast.BinaryExpr:
 					if n.Op != token.EQL && n.Op != token.NEQ {
 						break
@@ -220,8 +239,8 @@ func TestImportBatchComparedOnlyThroughInBatch(t *testing.T) {
 
 // InBatch needs an import registration and a non-empty, equal ID.
 func TestInBatch(t *testing.T) {
-	imported := archive.SessionRegistration{Origin: archive.SessionOriginImport, ImportBatch: "2026-09-23-1"}
-	hook := archive.SessionRegistration{Origin: archive.SessionOriginHook, ImportBatch: "2026-09-23-1"}
+	imported := archive.SessionRegistration{Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("2026-09-23-1")}
+	hook := archive.SessionRegistration{Origin: archive.SessionOriginHook, ImportBatch: archive.NewImportBatch("2026-09-23-1")}
 	unbatched := archive.SessionRegistration{Origin: archive.SessionOriginImport}
 	for _, tc := range []struct {
 		reg  archive.SessionRegistration
@@ -234,7 +253,7 @@ func TestInBatch(t *testing.T) {
 		{hook, "2026-09-23-1", false},
 		{unbatched, "", false},
 	} {
-		if got := InBatch(tc.reg, tc.id); got != tc.want {
+		if got := tc.reg.InBatch(tc.id); got != tc.want {
 			t.Errorf("InBatch(%+v, %q) = %v", tc.reg, tc.id, got)
 		}
 	}

@@ -296,6 +296,14 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 	if reg.ReadsTranscriptFile() && reg.TranscriptPath == "" && s.expired(reg.Admitted()) {
 		deferForWork = false
 	}
+	// What the session still owes (state.Outstanding), read only for a
+	// session old enough to expire: the steady state stays a summary read.
+	var owed state.Outstanding
+	if locallyExpired {
+		if owed, err = s.local.Outstanding(reg, s.requested[id]); err != nil {
+			return fmt.Errorf("check outstanding work: %w", err)
+		}
+	}
 	if locallyExpired && deferForWork {
 		// Unpublished work is not expired evidence. A session that crosses the
 		// retention boundary on the same pass its publication fails
@@ -306,12 +314,9 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 		// intact, or it keeps failing and reports itself as a failure. A
 		// session the collector no longer publishes is not deferred: its
 		// outstanding work will never be done, so waiting on it would keep
-		// the session forever.
-		unfinished, err := s.hasUnfinishedWork(id)
-		if err != nil {
-			return err
-		}
-		locallyExpired = !unfinished
+		// the session forever. A scan that never finishes does not defer it
+		// either (see state.Outstanding.DefersExpiry).
+		locallyExpired = !owed.DefersExpiry()
 	}
 
 	// A session admitted into another destination has no objects in this
@@ -330,15 +335,11 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 		// reached storage before its local acknowledgement did. Anything
 		// else is local state only, so it is forgotten without a call for
 		// its objects.
-		pending, err := s.local.HasPending(id)
-		if err != nil {
-			return fmt.Errorf("check pending publication: %w", err)
-		}
 		// A published state or pending publication moved aside because it
 		// no longer decoded may have been the record of objects that are in
 		// the bucket, so such a session is deleted from it like a published
 		// one.
-		if !summary.Published && !pending && !s.local.LostPublication(id) {
+		if !summary.Published && !owed.Upload && !s.local.LostPublication(id) {
 			return s.forget(reg, deferForWork, &s.result.PrunedSessions, "forget never-published session")
 		}
 	}
@@ -504,21 +505,6 @@ func forgetExpired(local *state.Store, reg archive.SessionRegistration, deferFor
 	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &state.RemovalRecord{
 		Harness: reg.Harness.Name, Reason: state.RemovalReasonRetention, At: now,
 	})
-}
-
-// hasUnfinishedWork reports whether the collector still owes this session a
-// publication: a request a hook left behind, or a publication built and not
-// yet accepted by storage. Either one means evidence exists that expiry would
-// destroy before it was ever archived.
-func (s *sweeper) hasUnfinishedWork(archiveSessionID string) (bool, error) {
-	if s.requested[archiveSessionID] {
-		return true, nil
-	}
-	pending, err := s.local.HasPending(archiveSessionID)
-	if err != nil {
-		return false, fmt.Errorf("check pending publication: %w", err)
-	}
-	return pending, nil
 }
 
 // anySupersededExpirable reports whether a sweep could delete at least one

@@ -424,7 +424,7 @@ func (u *upload) refresh() error {
 	}
 	u.total, u.totalBytes, u.pending = 0, 0, map[string]int64{}
 	for _, reg := range regs {
-		if !backfill.InBatch(reg, u.batch) || reg.ParentSessionID != "" {
+		if !reg.InBatch(u.batch) || reg.ParentSessionID != "" {
 			continue
 		}
 		size := u.size(reg)
@@ -554,7 +554,7 @@ func runBackfillHistory(args []string, stdout, stderr io.Writer, env Env) int {
 func batchUploadState(store *state.Store, cfg config.Config, regs []archive.SessionRegistration, b backfill.Batch, latest bool) (string, error) {
 	registered, subagents, waiting := 0, 0, 0
 	for _, reg := range regs {
-		if !backfill.InBatch(reg, b.ID) {
+		if !reg.InBatch(b.ID) {
 			continue
 		}
 		if reg.ParentSessionID != "" {

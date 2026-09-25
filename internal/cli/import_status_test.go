@@ -27,7 +27,7 @@ func saveImportedSession(t *testing.T, store *state.Store, now time.Time, id, pr
 		ArchiveSessionID: id, NativeSessionID: "native-" + id, ProjectID: archive.ProjectID(project), ProjectRoot: project,
 		Harness: archive.Harness{Name: "codex", Version: "1.2.3"}, TranscriptPath: path,
 		SessionStartedAt: now.AddDate(-1, 0, 0), RegisteredAt: now, AdmittedAt: now,
-		Origin: archive.SessionOriginImport, StartedAtSource: archive.StartedAtSourceTranscript, ImportBatch: "batch-1",
+		Origin: archive.SessionOriginImport, StartedAtSource: archive.StartedAtSourceTranscript, ImportBatch: archive.NewImportBatch("batch-1"),
 	}
 	if err := store.SaveRegistration(reg); err != nil {
 		t.Fatal(err)

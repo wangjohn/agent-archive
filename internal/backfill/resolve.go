@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // resolution is where one working directory is imported, or why it is not.
@@ -43,7 +44,20 @@ type resolver struct {
 
 func newResolver(env Environment, cfg config.Config, filters Filters) *resolver {
 	var workspaces []workspaceFolder
+	resolvedHome := env.resolved(env.Home)
+	lookInDocuments := documentsInUse(env, resolvedHome, cfg)
 	for _, folder := range workspaceFolders(env.Home) {
+		if !lookInDocuments && local.PathWithin(folder, filepath.Join(env.Home, "Documents")) {
+			// Resolving a folder in ~/Documents looks inside Documents, which
+			// makes macOS ask a terminal without access for it. Unless
+			// Documents is in use already, the folder is matched as spelled,
+			// under home as given and resolved: a session there still maps
+			// to it, and a plan that has none never touches Documents.
+			rel, _ := filepath.Rel(env.Home, folder)
+			root := filepath.Join(resolvedHome, rel)
+			workspaces = append(workspaces, workspaceFolder{root: root, forms: uniquePaths(filepath.Clean(folder), root)})
+			continue
+		}
 		workspaces = append(workspaces, workspaceFolder{root: env.resolved(folder), forms: uniquePaths(filepath.Clean(folder), env.resolved(folder))})
 	}
 	var temps []string
@@ -87,20 +101,9 @@ func uniquePaths(paths ...string) []string {
 	return out
 }
 
-// pathWithin reports whether path is root or lies beneath it, lexically.
-func pathWithin(path, root string) bool {
-	if path == root {
-		return true
-	}
-	if !strings.HasSuffix(root, string(filepath.Separator)) {
-		root += string(filepath.Separator)
-	}
-	return strings.HasPrefix(path, root)
-}
-
 func withinAny(path string, roots []string) bool {
 	for _, root := range roots {
-		if pathWithin(path, root) {
+		if local.PathWithin(path, root) {
 			return true
 		}
 	}
@@ -183,6 +186,21 @@ type workspaceFolder struct {
 	forms []string
 }
 
+// documentsInUse reports whether a configured project, included or
+// excluded, is in ~/Documents: then the person already gave this Mac's
+// capture access to it, and looking in it (resolving the Codex workspace
+// folder's symlinks) asks nothing new.
+func documentsInUse(env Environment, resolvedHome string, cfg config.Config) bool {
+	for _, p := range cfg.Archive.Projects {
+		for _, home := range uniquePaths(filepath.Clean(env.Home), resolvedHome) {
+			if local.PathWithin(filepath.Clean(p.Root), filepath.Join(home, "Documents")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // workspaceFolders are the folders desktop apps start chats in, under home:
 // Claude desktop's scratch chats and Codex desktop's dated workspaces
 // (<date>/<name>).
@@ -216,7 +234,7 @@ func (r *resolver) configured(dir string) (resolution, bool) {
 
 // homeOrAbove reports whether dir is home or one of its ancestors.
 func (r *resolver) homeOrAbove(dir string) bool {
-	return pathWithin(r.home, dir) || pathWithin(r.homeRaw, dir)
+	return local.PathWithin(r.home, dir) || local.PathWithin(r.homeRaw, dir)
 }
 
 // homeRule is rule 7 for home or a folder above it. Only home itself can
@@ -238,7 +256,7 @@ func (r *resolver) configuredOwner(dir string) (project archiveProject, found bo
 	bestLen := -1
 	for _, p := range r.cfg.Archive.Projects {
 		configured := r.env.resolved(p.Root)
-		if !pathWithin(dir, configured) || len(configured) <= bestLen {
+		if !local.PathWithin(dir, configured) || len(configured) <= bestLen {
 			continue
 		}
 		project, bestLen, found = archiveProject{Root: p.Root, Included: p.Included}, len(configured), true

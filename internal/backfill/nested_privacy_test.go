@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // PR #53 second review: the look inside an added plain folder must not make
@@ -67,7 +68,7 @@ func TestNestedLookNeverReadsInsideProtectedFolders(t *testing.T) {
 	var touched []string
 	guard := func(path string) {
 		for _, p := range []string{icloud, containers} {
-			if path != p && pathWithin(path, p) {
+			if path != p && local.PathWithin(path, p) {
 				touched = append(touched, path)
 			}
 		}

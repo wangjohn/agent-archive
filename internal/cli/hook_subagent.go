@@ -22,7 +22,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 	if err != nil {
 		return err
 	}
-	if !found || canonicalHarness(parent.Harness.Name) != canonicalHarness(harness) || !cfg.AcceptSession(parent) {
+	if !found || archive.CanonicalHarness(parent.Harness.Name) != archive.CanonicalHarness(harness) || !cfg.AcceptSession(parent) {
 		return nil
 	}
 
@@ -67,8 +67,8 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 }
 
 func supportsSubagentTranscript(harness string) bool {
-	switch strings.ToLower(strings.TrimSpace(harness)) {
-	case "claude", "claude-code":
+	switch archive.CanonicalHarness(harness) {
+	case "claude":
 		return true
 	default:
 		return false

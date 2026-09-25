@@ -97,7 +97,7 @@ func (p Plan) BatchFilters() BatchFilters {
 		IncludeHome: f.IncludeHome, IncludeTemp: f.IncludeTemp, IncludeRemoved: f.IncludeRemoved,
 	}
 	for _, h := range f.Harnesses {
-		out.Harnesses = addUnique(out.Harnesses, canonicalHarness(h))
+		out.Harnesses = addUnique(out.Harnesses, archive.CanonicalHarness(h))
 	}
 	sort.Strings(out.Harnesses)
 	for _, dir := range p.projectFilter {
@@ -118,7 +118,7 @@ func (b *Batch) Reconcile(store *state.Store) error {
 	}
 	parents := map[string]bool{}
 	for _, reg := range regs {
-		if !InBatch(reg, b.ID) {
+		if !reg.InBatch(b.ID) {
 			continue
 		}
 		if reg.ParentSessionID != "" {
@@ -238,16 +238,6 @@ var batchIDPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}-[1-9][0-9]{
 // An empty ID never does.
 func ValidBatchID(id string) bool { return batchIDPattern.MatchString(id) }
 
-// InBatch reports whether reg was registered by the import id: backfill
-// registered it (Imported), and it carries that import's ID. It is the only
-// test of whether a registration belongs to an import, so a batch with a
-// missing or empty ID, or a hook registration that carries an ID, never
-// pulls a hook-captured session into an import's undo, upload, or history.
-// TestImportBatchComparedOnlyThroughInBatch holds every caller to it.
-func InBatch(reg archive.SessionRegistration, id string) bool {
-	return id != "" && reg.Imported() && reg.ImportBatch == id
-}
-
 // validate checks what LoadBatches relies on in a batch read from the file
 // named stem.json: an ID of the form OpenBatch gives, that file's own name,
 // and a start time.
@@ -352,8 +342,8 @@ func OpenBatch(home string, store *state.Store, filters BatchFilters, destinatio
 		used = append(used, b.ID)
 	}
 	for _, reg := range regs {
-		if reg.ImportBatch != "" {
-			used = append(used, reg.ImportBatch)
+		if id := reg.ImportBatch.Recorded(); id != "" {
+			used = append(used, id)
 		}
 	}
 	day := now.Format(dateLayout)

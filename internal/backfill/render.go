@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
@@ -606,7 +607,7 @@ func (p Plan) destination() string {
 func (p Plan) filterFlags() string {
 	var flags []string
 	for _, h := range p.Filters.Harnesses {
-		flags = append(flags, "--harness "+canonicalHarness(h))
+		flags = append(flags, "--harness "+archive.CanonicalHarness(h))
 	}
 	for _, dir := range p.Filters.Projects {
 		if abs, err := filepath.Abs(dir); err == nil {
@@ -757,7 +758,7 @@ func RenderJSON(w io.Writer, p Plan) error {
 		UnreadableStores:              append([]string{}, p.UnreadableStores...),
 	}
 	for _, h := range p.Filters.Harnesses {
-		out.Filters.Harnesses = append(out.Filters.Harnesses, canonicalHarness(h))
+		out.Filters.Harnesses = append(out.Filters.Harnesses, archive.CanonicalHarness(h))
 	}
 	for _, dir := range p.Filters.Projects {
 		if abs, err := filepath.Abs(dir); err == nil {

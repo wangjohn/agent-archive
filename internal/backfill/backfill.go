@@ -194,7 +194,7 @@ const dateLayout = "2006-01-02"
 // Validate checks the filters' values before any file is read.
 func (f Filters) Validate() error {
 	for _, h := range f.Harnesses {
-		if canonicalHarness(h) == "" {
+		if _, known := archive.KnownHarness(h); !known {
 			return fmt.Errorf("--harness must be claude, codex, or cursor, not %q", h)
 		}
 	}
@@ -228,19 +228,6 @@ const (
 	harnessCodex  harness = "codex"
 	harnessCursor harness = "cursor"
 )
-
-// canonicalHarness returns the harness name the archive uses, or "" for an
-// unknown one.
-func canonicalHarness(name string) string {
-	//lint:ignore LV1001 name is free-form: a --harness value or a stored harness name, aliases included
-	switch name {
-	case "claude", "claude-code":
-		return "claude"
-	case "codex", "cursor":
-		return name
-	}
-	return ""
-}
 
 // Environment is everything BuildPlan reads from the machine. A nil function
 // uses the real file system. The one exception is the adapter pass: it goes

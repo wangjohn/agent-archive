@@ -185,7 +185,7 @@ func TestImportedCursorDatabaseChatBlocksADestinationChange(t *testing.T) {
 		return archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "db-chat", ProjectID: archive.ProjectID(project), ProjectRoot: project,
 			Harness: archive.Harness{Name: "cursor"}, SourceKind: archive.SourceKindCursorSQLite, SourceKey: "db-chat",
 			SessionStartedAt: now.Add(-time.Hour), StartedAtSource: archive.StartedAtSourceCursorComposer,
-			RegisteredAt: admitted, AdmittedAt: admitted, Origin: archive.SessionOriginImport, ImportBatch: "2026-09-23-1", DestinationID: cfg.DestinationID()}
+			RegisteredAt: admitted, AdmittedAt: admitted, Origin: archive.SessionOriginImport, ImportBatch: archive.NewImportBatch("2026-09-23-1"), DestinationID: cfg.DestinationID()}
 	})
 	if err != nil {
 		t.Fatal(err)

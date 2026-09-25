@@ -56,6 +56,10 @@ may have made; a copy a killed backfill leaves is removed by the next
   5,000), the plan says so: a repository it did not find is captured too.
   To stop that, exclude the folder in setup, or import only the projects
   you want with `--project`.
+- Chats Codex desktop started in its own workspaces (`~/Documents/Codex`)
+  are one project. Recognizing them doesn't look inside Documents, so a
+  terminal without access to Documents is not asked for it unless a session
+  you import actually ran there.
 - `--since` and `--until` take a date (`2026-09-01`), an RFC 3339 time, or an
   age (`30d`, `12h`). Backfill selects whole local days, so a time or an age
   selects from the start of the day it falls on. An interrupted import run

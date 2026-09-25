@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 // detectHarnesses best-effort-detects installed applications by checking
@@ -122,7 +123,7 @@ func parseJobState(output string, err error, plist string) string {
 	switch {
 	case loadedFrom == "":
 		return "unknown"
-	case canonicalPath(loadedFrom) != canonicalPath(plist):
+	case !local.SameLocation(loadedFrom, plist):
 		return jobAnotherInstallation
 	case strings.Contains(output, "state = running"):
 		return "running"

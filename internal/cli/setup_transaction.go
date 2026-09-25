@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -24,13 +23,25 @@ import (
 
 type setupJournal struct {
 	Legacy *legacyJob `json:"legacy,omitempty"`
-	// Relabeled is the collector an earlier release installed for this
-	// data directory under the default label (see previousCollectorPlist);
-	// setup retires it in favor of the directory's own label.
-	Relabeled *legacyJob     `json:"relabeled,omitempty"`
-	Changes   []hooks.Change `json:"changes"`
-	Plist     string         `json:"plist"`
-	WasLoaded bool           `json:"was_loaded"`
+	// Relabeled and MoreRelabeled are the collectors earlier releases
+	// installed for this data directory under other labels (see
+	// previousCollectorPlists); setup retires them in favor of the
+	// directory's own label. The first stays in Relabeled, where releases
+	// that retired at most one recorded it, so either reads the other's
+	// journal of one.
+	Relabeled     *legacyJob     `json:"relabeled,omitempty"`
+	MoreRelabeled []*legacyJob   `json:"more_relabeled,omitempty"`
+	Changes       []hooks.Change `json:"changes"`
+	Plist         string         `json:"plist"`
+	WasLoaded     bool           `json:"was_loaded"`
+}
+
+// relabeled lists every collector the journal retires under another label.
+func (j setupJournal) relabeled() []*legacyJob {
+	if j.Relabeled == nil {
+		return j.MoreRelabeled
+	}
+	return append([]*legacyJob{j.Relabeled}, j.MoreRelabeled...)
 }
 
 func journalPath(home string) string { return filepath.Join(home, "setup-transaction.json") }
@@ -72,20 +83,19 @@ func destinationEqual(a, b credentials.Config) bool {
 	return config.DestinationID(a) == config.DestinationID(b)
 }
 
-// pendingSessions counts every accepted session with work outstanding, a
-// session waiting for its transcript included: status reports it as pending,
-// because from the user's side it is.
+// pendingSessions counts every accepted session state.Outstanding reports
+// as pending, a session waiting for its transcript included: status reports
+// it as pending, because from the user's side it is.
 func pendingSessions(home string, cfg config.Config) (int, error) {
 	blocking, waiting, err := pendingSessionCounts(home, cfg)
 	return blocking + waiting, err
 }
 
 // pendingSessionCounts splits the pending sessions in two. waiting counts
-// registrations with no transcript path that have never published and have
-// no publication in flight: a Cursor chat whose transcript never arrived
-// (transcripts turned off, for example). Nothing of such a session can be
-// published anywhere until a path arrives, so its queued request is not work
-// a sync could finish. blocking counts everything else.
+// those only waiting for their transcript (state.Outstanding's
+// WaitingForTranscript): nothing of such a session can be published
+// anywhere until a path arrives, so its queued request is not work a sync
+// could finish. blocking counts everything else.
 func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int, err error) {
 	store := state.OpenReadOnly(home)
 	regs, err := store.LoadRegistrations()
@@ -96,53 +106,24 @@ func pendingSessionCounts(home string, cfg config.Config) (blocking, waiting int
 	if err != nil {
 		return 0, 0, err
 	}
-	return countPending(store, regs, reqs, cfg.AcceptSession)
-}
-
-// countPending is pendingSessionCounts over registrations and requests
-// already loaded, counting the registrations accept admits.
-func countPending(store *state.Store, regs []archive.SessionRegistration, reqs []state.Request, accept func(archive.SessionRegistration) bool) (blocking, waiting int, err error) {
-	requested := map[string]bool{}
-	for _, r := range reqs {
-		requested[r.ArchiveSessionID] = true
-	}
+	queued := state.QueuedRequests(reqs)
 	for _, r := range regs {
-		if !accept(r) {
+		if !cfg.AcceptSession(r) {
 			continue
 		}
-		pending, idle, err := sessionPending(store, r, requested[r.ArchiveSessionID])
+		owed, err := store.Outstanding(r, queued[r.ArchiveSessionID])
 		if err != nil {
 			return 0, 0, err
 		}
 		switch {
-		case !pending:
-		case idle:
-			waiting++
-		default:
+		case !owed.Pending():
+		case owed.SyncCanFinish():
 			blocking++
+		default:
+			waiting++
 		}
 	}
 	return blocking, waiting, nil
-}
-
-// sessionPending reports whether one session has work outstanding, and if
-// so whether it is only waiting for its transcript (see
-// pendingSessionCounts). requested is whether a hook request for it is
-// queued.
-func sessionPending(store *state.Store, r archive.SessionRegistration, requested bool) (pending, idle bool, err error) {
-	_, _, cacheStatus, found, err := store.LoadPublished(r.ArchiveSessionID)
-	if err != nil {
-		return false, false, err
-	}
-	scanPending, err := store.ScanPending(r.ArchiveSessionID)
-	if err != nil {
-		return false, false, err
-	}
-	if !scanPending && !requested && found && cacheStatus != state.CacheStatusRateLimited {
-		return false, false, nil
-	}
-	idle, err = waitingForTranscript(store, r)
-	return err == nil, idle, err
 }
 
 // sessionsAdmittedInto counts the registrations that record cfg's
@@ -162,22 +143,6 @@ func sessionsAdmittedInto(home string, cfg config.Config) (int, error) {
 		}
 	}
 	return count, nil
-}
-
-// waitingForTranscript reports whether a registration has no transcript path,
-// has never published, and has no publication in flight. A Cursor database
-// chat has no transcript path by design and never waits for one: it is
-// read from the database, so a sync can publish it and it is pending.
-func waitingForTranscript(store *state.Store, r archive.SessionRegistration) (bool, error) {
-	if r.TranscriptPath != "" || !r.ReadsTranscriptFile() {
-		return false, nil
-	}
-	_, _, published, err := store.LoadLastPublished(r.ArchiveSessionID)
-	if err != nil || published {
-		return false, err
-	}
-	pending, err := store.HasPending(r.ArchiveSessionID)
-	return !pending, err
 }
 
 func reviewChanges(home string, old, next config.Config, p *prompter, env Env) error {
@@ -425,7 +390,12 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err != nil {
 		return err
 	}
-	journal := setupJournal{Legacy: legacy, Relabeled: relabeled, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
+	var firstRelabeled *legacyJob
+	var moreRelabeled []*legacyJob
+	if len(relabeled) > 0 {
+		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
+	}
+	journal := setupJournal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: plistPath, WasLoaded: launchJobActive(job)}
 	if err = local.Write(journalPath(home), journal); err != nil {
 		return err
 	}
@@ -446,8 +416,10 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err = retireLegacyJob(journal.Legacy, env); err != nil {
 		return fail(err)
 	}
-	if err = retireLegacyJob(journal.Relabeled, env); err != nil {
-		return fail(fmt.Errorf("retire the collector installed under the default label: %w", err))
+	for _, job := range journal.relabeled() {
+		if err = retireLegacyJob(job, env); err != nil {
+			return fail(fmt.Errorf("retire the %s: %w", relabeledJobName, err))
+		}
 	}
 	if err = env.loadLaunchAgent(plistPath); err != nil {
 		return fail(fmt.Errorf("start background collector: %w", err))
@@ -483,8 +455,10 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 	if err := checkLegacyJob(home, journal.Legacy, legacyJobName); err != nil {
 		return err
 	}
-	if err := checkLegacyJob(home, journal.Relabeled, relabeledJobName); err != nil {
-		return err
+	for _, job := range journal.relabeled() {
+		if err := checkLegacyJob(home, job, relabeledJobName); err != nil {
+			return err
+		}
 	}
 	state := env.jobState(journal.Plist)
 	if launchJobActive(state) {
@@ -505,8 +479,10 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 	if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, env); err != nil {
 		return err
 	}
-	if err := restoreLegacyJob(home, journal.Relabeled, relabeledJobName, env); err != nil {
-		return err
+	for _, job := range journal.relabeled() {
+		if err := restoreLegacyJob(home, job, relabeledJobName, env); err != nil {
+			return err
+		}
 	}
 	return os.Remove(journalPath(home))
 }
@@ -514,7 +490,7 @@ func restoreSetup(home string, journal setupJournal, env Env) error {
 // Names of the jobs a setup journal can retire, as recovery errors call them.
 const (
 	legacyJobName    = "legacy upload job"
-	relabeledJobName = "background collector installed under the default label"
+	relabeledJobName = "background collector installed under an earlier label"
 )
 
 // otherInstallationError is a setup refused because another installation's
@@ -640,30 +616,30 @@ func recoverSetup(home string, env Env) error {
 	return restoreSetup(home, journal, env)
 }
 
-// planRelabel prepares retiring the collector an earlier release installed
-// for home under the default label, or returns nil when there is none.
-func planRelabel(home, userHome string, env Env) (*legacyJob, error) {
-	path := env.installation(home, userHome).previousCollectorPlist()
-	if path == "" {
-		return nil, nil
+// planRelabel prepares retiring every collector earlier releases installed
+// for home under other labels (previousCollectorPlists).
+func planRelabel(home, userHome string, env Env) ([]*legacyJob, error) {
+	var jobs []*legacyJob
+	for _, path := range env.installation(home, userHome).previousCollectorPlists() {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		state := env.jobState(path)
+		if state == "unknown" {
+			return nil, fmt.Errorf("cannot determine the state of %s; restore access to launchctl and retry", path)
+		}
+		if state == jobAnotherInstallation {
+			// launchd runs that label from another plist: not this one's to retire.
+			continue
+		}
+		jobs = append(jobs, &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)})
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	state := env.jobState(path)
-	if state == "unknown" {
-		return nil, fmt.Errorf("cannot determine the state of %s; restore access to launchctl and retry", path)
-	}
-	if state == jobAnotherInstallation {
-		// launchd runs that label from another plist: not this one's to retire.
-		return nil, nil
-	}
-	return &legacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: launchJobActive(state)}, nil
+	return jobs, nil
 }
 
 func withoutBucketPrivacy(cfg config.Config) config.Config {

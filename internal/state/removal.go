@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -50,11 +51,7 @@ func removalPath(home, harness, nativeSessionID string) string {
 // removalHarness is the app name removal records are keyed by, as the CLI
 // canonicalises hook harness names.
 func removalHarness(harness string) string {
-	harness = strings.ToLower(strings.TrimSpace(harness))
-	if harness == "claude-code" {
-		return "claude"
-	}
-	return harness
+	return archive.CanonicalHarness(harness)
 }
 
 // RecordRemoval writes forgotten/<sha256(harness + "\x00" + nativeSessionID)>.json.
