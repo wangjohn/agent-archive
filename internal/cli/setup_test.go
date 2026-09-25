@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 // fakeKeychain is an in-memory credentials.CredentialStore for tests, since
@@ -340,5 +341,103 @@ func TestPromptsRetryInvalidValuesAndDeduplicatePaths(t *testing.T) {
 	projects, err := promptProjects(p, nil, nil)
 	if err != nil || len(projects) != 1 {
 		t.Fatal(projects, err)
+	}
+}
+
+func TestDraftStorageEditKeepsCaptureChoices(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	input := s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project)
+	setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0)
+	setupRun(t, env, "storage\ns3\nother-bucket\nprofile\ny\n", 0)
+	cfg, _, _ := config.Load(home)
+	if cfg.Storage.Bucket != "other-bucket" || len(cfg.Archive.Projects) != 1 || len(cfg.Harnesses) != 1 {
+		t.Fatal("edit lost capture choices")
+	}
+}
+
+func TestRestartRemovesOnlyStagedCredentials(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	kc := newFakeKeychain()
+	env := setupTestEnv(t, home, t.TempDir(), kc, time.Now())
+	input := r2SetupInput(project, "staged-secret")
+	setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0)
+	if len(kc.items) != 1 {
+		t.Fatal("missing staged credential")
+	}
+	setupRun(t, env, "restart\n", 1) // cancel at the first capture prompt after discarding
+	if len(kc.items) != 0 {
+		t.Fatal("discarded draft leaked credential")
+	}
+}
+
+// Without a terminal, setup and uninstall stop before asking anything, with
+// one line saying why; uninstall --yes works without one.
+func TestSetupAndUninstallNeedATerminal(t *testing.T) {
+	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
+	env.IsTerminal = func(any) bool { return false }
+	for _, cmd := range []string{"setup", "uninstall"} {
+		var out, errOut bytes.Buffer
+		code := Run([]string{cmd}, strings.NewReader("y\n"), &out, &errOut, env)
+		if code != 1 || out.Len() != 0 || strings.Count(errOut.String(), "\n") != 1 || !strings.Contains(errOut.String(), "terminal") {
+			t.Fatalf("%s: exit %d stdout=%q stderr=%q", cmd, code, &out, &errOut)
+		}
+	}
+	if cfg, _, _ := config.Load(home); !cfg.Archive.Enabled {
+		t.Fatal("refusing changed the configuration")
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("uninstall --yes: exit %d\n%s", code, &errOut)
+	}
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !os.IsNotExist(err) {
+		t.Fatal("uninstall --yes left the collector")
+	}
+}
+
+type settingsProbeStore struct {
+	storage.ObjectStore
+	fail bool
+}
+
+func (s settingsProbeStore) Put(ctx context.Context, key string, value []byte) error {
+	if s.fail {
+		return errors.New("incorrect region or folder")
+	}
+	return s.ObjectStore.Put(ctx, key, value)
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestFailedProbeAllowsRegionAndPrefixCorrection(t *testing.T) {
+	for _, choice := range []string{"region", "prefix"} {
+		t.Run(choice, func(t *testing.T) {
+			home := t.TempDir()
+			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+			attempts := 0
+			env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+				attempts++
+				fixed := cfg.Storage.Region == "eu-west-1"
+				if choice == "prefix" {
+					fixed = cfg.Storage.Prefix == "allowed/"
+				}
+				return settingsProbeStore{storagetest.NewMemoryStore(), !fixed}, nil
+			}
+			value := "eu-west-1"
+			if choice == "prefix" {
+				value = "allowed/"
+			}
+			input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
+			setupRun(t, env, input+"edit\n"+choice+"\n"+value+"\ny\n", 0)
+			if attempts != 2 {
+				t.Fatalf("attempts=%d", attempts)
+			}
+			cfg, found, err := config.Load(home)
+			if err != nil || !found {
+				t.Fatalf("saved=%v err=%v", found, err)
+			}
+			if choice == "region" && cfg.Storage.Region != value || choice == "prefix" && cfg.Storage.Prefix != value {
+				t.Fatal(cfg.Storage)
+			}
+		})
 	}
 }

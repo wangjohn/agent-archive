@@ -97,3 +97,11 @@ func TestIsolationFailsClosed(t *testing.T) {
 		t.Errorf("testEnv job state = %q", got)
 	}
 }
+
+// stubLaunchctl replaces launchctl for one test.
+func stubLaunchctl(t *testing.T, run func(args ...string) ([]byte, error)) {
+	t.Helper()
+	previous := runLaunchctl
+	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) { return run(args...) }
+	t.Cleanup(func() { runLaunchctl = previous })
+}

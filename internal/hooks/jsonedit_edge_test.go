@@ -284,3 +284,60 @@ func sameJSON(a, b any) bool {
 	var x, y bytes.Buffer
 	return encodeValue(&x, a) == nil && encodeValue(&y, b) == nil && bytes.Equal(x.Bytes(), y.Bytes())
 }
+
+// Regression: hook ownership review, 2026-09 (1a9420b).
+func TestDuplicateHooksKeyIsRefused(t *testing.T) {
+	for _, src := range []string{`{"hooks":{},"model":"x","hooks":{}}`, `{"version":1,"version":1,"hooks":{}}`} {
+		_, err := Merge([]byte(src), "cursor", testHook("/bin/agent-archive"))
+		if !errors.Is(err, errInvalidConfiguration) || !strings.Contains(err.Error(), "more than one") {
+			t.Fatalf("%s: %v", src, err)
+		}
+	}
+}
+
+// A file with Windows line endings keeps them in the spliced block, and
+// uninstall restores it byte for byte.
+//
+// Regression: hook ownership review, 2026-09 (1a9420b).
+func TestCRLFFileKeepsItsLineEndings(t *testing.T) {
+	original := "{\r\n  \"model\": \"opus\",\r\n  \"hooks\": {\r\n    \"Notification\": []\r\n  }\r\n}\r\n"
+	merged, err := Merge([]byte(original), "claude", testHook("/usr/local/bin/agent-archive"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(merged), "\n") != strings.Count(string(merged), "\r\n") {
+		t.Fatalf("bare LF in a CRLF file:\n%q", merged)
+	}
+	removed, _, err := Remove(merged, "claude", Hook{})
+	if err != nil || string(removed) != original {
+		t.Fatalf("round trip: %v\n%q", err, removed)
+	}
+}
+
+// Cursor's "version" goes before "hooks", as Cursor writes it.
+//
+// Regression: hook ownership review, 2026-09 (1a9420b).
+func TestCursorVersionPrecedesHooks(t *testing.T) {
+	for name, src := range map[string]string{
+		"new file":          "",
+		"hooks, no version": "{\n  \"hooks\": {}\n}\n",
+		"other settings":    "{\n  \"x\": 1\n}\n",
+	} {
+		merged, err := Merge([]byte(src), "cursor", testHook("/usr/local/bin/agent-archive"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, h := strings.Index(string(merged), `"version"`), strings.Index(string(merged), `"hooks"`)
+		if v < 0 || v > h {
+			t.Fatalf("%s:\n%s", name, merged)
+		}
+		if ok, err := isValidJSON(merged); !ok {
+			t.Fatalf("%s: %v\n%s", name, err, merged)
+		}
+	}
+}
+
+func isValidJSON(b []byte) (bool, error) {
+	_, err := parseDocument(b)
+	return err == nil, err
+}

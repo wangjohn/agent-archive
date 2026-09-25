@@ -148,10 +148,33 @@ LaunchAgent runs) are not part of the user interface and may change.
   -update-filter-golden -update-composer-golden -update` and review the diff
   line by line: a golden change is a privacy change (see
   [versions](../reference/versions.md)).
-- Name tests by the behavior they pin (`TestUndoKeepsAProjectAnotherImportStillNeeds`),
-  not by the review that found the bug.
 - A bug fix comes with a test that fails without the fix. Check by reverting
   the fix.
+
+## Where tests live
+
+- A test sits next to the production file it covers: tests of `status.go` go
+  in `status_test.go`, or in `status_<aspect>_test.go` when one aspect has
+  enough tests to be worth its own file (`status_gaps_test.go`,
+  `setup_transaction_recovery_test.go`). Package-wide test helpers
+  (`testEnv`, fixtures used by many files) live in `cli_test.go` or the
+  package's `testonly_test.go`; `TestMain` lives in `main_test.go`.
+- Name files and tests by the behavior they pin
+  (`TestUndoKeepsAProjectAnotherImportStillNeeds`), never by the review,
+  round, or pull request that found the bug: no `review_fixes_test.go`,
+  `second_review_test.go`, or `cli_correctness_test.go`.
+- Record where a regression came from in the test's doc comment instead:
+
+  ```go
+  // A resumed chat keeps the project it started in.
+  //
+  // Regression: 2026-09 review H-21.
+  func TestResumeKeepsItsProject(t *testing.T) {
+  ```
+
+- Moving tests between files is a pure move: keep each test's body
+  unchanged, and check that `go test -list '.*' ./...` prints the same names
+  before and after.
 
 ## Fuzzing
 

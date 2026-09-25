@@ -377,3 +377,33 @@ func TestBackgroundChecksStorageWithoutSessionsAndStatusDoesNotProbe(t *testing.
 		t.Fatalf("synthetic probe leaked: %#v %v", objects, err)
 	}
 }
+
+// Read-back is capped per pass. A large import must not hold a hook-captured
+// publication, the only kind that verifies an app, behind the cap.
+func TestVerificationReadsBackHookPublicationsBeforeImports(t *testing.T) {
+	home := t.TempDir()
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	project := t.TempDir()
+	cfg := pairTestConfig(now, []string{"codex"}, project)
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	for i := range maxVerificationsPerPass + 1 {
+		saveImportedSession(t, store, now, "import-"+string(rune('a'+i)), project)
+	}
+	// The imports publish first, so they are the oldest publications.
+	if result, err := collector.Run(context.Background(), store, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return now }}); err != nil || len(result.Errors) != 0 {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	later := now.Add(time.Hour)
+	publishPairSession(t, home, store, remote, cfg, later, "hook", project, false)
+	summary, err := verifyPublications(home, cfg, testEnv(t, home, later), store, remote)
+	if err != nil || summary.Attempted != maxVerificationsPerPass || summary.Deferred != 2 {
+		t.Fatalf("summary=%#v err=%v", summary, err)
+	}
+	if record, err := readVerification(home, "hook"); err != nil || record.VerifiedAt.IsZero() {
+		t.Fatalf("the hook publication waited behind imports: %#v %v", record, err)
+	}
+}

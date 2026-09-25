@@ -149,20 +149,6 @@ func TestReviewActionMapsChoices(t *testing.T) {
 	}
 }
 
-func TestPickAWSProfileByNumberOrName(t *testing.T) {
-	names := []string{"default", "work"}
-	for input, want := range map[string]string{"2\n": "work", "\n": "default", "other\n": "other"} {
-		var out bytes.Buffer
-		got, err := pickAWSProfile(newPrompter(strings.NewReader(input), &out), names, "default")
-		if err != nil || got != want {
-			t.Fatalf("input %q: got %q, %v; want %q", input, got, err, want)
-		}
-		if !strings.Contains(out.String(), "  2) work\n") || !strings.Contains(out.String(), "Enter 1-2, or another profile name [1]: ") {
-			t.Fatalf("unexpected output: %s", &out)
-		}
-	}
-}
-
 func TestNewlyFoundAppsOmitAppsNotDetected(t *testing.T) {
 	var out bytes.Buffer
 	got, err := promptHarnesses(newPrompter(strings.NewReader("\n"), &out), []string{"claude", "cursor"}, []string{"cursor"})
@@ -282,5 +268,48 @@ func TestSetupReviewShowsDeclinedApps(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again)") || strings.Contains(got, "Nothing above differs") {
 		t.Fatalf("declining found apps not shown as a change:\n%s", got)
+	}
+}
+
+func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
+	project, other := t.TempDir(), t.TempDir()
+	other, _ = filepath.EvalSymlinks(other)
+	if err := os.Mkdir(filepath.Join(project, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
+	env.WorkingDir = func() (string, error) { return project, nil }
+	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+	var cfg config.Config
+	var out bytes.Buffer
+	err := chooseCapture(newPrompter(strings.NewReader("y\nn\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env)
+	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
+		t.Fatalf("config=%+v err=%v", cfg, err)
+	}
+}
+
+func TestStorageHelpReturnsToSelection(t *testing.T) {
+	var out bytes.Buffer
+	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3\nbucket\nprofile\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }})
+	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), "https://developers.cloudflare.com/") {
+		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
+	}
+}
+
+func TestManualProjectsExpandInjectedHomeAndDeduplicateSymlinks(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "project")
+	alias := filepath.Join(home, "alias")
+	if err := os.Mkdir(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(project, alias); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	projects, err := promptProjects(newPrompter(strings.NewReader("~/project\n~/alias\n\n"), &out), nil, nil, home)
+	canonical, _ := filepath.EvalSymlinks(project)
+	if err != nil || len(projects) != 1 || projects[0].Root != canonical {
+		t.Fatalf("projects=%+v err=%v", projects, err)
 	}
 }

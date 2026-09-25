@@ -345,3 +345,97 @@ func TestUninstallDeleteLocalDataRemovesTheMetadataCache(t *testing.T) {
 		t.Fatalf("cache reported as a leftover:\n%s", stderr.String())
 	}
 }
+
+func TestUninstallCannotResumeRemovedIntegrations(t *testing.T) {
+	_, _, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()))
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"resume"}, nil, &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), "setup") {
+		t.Fatal("resume claimed removed integrations were active")
+	}
+}
+
+// Uninstall only needs the hook files of the apps setup installed. An
+// unparsable file of an app that was never selected is reported and left
+// alone instead of blocking the collector's removal.
+func TestUninstallSkipsAnUnparsableFileOfAnUnselectedApp(t *testing.T) {
+	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
+	cursor := filepath.Join(userHome, ".cursor", "hooks.json")
+	must(t, os.MkdirAll(filepath.Dir(cursor), 0700))
+	broken := []byte("{\"version\":1,\"hooks\":{},}\n")
+	must(t, os.WriteFile(cursor, broken, 0600))
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env); code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, &out, &errOut)
+	}
+	if !strings.Contains(out.String(), "Skipped "+cursor) {
+		t.Fatalf("the skipped file was not reported:\n%s", &out)
+	}
+	if b, _ := os.ReadFile(cursor); !bytes.Equal(b, broken) {
+		t.Fatal("the unparsable file was changed")
+	}
+	if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !os.IsNotExist(err) {
+		t.Fatal("the collector was not removed")
+	}
+	// The same file blocks uninstall once setup did install Cursor hooks.
+	_, userHome, env = installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, false, true, t.TempDir()))
+	cursor = filepath.Join(userHome, ".cursor", "hooks.json")
+	must(t, os.WriteFile(cursor, broken, 0600))
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env); code != 1 || !strings.Contains(errOut.String(), cursor) {
+		t.Fatalf("exit %d\n%s%s", code, &out, &errOut)
+	}
+}
+
+// A hook file edited while uninstall runs is reported as such, with uninstall
+// (not setup) as the command to rerun.
+func TestUninstallConcurrentEditNamesUninstall(t *testing.T) {
+	_, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()))
+	settings := filepath.Join(userHome, ".claude", "settings.json")
+	jobState := env.JobState
+	env.JobState = func(p string) string {
+		// Runs after uninstall planned its changes: an editor saves the file.
+		b, _ := os.ReadFile(settings)
+		must(t, os.WriteFile(settings, append(b, ' '), 0600))
+		return jobState(p)
+	}
+	var out, errOut bytes.Buffer
+	code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, env)
+	if code != 1 || !strings.Contains(errOut.String(), settings) || !strings.Contains(errOut.String(), "rerun agent-archive uninstall") || strings.Contains(errOut.String(), "retry setup") {
+		t.Fatalf("exit %d\n%s", code, &errOut)
+	}
+}
+
+// Uninstall also removes hooks an earlier release left at the legacy path
+// when the recorded path is elsewhere.
+//
+// Regression: hook ownership review, 2026-09 (1a9420b).
+func TestUninstallCleansTheLegacyPathToo(t *testing.T) {
+	home, userHome := t.TempDir(), t.TempDir()
+	claudeDir := filepath.Join(userHome, "cfg")
+	must(t, os.MkdirAll(claudeDir, 0700))
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	env.LookupEnv = func(k string) (string, bool) { return claudeDir, k == "CLAUDE_CONFIG_DIR" }
+	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()), 0)
+	legacy, err := hooks.Plan(legacyHookFiles(userHome), env.installation(home, userHome).hook("/opt/old/agent-archive"), []string{"claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := hooks.Apply(legacy); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("exit %d\n%s", code, &errOut)
+	}
+	for _, path := range []string{filepath.Join(claudeDir, "settings.json"), legacy[0].Path} {
+		if b, _ := os.ReadFile(path); strings.Contains(string(b), hooks.Owner) {
+			t.Fatalf("hooks left in %s", path)
+		}
+	}
+}

@@ -288,3 +288,99 @@ func TestReadBackDefersOnceThePassDeadlineHasPassed(t *testing.T) {
 		t.Fatalf("summary = %#v %v", summary, err)
 	}
 }
+
+func TestCollectorKeepsLastPublicationOnUnchangedPass(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	now := time.Now()
+	setUpTestConfig(t, home, project, now.Add(-time.Hour))
+	env := testEnv(t, home, now)
+	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "one", "cwd": project, "transcript_path": writeCodexTranscript(t, project)}, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runOnePass(env, false); err != nil {
+		t.Fatal(err)
+	}
+	store := state.OpenReadOnly(home)
+	first, _ := store.LoadStatus()
+	env.Now = func() time.Time { return now.Add(time.Minute) }
+	if _, err := runOnePass(env, false); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := store.LoadStatus()
+	if next.LastPublishedAt.IsZero() || !next.LastPublishedAt.Equal(first.LastPublishedAt) {
+		t.Fatal("lost last publication")
+	}
+}
+
+func TestCollectCommandSilentlyNoopsWhenPausedOrNotSetUp(t *testing.T) {
+	home := t.TempDir()
+	env := testEnv(t, home, time.Now())
+	var out, errOut bytes.Buffer
+	if code := runCollectCommand(nil, &out, &errOut, env); code != 0 || errOut.Len() != 0 {
+		t.Fatalf("not-set-up _collect should be silent: code=%d stderr=%s", code, errOut.String())
+	}
+
+	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	if _, err := config.SetPaused(home, true); err != nil {
+		t.Fatal(err)
+	}
+	if code := runCollectCommand(nil, &out, &errOut, env); code != 0 || errOut.Len() != 0 {
+		t.Fatalf("paused _collect should be silent: code=%d stderr=%s", code, errOut.String())
+	}
+}
+
+func TestCollectCommandRunsQuietlyOnSuccess(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	setUpTestConfig(t, home, dir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	transcript := writeCodexTranscript(t, dir)
+	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native-1", "cwd": dir, "transcript_path": transcript}
+	if err := handleHookEvent(home, "codex", payload, now); err != nil {
+		t.Fatal(err)
+	}
+
+	env := testEnv(t, home, now)
+	var out, errOut bytes.Buffer
+	if code := runCollectCommand(nil, &out, &errOut, env); code != 0 || errOut.Len() != 0 || out.Len() != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+	}
+
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.LastPublishedAt.IsZero() {
+		t.Fatal("expected a publish to have happened")
+	}
+}
+
+func TestCollectCommandRecordsPreflightFailureInStatus(t *testing.T) {
+	home := t.TempDir()
+	setUpTestConfig(t, home, "/work/widget", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	env := testEnv(t, home, time.Now())
+	openErr := errors.New("simulated broken storage credentials")
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return nil, openErr }
+
+	var out, errOut bytes.Buffer
+	if code := runCollectCommand(nil, &out, &errOut, env); code != 1 {
+		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	}
+
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(status.LastError, openErr.Error()) {
+		t.Fatalf("expected status.LastError to record the preflight failure, got %q", status.LastError)
+	}
+}

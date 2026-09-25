@@ -417,3 +417,45 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+// A relative link is resolved from the directory it really sits in. With
+// ~/.claude itself a link into a dotfiles repository, settings.json ->
+// ../shared/settings.json names dotfiles/shared/settings.json, not
+// ~/shared/settings.json.
+//
+// Regression: hook ownership review, 2026-09 (1a9420b).
+func TestRelativeLinkInsideALinkedDirectory(t *testing.T) {
+	home := t.TempDir()
+	dotfiles := filepath.Join(home, "dotfiles")
+	must(t, os.MkdirAll(filepath.Join(dotfiles, "claude"), 0700))
+	must(t, os.MkdirAll(filepath.Join(dotfiles, "shared"), 0700))
+	target := filepath.Join(dotfiles, "shared", "settings.json")
+	original := []byte("{\n  \"model\": \"opus\"\n}\n")
+	must(t, os.WriteFile(target, original, 0600))
+	if err := os.Symlink("../shared/settings.json", filepath.Join(dotfiles, "claude", "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dotfiles, "claude"), filepath.Join(home, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	hook := testHook("/usr/local/bin/agent-archive")
+	plan, err := Plan(testFiles(home), hook, []string{"claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(plan); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "shared")); !os.IsNotExist(err) {
+		t.Fatal("a stray file was written beside the linked directory")
+	}
+	if ok, err := Installed(testFiles(home), hook, "claude"); !ok || err != nil {
+		t.Fatalf("installed=%v err=%v", ok, err)
+	}
+	if err := Rollback(plan); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(target); string(b) != string(original) {
+		t.Fatalf("rollback did not restore the target:\n%s", b)
+	}
+}

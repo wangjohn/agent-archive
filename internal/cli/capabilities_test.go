@@ -1,12 +1,20 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/collector"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
 
 func TestCapabilityProfilesDoNotClaimUnverifiedNativeEvidence(t *testing.T) {
@@ -203,5 +211,64 @@ func TestVersionDirPatternIsAnchored(t *testing.T) {
 		if got := versionDirPattern.MatchString(name); got != want {
 			t.Fatalf("%q: got %v want %v", name, got, want)
 		}
+	}
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestVersionSupportUsesPublishedVersionNotResumedRegistration(t *testing.T) {
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	at := time.Now().UTC()
+	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: project, Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	localStore, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(project, "synthetic.jsonl")
+	if err := os.WriteFile(path, []byte(`{"type":"turn_context","model":"synthetic"}`+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reg := archive.SessionRegistration{ArchiveSessionID: "s", NativeSessionID: "n", ProjectID: "p", ProjectRoot: project, Harness: archive.Harness{Name: "codex", Version: "1.2.3"}, TranscriptPath: path, SessionStartedAt: at, RegisteredAt: at}
+	if err := localStore.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	result, err := collector.Run(context.Background(), localStore, remote, collector.Options{MachineID: cfg.MachineID, Now: func() time.Time { return at }})
+	if err != nil || len(result.Errors) > 0 {
+		t.Fatalf("%+v %v", result, err)
+	}
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
+	if summary, err := verifyPublications(home, cfg, env, localStore, remote); err != nil || summary.Verified != 1 {
+		t.Fatalf("%+v %v", summary, err)
+	}
+	reg.Harness.Version = "2.0.0"
+	if err := localStore.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordApplicationDiscoveries(home, map[string]applicationDiscovery{"codex": {Installed: true, Version: "2.0.0", VersionState: "observed"}}, at); err != nil {
+		t.Fatal(err)
+	}
+	view, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Apps[0].VersionSupport != "unverified" {
+		t.Fatalf("unpublished resumed version verified: %+v", view.Apps[0])
+	}
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestMissingVersionDiscoveryIsUnknown(t *testing.T) {
+	if got := installedVersionSupport(applicationDiscovery{}, nil); got != "unknown" {
+		t.Fatal(got)
+	}
+	if got := installedVersionSupport(applicationDiscovery{Installed: true, Version: "1.0.0"}, []string{"11.0.0"}); got != "unverified" {
+		t.Fatal(got)
+	}
+	var output cappedBuffer
+	if _, err := output.Write([]byte(strings.Repeat("x", 5000))); err == nil || output.Len() > 4096 {
+		t.Fatal("version output not bounded")
 	}
 }

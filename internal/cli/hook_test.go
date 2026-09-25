@@ -873,3 +873,82 @@ func TestRelativeTranscriptPathProvesNothing(t *testing.T) {
 		t.Fatalf("diagnostics=%#v", ds)
 	}
 }
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestResumeCannotReplaceIdentityOrEraseTranscript(t *testing.T) {
+	home := t.TempDir()
+	at := time.Now().UTC()
+	setUpTestConfig(t, home, "/work/widget", at.Add(-time.Hour))
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "s", "cwd": "/work/widget", "transcript_path": "/synthetic/transcript.jsonl"}
+	if err := handleHookEvent(home, "claude", payload, at); err != nil {
+		t.Fatal(err)
+	}
+	delete(payload, "transcript_path")
+	payload["source"] = "resume"
+	if err := handleHookEvent(home, "claude", payload, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := handleHookEvent(home, "codex", payload, at.Add(time.Minute)); err == nil {
+		t.Fatal("cross-harness identity accepted")
+	}
+	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "s"}, at.Add(time.Minute)); err == nil {
+		t.Fatal("cross-harness stop accepted")
+	}
+	store, _ := state.Open(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].TranscriptPath != "/synthetic/transcript.jsonl" || !regs[0].SessionStartedAt.Equal(at) {
+		t.Fatalf("registration %+v", regs)
+	}
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestCompactFromSubdirectoryKeepsProjectIdentity(t *testing.T) {
+	home := t.TempDir()
+	at := time.Now().UTC()
+	cfg := config.Config{
+		MachineID: "machine-1",
+		Storage:   credentialsTestConfig(),
+		Archive: archive.Config{
+			SchemaVersion: 1, MachineID: "machine-1", Enabled: true,
+			Projects: []archive.ProjectActivation{
+				{ProjectID: archive.ProjectID("/work/widget"), Root: "/work/widget", Included: true, ActivatedAt: at.Add(-time.Hour)},
+				{ProjectID: archive.ProjectID("/work/other"), Root: "/work/other", Included: true, ActivatedAt: at.Add(-time.Hour)},
+			},
+		},
+	}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	start := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "s", "cwd": "/work/widget", "transcript_path": "/synthetic/t1.jsonl"}
+	if err := handleHookEvent(home, "claude", start, at); err != nil {
+		t.Fatal(err)
+	}
+	// The agent `cd`'d into a subdirectory; Claude Code's hook cwd follows it.
+	compact := map[string]any{"hook_event_name": "SessionStart", "source": "compact", "session_id": "s", "cwd": "/work/widget/internal/cli", "transcript_path": "/synthetic/t2.jsonl", "model": "model-x"}
+	if err := handleHookEvent(home, "claude", compact, at.Add(time.Minute)); err != nil {
+		t.Fatalf("compact from a subdirectory of the registered project was rejected: %v", err)
+	}
+	store, _ := state.Open(home)
+	regs, _ := store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].ProjectRoot != "/work/widget" || regs[0].TranscriptPath != "/synthetic/t2.jsonl" || !regs[0].SessionStartedAt.Equal(at) {
+		t.Fatalf("registration %+v", regs)
+	}
+	// Both the fresh start and the compact continuation are lifecycle
+	// evidence for the same session; neither asks for an upload.
+	requests, err := store.LoadRequests()
+	if err != nil || len(requests) != 1 || len(requests[0].HookEvidence) != 2 || !requests[0].Deferred {
+		t.Fatalf("compact lifecycle evidence was not recorded: %+v err=%v", requests, err)
+	}
+	if last := requests[0].HookEvidence[1]; last.Provenance != "hook:claude:sessionstart" || last.Payload["model"] != "model-x" {
+		t.Fatalf("compact lifecycle evidence was not recorded: %+v", last)
+	}
+	// A continuation reported from a different configured project is still a conflict.
+	compact["cwd"] = "/work/other/sub"
+	if err := handleHookEvent(home, "claude", compact, at.Add(2*time.Minute)); err == nil {
+		t.Fatal("cross-project identity accepted")
+	}
+	regs, _ = store.LoadRegistrations()
+	if len(regs) != 1 || regs[0].ProjectRoot != "/work/widget" || regs[0].TranscriptPath != "/synthetic/t2.jsonl" {
+		t.Fatalf("registration %+v", regs)
+	}
+}

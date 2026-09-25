@@ -506,3 +506,83 @@ func TestJSONOutputEscapesEveryControl(t *testing.T) {
 		}
 	}
 }
+
+// list and backfill read --since the same way; backfill then selects whole
+// local days.
+func TestSinceFormsAreShared(t *testing.T) {
+	loc := time.FixedZone("PDT", -7*3600)
+	now := time.Date(2026, 9, 24, 1, 30, 0, 0, loc) // 08:30 UTC
+	for value, want := range map[string]string{
+		"":                     "",
+		"2026-09-01":           "2026-09-01",
+		"7d":                   "2026-09-17",
+		"2h":                   "2026-09-23", // 23:30 the previous local day
+		"2026-09-20T03:00:00Z": "2026-09-19", // 20:00 on the 19th, local
+	} {
+		got, err := backfillDay(value, now)
+		if err != nil || got != want {
+			t.Errorf("%q: %q %v, want %q", value, got, err, want)
+		}
+	}
+	for _, value := range []string{"yesterday", "-7d", "100001d", "9999999999999d"} {
+		if _, err := backfillDay(value, now); err == nil {
+			t.Errorf("%q accepted", value)
+		}
+		if _, err := parseSince(value, now); err == nil {
+			t.Errorf("list accepted %q", value)
+		}
+	}
+}
+
+// Regression: pre-release review, carried over from agent-skills (e371b6a).
+func TestShowKeepsParentReadableWhenChildIsGone(t *testing.T) {
+	env, remote, id := publishedFixture(t)
+	parent, err := readSingleMetadata(t, remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent.LinkedSessions = []archive.LinkedSessionReference{{SessionID: "missing-child", Relationship: "subagent", Status: archive.LinkedSessionPublished, ObservedAt: time.Now().UTC()}}
+	key, _ := archive.MetadataObjectKey(parent.Harness.Name, id)
+	data, _ := json.Marshal(parent)
+	if err := remote.Put(context.Background(), key, data); err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.Delete(context.Background(), parent.SourceBundle.Key); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"show", id}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("code=%d err=%s", code, errOut.String())
+	}
+	// `"hook_finals"` appears only in the normalized view, which this
+	// metadata-only invocation must not print. (It replaces a `"turns":`
+	// check, which parser 0.6 also emits inside `counts`.)
+	if !strings.Contains(out.String(), `"unavailable_or_expired"`) || strings.Contains(out.String(), `"hook_finals"`) {
+		t.Fatalf("bad metadata-only output: %s", out.String())
+	}
+	var decoded archive.Metadata
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil || decoded.SessionID != id {
+		t.Fatalf("metadata compatibility lost: %v", err)
+	}
+}
+
+// A sidecar that does not validate (written by a newer version, or damaged)
+// is left out of `list` with a warning on stderr; the rest is listed and
+// stdout keeps its format.
+func TestListWarnsAboutInvalidSidecarAndListsTheRest(t *testing.T) {
+	env, mem, id := publishedFixture(t)
+	bad := "sessions/codex/newer-session/metadata.json"
+	if err := mem.Put(context.Background(), bad, []byte(`{"schema_version":99}`)); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"list", "--no-cache"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), id) || !strings.Contains(out.String(), "1 session(s).") {
+		t.Fatalf("stdout:\n%s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "warning: skipped a session whose metadata could not be read") || !strings.Contains(errOut.String(), bad) {
+		t.Fatalf("stderr:\n%s", errOut.String())
+	}
+}
