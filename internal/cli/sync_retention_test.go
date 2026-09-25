@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -65,7 +66,7 @@ func TestSyncStillExpiresSessionsOfAnExcludedProject(t *testing.T) {
 	if cfg.AcceptSession(reg) {
 		t.Fatal("test precondition: the session should no longer be publishable")
 	}
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "native"}, now.Add(time.Hour)); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "Stop", "session_id": "native"}, now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 

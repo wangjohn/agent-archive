@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -65,7 +66,7 @@ func TestBackfillKeepsReposUnderAnAddedFolderOutOfCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project, owned := configuredProjectActivationFor(cfg, secret); !owned || project.Root != secret || project.Included {
+	if project, owned := capture.ConfiguredProjectActivationFor(cfg, secret); !owned || project.Root != secret || project.Included {
 		t.Fatalf("hook owner for the nested repository: %+v %v", project, owned)
 	}
 	if f.hookStart(t, "new-secret-session", secret) {
@@ -118,7 +119,7 @@ func TestSetupDraftKeepsKeptOutFolders(t *testing.T) {
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
 	setupRun(t, env, "continue\ny\n", 0)
 	cfg, _, _ := config.Load(f.data)
-	if project, owned := configuredProjectActivationFor(cfg, secret); !owned || project.Root != secret || project.Included {
+	if project, owned := capture.ConfiguredProjectActivationFor(cfg, secret); !owned || project.Root != secret || project.Included {
 		t.Fatalf("hook owner for the nested repository after continuing the draft: %+v %v\n%+v", project, owned, cfg.Archive.Projects)
 	}
 	if f.hookStart(t, "new-secret-session", secret) {

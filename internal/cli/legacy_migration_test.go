@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 const legacyPlist = `<?xml version="1.0"?><plist><dict><key>Label</key><string>com.agent-skills.skill-runs-upload</string><key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>/private/runtime/skill_runs.py</string><string>--home</string><string>/private/records</string><string>upload</string></array></dict></plist>`
@@ -144,7 +145,7 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 		Changes: []hooks.Change{{Path: plistPath, After: []byte("new plist"), Mode: 0600}, {Path: configPath, After: []byte("new config"), Mode: 0600}},
 		Plist:   plistPath,
 	}
-	if err := local.Write(journalPath(home), journal); err != nil {
+	if err := local.Write(setupjournal.JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
 	if err := recoverSetup(home, env); err != nil {
@@ -161,7 +162,7 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 			t.Fatalf("%s left behind: %v", p, err)
 		}
 	}
-	if transactionPending(home) {
+	if setupjournal.TransactionPending(home) {
 		t.Fatal("journal not removed")
 	}
 	// Recovery is idempotent once the journal is gone.

@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -154,7 +156,7 @@ func TestStatusJSONAndTextUseObservedEvidence(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := local.Write(journalPath(home), setupJournal{}); err != nil {
+	if err := local.Write(setupjournal.JournalPath(home), setupJournal{}); err != nil {
 		t.Fatal(err)
 	}
 	view, err = readStatus(env)
@@ -230,7 +232,7 @@ func TestStatusJSONOmitsUnsetTimes(t *testing.T) {
 func TestStatusReportsJournalWithoutConfiguration(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	if err := local.Write(journalPath(home), setupJournal{}); err != nil {
+	if err := local.Write(setupjournal.JournalPath(home), setupJournal{}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := readStatus(testEnv(t, home, time.Now()))
@@ -247,7 +249,7 @@ func TestStatusPreservesPublicationDuringRateLimitedUpdate(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), now)
 	setupRun(t, env, s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), 0)
 	path := writeCodexTranscript(t, project)
-	if err := handleHookEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now); err != nil {
+	if err := capture.HandleEvent(home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runOnePass(env, false); err != nil {

@@ -1,4 +1,4 @@
-package cli
+package capture
 
 import (
 	"errors"
@@ -14,39 +14,43 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
-// captureDiagnosticCode names the boundary that prevented a capture.
-type captureDiagnosticCode string
+// DiagnosticCode names the boundary that prevented a capture.
+type DiagnosticCode string
 
+// The diagnostic codes status explains (DiagnosticMessage).
 const (
-	diagnosticUnknownSessionStart captureDiagnosticCode = "session_start_unknown"
-	diagnosticPreActivationStart  captureDiagnosticCode = "session_started_before_activation"
-	// diagnosticSetupInProgress records a start that arrived while setup's own
+	DiagnosticUnknownSessionStart DiagnosticCode = "session_start_unknown"
+	DiagnosticPreActivationStart  DiagnosticCode = "session_started_before_activation"
+	// DiagnosticSetupInProgress records a start that arrived while setup's own
 	// transaction was open. Hooks do not register anything in that window.
-	diagnosticSetupInProgress captureDiagnosticCode = "setup_in_progress"
-	// diagnosticHookFailed records a hook that stopped on an internal error
+	DiagnosticSetupInProgress DiagnosticCode = "setup_in_progress"
+	// DiagnosticHookFailed records a hook that stopped on an internal error
 	// (a recovered panic), so the event it carried was not recorded.
-	diagnosticHookFailed captureDiagnosticCode = "hook_failed"
+	DiagnosticHookFailed DiagnosticCode = "hook_failed"
 )
 
-// captureDiagnostic is deliberately content-free. It records only the
+// Diagnostic is deliberately content-free. It records only the
 // integration boundary that prevented capture; native session identifiers,
 // transcript paths, hook payloads, and conversation content never belong here.
-type captureDiagnostic struct {
-	Code        captureDiagnosticCode `json:"code"`
-	Harness     string                `json:"harness"`
-	ProjectRoot string                `json:"project_root,omitempty"`
-	ObservedAt  time.Time             `json:"observed_at"`
+type Diagnostic struct {
+	Code        DiagnosticCode `json:"code"`
+	Harness     string         `json:"harness"`
+	ProjectRoot string         `json:"project_root,omitempty"`
+	ObservedAt  time.Time      `json:"observed_at"`
 }
 
-func captureDiagnosticsPath(home string) string {
+// DiagnosticsPath is capture-diagnostics.json in the data directory home.
+func DiagnosticsPath(home string) string {
 	return filepath.Join(home, "capture-diagnostics.json")
 }
 
-func readCaptureDiagnostics(home string) ([]captureDiagnostic, error) {
-	var diagnostics []captureDiagnostic
-	if err := local.Read(captureDiagnosticsPath(home), &diagnostics); err != nil {
+// ReadDiagnostics returns the stored diagnostics, oldest first, or none when
+// the file does not exist yet.
+func ReadDiagnostics(home string) ([]Diagnostic, error) {
+	var diagnostics []Diagnostic
+	if err := local.Read(DiagnosticsPath(home), &diagnostics); err != nil {
 		if os.IsNotExist(err) {
-			return []captureDiagnostic{}, nil
+			return []Diagnostic{}, nil
 		}
 		return nil, err
 	}
@@ -54,9 +58,9 @@ func readCaptureDiagnostics(home string) ([]captureDiagnostic, error) {
 }
 
 const (
-	// diagnosticsLockName serializes every read-modify-write of
+	// DiagnosticsLockName serializes every read-modify-write of
 	// capture-diagnostics.json: each hook-side record and setup's prune.
-	diagnosticsLockName = "diagnostics.lock"
+	DiagnosticsLockName = "diagnostics.lock"
 	// pruneDiagnosticsWait is setup's wait. Holders keep the lock for one
 	// small file write, so this only has to outlast a burst of hooks.
 	pruneDiagnosticsWait = 2 * time.Second
@@ -68,15 +72,15 @@ const (
 // a race test can rule out timeout drops and observe lost updates alone.
 var hookDiagnosticsWait = 50 * time.Millisecond
 
-// recordCaptureDiagnostic adds a diagnostic under diagnostics.lock, or drops it
+// RecordDiagnostic adds a diagnostic under diagnostics.lock, or drops it
 // if the lock is not free within hookDiagnosticsWait. Under the lock it rereads
 // the configuration: the caller decided the project was included from a
 // snapshot, and setup may have excluded it and pruned its diagnostics since.
 // Checking against the committed configuration, under the same lock the prune
 // takes, means a pruned project's diagnostic can never come back, whichever
 // of the two runs first.
-func recordCaptureDiagnostic(home string, diagnostic captureDiagnostic) error {
-	unlock, err := local.NamedLockWait(home, diagnosticsLockName, hookDiagnosticsWait)
+func RecordDiagnostic(home string, diagnostic Diagnostic) error {
+	unlock, err := local.NamedLockWait(home, DiagnosticsLockName, hookDiagnosticsWait)
 	if errors.Is(err, local.ErrBusy) {
 		return nil
 	}
@@ -88,10 +92,10 @@ func recordCaptureDiagnostic(home string, diagnostic captureDiagnostic) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	if !found || len(includedCaptureDiagnostics([]captureDiagnostic{diagnostic}, cfg.Archive.Projects)) == 0 {
+	if !found || len(IncludedDiagnostics([]Diagnostic{diagnostic}, cfg.Archive.Projects)) == 0 {
 		return nil
 	}
-	diagnostics, err := readCaptureDiagnostics(home)
+	diagnostics, err := ReadDiagnostics(home)
 	if state.IsUndecodable(err) {
 		// Advisory, and rewritten whole below: a file that no longer decodes
 		// is replaced rather than left to fail every later diagnostic.
@@ -115,15 +119,15 @@ func recordCaptureDiagnostic(home string, diagnostic captureDiagnostic) error {
 	if len(kept) > 50 {
 		kept = kept[len(kept)-50:]
 	}
-	return local.Write(captureDiagnosticsPath(home), kept)
+	return local.Write(DiagnosticsPath(home), kept)
 }
 
-// includedCaptureDiagnostics keeps only diagnostics for projects that are
+// IncludedDiagnostics keeps only diagnostics for projects that are
 // currently included. A diagnostic is recorded only for an included project,
 // but the project may be excluded later; its path must then stop appearing
 // in status, not linger until newer entries push it out.
-func includedCaptureDiagnostics(diagnostics []captureDiagnostic, projects []archive.ProjectActivation) []captureDiagnostic {
-	kept := make([]captureDiagnostic, 0, len(diagnostics))
+func IncludedDiagnostics(diagnostics []Diagnostic, projects []archive.ProjectActivation) []Diagnostic {
+	kept := make([]Diagnostic, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		for _, project := range projects {
 			if project.Included && filepath.Clean(project.Root) == filepath.Clean(diagnostic.ProjectRoot) {
@@ -135,41 +139,42 @@ func includedCaptureDiagnostics(diagnostics []captureDiagnostic, projects []arch
 	return kept
 }
 
-// pruneCaptureDiagnostics drops stored diagnostics for projects that are no
+// PruneDiagnostics drops stored diagnostics for projects that are no
 // longer included, so an excluded path is not kept on disk either. Setup
 // calls it after committing the configuration those projects come from; see
-// recordCaptureDiagnostic for why that order plus the shared lock is enough.
-func pruneCaptureDiagnostics(home string, projects []archive.ProjectActivation) error {
-	unlock, err := local.NamedLockWait(home, diagnosticsLockName, pruneDiagnosticsWait)
+// RecordDiagnostic for why that order plus the shared lock is enough.
+func PruneDiagnostics(home string, projects []archive.ProjectActivation) error {
+	unlock, err := local.NamedLockWait(home, DiagnosticsLockName, pruneDiagnosticsWait)
 	if err != nil {
 		return fmt.Errorf("lock capture diagnostics: %w", err)
 	}
 	defer unlock()
-	diagnostics, err := readCaptureDiagnostics(home)
+	diagnostics, err := ReadDiagnostics(home)
 	if state.IsUndecodable(err) {
 		// Replaced by an empty list: nothing in it can be pruned, and it
 		// must not stop setup.
-		return local.Write(captureDiagnosticsPath(home), []captureDiagnostic{})
+		return local.Write(DiagnosticsPath(home), []Diagnostic{})
 	}
 	if err != nil {
 		return err
 	}
-	kept := includedCaptureDiagnostics(diagnostics, projects)
+	kept := IncludedDiagnostics(diagnostics, projects)
 	if len(kept) == len(diagnostics) {
 		return nil
 	}
-	return local.Write(captureDiagnosticsPath(home), kept)
+	return local.Write(DiagnosticsPath(home), kept)
 }
 
-func captureDiagnosticMessage(code captureDiagnosticCode) string {
+// DiagnosticMessage says in words what a diagnostic code means.
+func DiagnosticMessage(code DiagnosticCode) string {
 	switch code {
-	case diagnosticUnknownSessionStart:
+	case DiagnosticUnknownSessionStart:
 		return "the session start could not be established"
-	case diagnosticPreActivationStart:
+	case DiagnosticPreActivationStart:
 		return "the session start does not meet the project activation boundary"
-	case diagnosticSetupInProgress:
+	case DiagnosticSetupInProgress:
 		return "setup was still in progress, so the session was not registered; start a new session"
-	case diagnosticHookFailed:
+	case DiagnosticHookFailed:
 		return "a hook stopped on an internal error, so its event was not recorded; please report it"
 	default:
 		return "capture evidence was not accepted"

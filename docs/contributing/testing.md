@@ -89,6 +89,17 @@ In Go tests, everything goes through injection:
   `launchctl` and Keychain with stand-ins that stop the test (see
   `isolation_test.go`). A test that leaves an `Env` field unset can therefore
   never reach your real apps, launchd, or Keychain.
+- `internal/capture` (the hook runtime) takes its data directory as an
+  argument and does not import anything that runs launchctl, opens the
+  Keychain, or uses the network (`TestCaptureImportBoundary`), so it has no
+  stand-ins for them. Its tests may not either:
+  `TestCaptureTestsCannotReachTheMac` fails a test file that imports
+  `os/exec` or the network, or uses `internal/credentials` for anything but
+  a config's storage settings. Its `TestMain` gives its tests a
+  temporary `HOME`, unsets the same variables, and keeps `$TMPDIR` in a
+  folder of the run's own (`internal/testutil/isolation`). Its tests call
+  `capture.HandleEvent` directly; tests that go through a command (`_hook`,
+  `status`, `sync`, `setup`) stay in `internal/cli`.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in

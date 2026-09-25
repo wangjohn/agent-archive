@@ -343,3 +343,13 @@ can list them, inspect them, and hand one to another agent.
   build, since the race detector skips them.
 - Documentation reorganized under `docs/` with an index, a threat-model-first
   privacy page, reference pages, and a link check that runs with the tests.
+- The hook runtime moved out of `internal/cli` into `internal/capture`
+  (event classification, session admission, lifecycle evidence, subagent
+  links, capture diagnostics); the `_hook` command is a thin adapter that
+  still always exits 0. Where setup's transaction record lives is
+  `internal/setupjournal`. Neither may import the command-line layer
+  (depguard, plus a test per package), and capture's tests fail closed in a
+  `TestMain` of their own; a guard test keeps them from importing anything
+  that runs a program, opens the Keychain, or uses the network. Tests that
+  run the go command keep its module and build caches instead of
+  downloading every module. No behavior change.

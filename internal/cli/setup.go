@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -415,7 +416,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		// The configuration is committed; a diagnostic for a project that
 		// was just excluded is stale local state, not a reason to fail.
-		if e := pruneCaptureDiagnostics(home, draft.Config.Archive.Projects); e != nil {
+		if e := capture.PruneDiagnostics(home, draft.Config.Archive.Projects); e != nil {
 			terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
 		}
 		terminal.Println(out, "\nConfiguration saved.")
