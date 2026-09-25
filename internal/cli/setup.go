@@ -268,6 +268,16 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 				return err
 			}
 		}
+		// The apps are chosen now, so whether applySetup would refuse them
+		// beside another installation's hooks is known: say so before the
+		// storage and retention questions, not after them. The answers so
+		// far are saved for the next run.
+		if problems := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), draft.Config.Harnesses); len(problems) > 0 {
+			if err = save(); err != nil {
+				return err
+			}
+			return &otherInstallationError{problems: problems}
+		}
 		if draft.Step == 1 {
 			p.step(2, "Connect storage")
 			cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env)
