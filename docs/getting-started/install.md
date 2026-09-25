@@ -3,12 +3,32 @@
 `agent-archive` is a single, self-contained macOS binary with no runtime
 dependencies. It runs on Intel and Apple Silicon Macs.
 
-> **Status: pre-release.** There is no signed release yet, so the install
-> script and the release downloads below have nothing to fetch until the
-> first `v0.1.0` tag is published. Until then, [build from
-> source](#build-from-source).
-
 After installing, continue with [setup](setup.md).
+
+## Install with the script
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
+```
+
+[`install.sh`](../../install.sh) is short; read it first if you prefer. It
+downloads the release binary for your Mac's architecture, checks it against
+the release's `SHA256SUMS` (which catches a damaged download; both files
+come from the same release), checks that it carries a valid Developer ID
+signature from the team the script names (which catches a binary someone
+else built), and installs it as `agent-archive`, without `sudo`.
+If `agent-archive` is already on your `PATH`, it replaces that copy,
+so the hooks and background collector keep pointing at it. Otherwise it uses
+`/usr/local/bin` when that is writable, and `~/.local/bin` if not, printing
+the line to add to your shell profile when the directory isn't on your
+`PATH`. It never runs setup.
+
+Run the same command again to upgrade. To choose a release or a directory,
+set the variables on the `sh` side of the pipe:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | AGENT_ARCHIVE_VERSION=v0.1.0 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
+```
 
 ## Build from source
 
@@ -46,34 +66,6 @@ place. Overwriting it in place with `cp` can leave macOS killing it at launch
 until the file is recreated. Setup records the binary's path in the hooks and
 the LaunchAgent; if you move it, rerun `agent-archive setup` from the new
 location (`status` reports hooks and background as `broken` until you do).
-
-## Install with the script
-
-Once a release exists:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
-```
-
-[`install.sh`](../../install.sh) is short; read it first if you prefer. It
-downloads the release binary for your Mac's architecture, checks it against
-the release's `SHA256SUMS` (which catches a damaged download; both files
-come from the same release), checks that it carries a valid Developer ID
-signature from the team the script names (which catches a binary someone
-else built), and installs it as `agent-archive`, without `sudo`. Until the
-first release the script names no team and refuses to install anything.
-If `agent-archive` is already on your `PATH`, it replaces that copy,
-so the hooks and background collector keep pointing at it. Otherwise it uses
-`/usr/local/bin` when that is writable, and `~/.local/bin` if not, printing
-the line to add to your shell profile when the directory isn't on your
-`PATH`. It never runs setup.
-
-Run the same command again to upgrade. To choose a release or a directory,
-set the variables on the `sh` side of the pipe:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | AGENT_ARCHIVE_VERSION=v0.1.0 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
-```
 
 ## Install a release build by hand
 

@@ -37,8 +37,8 @@ disclosing it; we'll agree on a date together.
 
 ## Supported versions
 
-agent-archive is pre-release: only the latest `main` is supported. Once
-versions are tagged, the latest release will be supported.
+The latest release is supported. Fixes land on `main` and ship in the next
+release.
 
 ## In scope
 

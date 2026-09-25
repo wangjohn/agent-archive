@@ -32,12 +32,10 @@ These are repository settings only the owner can make:
   Apple secrets below into it, deleting the repository-level copies.
   Without reviewers, anyone who can push a tag to a commit on `main` can
   publish.
-- Set `team_id` in `install.sh` to the Apple Developer Team ID that signs
-  releases (the `APPLE_TEAM_ID` secret: ten capital letters and digits,
-  shown under Membership details at developer.apple.com), in a pull
-  request merged before tagging. `scripts/check-release-signing.sh`
-  refuses to publish while they differ, and `install.sh` refuses to install
-  anything while `team_id` is empty.
+- `team_id` in `install.sh` is the Apple Developer Team ID that signs
+  releases, `568CGRV32C`. The `APPLE_TEAM_ID` secret must be the same value
+  (shown under Membership details at developer.apple.com):
+  `scripts/check-release-signing.sh` refuses to publish while they differ.
 - Protect `main` so the tag's commit has passed CI.
 
 ## Signing and notarization

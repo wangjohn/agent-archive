@@ -8,7 +8,7 @@ are for people using it; specs and contributor guides are in
 
 | Doc | For |
 | --- | --- |
-| [Install](getting-started/install.md) | Building from source (pre-release) or installing a release. |
+| [Install](getting-started/install.md) | Installing a release, or building from source. |
 | [Create a bucket](getting-started/bucket.md) | A private R2 or S3 bucket and an access key, step by step. |
 | [Setup](getting-started/setup.md) | Choosing apps and projects, connecting a bucket, and what setup changes. |
 | [Uninstall](getting-started/uninstall.md) | Removing hooks, the collector, local data, and the binary; deleting the archive in the bucket; downgrading. |
