@@ -192,9 +192,6 @@ linters:
       - path: internal/retention/retention\.go
         text: sweepSession
         linters: [funlen, gocyclo]
-      - path: internal/cli/status\.go
-        text: readStatus
-        linters: [funlen, gocyclo]
       - path: internal/cli/setup\.go
         text: "`setup`|'setup'"
         linters: [funlen, gocyclo]
