@@ -51,8 +51,9 @@ changes app settings.
   [Re-admission](#re-admission)).
 - Deduplicating content that Claude Code copies into forked sessions.
 - Linking Codex sub-threads to their parents.
-- Importing from other Macs, from backups, or from non-default store paths
-  such as `CLAUDE_CONFIG_DIR` and `CODEX_HOME`.
+- Importing from other Macs, from backups, or from store paths other than
+  the defaults and those `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and setup's
+  recorded hook files name (see [Discovery](#discovery)).
 - Installing hooks or changing app settings.
 - A "never delete" retention setting. Setup currently maps `0` days to 90.
 
