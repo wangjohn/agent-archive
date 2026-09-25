@@ -214,10 +214,9 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 	}
 	now := env.now().UTC()
 	type candidate struct {
-		reg    archive.SessionRegistration
-		bundle archive.SourceBundle
-		at     time.Time
-		prior  verificationEvidence
+		reg   archive.SessionRegistration
+		at    time.Time
+		prior verificationEvidence
 		// cfgID is the per-session verification configuration hash the
 		// record is keyed to (see sessionVerificationConfigurationID).
 		cfgID string
@@ -228,12 +227,16 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 		if !cfg.AcceptSession(reg) {
 			continue
 		}
-		bundle, at, _, err := store.LoadLastPublished(reg.ArchiveSessionID)
+		// The summary at the head of the published state says when the
+		// last publication was, which is all a session already verified
+		// needs; only the few due below decode their whole state.
+		published, _, err := store.LoadPublishedSummary(reg.ArchiveSessionID)
 		if err != nil {
 			localErrs = append(localErrs, err)
 			continue
 		}
-		if at.IsZero() {
+		at := published.LastPublishedAt
+		if !published.Published || at.IsZero() {
 			continue
 		}
 		prior, err := readVerification(home, reg.ArchiveSessionID)
@@ -254,7 +257,7 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 			// A new publication or configuration starts its own attempt count.
 			prior = verificationEvidence{}
 		}
-		due = append(due, candidate{reg, bundle, at, prior, verificationConfigurationID})
+		due = append(due, candidate{reg, at, prior, verificationConfigurationID})
 	}
 	// Imports are read back too, but only hook-captured publications prove an
 	// app's capture works (status never promotes an app on an import), so
@@ -274,8 +277,19 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 			summary.Deferred++
 			continue
 		}
+		published, err := store.LoadPublishedState(c.reg.ArchiveSessionID)
+		if err != nil {
+			localErrs = append(localErrs, err)
+			continue
+		}
+		if _, at, _ := published.LastPublished(); !at.Equal(c.at) {
+			// Republished since the summary was read: the next pass reads
+			// the new publication back.
+			summary.Deferred++
+			continue
+		}
 		summary.Attempted++
-		sha, err := verifyPublication(ctx, cfg, store, remote, c.reg, c.bundle)
+		sha, err := verifyPublication(ctx, cfg, remote, c.reg, published)
 		record := verificationEvidence{ConfigurationID: c.cfgID, PublishedAt: c.at, SourceSHA256: sha, Attempts: c.prior.Attempts + 1}
 		switch {
 		case err == nil:
@@ -311,19 +325,17 @@ var verificationTimeout = 5 * time.Minute
 // any other error is treated as transient.
 //
 // The source the metadata must name is the one recorded when it was uploaded
-// (state.Store.LoadLastPublishedSource). Only state from a version
+// (state.Published.LastPublishedSource). Only state from a version
 // that recorded none falls back to rebuilding the digest from the cached
 // bundle, which a later source schema or compressor can no longer reproduce.
-func verifyPublication(ctx context.Context, cfg config.Config, store *state.Store, remote storage.ObjectStore, reg archive.SessionRegistration, bundle archive.SourceBundle) (string, error) {
+func verifyPublication(ctx context.Context, cfg config.Config, remote storage.ObjectStore, reg archive.SessionRegistration, published *state.Published) (string, error) {
 	key, err := archive.MetadataObjectKey(reg.Harness.Name, reg.ArchiveSessionID)
 	if err != nil {
 		return "", err
 	}
-	expected, recorded, err := store.LoadLastPublishedSource(reg.ArchiveSessionID)
-	if err != nil {
-		return "", err
-	}
+	expected, recorded := published.LastPublishedSource()
 	if !recorded {
+		bundle, _, _ := published.LastPublished()
 		rebuilt, err := archive.BuildCompressedSource(bundle)
 		if err != nil {
 			return "", err
