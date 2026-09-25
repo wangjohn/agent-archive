@@ -252,18 +252,24 @@ func TestBatchReconcile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	save := func(id, batch, parent string) {
+	save := func(id, batch, parent string, origins ...archive.SessionOrigin) {
+		origin := archive.SessionOriginImport
+		if len(origins) > 0 {
+			origin = origins[0]
+		}
 		t.Helper()
 		reg := archive.SessionRegistration{ArchiveSessionID: id, NativeSessionID: "n-" + id, ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"},
-			SessionStartedAt: fixedNow, ImportBatch: batch, ParentSessionID: parent}
+			SessionStartedAt: fixedNow, ImportBatch: batch, ParentSessionID: parent, Origin: origin}
 		if err := store.SaveRegistration(reg); err != nil {
 			t.Fatal(err)
 		}
 	}
-	save("a", "b1", "")
-	save("b", "b1", "")
-	save("c", "b2", "")
-	save("a-child", "b1", "a")
+	save("a", "2026-09-23-1", "")
+	save("b", "2026-09-23-1", "")
+	save("c", "2026-09-23-2", "")
+	save("a-child", "2026-09-23-1", "a")
+	// A hook registration carrying the ID is not the import's (B-23).
+	save("hook", "2026-09-23-1", "", archive.SessionOriginHook)
 	if err := store.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: "b-child", NativeSessionID: "n-b:subagent:x", ParentArchiveSessionID: "b", ParentNativeSessionID: "n-b",
 		ProjectID: "p", ProjectRoot: "/p", Harness: archive.Harness{Name: "claude"}, AgentID: "x", TranscriptPath: "/p/x.jsonl",
@@ -271,7 +277,7 @@ func TestBatchReconcile(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	b := Batch{ID: "b1", Sessions: []string{"a"}}
+	b := Batch{ID: "2026-09-23-1", Sessions: []string{"a"}}
 	if err := b.Reconcile(store); err != nil {
 		t.Fatal(err)
 	}

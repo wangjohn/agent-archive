@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -100,7 +101,7 @@ func (b *Batch) Reconcile(store *state.Store) error {
 	}
 	parents := map[string]bool{}
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID {
+		if !InBatch(reg, b.ID) {
 			continue
 		}
 		if reg.ParentSessionID != "" {
@@ -142,10 +143,44 @@ func (f BatchFilters) equal(o BatchFilters) bool {
 
 func batchDir(home string) string { return filepath.Join(home, "imports") }
 
+// batchIDPattern is the form OpenBatch gives an import ID: its local date
+// and the day's count from 1.
+var batchIDPattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}-[1-9][0-9]{0,5}$`)
+
+// ValidBatchID reports whether id has the form OpenBatch gives import IDs.
+// An empty ID never does.
+func ValidBatchID(id string) bool { return batchIDPattern.MatchString(id) }
+
+// InBatch reports whether reg was registered by the import id: backfill
+// registered it (Imported), and it carries that import's ID. It is the only
+// test of whether a registration belongs to an import, so a batch with a
+// missing or empty ID, or a hook registration that carries an ID, never
+// pulls a hook-captured session into an import's undo, upload, or history.
+// TestImportBatchComparedOnlyThroughInBatch holds every caller to it.
+func InBatch(reg archive.SessionRegistration, id string) bool {
+	return id != "" && reg.Imported() && reg.ImportBatch == id
+}
+
+// validate checks what LoadBatches relies on in a batch read from the file
+// named stem.json: an ID of the form OpenBatch gives, that file's own name,
+// and a start time.
+func (b Batch) validate(stem string) error {
+	switch {
+	case !ValidBatchID(b.ID):
+		return errors.New("it has no valid import ID")
+	case b.ID != stem:
+		return fmt.Errorf("its import ID %q does not match its file name", b.ID)
+	case b.StartedAt.IsZero():
+		return errors.New("it has no start time")
+	}
+	return nil
+}
+
 func batchPath(home, id string) string { return filepath.Join(batchDir(home), id+".json") }
 
 // LoadBatches returns every readable import batch, oldest first. A batch
-// file that cannot be read is left out and named in err, which is returned
+// file that cannot be read, or does not hold a valid batch (see validate),
+// is left out and named in err, which is returned
 // alongside the batches that could be read: a caller that only reports on
 // imports can go on, one that must see every batch treats err as fatal.
 func LoadBatches(home string) ([]Batch, error) {
@@ -163,8 +198,13 @@ func LoadBatches(home string) ([]Batch, error) {
 			continue
 		}
 		var b Batch
+		stem := strings.TrimSuffix(e.Name(), ".json")
 		if err := local.Read(filepath.Join(batchDir(home), e.Name()), &b); err != nil {
-			unreadable = append(unreadable, fmt.Errorf("read import %q: %w", strings.TrimSuffix(e.Name(), ".json"), err))
+			unreadable = append(unreadable, fmt.Errorf("read import %q: %w", stem, err))
+			continue
+		}
+		if err := b.validate(stem); err != nil {
+			unreadable = append(unreadable, fmt.Errorf("read import %q: %w", stem, err))
 			continue
 		}
 		out = append(out, b)
@@ -180,8 +220,8 @@ func LoadBatches(home string) ([]Batch, error) {
 
 // SaveBatch durably writes b, replacing any earlier version.
 func SaveBatch(home string, b Batch) error {
-	if b.ID == "" || strings.ContainsAny(b.ID, `/\`) {
-		return errors.New("import ID is required")
+	if !ValidBatchID(b.ID) {
+		return fmt.Errorf("import ID %q is not valid", b.ID)
 	}
 	if err := local.Write(batchPath(home, b.ID), b); err != nil {
 		return fmt.Errorf("save import %s: %w", b.ID, err)

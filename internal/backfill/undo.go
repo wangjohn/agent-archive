@@ -98,6 +98,11 @@ type UndoSession struct {
 // admitted before b started or after it completed: it belongs to an earlier
 // import that had the same ID.
 func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []Batch, b Batch, project string) (UndoPlan, error) {
+	// Sessions are selected by the ID they carry (InBatch), so a batch
+	// without a valid one selects nothing it could prove is its own.
+	if !ValidBatchID(b.ID) {
+		return UndoPlan{}, fmt.Errorf("import %q has no valid import ID; nothing was changed", b.ID)
+	}
 	if project != "" {
 		if abs, err := filepath.Abs(project); err == nil {
 			project = abs
@@ -145,13 +150,13 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	selected := map[string]bool{}
 	var parents, children []UndoSession
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID || reg.ParentSessionID != "" || !inProject(reg.ProjectRoot) {
+		if !InBatch(reg, b.ID) || reg.ParentSessionID != "" || !inProject(reg.ProjectRoot) {
 			continue
 		}
 		selected[reg.ArchiveSessionID] = true
 	}
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID {
+		if !InBatch(reg, b.ID) {
 			continue
 		}
 		// A subagent goes with its parent. One whose parent is no longer
@@ -218,7 +223,7 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 func sessionsOutsideBatch(regs []archive.SessionRegistration, b Batch) int {
 	n := 0
 	for _, reg := range regs {
-		if reg.ImportBatch != b.ID || reg.ParentSessionID != "" || reg.AdmittedAt.IsZero() {
+		if !InBatch(reg, b.ID) || reg.ParentSessionID != "" || reg.AdmittedAt.IsZero() {
 			continue
 		}
 		if reg.AdmittedAt.Before(b.StartedAt) || b.CompletedAt != nil && reg.AdmittedAt.After(*b.CompletedAt) {
@@ -253,7 +258,7 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 			return o.ID != b.ID && o.UndoneAt != nil && slices.Contains(o.ProjectsKept, project.ProjectID)
 		}) {
 			candidate = slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
-				return reg.ImportBatch == b.ID && reg.ParentSessionID == "" && inside(reg, project)
+				return InBatch(reg, b.ID) && reg.ParentSessionID == "" && inside(reg, project)
 			})
 		}
 		if !candidate {
@@ -261,7 +266,7 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 		}
 		kept := KeptProject{Project: project}
 		for _, reg := range regs {
-			if reg.Imported() && reg.ImportBatch != b.ID && reg.ParentSessionID == "" && inside(reg, project) {
+			if reg.Imported() && !InBatch(reg, b.ID) && reg.ParentSessionID == "" && inside(reg, project) {
 				kept.Sessions++
 				kept.Imports = addUnique(kept.Imports, reg.ImportBatch)
 			}
