@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
 // hookStart runs a Claude Code SessionStart hook for a new session in cwd an
@@ -90,5 +92,34 @@ func TestBackfillKeepsReposUnderAnAddedFolderOutOfCapture(t *testing.T) {
 		if p.Root == notes && p.Included {
 			t.Fatalf("the folder is still included: %+v", p)
 		}
+	}
+}
+
+// Regression (PR #53 review): a setup draft saved before the import, then
+// continued, used to carry back only the projects the import added and drop
+// the excluded entries that keep the repositories inside an added plain
+// folder out of capture, so the folder captured them after all.
+func TestSetupDraftKeepsKeptOutFolders(t *testing.T) {
+	f, bucket := newImportFixture(t)
+	secret := filepath.Join(f.userHome, "old-notes", "secret-repo")
+	if err := os.MkdirAll(filepath.Join(secret, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, _, _ := config.Load(f.data)
+	if err := local.Write(filepath.Join(f.data, "setup-draft.json"), setupDraft{Version: 1, Step: 2, Config: before}); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, code := f.importRun(t, nil, false, "--yes", "--background"); code != 0 {
+		t.Fatalf("import: %s", errOut)
+	}
+	env := setupTestEnv(t, f.data, f.userHome, newFakeKeychain(), backfillNow)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return bucket, nil }
+	setupRun(t, env, "continue\ny\n", 0)
+	cfg, _, _ := config.Load(f.data)
+	if project, owned := configuredProjectActivationFor(cfg, secret); !owned || project.Root != secret || project.Included {
+		t.Fatalf("hook owner for the nested repository after continuing the draft: %+v %v\n%+v", project, owned, cfg.Archive.Projects)
+	}
+	if f.hookStart(t, "new-secret-session", secret) {
+		t.Fatal("a new session in the nested repository was captured")
 	}
 }
