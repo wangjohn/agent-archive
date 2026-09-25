@@ -217,6 +217,15 @@ can list them, inspect them, and hand one to another agent.
 - A pass no longer costs anything for sessions whose transcript the app has
   deleted, or for subagents that are already linked: 200 such sessions took
   two seconds a pass and 400 subagents 25 seconds; now each is one stat.
+- A long session costs the background collector far less each time it
+  grows. For a 30 MB transcript a pass took about 10 seconds and allocated
+  over a gigabyte, and every publication downloaded the whole source again
+  to verify it; now a pass takes under 4 seconds with about half the
+  memory, and a source is verified by the checksum the storage service
+  reports, downloading nothing (a service that reports none still has it
+  read back). After an upgrade that changes only how metadata is derived,
+  a session whose transcript hasn't changed is no longer read again. See
+  [bucket layout](docs/reference/bucket-layout.md#how-objects-change).
 - A local state file that no longer decodes (published, pending, or
   superseded state; a scan journal; the session index; a removal record) is
   moved aside or rebuilt once instead of failing its session on every pass;
