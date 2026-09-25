@@ -98,6 +98,31 @@ func TestSessionWhoseRegistrationWasLostIsStillExpired(t *testing.T) {
 	}
 }
 
+// An orphan is expired by age like any other session, so a clock ahead of
+// the storage service's deletes nothing of it either.
+func TestOrphanIsKeptWhileTheClockIsAhead(t *testing.T) {
+	local := newTestStore(t)
+	store := storage.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	publishTwice(t, local, store, "s1", t.TempDir(), t0)
+	corruptFile(t, local, "registrations/s1.json")
+	if r := collect(t, local, store, t0.Add(time.Hour)); !errors.Is(r.Errors["s1"], state.ErrQuarantined) {
+		t.Fatalf("errors = %v", r.Errors)
+	}
+	at := t0.Add(retentionWindow + time.Hour)
+	ahead := func(context.Context) (time.Time, error) { return at.Add(-2 * MaxClockSkew), nil }
+	result, err := Sweep(context.Background(), local, store, Options{Now: func() time.Time { return at }, ServerClock: ahead, SessionMaxAge: retentionWindow})
+	if err != nil || len(result.DeletedSessions) != 0 || !errors.Is(result.Held, ErrClockAhead) {
+		t.Fatalf("%#v %v", result, err)
+	}
+	if sessionObjects(t, store, "s1") == 0 {
+		t.Fatal("a clock ahead deleted an orphan's objects")
+	}
+	if orphans, err := local.OrphanedSessions(nil); err != nil || len(orphans) != 1 {
+		t.Fatalf("a clock ahead forgot an orphan: %v %v", orphans, err)
+	}
+}
+
 // An orphan is not forgotten if its registration reappears before the sweep
 // gets to it: a hook registering the native session again reuses its ID.
 func TestOrphanRegisteredAgainIsKept(t *testing.T) {
