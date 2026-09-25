@@ -51,6 +51,7 @@ func TestCredentialShapeNeedles(t *testing.T) {
 		"ke" + "y-" + d(32),
 		d(9) + ":AA" + a(33),
 		"abc" + "8Q~" + a(32),
+		"LS0tLS1" + "CRUdJTi" + a(24),
 	}
 	if len(samples) != len(credentialShapeTable) {
 		t.Fatalf("%d samples for %d shapes: add a sample for each new shape", len(samples), len(credentialShapeTable))

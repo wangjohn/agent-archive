@@ -381,6 +381,10 @@ replaced with `[REDACTED]` and a `sensitive_content_redacted` gap is recorded.
   result in chunks), the base64 lines right above an END line that starts
   its line are redacted with it. Certificates and public keys are not
   redacted.
+- A PEM block encoded in base64 whole (kubeconfig `client-key-data`), from
+  its `LS0tLS1CRUdJTi` prefix, certificates included (filter 12).
+- Docker `config.json` `"auth"` and `"identitytoken"` values shown as text
+  (filter 12).
 - JWTs: three base64url segments, the first beginning with `eyJ`.
 - URL userinfo: in `scheme://user:pass@host` (or `scheme://user@host`) the
   userinfo is replaced and the scheme and host are kept. The userinfo ends

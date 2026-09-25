@@ -5,6 +5,20 @@ rules, as a whole, are in [privacy](privacy.md); version numbers and bump
 rules are in [versions](../reference/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
+## Source filter version 12
+
+Adapter version 0.12.0 goes with it; the parser is unchanged.
+
+- **Private keys encoded in base64.** A PEM block encoded in base64 whole,
+  as kubeconfig's `client-key-data` holds a client's private key, is
+  redacted wherever it appears (`cat ~/.kube/config`, `kubectl config view
+  --raw`). Certificates encoded the same way are redacted too.
+- **Docker registry logins shown as text.** The `"auth"` and
+  `"identitytoken"` values of Docker's `config.json`, base64 of
+  `user:password`, were dropped only when the file was parsed as JSON. They
+  are now redacted in text as well: a file read with line numbers, or JSON
+  following other command output.
+
 ## Source filter version 11
 
 Filter 11 closes the shapes next to ones filter 9 and 10 fixed, from the

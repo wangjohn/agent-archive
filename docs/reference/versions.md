@@ -8,8 +8,8 @@ affects.
 | Version | Where | Recorded in | Current | Changes when |
 | --- | --- | --- | --- | --- |
 | Release | `cli.Version` (set at build time) | `--version` | pre-release | A tag is cut. |
-| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 11 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
-| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.11.0 | An adapter's output changes (bumped with the filter in practice). |
+| Filter | `archive.FilterVersion` | source header `capture.filter_version`, metadata `filter_version` | 12 | What the privacy filter keeps, drops, or redacts changes: any change to filtered output. |
+| Adapter | `adapterVersion` in `internal/archive/adapters.go` | `capture.adapter_version` | 0.12.0 | An adapter's output changes (bumped with the filter in practice). |
 | Parser | `archive.DefaultParserVersion` | metadata `parser.version` | 0.11.0 | How metadata is derived from a source changes: counts, turns, models, skills, gaps. |
 | Source schema | `archive.SourceSchemaVersion` | source header `schema_version` | 2 | The source bundle's line format changes. Readers refuse other versions. |
 | Metadata schema | `archive.MetadataSchemaVersion` | metadata `schema_version` | 1 | The metadata sidecar changes incompatibly. Optional fields don't bump it. |

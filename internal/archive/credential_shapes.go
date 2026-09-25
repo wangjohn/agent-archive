@@ -162,6 +162,10 @@ var credentialShapeTable = []struct {
 	{`\bkey-[0-9a-f]{32}\b`, []string{"key-"}},
 	{`\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b`, []string{":aa"}},
 	{`\b[A-Za-z0-9_~.-]{3}[78]Q~[A-Za-z0-9_~.-]{31,34}`, []string{"7q~", "8q~"}},
+	// A PEM block encoded in base64 whole, as kubeconfig's client-key-data
+	// holds a private key: every one begins with base64 of "-----BEGIN".
+	// Certificates encoded the same way are redacted too.
+	{`\bLS0tLS1CRUdJTi[A-Za-z0-9+/]{20,}={0,2}`, []string{"ls0tls1crudjti"}},
 }
 
 // credentialShape is credentialShapeTable as one pattern, gated by all of
@@ -300,6 +304,10 @@ var credentialContextPatterns = func() []linePattern {
 		{`(?i)\bhooks\.slack\.com/(?:services|workflows|triggers)/(?P<value>[A-Za-z0-9/_-]{8,})`, []string{"hooks.slack.com/"}},
 		{`(?i)\bdiscord(?:app)?\.com/api/webhooks/(?P<value>[0-9]+/[A-Za-z0-9_-]{8,})`, []string{"discord"}},
 		{`(?i)\.webhook\.office\.com/webhookb2/(?P<value>[A-Za-z0-9@/_.-]{8,})`, []string{".webhook.office.com/"}},
+		// Docker's config.json registry login, base64 of `user:secret`, when
+		// the file is shown as text rather than parsed as JSON: `"auth"` is
+		// too common a word to redact everywhere (credentialVocabulary).
+		{`(?i)\\*"(?:auth|identitytoken)\\*"[ \t]*:[ \t]*\\*"(?P<value>[A-Za-z0-9+/._-]{12,}={0,2})\\*"`, []string{`"auth`, "identitytoken"}},
 		// A bearer token outside an Authorization header.
 		{`(?:^|[^A-Za-z0-9_])(?i:bearer)[ \t]+(?P<value>[A-Za-z0-9._~+/-]{20,}=*)`, []string{"bearer"}},
 	} {
