@@ -1,0 +1,187 @@
+package cli
+
+import (
+	"flag"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+)
+
+var (
+	// docFence is a fenced code block; docCodeSpan an inline code span.
+	docFence    = regexp.MustCompile("(?ms)^[ \t]*(```|~~~)([^\n]*)\n(.*?)^[ \t]*(```|~~~)")
+	docCodeSpan = regexp.MustCompile("`([^`\n]+)`")
+	// docInvocation is `agent-archive` and what follows it on the line, up
+	// to the end of a shell command.
+	docInvocation = regexp.MustCompile(`(?:^|[\s("'$])agent-archive((?:[ \t]+[^\s|;&)"'` + "`" + `]+)*)`)
+	// shellComment is a shell comment: a # at the start of a line or after
+	// a space, to the end of the line.
+	shellComment = regexp.MustCompile(`(^|\s)#.*$`)
+	// docCommandWord is what a command (or a placeholder for one) looks
+	// like, as opposed to the next word of a sentence.
+	docCommandWord = regexp.MustCompile(`^(-{0,2}[a-z_][a-z-]*|[A-Z_]+)$`)
+	docFlagName    = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+)
+
+// docCommandSources are the Markdown and issue-template files whose quoted
+// commands must exist: README.md, docs/ except the unmaintained history
+// and the unimplemented proposals, and .github/ISSUE_TEMPLATE.
+func docCommandSources(t *testing.T) []string {
+	t.Helper()
+	root := filepath.Join("..", "..")
+	files := []string{filepath.Join(root, "README.md")}
+	for _, dir := range []string{"docs", filepath.Join(".github", "ISSUE_TEMPLATE")} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if slash := filepath.ToSlash(path); strings.HasSuffix(slash, "docs/history") || strings.HasSuffix(slash, "docs/design/proposed") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if ext := filepath.Ext(path); ext == ".md" || ext == ".yml" || ext == ".yaml" {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return files
+}
+
+// quotedCode returns the code a file quotes: every fenced block (but a
+// diagram's) and inline code span of a Markdown file, and every code span of
+// an issue template, whose YAML strings are Markdown.
+func quotedCode(path string, text string) []string {
+	var code []string
+	if strings.HasSuffix(path, ".md") {
+		for _, m := range docFence.FindAllStringSubmatch(text, -1) {
+			if !strings.Contains(m[2], "mermaid") {
+				code = append(code, m[3])
+			}
+		}
+		text = docFence.ReplaceAllString(text, "")
+	}
+	for _, m := range docCodeSpan.FindAllStringSubmatch(text, -1) {
+		code = append(code, m[1])
+	}
+	return code
+}
+
+// commandWords splits what follows agent-archive into words, ending at the
+// end of a sentence or an aside ("run agent-archive sync." or "agent-archive
+// (as recorded)") and dropping a word's trailing punctuation. It returns
+// nothing when the first word does not look like a command, as in prose.
+func commandWords(s string) []string {
+	var words []string
+	for _, word := range strings.Fields(s) {
+		if strings.HasPrefix(word, "(") {
+			break
+		}
+		trimmed := strings.TrimRight(word, ".,:;")
+		if trimmed != "" {
+			words = append(words, trimmed)
+		}
+		if trimmed != word {
+			break
+		}
+	}
+	if len(words) == 0 || !docCommandWord.MatchString(words[0]) {
+		return nil
+	}
+	return words
+}
+
+// flagNameOf returns the flag a quoted word names ("--json", "[--yes]",
+// "--since=7d"), or "" when it names none.
+func flagNameOf(word string) string {
+	word = strings.Trim(word, "[]")
+	if !strings.HasPrefix(word, "-") {
+		return ""
+	}
+	name, _, _ := strings.Cut(strings.TrimLeft(word, "-"), "=")
+	if !docFlagName.MatchString(name) {
+		return ""
+	}
+	return name
+}
+
+// D-39: every `agent-archive COMMAND [SUBCOMMAND] --flag` quoted in the docs,
+// the README, and the issue templates names a real command and flags its
+// parser accepts, so a renamed or removed flag cannot linger in the docs.
+func TestDocsQuoteOnlyRealCommandsAndFlags(t *testing.T) {
+	t.Parallel()
+	sets := commandFlagSets(t)
+	// What may follow agent-archive besides a public command: help, the
+	// version flags, and the hidden entry points apps and
+	// launchd run (_hook takes --harness).
+	others := map[string][]string{
+		"help": nil, "--help": nil, "-h": nil, "--version": nil, "-v": nil,
+		"_collect": nil, "_hook": {"harness"},
+	}
+	checked := 0
+	for _, path := range docCommandSources(t) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, _ := filepath.Rel(filepath.Join("..", ".."), path)
+		// Design documents propose flags that do not exist yet, so only an
+		// explicit `agent-archive ...` is checked there; elsewhere a code
+		// span such as `list --json` names the command too.
+		design := strings.HasPrefix(filepath.ToSlash(rel), "docs/design/")
+		for _, code := range quotedCode(path, string(data)) {
+			for line := range strings.SplitSeq(code, "\n") {
+				line = shellComment.ReplaceAllString(line, "")
+				invocations := docInvocation.FindAllStringSubmatch(line, -1)
+				if fields := strings.Fields(line); !design && len(invocations) == 0 && len(fields) > 1 && commandHelp[fields[0]] != "" && slices.ContainsFunc(fields[1:], func(w string) bool { return flagNameOf(w) != "" }) {
+					invocations = [][]string{{line, " " + line}}
+				}
+				for _, m := range invocations {
+					words := commandWords(m[1])
+					if len(words) == 0 {
+						continue // agent-archive alone, or in a sentence
+					}
+					command, rest := words[0], words[1:]
+					if command == "COMMAND" {
+						continue // a placeholder: any command, any of its flags
+					}
+					accepted, other := others[command]
+					if _, public := commandHelp[command]; !public && !other {
+						t.Errorf("%s: `agent-archive %s`: no command %q", rel, strings.Join(words, " "), command)
+						continue
+					}
+					if len(rest) > 0 {
+						if _, ok := commandHelp[command+" "+rest[0]]; ok {
+							command, rest = command+" "+rest[0], rest[1:]
+						}
+					}
+					if set, ok := sets[command]; ok {
+						accepted = nil
+						set.VisitAll(func(f *flag.Flag) { accepted = append(accepted, f.Name) })
+					}
+					for _, word := range rest {
+						name := flagNameOf(word)
+						if name == "" {
+							continue
+						}
+						checked++
+						if name != "help" && name != "h" && !slices.Contains(accepted, name) {
+							t.Errorf("%s: `agent-archive %s`: %s has no flag --%s", rel, strings.Join(words, " "), command, name)
+						}
+					}
+				}
+			}
+		}
+	}
+	if checked < 20 {
+		t.Fatalf("checked only %d quoted flags; the extraction is broken", checked)
+	}
+}
