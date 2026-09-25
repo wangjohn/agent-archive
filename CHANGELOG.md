@@ -81,6 +81,22 @@ is no tagged release yet: build from source (see the
 - Backfill: undoing an import keeps a project that another import still has
   sessions in, and says so; the undo of the last such import excludes it.
   Ctrl-C while the plan is being made stops cleanly (#42).
+- Backfill: importing a session run in a plain folder (say `~/code`) now
+  says that the folder will capture new sessions anywhere under it, and adds
+  the repositories and app folders inside it as excluded projects, so they
+  stay out of capture as before; the plan lists them. Undo removes them
+  again.
+- Backfill: the import prompt's `edit` only raises retention (shorten it in
+  setup), and undoing the import puts the earlier retention back, after
+  saying how many older sessions that deletes.
+- Backfill reads Claude Code and Codex sessions from where
+  `CLAUDE_CONFIG_DIR` and `CODEX_HOME` point, as setup's hooks do. An import
+  interrupted with a relative `--since 30d` is finished by the same option
+  on a later day, and the plan points at an interrupted import a run would
+  not finish.
+- Backfill says at once that Ctrl-C is stopping it. A second Ctrl-C,
+  SIGTERM, or SIGHUP quits at once after removing its copy of Cursor's
+  database, and every `backfill` command removes copies a killed run left.
 
 ### Fixed
 
@@ -105,6 +121,16 @@ is no tagged release yet: build from source (see the
 - An interrupted backfill plan no longer leaves a copy of Cursor's database in
   the temporary folder for an hour; hooks are never kept waiting while
   backfill reads Cursor's database (#42).
+- `backfill undo` no longer excludes a project that setup included again
+  after an earlier undo excluded it, whichever import touched it later; the
+  plan lists a project taken over from an earlier undo apart from the ones
+  the import added.
+- A damaged import file (no `id`, an `id` that isn't its file name, no start
+  time) is reported as unreadable instead of pulling hook-captured sessions
+  into `backfill undo`'s plan, and undo only ever selects sessions an import
+  registered.
+- `backfill --dry-run --json`: the JSON reference now says it holds project
+  folders, and that `storage_checked` is always `false` in a dry run.
 
 ### Internal
 
