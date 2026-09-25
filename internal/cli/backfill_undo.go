@@ -81,6 +81,14 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// Nothing to do needs no confirmation, so these come before the
 	// terminal requirement.
 	if plan.Empty() {
+		// An earlier run that stopped after changing the configuration left
+		// its changes unrecorded; recording them is all that is left.
+		if len(plan.Settled.Excluded) > 0 || plan.Settled.RetentionRestored {
+			batch.RecordUndone(plan.Settled)
+			if err := backfill.SaveBatch(home, *batch); err != nil {
+				return fail("%v", err)
+			}
+		}
 		if *project != "" {
 			terminal.Printf(stdout, "No sessions from %s are left in import %s. Nothing was changed.\n", plan.ProjectDisplay(), batch.ID)
 		} else {
@@ -226,6 +234,7 @@ func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fing
 	markUndone := func() error {
 		batch.UndoneAt = &now
 		batch.RecordKept(plan.KeepProjects)
+		batch.RecordUndone(plan.Settled)
 		if err := backfill.SaveBatch(home, *batch); err != nil {
 			return fmt.Errorf("%w. Nothing was changed", err)
 		}

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -99,5 +100,56 @@ func TestBackfillUndoKeepsRetentionChangedSince(t *testing.T) {
 	}
 	if cfg, _, _ = config.Load(f.data); cfg.RetentionDays != 200 {
 		t.Fatalf("retention %d", cfg.RetentionDays)
+	}
+}
+
+// Regression (PR #53 review): an undo that stopped after saving the
+// configuration, before recording in the batch what it excluded and
+// restored, left no record of either. Its rerun called the restored
+// retention "changed after the import", and once setup included the
+// projects and raised retention again, the next undo excluded them and
+// shortened retention a second time. The rerun now records both.
+func TestBackfillUndoRecordsWhatAnInterruptedRunChanged(t *testing.T) {
+	f, _ := newImportFixture(t)
+	backdateTranscripts(t, f)
+	if _, errOut, code := f.importRun(t, strings.NewReader("edit\n365\ny\n"), true, "--background"); code != 0 {
+		t.Fatalf("import: %d %s", code, errOut)
+	}
+	if _, errOut, code := f.undoRun(t, nil, false, "--yes"); code != 0 {
+		t.Fatalf("undo: %d %s", code, errOut)
+	}
+	// The run stopped before recording its configuration changes.
+	batch, _ := loadBatch(t, f.data)
+	if len(batch.ProjectsExcluded) == 0 || batch.Retention == nil {
+		t.Fatalf("batch %+v", batch)
+	}
+	batch.ProjectsExcluded, batch.Retention.Restored = nil, false
+	if err := backfill.SaveBatch(f.data, batch); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, code := f.undoRun(t, nil, false, "--yes")
+	if code != 0 || strings.Contains(out, "Retention stays at") {
+		t.Fatalf("rerun: %d\n%s\n%s", code, out, errOut)
+	}
+	if batch, _ = loadBatch(t, f.data); len(batch.ProjectsExcluded) == 0 || !batch.Retention.Restored {
+		t.Fatalf("the rerun did not record the changes: %+v", batch)
+	}
+
+	// Setup includes the projects again and raises retention back.
+	cfg, _, _ := config.Load(f.data)
+	for i := range cfg.Archive.Projects {
+		cfg.Archive.Projects[i].Included = true
+	}
+	cfg.RetentionDays = 365
+	if err := config.Save(f.data, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, code = f.undoRun(t, nil, false, "--yes"); code != 0 {
+		t.Fatalf("later undo: %d %s", code, errOut)
+	}
+	after, _, _ := config.Load(f.data)
+	if after.RetentionDays != 365 || includedProjects(after.Archive.Projects) != len(after.Archive.Projects) {
+		t.Fatalf("a later undo changed setup's choices again: retention %d, projects %+v", after.RetentionDays, after.Archive.Projects)
 	}
 }

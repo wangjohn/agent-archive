@@ -65,6 +65,13 @@ type UndoPlan struct {
 	// RetentionChangedSince is set when the import raised retention and it
 	// was changed again afterwards, so undo leaves it as it is.
 	RetentionChangedSince bool
+	// Settled is what an earlier run of this undo changed in the
+	// configuration but stopped before recording in the batch: projects it
+	// excluded, and the retention it put back. Nothing is left to change
+	// for them; the caller records them in the batch (Batch.RecordUndone),
+	// so a later undo never excludes such a project again once setup
+	// includes it, nor restores retention twice.
+	Settled UndoChanges
 	// HookCapturedStopping counts the hook-captured sessions in
 	// ExcludeProjects. Excluding the projects stops them uploading; they are
 	// not deleted.
@@ -205,7 +212,7 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	}
 	p.Sessions = slices.Concat(children, parents)
 
-	p.ExcludeProjects, p.KeepProjects, p.TakenOver = undoProjects(cfg, regs, batches, b, inProject)
+	p.ExcludeProjects, p.KeepProjects, p.TakenOver, p.Settled.Excluded = undoProjects(cfg, regs, batches, b, inProject)
 	p.RemoveKeptOut = keptOutToRemove(env, cfg, regs, batches, b, p.ExcludeProjects)
 	excludedRoots := map[string]bool{}
 	for _, project := range p.ExcludeProjects {
@@ -219,13 +226,18 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	}
 
 	if r := b.Retention; r != nil && !r.Restored && p.Project == "" {
-		if cfg.RetentionDays == r.To {
+		switch {
+		case cfg.RetentionDays == r.To:
 			restore := *r
 			p.RestoreRetention = &restore
 			if p.RetentionDeletes, err = retentionDeletes(store, cfg, regs, p.Sessions, restore, env.now()); err != nil {
 				return UndoPlan{}, err
 			}
-		} else {
+		case b.UndoneAt != nil && cfg.RetentionDays == r.From:
+			// An earlier run of this undo put it back and stopped before
+			// recording so.
+			p.Settled.RetentionRestored = true
+		default:
 			p.RetentionChangedSince = true
 		}
 	}
@@ -375,7 +387,7 @@ func sessionsOutsideBatch(regs []archive.SessionRegistration, b Batch) int {
 // longer accepts them), silently, as part of undoing an import they are not
 // in. Hook-captured sessions do not keep a project: the import added it, so
 // undoing the import is what stops them, as the plan says.
-func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches []Batch, b Batch, inProject func(string) bool) (exclude []archive.ProjectActivation, keep []KeptProject, takenOver map[string][]string) {
+func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches []Batch, b Batch, inProject func(string) bool) (exclude []archive.ProjectActivation, keep []KeptProject, takenOver map[string][]string, settled []string) {
 	inside := func(reg archive.SessionRegistration, project archive.ProjectActivation) bool {
 		return reg.ProjectID == project.ProjectID || reg.ProjectRoot == project.Root
 	}
@@ -392,10 +404,11 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 	}
 	takenOver = map[string][]string{}
 	for _, project := range cfg.Archive.Projects {
-		if !project.Included || !inProject(project.Root) || excludedByUndo[project.ProjectID] {
+		if !inProject(project.Root) || excludedByUndo[project.ProjectID] {
 			continue
 		}
 		candidate := slices.Contains(b.ProjectsAdded, project.ProjectID)
+		var from []string
 		if !candidate && slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
 			return InBatch(reg, b.ID) && reg.ParentSessionID == "" && inside(reg, project)
 		}) {
@@ -409,12 +422,25 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 				if keptFor, recorded := o.ProjectsKeptFor[project.ProjectID]; recorded && !slices.Contains(keptFor, b.ID) {
 					continue
 				}
-				takenOver[project.ProjectID] = append(takenOver[project.ProjectID], o.ID)
+				from = append(from, o.ID)
 			}
-			candidate = len(takenOver[project.ProjectID]) > 0
+			candidate = len(from) > 0
 		}
 		if !candidate {
 			continue
+		}
+		if !project.Included {
+			// Excluded already. After an earlier run of this undo, that run
+			// most likely excluded it and stopped before recording so
+			// (settled): recording it keeps a later undo from excluding it
+			// again once setup includes it. Otherwise there is nothing to do.
+			if b.UndoneAt != nil {
+				settled = append(settled, project.ProjectID)
+			}
+			continue
+		}
+		if len(from) > 0 {
+			takenOver[project.ProjectID] = from
 		}
 		kept := KeptProject{Project: project}
 		for _, reg := range regs {
@@ -430,7 +456,7 @@ func undoProjects(cfg config.Config, regs []archive.SessionRegistration, batches
 		sort.Strings(kept.Imports)
 		keep = append(keep, kept)
 	}
-	return exclude, keep, takenOver
+	return exclude, keep, takenOver, settled
 }
 
 // RecordKept records in b the projects its undo keeps included, and the

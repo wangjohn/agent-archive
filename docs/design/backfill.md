@@ -228,6 +228,12 @@ asks `[y/N]`. On a yes:
   taken-over project apart from the ones the import added. A project any
   undo has excluded (it is in some batch's `projects_excluded`) is never
   excluded again by any undo: if it is included now, setup included it.
+- **Interrupted undo.** The batch is marked undone before the configuration
+  is saved, and what the save excluded and restored is recorded after it. A
+  run that stops in between leaves those unrecorded; its rerun (with
+  `undone_at` set) records a project of the import that is excluded now,
+  and a retention that is back at `from`, as done (`UndoPlan.Settled`),
+  even when nothing else is left to undo.
 
 ## Admission model
 
