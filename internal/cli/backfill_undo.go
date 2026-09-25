@@ -231,7 +231,7 @@ func commitUndo(home string, batch *backfill.Batch, plan backfill.UndoPlan, fing
 		}
 		return nil
 	}
-	if len(plan.ExcludeProjects) == 0 && len(plan.RemoveApps) == 0 && plan.RestoreRetention == nil {
+	if len(plan.ExcludeProjects) == 0 && len(plan.RemoveApps) == 0 && plan.RestoreRetention == nil && len(plan.RemoveKeptOut) == 0 {
 		return backfill.UndoChanges{}, markUndone()
 	}
 	releaseHooks, err := local.NamedLockWait(home, "hooks.lock", backfillHooksWait)

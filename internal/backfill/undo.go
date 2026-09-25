@@ -48,6 +48,12 @@ type UndoPlan struct {
 	// that the import did not add, the earlier imports whose undo kept it
 	// included for this import's sessions. The plan lists them apart.
 	TakenOver map[string][]string
+	// RemoveKeptOut are excluded projects an import added only to keep
+	// folders inside a plain folder it added out of capture (ProjectsKeptOut)
+	// that nothing included contains once this undo's exclusions are made.
+	// Removing them changes no capture: nothing configured and included is
+	// above them. Undo removes them from the configuration.
+	RemoveKeptOut []archive.ProjectActivation
 	// RestoreRetention is set when the import raised the archive-wide
 	// retention and it is still what the import set: undo puts the earlier
 	// value back. A --project undo leaves retention alone.
@@ -200,6 +206,7 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	p.Sessions = slices.Concat(children, parents)
 
 	p.ExcludeProjects, p.KeepProjects, p.TakenOver = undoProjects(cfg, regs, batches, b, inProject)
+	p.RemoveKeptOut = keptOutToRemove(env, cfg, regs, batches, p.ExcludeProjects)
 	excludedRoots := map[string]bool{}
 	for _, project := range p.ExcludeProjects {
 		excludedRoots[project.Root] = true
@@ -241,6 +248,49 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 		}
 	}
 	return p, nil
+}
+
+// keptOutToRemove returns the excluded projects any import added to keep a
+// folder out of capture (ProjectsKeptOut) that are no longer needed once
+// exclude is excluded: still excluded (setup did not include them), no
+// session registered in them, and no included project, other than those
+// being excluded, containing them. For such a folder the nearest configured
+// project, with or without the entry, is excluded or absent, so removing it
+// changes no capture; it only puts the configuration back.
+func keptOutToRemove(env Environment, cfg config.Config, regs []archive.SessionRegistration, batches []Batch, exclude []archive.ProjectActivation) []archive.ProjectActivation {
+	keptOut := map[string]bool{}
+	for _, o := range batches {
+		for _, id := range o.ProjectsKeptOut {
+			keptOut[id] = true
+		}
+	}
+	if len(keptOut) == 0 {
+		return nil
+	}
+	excluding := map[string]bool{}
+	for _, project := range exclude {
+		excluding[project.ProjectID] = true
+	}
+	var out []archive.ProjectActivation
+	for _, g := range cfg.Archive.Projects {
+		if !keptOut[g.ProjectID] || g.Included {
+			continue
+		}
+		if slices.ContainsFunc(regs, func(reg archive.SessionRegistration) bool {
+			return reg.ProjectID == g.ProjectID || reg.ProjectRoot == g.Root
+		}) {
+			continue
+		}
+		resolved := env.resolved(g.Root)
+		covered := slices.ContainsFunc(cfg.Archive.Projects, func(q archive.ProjectActivation) bool {
+			return q.ProjectID != g.ProjectID && q.Included && !excluding[q.ProjectID] &&
+				(pathWithin(g.Root, q.Root) || pathWithin(resolved, env.resolved(q.Root)))
+		})
+		if !covered {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // retentionDeletes counts the sessions (not subagents) in cfg's destination,
@@ -545,6 +595,8 @@ type UndoChanges struct {
 	// RetentionRestored is set when retention was put back to the value
 	// before the import.
 	RetentionRestored bool
+	// RemovedKeptOut are the IDs of the kept-out projects removed.
+	RemovedKeptOut []string
 }
 
 // ApplyToConfig excludes the plan's projects, removes its apps, and restores
@@ -560,6 +612,13 @@ func (p UndoPlan) ApplyToConfig(cfg *config.Config) UndoChanges {
 		}
 	}
 	cfg.ImportedHarnesses = slices.DeleteFunc(cfg.ImportedHarnesses, func(app string) bool { return slices.Contains(p.RemoveApps, app) })
+	cfg.Archive.Projects = slices.DeleteFunc(cfg.Archive.Projects, func(project archive.ProjectActivation) bool {
+		remove := !project.Included && slices.ContainsFunc(p.RemoveKeptOut, func(g archive.ProjectActivation) bool { return g.ProjectID == project.ProjectID })
+		if remove {
+			changes.RemovedKeptOut = append(changes.RemovedKeptOut, project.ProjectID)
+		}
+		return remove
+	})
 	if r := p.RestoreRetention; r != nil && cfg.RetentionDays == r.To {
 		cfg.RetentionDays = r.From
 		changes.RetentionRestored = true
@@ -725,6 +784,9 @@ func RenderUndo(w io.Writer, p UndoPlan) {
 			terminal.Printf(w, "      %s\n", line)
 		}
 		terminal.Printf(w, "    Undoing the last of those imports excludes %s.\n", themIt(n))
+	}
+	if n := len(p.RemoveKeptOut); n > 0 {
+		terminal.Printf(w, "  • %s the import added as excluded, to keep folders inside a project\n    out of capture, %s removed from setup again; nothing there is captured\n    either way.\n", CountNoun(n, "project"), IsAre(n))
 	}
 	if r := p.RestoreRetention; r != nil {
 		if c.Sessions+c.Subagents == 0 && len(p.ExcludeProjects) == 0 && len(p.KeepProjects) == 0 {

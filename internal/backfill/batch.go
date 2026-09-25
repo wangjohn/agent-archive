@@ -37,6 +37,11 @@ type Batch struct {
 	ProjectsAdded []string `json:"projects_added"`
 	// AppsAdded are the apps the import added to ImportedHarnesses.
 	AppsAdded []string `json:"apps_added"`
+	// ProjectsKeptOut are the projects the import added excluded: folders
+	// inside a plain folder it added (repositories, app folders) that the
+	// new project would otherwise capture. Undo removes each again once
+	// nothing included contains it.
+	ProjectsKeptOut []string `json:"projects_kept_out,omitempty"`
 	// Sessions are the archive session IDs the import registered.
 	Sessions []string `json:"sessions"`
 	// Subagents are the archive session IDs given to the imported sessions'
@@ -299,6 +304,7 @@ func OpenBatch(home string, store *state.Store, filters BatchFilters, destinatio
 func (b *Batch) AddChanges(c ConfigChanges) {
 	b.ProjectsAdded = addUnique(b.ProjectsAdded, c.ProjectIDs...)
 	b.AppsAdded = addUnique(b.AppsAdded, c.Apps...)
+	b.ProjectsKeptOut = addUnique(b.ProjectsKeptOut, c.KeptOut...)
 	if c.Retention != nil {
 		change := *c.Retention
 		if b.Retention != nil {

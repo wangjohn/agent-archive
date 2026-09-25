@@ -36,6 +36,12 @@ background collector upload what is registered.
   many there are.
 - Sessions run from your home directory or a temporary directory are skipped
   unless you pass `--include-home` or `--include-temp`.
+- A plain folder that isn't a repository (say `~/code`, where you once ran an
+  agent) becomes a project that captures new sessions anywhere under it
+  that no nearer project owns; the plan says so under its row. Repositories
+  and app folders inside it are added to setup as excluded projects, so they
+  stay out of capture as before, and the plan lists them. Include one in
+  setup to capture it; undoing the import removes them again.
 - `--since` and `--until` take a date (`2026-09-01`), an RFC 3339 time, or an
   age (`30d`, `12h`). Backfill selects whole local days, so a time or an age
   selects from the start of the day it falls on.

@@ -33,6 +33,18 @@ type ProjectSummary struct {
 	Bytes      int64
 	FirstStart time.Time
 	LastStart  time.Time
+	// KeptOut are the folders inside a project the plan adds that the
+	// import adds as excluded projects, so the new project does not capture
+	// them (see nested.go). NestedComplete is false when not every folder
+	// inside could be looked in.
+	KeptOut        []string
+	NestedComplete bool
+}
+
+// CapturesSubfolders reports whether adding the project makes hooks capture
+// new sessions in folders under it that no nearer project owns.
+func (s ProjectSummary) CapturesSubfolders() bool {
+	return !s.Included && capturesSubfolders(s.Kind)
 }
 
 // Total is the number of sessions the project imports.
@@ -91,6 +103,10 @@ func (p Plan) Projects() []ProjectSummary {
 	out := make([]ProjectSummary, len(order))
 	for i, s := range order {
 		out[i] = *s
+		out[i].NestedComplete = true
+		if nested, ok := p.nested[s.Root]; ok {
+			out[i].KeptOut, out[i].NestedComplete = nested.KeptOut, nested.Complete
+		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if a, b := out[i].Total(), out[j].Total(); a != b {
@@ -314,8 +330,43 @@ func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
 		}
 		terminal.Println(w, "  Every future session under your home folder that isn't in a nearer project")
 		terminal.Println(w, "  will be captured too.")
-	case ProjectKindRepository, ProjectKindTemporary, ProjectKindDirectory:
+	case ProjectKindTemporary, ProjectKindDirectory:
+		if s.CapturesSubfolders() {
+			p.renderSubfolderNote(w, s)
+		}
+	case ProjectKindRepository:
 		// No note under the row.
+	}
+}
+
+// maxKeptOutShown is how many kept-out folders a row lists by name.
+const maxKeptOutShown = 5
+
+// renderSubfolderNote says what adding a plain folder captures: every
+// future session in a folder under it that no nearer project owns, except
+// the folders the import keeps out, which it names.
+func (p Plan) renderSubfolderNote(w io.Writer, s ProjectSummary) {
+	terminal.Println(w, "  Every future session in a folder under it that isn't in a nearer project")
+	terminal.Println(w, "  will be captured too.")
+	if n := len(s.KeptOut); n > 0 {
+		if n == 1 {
+			terminal.Println(w, "  One folder inside it, a repository or app folder, is added as an excluded")
+			terminal.Println(w, "  project so it stays out of capture; setup can include it:")
+		} else {
+			terminal.Printf(w, "  %d folders inside it, repositories or app folders, are added as excluded\n", n)
+			terminal.Println(w, "  projects so they stay out of capture; setup can include them:")
+		}
+		for i, folder := range s.KeptOut {
+			if i == maxKeptOutShown {
+				terminal.Printf(w, "    and %d more\n", n-maxKeptOutShown)
+				break
+			}
+			terminal.Printf(w, "    %s\n", p.display(folder))
+		}
+	}
+	if !s.NestedComplete {
+		terminal.Println(w, "  Not every folder inside it could be checked for repositories; any not")
+		terminal.Println(w, "  found are captured too.")
 	}
 }
 
@@ -637,6 +688,14 @@ type projectJSON struct {
 	Bytes          int64          `json:"bytes"`
 	FirstStartedAt time.Time      `json:"first_started_at"`
 	LastStartedAt  time.Time      `json:"last_started_at"`
+	// CapturesSubfolders is set when adding the project makes hooks capture
+	// new sessions in folders under it that no nearer project owns.
+	CapturesSubfolders bool `json:"captures_subfolders"`
+	// KeptOut are the folders inside it the import adds as excluded
+	// projects; KeptOutComplete is false when not every folder inside could
+	// be checked.
+	KeptOut         []string `json:"kept_out"`
+	KeptOutComplete bool     `json:"kept_out_complete"`
 }
 
 // RenderJSON writes the plan with the spec's top-level keys. storageChecked
@@ -687,6 +746,7 @@ func RenderJSON(w io.Writer, p Plan, storageChecked bool) error {
 			Root: s.Root, Kind: s.Kind, Status: status, Exists: s.Exists,
 			Sessions: sessions, Subagents: s.Subagents, Bytes: s.Bytes,
 			FirstStartedAt: s.FirstStart.UTC(), LastStartedAt: s.LastStart.UTC(),
+			CapturesSubfolders: s.CapturesSubfolders(), KeptOut: append([]string{}, s.KeptOut...), KeptOutComplete: s.NestedComplete,
 		})
 	}
 	encoder := json.NewEncoder(w)

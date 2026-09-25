@@ -60,6 +60,9 @@ type ConfigChanges struct {
 	Apps []string
 	// Retention is set when the plan raised the archive-wide retention.
 	Retention *RetentionChange
+	// KeptOut are the projects added excluded: folders inside an added
+	// project that it would otherwise capture (see nested.go).
+	KeptOut []string
 }
 
 // ErrRetentionShortened means a plan would lower the archive-wide retention,
@@ -69,12 +72,13 @@ type ConfigChanges struct {
 var ErrRetentionShortened = errors.New("an import only raises retention; shorten it in setup")
 
 // ApplyToConfig adds what the plan needs to cfg: every project it imports
-// into that is not configured yet, included and activated at admittedAt,
-// every app it imports that has no hooks to ImportedHarnesses, and the
-// plan's retention when it is longer than cfg's. It returns what it changed.
+// into that is not configured yet, included and activated at admittedAt;
+// the folders inside those that the plan keeps out, excluded; every app it
+// imports that has no hooks to ImportedHarnesses; and the plan's retention
+// when it is longer than cfg's. It returns what it changed.
 // cfg is left as it was when it returns an error.
 func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (ConfigChanges, error) {
-	changes := ConfigChanges{ProjectIDs: []string{}, Apps: []string{}}
+	changes := ConfigChanges{ProjectIDs: []string{}, Apps: []string{}, KeptOut: []string{}}
 	if p.RetentionDays > 0 && p.RetentionDays != cfg.RetentionDays {
 		if cfg.RetentionDays <= 0 || p.RetentionDays < cfg.RetentionDays {
 			return ConfigChanges{}, fmt.Errorf("%w (from %d to %d days)", ErrRetentionShortened, cfg.RetentionDays, p.RetentionDays)
@@ -91,6 +95,23 @@ func ApplyToConfig(cfg *config.Config, p Plan, admittedAt time.Time) (ConfigChan
 			ProjectID: id, Root: c.ProjectRoot, ActivatedAt: admittedAt.UTC(), Included: true,
 		})
 		changes.ProjectIDs = append(changes.ProjectIDs, id)
+	}
+	// The folders inside an added plain folder stay out of capture, as they
+	// were: an excluded project is the nearest configured one for them.
+	for _, s := range p.Projects() {
+		if !slices.Contains(changes.ProjectIDs, archive.ProjectID(s.Root)) {
+			continue
+		}
+		for _, folder := range s.KeptOut {
+			if slices.ContainsFunc(cfg.Archive.Projects, func(existing archive.ProjectActivation) bool { return existing.Root == folder }) {
+				continue
+			}
+			id := archive.ProjectID(folder)
+			cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{
+				ProjectID: id, Root: folder, ActivatedAt: admittedAt.UTC(), Included: false,
+			})
+			changes.KeptOut = append(changes.KeptOut, id)
+		}
 	}
 	for _, app := range p.AppsWithoutHooks() {
 		if !slices.Contains(cfg.ImportedHarnesses, app) {

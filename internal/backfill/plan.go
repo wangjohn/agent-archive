@@ -65,6 +65,9 @@ type Plan struct {
 	// fully listed; the plan then can't tell which of the database's chats
 	// have transcripts, so it does not read the database.
 	cursorIncomplete bool
+	// nested holds, for each project the plan adds that would capture its
+	// subfolders, the folders inside it the import keeps out (see nested.go).
+	nested map[string]nestedFolders
 }
 
 // Destination names the bucket imports go to.
@@ -375,6 +378,7 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	if err := planCursorDatabase(ctx, env, state, r, projectFilter, since, until, workers, &plan); err != nil {
 		return Plan{}, err
 	}
+	planNested(r, &plan)
 	sort.SliceStable(plan.Candidates, func(i, j int) bool {
 		a, b := plan.Candidates[i], plan.Candidates[j]
 		if a.Harness != b.Harness {

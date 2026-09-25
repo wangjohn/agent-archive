@@ -158,7 +158,9 @@ registered sessions persist locally, and the next collector pass uploads them.
 
 `--dry-run --json` prints the same plan with these top-level keys:
 `destination`, `filters`, `projects` (each has `root`, `kind`, `status`,
-`exists`, per-app `sessions`, `subagents`, `bytes`, and first and last start),
+`exists`, per-app `sessions`, `subagents`, `bytes`, first and last start,
+`captures_subfolders`, `kept_out`, the folders inside it the import adds as
+excluded projects, and `kept_out_complete`),
 `skipped` (a count for each reason), `apps_without_hooks`, `retention_days`,
 `expires_on`, and `storage_checked`, then `cursor_database_checked`,
 `cursor_database_unchecked_reason` (when not checked),
@@ -456,6 +458,25 @@ matching rule wins.
    under home that isn't in a nearer project. `/`, `/Users`, and anything else
    above home are skipped with `above_home`, which no flag overrides.
 8. **Anything else** becomes its own project, whether or not it still exists.
+
+A plain folder (rule 8), or a temporary directory with `--include-temp`,
+that the import adds owns every folder under it that no nearer project
+owns: hooks capture a new session in the nearest configured project that
+contains it. So the plan says, under the row, that every future session
+under it that isn't in a nearer project is captured too, and it looks
+inside the folder (at most 5,000 folders listed; symlinks, `.git`,
+`node_modules`, and virtual environments are not entered) for what must stay
+as it is: nested repositories and linked worktrees (a `.git` folder or
+file), and the desktop apps' workspace folders and temporary directories.
+The import adds each as an excluded project (`projects_kept_out` in the
+batch), so the nearest configured project for anything in them is excluded
+and hooks keep ignoring them, as before the import. The plan lists them, and
+says when not every folder could be checked. Undo removes each such entry
+again once nothing included contains it (removing it then changes no
+capture). Home (rule 7) is not looked in: `--include-home` is the explicit
+choice to capture everything under home, and the plan warns about it. A
+later backfill skips a kept-out repository's sessions as
+`excluded_project`, until setup includes it.
 
 When rules 3 or 4 map a directory to a repository, rule 2 runs again on that
 repository, so a worktree outside its repository still honours the

@@ -51,11 +51,11 @@ func TestBatchKeepsFirstRetentionAcrossRuns(t *testing.T) {
 
 // Guard (B-21 hardening): every configuration field an import changes is
 // recorded in the batch and put back by its undo. The test applies an import
-// that changes all it can (a project, an app, the retention), then diffs
-// every field of config.Config, so a future change ApplyToConfig makes
-// without recording it, or that undo does not reverse, fails here. The one
-// intended difference after the undo: an added project stays configured,
-// excluded.
+// that changes all it can (projects, a kept-out folder, an app, the
+// retention), then diffs every field of config.Config, so a future change
+// ApplyToConfig makes without recording it, or that undo does not reverse,
+// fails here. The one intended difference after the undo: an added project
+// stays configured, excluded.
 func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 	f := newUndoFixture(t)
 	f.include("/work/in")
@@ -65,7 +65,10 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 	plan := Plan{Harnesses: f.cfg.Harnesses, RetentionDays: 365, Candidates: []Candidate{
 		{Harness: "claude", ProjectRoot: "/work/in", ProjectIncluded: true},
 		{Harness: "codex", ProjectRoot: "/work/new"},
+		{Harness: "claude", ProjectRoot: "/work/dir", ProjectKind: ProjectKindDirectory},
 	}}
+	// A plain folder the import adds keeps a repository inside it out.
+	plan.nested = map[string]nestedFolders{"/work/dir": {KeptOut: []string{"/work/dir/repo"}, Complete: true}}
 	cfg := cloneConfig(t, f.cfg)
 	admitted := fixedNow.Add(-time.Hour).UTC()
 	changes, err := ApplyToConfig(&cfg, plan, admitted)
@@ -77,7 +80,7 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 
 	// Every changed field is one the batch records.
 	recorded := map[string]func() bool{
-		"Archive":           func() bool { return len(b.ProjectsAdded) == 1 },
+		"Archive":           func() bool { return len(b.ProjectsAdded) == 2 && len(b.ProjectsKeptOut) == 1 },
 		"ImportedHarnesses": func() bool { return strings.Join(b.AppsAdded, ",") == "codex" },
 		"RetentionDays":     func() bool { return b.Retention != nil && b.Retention.From == 90 && b.Retention.To == 365 },
 	}
@@ -103,13 +106,14 @@ func TestImportConfigChangesAreRecordedAndUndone(t *testing.T) {
 	}
 	after := cloneConfig(t, cfg)
 	undone := undo.ApplyToConfig(&after)
-	if !undone.RetentionRestored || len(undone.Excluded) != 1 {
+	if !undone.RetentionRestored || len(undone.Excluded) != 2 || len(undone.RemovedKeptOut) != 1 {
 		t.Fatalf("undo changes %+v", undone)
 	}
-	// The added project stays, excluded; everything else is as before.
+	// The added projects stay, excluded; the kept-out entry is gone;
+	// everything else is as before.
 	want := cloneConfig(t, before)
 	for _, p := range after.Archive.Projects {
-		if p.Root == "/work/new" {
+		if p.Root == "/work/new" || p.Root == "/work/dir" {
 			if p.Included {
 				t.Fatalf("added project still included: %+v", p)
 			}
