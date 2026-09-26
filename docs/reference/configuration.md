@@ -42,18 +42,18 @@ consistent with each other.
 | `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE` | Where the AWS SDK finds profiles, as for the AWS CLI. The background collector runs under launchd, which passes it none of your shell's environment, so for S3 setup writes the ones set in its shell (as absolute paths) into the collector's LaunchAgent, along with that shell's `PATH`, so a `credential_process` such as `aws-vault`, 1Password's `op`, or `granted` in `/opt/homebrew/bin` runs there too. The `PATH` keeps the shell's entries that are existing directories not writable by every account, then launchd's `/usr/bin:/bin:/usr/sbin:/sbin`. Change either and run setup again; `status` warns when the collector's files are gone, its `PATH` no longer finds the profile's `credential_process`, or your shell's files differ from the collector's. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` are never copied: the profile supplies credentials. |
 | `AWS_CA_BUNDLE`, `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL_SSO`, `AWS_ENDPOINT_URL_SSO_OIDC` | A CA bundle (for a network that inspects TLS) and endpoint overrides, as for the AWS CLI. For S3, setup copies the ones set in its shell into the collector's LaunchAgent, like the files above (an endpoint URL with a user name or password in it is not copied). |
 | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (either case) | The proxy for S3 and credential requests, as for any Go program. For S3, setup copies the ones set in its shell into the collector's LaunchAgent. A proxy URL with a user name or password in it is not copied, and setup warns that the collector runs without it. |
+| `AWS_VAULT_BACKEND`, `AWS_VAULT_KEYCHAIN_NAME`, `AWS_VAULT_PROMPT`, `AWS_VAULT_PASS_PREFIX`, `AWS_VAULT_FILE_DIR`; `OP_ACCOUNT`, `OP_CONFIG_DIR` | Where aws-vault and 1Password's `op` find credentials, when a profile's `credential_process` runs one of them. For S3, setup copies the ones set in its shell into the collector's LaunchAgent (the directories as absolute paths, or as written when they start with `~/`). The same helpers keep secrets in variables too (`AWS_VAULT_FILE_PASSPHRASE`, `OP_SERVICE_ACCOUNT_TOKEN`, `OP_SESSION_*`); those are never copied. |
 | `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` | Set by the app for commands it runs; `handoff --latest` skips that session. |
 | `NO_COLOR` | Disables colored output. |
 | `AGENT_ARCHIVE_VERSION`, `AGENT_ARCHIVE_INSTALL_DIR` | `install.sh` only: the release and directory to install. |
 
 Nothing else from your shell reaches the background collector. An S3 profile
-that works only with other variables set, such as a `credential_process`
-helper's own settings (`AWS_VAULT_BACKEND`, `OP_ACCOUNT`) or a proxy that
-needs a password, passes setup's storage check but fails in the background,
-and `status` cannot tell why; it shows the collector's last error. Helper
-settings are not copied because the same helpers keep secrets in variables
-too (`AWS_VAULT_FILE_PASSPHRASE`, `OP_SERVICE_ACCOUNT_TOKEN`). Put those
-settings where the helper reads them without the shell (the AWS profile
+that works only with other variables set, such as another helper's settings
+or a proxy that needs a password, passes setup's storage check but fails in
+the background. When a profile's `credential_process` fails there, `status`
+says so and suggests what to check; what the helper printed is never
+recorded, since it can contain credentials. Put settings the collector
+doesn't get where the helper reads them without the shell (the AWS profile
 itself, or the helper's own configuration file), or run
 `agent-archive sync` from your shell.
 

@@ -74,6 +74,16 @@ published, and read-back-verified evidence.
   profile works. A warning that your shell's AWS settings files differ from
   the collector's means `sync` here and the collector read different
   profiles.
+- **The background collector couldn't get credentials from your AWS
+  profile's `credential_process`** (S3): the helper ran but failed. It runs
+  without most of your shell's environment: aws-vault's and 1Password's
+  settings for where credentials live are passed on, but other settings
+  aren't
+  ([configuration](../reference/configuration.md#environment-variables)).
+  Put a missing setting in the helper's own configuration. A helper that
+  needs you to unlock it or sign in (a locked vault, an expired `op`
+  session) fails until you do. Check with `agent-archive sync`, then run
+  `agent-archive setup` again from a shell where it works.
 - **Capture** distinguishes waiting for a session, observed hooks, local
   capture, and published sources with verified checksums. Configuration
   alone never establishes capture.

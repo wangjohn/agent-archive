@@ -37,6 +37,20 @@ var collectorAWSEndpoints = []string{"AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3", 
 // collectorEnvironmentLeftOut).
 var collectorProxies = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
 
+// collectorHelperSettings are credential_process helpers' own settings
+// that say where credentials live or how to ask for them: aws-vault's
+// backend, keychain, prompt and pass prefix, and 1Password's account.
+// Each is reviewed by name, never matched by prefix, because the same
+// helpers keep secrets in variables of the same family
+// (AWS_VAULT_FILE_PASSPHRASE, OP_SERVICE_ACCOUNT_TOKEN, OP_SESSION_*),
+// which must never reach the plist.
+var collectorHelperSettings = []string{"AWS_VAULT_BACKEND", "AWS_VAULT_KEYCHAIN_NAME", "AWS_VAULT_PROMPT", "AWS_VAULT_PASS_PREFIX", "OP_ACCOUNT"}
+
+// collectorHelperDirs are the helpers' settings that name a directory,
+// recorded as absolute paths like collectorAWSFiles: aws-vault's file
+// backend and 1Password's configuration.
+var collectorHelperDirs = []string{"AWS_VAULT_FILE_DIR", "OP_CONFIG_DIR"}
+
 // launchdPath is the PATH launchd gives a job whose plist sets none.
 const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -46,8 +60,8 @@ const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 // shell's environment.
 //
 // For S3 it records the AWS file variables that are set, as absolute paths,
-// the endpoint overrides and proxy settings that are set, and always a
-// PATH: this shell's usable entries followed by launchd's own. PATH is
+// the endpoint overrides, proxy settings and reviewed helper settings that
+// are set, and always a PATH: this shell's usable entries followed by launchd's own. PATH is
 // recorded for every S3 profile, not only one that uses
 // credential_process today, because the SDK can reach a credential_process
 // through a source_profile chain, the command it runs (aws-vault, 1Password's
@@ -63,6 +77,23 @@ func (e Env) collectorEnvironment(storage credentials.Config) map[string]string 
 	for _, name := range collectorAWSFiles {
 		if value, ok := e.lookupEnv(name); ok && strings.TrimSpace(value) != "" {
 			environment[name] = e.absolutePath(strings.TrimSpace(value))
+		}
+	}
+	// The helpers expand a leading ~/ against the home directory, which the
+	// collector shares, so such a setting is kept as written. The AWS SDK
+	// does not, so the AWS files above are always resolved.
+	for _, name := range collectorHelperDirs {
+		if value, ok := e.lookupEnv(name); ok && strings.TrimSpace(value) != "" {
+			value = strings.TrimSpace(value)
+			if value != "~" && !strings.HasPrefix(value, "~/") {
+				value = e.absolutePath(value)
+			}
+			environment[name] = value
+		}
+	}
+	for _, name := range collectorHelperSettings {
+		if value, _ := e.lookupEnv(name); strings.TrimSpace(value) != "" {
+			environment[name] = strings.TrimSpace(value)
 		}
 	}
 	for _, name := range slices.Concat(collectorAWSEndpoints, collectorProxies) {
@@ -131,7 +162,8 @@ func collectorPath(shellPath string) string {
 }
 
 // absolutePath resolves path against the working directory, as the AWS SDK
-// does for a relative AWS_CONFIG_FILE; the collector runs elsewhere.
+// does for a relative AWS_CONFIG_FILE, including one starting with ~, which
+// the SDK does not expand; the collector runs elsewhere.
 func (e Env) absolutePath(path string) string {
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path)

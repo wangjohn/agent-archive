@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -173,6 +174,9 @@ func isStorageError(err error) bool {
 }
 
 func storageFailureState(err error) string {
+	if credentials.CredentialProcessFailed(err) {
+		return "credentials_unavailable"
+	}
 	var api smithy.APIError
 	if errors.As(err, &api) {
 		switch api.ErrorCode() {
