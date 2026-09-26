@@ -74,9 +74,21 @@ func (e Env) collectorEnvironment(storage credentials.Config) map[string]string 
 		return nil
 	}
 	environment := map[string]string{}
-	for _, name := range slices.Concat(collectorAWSFiles, collectorHelperDirs) {
+	for _, name := range collectorAWSFiles {
 		if value, ok := e.lookupEnv(name); ok && strings.TrimSpace(value) != "" {
 			environment[name] = e.absolutePath(strings.TrimSpace(value))
+		}
+	}
+	// The helpers expand a leading ~/ against the home directory, which the
+	// collector shares, so such a setting is kept as written. The AWS SDK
+	// does not, so the AWS files above are always resolved.
+	for _, name := range collectorHelperDirs {
+		if value, ok := e.lookupEnv(name); ok && strings.TrimSpace(value) != "" {
+			value = strings.TrimSpace(value)
+			if value != "~" && !strings.HasPrefix(value, "~/") {
+				value = e.absolutePath(value)
+			}
+			environment[name] = value
 		}
 	}
 	for _, name := range collectorHelperSettings {
@@ -150,15 +162,11 @@ func collectorPath(shellPath string) string {
 }
 
 // absolutePath resolves path against the working directory, as the AWS SDK
-// does for a relative AWS_CONFIG_FILE; the collector runs elsewhere. A path
-// starting with ~ is kept as written: the program reading it expands it
-// against the home directory, which the collector shares.
+// does for a relative AWS_CONFIG_FILE, including one starting with ~, which
+// the SDK does not expand; the collector runs elsewhere.
 func (e Env) absolutePath(path string) string {
 	if filepath.IsAbs(path) {
 		return filepath.Clean(path)
-	}
-	if strings.HasPrefix(path, "~") {
-		return path
 	}
 	dir, err := os.Getwd()
 	if e.WorkingDir != nil {
