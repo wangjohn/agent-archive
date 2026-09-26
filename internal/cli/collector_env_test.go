@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -325,6 +326,78 @@ func TestCarriesCredentials(t *testing.T) {
 	} {
 		if got := carriesCredentials(value); got != want {
 			t.Errorf("carriesCredentials(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+// A credential_process helper's reviewed settings reach the collector, so
+// aws-vault finds its backend and op its account in the background too;
+// the same helpers' secrets never do.
+func TestSetupGivesTheCollectorTheHelpersSettingsButNotItsSecrets(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.WorkingDir = func() (string, error) { return "/Users/someone/work", nil }
+	env.LookupEnv = shellEnvironment(map[string]string{
+		"AWS_VAULT_BACKEND":         "file",
+		"AWS_VAULT_FILE_DIR":        "vault-files",
+		"AWS_VAULT_PROMPT":          "osascript",
+		"OP_ACCOUNT":                "my.1password.com",
+		"OP_CONFIG_DIR":             "~/.config/op",
+		"AWS_VAULT_FILE_PASSPHRASE": "vault-passphrase-never-saved",
+		"OP_SERVICE_ACCOUNT_TOKEN":  "op-token-never-saved",
+		"OP_SESSION_my":             "op-session-never-saved",
+	})
+	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()), 0)
+	environment, plist := collectorPlistEnvironment(t, env, home, userHome)
+	for name, want := range map[string]string{
+		"AWS_VAULT_BACKEND":  "file",
+		"AWS_VAULT_FILE_DIR": "/Users/someone/work/vault-files",
+		"AWS_VAULT_PROMPT":   "osascript",
+		"OP_ACCOUNT":         "my.1password.com",
+		"OP_CONFIG_DIR":      "~/.config/op",
+	} {
+		if environment[name] != want {
+			t.Errorf("collector %s = %q, want %q", name, environment[name], want)
+		}
+	}
+	for _, secret := range []string{"never-saved", "AWS_VAULT_FILE_PASSPHRASE", "OP_SERVICE_ACCOUNT_TOKEN", "OP_SESSION"} {
+		if strings.Contains(plist, secret) {
+			t.Fatalf("the LaunchAgent carries %s", secret)
+		}
+	}
+}
+
+// The helper settings are a reviewed list, so a name that reads like a
+// secret must never be added to it.
+func TestCollectorHelperSettingsNameNoSecrets(t *testing.T) {
+	t.Parallel()
+	for _, name := range slices.Concat(collectorHelperSettings, collectorHelperDirs) {
+		for _, word := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSPHRASE", "SESSION", "ACCESS_KEY", "CREDENTIAL"} {
+			if strings.Contains(name, word) {
+				t.Errorf("%s looks like it holds a secret (%s)", name, word)
+			}
+		}
+	}
+}
+
+// The AWS SDK does not expand ~, so setup's storage check read a quoted
+// AWS_CONFIG_FILE='~/cfg' relative to its working directory; the collector,
+// started in /, must be given that same file, not ~/cfg.
+func TestSetupResolvesAnAWSFileStartingWithATilde(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	env.WorkingDir = func() (string, error) { return "/Users/someone/work", nil }
+	env.LookupEnv = shellEnvironment(map[string]string{"AWS_CONFIG_FILE": "~/cfg", "AWS_VAULT_FILE_DIR": "~vault"})
+	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, t.TempDir()), 0)
+	environment, _ := collectorPlistEnvironment(t, env, home, userHome)
+	for name, want := range map[string]string{
+		"AWS_CONFIG_FILE":    "/Users/someone/work/~/cfg",
+		"AWS_VAULT_FILE_DIR": "/Users/someone/work/~vault",
+	} {
+		if environment[name] != want {
+			t.Errorf("collector %s = %q, want %q", name, environment[name], want)
 		}
 	}
 }

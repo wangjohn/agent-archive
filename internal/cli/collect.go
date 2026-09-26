@@ -184,7 +184,13 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 				return collector.Result{}, err
 			}
 			if probeErr != nil {
-				recordPreflightError(localStore, fmt.Errorf("background storage access failed; restore credentials or connectivity and retry"))
+				// Only a fixed message is recorded: the SDK's own can carry
+				// what a credential_process printed.
+				message := "background storage access failed; restore credentials or connectivity and retry"
+				if credentials.CredentialProcessFailed(probeErr) {
+					message = backgroundCredentialProcessFailure
+				}
+				recordPreflightError(localStore, errors.New(message))
 				return collector.Result{}, probeErr
 			}
 		}
@@ -360,6 +366,11 @@ func addStatusProblem(localStore *state.Store, problem string) {
 	status.LastError = problem
 	_ = localStore.SaveStatus(status)
 }
+
+// backgroundCredentialProcessFailure is the Status.LastError a background
+// pass records when the S3 profile's credential_process could not supply
+// credentials, which status recognizes to say what to check.
+const backgroundCredentialProcessFailure = "background storage access failed: the AWS profile's credential_process could not supply credentials"
 
 // recordPreflightError persists a failure that happened before collector.Run
 // could record its own Status, so `status` reflects it. Best-effort: if the

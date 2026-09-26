@@ -2,13 +2,18 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/credentials/processcreds"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -88,5 +93,61 @@ func TestScheduledProbeContinuesToPublication(t *testing.T) {
 	objects, err := remote.List(context.Background(), ".setup-test/")
 	if err != nil || len(objects) != 0 {
 		t.Fatalf("probe cleanup: %v %v", objects, err)
+	}
+}
+
+// processFailingStore fails every request the way the S3 client does when
+// the profile's credential_process fails, with what the process printed in
+// the SDK's error.
+type processFailingStore struct{ *storagetest.MemoryStore }
+
+func (processFailingStore) Put(context.Context, string, []byte) error {
+	return fmt.Errorf("operation error S3: PutObject, failed to retrieve credentials: %w",
+		&processcreds.ProviderError{Err: errors.New("parse failed of process output: {\"SecretAccessKey\":\"printed-secret\"}")})
+}
+
+// A background pass whose credential_process fails records that, in words
+// status recognizes, and never what the process printed.
+func TestBackgroundPassRecordsACredentialProcessFailure(t *testing.T) {
+	t.Parallel()
+	home, userHome := t.TempDir(), t.TempDir()
+	at := time.Now().UTC()
+	cfg := config.Config{MachineID: "machine", Storage: credentialsTestConfig(), Harnesses: []string{"codex"}, Archive: archive.Config{Enabled: true, Projects: []archive.ProjectActivation{{Root: t.TempDir(), Included: true, ActivatedAt: at.Add(-time.Hour)}}}}
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), at)
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return processFailingStore{storagetest.NewMemoryStore()}, nil
+	}
+	if _, err := runOnePass(env, true); err == nil {
+		t.Fatal("the pass succeeded without credentials")
+	}
+	localStore, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := localStore.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.LastError != backgroundCredentialProcessFailure {
+		t.Fatalf("last error %q", status.LastError)
+	}
+	var health storageHealth
+	if err := local.Read(filepath.Join(home, "storage-health.json"), &health); err != nil || health.State != "credentials_unavailable" {
+		t.Fatalf("storage health %+v %v", health, err)
+	}
+	for _, name := range []string{"status.json", "storage-health.json"} {
+		if data, _ := os.ReadFile(filepath.Join(home, name)); strings.Contains(string(data), "printed-secret") {
+			t.Fatalf("%s holds what the credential_process printed", name)
+		}
+	}
+	view, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.State != "Needs attention" || !strings.Contains(view.Next, "couldn't get credentials from your AWS profile's credential_process") {
+		t.Fatalf("state %q, next %q", view.State, view.Next)
 	}
 }
