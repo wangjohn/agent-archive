@@ -868,6 +868,9 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		if action := credentials.RecoveryActionForMessage(view.Collector.LastError); action != "" {
 			view.Next = action
 		}
+		if strings.Contains(view.Collector.LastError, backgroundCredentialProcessFailure) {
+			view.Next = "The background collector couldn't get credentials from your AWS profile's credential_process. It runs without most of your shell's environment: if the helper needs a setting the collector doesn't get (see Environment variables in the configuration reference), put it in the helper's own configuration; if it needs you to unlock it or sign in, do that. Check with agent-archive sync, then run agent-archive setup again from a shell where it works."
+		}
 	}
 	if len(background.environmentProblems) > 0 {
 		view.State = "Needs attention"
