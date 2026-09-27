@@ -19,9 +19,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials/ec2rolecreds"
 	"github.com/aws/aws-sdk-go-v2/credentials/processcreds"
 	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sso"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go/logging"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
@@ -173,6 +176,109 @@ func TestDiagnoseClassifiesSDKErrors(t *testing.T) {
 	}
 }
 
+// stsRefusal answers every STS call as an AWS query-protocol AccessDenied,
+// as STS does for an AssumeRole the caller may not make.
+var stsRefusal = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/xml")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = io.WriteString(w, `<ErrorResponse><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>synthetic</Message></Error><RequestId>r</RequestId></ErrorResponse>`)
+})
+
+// ssoNotFound answers every SSO call with a 404 ResourceNotFoundException, as
+// GetRoleCredentials does for a role or account the profile names wrongly.
+var ssoNotFound = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Amzn-Errortype", "ResourceNotFoundException")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = io.WriteString(w, `{"message":"synthetic"}`)
+})
+
+// roleCredentials is a role profile's provider, with STS at url.
+func roleCredentials(url string) aws.CredentialsProvider {
+	client := sts.New(sts.Options{
+		Region: "us-east-1", BaseEndpoint: aws.String(url), Retryer: aws.NopRetryer{},
+		Credentials: awscredentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", ""),
+	})
+	return stscreds.NewAssumeRoleProvider(client, "arn:aws:iam::123456789012:role/archive")
+}
+
+// ssoCredentials is an SSO profile's provider with a current sign-in, with
+// the SSO portal at url.
+func ssoCredentials(t *testing.T, url string) aws.CredentialsProvider {
+	t.Helper()
+	tokenFile := filepath.Join(t.TempDir(), "token.json")
+	token := `{"accessToken":"synthetic","expiresAt":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"}`
+	if err := os.WriteFile(tokenFile, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client := sso.New(sso.Options{Region: "us-east-1", BaseEndpoint: aws.String(url), Retryer: aws.NopRetryer{}})
+	return ssocreds.New(client, "123456789012", "archive", "https://example.awsapps.com/start", func(o *ssocreds.Options) {
+		o.CachedTokenFilepath = tokenFile
+	})
+}
+
+// A refusal from the service that hands out a profile's credentials (STS
+// for a role, SSO for a sign-in) is a credential problem: the bucket was
+// never asked, so it is neither access_denied nor a missing object.
+func TestDiagnoseCredentialServiceRefusals(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		service http.Handler
+		provide func(t *testing.T, url string) aws.CredentialsProvider
+	}{
+		{name: "STS AccessDenied", service: stsRefusal, provide: func(_ *testing.T, url string) aws.CredentialsProvider { return roleCredentials(url) }},
+		{name: "SSO 404", service: ssoNotFound, provide: ssoCredentials},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			service := httptest.NewServer(c.service)
+			defer service.Close()
+			bucket := httptest.NewServer(s3Reply{status: 200})
+			defer bucket.Close()
+			store, err := NewS3Store(S3StoreOptions{Client: diagnoseClient(bucket, c.provide(t, service.URL)), Bucket: "bucket"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = store.Get(context.Background(), "key")
+			if err == nil || errors.Is(err, ErrNotFound) {
+				t.Fatalf("Get = %v; want the credential failure, not a missing object", err)
+			}
+			got := Diagnose(err)
+			if got.Cause != CauseNoCredentials {
+				t.Fatalf("Diagnose(%v) = %q, want no_credentials", err, got.Cause)
+			}
+			assertPlainDiagnosis(t, got)
+		})
+	}
+}
+
+// A credential service that cannot be reached is a network failure, like
+// the storage provider itself; only the EC2 metadata service, which a Mac
+// never has, means missing credentials when unreachable.
+func TestDiagnoseUnreachableCredentialServiceIsNetwork(t *testing.T) {
+	bucket := httptest.NewServer(s3Reply{status: 200})
+	defer bucket.Close()
+	err := getObject(context.Background(), diagnoseClient(bucket, roleCredentials(closedURL())))
+	if got := Diagnose(err); got.Cause != CauseNetwork {
+		t.Fatalf("Diagnose(%v) = %q, want network", err, got.Cause)
+	}
+}
+
+// A call the caller cancelled is not the network's fault.
+func TestDiagnoseCancelledIsNotNetwork(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	defer server.Close()
+	defer close(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	err := getObject(ctx, diagnoseClient(server, nil))
+	got := Diagnose(err)
+	if got.Cause != CauseOther || !strings.Contains(got.Explanation, "cancelled") {
+		t.Fatalf("Diagnose(%v) = %+v, want other, naming the cancellation", err, got)
+	}
+	assertPlainDiagnosis(t, got)
+}
+
 // A storage provider that cannot be reached, or does not answer before the
 // deadline, is a network failure.
 func TestDiagnoseNetworkFailures(t *testing.T) {
@@ -216,6 +322,35 @@ func TestDiagnoseConfiguredStoreFailures(t *testing.T) {
 	_, err = NewConfiguredStore(context.Background(), credentials.Config{Provider: "r2", Bucket: "b", R2CredentialRef: "agent-archive:gone", R2AccountID: "acct123"}, fakeCredentialStore{})
 	if got := Diagnose(err); got.Cause != CauseNoCredentials || !strings.Contains(got.Explanation, "Keychain") {
 		t.Errorf("missing Keychain item: Diagnose(%v) = %+v, want no_credentials naming the Keychain", err, got)
+	}
+	for _, keychainErr := range []error{credentials.ErrKeychainLocked, &credentials.KeychainStatusError{Status: -1}, credentials.ErrUnavailable} {
+		_, err = NewConfiguredStore(context.Background(), credentials.Config{Provider: "r2", Bucket: "b", R2CredentialRef: "agent-archive:r2", R2AccountID: "acct123"}, fakeCredentialStore{err: keychainErr})
+		got := Diagnose(err)
+		if got.Cause != CauseNoCredentials || !strings.Contains(got.Explanation, "Keychain") {
+			t.Errorf("Keychain failure: Diagnose(%v) = %+v, want no_credentials naming the Keychain", err, got)
+		}
+		assertPlainDiagnosis(t, got)
+	}
+}
+
+// A store that could not be built from its settings never reached the
+// provider, so the diagnosis does not blame the provider.
+func TestDiagnoseLocalSettingsDoNotBlameTheProvider(t *testing.T) {
+	for _, cfg := range []credentials.Config{
+		{Provider: "s3", Bucket: "b"},
+		{Provider: "gcs", Bucket: "b"},
+		{Provider: "r2", Bucket: "b", R2CredentialRef: "agent-archive:r2"},
+	} {
+		keychain := fakeCredentialStore{values: map[string]credentials.R2Credentials{"agent-archive:r2": {AccessKeyID: "a", SecretAccessKey: "b"}}}
+		_, err := NewConfiguredStore(context.Background(), cfg, keychain)
+		if err == nil {
+			t.Fatalf("NewConfiguredStore(%+v) succeeded; want an error", cfg)
+		}
+		got := Diagnose(err)
+		if got.Cause != CauseOther || strings.Contains(got.Explanation, "provider returned") {
+			t.Errorf("Diagnose(%v) = %+v, want other, not blaming the provider", err, got)
+		}
+		assertPlainDiagnosis(t, got)
 	}
 }
 

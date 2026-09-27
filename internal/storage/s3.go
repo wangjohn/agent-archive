@@ -305,11 +305,12 @@ func trimStorePrefix(key, prefix string) string {
 // misconfigured endpoint) stays an error instead of reading as a missing
 // object. A 404 whose code is NoSuchBucket names a missing bucket, which is a
 // configuration problem, not an absent object. A 403 is never not-found here;
-// Get and Stat ask confirmedAbsent about it separately. A 404 from the EC2
-// metadata service, which the SDK asks for credentials when a profile has
-// none, is about the credentials and never means a missing object.
+// Get and Stat ask confirmedAbsent about it separately. A 404 from a
+// service the SDK asks for credentials (the EC2 metadata service, STS, SSO,
+// a container credentials endpoint) is about the credentials and never
+// means a missing object.
 func isNotFound(err error) bool {
-	if err == nil || fromMetadataService(err) {
+	if err == nil || credentialService(err) != "" {
 		return false
 	}
 	var noSuchKey *types.NoSuchKey

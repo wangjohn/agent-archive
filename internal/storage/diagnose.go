@@ -9,6 +9,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/credentials/ssocreds"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -64,8 +65,9 @@ func Diagnose(err error) Diagnosis {
 		return Diagnosis{}
 	}
 	// Credentials come first: fetching them can itself fail with an API
-	// error or a network error (an unreachable EC2 metadata service), and
-	// that is still a missing credential, not a bucket or network problem.
+	// error (an STS or SSO refusal) or a network error (an unreachable EC2
+	// metadata service), and that is still a credential problem, not a
+	// bucket or network one.
 	if d, ok := diagnoseCredentials(err); ok {
 		return d
 	}
@@ -75,6 +77,15 @@ func Diagnose(err error) Diagnosis {
 			return d
 		}
 	}
+	// A cancelled call never got its answer either, but because the caller
+	// stopped waiting, not because the provider couldn't be reached.
+	if errors.Is(err, context.Canceled) {
+		return Diagnosis{
+			Cause:       CauseOther,
+			Explanation: "The storage check was cancelled before it finished.",
+			Fix:         "Run it again and let it finish.",
+		}
+	}
 	if isNetworkError(err) {
 		return Diagnosis{
 			Cause:       CauseNetwork,
@@ -82,10 +93,20 @@ func Diagnose(err error) Diagnosis {
 			Fix:         "Check your internet connection, and any VPN or proxy, then try again.",
 		}
 	}
+	var response *smithyhttp.ResponseError
+	if errors.As(err, &response) || apiErr != nil {
+		return Diagnosis{
+			Cause:       CauseOther,
+			Explanation: "The storage provider returned an error agent-archive doesn't recognize.",
+			Fix:         "Try again in a moment; if it keeps failing, check the bucket's settings with your storage provider.",
+		}
+	}
+	// No answer came from the provider, so the failure is local: most often
+	// a storage setting (provider, region, endpoint) that isn't valid.
 	return Diagnosis{
 		Cause:       CauseOther,
-		Explanation: "The storage provider returned an error agent-archive doesn't recognize.",
-		Fix:         "Try again in a moment; if it keeps failing, check the bucket's settings with your storage provider.",
+		Explanation: "agent-archive couldn't use the storage settings.",
+		Fix:         "Check the storage provider, bucket, region and endpoint, then run setup again.",
 	}
 }
 
@@ -139,32 +160,68 @@ func diagnoseCredentials(err error) (Diagnosis, bool) {
 			Fix:         "Run setup again and paste the R2 access key ID and secret.",
 		}, true
 	}
+	if errors.Is(err, credentials.ErrKeychainLocked) {
+		return Diagnosis{
+			Cause:       CauseNoCredentials,
+			Explanation: "The Keychain is locked, or denied agent-archive access to the R2 access key.",
+			Fix:         "Unlock the login Keychain (log in, or open Keychain Access), then try again.",
+		}, true
+	}
+	if errors.Is(err, credentials.ErrUnavailable) {
+		return Diagnosis{
+			Cause:       CauseNoCredentials,
+			Explanation: "The R2 access key couldn't be read from the Keychain.",
+			Fix:         "Run setup again and choose storage to check the stored access key.",
+		}, true
+	}
 	var emptyStatic *awscredentials.StaticCredentialsEmptyError
-	if errors.As(err, &emptyStatic) || fromMetadataService(err) {
+	service := credentialService(err)
+	if errors.As(err, &emptyStatic) || service == metadataServiceID {
 		return noCredentialsFound, true
+	}
+	if service != "" {
+		// STS, SSO or a container credentials endpoint answered, or
+		// couldn't be reached. Unreachable is the network's fault, and a
+		// cancelled call nobody's; any answer refuses the profile's
+		// credentials.
+		if isNetworkError(err) || errors.Is(err, context.Canceled) {
+			return Diagnosis{}, false
+		}
+		return Diagnosis{
+			Cause:       CauseNoCredentials,
+			Explanation: "The storage profile's credentials couldn't be obtained from its sign-in or role service.",
+			Fix:         "Check the profile's role and account settings, and for an SSO profile sign in again with `aws sso login --profile <profile>`, then try again.",
+		}, true
 	}
 	return Diagnosis{}, false
 }
 
-// fromMetadataService reports whether err passed through a call to the EC2
-// instance metadata service. The SDK asks it for credentials only when a
-// profile names no other source, so on a Mac such a failure means the
+// metadataServiceID is the SDK's service ID for the EC2 instance metadata
+// service.
+const metadataServiceID = "ec2imds"
+
+// credentialService returns the SDK service ID of a call that failed while
+// fetching credentials for a storage call (such as "STS", "SSO", or
+// metadataServiceID), or "" when err did not come from fetching
+// credentials. That call's error sits inside the storage call's own
+// operation error, so each operation error in the chain is checked, not
+// just the first.
+//
+// The SDK asks the EC2 metadata service for credentials only when a
+// profile names no other source, so on a Mac a failure there means the
 // profile has no credentials, even when the call itself failed to connect.
-// The metadata call's error sits inside the storage call's own operation
-// error, so each operation error in the chain is checked, not just the
-// first.
-func fromMetadataService(err error) bool {
+func credentialService(err error) string {
 	for err != nil {
 		var op *smithy.OperationError
 		if !errors.As(err, &op) {
-			return false
+			return ""
 		}
-		if op.Service() == "ec2imds" {
-			return true
+		if op.Service() != s3.ServiceID {
+			return op.Service()
 		}
 		err = op.Unwrap()
 	}
-	return false
+	return ""
 }
 
 // diagnoseCode recognizes an S3 or R2 API error code. A HEAD response has
