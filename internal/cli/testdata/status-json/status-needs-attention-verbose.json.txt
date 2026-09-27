@@ -1,0 +1,113 @@
+$ agent-archive status --verbose --json
+{
+  "privacy_evidence": {
+    "state": "not_verified",
+    "reason": "inspection_unavailable",
+    "scope": "native_bucket_public_access",
+    "checked_at": "2026-09-25T12:00:00Z",
+    "configuration_id": "ID",
+    "guidance_url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html"
+  },
+  "configuration_id": "ID",
+  "authentication": {
+    "configuration_id": "ID",
+    "state": "verified",
+    "checked_at": "2026-09-25T12:00:00Z",
+    "context": "manual_sync"
+  },
+  "code": "needs_attention",
+  "schema_version": 3,
+  "state": "Needs attention",
+  "storage": "s3 / team-archive / agent-archive/",
+  "storage_verified_at": "2026-09-25T12:00:00Z",
+  "storage_access_confirmed_at": "2026-09-25T12:00:00Z",
+  "storage_access_confirmed_by": "setup",
+  "privacy": "not_verified",
+  "background": "loaded",
+  "paused": false,
+  "projects": [
+    "/Users/alex/src/web-app"
+  ],
+  "applications": [
+    {
+      "published_sessions": 1,
+      "verified_sessions": 1,
+      "configured": true,
+      "hook_observed": true,
+      "captured_locally": true,
+      "published": true,
+      "read_back_verified": true,
+      "verified_at": "2026-09-25T12:00:00Z",
+      "verification_state": "verified_at_recorded_time",
+      "trust": "unknown",
+      "observed_adapter_versions": [
+        "0.12.0"
+      ],
+      "installed": false,
+      "installed_version_state": "unknown",
+      "installed_version_support": "unknown",
+      "capabilities": {
+        "fresh_start": {
+          "state": "documented",
+          "evidence": "SessionStart.source distinguishes startup/clear from resume/compact."
+        },
+        "transcript": {
+          "state": "documented",
+          "evidence": "Hooks provide transcript_path; official documentation says its format is not stable."
+        },
+        "lifecycle": {
+          "state": "documented",
+          "evidence": "SessionStart, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop are documented."
+        },
+        "skill_evidence": {
+          "state": "unavailable",
+          "evidence": "No supported native eligibility/use contract has been verified.",
+          "next_action": "Treat eligibility comparisons as unavailable."
+        },
+        "subagent_linkage": {
+          "state": "unavailable",
+          "evidence": "A lifecycle event alone does not provide a verified child transcript and parent link.",
+          "next_action": "Validate child identity, parent identity, and transcript path for the installed version."
+        },
+        "adapter_fixtures": {
+          "state": "documented",
+          "evidence": "Synthetic fixtures exercise the bounded adapter; they do not prove an installed version."
+        }
+      },
+      "projects": [
+        {
+          "project_id": "project-ID",
+          "project_root": "/Users/alex/src/web-app",
+          "activated_at": "2026-09-25T12:00:00Z",
+          "configured": true,
+          "hook_observed": true,
+          "captured_locally": true,
+          "published": true,
+          "read_back_verified": true,
+          "published_sessions": 1,
+          "verified_sessions": 1,
+          "verification_state": "verified_at_recorded_time",
+          "verified_at": "2026-09-25T12:00:00Z"
+        }
+      ],
+      "code": "published_source_verified",
+      "hooks": "installed",
+      "name": "codex",
+      "state": "published; source verified",
+      "sessions": 1,
+      "last_published_at": "2026-09-25T12:00:00Z"
+    }
+  ],
+  "collector": {
+    "last_scan_at": "2026-09-25T12:00:00Z",
+    "last_published_at": "2026-09-25T12:00:00Z",
+    "pending_count": 0,
+    "last_error": "list registrations: AccessDenied: Access Denied"
+  },
+  "imported_sessions": 0,
+  "imported_pending": 0,
+  "imported_with_issues": 0,
+  "last_import": "",
+  "next_action": "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
+}
+[exit 0]

@@ -16,5 +16,5 @@ Storage
   ✓ Background collector on            no scan yet
   · Last upload: never · 0 pending
 
-Details: agent-archive status --json
+Details: agent-archive status --verbose
 [exit 0]

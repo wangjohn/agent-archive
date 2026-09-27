@@ -13,5 +13,5 @@ Storage
   · Last upload: just now · 0 pending
 
 Next: Keep working. Run agent-archive list to inspect archived sessions.
-Details: agent-archive status --json
+Details: agent-archive status --verbose
 [exit 0]

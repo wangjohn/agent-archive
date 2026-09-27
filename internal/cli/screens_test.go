@@ -454,6 +454,32 @@ var screens = []screen{
 			must(t, store.SaveStatus(status))
 		},
 	},
+	{
+		// status --verbose after a session was captured and published.
+		name: "status-ready-verbose",
+		args: []string{"status", "--verbose"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+			f.published(t)
+		},
+	},
+	{
+		// status --verbose when the last pass could not reach storage.
+		name: "status-needs-attention-verbose",
+		args: []string{"status", "--verbose"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+			f.published(t)
+			store, err := state.Open(f.home)
+			must(t, err)
+			status, err := store.LoadStatus()
+			must(t, err)
+			status.LastError = "list registrations: AccessDenied: Access Denied"
+			must(t, store.SaveStatus(status))
+		},
+	},
 }
 
 // storageFailureAnswers set up Codex in ~/src/web-app with S3 storage, and

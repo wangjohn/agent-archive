@@ -2,7 +2,8 @@ $ agent-archive status
 Agent Archive  ● Needs attention
 
   ! The last sync failed
-    Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage.
+    Check storage access and run agent-archive sync.
+    To change credentials, run agent-archive setup and choose storage.
 
 Capture
   ✓ Codex   hooks installed   1 session archived, verified just now
@@ -13,8 +14,8 @@ Storage
   ! Bucket privacy not verified        this storage can't be inspected
     Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Background collector on            last scan just now
-  ✗ Last error: list registrations: AccessDenied: Access Denied
+  ✗ Storage refused access
   · Last upload: just now · 0 pending
 
-Details: agent-archive status --json
+Details: agent-archive status --verbose
 [exit 0]
