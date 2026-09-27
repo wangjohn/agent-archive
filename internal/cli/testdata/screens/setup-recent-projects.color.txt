@@ -6,11 +6,13 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 
 Include Claude Code? [Y/n] 
 Projects with recent sessions:
-  1) ~/src/web-app  \e[2mtoday\e[0m
-  2) ~/src/api  \e[2m3 days ago\e[0m
-  3) ~/src/docs  \e[2m40 days ago\e[0m
-Enter the numbers to include (for example 1 3), or a project path. Enter a blank line when finished.
+  1) ~/src/web-app  \e[2m1 session · today\e[0m
+  2) ~/src/api      \e[2m1 session · 3 days ago\e[0m
+  3) ~/src/docs     \e[2m1 session · 40 days ago\e[0m
+Enter numbers to include (for example 1 3), a for all, or a project path.
+Enter a blank line when finished.
 Projects: 1 2
+Included: ~/src/web-app, ~/src/api
 Projects: 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
