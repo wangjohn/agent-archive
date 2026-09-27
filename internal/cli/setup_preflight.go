@@ -3,9 +3,12 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // preflightCheck is one check setup makes before its first question, so
@@ -14,9 +17,11 @@ import (
 type preflightCheck struct {
 	// Label names what was checked, such as "Claude Code hooks".
 	Label string
-	// Detail is what was found: the file checked, or where and what the
-	// problem is.
+	// Detail is what was found: the file checked, or where the problem is.
 	Detail string
+	// Problem is what is wrong, when that is said apart from Detail, on a
+	// line of its own under it.
+	Problem string
 	// Fix is what to do about a problem; empty when OK.
 	Fix string
 	// OK is whether the check passed. A check that did not pass blocks
@@ -38,16 +43,21 @@ func (c preflightChecks) blocked() bool {
 	return false
 }
 
-// print writes one line per check: a ✓, or a ✗ with the problem and, under
-// it, the fix.
+// print writes one line per check: a ✓, or a ✗ with, under it, the
+// problem and the fix. Long lines wrap under their own text.
 func (c preflightChecks) print(p *prompter) {
 	for _, check := range c {
 		line := check.Label + ": " + check.Detail
 		if check.OK {
-			p.item(p.style.okMark(), line, nil)
+			terminal.Println(p.out, p.style.hang("  "+p.style.okMark()+" ", line))
 			continue
 		}
-		p.item(p.style.failMark(), line, []string{check.Fix})
+		terminal.Println(p.out, p.style.hang("  "+p.style.failMark()+" ", line))
+		for _, text := range []string{check.Problem, check.Fix} {
+			if text != "" {
+				terminal.Println(p.out, p.style.hang("    ", text))
+			}
+		}
 	}
 }
 
@@ -61,7 +71,7 @@ func (e *preflightError) Error() string {
 	var failed []string
 	for _, check := range e.checks {
 		if !check.OK {
-			failed = append(failed, check.Label+": "+check.Detail)
+			failed = append(failed, strings.TrimSuffix(check.Label+": "+check.Detail+": "+check.Problem, ": "))
 		}
 	}
 	return strings.Join(failed, "; ")
@@ -100,14 +110,16 @@ func preflight(env Env, home, userHome string, apps []string, keychain bool) pre
 				where = fmt.Sprintf("%s:%d:%d", where, problem.Line, problem.Column)
 			}
 			check.OK = false
-			check.Detail = where + ": " + problem.Reason
-			check.Fix = "Fix the file (setup edits only plain JSON), then run agent-archive setup again. To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
+			check.Detail = where
+			check.Problem = upperFirst(problem.Reason) + "."
+			check.Fix = "Setup edits only plain JSON. Fix the file, then run agent-archive setup again. To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
 		}
 		checks = append(checks, check)
 	}
 
 	plist := env.installation(home, userHome).collectorPlist()
-	job := preflightCheck{Label: "Background job", Detail: "launchctl answers", OK: true}
+	job := preflightCheck{Label: "Background job", Detail: "launchctl responds", OK: true}
+	//lint:ignore LV1001 Env.JobState reports launchd states as plain strings
 	switch env.jobState(plist) {
 	case "unknown":
 		job.OK = false
@@ -136,7 +148,7 @@ func keychainCheck(env Env) preflightCheck {
 			Fix:    "Use the release build of agent-archive, which can open the Keychain, or store in Amazon S3 with agent-archive setup --yes --provider s3.",
 		}
 	}
-	return preflightCheck{Label: "Keychain", Detail: "opens, for the R2 key", OK: true}
+	return preflightCheck{Label: "Keychain", Detail: "opens (for the R2 key)", OK: true}
 }
 
 // preflightApps are the apps whose hook files interactive setup checks
@@ -155,4 +167,11 @@ func preflightApps(detected, saved, declined, draft []string) []string {
 		apps = append(apps, app)
 	}
 	return apps
+}
+
+// upperFirst starts text with a capital letter, so a lower-case reason can
+// stand as a sentence of its own.
+func upperFirst(text string) string {
+	r, size := utf8.DecodeRuneInString(text)
+	return string(unicode.ToUpper(r)) + text[size:]
 }

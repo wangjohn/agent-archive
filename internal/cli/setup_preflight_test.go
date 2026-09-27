@@ -68,10 +68,10 @@ func TestSetupStopsBeforeAnyQuestionOnACommentedSettingsFile(t *testing.T) {
 		t.Fatalf("exit %d after %d reads, want 1 before any question\n%s", code, in.reads, output)
 	}
 	for _, want := range []string{
-		"✗ Claude Code hooks: ~/.claude/settings.json:2:3: ",
+		"✗ Claude Code hooks: ~/.claude/settings.json:2:3\n",
 		"comments (JSONC) are not JSON, so remove them",
-		"Fix the file",
-		"✓ Background job: launchctl answers",
+		"Fix the file, then run",
+		"✓ Background job: launchctl responds",
 		"Nothing was changed, and any unfinished setup is kept.",
 	} {
 		if !strings.Contains(output, want) {
@@ -102,7 +102,7 @@ func TestSetupYesStopsOnACommentedSettingsFile(t *testing.T) {
 	must(t, os.WriteFile(settings, []byte("{\"a\": 1,}\n"), 0o600))
 
 	output, code, _ := runUnanswered(t, env, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", t.TempDir())
-	if code != 1 || !strings.Contains(output, "✗ Claude Code hooks: ~/.claude/settings.json:1:8: ") {
+	if code != 1 || !strings.Contains(output, "✗ Claude Code hooks: ~/.claude/settings.json:1:8\n") {
 		t.Fatalf("exit %d\n%s", code, output)
 	}
 	if !strings.Contains(output, "Setup incomplete: Claude Code hooks: ~/.claude/settings.json:1:8: ") || strings.Contains(output, "Checking your storage") {

@@ -1,6 +1,6 @@
 $ agent-archive setup
 Checking installed applications...
-  ✓ Background job: launchctl answers
+  ✓ Background job: launchctl responds
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 
 Step 1 of 3 · Choose what to capture

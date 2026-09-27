@@ -1,6 +1,6 @@
 $ agent-archive setup --yes --apps codex --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --project ~/src/web-app
   ✓ Codex hooks: ~/.codex/hooks.json
-  ✓ Background job: launchctl answers
+  ✓ Background job: launchctl responds
 Checking your storage connection…
 ✓ Connected.
 Apps: Codex. Projects: 1. Storage: Amazon S3 bucket team-archive.
