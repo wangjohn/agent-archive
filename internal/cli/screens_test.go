@@ -125,6 +125,29 @@ var screens = []screen{
 		},
 	},
 	{
+		// Claude Code's settings.json holds a comment, so setup stops
+		// before its first question and says where and how to fix it.
+		name: "setup-preflight-blocked",
+		exit: 1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex", "claude")
+			settings := filepath.Join(f.userHome, ".claude", "settings.json")
+			must(t, os.MkdirAll(filepath.Dir(settings), 0o700))
+			must(t, os.WriteFile(settings, []byte("{\n  // my model\n  \"model\": \"opus\"\n}\n"), 0o600))
+		},
+	},
+	{
+		// setup --yes makes the same checks first.
+		name: "setup-yes-preflight",
+		args: []string{"setup", "--yes", "--apps", "codex", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--project", "~/src/web-app"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex")
+			f.project(t, "src/web-app")
+		},
+	},
+	{
 		// Setup on an installed Mac asks what to change; this run leaves
 		// at the review.
 		name:    "setup-reconfigure-menu",

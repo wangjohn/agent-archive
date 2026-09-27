@@ -118,6 +118,21 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if _, saved, _, e := readDraft(home); e != nil || saved {
 		return fmt.Errorf("an unfinished setup is saved in %s; run agent-archive setup to finish or discard it first", draftPath(home))
 	}
+	// The checks interactive setup makes before its first question, for the
+	// apps these answers install and, when they store in R2, the Keychain.
+	chosen := existing
+	if err = setupApps(&chosen, opts.apps, env.detectHarnesses(userHome), installed); err != nil {
+		return err
+	}
+	provider := existing.Storage.Provider
+	if opts.storageFlagsSupplied {
+		provider = opts.provider
+	}
+	checks := preflight(env, home, userHome, chosen.Harnesses, provider == credentials.ProviderR2)
+	checks.print(newPrompter(stdin, out))
+	if checks.blocked() {
+		return &preflightError{checks: checks}
+	}
 	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env)
 	if err != nil {
 		return err

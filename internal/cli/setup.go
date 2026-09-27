@@ -140,6 +140,10 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			if errors.As(err, &other) {
 				terminal.Println(stderr, other.guidance())
 			}
+			var blocker *preflightError
+			if errors.As(err, &blocker) {
+				terminal.Println(stderr, blocker.guidance())
+			}
 			return 1
 		}
 		return 0
@@ -154,6 +158,11 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		var other *otherInstallationError
 		if errors.As(err, &other) {
 			terminal.Println(stderr, other.guidance())
+			return 1
+		}
+		var blocker *preflightError
+		if errors.As(err, &blocker) {
+			terminal.Println(stderr, blocker.guidance())
 			return 1
 		}
 		terminal.Println(stderr, "Run agent-archive setup to continue.")
@@ -207,6 +216,17 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	// beside another installation's (see applySetup).
 	for _, problem := range env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), allHarnesses) {
 		p.warn(problem)
+	}
+	// What applying the setup needs is checked before any question, so a
+	// hook file setup cannot edit, or a launchctl or Keychain that does not
+	// answer, stops setup here rather than after every answer. R2 may be
+	// chosen at the storage question, so the Keychain is always checked.
+	// A draft that cannot be read is dealt with after these checks.
+	unfinished, _, _, _ := readDraft(home)
+	checks := preflight(env, home, userHome, preflightApps(env.detectHarnesses(userHome), existing.Harnesses, existing.DeclinedHarnesses, unfinished.Config.Harnesses), true)
+	checks.print(p)
+	if checks.blocked() {
+		return &preflightError{checks: checks}
 	}
 	if !found {
 		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
