@@ -6,6 +6,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- A shared terminal style for setup and status: green ✓, yellow !, red ✗,
+  cyan commands, dim details, and your home folder shown as `~`. Plain
+  output with `NO_COLOR`, `TERM=dumb`, or when piped is unchanged.
+- Golden transcripts of the setup and status screens, in color and plain, so
+  changes to what you see are reviewed line by line.
+- A plain-words diagnosis for storage failures (no credentials, access
+  denied, no such bucket, wrong region, network), each with a fix to try.
+  The AWS SDK no longer prints its own warnings to the terminal.
+
 ## [0.1.0] - 2026-09-25
 
 The first release.

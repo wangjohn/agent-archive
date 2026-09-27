@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/logging"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
@@ -84,6 +85,11 @@ func NewS3Store(options S3StoreOptions) (*S3Store, error) {
 // response-header timeouts (see withTimeouts). A body that stalls after its
 // headers arrived is bounded by the caller's context deadline instead,
 // since no fixed limit suits both a small metadata read and a large upload.
+//
+// The SDK's logger is silenced: config.LoadDefaultConfig points it at
+// stderr, where it would print lines such as "SDK <date> DEBUG Response has
+// no supported checksum" into the middle of a command's output. Failures
+// reach the caller as errors, which Diagnose explains.
 func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int) *s3.Client {
 	if maxAttempts <= 0 {
 		maxAttempts = 3
@@ -93,6 +99,7 @@ func NewClient(cfg aws.Config, endpoint string, pathStyle bool, maxAttempts int)
 			options.BaseEndpoint = aws.String(strings.TrimRight(endpoint, "/"))
 		}
 		options.HTTPClient = withTimeouts(options.HTTPClient)
+		options.Logger = logging.Nop{}
 		options.UsePathStyle = pathStyle
 		options.Retryer = awsretry.NewStandard(func(retryOptions *awsretry.StandardOptions) {
 			retryOptions.MaxAttempts = maxAttempts
@@ -298,9 +305,12 @@ func trimStorePrefix(key, prefix string) string {
 // misconfigured endpoint) stays an error instead of reading as a missing
 // object. A 404 whose code is NoSuchBucket names a missing bucket, which is a
 // configuration problem, not an absent object. A 403 is never not-found here;
-// Get and Stat ask confirmedAbsent about it separately.
+// Get and Stat ask confirmedAbsent about it separately. A 404 from a
+// service the SDK asks for credentials (the EC2 metadata service, STS, SSO,
+// a container credentials endpoint) is about the credentials and never
+// means a missing object.
 func isNotFound(err error) bool {
-	if err == nil {
+	if err == nil || credentialService(err) != "" {
 		return false
 	}
 	var noSuchKey *types.NoSuchKey

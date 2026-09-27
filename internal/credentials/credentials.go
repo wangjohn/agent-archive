@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/smithy-go/logging"
 )
 
 var (
@@ -89,6 +90,13 @@ const (
 // explicit profile makes the SDK resolve that profile's static, SSO,
 // process, or role credentials; it does not fall back to unrelated environment
 // credentials when the selected profile is unavailable.
+//
+// The SDK's logger is silenced. The clients the SDK builds while loading
+// (the EC2 metadata client that looks for credentials when a profile has
+// none, SSO, STS) keep the logger they were built with, and the SDK's
+// default prints to stderr, such as "SDK <date> WARN falling back to
+// IMDSv1" when a profile has no credentials. Failures still reach the
+// caller as errors.
 func LoadAWSConfig(ctx context.Context, profile, region string) (aws.Config, error) {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
@@ -96,6 +104,7 @@ func LoadAWSConfig(ctx context.Context, profile, region string) (aws.Config, err
 	}
 	options := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithSharedConfigProfile(profile),
+		awsconfig.WithLogger(logging.Nop{}),
 	}
 	if strings.TrimSpace(region) != "" {
 		options = append(options, awsconfig.WithRegion(strings.TrimSpace(region)))
