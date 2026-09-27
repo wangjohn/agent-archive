@@ -41,10 +41,11 @@ func TestStatusMarksAreTheirSymbols(t *testing.T) {
 	t.Parallel()
 	color, plain := textStyle{color: true}, textStyle{}
 	marks := []struct {
-		name         string
-		color, plain string
-		want         string
-		wantCode     string
+		name     string
+		color    string
+		plain    string
+		want     string
+		wantCode string
 	}{
 		{"ok", color.okMark(), plain.okMark(), "✓", "32"},
 		{"warn", color.warnMark(), plain.warnMark(), "!", "33"},
@@ -99,10 +100,11 @@ func TestStyleForIsPlainWhenOutputIsNotATerminal(t *testing.T) {
 func TestHangingIndentWrapsUnderTheText(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name         string
-		prefix, text string
-		width        int
-		want         string
+		name   string
+		prefix string
+		text   string
+		width  int
+		want   string
 	}{
 		{
 			"fits on one line",
@@ -145,7 +147,7 @@ func TestHangingIndentWrapsUnderTheText(t *testing.T) {
 			t.Errorf("%s:\n got %q\nwant %q", c.name, got, c.want)
 		}
 		if c.width > 0 {
-			for _, line := range strings.Split(hangingIndent(c.prefix, c.text, c.width), "\n") {
+			for line := range strings.SplitSeq(hangingIndent(c.prefix, c.text, c.width), "\n") {
 				if visibleWidth(line) > c.width && !strings.Contains(line, "https://") {
 					t.Errorf("%s: line %q is wider than %d columns", c.name, line, c.width)
 				}
@@ -246,7 +248,9 @@ func TestDisplayPathShowsHomeAsTilde(t *testing.T) {
 	t.Parallel()
 	home := filepath.FromSlash("/Users/someone")
 	cases := []struct {
-		path, home, want string
+		path string
+		home string
+		want string
 	}{
 		{"/Users/someone/code/app", home, "~/code/app"},
 		{"/Users/someone", home, "~"},

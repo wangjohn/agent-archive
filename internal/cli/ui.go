@@ -130,7 +130,7 @@ func hangingIndent(prefix, text string, width int) string {
 		b.WriteString(lead)
 		column := visibleWidth(lead)
 		start := column
-		for _, word := range strings.Fields(paragraph) {
+		for word := range strings.FieldsSeq(paragraph) {
 			w := visibleWidth(word)
 			if column > start {
 				if column+1+w > width {
