@@ -266,27 +266,27 @@ func TestSetupYesStorageFailureLeavesNothing(t *testing.T) {
 func TestSetupYesRefusesAPublicBucket(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		state, reason string
-		exit          int
-		want          []string
+		privacy storage.PrivacyReport
+		exit    int
+		want    []string
 	}{
-		{"public_or_risky", "public_bucket_policy", 1, []string{
+		{storage.PrivacyReport{State: "public_or_risky", Reason: "public_bucket_policy"}, 1, []string{
 			"✗ Bucket is public",
 			"a bucket policy allows public access",
 			"Fix its access before archiving: https://",
 			"Setup incomplete: bucket b allows public access (a bucket policy allows public access); nothing was changed.",
 		}},
-		{"not_verified", "public_access_controls_not_fully_verified", 0, []string{
+		{storage.PrivacyReport{State: "not_verified", Reason: "public_access_controls_not_fully_verified"}, 0, []string{
 			"! Bucket privacy not verified: not every public-access setting could be confirmed.",
 		}},
 	} {
-		t.Run(tc.state, func(t *testing.T) {
+		t.Run(tc.privacy.State, func(t *testing.T) {
 			t.Parallel()
 			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 			env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
 				report := storage.UnknownPrivacy(cfg.Storage.Provider)
-				report.State, report.Reason = tc.state, tc.reason
+				report.State, report.Reason = tc.privacy.State, tc.privacy.Reason
 				return privacyReportStore{ObjectStore: storagetest.NewMemoryStore(), report: report}, nil
 			}
 			output := setupYes(t, env, "", tc.exit, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--apps", "claude", "--project", project)
