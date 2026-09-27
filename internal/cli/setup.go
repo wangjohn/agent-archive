@@ -604,11 +604,13 @@ func storageCheckMayPrompt(storage credentials.Config, env Env) bool {
 	if storage.Provider != credentials.ProviderS3 || storage.AWSProfile == "" {
 		return false
 	}
-	home, err := env.home()
+	// The AWS files are under the user's home, as for profile discovery,
+	// not agent-archive's data directory.
+	userHome, err := env.userHomeDir()
 	if err != nil {
 		return true
 	}
-	configFile, credentialsFile := awsFiles(home, env.lookupEnv)
+	configFile, credentialsFile := awsFiles(userHome, env.lookupEnv)
 	return credentialProcess(configFile, credentialsFile, storage.AWSProfile) != ""
 }
 

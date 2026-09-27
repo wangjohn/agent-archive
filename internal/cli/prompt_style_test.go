@@ -260,7 +260,10 @@ func TestStorageCheckSkipsSpinnerForCredentialProcess(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Join(home, ".aws"), 0o700))
 	must(t, os.WriteFile(filepath.Join(home, ".aws", "config"), []byte("[profile work]\ncredential_process = aws-vault export --format=json work\n"), 0o600))
 	env := storageCheckEnv(storagetest.NewMemoryStore(), nil)
-	env.Home = func() (string, error) { return home, nil }
+	// The AWS files are under the user's home; the data directory is
+	// somewhere else.
+	env.UserHomeDir = func() (string, error) { return home, nil }
+	env.Home = func() (string, error) { return t.TempDir(), nil }
 	env.LookupEnv = func(string) (string, bool) { return "", false }
 	var out bytes.Buffer
 	p := styledPrompter("", &out, textStyle{color: true, live: true})
