@@ -1,7 +1,7 @@
 $ agent-archive status
 \e[1mAgent Archive\e[0m  \e[33m● Needs attention\e[0m
 
-  \e[33m!\e[0m The last pass failed
+  \e[33m!\e[0m The last sync failed
     Check storage access and run \e[36magent-archive sync\e[0m. To change credentials, run agent-archive setup and choose storage.
 
 \e[1mCapture\e[0m
@@ -11,7 +11,7 @@ $ agent-archive status
 \e[1mStorage\e[0m
   \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now\e[0m
   \e[33m!\e[0m Bucket privacy not verified        \e[2mthis storage can't be inspected\e[0m
-    Review: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+    Check public access: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
   \e[32m✓\e[0m Background collector on            \e[2mlast scan just now\e[0m
   \e[31m✗\e[0m Last error: list registrations: AccessDenied: Access Denied
   \e[2m·\e[0m Last upload: just now · 0 pending

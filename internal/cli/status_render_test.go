@@ -23,7 +23,7 @@ func busyStatusView() statusView {
 	return statusView{
 		configured: true,
 		State:      "Needs attention",
-		problem:    "The last pass failed",
+		problem:    "The last sync failed",
 		Next:       "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage.",
 		Storage:    "s3 / team-archive / agent-archive/",
 		Authentication: storageHealth{
@@ -87,7 +87,7 @@ func TestStatusTextShowsNoCodesOrExactTimes(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Agent Archive  ● Needs attention\n",
-		"  ! The last pass failed\n",
+		"  ! The last sync failed\n",
 		"    Check storage access and run agent-archive sync.",
 		"2 sessions archived, verified 26 hours ago",
 		"uploaded, read-back pending (1 of 2 projects verified)",
@@ -97,7 +97,7 @@ func TestStatusTextShowsNoCodesOrExactTimes(t *testing.T) {
 		"· Imported: 4 sessions, 1 waiting to upload; last import import-7\n",
 		"reachable, checked 2 minutes ago",
 		"the last check is over a day old, checked 3 hours ago",
-		"    Review: https://example.com/guide\n",
+		"    Check public access: https://example.com/guide\n",
 		"last scan 1 minute ago",
 		"✗ Last error: list registrations: AccessDenied: Access Denied\n",
 		"· Last upload: 50 minutes ago · 3 pending\n",

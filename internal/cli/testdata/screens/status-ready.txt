@@ -8,7 +8,7 @@ Capture
 Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
   ! Bucket privacy not verified        this storage can't be inspected
-    Review: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Background collector on            last scan just now
   · Last upload: just now · 0 pending
 

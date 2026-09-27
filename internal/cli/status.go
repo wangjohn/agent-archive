@@ -771,7 +771,7 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 	}
 	if view.Collector.LastError != "" {
 		view.State = "Needs attention"
-		view.problem = "The last pass failed"
+		view.problem = "The last sync failed"
 		view.Next = "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
 		// A Keychain failure has one specific fix; status.json keeps only
 		// the error text, so it is recognized from that.
@@ -1339,7 +1339,7 @@ func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
 	if report.CheckedAt != nil {
 		checked = ", checked " + relativeAge(sc.now, *report.CheckedAt)
 	}
-	review := statusNote{text: "Review: " + s.cmd(report.GuidanceURL)}
+	review := statusNote{text: "Check public access: " + s.cmd(report.GuidanceURL)}
 	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
 	switch report.State {
 	case "verified_private":

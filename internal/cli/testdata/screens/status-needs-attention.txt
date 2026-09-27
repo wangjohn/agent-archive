@@ -1,7 +1,7 @@
 $ agent-archive status
 Agent Archive  ● Needs attention
 
-  ! The last pass failed
+  ! The last sync failed
     Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage.
 
 Capture
@@ -11,7 +11,7 @@ Capture
 Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
   ! Bucket privacy not verified        this storage can't be inspected
-    Review: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+    Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Background collector on            last scan just now
   ✗ Last error: list registrations: AccessDenied: Access Denied
   · Last upload: just now · 0 pending
