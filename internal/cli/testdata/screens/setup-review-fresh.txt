@@ -5,9 +5,10 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 Step 1 of 3 · Choose what to capture
 
 Include Codex and Claude Code? [Y/n] y
-Project: /Users/alex/src/web-app
-Archive sessions in this project? [Y/n] y
-Add another project? [y/N] n
+Projects to archive (✓ included):
+  1) ✓ ~/src/web-app  this folder
+Enter 1 to include or leave it out, or a project path to add another. Enter a blank line when finished.
+Projects: 
 
 Step 2 of 3 · Connect storage
 

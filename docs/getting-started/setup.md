@@ -26,15 +26,18 @@ found, it opens the individual choices immediately. On reconfiguration, it
 lists the apps included and not included, then asks "Change which apps are
 included? [y/N]".
 
-If setup finds the current Git project, it shows its full path and asks
-"Archive sessions in this project?" Accept, then answer "Add another
-project? [y/N]" to add more, or decline to choose projects yourself.
+Setup then lists projects to archive: the ones Claude Code and Codex
+sessions on this Mac ran in, most recent first, with how many sessions each
+has and when one was last used. Enter their numbers (`1 3`, or a range such
+as `2-4`), `a` for all of them, or type a project path; a blank line
+finishes. With no history to offer, it asks for paths.
 
-To choose projects, setup lists the ones Claude Code and Codex sessions on
-this Mac ran in, most recent first. Enter their numbers (`1 3`, or a range
-such as `2-4`), or type a project path; a blank line finishes. With no
-history to offer, it asks for paths. Include each project explicitly; nothing
-outside an included project is captured.
+If you run setup inside a Git project, that project heads the list, marked
+✓ as already included, so a blank line archives just it. Here a number
+switches a project in or out: enter `1` to leave the current project out.
+
+Include each project explicitly; nothing outside an included project is
+captured. If you finish with no project included, setup asks again.
 
 ## 2. Storage
 

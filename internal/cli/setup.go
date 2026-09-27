@@ -525,44 +525,35 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	if len(cfg.Harnesses) == 0 {
 		return fmt.Errorf("choose at least one application")
 	}
-	acceptedProject := false
+	// In a Git repository with no projects yet, the repository heads the
+	// recent-projects list, already included.
+	current := ""
 	if len(cfg.Archive.Projects) == 0 {
 		dir, e := os.Getwd()
 		if env.WorkingDir != nil {
 			dir, e = env.WorkingDir()
 		}
 		if e == nil {
-			if root := suggestedProject(dir); root != "" {
-				terminal.Printf(p.out, "Project: %s\n", root)
-				acceptedProject, err = p.yesNo("Archive sessions in this project?", true)
-				if err != nil {
-					return err
-				}
-				if acceptedProject {
-					cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(root), Root: root, Included: true}}
-					more, e := p.yesNo("Add another project?", false)
-					if e != nil {
-						return e
-					}
-					if more {
-						cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, nil, known(*cfg), userHome)
-						if err != nil {
-							return err
-						}
-					}
-				}
-			}
+			current = suggestedProject(dir)
 		}
 	}
-	if !acceptedProject {
+	if current != "" {
+		offered := known(*cfg)
+		cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
+		cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, nil, offered, current, userHome)
+	} else {
 		cfg.Archive.Projects, err = promptProjects(p, cfg.Archive.Projects, backfilledProjects(env), known(*cfg), userHome)
+	}
+	if err != nil {
+		return err
+	}
+	// Leaving every project out asks again rather than ending setup.
+	for includedProjects(cfg.Archive.Projects) == 0 {
+		terminal.Println(p.out, p.style.warnMark()+" Choose at least one project: only sessions in included projects are archived.")
+		cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, cfg.Archive.Projects, known(*cfg), current, userHome)
 		if err != nil {
 			return err
 		}
-	}
-
-	if includedProjects(cfg.Archive.Projects) == 0 {
-		return fmt.Errorf("choose at least one project")
 	}
 	if cfg.RetentionDays <= 0 {
 		cfg.RetentionDays = defaultRetentionDays
@@ -874,7 +865,7 @@ func promptProjects(p *prompter, existing []archive.ProjectActivation, backfille
 			result = append(result, project)
 		}
 	}
-	return addProjects(p, result, existing, known, userHomes...)
+	return addProjects(p, result, existing, known, "", userHomes...)
 }
 
 // maxKnownProjects caps how many projects from the apps' history setup
@@ -883,31 +874,74 @@ const maxKnownProjects = 12
 
 // addProjects asks for projects to add to result: by number from known,
 // when the apps' history mentions any result does not include, or by path.
-// A project in existing keeps its activation time.
-func addProjects(p *prompter, result, existing []archive.ProjectActivation, known []backfill.KnownProject, userHomes ...string) ([]archive.ProjectActivation, error) {
+// current, when not "", is the Git repository setup runs in: it heads the
+// list, with the state result gives it, and its numbers switch a listed
+// project in or out. a includes every listed project. A project in existing
+// keeps its activation time.
+func addProjects(p *prompter, result, existing []archive.ProjectActivation, known []backfill.KnownProject, current string, userHomes ...string) ([]archive.ProjectActivation, error) {
 	home := ""
 	if len(userHomes) > 0 {
 		home = userHomes[0]
 	}
+	// result is edited in place below; existing may share its array.
+	result = slices.Clone(result)
 	seen := map[string]bool{}
+	// excluded are the projects result holds as exclusions, which leaving
+	// them out again restores.
+	excluded := map[string]bool{}
 	for _, project := range result {
 		if project.Included {
 			seen[project.Root] = true
+		} else {
+			excluded[project.Root] = true
 		}
 	}
-	var offered []string
-	for _, project := range known {
-		if !seen[project.Root] && len(offered) < maxKnownProjects {
-			if len(offered) == 0 {
-				terminal.Println(p.out, "Projects with recent sessions:")
+	var offered []backfill.KnownProject
+	if current != "" {
+		entry := backfill.KnownProject{Root: current}
+		for _, project := range known {
+			if project.Root == current {
+				entry = project
 			}
-			offered = append(offered, project.Root)
-			terminal.Printf(p.out, "  %d) %s  %s\n", len(offered), displayPath(project.Root, home), p.style.dim(lastUsed(project.LastUsed, p.clock())))
 		}
+		offered = append(offered, entry)
+	}
+	for _, project := range known {
+		if !seen[project.Root] && project.Root != current && len(offered) < maxKnownProjects {
+			offered = append(offered, project)
+		}
+	}
+	width := 0
+	for _, project := range offered {
+		width = max(width, visibleWidth(displayPath(project.Root, home)))
 	}
 	label := "Project path: "
 	if len(offered) > 0 {
-		terminal.Println(p.out, "Enter the numbers to include (for example 1 3), or a project path. Enter a blank line when finished.")
+		if current != "" {
+			terminal.Println(p.out, "Projects to archive (✓ included):")
+		} else {
+			terminal.Println(p.out, "Projects with recent sessions:")
+		}
+		for i, project := range offered {
+			// Only a list that starts with a project included marks one.
+			mark := ""
+			switch {
+			case seen[project.Root]:
+				mark = p.style.okMark() + " "
+			case current != "":
+				mark = "  "
+			}
+			path := displayPath(project.Root, home)
+			terminal.Printf(p.out, "  %d) %s%s%s  %s\n", i+1, mark, path, strings.Repeat(" ", width-visibleWidth(path)), p.style.dim(projectDetails(project, current, p.clock())))
+		}
+		switch {
+		case current != "" && len(offered) == 1:
+			terminal.Println(p.out, "Enter 1 to include or leave it out, or a project path to add another. Enter a blank line when finished.")
+		case current != "":
+			terminal.Println(p.out, "Enter numbers to include or leave out (for example 2 3), a for all, or a project path. Enter a blank line when finished.")
+		default:
+			terminal.Println(p.out, "Enter the numbers to include (for example 1 3), a for all, or a project path. Enter a blank line when finished.")
+		}
 		label = "Projects: "
 	} else {
 		terminal.Println(p.out, "Add project directories, one per line. Enter a blank line when finished.")
@@ -938,6 +972,33 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 		}
 		result = append(result, project)
 	}
+	leaveOut := func(root string) {
+		delete(seen, root)
+		for i := range result {
+			if result[i].Root != root {
+				continue
+			}
+			if excluded[root] {
+				result[i].Included = false
+			} else {
+				result = slices.Delete(result, i, i+1)
+			}
+			return
+		}
+	}
+	selection := func() {
+		var names []string
+		for _, project := range result {
+			if project.Included {
+				names = append(names, displayPath(project.Root, home))
+			}
+		}
+		if len(names) == 0 {
+			terminal.Println(p.out, "No project included yet.")
+			return
+		}
+		terminal.Println(p.out, p.style.hang("Included: ", strings.Join(names, ", ")))
+	}
 	for {
 		answer, err := p.line(label)
 		if err != nil {
@@ -946,20 +1007,53 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 		if answer == "" {
 			return result, nil
 		}
+		if len(offered) > 0 && (strings.EqualFold(answer, "a") || strings.EqualFold(answer, "all")) {
+			for _, project := range offered {
+				if !seen[project.Root] {
+					include(project.Root)
+				}
+			}
+			selection()
+			continue
+		}
 		if numbers, ok, inRange := parseNumbers(answer, len(offered)); ok && len(offered) > 0 {
 			if !inRange {
-				terminal.Printf(p.out, "Enter numbers from 1 to %d, or a project path.\n", len(offered))
+				terminal.Printf(p.out, "Enter numbers from 1 to %d, a for all, or a project path.\n", len(offered))
 				continue
 			}
 			for _, n := range numbers {
-				if !seen[offered[n-1]] {
-					include(offered[n-1])
+				switch root := offered[n-1].Root; {
+				case !seen[root]:
+					include(root)
+				case current != "":
+					leaveOut(root)
 				}
 			}
+			selection()
 			continue
 		}
 		include(answer)
 	}
+}
+
+// projectDetails describes a listed project: whether it is the folder setup
+// runs in, how many sessions the apps' history holds for it, and when one
+// was last used.
+func projectDetails(project backfill.KnownProject, current string, now time.Time) string {
+	var details []string
+	if project.Root == current {
+		details = append(details, "this folder")
+	}
+	switch {
+	case project.Sessions == 1:
+		details = append(details, "1 session")
+	case project.Sessions > 1:
+		details = append(details, fmt.Sprintf("%d sessions", project.Sessions))
+	}
+	if used := lastUsed(project.LastUsed, now); used != "" {
+		details = append(details, used)
+	}
+	return strings.Join(details, " · ")
 }
 
 // projectDir resolves a project directory as typed: ~ is home (the

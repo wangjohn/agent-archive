@@ -73,19 +73,23 @@ func TestSetupOffersProjectsFromAppHistory(t *testing.T) {
 	}
 }
 
-// Accepting the current repository no longer ends the project step: one
-// more question adds others, and its default keeps the old flow.
-func TestSetupAddsAnotherProjectAfterTheCurrentRepository(t *testing.T) {
+// Inside a repository, setup lists it already included, followed by the
+// projects the apps' history mentions with their session counts, so another
+// project is one number away and a blank line keeps just the repository.
+func TestSetupListsRecentProjectsAfterTheCurrentRepository(t *testing.T) {
 	t.Parallel()
 	for _, add := range []bool{false, true} {
 		t.Run(strconv.FormatBool(add), func(t *testing.T) {
 			t.Parallel()
-			home, current, other := t.TempDir(), gitRepo(t), gitRepo(t)
-			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+			home, userHome, current, other := t.TempDir(), t.TempDir(), gitRepo(t), gitRepo(t)
+			now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+			writeClaudeSession(t, userHome, "one", other, now.Add(-time.Hour))
+			writeClaudeSession(t, userHome, "two", other, now.Add(-2*time.Hour))
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), now)
 			env.WorkingDir = func() (string, error) { return current, nil }
-			answers := []string{"y", "n", "n", "y", ""}
+			answers := []string{"y", "n", "n", ""}
 			if add {
-				answers = []string{"y", "n", "n", "y", "y", other, ""}
+				answers = []string{"y", "n", "n", "2", ""}
 			}
 			input := strings.Join(append(answers, "s3", "b", "profile", "us-east-1", "y"), "\n") + "\n"
 			output := setupRun(t, env, input, 0)
@@ -94,7 +98,8 @@ func TestSetupAddsAnotherProjectAfterTheCurrentRepository(t *testing.T) {
 			if add {
 				want = 2
 			}
-			if !strings.Contains(output, "Add another project? [y/N]") || includedProjects(cfg.Archive.Projects) != want || cfg.Archive.Projects[0].Root != current {
+			if !strings.Contains(output, "1) ✓ "+current) || !strings.Contains(output, "2)   "+other) || !strings.Contains(output, "2 sessions · today") ||
+				strings.Contains(output, "Add another project?") || includedProjects(cfg.Archive.Projects) != want || cfg.Archive.Projects[0].Root != current {
 				t.Fatalf("projects %+v\n%s", cfg.Archive.Projects, output)
 			}
 		})

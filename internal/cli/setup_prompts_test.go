@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
@@ -298,9 +299,77 @@ func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
 	var cfg config.Config
 	var out bytes.Buffer
-	err := chooseCapture(newPrompter(strings.NewReader("y\nn\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
+	err := chooseCapture(newPrompter(strings.NewReader("y\n1\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
 	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
 		t.Fatalf("config=%+v err=%v", cfg, err)
+	}
+}
+
+// Leaving every project out asks for one again instead of ending setup,
+// inside a repository and outside one.
+//
+// Regression: 2026-09 onboarding review #7.
+func TestLeavingEveryProjectOutAsksAgain(t *testing.T) {
+	t.Parallel()
+	for _, inRepo := range []bool{true, false} {
+		t.Run(map[bool]string{true: "repository", false: "no-repository"}[inRepo], func(t *testing.T) {
+			t.Parallel()
+			other := t.TempDir()
+			other, _ = filepath.EvalSymlinks(other)
+			env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
+			env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+			input := "y\n\n" + other + "\n\n"
+			if inRepo {
+				current := gitRepo(t)
+				env.WorkingDir = func() (string, error) { return current, nil }
+				input = "y\n1\n\n" + other + "\n\n"
+			} else {
+				env.WorkingDir = func() (string, error) { return other, nil }
+			}
+			var cfg config.Config
+			var out bytes.Buffer
+			err := chooseCapture(newPrompter(strings.NewReader(input), &out), &cfg, t.TempDir(), env, nil)
+			if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other || !strings.Contains(out.String(), "Choose at least one project") {
+				t.Fatalf("config=%+v err=%v\n%s", cfg, err, &out)
+			}
+		})
+	}
+}
+
+// a includes every listed project, and each line says how many sessions the
+// apps' history holds for it.
+//
+// Regression: 2026-09 onboarding review #8.
+func TestRecentProjectsShowCountsAndATakesAll(t *testing.T) {
+	t.Parallel()
+	one, two := gitRepo(t), gitRepo(t)
+	known := []backfill.KnownProject{{Root: one, Sessions: 12}, {Root: two, Sessions: 1}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("a\n\n"), &out), nil, nil, known, "")
+	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
+		t.Fatalf("projects=%+v err=%v", projects, err)
+	}
+	if !strings.Contains(out.String(), "12 sessions") || !strings.Contains(out.String(), "1 session") || !strings.Contains(out.String(), "a for all") {
+		t.Fatalf("output:\n%s", &out)
+	}
+}
+
+// Switching a listed project off undoes only this answer: a project the
+// list added is dropped, and an exclusion setup kept stays an exclusion,
+// so a later backfill still skips it.
+func TestLeavingAListedProjectOutRestoresItsState(t *testing.T) {
+	t.Parallel()
+	current, excluded := gitRepo(t), gitRepo(t)
+	result := []archive.ProjectActivation{
+		{ProjectID: archive.ProjectID(current), Root: current, Included: true},
+		{ProjectID: archive.ProjectID(excluded), Root: excluded},
+	}
+	known := []backfill.KnownProject{{Root: excluded, Sessions: 3}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("2\n1 2\n\n"), &out), result, result, known, current)
+	want := []archive.ProjectActivation{{ProjectID: archive.ProjectID(excluded), Root: excluded}}
+	if err != nil || !reflect.DeepEqual(projects, want) {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
 }
 
