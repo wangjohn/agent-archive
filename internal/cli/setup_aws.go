@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -181,12 +182,27 @@ func (e Env) awsBuckets(profile, region string) (BucketFinder, error) {
 var openAWSBuckets = func(profile, region string) (BucketFinder, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), bucketDiscoveryTimeout)
 	defer cancel()
-	// Listing works from any region; the profile's is used when it has one.
-	cfg, err := credentials.LoadAWSConfig(ctx, profile, firstNonEmpty(region, "us-east-1"))
+	cfg, err := loadBucketDiscoveryConfig(ctx, profile, region)
 	if err != nil {
 		return nil, err
 	}
 	return s3BucketFinder{storage.NewClient(cfg, "", true, 1)}, nil
+}
+
+// loadBucketDiscoveryConfig loads profile the way the storage check does.
+// Listing works from any region, so us-east-1 is used only when neither
+// region nor the SDK's own sources (AWS_REGION, the profile) name one;
+// forcing it would send GovCloud or China credentials to the wrong
+// partition.
+func loadBucketDiscoveryConfig(ctx context.Context, profile, region string) (aws.Config, error) {
+	cfg, err := credentials.LoadAWSConfig(ctx, profile, region)
+	if err != nil {
+		return aws.Config{}, err
+	}
+	if cfg.Region == "" {
+		cfg.Region = "us-east-1"
+	}
+	return cfg, nil
 }
 
 // bucketDiscoveryTimeout bounds each discovery call, so a profile whose
@@ -250,6 +266,11 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env) error {
 		cfg.Region = ""
 	}
 	cfg.AWSProfile = profile
+	// A region saved before setup checked its shape is dropped here, before
+	// it can break the discovery client.
+	if !validRegion(cfg.Region) {
+		cfg.Region = ""
+	}
 	var profileRegion string
 	noCredentials := false
 	for _, candidate := range profiles {
@@ -258,16 +279,25 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env) error {
 			break
 		}
 	}
+	if !validRegion(profileRegion) {
+		profileRegion = ""
+	}
 
 	var finder BucketFinder
 	if noCredentials {
 		terminal.Printf(p.out, "Profile %s has no credentials configured, so type the bucket name.\n", profile)
 	} else if finder, err = env.awsBuckets(profile, firstNonEmpty(cfg.Region, profileRegion)); err != nil {
 		finder = nil
-		terminal.Printf(p.out, "Couldn't list the buckets of profile %s (%s), so type the name.\n", profile, discoveryReason(err))
+		noteListFailure(p, profile, err)
 	}
-	if cfg.Bucket, err = promptBucket(p, finder, profile, cfg.Bucket); err != nil {
+	var listErr error
+	if cfg.Bucket, listErr, err = promptBucket(p, finder, profile, cfg.Bucket); err != nil {
 		return err
+	}
+	// Without working credentials or a network, the region lookup would run
+	// the credential chain again only to fail the same way.
+	if cause := storage.Diagnose(listErr).Cause; listErr != nil && (cause == storage.CauseNoCredentials || cause == storage.CauseNetwork) {
+		finder = nil
 	}
 
 	if finder != nil {
@@ -279,10 +309,7 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env) error {
 		}
 		terminal.Printf(p.out, "Couldn't look up the region of bucket %s (%s).\n", cfg.Bucket, discoveryReason(err))
 	}
-	if !validRegion(cfg.Region) {
-		cfg.Region = ""
-	}
-	if cfg.Region == "" && validRegion(profileRegion) {
+	if cfg.Region == "" {
 		cfg.Region = profileRegion
 	}
 	if cfg.Region == "" {
@@ -296,20 +323,24 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env) error {
 // promptBucket offers the buckets finder lists by number, or asks for the
 // name when there is no finder, the listing fails, or it is empty. The
 // saved bucket is the default, else the first named like agent-archive*.
-func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (string, error) {
+// listErr is why the listing failed, if it did.
+func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (bucket string, listErr, err error) {
 	if finder == nil {
-		return p.required("Bucket name", saved)
+		bucket, err = p.required("Bucket name", saved)
+		return bucket, nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bucketDiscoveryTimeout)
-	names, err := finder.Buckets(ctx)
+	names, listErr := finder.Buckets(ctx)
 	cancel()
-	if err != nil {
-		terminal.Printf(p.out, "Couldn't list the buckets of profile %s (%s), so type the name.\n", profile, discoveryReason(err))
-		return p.required("Bucket name", saved)
+	if listErr != nil {
+		noteListFailure(p, profile, listErr)
+		bucket, err = p.required("Bucket name", saved)
+		return bucket, listErr, err
 	}
 	if len(names) == 0 {
 		terminal.Printf(p.out, "Profile %s can see no buckets, so type the name.\n", profile)
-		return p.required("Bucket name", saved)
+		bucket, err = p.required("Bucket name", saved)
+		return bucket, nil, err
 	}
 	def := saved
 	if def == "" {
@@ -320,7 +351,14 @@ func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (stri
 			}
 		}
 	}
-	return pickByNumber(p, "Which bucket should sessions be stored in?", names, nil, def, "bucket name")
+	bucket, err = pickByNumber(p, "Which bucket should sessions be stored in?", names, nil, def, "bucket name", maxListedBuckets)
+	return bucket, nil, err
+}
+
+// noteListFailure says in one line that profile's buckets couldn't be
+// listed, and why.
+func noteListFailure(p *prompter, profile string, err error) {
+	terminal.Printf(p.out, "Couldn't list the buckets of profile %s (%s), so type the name.\n", profile, discoveryReason(err))
 }
 
 // bucketRegion reads bucket's region. A region S3 names while refusing
@@ -361,10 +399,10 @@ func discoveryReason(err error) string {
 		return "S3 couldn't be reached"
 	case storage.CauseWrongRegion:
 		return "the bucket is in another region"
-	case storage.CauseOther:
-		return "S3 returned an error"
 	default:
-		return "S3 returned an error"
+		// CauseOther includes local failures, such as an unusable profile,
+		// where S3 was never asked.
+		return "the lookup failed"
 	}
 }
 
@@ -380,20 +418,21 @@ func pickAWSProfile(p *prompter, profiles []AWSProfile, def string) (string, err
 			notes[i] = p.style.dim("(no credentials configured)")
 		}
 	}
-	return pickByNumber(p, "Which AWS profile has access to the bucket?", names, notes, def, "profile name")
+	return pickByNumber(p, "Which AWS profile has access to the bucket?", names, notes, def, "profile name", 0)
 }
 
-// maxListed caps how many choices pickByNumber lists; the rest can be typed.
-const maxListed = 20
+// maxListedBuckets caps how many buckets setup lists; the rest can be typed.
+const maxListedBuckets = 20
 
 // pickByNumber lists names by number under question, each followed by its
 // note if any, and returns the one chosen by number or the name typed. The
-// default is def's number when listed, else def itself.
-func pickByNumber(p *prompter, question string, names, notes []string, def, kind string) (string, error) {
+// default is def's number when listed, else def itself. A positive limit
+// caps how many are listed; the rest can be typed.
+func pickByNumber(p *prompter, question string, names, notes []string, def, kind string, limit int) (string, error) {
 	terminal.Println(p.out, question)
 	listed := names
-	if len(listed) > maxListed {
-		listed = listed[:maxListed]
+	if limit > 0 && len(listed) > limit {
+		listed = listed[:limit]
 	}
 	defNum := def
 	for i, name := range listed {

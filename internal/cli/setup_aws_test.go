@@ -215,6 +215,8 @@ type fakeBuckets struct {
 	regionErr error
 	// opened records the profile and region each open was given.
 	opened *[]string
+	// regionCalls counts Region lookups.
+	regionCalls *int
 }
 
 func (f fakeBuckets) open(profile, region string) (BucketFinder, error) {
@@ -227,6 +229,9 @@ func (f fakeBuckets) open(profile, region string) (BucketFinder, error) {
 func (f fakeBuckets) Buckets(context.Context) ([]string, error) { return f.names, f.listErr }
 
 func (f fakeBuckets) Region(_ context.Context, bucket string) (string, error) {
+	if f.regionCalls != nil {
+		*f.regionCalls++
+	}
 	if f.regionErr != nil {
 		return "", f.regionErr
 	}
@@ -445,7 +450,7 @@ func TestS3LocationNeverPrintsTheDiscoveryError(t *testing.T) {
 	if err := promptS3Location(newPrompter(strings.NewReader("work\nb\nus-east-1\n"), &out), &credentials.Config{}, env); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "AKIA") || !strings.Contains(out.String(), "Couldn't list the buckets of profile work (S3 returned an error), so type the name.\n") {
+	if strings.Contains(out.String(), "AKIA") || !strings.Contains(out.String(), "Couldn't list the buckets of profile work (the lookup failed), so type the name.\n") {
 		t.Fatalf("output %q", &out)
 	}
 }
@@ -477,9 +482,104 @@ func TestSetupYesRejectsARegionThatIsNotARegion(t *testing.T) {
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("a configuration was saved")
 	}
-	// A profile's own region is checked too.
+	if !strings.Contains(out, `--region "~/code/api" isn't an AWS region`) {
+		t.Fatalf("output does not name the rejected flag: %s", out)
+	}
+	// A profile's own region is checked too, and the error names the profile.
 	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "p", Region: "nowhere"}}, nil }
-	setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--project", t.TempDir())
+	out = setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--project", t.TempDir())
+	if !strings.Contains(out, `AWS profile p names region "nowhere", which isn't an AWS region; pass --region`) {
+		t.Fatalf("output %s", out)
+	}
+}
+
+// A region saved before setup checked its shape never reaches the
+// discovery client, where it would break listing.
+func TestS3LocationNeverOpensDiscoveryWithASavedRegionThatIsNotARegion(t *testing.T) {
+	t.Parallel()
+	var opened []string
+	cfg := credentials.Config{AWSProfile: "work", Region: "~/code/api"}
+	env := s3LocationEnv([]AWSProfile{{Name: "work", Region: "eu-west-2"}},
+		fakeBuckets{names: []string{"team-archive"}, regions: map[string]string{"team-archive": "eu-west-2"}, opened: &opened})
+	var out bytes.Buffer
+	if err := promptS3Location(newPrompter(strings.NewReader("\n1\n"), &out), &cfg, env); err != nil || cfg.Region != "eu-west-2" {
+		t.Fatalf("cfg=%+v err=%v", cfg, err)
+	}
+	if !reflect.DeepEqual(opened, []string{"work eu-west-2"}) {
+		t.Fatalf("finder opened with %q", opened)
+	}
+}
+
+// When listing fails for want of credentials, setup does not run the
+// credential chain again for the region, and says so in one line.
+func TestS3LocationSkipsTheRegionLookupWhenListingCannotWork(t *testing.T) {
+	t.Parallel()
+	noCredentials := &smithy.GenericAPIError{Code: "ExpiredToken", Message: "synthetic"}
+	for _, tc := range []struct {
+		name    string
+		listErr error
+		calls   int
+	}{
+		{"no credentials", noCredentials, 0},
+		{"access denied", errAccessDenied, 1},
+	} {
+		calls := 0
+		cfg := credentials.Config{}
+		env := s3LocationEnv([]AWSProfile{{Name: "work", Region: "us-west-2"}},
+			fakeBuckets{listErr: tc.listErr, regions: map[string]string{"typed": "us-west-2"}, regionCalls: &calls})
+		var out bytes.Buffer
+		if err := promptS3Location(newPrompter(strings.NewReader("\ntyped\n"), &out), &cfg, env); err != nil || cfg.Region != "us-west-2" {
+			t.Fatalf("%s: cfg=%+v err=%v", tc.name, cfg, err)
+		}
+		if calls != tc.calls || strings.Count(out.String(), "Couldn't") != 1 {
+			t.Errorf("%s: %d region lookups, want %d; output %q", tc.name, calls, tc.calls, &out)
+		}
+	}
+}
+
+// Every AWS profile is listed by number; only buckets are capped.
+func TestPickAWSProfileListsEveryProfile(t *testing.T) {
+	t.Parallel()
+	var profiles []AWSProfile
+	for i := 1; i <= 25; i++ {
+		profiles = append(profiles, AWSProfile{Name: fmt.Sprintf("account-%02d", i)})
+	}
+	var out bytes.Buffer
+	got, err := pickAWSProfile(newPrompter(strings.NewReader("25\n"), &out), profiles, "")
+	if err != nil || got != "account-25" {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+	if !strings.Contains(out.String(), "  25) account-25\nEnter 1-25, or another profile name: ") || strings.Contains(out.String(), "more not listed") {
+		t.Fatalf("output %q", &out)
+	}
+}
+
+// Discovery uses the region the SDK finds (AWS_REGION, then the profile)
+// when none is given, and falls back to us-east-1 only when there is none,
+// so GovCloud or China credentials reach their own partition.
+func TestBucketDiscoveryConfigKeepsTheSDKRegion(t *testing.T) {
+	dir := t.TempDir()
+	configFile := filepath.Join(dir, "config")
+	body := "[profile gov]\nregion = us-gov-west-1\naws_access_key_id = AKIASYNTHETIC\naws_secret_access_key = synthetic\n" +
+		"[profile bare]\naws_access_key_id = AKIASYNTHETIC\naws_secret_access_key = synthetic\n"
+	if err := os.WriteFile(configFile, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", configFile)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "credentials"))
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	for _, tc := range []struct{ profile, region, awsRegion, want string }{
+		{"gov", "", "", "us-gov-west-1"},
+		{"bare", "", "cn-north-1", "cn-north-1"},
+		{"bare", "", "", "us-east-1"},
+		{"gov", "eu-west-2", "", "eu-west-2"},
+	} {
+		t.Setenv("AWS_REGION", tc.awsRegion)
+		cfg, err := loadBucketDiscoveryConfig(context.Background(), tc.profile, tc.region)
+		if err != nil || cfg.Region != tc.want {
+			t.Errorf("%s %q AWS_REGION=%q: region %q err=%v, want %q", tc.profile, tc.region, tc.awsRegion, cfg.Region, err, tc.want)
+		}
+	}
 }
 
 // The provider and profile questions agree: when AWS_PROFILE names a
