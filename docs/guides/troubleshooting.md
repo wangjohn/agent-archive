@@ -46,31 +46,72 @@ find none say so without creating the data directory.
 
 ```sh
 agent-archive status
+agent-archive status --verbose
 agent-archive status --json
 ```
 
 Status uses local evidence and a read-only launchd check; it never downloads
-conversations. The text status leads with the overall state and, unless it is
-Ready, the one thing to fix and how. Below that, **Capture** has a row per app
-and **Storage** a row each for the destination, bucket privacy, and the
-background collector: ✓ is fine, ! needs you, ✗ is blocked. Times are shown
-relative to now. `status --json` has the exact times and codes, and separates
-configured, hook-observed, captured, published, and read-back-verified
-evidence.
+conversations. It leads with the overall state and, unless that is Ready,
+the one thing to fix, with each command to run on its own line:
 
+```text
+Agent Archive  ● Needs attention
+
+  ! The last sync failed
+    Check storage access and run agent-archive sync.
+    To change credentials, run agent-archive setup and choose storage.
+
+Capture
+  ✓ Codex   hooks installed   1 session archived, verified just now
+  · Projects: ~/src/web-app
+
+Storage
+  ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
+  ! Bucket privacy not verified        this storage can't be inspected
+    Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ✓ Background collector on            last scan just now
+  ✗ Storage refused access
+  · Last upload: just now · 0 pending
+
+Details: agent-archive status --verbose
+```
+
+**Capture** has a row per app, then the included projects and any imports.
+**Storage** has a row each for the destination, bucket privacy, the
+background collector, the last sync's error if it failed, and uploads. ✓ is
+fine, ! needs you, ✗ is blocked, and · is information. Times are relative to
+now and paths under your home folder start with `~`.
+
+- **`status --verbose`** prints the same screen and then a **Details**
+  section with what is behind each row: the state codes, exact times (UTC),
+  full paths, each app's installed version and support, each project's
+  verification state, read-back evidence and retries, the bucket privacy
+  check's reason code and guidance, and the last error as the collector
+  recorded it. Include it when you report a problem.
+- **`status --json`** is the same evidence as a versioned document for
+  scripts ([JSON output](../reference/json-output.md#status---json)); it
+  separates configured, hook-observed, captured, published, and
+  read-back-verified evidence. `--verbose` doesn't change it.
 - **Before setup**, status shows only that setup is needed (`--json`:
   background `missing`, authentication `not_configured`).
+- **A failed sync** shows its cause on the Storage section's ✗ row when the
+  storage provider refused the request: **Storage refused access** (the
+  credentials aren't allowed to list, read, write and delete in the bucket),
+  **Storage didn't accept the credentials** (an expired or unknown key),
+  **The bucket doesn't exist**, or **The bucket is in a different region**.
+  Any other failure is shown as **Last error:** with the collector's own
+  words. The provider's raw error is in `status --verbose`.
 - **Background collector on** (`--json`: background `loaded`, or `running`
   while a pass is executing) means launchd knows the scheduled job. When it
   **belongs to another installation** (`another_installation`), launchd runs
   this installation's label from a different plist. That job belongs to another
   installation and is left alone: set `AGENT_ARCHIVE_HOME` to a data
   directory of this installation's own, or uninstall the other one.
-- **Hooks or background collector broken** means the configuration is in
-  place but runs an `agent-archive` executable that has since been moved,
-  deleted, or made non-executable. Rerun `agent-archive setup` from the
-  binary's new location.
-- **The background collector cannot load your AWS profile** (S3): the
+- **agent-archive can't run from where setup installed it** means the hooks
+  or background collector run an `agent-archive` executable that has since
+  been moved, deleted, or made non-executable. Rerun `agent-archive setup`
+  from the binary's new location.
+- **The background collector can't load your AWS profile** (S3): the
   collector runs with the AWS files and `PATH` setup recorded in its
   LaunchAgent, and one of them no longer works: an `AWS_CONFIG_FILE` that
   moved, or a `credential_process` helper that is no longer on that `PATH`
@@ -80,8 +121,8 @@ evidence.
   profile works. A warning that your shell's AWS settings files differ from
   the collector's means `sync` here and the collector read different
   profiles.
-- **The background collector couldn't get credentials from your AWS
-  profile's `credential_process`** (S3): the helper ran but failed. It runs
+- **The background collector couldn't get AWS credentials** (S3): the
+  profile's `credential_process` helper ran but failed. It runs
   without most of your shell's environment: aws-vault's and 1Password's
   settings for where credentials live are passed on, but other settings
   aren't
@@ -90,9 +131,10 @@ evidence.
   needs you to unlock it or sign in (a locked vault, an expired `op`
   session) fails until you do. Check with `agent-archive sync`, then run
   `agent-archive setup` again from a shell where it works.
-- **Capture** distinguishes waiting for a session, observed hooks, local
-  capture, and published sources with verified checksums. Configuration
-  alone never establishes capture.
+- **Capture** rows say how far each app has got: waiting for its first
+  session, session seen, captured but not uploaded, uploaded with read-back
+  pending, or archived and verified. Configuration alone never establishes
+  capture.
 - **The storage row** shows when the bucket was last found reachable with
   the configured credentials, and whether by setup's check or the collector
   (its access probe, or a pass that uploaded), or why the last check failed.
@@ -100,22 +142,24 @@ evidence.
   configuration, retries failed checks, and refreshes the check after four
   minutes. A check over ten minutes old is flagged, unless collection is
   paused, when the last check is shown with its time.
-- **Capture gaps.** `status --json` counts, per app, the sessions whose
-  last capture recorded a gap (`sessions_with_capture_gaps`). The fields are
-  described in [JSON output](../reference/json-output.md#status---json).
+- **Capture gaps.** An app's row counts the sessions whose last capture
+  recorded a gap; `status --json` lists them (`capture_gaps`,
+  `sessions_with_capture_gaps`), as described in
+  [JSON output](../reference/json-output.md#status---json).
 - **Read-back.** Each publication is read back and compared. One that cannot
   be read back is retried with increasing delays (one minute up to a day), at
-  most five per pass, oldest first; status reports it as pending, failed, or
-  mismatched. It does not fail `sync`.
+  most five per pass, oldest first; status says when it retries next and how
+  many attempts it has made, or that what was read back doesn't match. It
+  does not fail `sync`.
 - **Collection stuck.** Every command that takes the collector lock records
   which command it is and when. When one has held it for over two hours
   (twice a pass's hard time limit), status says collection is stuck and names
   the command and its process ID.
-- **Quarantined state.** Status counts local state files a pass could not read
-  and moved aside, and session summaries this version cannot refresh.
-- **Authentication** in `status --json` says whether the storage check came
-  from a manual `sync` or the background environment. App versions a hook
-  doesn't report stay unknown.
+- **Notes** count local state files a pass could not read and moved aside,
+  and session summaries this version cannot refresh.
+- **Authentication** in `status --verbose` and `status --json` says whether
+  the storage check came from a manual `sync` or the background environment.
+  App versions a hook doesn't report stay unknown.
 
 ## An interrupted setup
 

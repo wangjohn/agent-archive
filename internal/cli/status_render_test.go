@@ -2,6 +2,7 @@ package cli
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -73,6 +74,12 @@ func renderStatus(view statusView, color bool) string {
 	return out.String()
 }
 
+func renderVerboseStatus(view statusView, color bool) string {
+	var out strings.Builder
+	printStatus(&out, view, statusScreen{style: textStyle{color: color}, now: renderNow, home: "/Users/alex", verbose: true})
+	return out.String()
+}
+
 // The text status words everything: exact times and the codes status --json
 // carries stay there.
 func TestStatusTextShowsNoCodesOrExactTimes(t *testing.T) {
@@ -85,10 +92,14 @@ func TestStatusTextShowsNoCodesOrExactTimes(t *testing.T) {
 	if code := regexp.MustCompile(`\b[a-z]+_[a-z_]+\b`).FindString(regexp.MustCompile(`\S+\.json\S*`).ReplaceAllString(text, "")); code != "" {
 		t.Errorf("status shows the code %s:\n%s", code, text)
 	}
+	// A storage error is shown by its cause, not the provider's raw text.
+	if strings.Contains(text, "AccessDenied") {
+		t.Errorf("status shows the raw storage error:\n%s", text)
+	}
 	for _, want := range []string{
 		"Agent Archive  ● Needs attention\n",
 		"  ! The last sync failed\n",
-		"    Check storage access and run agent-archive sync.",
+		"    Check storage access and run agent-archive sync.\n    To change credentials, run agent-archive setup and choose storage.\n",
 		"2 sessions archived, verified 26 hours ago",
 		"uploaded, read-back pending (1 of 2 projects verified)",
 		"Read-back failed: not found (retrying in 5 minutes, 2 attempts so far)",
@@ -99,12 +110,12 @@ func TestStatusTextShowsNoCodesOrExactTimes(t *testing.T) {
 		"the last check is over a day old, checked 3 hours ago",
 		"    Check public access: https://example.com/guide\n",
 		"last scan 1 minute ago",
-		"✗ Last error: list registrations: AccessDenied: Access Denied\n",
+		"✗ Storage refused access\n",
 		"· Last upload: 50 minutes ago · 3 pending\n",
 		"! 2 local state files couldn't be read and were moved aside",
 		"· 1 session summary can't be refreshed",
 		"! Installed versions could not be read from ~/.agent-archive/application-versions.json",
-		"Details: agent-archive status --json\n",
+		"Details: agent-archive status --verbose\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("status is missing %q:\n%s", want, text)
@@ -206,7 +217,7 @@ func TestStatusWrapsToTheTerminal(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"\n    Check storage access and run agent-archive sync. To\n    change credentials,",
+		"\n    Check storage access and run agent-archive sync.\n    To change credentials, run agent-archive setup and\n    choose storage.\n",
 		"\n  ✓ Codex 0.121.0        hooks installed\n    2 sessions archived, verified 26 hours ago\n",
 	} {
 		if !strings.Contains(out.String(), want) {
@@ -301,5 +312,100 @@ func TestStatusWaitingProjectOfCapturedApp(t *testing.T) {
 	statusScreen{home: "/Users/alex"}.printNextStep(&out, view)
 	if !strings.Contains(out.String(), "! Waiting for a Codex session in ~/b\n") {
 		t.Fatalf("screen:\n%s", out.String())
+	}
+}
+
+// status --verbose keeps everything the text status printed before it was
+// redesigned: codes, exact times, full paths, raw errors and evidence, in a
+// Details section after the usual screen.
+func TestStatusVerboseKeepsTodaysDetail(t *testing.T) {
+	t.Parallel()
+	view := busyStatusView()
+	view.Code = statusCode(view.State)
+	for i := range view.Apps {
+		view.Apps[i].Code = statusCode(view.Apps[i].State)
+	}
+	text := renderVerboseStatus(view, false)
+	screen, _, found := strings.Cut(renderStatus(view, false), "\nDetails:")
+	if !found || !strings.HasPrefix(text, screen) {
+		t.Errorf("status --verbose does not start with the usual screen:\n%s", text)
+	}
+	for _, want := range []string{
+		"\nDetails\n",
+		"  State:         Needs attention (needs_attention)\n",
+		"  Storage:       s3 / team-archive / agent-archive/\n",
+		"  Access:        confirmed 2026-09-25T11:58:00Z by the collector's last successful storage access\n",
+		"  Bucket privacy not verified.\n    Checked: 2026-09-25T09:00:00Z; inspection_stale.\n    Review: https://example.com/guide\n",
+		"  Authentication: verified (checked 2026-09-25T11:58:00Z; manual_sync)\n",
+		"  Background:    loaded\n",
+		"  Projects:      2 included\n  Pending:       3 session(s)\n  Last scan:     2026-09-25T11:59:00Z\n  Last publish:  2026-09-25T11:10:00Z\n",
+		"  Imported:      4 session(s), 1 waiting to upload; last import import-7\n",
+		"  Codex: published; source verified (published_source_verified; 2 session(s); 1 with a capture gap); hooks installed\n",
+		"    Hook trust: unknown here;",
+		"    Installed version: 0.121.0; support unverified (verified sessions came from a different version).\n",
+		"    Read-back verified: 2026-09-24T10:00:00Z; evidence is for that publication.\n",
+		"    Capture gaps: 2 recorded across 1 session(s); see status --json for details.\n",
+		"    Project /Users/alex/src/api: incomplete.\n",
+		"    Last read-back: 2026-09-25T11:00:00Z (1 of 2 projects verified).\n",
+		"    Read-back: failed: not found (attempt 2; next retry 2026-09-25T12:05:00Z)\n",
+		"  Cursor: waiting for first session (awaiting_session; 0 session(s)); hooks missing or incomplete\n",
+		"  Capture skipped in /Users/alex/src/api (Claude Code): setup was still in progress, so the session was not registered; start a new session at 2026-09-25T11:20:00Z.\n",
+		"  Last error:    list registrations: AccessDenied: Access Denied\n",
+		"  Quarantined:   2 local state file(s)",
+		"  Summaries:     1 session summary(ies)",
+		"  Warning:       Installed versions could not be read from /Users/alex/.agent-archive/application-versions.json",
+		"\nAs JSON: agent-archive status --json\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("status --verbose is missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(renderStatus(view, false), "\nDetails\n") {
+		t.Error("status without --verbose has the Details section")
+	}
+}
+
+// The Storage section names a storage refusal the collector recorded by its
+// cause, from the provider's error code, and shows anything else as recorded.
+func TestStatusLastErrorPlainCause(t *testing.T) {
+	t.Parallel()
+	for recorded, want := range map[string]string{
+		"list registrations: AccessDenied: Access Denied": "Storage refused access",
+		"list registrations: operation error S3: ListObjectsV2, https response error StatusCode: 403, RequestID: R, HostID: H, api error AccessDenied: Access Denied": "Storage refused access",
+		"publish: operation error S3: PutObject, api error NoSuchBucket: The specified bucket does not exist":                                                         "The bucket doesn't exist",
+		"list registrations: operation error S3: ListObjectsV2, api error InvalidAccessKeyId: The key does not exist":                                                 "Storage didn't accept the credentials",
+		"list registrations: operation error S3: ListObjectsV2, api error PermanentRedirect: use the right endpoint":                                                  "The bucket is in a different region",
+		"2 session(s) failed to scan or publish":                                                                     "Last error: 2 session(s) failed to scan or publish",
+		"2 session(s) failed to scan or publish; list registrations: api error AccessDenied: Access Denied":          "Last error: 2 session(s) failed to scan or publish; Storage refused access",
+		"list registrations: operation error S3: ListObjectsV2, api error SlowDown: Please reduce your request rate": "Last error: list registrations: operation error S3: ListObjectsV2, api error SlowDown: Please reduce your request rate",
+		"the note says AccessDenied: is expected here":                                                               "Last error: the note says AccessDenied: is expected here",
+	} {
+		if got := lastErrorText(recorded); got != want {
+			t.Errorf("%q: %q want %q", recorded, got, want)
+		}
+	}
+}
+
+// A next step puts each sentence that names a command on its own line, with
+// that command highlighted; a sentence without one stays with the line
+// before it.
+func TestStatusNextStepOneCommandPerLine(t *testing.T) {
+	t.Parallel()
+	sc := statusScreen{style: textStyle{color: true}}
+	for next, want := range map[string][]string{
+		"Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage.": {
+			"Check storage access and run \x1b[36magent-archive sync\x1b[0m.",
+			"To change credentials, run \x1b[36magent-archive setup\x1b[0m and choose storage.",
+		},
+		"Keep working. Run agent-archive list to inspect archived sessions.": {
+			"Keep working. Run \x1b[36magent-archive list\x1b[0m to inspect archived sessions.",
+		},
+		"Run agent-archive resume when ready. Registered sessions can catch up after resume.": {
+			"Run \x1b[36magent-archive resume\x1b[0m when ready. Registered sessions can catch up after resume.",
+		},
+	} {
+		if got := sc.proseLines(next); !slices.Equal(got, want) {
+			t.Errorf("%q:\n%q\nwant\n%q", next, got, want)
+		}
 	}
 }

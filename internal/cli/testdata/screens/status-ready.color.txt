@@ -13,5 +13,5 @@ $ agent-archive status
   \e[2m·\e[0m Last upload: just now · 0 pending
 
 \e[2mNext:\e[0m Keep working. Run \e[36magent-archive list\e[0m to inspect archived sessions.
-\e[2mDetails:\e[0m \e[36magent-archive status --json\e[0m
+\e[2mDetails:\e[0m \e[36magent-archive status --verbose\e[0m
 [exit 0]

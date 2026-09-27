@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/smithy-go"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -155,6 +156,7 @@ type statusView struct {
 func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("status", stderr)
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
+	verbose := fs.Bool("verbose", false, "also print the codes, exact times and evidence behind each line")
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
@@ -175,7 +177,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
 		return 0
 	}
-	printStatus(stdout, view, statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome})
+	printStatus(stdout, view, statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose})
 	return 0
 }
 
@@ -989,16 +991,19 @@ func statusCode(label string) string {
 }
 
 // statusScreen is what the text status is drawn with: the output's style,
-// the clock times are shown relative to, and the home folder shown as ~.
+// the clock times are shown relative to, the home folder shown as ~, and
+// whether to add the Details section (status --verbose).
 type statusScreen struct {
-	style textStyle
-	now   time.Time
-	home  string
+	style   textStyle
+	now     time.Time
+	home    string
+	verbose bool
 }
 
 // printStatus writes the text status: the overall state, what to do about
 // it, the Capture and Storage sections, and anything else worth knowing.
-// Codes and exact times are left to status --json.
+// Codes, exact times and raw errors are left to the Details section that
+// status --verbose adds, and to status --json.
 func printStatus(out io.Writer, view statusView, sc statusScreen) {
 	s := sc.style
 	terminal.Printf(out, "%s  %s\n", s.bold("Agent Archive"), sc.stateLabel(view.State))
@@ -1017,11 +1022,25 @@ func printStatus(out io.Writer, view statusView, sc statusScreen) {
 		terminal.Printf(out, "\n%s\n", s.bold("Notes"))
 		sc.printRows(out, notes)
 	}
+	if sc.verbose {
+		terminal.Printf(out, "\n%s\n", s.bold("Details"))
+		printStatusDetails(out, view)
+	}
 	terminal.Println(out)
 	if view.State == "Ready" {
-		terminal.Println(out, s.hang(s.dim("Next:")+" ", sc.prose(view.Next)))
+		for i, line := range sc.proseLines(view.Next) {
+			lead := s.dim("Next:") + " "
+			if i > 0 {
+				lead = "      "
+			}
+			terminal.Println(out, s.hang(lead, line))
+		}
 	}
-	terminal.Printf(out, "%s %s\n", s.dim("Details:"), s.cmd("agent-archive status --json"))
+	if sc.verbose {
+		terminal.Printf(out, "%s %s\n", s.dim("As JSON:"), s.cmd("agent-archive status --json"))
+		return
+	}
+	terminal.Printf(out, "%s %s\n", s.dim("Details:"), s.cmd("agent-archive status --verbose"))
 }
 
 // stateLabel is the overall state after a dot, green when all is well and
@@ -1041,13 +1060,15 @@ func (sc statusScreen) stateLabel(state string) string {
 // printNextStep writes the one thing to do now: what is wrong, and under it
 // how to fix it.
 func (sc statusScreen) printNextStep(out io.Writer, view statusView) {
-	next := sc.prose(view.Next)
+	indent := "    "
 	if view.problem == "" {
-		terminal.Println(out, sc.style.hang("  ", next))
-		return
+		indent = "  "
+	} else {
+		terminal.Println(out, sc.style.hang("  "+sc.style.warnMark()+" ", sc.tilde(view.problem)))
 	}
-	terminal.Println(out, sc.style.hang("  "+sc.style.warnMark()+" ", sc.tilde(view.problem)))
-	terminal.Println(out, sc.style.hang("    ", next))
+	for _, line := range sc.proseLines(view.Next) {
+		terminal.Println(out, sc.style.hang(indent, line))
+	}
 }
 
 // statusRow is one line of a status section: a colored symbol, columns
@@ -1271,7 +1292,7 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 	}
 	rows = append(rows, sc.backgroundRow(view))
 	if view.Collector.LastError != "" {
-		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{"Last error: " + view.Collector.LastError}})
+		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{lastErrorText(view.Collector.LastError)}})
 	}
 	uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
@@ -1487,6 +1508,233 @@ func (sc statusScreen) prose(text string) string {
 	return text
 }
 
+// proseLines readies a next step for the screen as prose does, one line for
+// each sentence that names a command, so that every command is highlighted
+// and no line highlights two. A sentence without a command stays on the line
+// before it.
+func (sc statusScreen) proseLines(text string) []string {
+	var lines []string
+	line := ""
+	for _, sentence := range sentences(text) {
+		if line != "" && proseCommand.MatchString(line) && proseCommand.MatchString(sentence) {
+			lines = append(lines, sc.prose(line))
+			line = ""
+		}
+		if line != "" {
+			line += " "
+		}
+		line += sentence
+	}
+	return append(lines, sc.prose(line))
+}
+
+// sentences splits text after each full stop that a space and a capital
+// letter follow.
+func sentences(text string) []string {
+	var out []string
+	for {
+		i := sentenceEnd.FindStringIndex(text)
+		if i == nil {
+			return append(out, text)
+		}
+		out = append(out, text[:i[0]+1])
+		text = text[i[1]-1:]
+	}
+}
+
+var sentenceEnd = regexp.MustCompile(`\. [A-Z]`)
+
 // proseCommand matches an agent-archive command, with its flags, in a
 // sentence.
 var proseCommand = regexp.MustCompile(`agent-archive (?:` + strings.Join(slices.Sorted(maps.Keys(commandHelp)), "|") + `)\b(?: --[a-z][a-z-]*)*`)
+
+// lastErrorText is the Storage section's line for the collector's last
+// error. A storage refusal the collector recorded is shown by its plain
+// cause (see storage.Diagnose); the raw error text is in status --verbose.
+// Anything else, like the collector's own counts of failed sessions, is
+// shown as recorded.
+func lastErrorText(lastError string) string {
+	parts := strings.Split(lastError, "; ")
+	plain := false
+	for i, part := range parts {
+		if cause := storageErrorCause(part); cause != "" {
+			parts[i], plain = cause, true
+		}
+	}
+	if plain && len(parts) == 1 {
+		return parts[0]
+	}
+	return "Last error: " + strings.Join(parts, "; ")
+}
+
+// storageErrorCause names, in a few words, the storage failure an error
+// recorded as text reports, or returns "" when it reports none that
+// storage.Diagnose recognizes. The status file keeps only the error's text,
+// so the provider's error code is read back from where the SDK writes it
+// ("api error AccessDenied: Access Denied") and diagnosed as a code; a
+// message that merely mentions a code elsewhere is not taken for it.
+func storageErrorCause(text string) string {
+	for _, match := range recordedErrorCode.FindAllStringSubmatch(text, -1) {
+		switch storage.Diagnose(&smithy.GenericAPIError{Code: match[1]}).Cause {
+		case storage.CauseAccessDenied:
+			return "Storage refused access"
+		case storage.CauseNoCredentials:
+			return "Storage didn't accept the credentials"
+		case storage.CauseNoSuchBucket:
+			return "The bucket doesn't exist"
+		case storage.CauseWrongRegion:
+			return "The bucket is in a different region"
+		case storage.CauseNetwork, storage.CauseOther:
+			// Not recognized from a code alone.
+		}
+	}
+	return ""
+}
+
+// recordedErrorCode matches a provider error code where an error's text puts
+// it: after "api error " or a ": ", and before ": ".
+var recordedErrorCode = regexp.MustCompile(`(?:^|api error |: )([A-Z][A-Za-z]+): `)
+
+// printStatusDetails writes the Details section of status --verbose: every
+// line the text status printed before it was redesigned, with its codes,
+// exact times, full paths and raw errors.
+func printStatusDetails(out io.Writer, view statusView) {
+	terminal.Printf(out, "  State:         %s (%s)\n", view.State, view.Code)
+	if view.Storage != "" {
+		terminal.Printf(out, "  Storage:       %s\n  Access:        %s\n", view.Storage, storageAccessLine(view))
+		printBucketPrivacy(out, view.PrivacyEvidence)
+	}
+	checked := "not checked yet"
+	if !view.Authentication.CheckedAt.IsZero() {
+		checked = "checked " + formatTimeOrNever(view.Authentication.CheckedAt)
+	}
+	if view.Authentication.Context != "" {
+		checked += "; " + view.Authentication.Context
+	}
+	terminal.Printf(out, "  Authentication: %s (%s)\n", view.Authentication.State, checked)
+	terminal.Printf(out, "  Background:    %s\n", view.Background)
+	if view.Paused {
+		terminal.Println(out, "  Collection:    paused")
+	}
+	terminal.Printf(out, "  Projects:      %d included\n  Pending:       %d session(s)\n  Last scan:     %s\n  Last publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
+	if view.ImportedSessions > 0 {
+		imported := fmt.Sprintf("%d session(s), %d waiting to upload", view.ImportedSessions, view.ImportedPending)
+		if view.ImportedWithIssues > 0 {
+			imported += fmt.Sprintf(", %d with a capture gap or failed scan", view.ImportedWithIssues)
+		}
+		if view.LastImport != "" {
+			imported += "; last import " + view.LastImport
+		}
+		terminal.Printf(out, "  Imported:      %s\n", imported)
+	}
+	for _, app := range view.Apps {
+		printAppDetails(out, app)
+	}
+	for _, diagnostic := range view.CaptureDiagnostics {
+		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
+	}
+	if view.Collector.LastError != "" {
+		terminal.Printf(out, "  Last error:    %s\n", view.Collector.LastError)
+	}
+	if n := len(view.Collector.QuarantinedFiles); n > 0 {
+		terminal.Printf(out, "  Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)
+	}
+	if n := view.Collector.UnrefreshableSummaries; n > 0 {
+		terminal.Printf(out, "  Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
+	}
+	for _, warning := range view.Warnings {
+		terminal.Printf(out, "  Warning:       %s\n", warning)
+	}
+}
+
+// printAppDetails writes one app's lines in the Details section.
+func printAppDetails(out io.Writer, app appStatus) {
+	gaps := ""
+	if len(app.CaptureGaps) > 0 {
+		gaps = fmt.Sprintf("; %d with a capture gap", app.SessionsWithCaptureGaps)
+	}
+	terminal.Printf(out, "  %s: %s (%s; %d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Code, app.Sessions, gaps, app.Hooks)
+	if app.Trust == "unknown" {
+		terminal.Println(out, "    Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
+	}
+	terminal.Printf(out, "    Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
+	if app.Capabilities.FreshStart.State == capabilityUnavailable {
+		terminal.Printf(out, "    Fresh-start capture: unavailable. %s\n", app.Capabilities.FreshStart.NextAction)
+	}
+	for _, pair := range app.Projects {
+		terminal.Printf(out, "    Project %s: %s.\n", pair.ProjectRoot, pair.VerificationState)
+	}
+	switch {
+	case app.ReadBackVerified && !app.VerifiedAt.IsZero():
+		terminal.Printf(out, "    Read-back verified: %s; evidence is for that publication.\n", formatTimeOrNever(app.VerifiedAt))
+	case !app.VerifiedAt.IsZero():
+		// Some evidence exists but not every project (or session) is
+		// covered, so do not call the app verified.
+		terminal.Printf(out, "    Last read-back: %s (%s).\n", formatTimeOrNever(app.VerifiedAt), readBackProgress(app))
+	}
+	if app.VerificationDetail != "" {
+		terminal.Printf(out, "    Read-back: %s\n", app.VerificationDetail)
+	}
+	if len(app.CaptureGaps) > 0 {
+		terminal.Printf(out, "    Capture gaps: %d recorded across %d session(s); see status --json for details.\n", len(app.CaptureGaps), app.SessionsWithCaptureGaps)
+	}
+}
+
+// storageAccessLine is the Details section's Access line: when access to
+// the destination was last confirmed, and by what.
+func storageAccessLine(view statusView) string {
+	switch view.StorageAccessConfirmedBy {
+	case storageAccessConfirmedBySetup:
+		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by setup's storage check (write, read, list, delete)"
+	case storageAccessConfirmedByCollector:
+		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by the collector's last successful storage access"
+	}
+	return "not confirmed yet"
+}
+
+// printBucketPrivacy writes the Details section's bucket privacy lines: the
+// last inspection's result, when it ran, its reason code, and the
+// provider's guidance.
+func printBucketPrivacy(out io.Writer, report storage.PrivacyReport) {
+	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
+	switch report.State {
+	case "verified_private":
+		terminal.Println(out, "  Bucket privacy: native public access blocked at the last check.")
+	case "public_or_risky":
+		terminal.Println(out, "  Bucket privacy: public configuration detected; review access before archiving.")
+	default:
+		terminal.Println(out, "  Bucket privacy not verified.")
+	}
+	checked := "never"
+	if report.CheckedAt != nil {
+		checked = formatTimeOrNever(*report.CheckedAt)
+	}
+	terminal.Printf(out, "    Checked: %s; %s.\n    Review: %s\n", checked, report.Reason, report.GuidanceURL)
+}
+
+// versionSupportNote explains an unverified installed version without
+// changing the support state or reason code.
+func versionSupportNote(app appStatus) string {
+	//lint:ignore LV1001 the reason codes are untyped constants in capabilities.go, which computes this field
+	switch app.VersionSupportReason {
+	case supportReasonNoVerifiedCapture:
+		return " (no session from this version has been published and read back yet)"
+	case supportReasonNoMatchingVersion:
+		return " (verified sessions came from a different version)"
+	case supportReasonVersionSourceMismatch:
+		return " (installed version and captured versions use different numbering; cannot be compared)"
+	}
+	return ""
+}
+
+// installedVersionLabel is an app's installed version, or why it is not
+// known.
+func installedVersionLabel(app appStatus) string {
+	if app.InstalledVersion != "" {
+		return app.InstalledVersion
+	}
+	if app.VersionState != "" {
+		return app.VersionState
+	}
+	return "unknown"
+}
