@@ -212,32 +212,40 @@ func TestReviewEditCancellationDoesNotInstall(t *testing.T) {
 	}
 }
 
-// An app chosen after the checks before the first question has its hook
-// file checked at the review, and a file setup cannot edit shows as ✗.
-func TestReviewChecklistChecksHookFilesPreflightMissed(t *testing.T) {
+// The review checks each chosen app's hook file as it is at the review:
+// one that became invalid after the checks before the first question, or
+// that those checks did not cover, shows as ✗, each such file on a line of
+// its own.
+func TestReviewChecklistChecksHookFilesAsTheyAreNow(t *testing.T) {
 	t.Parallel()
 	userHome := t.TempDir()
 	settings := filepath.Join(userHome, ".claude", "settings.json")
-	must(t, os.MkdirAll(filepath.Dir(settings), 0o700))
-	must(t, os.WriteFile(settings, []byte("{\n  // a comment\n}\n"), 0o600))
+	cursor := filepath.Join(userHome, ".cursor", "hooks.json")
 	codex := filepath.Join(userHome, ".codex", "hooks.json")
-	checks := preflightChecks{{App: "codex", Label: "Codex hooks", Detail: "~/.codex/hooks.json", OK: true}}
-	files := hooks.Files{"codex": codex, "claude": settings}
-	got, ok := hookFilesCheck([]string{"codex"}, checks, files, userHome)
-	if !ok || got.mark != symbolOK || got.detail != "~/.codex/hooks.json" {
-		t.Fatalf("preflight result not used: %+v", got)
+	for _, path := range []string{settings, cursor} {
+		must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		must(t, os.WriteFile(path, []byte("{\n  // a comment\n}\n"), 0o600))
 	}
-	got, ok = hookFilesCheck([]string{"codex", "claude"}, checks, files, userHome)
-	if !ok || got.mark != symbolFail || got.label != "Claude Code hook file is invalid" || !strings.HasPrefix(got.detail, "~/.claude/settings.json:2:") {
-		t.Fatalf("invalid file not reported: %+v", got)
+	files := hooks.Files{"codex": codex, "claude": settings, "cursor": cursor}
+	got := hookFilesChecks([]string{"codex"}, files, userHome)
+	if len(got) != 1 || got[0].mark != symbolOK || got[0].label != "Hook file is valid" || got[0].detail != "~/.codex/hooks.json" {
+		t.Fatalf("valid file not reported: %+v", got)
 	}
-	if _, ok = hookFilesCheck(nil, checks, files, userHome); ok {
-		t.Fatal("a check without apps")
+	got = hookFilesChecks([]string{"codex", "claude", "cursor"}, files, userHome)
+	if len(got) != 3 ||
+		got[0].mark != symbolFail || got[0].label != "Claude Code hook file is invalid" || !strings.HasPrefix(got[0].detail, "~/.claude/settings.json:2:") ||
+		got[1].mark != symbolFail || got[1].label != "Cursor hook file is invalid" || !strings.HasPrefix(got[1].detail, "~/.cursor/hooks.json:2:") ||
+		got[2].mark != symbolOK || got[2].detail != "~/.codex/hooks.json" {
+		t.Fatalf("invalid files not each reported: %+v", got)
+	}
+	if got = hookFilesChecks(nil, files, userHome); len(got) != 0 {
+		t.Fatalf("a check without apps: %+v", got)
 	}
 }
 
 // Codex's /hooks step shows for a first setup, and on a reconfiguration
-// only when Codex is newly included.
+// when Codex is newly included or its hooks move to a file it has not
+// approved.
 func TestReviewChecklistShowsCodexStepOnlyWhenNew(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{Harnesses: []string{"codex", "claude"}}
@@ -250,7 +258,11 @@ func TestReviewChecklistShowsCodexStepOnlyWhenNew(t *testing.T) {
 		return false
 	}
 	installed := config.Config{Harnesses: []string{"codex"}}
-	if !step(setupReview{}) || !step(setupReview{existing: installed}) || step(setupReview{existing: installed, reconfiguring: true}) ||
+	here := hooks.Files{"codex": "/u/.codex/hooks.json"}
+	moved := hooks.Files{"codex": "/u/alt/hooks.json"}
+	if !step(setupReview{}) || !step(setupReview{existing: installed}) ||
+		step(setupReview{existing: installed, reconfiguring: true, hookFiles: here, installedHookFiles: here}) ||
+		!step(setupReview{existing: installed, reconfiguring: true, hookFiles: moved, installedHookFiles: here}) ||
 		!step(setupReview{existing: config.Config{Harnesses: []string{"claude"}}, reconfiguring: true}) {
 		t.Fatal("Codex step shown wrongly")
 	}

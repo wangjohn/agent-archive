@@ -21,12 +21,12 @@ type setupReview struct {
 	existing      config.Config
 	reconfiguring bool
 	discoveries   map[string]applicationDiscovery
-	// checks are the checks setup made before its first question; the hook
-	// files' results feed the checklist.
-	checks preflightChecks
 	// hookFiles are the files each app's hooks go into.
 	hookFiles hooks.Files
-	userHome  string
+	// installedHookFiles are where setup installed the existing apps'
+	// hooks.
+	installedHookFiles hooks.Files
+	userHome           string
 }
 
 // reviewRow is one labeled line of the review summary. A row with several
@@ -216,12 +216,11 @@ func reviewChecklist(cfg config.Config, review setupReview, at time.Time) []revi
 		{mark: symbolOK, label: "Storage connected", detail: "write, read, list, delete"},
 		privacyCheck(cfg, at),
 	}
-	if hooksCheck, ok := hookFilesCheck(cfg.Harnesses, review.checks, review.hookFiles, review.userHome); ok {
-		checks = append(checks, hooksCheck)
-	}
+	checks = append(checks, hookFilesChecks(cfg.Harnesses, review.hookFiles, review.userHome)...)
 	for _, app := range cfg.Harnesses {
-		// An app whose hooks are installed already has taken its step.
-		if review.reconfiguring && containsString(review.existing.Harnesses, app) {
+		// An app whose hooks are installed already has taken its step,
+		// unless they move to another file, which it has not approved.
+		if review.reconfiguring && containsString(review.existing.Harnesses, app) && review.installedHookFiles[app] == review.hookFiles[app] {
 			continue
 		}
 		if step, ok := appStepAfterSetup[app]; ok {
@@ -254,53 +253,30 @@ func privacyCheck(cfg config.Config, at time.Time) reviewCheck {
 	return reviewCheck{mark: symbolWarn, label: "Bucket privacy unknown", detail: privacyReasonText(report.Reason), more: []string{"Make sure public access is off:"}, link: report.GuidanceURL}
 }
 
-// hookFilesCheck reports on the hook files of apps, from the checks setup
-// made before its first question. An app chosen since, which those checks
-// did not cover, has its file checked now. It reports nothing without apps.
-func hookFilesCheck(apps []string, checks preflightChecks, files hooks.Files, userHome string) (reviewCheck, bool) {
+// hookFilesChecks reports on the hook files of apps, checked as they are
+// now rather than taken from the checks before setup's first question: a
+// file can change while setup asks, and an app chosen since was not
+// checked then. Each file setup cannot edit has a ✗ of its own; the rest
+// share one ✓. It reports nothing without apps.
+func hookFilesChecks(apps []string, files hooks.Files, userHome string) []reviewCheck {
+	var bad []reviewCheck
 	var paths []string
-	var bad *preflightCheck
-	for _, app := range apps {
-		check, found := preflightCheck{}, false
-		for _, c := range checks {
-			if c.App == app {
-				check, found = c, true
-				break
-			}
-		}
-		if !found {
-			check = checkHookFile(app, files[app], userHome)
-		}
-		if !check.OK && bad == nil {
-			bad = &check
+	fix := func(string) string { return "Setup edits only plain JSON. Fix the file before you start." }
+	for _, check := range hookFileChecks(apps, files, userHome, fix) {
+		if !check.OK {
+			bad = append(bad, reviewCheck{mark: symbolFail, label: appName(check.App) + " hook file is invalid", detail: check.Detail, more: []string{check.Problem, check.Fix}})
+			continue
 		}
 		paths = append(paths, check.Detail)
 	}
 	if len(paths) == 0 {
-		return reviewCheck{}, false
-	}
-	if bad != nil {
-		return reviewCheck{mark: symbolFail, label: appName(bad.App) + " hook file is invalid", detail: bad.Detail, more: []string{bad.Problem, "Setup edits only plain JSON. Fix the file before you start."}}, true
+		return bad
 	}
 	label := "Hook files are valid"
 	if len(paths) == 1 {
 		label = "Hook file is valid"
 	}
-	return reviewCheck{mark: symbolOK, label: label, detail: strings.Join(paths, ", ")}, true
-}
-
-// checkHookFile checks app's hook file at path, as the checks before the
-// first question do.
-func checkHookFile(app, path, userHome string) preflightCheck {
-	problems := hooks.Validate(hooks.Files{app: path})
-	if len(problems) == 0 {
-		return preflightCheck{App: app, Detail: displayPath(path, userHome), OK: true}
-	}
-	where := displayPath(path, userHome)
-	if problems[0].Line > 0 {
-		where = fmt.Sprintf("%s:%d:%d", where, problems[0].Line, problems[0].Column)
-	}
-	return preflightCheck{App: app, Detail: where, Problem: sentence(problems[0].Reason)}
+	return append(bad, reviewCheck{mark: symbolOK, label: label, detail: strings.Join(paths, ", ")})
 }
 
 // printReviewChecklist prints the checklist with its details in a column.

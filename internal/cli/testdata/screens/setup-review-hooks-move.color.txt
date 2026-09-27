@@ -26,6 +26,7 @@ Checking your storage connection…
   \e[33m!\e[0m Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
   \e[32m✓\e[0m Hook file is valid      ~/codex-elsewhere/hooks.json
+  \e[33m!\e[0m Codex needs one step    approve the hooks with /hooks after setup
   \e[33m!\e[0m Codex hooks move to ~/codex-elsewhere/hooks.json from ~/.codex/hooks.json.
     CODEX_HOME in this shell differs from when setup last ran. To keep them where they are,
     cancel and run agent-archive setup from a shell without CODEX_HOME.
