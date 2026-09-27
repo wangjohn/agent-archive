@@ -117,6 +117,74 @@ func Plan(files Files, hook Hook, harnesses []string) ([]Change, error) {
 	return changes, nil
 }
 
+// Problem is why setup cannot install into one hook file, as Validate finds
+// it.
+type Problem struct {
+	// Harness is the application the file belongs to, as files names it.
+	Harness string
+	// Path is the file as files names it: a symbolic link is reported by
+	// its own path, not the file it points to.
+	Path string
+	// Line and Column say where in the file the problem is, both 1-based,
+	// the column counted in bytes. Both are 0 when the problem is not at
+	// one place, such as a duplicate key under "hooks", which Reason names
+	// by its path in the JSON instead.
+	Line, Column int
+	// Reason is what is wrong and, for the usual mistakes, how to fix it,
+	// without the path, line and column.
+	Reason string
+	// Err is the error Plan fails with for this file, word for word.
+	Err error
+}
+
+// validationHook stands in for the Hook setup installs when Validate runs
+// Merge: a file Merge refuses is refused for what it holds, never for the
+// command installed into it, so any valid Hook refuses the same files.
+var validationHook = Hook{Executable: string(filepath.Separator)}
+
+// Validate checks every hook file in files the way Plan does before it
+// installs into one, and returns a Problem for each file Plan would refuse:
+// one that is not plain JSON (a comment, a trailing comma, a byte-order
+// mark), holds a duplicate key setup would have to choose between, or has
+// hooks of a shape setup cannot edit. It reads the files, through any
+// symbolic links, and changes nothing. A missing file is no problem: setup
+// creates it. Problems come in harness order.
+func Validate(files Files) []Problem {
+	var problems []Problem
+	for _, harness := range slices.Sorted(maps.Keys(files)) {
+		path, err := files.path(harness)
+		if err != nil {
+			problems = append(problems, Problem{Harness: harness, Path: files[harness], Reason: err.Error(), Err: err})
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			reason := "the file cannot be read"
+			if cause := errors.Unwrap(err); cause != nil {
+				reason += ": " + cause.Error()
+			}
+			problems = append(problems, Problem{Harness: harness, Path: path, Reason: reason, Err: fmt.Errorf("cannot read %s", path)})
+			continue
+		}
+		if _, err = Merge(data, harness, validationHook); err == nil {
+			continue
+		}
+		p := Problem{Harness: harness, Path: path, Reason: err.Error(), Err: fmt.Errorf("%s: %w", path, err)}
+		var located *configError
+		switch {
+		case errors.As(err, &located):
+			p.Line, p.Column, p.Reason = located.line, located.column, located.reason
+		case errors.Is(err, errInvalidConfiguration):
+			p.Reason = strings.TrimPrefix(p.Reason, errInvalidConfiguration.Error()+": ")
+		}
+		problems = append(problems, p)
+	}
+	return problems
+}
+
 // ErrChanged reports that a file changed after its Change was planned.
 // Apply wraps it with the file's path; the caller says how to retry.
 var ErrChanged = errors.New("changed while it was being updated")

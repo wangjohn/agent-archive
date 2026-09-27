@@ -97,13 +97,14 @@ jobs:
       # Production code only tests reach belongs in a _test.go file (or a
       # test-only package); deadcode finds it. Listed exceptions: the test
       # helper packages, a cgo probe (test files cannot use cgo), and a load
-      # counter other packages' cost tests read.
+      # counter other packages' cost tests read, and hooks.Validate, which
+      # setup calls once B2 lands (B2 removes this exception).
       - name: No unreachable production code
         run: |
           go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./... > "$RUNNER_TEMP/deadcode.txt"
           # grep exits 1 when every line is an exception; 2 is a real failure.
           status=0
-          grep -v -E '^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$' "$RUNNER_TEMP/deadcode.txt" > "$RUNNER_TEMP/unexpected.txt" || status=$?
+          grep -v -E '^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/hooks/install\.go:[0-9]+:[0-9]+: unreachable func: Validate$' "$RUNNER_TEMP/deadcode.txt" > "$RUNNER_TEMP/unexpected.txt" || status=$?
           if [ "$status" -gt 1 ]; then
             exit "$status"
           fi
