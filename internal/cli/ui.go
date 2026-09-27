@@ -155,6 +155,9 @@ var wordSpan = regexp.MustCompile(`[^ ]+`)
 
 var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
+// ansiReset matches a color code that turns color off.
+var ansiReset = regexp.MustCompile("^\x1b\\[0*m$")
+
 // visibleWidth is the number of columns text takes on a terminal: wide
 // characters such as CJK take two, combining marks none, and color codes
 // none.
@@ -170,8 +173,7 @@ func runeWidth(r rune) int {
 	if unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf) {
 		return 0
 	}
-	switch width.LookupRune(r).Kind() {
-	case width.EastAsianWide, width.EastAsianFullwidth:
+	if kind := width.LookupRune(r).Kind(); kind == width.EastAsianWide || kind == width.EastAsianFullwidth {
 		return 2
 	}
 	return 1
@@ -191,7 +193,7 @@ func truncateVisible(text string, limit int) string {
 		if loc := ansiEscape.FindStringIndex(text); loc != nil && loc[0] == 0 {
 			code := text[:loc[1]]
 			b.WriteString(code)
-			colored = code != "\x1b[0m" && code != "\x1b[m"
+			colored = !ansiReset.MatchString(code)
 			text = text[loc[1]:]
 			continue
 		}
