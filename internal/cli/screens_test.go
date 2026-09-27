@@ -81,7 +81,7 @@ var screens = []screen{
 		// A first run on a Mac with all three apps, from inside a Git
 		// repository, through to the next steps.
 		name:    "setup-fresh-apps-git-cwd",
-		answers: []string{"", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: []string{"", "", "2", "team-archive", "work", "us-east-1", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude", "cursor")
@@ -111,6 +111,34 @@ var screens = []screen{
 			writeClaudeSession(t, f.userHome, "one", f.project(t, "src/api"), screenNow.Add(-72*time.Hour))
 			writeClaudeSession(t, f.userHome, "two", f.project(t, "src/web-app"), screenNow.Add(-time.Hour))
 			writeClaudeSession(t, f.userHome, "three", f.project(t, "src/docs"), screenNow.Add(-40*24*time.Hour))
+		},
+	},
+	{
+		// Inside a repository, the recent-projects list starts with it,
+		// included, and each project's session count.
+		name:    "setup-recent-projects-git-cwd",
+		answers: []string{"", "3", ""},
+		exit:    1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			writeClaudeSession(t, f.userHome, "one", f.project(t, "src/api"), screenNow.Add(-72*time.Hour))
+			writeClaudeSession(t, f.userHome, "two", f.project(t, "src/web-app"), screenNow.Add(-time.Hour))
+			writeClaudeSession(t, f.userHome, "three", f.project(t, "src/web-app"), screenNow.Add(-2*time.Hour))
+			writeClaudeSession(t, f.userHome, "four", f.project(t, "src/docs"), screenNow.Add(-40*24*time.Hour))
+		},
+	},
+	{
+		// Leaving every project out asks again; a includes them all.
+		name:    "setup-recent-projects-none-left",
+		answers: []string{"", "1", "", "a", ""},
+		exit:    1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			writeClaudeSession(t, f.userHome, "one", f.project(t, "src/api"), screenNow.Add(-72*time.Hour))
 		},
 	},
 	{
@@ -161,7 +189,7 @@ var screens = []screen{
 		// The storage check fails, and setup offers to edit, retry, or
 		// cancel.
 		name:    "setup-storage-failure",
-		answers: []string{"y", "n", "n", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: []string{"y", "n", "n", "", "2", "team-archive", "work", "us-east-1", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -174,7 +202,7 @@ var screens = []screen{
 	{
 		// The review before a first setup commits, cancelled there.
 		name:    "setup-review-fresh",
-		answers: []string{"y", "y", "n", "2", "team-archive", "work", "us-east-1", "3"},
+		answers: []string{"y", "", "2", "team-archive", "work", "us-east-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
@@ -196,7 +224,7 @@ var screens = []screen{
 	{
 		// What a committed first setup ends with.
 		name:    "setup-next-steps",
-		answers: []string{"y", "y", "y", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: []string{"y", "y", "y", "", "2", "team-archive", "work", "us-east-1", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)

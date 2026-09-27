@@ -10,9 +10,11 @@ Choose which apps to include:
 Include Codex? [y/N] y
 Include Claude Code? [y/N] n
 Include Cursor? [y/N] n
-Project: /Users/alex/src/web-app
-Archive sessions in this project? [Y/n] 
-Add another project? [y/N] 
+Projects to archive (✓ included):
+  1) ✓ ~/src/web-app  this folder
+Enter 1 to include or leave it out, or a path to add a project.
+Enter a blank line when finished.
+Projects: 
 
 Step 2 of 3 · Connect storage
 
