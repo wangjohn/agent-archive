@@ -7,13 +7,14 @@ Agent Archive is already set up. What would you like to change?
   2) Storage (bucket and credentials)
   3) How long sessions are kept
   4) All settings
-Enter 1-4 [1]: 3
+  5) Nothing, exit
+Enter 1-5 [1]: 3
 Keep sessions for how many days? [90]: 90
 
 Checking your storage connection…
 ✓ Connected to your storage.
 
-Step 3 of 3 · Review your changes
+Review your changes
 
   Apps       Codex (version not detected)
   Projects   ~/src/web-app

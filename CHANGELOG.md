@@ -58,6 +58,10 @@ follow [Semantic Versioning](https://semver.org/).
 - `status --verbose` adds a Details section with the internal codes, exact
   times, bucket privacy evidence and per-app notes, and the default view
   names a storage failure's cause in plain words instead of SDK text.
+- `setup` polish: "Nothing, exit" leaves no draft behind, a single-area edit
+  drops "Step n of 3", the retention warning shows the local date and only
+  appears when sessions are affected, hook-file errors name the real
+  problem, and `setup --yes` refuses a public bucket like interactive setup.
 
 ## [0.1.0] - 2026-09-25
 

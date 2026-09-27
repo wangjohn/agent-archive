@@ -2,7 +2,6 @@ $ agent-archive setup
 Checking installed applications...
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
-You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 You have an unfinished setup. What would you like to do?
   1) Continue where you left off
   2) Change apps and projects

@@ -190,13 +190,9 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		return discard(&storageCheckError{err: accessErr, outcome: "nothing was changed"})
 	}
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
-	// A reconfiguration's warnings, or its refusal (sessions pending at the
-	// old destination).
-	if err = reviewChanges(home, existing, cfg, p, env); err != nil {
+	if err = reviewWithoutQuestions(home, existing, cfg, p, env); err != nil {
 		return discard(err)
 	}
-	terminal.Printf(out, "Apps: %s. Projects: %d. Storage: %s bucket %s.\n", appList(cfg.Harnesses), includedProjects(cfg.Archive.Projects), providerName(cfg.Storage.Provider), cfg.Storage.Bucket)
-	printReviewPrivacy(p, cfg)
 	warnCollectorEnvironment(p, cfg.Storage, userHome, env)
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
 		if len(draft.StagedRefs) > 0 {
@@ -205,6 +201,24 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		return err
 	}
 	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome})
+}
+
+// reviewWithoutQuestions is setup --yes's review: a reconfiguration's
+// warnings, or its refusal (sessions pending at the old destination), then
+// what will be saved and the bucket's privacy. A public bucket is refused,
+// as its ✗ row blocks starting from interactive setup's review; privacy
+// that could not be read only warns.
+func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompter, env Env) error {
+	if err := reviewChanges(home, existing, cfg, p, env); err != nil {
+		return err
+	}
+	terminal.Printf(p.out, "Apps: %s. Projects: %d. Storage: %s bucket %s.\n", appList(cfg.Harnesses), includedProjects(cfg.Archive.Projects), providerName(cfg.Storage.Provider), cfg.Storage.Bucket)
+	if check := privacyCheck(cfg, p.clock()); check.mark == symbolFail {
+		printReviewChecklist(p, []reviewCheck{check})
+		return fmt.Errorf("bucket %s allows public access (%s); nothing was changed. Fix its access (%s), then run the same agent-archive setup --yes command again", cfg.Storage.Bucket, check.detail, check.link)
+	}
+	printReviewPrivacy(p, cfg)
+	return nil
 }
 
 // setupAnswers is the configuration setup --yes saves, before its storage

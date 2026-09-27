@@ -8,8 +8,21 @@ Agent Archive is already set up. What would you like to change?
   3) How long sessions are kept
   4) All settings
   5) Nothing, exit
-Enter 1-5 [1]: 3
-Keep sessions for how many days? [90]: 30
+Enter 1-5 [1]: 2
+
+Connect storage
+
+Where should sessions be stored?
+  1) Cloudflare R2
+  2) Amazon S3
+  3) Show setup instructions
+Enter 1-3 [2]: 
+AWS profile [work]: 
+Which bucket should sessions be stored in?
+  1) photos
+  2) team-archive
+Enter 1-2, or another bucket name [2]: 
+Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 ✓ Connected to your storage.
@@ -19,10 +32,9 @@ Review your changes
   Apps       Codex (version not detected)
   Projects   ~/src/web-app
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
-* Keep for   30 days
-             was 90 days
+  Keep for   90 days
 
-  * changed from your current settings
+  Nothing above differs from your current settings.
 
   ✓ Storage connected       write, read, list, delete
   ! Bucket privacy unknown  public-access settings could not be read

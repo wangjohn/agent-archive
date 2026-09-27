@@ -23,11 +23,18 @@ type prompter struct {
 	source io.Reader
 	now    func() time.Time
 	style  textStyle
+	// singleArea is set while setup changes one area of an installed
+	// setup, where step headings do not count steps.
+	singleArea bool
 }
 
 // step prints a wizard step heading, set apart from the prompts above it.
 func (p *prompter) step(n int, title string) {
-	terminal.Printf(p.out, "\n%s\n\n", p.style.bold(fmt.Sprintf("Step %d of 3 · %s", n, title)))
+	heading := fmt.Sprintf("Step %d of 3 · %s", n, title)
+	if p.singleArea {
+		heading = title
+	}
+	terminal.Printf(p.out, "\n%s\n\n", p.style.bold(heading))
 }
 
 // warn and note print one review item. Continuation lines, such as a link,

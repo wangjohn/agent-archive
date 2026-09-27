@@ -255,22 +255,34 @@ func invalid(src []byte, err error) error {
 	if offset < 0 || offset > len(src) {
 		return &configError{message: fmt.Sprintf("%s: %s", errInvalidConfiguration, err), reason: err.Error(), cause: err}
 	}
+	// A file that stops before its JSON is complete is reported at its end,
+	// whatever it last held: a value, a comma, or whitespace.
+	truncated := offset == len(src) || syntaxErr != nil && int(syntaxErr.Offset) == len(src) && strings.Contains(syntaxErr.Error(), "unexpected end of JSON input")
+	if truncated {
+		offset = len(src)
+	}
 	// Offset counts the bytes read, which ends just after the one that
 	// failed; step back over whitespace to the character itself.
-	for offset > 0 && offset < len(src) && (src[offset] == ' ' || src[offset] == '\n' || src[offset] == '\r' || src[offset] == '\t') {
+	for !truncated && offset > 0 && offset < len(src) && (src[offset] == ' ' || src[offset] == '\n' || src[offset] == '\r' || src[offset] == '\t') {
 		offset--
 	}
 	line, column := position(src, offset)
-	hint := ""
+	// The reason names the plain cause; the parser's own words are kept
+	// only for a mistake not named here.
+	reason := "this is not valid JSON (" + err.Error() + ")"
 	rest := src[offset:]
 	after := bytes.TrimLeft(bytes.TrimPrefix(rest, []byte(",")), " \t\r\n")
+	// A comma where a value belongs, as in "a": , is not a trailing one.
+	before := bytes.TrimRight(src[:offset], " \t\r\n")
+	afterValue := len(before) > 0 && !bytes.ContainsAny(before[len(before)-1:], ":[{,")
 	switch {
+	case truncated:
+		reason = "the file ends before its JSON is complete"
 	case bytes.HasPrefix(rest, []byte("//")) || bytes.HasPrefix(rest, []byte("/*")):
-		hint = "; comments (JSONC) are not JSON, so remove them"
-	case bytes.HasPrefix(rest, []byte(",")) && (len(after) == 0 || bytes.HasPrefix(after, []byte("}")) || bytes.HasPrefix(after, []byte("]"))):
-		hint = "; a comma before a closing brace or bracket (a trailing comma) is not JSON, so remove it"
+		reason = "this is a comment (JSONC); comments are not JSON, so remove it"
+	case bytes.HasPrefix(rest, []byte(",")) && afterValue && (len(after) == 0 || bytes.HasPrefix(after, []byte("}")) || bytes.HasPrefix(after, []byte("]"))):
+		reason = "this comma comes before a closing brace or bracket (a trailing comma), which is not JSON; remove it"
 	}
-	reason := err.Error() + hint
 	return &configError{
 		message: fmt.Sprintf("%s: line %d, column %d: %s", errInvalidConfiguration, line, column, reason),
 		line:    line,

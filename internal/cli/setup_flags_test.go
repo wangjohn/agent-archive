@@ -260,6 +260,68 @@ func TestSetupYesStorageFailureLeavesNothing(t *testing.T) {
 	}
 }
 
+// A public bucket blocks setup --yes before anything is committed, as its
+// ✗ row blocks interactive setup's review; privacy that could not be read
+// only warns.
+func TestSetupYesRefusesAPublicBucket(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		privacy storage.PrivacyReport
+		exit    int
+		want    []string
+	}{
+		{storage.PrivacyReport{State: "public_or_risky", Reason: "public_bucket_policy"}, 1, []string{
+			"✗ Bucket is public",
+			"a bucket policy allows public access",
+			"Fix its access before archiving: https://",
+			"Setup incomplete: bucket b allows public access (a bucket policy allows public access); nothing was changed.",
+		}},
+		{storage.PrivacyReport{State: "not_verified", Reason: "public_access_controls_not_fully_verified"}, 0, []string{
+			"! Bucket privacy not verified: not every public-access setting could be confirmed.",
+		}},
+	} {
+		t.Run(tc.privacy.State, func(t *testing.T) {
+			t.Parallel()
+			home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+			env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+				report := storage.UnknownPrivacy(cfg.Storage.Provider)
+				report.State, report.Reason = tc.privacy.State, tc.privacy.Reason
+				return privacyReportStore{ObjectStore: storagetest.NewMemoryStore(), report: report}, nil
+			}
+			loaded := 0
+			load := env.LoadLaunchAgent
+			env.LoadLaunchAgent = func(path string) error { loaded++; return load(path) }
+			output := setupYes(t, env, "", tc.exit, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--apps", "claude", "--project", project)
+			for _, want := range tc.want {
+				if !strings.Contains(output, want) {
+					t.Errorf("output lacks %q:\n%s", want, output)
+				}
+			}
+			_, found, _ := config.Load(home)
+			if found != (tc.exit == 0) {
+				t.Fatalf("configuration saved: %v, want %v\n%s", found, tc.exit == 0, output)
+			}
+			if tc.exit == 0 {
+				// The checks below would see the job a successful run starts.
+				if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); err != nil || loaded == 0 {
+					t.Fatalf("a successful run installed no LaunchAgent (loaded %d times): %v", loaded, err)
+				}
+				return
+			}
+			if _, err := os.Stat(draftPath(home)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("refusal left a draft")
+			}
+			if _, err := os.Stat(filepath.Join(userHome, ".claude", "settings.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("refusal installed hooks")
+			}
+			if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !errors.Is(err, os.ErrNotExist) || loaded != 0 {
+				t.Fatalf("refusal installed the LaunchAgent (loaded %d times)", loaded)
+			}
+		})
+	}
+}
+
 // Every missing or wrong answer is reported in one run, one per line with
 // the flag that fixes it, before launchctl or the Keychain is asked and
 // before anything is read from a terminal or changed.
