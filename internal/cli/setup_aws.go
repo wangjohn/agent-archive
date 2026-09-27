@@ -82,12 +82,11 @@ func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {
 			o.ConfigFiles = []string{configPath}
 			o.CredentialsFiles = []string{credentialsPath}
 		})
-		profile := AWSProfile{Name: name}
-		if err == nil {
-			profile.Region = cfg.Region
-			profile.NoCredentials = !hasCredentialSource(cfg)
+		if err != nil {
+			profiles = append(profiles, AWSProfile{Name: name})
+			continue
 		}
-		profiles = append(profiles, profile)
+		profiles = append(profiles, AWSProfile{Name: name, Region: cfg.Region, NoCredentials: !hasCredentialSource(cfg)})
 	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
 	return profiles, nil
