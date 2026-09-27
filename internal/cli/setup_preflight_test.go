@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -218,6 +219,112 @@ func TestPreflightApps(t *testing.T) {
 	for _, c := range cases {
 		if got := preflightApps(c.detected, c.saved, c.declined, c.draft); !slices.Equal(got, c.want) {
 			t.Errorf("preflightApps(%v, %v, %v, %v) = %v, want %v", c.detected, c.saved, c.declined, c.draft, got, c.want)
+		}
+	}
+}
+
+// An app the unfinished setup leaves out is not checked: resuming it never
+// touches that app's file, so a file setup cannot edit does not stop it.
+func TestSetupDoesNotCheckAnAppTheUnfinishedSetupLeavesOut(t *testing.T) {
+	t.Parallel()
+	env, home, userHome := preflightEnv(t)
+	env.DetectHarnesses = func(string) []string { return []string{"claude", "cursor"} }
+	cursor := env.hookFiles(userHome)["cursor"]
+	must(t, os.MkdirAll(filepath.Dir(cursor), 0o700))
+	must(t, os.WriteFile(cursor, []byte("{,}\n"), 0o600))
+	draft := setupDraft{Version: draftFormat, Step: 1, Config: config.Config{Harnesses: []string{"claude"}, DeclinedHarnesses: []string{"cursor"}}}
+	must(t, local.Write(draftPath(home), draft))
+
+	output, _, in := runUnanswered(t, env)
+	if in.reads == 0 || strings.Contains(output, "Cursor hooks") || !strings.Contains(output, "unfinished setup. What would you like") {
+		t.Fatalf("setup did not reach the unfinished setup's menu without checking Cursor: %d reads\n%s", in.reads, output)
+	}
+}
+
+// The fix for a hook file offers leaving the app out with setup --yes
+// --apps only where that runs: not for an installed app, which --yes
+// never removes, and not while an unfinished setup is saved, which --yes
+// refuses. setup --yes, stopped, says to run the same command again.
+func TestPreflightFixOffersOnlyARunnableSetupYes(t *testing.T) {
+	t.Parallel()
+	commented := []byte("{\n  // mine\n}\n")
+	leaveOut := "To set up without Claude Code, run agent-archive setup --yes"
+
+	env, home, userHome := preflightEnv(t)
+	settings := env.hookFiles(userHome)["claude"]
+	must(t, os.MkdirAll(filepath.Dir(settings), 0o700))
+	must(t, os.WriteFile(settings, commented, 0o600))
+	cfg := config.Config{Harnesses: []string{"claude"}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "b", AWSProfile: "p", Region: "us-east-1"}}
+	cfg.Archive.Enabled = true
+	must(t, config.Save(home, cfg))
+	output, code, _ := runUnanswered(t, env)
+	if code != 1 || !strings.Contains(output, "✗ Claude Code hooks") || strings.Contains(output, leaveOut) {
+		t.Errorf("installed: exit %d\n%s", code, output)
+	}
+	output, code, _ = runUnanswered(t, env, "--yes", "--project", t.TempDir())
+	if code != 1 || strings.Contains(output, leaveOut) || !strings.Contains(output, "run the same agent-archive setup --yes command again") || strings.Contains(output, "unfinished setup is kept") {
+		t.Errorf("installed, --yes: exit %d\n%s", code, output)
+	}
+
+	env, home, userHome = preflightEnv(t)
+	settings = env.hookFiles(userHome)["claude"]
+	must(t, os.MkdirAll(filepath.Dir(settings), 0o700))
+	must(t, os.WriteFile(settings, commented, 0o600))
+	output, _, _ = runUnanswered(t, env)
+	if !strings.Contains(output, leaveOut) {
+		t.Errorf("first setup: the fix does not offer --apps\n%s", output)
+	}
+	must(t, local.Write(draftPath(home), setupDraft{Version: draftFormat, Step: 1, Config: config.Config{Harnesses: []string{"claude"}}}))
+	output, code, _ = runUnanswered(t, env)
+	if code != 1 || strings.Contains(output, leaveOut) {
+		t.Errorf("unfinished setup saved: exit %d\n%s", code, output)
+	}
+}
+
+// lockedKeychain is a Keychain this build can use but that refuses reads
+// without UI, as a locked login Keychain does.
+type lockedKeychain struct{ *fakeKeychain }
+
+func (lockedKeychain) Load(context.Context, string) (credentials.R2Credentials, error) {
+	return credentials.R2Credentials{}, credentials.ErrKeychainLocked
+}
+
+// A Keychain that opens in this build but is locked stops setup before its
+// first question too, with the fix of unlocking it; a saved key that is
+// merely missing does not.
+func TestSetupStopsBeforeAnyQuestionWhenTheKeychainIsLocked(t *testing.T) {
+	t.Parallel()
+	env, home, _ := preflightEnv(t)
+	must(t, config.Save(home, config.Config{Harnesses: []string{"claude"}, Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "saved"}}))
+	env.Keychain = func() (credentials.CredentialStore, error) { return lockedKeychain{newFakeKeychain()}, nil }
+	output, code, in := runUnanswered(t, env)
+	if code != 1 || in.reads != 0 || !strings.Contains(output, "✗ Keychain: cannot be opened") || !strings.Contains(output, "Unlock the login Keychain") {
+		t.Fatalf("locked: exit %d after %d reads\n%s", code, in.reads, output)
+	}
+	env.Keychain = func() (credentials.CredentialStore, error) { return newFakeKeychain(), nil }
+	if output, _, _ = runUnanswered(t, env); !strings.Contains(output, "✓ Keychain: opens") {
+		t.Fatalf("a missing saved key failed the Keychain check:\n%s", output)
+	}
+}
+
+// setup --yes reports a mistake in its flags before asking launchctl or the
+// Keychain, so one run names it even when those would stop setup too.
+func TestSetupYesReportsFlagMistakesBeforeItsChecks(t *testing.T) {
+	t.Parallel()
+	env, _, _ := preflightEnv(t)
+	env.JobState = func(string) string { return "unknown" }
+	output, code, _ := runUnanswered(t, env, "--yes", "--provider", "r2", "--bucket", "b", "--project", t.TempDir())
+	if code != 1 || !strings.Contains(output, "--provider r2 needs --r2-account") || strings.Contains(output, "Background job") {
+		t.Fatalf("exit %d\n%s", code, output)
+	}
+}
+
+// A hook file's reason becomes one sentence, whatever its ending.
+func TestSentence(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{"": "", "remove them": "Remove them.", "remove them.": "Remove them.", "é": "É."} {
+		if got := sentence(in); got != want {
+			t.Errorf("sentence(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

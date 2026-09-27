@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -62,8 +65,12 @@ func (c preflightChecks) print(p *prompter) {
 }
 
 // preflightError stops setup when a check before its first question
-// failed.
-type preflightError struct{ checks preflightChecks }
+// failed. yes is whether setup --yes made the checks, which is then the
+// command to run again.
+type preflightError struct {
+	checks preflightChecks
+	yes    bool
+}
 
 // Error names each failed check again, so a run whose standard output is
 // not read, such as a script's setup --yes, still says what blocked it.
@@ -78,19 +85,39 @@ func (e *preflightError) Error() string {
 }
 
 func (e *preflightError) guidance() string {
+	if e.yes {
+		return "Nothing was changed. Fix what is marked ✗ above, then run the same agent-archive setup --yes command again."
+	}
 	return "Nothing was changed, and any unfinished setup is kept. Fix what is marked ✗ above, then run agent-archive setup again."
 }
 
+// preflightScope is what setup's checks before its first question cover.
+type preflightScope struct {
+	// apps are the apps whose hook files are checked.
+	apps []string
+	// kept are the apps setup --yes --apps cannot leave out now: those
+	// installed, or every app while an unfinished setup is saved, since
+	// setup --yes refuses to run then. A problem with one of their files
+	// is fixed only in the file.
+	kept []string
+	// r2 is whether the Keychain is checked, for an R2 key.
+	r2 bool
+	// credentialRef is the saved R2 key's Keychain reference, if any: the
+	// item the Keychain check reads.
+	credentialRef string
+}
+
 // preflight checks what applying the setup needs, before setup asks
-// anything: that the hook files of apps (in allHarnesses order) are ones
-// setup can install into, that launchctl answers about the background
-// job, and, when keychain is set, that the Keychain opens for an R2 key.
-func preflight(env Env, home, userHome string, apps []string, keychain bool) preflightChecks {
+// anything: that the hook files of scope's apps (in allHarnesses order)
+// are ones setup can install into, that launchctl answers about the
+// background job, and, when scope.r2 is set, that the Keychain opens for
+// an R2 key.
+func preflight(env Env, home, userHome string, scope preflightScope) preflightChecks {
 	var checks preflightChecks
 	files := hooks.Files{}
 	all := env.hookFiles(userHome)
 	for _, app := range allHarnesses {
-		if containsString(apps, app) {
+		if containsString(scope.apps, app) {
 			files[app] = all[app]
 		}
 	}
@@ -111,8 +138,11 @@ func preflight(env Env, home, userHome string, apps []string, keychain bool) pre
 			}
 			check.OK = false
 			check.Detail = where
-			check.Problem = upperFirst(problem.Reason) + "."
-			check.Fix = "Setup edits only plain JSON. Fix the file, then run agent-archive setup again. To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
+			check.Problem = sentence(problem.Reason)
+			check.Fix = "Setup edits only plain JSON. Fix the file, then run agent-archive setup again."
+			if !containsString(scope.kept, app) {
+				check.Fix += " To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
+			}
 		}
 		checks = append(checks, check)
 	}
@@ -131,29 +161,50 @@ func preflight(env Env, home, userHome string, apps []string, keychain bool) pre
 	}
 	checks = append(checks, job)
 
-	if keychain {
-		checks = append(checks, keychainCheck(env))
+	if scope.r2 {
+		checks = append(checks, keychainCheck(env, scope.credentialRef))
 	}
 	return checks
 }
 
+// keychainProbeRef is the reference the Keychain check reads when no R2
+// key is saved yet: no item has it, so a Keychain that opens answers that
+// it is missing.
+const keychainProbeRef = "agent-archive-setup-check"
+
 // keychainCheck checks that the Keychain, where setup keeps an R2 key,
-// opens.
-func keychainCheck(env Env) preflightCheck {
-	if _, err := env.keychain(); err != nil {
+// opens: that this build can use it, and that reading ref (or a probe
+// reference) without showing UI is not refused as locked or unavailable.
+// A missing or unreadable item is no problem here: setup asks for the key
+// again.
+func keychainCheck(env Env, ref string) preflightCheck {
+	kc, err := env.keychain()
+	if err == nil {
+		if ref == "" {
+			ref = keychainProbeRef
+		}
+		if _, err = kc.Load(context.Background(), ref); !errors.Is(err, credentials.ErrUnavailable) {
+			err = nil
+		}
+	}
+	if err != nil {
+		fix := "Use the release build of agent-archive, which can open the Keychain, or store in Amazon S3 with agent-archive setup --yes --provider s3."
+		if errors.Is(err, credentials.ErrKeychainLocked) {
+			fix = "Unlock the login Keychain (log in, or open Keychain Access), then run agent-archive setup again, or store in Amazon S3 with agent-archive setup --yes --provider s3."
+		}
 		return preflightCheck{
 			Label:  "Keychain",
 			Detail: "cannot be opened, so an R2 key cannot be kept (" + strings.TrimSuffix(err.Error(), ".") + ")",
-			Fix:    "Use the release build of agent-archive, which can open the Keychain, or store in Amazon S3 with agent-archive setup --yes --provider s3.",
+			Fix:    fix,
 		}
 	}
 	return preflightCheck{Label: "Keychain", Detail: "opens (for the R2 key)", OK: true}
 }
 
 // preflightApps are the apps whose hook files interactive setup checks
-// before its first question: every app detected on this Mac that the saved
-// configuration does not leave out, and every app the saved configuration
-// or the unfinished setup includes.
+// before its first question: every app detected on this Mac that neither
+// the saved configuration nor the unfinished setup leaves out, and every
+// app the saved configuration or the unfinished setup includes.
 func preflightApps(detected, saved, declined, draft []string) []string {
 	var apps []string
 	for _, app := range allHarnesses {
@@ -168,9 +219,13 @@ func preflightApps(detected, saved, declined, draft []string) []string {
 	return apps
 }
 
-// upperFirst starts text with a capital letter, so a lower-case reason can
-// stand as a sentence of its own.
-func upperFirst(text string) string {
+// sentence makes a lower-case reason a sentence of its own: it starts with
+// a capital letter and ends with one period.
+func sentence(text string) string {
+	text = strings.TrimSuffix(strings.TrimSpace(text), ".")
+	if text == "" {
+		return ""
+	}
 	r, size := utf8.DecodeRuneInString(text)
-	return string(unicode.ToUpper(r)) + text[size:]
+	return string(unicode.ToUpper(r)) + text[size:] + "."
 }
