@@ -290,7 +290,10 @@ func TestS3LocationBucketDefault(t *testing.T) {
 	names := []string{"photos", "agent-archive-alex", "agent-archive-old"}
 	regions := map[string]string{"photos": "us-east-1", "agent-archive-alex": "us-east-1", "elsewhere": "us-east-1"}
 	for _, tc := range []struct {
-		name, saved, want, prompt string
+		name   string
+		saved  string
+		want   string
+		prompt string
 	}{
 		{"named like agent-archive", "", "agent-archive-alex", "Enter 1-3, or another bucket name [2]: "},
 		{"saved bucket listed", "photos", "photos", "Enter 1-3, or another bucket name [1]: "},

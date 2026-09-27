@@ -359,6 +359,10 @@ func discoveryReason(err error) string {
 		return "no such bucket"
 	case storage.CauseNetwork:
 		return "S3 couldn't be reached"
+	case storage.CauseWrongRegion:
+		return "the bucket is in another region"
+	case storage.CauseOther:
+		return "S3 returned an error"
 	default:
 		return "S3 returned an error"
 	}
