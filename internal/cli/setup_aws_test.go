@@ -346,12 +346,12 @@ func TestS3LocationFallsBackToTyping(t *testing.T) {
 		{
 			"listing denied, region found", fakeBuckets{listErr: errAccessDenied, regions: map[string]string{"typed": "us-west-2"}},
 			"\ntyped\n", "us-west-2",
-			[]string{"Couldn't list the buckets of profile work (access denied), so type the name.\nBucket name: ", "Bucket typed is in us-west-2; using that region."},
+			[]string{"Couldn't list buckets for profile work (access denied). Type the bucket name.\nBucket name: ", "Bucket typed is in us-west-2; using that region."},
 		},
 		{
 			"no buckets", fakeBuckets{regions: map[string]string{"typed": "us-west-2"}},
 			"\ntyped\n", "us-west-2",
-			[]string{"Profile work can see no buckets, so type the name.\nBucket name: "},
+			[]string{"Profile work can't see any buckets. Type the bucket name.\nBucket name: "},
 		},
 		{
 			"region denied, profile's used", fakeBuckets{names: []string{"typed"}, regionErr: errAccessDenied},
@@ -450,7 +450,7 @@ func TestS3LocationNeverPrintsTheDiscoveryError(t *testing.T) {
 	if err := promptS3Location(newPrompter(strings.NewReader("work\nb\nus-east-1\n"), &out), &credentials.Config{}, env); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "AKIA") || !strings.Contains(out.String(), "Couldn't list the buckets of profile work (the lookup failed), so type the name.\n") {
+	if strings.Contains(out.String(), "AKIA") || !strings.Contains(out.String(), "Couldn't list buckets for profile work (the lookup failed). Type the bucket name.\n") {
 		t.Fatalf("output %q", &out)
 	}
 }

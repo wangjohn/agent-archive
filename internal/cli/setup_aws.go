@@ -338,7 +338,7 @@ func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (buck
 		return bucket, listErr, err
 	}
 	if len(names) == 0 {
-		terminal.Printf(p.out, "Profile %s can see no buckets, so type the name.\n", profile)
+		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name.\n", profile)
 		bucket, err = p.required("Bucket name", saved)
 		return bucket, nil, err
 	}
@@ -358,7 +358,7 @@ func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (buck
 // noteListFailure says in one line that profile's buckets couldn't be
 // listed, and why.
 func noteListFailure(p *prompter, profile string, err error) {
-	terminal.Printf(p.out, "Couldn't list the buckets of profile %s (%s), so type the name.\n", profile, discoveryReason(err))
+	terminal.Printf(p.out, "Couldn't list buckets for profile %s (%s). Type the bucket name.\n", profile, discoveryReason(err))
 }
 
 // bucketRegion reads bucket's region. A region S3 names while refusing
