@@ -1,16 +1,17 @@
 $ agent-archive setup
 Checking installed applications...
-  ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Claude Code hooks: ~/.claude/settings.json
   ✓ Background job: launchctl responds
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
-You have an unfinished setup. What would you like to do?
-  1) Continue where you left off
-  2) Change apps and projects
-  3) Change storage
-  4) Change how long sessions are kept
-  5) Start over
-Enter 1-5 [1]: 1
+
+Step 1 of 3 · Choose what to capture
+
+Include Claude Code? [Y/n] 
+Projects to archive (✓ included):
+  1) ✓ ~/src/web-app  this folder
+Enter 1 to include or leave it out, or a path to add a project.
+Enter a blank line when finished.
+Projects: 
 
 Step 2 of 3 · Connect storage
 
@@ -18,29 +19,25 @@ Where should sessions be stored?
   1) Cloudflare R2
   2) Amazon S3
   3) Show setup instructions
-Enter 1-3 [1]: 2
-AWS profile: work
-Which bucket should sessions be stored in?
-  1) photos
-  2) team-archive
-Enter 1-2, or another bucket name: 2
-Bucket team-archive is in us-east-1; using that region.
+Enter 1-3 [1]: 1
+R2 account ID or bucket URL: 0123456789abcdef0123456789abcdef
+Bucket name: team-archive
+Access key ID: ACCESSKEYID
+Secret access key (hidden): SECRET
 
 Checking your storage connection…
 ✓ Connected.
 
 Step 3 of 3 · Ready to start
 
-  Apps       Codex 0.121.0 · Claude Code 2.1.90
+  Apps       Claude Code 2.1.90
   Projects   ~/src/web-app
-  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
+  Storage    r2://team-archive/agent-archive/  account 0123456789abcdef0123456789abcdef
   Keep for   90 days
 
   ✓ Storage connected       write, read, list, delete
-  ! Bucket privacy unknown  public-access settings could not be read
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
-  ! Codex needs one step    approve the hooks with /hooks after setup
+  ! Bucket privacy unknown  check public access in the Cloudflare dashboard
+  ✓ Hook file is valid      ~/.claude/settings.json
 
   Filtering is best effort; sensitive text may remain in archived sessions.
   What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md

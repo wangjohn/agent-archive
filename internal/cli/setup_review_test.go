@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -52,7 +53,7 @@ func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
 	}
 	input := strings.Join([]string{"y", project, "", "s3", "profile", "test", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
-	if !strings.Contains(output, "Codex (version unknown)") || strings.Contains(output, "not found") {
+	if !strings.Contains(output, "Codex (version not detected)") || strings.Contains(output, "not found") {
 		t.Fatalf("detected app shown as not found:\n%s", output)
 	}
 	// Only the display changes; the recorded discovery keeps what was seen.
@@ -70,7 +71,7 @@ func TestReviewDiscoveriesKeepsUndetectedAbsentApps(t *testing.T) {
 		"claude": {VersionState: "absent"},
 		"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"},
 	}, []string{"claude", "cursor"})
-	for app, want := range map[string]string{"codex": "Codex (not found)", "claude": "Claude Code (version unknown)", "cursor": "Cursor 3.21.13"} {
+	for app, want := range map[string]string{"codex": "Codex (not found)", "claude": "Claude Code (version not detected)", "cursor": "Cursor 3.21.13"} {
 		if line := appWithVersion(app, got[app]); line != want {
 			t.Fatalf("%s: got %q want %q", app, line, want)
 		}
@@ -114,8 +115,8 @@ func TestSetupReviewWarnsWhenHookFilesMove(t *testing.T) {
 	var out, errOut bytes.Buffer
 	Run([]string{"setup"}, strings.NewReader("3\n90\n3\n"), &out, &errOut, env)
 	output := out.String()
-	if !strings.Contains(output, "Claude Code hooks: "+filepath.Join(elsewhere, "settings.json")) ||
-		!strings.Contains(output, "hooks move here from "+filepath.Join(userHome, ".claude", "settings.json")) {
+	if !strings.Contains(output, "Hook file is valid      ~/elsewhere/settings.json") ||
+		!strings.Contains(output, "Claude Code hooks move to ~/elsewhere/settings.json from ~/.claude/settings.json.") {
 		t.Fatalf("no warning:\n%s%s", output, &errOut)
 	}
 	_ = home
@@ -208,5 +209,49 @@ func TestReviewEditCancellationDoesNotInstall(t *testing.T) {
 				t.Fatalf("installed without confirmation: found=%v err=%v", found, err)
 			}
 		})
+	}
+}
+
+// An app chosen after the checks before the first question has its hook
+// file checked at the review, and a file setup cannot edit shows as ✗.
+func TestReviewChecklistChecksHookFilesPreflightMissed(t *testing.T) {
+	t.Parallel()
+	userHome := t.TempDir()
+	settings := filepath.Join(userHome, ".claude", "settings.json")
+	must(t, os.MkdirAll(filepath.Dir(settings), 0o700))
+	must(t, os.WriteFile(settings, []byte("{\n  // a comment\n}\n"), 0o600))
+	codex := filepath.Join(userHome, ".codex", "hooks.json")
+	checks := preflightChecks{{App: "codex", Label: "Codex hooks", Detail: "~/.codex/hooks.json", OK: true}}
+	files := hooks.Files{"codex": codex, "claude": settings}
+	got, ok := hookFilesCheck([]string{"codex"}, checks, files, userHome)
+	if !ok || got.mark != symbolOK || got.detail != "~/.codex/hooks.json" {
+		t.Fatalf("preflight result not used: %+v", got)
+	}
+	got, ok = hookFilesCheck([]string{"codex", "claude"}, checks, files, userHome)
+	if !ok || got.mark != symbolFail || got.label != "Claude Code hook file is invalid" || !strings.HasPrefix(got.detail, "~/.claude/settings.json:2:") {
+		t.Fatalf("invalid file not reported: %+v", got)
+	}
+	if _, ok = hookFilesCheck(nil, checks, files, userHome); ok {
+		t.Fatal("a check without apps")
+	}
+}
+
+// Codex's /hooks step shows for a first setup, and on a reconfiguration
+// only when Codex is newly included.
+func TestReviewChecklistShowsCodexStepOnlyWhenNew(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{Harnesses: []string{"codex", "claude"}}
+	step := func(review setupReview) bool {
+		for _, check := range reviewChecklist(cfg, review, time.Now()) {
+			if check.label == "Codex needs one step" {
+				return check.mark == symbolWarn && strings.Contains(check.detail, "/hooks")
+			}
+		}
+		return false
+	}
+	installed := config.Config{Harnesses: []string{"codex"}}
+	if !step(setupReview{}) || !step(setupReview{existing: installed}) || step(setupReview{existing: installed, reconfiguring: true}) ||
+		!step(setupReview{existing: config.Config{Harnesses: []string{"claude"}}, reconfiguring: true}) {
+		t.Fatal("Codex step shown wrongly")
 	}
 }

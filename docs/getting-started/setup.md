@@ -108,12 +108,47 @@ falling back to visible keystrokes.
 
 ## 3. Review and start
 
-The summary shows the apps, projects, destination, and automatic deletion
-period, and the session scope when it is not the default (every new
-session). An app you left out is listed as skipped: setup does not offer it
-again, but you can add it back under "Apps and projects" in a later
-`agent-archive setup`. The deletion period is 90 days by default; older
-sessions are deleted from the bucket automatically.
+The review lists what setup will save, then a checklist of what it found:
+
+```
+Step 3 of 3 · Ready to start
+
+  Apps       Codex 0.121.0 · Claude Code 2.1.90
+  Projects   ~/src/web-app
+  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
+  Keep for   90 days
+
+  ✓ Storage connected       write, read, list, delete
+  ✓ Bucket is private       all public access blocked
+  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
+  ! Codex needs one step    approve the hooks with /hooks after setup
+```
+
+The summary shows the apps with their versions ("version not detected"
+when setup could not read one), the projects, the storage address with its
+region and profile (or R2 account), and the deletion period. The session
+scope shows when it is not the default (every new session). An app you left
+out is listed as skipped: setup does not offer it again, but you can add it
+back under "Apps and projects" in a later `agent-archive setup`. The
+deletion period is 90 days by default; older sessions are deleted from the
+bucket automatically. When you reconfigure, each changed value is marked `*`
+with its old value beneath it.
+
+In the checklist, ✓ is fine, ! needs you, and ✗ needs fixing first:
+
+- **Storage connected**: the storage check wrote, read, listed and deleted a
+  test file.
+- **Bucket is private**: the bucket blocks all public access. A public
+  bucket is marked ✗ with a link on fixing it; a bucket whose settings could
+  not be read is marked !. R2 keys cannot read public-access settings, so
+  for R2 the review reminds you to check public access in the Cloudflare
+  dashboard.
+- **Hook files are valid**: setup can edit each app's hook file.
+- **Codex needs one step**: Codex asks you to approve new hooks. After
+  setup, run `/hooks` in Codex and approve them.
+
+Any warnings about the change follow, such as a shorter retention period or
+hooks moving to another file.
 
 At "Start archiving?", enter the number for "Edit a setting" to adjust apps, projects, session scope, retention, storage,
 the folder inside the bucket, or the AWS region. The folder inside the

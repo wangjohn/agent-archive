@@ -18,6 +18,8 @@ import (
 // that a problem only applying the setup would otherwise find stops it
 // while nothing has been asked or changed.
 type preflightCheck struct {
+	// App is the app whose hook file was checked; empty for other checks.
+	App string
 	// Label names what was checked, such as "Claude Code hooks".
 	Label string
 	// Detail is what was found: the file checked, or where the problem is.
@@ -130,7 +132,7 @@ func preflight(env Env, home, userHome string, scope preflightScope) preflightCh
 		if !ok {
 			continue
 		}
-		check := preflightCheck{Label: appName(app) + " hooks", Detail: displayPath(path, userHome), OK: true}
+		check := preflightCheck{App: app, Label: appName(app) + " hooks", Detail: displayPath(path, userHome), OK: true}
 		if problem, found := problems[app]; found {
 			where := check.Detail
 			if problem.Line > 0 {

@@ -471,17 +471,16 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 		}
 		// Review what will be committed, not what a draft may have saved.
 		draft.Config.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
-		showSetupReview(p, draft.Config, existing, installed, reviewed)
-		terminal.Println(out, "\n"+p.style.bold("Before you confirm"))
+		showSetupReview(p, draft.Config, setupReview{existing: existing, reconfiguring: installed, discoveries: reviewed, checks: checks, hookFiles: env.hookFiles(userHome), userHome: userHome})
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
 			return err
 		}
 		if existing.Paused {
 			p.note("Capture stays paused until you run agent-archive resume.")
 		}
-		reviewHookFiles(p, draft.Config.Harnesses, env.hookFiles(userHome), env.installedHookFiles(userHome, existing), existing.Harnesses, len(existing.HookFiles) > 0)
-		printReviewNotes(p, draft.Config, reviewed)
+		reviewHookFiles(p, draft.Config.Harnesses, env.hookFiles(userHome), env.installedHookFiles(userHome, existing), existing.Harnesses, len(existing.HookFiles) > 0, userHome)
 		warnCollectorEnvironment(p, draft.Config.Storage, userHome, env)
+		printReviewNotes(p)
 		action, e := reviewAction(p, installed)
 		if e != nil {
 			return e

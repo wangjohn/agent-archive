@@ -33,21 +33,18 @@ Checking your storage connection…
 
 \e[1mStep 3 of 3 · Ready to start\e[0m
 
-  \e[2mApps     \e[0m Codex 0.121.0, Claude Code 2.1.90
-  \e[2mProjects \e[0m /Users/alex/src/web-app
-  \e[2mKeep for \e[0m 90 days, then deleted automatically
-  \e[2mStorage  \e[0m Amazon S3
-  \e[2mBucket   \e[0m team-archive
-  \e[2mAWS      \e[0m profile work · us-east-1
+  \e[2mApps      \e[0m Codex 0.121.0 · Claude Code 2.1.90
+  \e[2mProjects  \e[0m ~/src/web-app
+  \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2mus-east-1 · profile work\e[0m
+  \e[2mKeep for  \e[0m 90 days
 
-\e[1mBefore you confirm\e[0m
-  \e[2m·\e[0m Codex hooks: /Users/alex/.codex/hooks.json
-  \e[2m·\e[0m Claude Code hooks: /Users/alex/.claude/settings.json
-  \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  \e[2m·\e[0m Filtering is best effort; sensitive text may remain in archived sessions.
-  \e[2m·\e[0m Capture with Codex 0.121.0, Claude Code 2.1.90 is not confirmed until a session is archived.
-    After your first session, check it with agent-archive status.
+  \e[32m✓\e[0m Storage connected       write, read, list, delete
+  \e[32m✓\e[0m Bucket is private       all public access blocked
+  \e[32m✓\e[0m Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
+  \e[33m!\e[0m Codex needs one step    approve the hooks with /hooks after setup
+
+\e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
+\e[2m  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 Start archiving?
   1) Yes, start archiving

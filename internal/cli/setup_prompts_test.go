@@ -72,7 +72,7 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 			t.Fatalf("unexpected %q in %s", unwanted, output)
 		}
 	}
-	for _, want := range []string{"Include Codex and Claude Code?", "90 days, then deleted automatically", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
+	for _, want := range []string{"Include Codex and Claude Code?", "Keep for   90 days\n", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q in %s", want, output)
 		}
@@ -92,15 +92,15 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 	next.Storage.R2AccountID = "newaccount"
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader(""), &out)
-	showSetupReview(p, next, old, true, map[string]applicationDiscovery{"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"}})
+	showSetupReview(p, next, setupReview{existing: old, reconfiguring: true, discoveries: map[string]applicationDiscovery{"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"}}})
 	got := out.String()
-	for _, want := range []string{"Apps      Cursor 3.21.13", "* Account   newaccount", "was oldaccount", "* changed from your current settings"} {
+	for _, want := range []string{"Apps       Cursor 3.21.13", "* Storage    r2://agent-archive/agent-archive/  account newaccount", "was r2://agent-archive/agent-archive/  account oldaccount", "* changed from your current settings"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in:\n%s", want, got)
 		}
 	}
 	if strings.Count(got, "* ") != 2 || strings.Contains(got, "\x1b[") {
-		t.Fatalf("only the account should be marked, with no color in a buffer:\n%s", got)
+		t.Fatalf("only the storage should be marked, with no color in a buffer:\n%s", got)
 	}
 }
 
@@ -281,9 +281,9 @@ func TestSetupReviewShowsDeclinedApps(t *testing.T) {
 	next := old
 	next.DeclinedHarnesses = []string{"codex", "claude"}
 	var out bytes.Buffer
-	showSetupReview(newPrompter(strings.NewReader(""), &out), next, old, true, nil)
+	showSetupReview(newPrompter(strings.NewReader(""), &out), next, setupReview{existing: old, reconfiguring: true})
 	got := out.String()
-	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)") || strings.Contains(got, "Nothing above differs") {
+	if !strings.Contains(got, "* Skipped    Codex and Claude Code (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)") || strings.Contains(got, "Nothing above differs") {
 		t.Fatalf("declining found apps not shown as a change:\n%s", got)
 	}
 }

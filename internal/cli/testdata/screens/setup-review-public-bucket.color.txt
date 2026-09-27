@@ -1,15 +1,17 @@
 $ agent-archive setup
 Checking installed applications...
-  \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
+  \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
   \e[32m✓\e[0m Background job: launchctl responds
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
-You have an unfinished setup. What would you like to do?
-  1) Continue where you left off
-  2) Change apps and projects
-  3) Change storage
-  4) Change how long sessions are kept
-  5) Start over
-Enter 1-5 [1]: 1
+
+\e[1mStep 1 of 3 · Choose what to capture\e[0m
+
+Include Claude Code? [Y/n] 
+Projects to archive (✓ included):
+  1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
+Enter 1 to include or leave it out, or a path to add a project.
+Enter a blank line when finished.
+Projects: 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
@@ -17,31 +19,28 @@ Where should sessions be stored?
   1) Cloudflare R2
   2) Amazon S3
   3) Show setup instructions
-Enter 1-3 [2]: 
-AWS profile [work]: 
+Enter 1-3 [1]: 2
+AWS profile: work
 Which bucket should sessions be stored in?
   1) photos
   2) team-archive
-Enter 1-2, or another bucket name [2]: 
-Couldn't look up the region of bucket team-archive (access denied).
-The last storage check failed with region us-east-1.
-Bucket region [us-east-1]: eu-west-1
+Enter 1-2, or another bucket name: 2
+Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 \e[32m✓ Connected.\e[0m
 
 \e[1mStep 3 of 3 · Ready to start\e[0m
 
-  \e[2mApps      \e[0m Codex (version not detected)
+  \e[2mApps      \e[0m Claude Code 2.1.90
   \e[2mProjects  \e[0m ~/src/web-app
-  \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2meu-west-1 · profile work\e[0m
+  \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2mus-east-1 · profile work\e[0m
   \e[2mKeep for  \e[0m 90 days
 
   \e[32m✓\e[0m Storage connected       write, read, list, delete
-  \e[33m!\e[0m Bucket privacy unknown  public-access settings could not be read
-    Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
-  \e[32m✓\e[0m Hook file is valid      ~/.codex/hooks.json
-  \e[33m!\e[0m Codex needs one step    approve the hooks with /hooks after setup
+  \e[31m✗\e[0m Bucket is public        a bucket policy allows public access
+    Fix its access before archiving: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+  \e[32m✓\e[0m Hook file is valid      ~/.claude/settings.json
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
 \e[2m  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m

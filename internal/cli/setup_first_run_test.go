@@ -153,7 +153,7 @@ func TestSetupReviewRemindsR2UsersToCheckPublicAccess(t *testing.T) {
 	home := t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	output := setupRun(t, env, r2SetupInput(t.TempDir(), "secret-value"), 0)
-	if strings.Contains(output, "Bucket privacy not verified") || !strings.Contains(output, "· Check that public access is disabled for the bucket in the Cloudflare dashboard.") {
+	if strings.Contains(output, "public-access settings could not be read") || !strings.Contains(output, "! Bucket privacy unknown  check public access in the Cloudflare dashboard") {
 		t.Fatalf("unexpected privacy note:\n%s", output)
 	}
 	cfg, _, _ := config.Load(home)
@@ -177,11 +177,11 @@ func TestSetupReviewShowsSessionsOnlyWhenNotTheDefault(t *testing.T) {
 		want          string
 	}{
 		{"default", cfg, config.Config{}, false, ""},
-		{"skills only", skills, config.Config{}, false, "Sessions  Only new sessions that use skills"},
-		{"back to all", cfg, skills, true, "* Sessions  All new sessions, with or without skills"},
+		{"skills only", skills, config.Config{}, false, "Sessions   Only new sessions that use skills"},
+		{"back to all", cfg, skills, true, "* Sessions   All new sessions, with or without skills"},
 	} {
 		var out strings.Builder
-		showSetupReview(newPrompter(strings.NewReader(""), &out), tc.next, tc.current, tc.reconfiguring, nil)
+		showSetupReview(newPrompter(strings.NewReader(""), &out), tc.next, setupReview{existing: tc.current, reconfiguring: tc.reconfiguring})
 		if got := out.String(); tc.want == "" && strings.Contains(got, "Sessions") || tc.want != "" && !strings.Contains(got, tc.want) {
 			t.Errorf("%s: review:\n%s", tc.name, got)
 		}
