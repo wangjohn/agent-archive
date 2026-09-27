@@ -154,7 +154,7 @@ func TestSetupStopsBeforeAnyQuestionWhenLaunchctlCannotTell(t *testing.T) {
 // not need the Keychain.
 func TestSetupStopsBeforeAnyQuestionWhenTheKeychainDoesNotOpen(t *testing.T) {
 	t.Parallel()
-	env, home, _ := preflightEnv(t)
+	env, home, userHome := preflightEnv(t)
 	env.Keychain = func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
 	output, _, in := runUnanswered(t, env)
 	if in.reads == 0 || strings.Contains(output, "Keychain") {
@@ -167,7 +167,11 @@ func TestSetupStopsBeforeAnyQuestionWhenTheKeychainDoesNotOpen(t *testing.T) {
 	if _, e := os.Stat(draftPath(home)); !os.IsNotExist(e) {
 		t.Errorf("setup --yes staged a draft before stopping: %v", e)
 	}
-	output, code, _ = runUnanswered(t, env, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", t.TempDir())
+	// Setup prints the project's path, from ~ in the home folder; elsewhere
+	// under t.TempDir it would carry this test's name, and "Keychain".
+	project := filepath.Join(userHome, "project")
+	must(t, os.Mkdir(project, 0o700))
+	output, code, _ = runUnanswered(t, env, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", project)
 	if code != 0 || strings.Contains(output, "Keychain") {
 		t.Fatalf("setup --yes --provider s3: exit %d\n%s", code, output)
 	}

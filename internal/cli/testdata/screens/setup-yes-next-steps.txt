@@ -1,4 +1,6 @@
 $ agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app
+  ✓ Claude Code hooks: ~/.claude/settings.json
+  ✓ Background job: launchctl responds
 Checking your storage connection…
 ✓ Connected.
 Apps: Claude Code. Projects: 1. Storage: Amazon S3 bucket team-archive.
