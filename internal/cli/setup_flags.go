@@ -395,6 +395,12 @@ func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env) (cred
 				return secret, fmt.Errorf("AWS profile %s names no region; pass --region", next.AWSProfile)
 			}
 		}
+		if !validRegion(next.Region) {
+			if opts.region != "" {
+				return secret, fmt.Errorf("--region %q isn't an AWS region; use a lowercase name such as us-east-1", next.Region)
+			}
+			return secret, fmt.Errorf("AWS profile %s names region %q, which isn't an AWS region; pass --region, such as --region us-east-1", next.AWSProfile, next.Region)
+		}
 	case "":
 		return secret, errors.New("--bucket and the other storage flags need --provider r2 or --provider s3")
 	default:

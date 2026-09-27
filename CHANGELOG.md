@@ -31,6 +31,10 @@ follow [Semantic Versioning](https://semver.org/).
 - `setup` always shows your recent projects with each one's session count,
   with the current repository pre-selected; `a` selects them all, and
   leaving every project out asks again instead of ending setup.
+- `setup` lists the chosen AWS profile's buckets to pick from (an
+  `agent-archive*` bucket is pre-selected) and uses the bucket's own region.
+  A region that isn't shaped like one is refused, and a saved one of that
+  kind is dropped on reconfigure.
 
 ## [0.1.0] - 2026-09-25
 

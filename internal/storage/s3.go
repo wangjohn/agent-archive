@@ -403,3 +403,43 @@ func NewConfiguredStore(ctx context.Context, cfg credentials.Config, keychain cr
 	client := NewClient(awsCfg, endpoint, true, 3)
 	return NewS3Store(S3StoreOptions{Provider: cfg.Provider, Client: client, Bucket: cfg.Bucket, Prefix: cfg.Prefix})
 }
+
+// ListBucketNames returns the names of every bucket the client's
+// credentials can list, following all result pages, in the order the
+// provider returns them. It needs s3:ListAllMyBuckets, which a
+// least-privilege profile often lacks; callers fall back to asking for the
+// name.
+func ListBucketNames(ctx context.Context, client *s3.Client) ([]string, error) {
+	pager := s3.NewListBucketsPaginator(client, &s3.ListBucketsInput{})
+	var names []string
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, bucket := range page.Buckets {
+			if name := aws.ToString(bucket.Name); name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names, nil
+}
+
+// BucketRegion returns the AWS region bucket lives in, from
+// GetBucketLocation. S3 reports us-east-1 as an empty location and the
+// legacy eu-west-1 as "EU"; both are translated to region names.
+func BucketRegion(ctx context.Context, client *s3.Client, bucket string) (string, error) {
+	output, err := client.GetBucketLocation(ctx, &s3.GetBucketLocationInput{Bucket: aws.String(bucket)})
+	if err != nil {
+		return "", err
+	}
+	switch location := string(output.LocationConstraint); location {
+	case "":
+		return "us-east-1", nil
+	case "EU":
+		return "eu-west-1", nil
+	default:
+		return location, nil
+	}
+}

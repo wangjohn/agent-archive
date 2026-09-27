@@ -81,7 +81,7 @@ var screens = []screen{
 		// A first run on a Mac with all three apps, from inside a Git
 		// repository, through to the next steps.
 		name:    "setup-fresh-apps-git-cwd",
-		answers: []string{"", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: []string{"", "", "2", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude", "cursor")
@@ -144,12 +144,38 @@ var screens = []screen{
 	{
 		// A setup left after its first step offers to continue.
 		name:    "setup-resume-menu",
-		answers: []string{"1", "2", "team-archive", "work", "us-east-1", "3"},
+		answers: []string{"1", "2", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
 			f.inWebApp(t)
 			f.setup(t, 1, "", "", "")
+		},
+	},
+	{
+		// With the AWS profile chosen, setup lists its buckets, pre-selects
+		// the one named like agent-archive*, and uses that bucket's own
+		// region rather than the profile's.
+		name:    "setup-s3-bucket-list",
+		answers: []string{"y", "n", "n", "", "2", "", "", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.inWebApp(t)
+			f.env.AWSProfiles = func() ([]AWSProfile, error) {
+				return []AWSProfile{{Name: "default", Region: "us-east-1"}, {Name: "personal", NoCredentials: true}}, nil
+			}
+			f.env.AWSBuckets = fakeBuckets{names: []string{"agent-archive-alex", "photos", "team-archive"}, regions: map[string]string{"agent-archive-alex": "eu-west-2"}}.open
+		},
+	},
+	{
+		// S3 refuses both lookups, so setup says why and asks for the
+		// bucket and region, turning away a path typed as the region.
+		name:    "setup-s3-bucket-typed",
+		answers: []string{"y", "n", "n", "", "2", "work", "team-archive", "~/code/api", "us-east-1", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.inWebApp(t)
+			f.env.AWSBuckets = fakeBuckets{listErr: errAccessDenied, regionErr: errAccessDenied}.open
 		},
 	},
 	{
@@ -189,7 +215,7 @@ var screens = []screen{
 		// The storage check fails, and setup offers to edit, retry, or
 		// cancel.
 		name:    "setup-storage-failure",
-		answers: []string{"y", "n", "n", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: []string{"y", "n", "n", "", "2", "work", "2", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -202,7 +228,7 @@ var screens = []screen{
 	{
 		// The review before a first setup commits, cancelled there.
 		name:    "setup-review-fresh",
-		answers: []string{"y", "", "2", "team-archive", "work", "us-east-1", "3"},
+		answers: []string{"y", "", "2", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
@@ -224,7 +250,7 @@ var screens = []screen{
 	{
 		// What a committed first setup ends with.
 		name:    "setup-next-steps",
-		answers: []string{"y", "y", "y", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: []string{"y", "y", "y", "", "2", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -314,6 +340,9 @@ func newScreenFixture(t *testing.T) *screenFixture {
 	env.TempDir = func() string { return tempDir }
 	f := &screenFixture{root: root, userHome: userHome, home: home, env: env, bucket: storagetest.NewMemoryStore()}
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return f.bucket, nil }
+	// The profile setup is given can list two buckets; team-archive is in
+	// us-east-1.
+	f.env.AWSBuckets = fakeBuckets{names: []string{"photos", "team-archive"}, regions: map[string]string{"team-archive": "us-east-1"}}.open
 	f.env.IsTerminal = func(stream any) bool {
 		switch stream.(type) {
 		case *strings.Reader, *echoAnswers:
@@ -393,7 +422,7 @@ func (f *screenFixture) setup(t *testing.T, exit int, answers ...string) {
 func (f *screenFixture) installed(t *testing.T) {
 	t.Helper()
 	project := f.project(t, "src/web-app")
-	f.setup(t, 0, "y", "n", "n", project, "", "2", "team-archive", "work", "us-east-1", "")
+	f.setup(t, 0, "y", "n", "n", project, "", "2", "work", "2", "")
 }
 
 // published captures and publishes one Codex session in ~/src/web-app.
