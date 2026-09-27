@@ -13,6 +13,18 @@ follow [Semantic Versioning](https://semver.org/).
   output with `NO_COLOR`, `TERM=dumb`, or when piped is unchanged.
 - Golden transcripts of the setup and status screens, in color and plain, so
   changes to what you see are reviewed line by line.
+- A plain-words diagnosis for storage failures (no credentials, access
+  denied, no such bucket, wrong region, network), each with a fix to try.
+  The AWS SDK no longer prints its own warnings to the terminal.
+- A read-only check of each app's hook settings file that reports the file,
+  line, column and reason for JSONC comments, trailing commas and duplicate
+  keys, without changing anything.
+
+### Changed
+
+- `setup` suggests `AWS_PROFILE` when it is set, marks AWS profiles that
+  have no credentials configured, and defaults to S3 when a usable profile
+  exists (R2 otherwise).
 
 ## [0.1.0] - 2026-09-25
 

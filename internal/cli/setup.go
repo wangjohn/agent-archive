@@ -605,7 +605,17 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 		{"s3", "Amazon S3"},
 		{"help", "Show setup instructions"},
 	}
-	choice, err := p.menu("Where should sessions be stored?", firstNonEmpty(existing.Provider, "r2"), providers...)
+	// S3 is offered first when an AWS profile with credentials is already
+	// configured; otherwise R2, which needs nothing installed.
+	// A saved provider wins, so discovery runs only when there is none.
+	defaultProvider := existing.Provider
+	if defaultProvider == "" {
+		defaultProvider = credentials.ProviderR2
+		if profiles, e := env.awsProfiles(); e == nil && len(usableAWSProfiles(profiles)) > 0 {
+			defaultProvider = credentials.ProviderS3
+		}
+	}
+	choice, err := p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	for err == nil && choice == "help" {
 		terminal.Println(p.out, "Cloudflare R2, in the dashboard at https://dash.cloudflare.com:")
 		terminal.Println(p.out, "  1. R2 Object Storage > Create bucket. Leave public access off.")
@@ -615,7 +625,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 		terminal.Println(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
 		terminal.Println(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
 		terminal.Println(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
-		choice, err = p.menu("Where should sessions be stored?", firstNonEmpty(existing.Provider, "r2"), providers[:2]...)
+		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers[:2]...)
 	}
 	if err != nil {
 		return cfg, secret, false, err

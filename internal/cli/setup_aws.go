@@ -19,6 +19,11 @@ import (
 type AWSProfile struct {
 	Name   string
 	Region string
+	// NoCredentials is true when the profile's settings name no credential
+	// source (no access keys, credential_process, SSO, login session, or
+	// role with a source to assume it from) or the SDK cannot load it.
+	// Discovery checks only that such a setting is present.
+	NoCredentials bool
 }
 
 func (e Env) awsProfiles() ([]AWSProfile, error) {
@@ -47,7 +52,8 @@ func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
-			// Only section names are used; values may contain credentials and are ignored.
+			// This scan uses only section names. The SDK parses the values below, but
+			// discovery keeps only the region and whether a credential setting is present.
 			if !strings.HasPrefix(line, "[") {
 				continue
 			}
@@ -78,14 +84,58 @@ func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {
 			o.ConfigFiles = []string{configPath}
 			o.CredentialsFiles = []string{credentialsPath}
 		})
-		region := ""
-		if err == nil {
-			region = cfg.Region
+		if err != nil {
+			// The SDK cannot load this profile (a broken source_profile
+			// chain, a missing sso-session section, conflicting credential
+			// settings), so it cannot supply credentials either.
+			profiles = append(profiles, AWSProfile{Name: name, NoCredentials: true})
+			continue
 		}
-		profiles = append(profiles, AWSProfile{Name: name, Region: region})
+		profiles = append(profiles, AWSProfile{Name: name, Region: cfg.Region, NoCredentials: !hasCredentialSource(cfg)})
 	}
 	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
 	return profiles, nil
+}
+
+// hasCredentialSource reports whether a profile names any way to get
+// credentials. It looks only at which settings are present; nothing is
+// retrieved or run. A role counts only with something to assume it from.
+func hasCredentialSource(cfg awsconfig.SharedConfig) bool {
+	role := cfg.RoleARN != "" && (cfg.SourceProfileName != "" || cfg.CredentialSource != "" || cfg.WebIdentityTokenFile != "")
+	return cfg.Credentials.HasKeys() || cfg.CredentialProcess != "" || cfg.WebIdentityTokenFile != "" ||
+		role || cfg.SSOSessionName != "" || cfg.SSOStartURL != "" || cfg.LoginSession != ""
+}
+
+// usableAWSProfiles names the discovered profiles that have a credential
+// source.
+func usableAWSProfiles(profiles []AWSProfile) []string {
+	var names []string
+	for _, profile := range profiles {
+		if !profile.NoCredentials {
+			names = append(names, profile.Name)
+		}
+	}
+	return names
+}
+
+// defaultAWSProfile is the profile setup offers first: the saved one, then
+// AWS_PROFILE, then "default" or the only profile, if it has a credential
+// source.
+func defaultAWSProfile(saved string, profiles []AWSProfile, env Env) string {
+	if saved != "" {
+		return saved
+	}
+	if name := lookupEnvTrimmed(env, "AWS_PROFILE"); name != "" {
+		return name
+	}
+	usable := usableAWSProfiles(profiles)
+	if containsString(usable, "default") {
+		return "default"
+	}
+	if len(usable) == 1 {
+		return usable[0]
+	}
+	return ""
 }
 
 func promptAWSProfile(p *prompter, cfg *credentials.Config, env Env) error {
@@ -93,21 +143,10 @@ func promptAWSProfile(p *prompter, cfg *credentials.Config, env Env) error {
 	if err != nil {
 		terminal.Println(p.out, "Could not read AWS profiles automatically. Enter an existing profile name below.")
 	}
-	names := make([]string, 0, len(profiles))
-	for _, profile := range profiles {
-		names = append(names, profile.Name)
-	}
-	def := cfg.AWSProfile
-	if def == "" {
-		if containsString(names, "default") {
-			def = "default"
-		} else if len(names) == 1 {
-			def = names[0]
-		}
-	}
+	def := defaultAWSProfile(cfg.AWSProfile, profiles, env)
 	var profile string
-	if len(names) > 0 {
-		profile, err = pickAWSProfile(p, names, def)
+	if len(profiles) > 0 {
+		profile, err = pickAWSProfile(p, profiles, def)
 	} else {
 		profile, err = p.required("AWS profile", def)
 	}
@@ -134,25 +173,30 @@ func promptAWSProfile(p *prompter, cfg *credentials.Config, env Env) error {
 	return nil
 }
 
-// pickAWSProfile lists the discovered profiles by number. A profile that
-// discovery missed can still be typed by name.
-func pickAWSProfile(p *prompter, names []string, def string) (string, error) {
+// pickAWSProfile lists the discovered profiles by number, marking those with
+// no credential source. A profile that discovery missed can still be typed
+// by name.
+func pickAWSProfile(p *prompter, profiles []AWSProfile, def string) (string, error) {
 	terminal.Println(p.out, "Which AWS profile has access to the bucket?")
 	defNum := def
-	for i, name := range names {
-		terminal.Printf(p.out, "  %d) %s\n", i+1, name)
-		if name == def {
+	for i, profile := range profiles {
+		note := ""
+		if profile.NoCredentials {
+			note = " " + p.style.dim("(no credentials configured)")
+		}
+		terminal.Printf(p.out, "  %d) %s%s\n", i+1, profile.Name, note)
+		if profile.Name == def {
 			defNum = strconv.Itoa(i + 1)
 		}
 	}
-	label := fmt.Sprintf("Enter 1-%d, or another profile name", len(names))
+	label := fmt.Sprintf("Enter 1-%d, or another profile name", len(profiles))
 	for {
 		answer, err := p.withDefault(label, defNum)
 		if err != nil {
 			return "", err
 		}
-		if n, e := strconv.Atoi(answer); e == nil && n >= 1 && n <= len(names) {
-			return names[n-1], nil
+		if n, e := strconv.Atoi(answer); e == nil && n >= 1 && n <= len(profiles) {
+			return profiles[n-1].Name, nil
 		}
 		if answer != "" {
 			return answer, nil

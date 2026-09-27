@@ -41,6 +41,9 @@ captured. If you finish with no project included, setup asks again.
 
 ## 2. Storage
 
+Setup suggests S3 when your AWS settings already have a profile with
+credentials, and R2 otherwise.
+
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
@@ -51,7 +54,13 @@ captured. If you finish with no project included, setup asks again.
   the profiles in your AWS settings and uses the profile's region when it has
   one; it asks for a region only when one is missing. The profiles come
   from `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` when your shell
-  sets them.
+  sets them. The suggested profile is `AWS_PROFILE` when your shell sets it,
+  else `default`, or the only profile, when it has credentials. A profile
+  whose settings name no credentials (no access keys, `credential_process`,
+  SSO, login session, or role it can assume) is marked "no credentials
+  configured", as is a profile the AWS SDK cannot load. Setup only checks
+  which settings are present: it never runs `credential_process`, signs in,
+  or prints or saves a secret.
 
 Setup checks the connection with one temporary synthetic object
 (`.setup-test/<random>.json`), which it deletes again. That proves the
