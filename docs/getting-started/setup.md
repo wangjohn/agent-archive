@@ -27,12 +27,15 @@ for each check: a ✓, or a ✗ with the problem and how to fix it.
   setup creates it.
 - **Background job.** `launchctl` must say whether the collector's job is
   already loaded.
-- **Keychain.** The macOS Keychain, where an R2 key is kept, must open.
+- **Keychain.** When your saved settings or an unfinished setup store in
+  R2, the macOS Keychain, where the R2 key is kept, must open.
 
 A ✗ stops setup before it asks anything: nothing is changed, and an
 unfinished setup is kept. Fix what is marked, then run `agent-archive setup`
-again. `setup --yes` makes the same checks, for the apps it would include,
-and checks the Keychain only when it stores in R2.
+again. To leave out an app whose file you don't want to change, choose the
+apps with [`setup --yes --apps`](#set-up-without-questions). `setup --yes`
+makes the same checks, for the apps it would include, and checks the
+Keychain when it stores in R2.
 
 Setup captures only **new** sessions in the projects you include. To import
 conversations already on this Mac, run [`agent-archive

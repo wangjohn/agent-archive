@@ -72,7 +72,6 @@ func TestSetupStopsBeforeAnyQuestionOnACommentedSettingsFile(t *testing.T) {
 		"comments (JSONC) are not JSON, so remove them",
 		"Fix the file",
 		"✓ Background job: launchctl answers",
-		"✓ Keychain: opens",
 		"Nothing was changed, and any unfinished setup is kept.",
 	} {
 		if !strings.Contains(output, want) {
@@ -146,18 +145,20 @@ func TestSetupStopsBeforeAnyQuestionWhenLaunchctlCannotTell(t *testing.T) {
 	}
 }
 
-// A Keychain that does not open stops interactive setup before its first
-// question, since R2 may be chosen there, and setup --yes when it stores in
-// R2; setup --yes storing in S3 does not need it.
+// A Keychain that does not open stops setup before its first question when
+// it would store in R2: interactive setup whose saved or unfinished setup
+// stores there, and setup --yes --provider r2. A setup that may still
+// choose S3 goes on to its questions, and setup --yes storing in S3 does
+// not need the Keychain.
 func TestSetupStopsBeforeAnyQuestionWhenTheKeychainDoesNotOpen(t *testing.T) {
 	t.Parallel()
 	env, home, _ := preflightEnv(t)
 	env.Keychain = func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
-	output, code, in := runUnanswered(t, env)
-	if code != 1 || in.reads != 0 || !strings.Contains(output, "✗ Keychain: cannot be opened") {
-		t.Fatalf("setup: exit %d after %d reads\n%s", code, in.reads, output)
+	output, _, in := runUnanswered(t, env)
+	if in.reads == 0 || strings.Contains(output, "Keychain") {
+		t.Fatalf("a first setup did not reach its first question without checking the Keychain: %d reads\n%s", in.reads, output)
 	}
-	output, code, _ = runUnanswered(t, env, "--yes", "--provider", "r2", "--r2-account", "0123456789abcdef0123456789abcdef", "--bucket", "b", "--r2-access-key-id", "KEY", "--project", t.TempDir())
+	output, code, _ := runUnanswered(t, env, "--yes", "--provider", "r2", "--r2-account", "0123456789abcdef0123456789abcdef", "--bucket", "b", "--r2-access-key-id", "KEY", "--project", t.TempDir())
 	if code != 1 || !strings.Contains(output, "✗ Keychain: cannot be opened") {
 		t.Fatalf("setup --yes --provider r2: exit %d\n%s", code, output)
 	}
@@ -167,6 +168,32 @@ func TestSetupStopsBeforeAnyQuestionWhenTheKeychainDoesNotOpen(t *testing.T) {
 	output, code, _ = runUnanswered(t, env, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", t.TempDir())
 	if code != 0 || strings.Contains(output, "Keychain") {
 		t.Fatalf("setup --yes --provider s3: exit %d\n%s", code, output)
+	}
+
+	// An unfinished setup that stores in R2 stops before its first question.
+	draft := setupDraft{Version: draftFormat, Step: 2, Config: config.Config{Harnesses: []string{"claude"}, Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b"}}}
+	must(t, local.Write(draftPath(home), draft))
+	output, code, in = runUnanswered(t, env)
+	if code != 1 || in.reads != 0 || !strings.Contains(output, "✗ Keychain: cannot be opened") {
+		t.Fatalf("setup with an R2 draft: exit %d after %d reads\n%s", code, in.reads, output)
+	}
+}
+
+// A configuration saved with R2 makes interactive setup check the Keychain
+// before its first question.
+func TestSetupChecksTheKeychainForASavedR2Configuration(t *testing.T) {
+	t.Parallel()
+	env, home, _ := preflightEnv(t)
+	cfg := config.Config{Harnesses: []string{"claude"}, Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b"}}
+	must(t, config.Save(home, cfg))
+	output, _, _ := runUnanswered(t, env)
+	if !strings.Contains(output, "✓ Keychain: opens") {
+		t.Fatalf("setup did not check the Keychain for a saved R2 configuration:\n%s", output)
+	}
+	env.Keychain = func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
+	output, code, in := runUnanswered(t, env)
+	if code != 1 || in.reads != 0 || !strings.Contains(output, "✗ Keychain: cannot be opened") {
+		t.Fatalf("exit %d after %d reads\n%s", code, in.reads, output)
 	}
 }
 

@@ -4,7 +4,6 @@ Checking installed applications...
   ✓ Claude Code hooks: ~/.claude/settings.json
   ✓ Cursor hooks: ~/.cursor/hooks.json
   ✓ Background job: launchctl answers
-  ✓ Keychain: opens, for the R2 key
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 
 Step 1 of 3 · Choose what to capture

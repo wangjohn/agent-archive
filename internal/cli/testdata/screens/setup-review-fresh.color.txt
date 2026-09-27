@@ -3,7 +3,6 @@ Checking installed applications...
   \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
   \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
   \e[32m✓\e[0m Background job: launchctl answers
-  \e[32m✓\e[0m Keychain: opens, for the R2 key
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m

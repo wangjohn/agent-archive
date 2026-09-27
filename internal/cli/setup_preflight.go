@@ -101,7 +101,7 @@ func preflight(env Env, home, userHome string, apps []string, keychain bool) pre
 			}
 			check.OK = false
 			check.Detail = where + ": " + problem.Reason
-			check.Fix = "Fix the file (setup edits only plain JSON), then run agent-archive setup again."
+			check.Fix = "Fix the file (setup edits only plain JSON), then run agent-archive setup again. To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
 		}
 		checks = append(checks, check)
 	}

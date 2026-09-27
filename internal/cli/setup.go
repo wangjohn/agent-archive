@@ -219,11 +219,13 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	}
 	// What applying the setup needs is checked before any question, so a
 	// hook file setup cannot edit, or a launchctl or Keychain that does not
-	// answer, stops setup here rather than after every answer. R2 may be
-	// chosen at the storage question, so the Keychain is always checked.
-	// A draft that cannot be read is dealt with after these checks.
+	// answer, stops setup here rather than after every answer. The Keychain
+	// is checked when the saved or unfinished setup stores in R2; choosing
+	// R2 later finds a Keychain that does not open at that question. A
+	// draft that cannot be read is dealt with after these checks.
 	unfinished, _, _, _ := readDraft(home)
-	checks := preflight(env, home, userHome, preflightApps(env.detectHarnesses(userHome), existing.Harnesses, existing.DeclinedHarnesses, unfinished.Config.Harnesses), true)
+	r2 := existing.Storage.Provider == credentials.ProviderR2 || unfinished.Config.Storage.Provider == credentials.ProviderR2
+	checks := preflight(env, home, userHome, preflightApps(env.detectHarnesses(userHome), existing.Harnesses, existing.DeclinedHarnesses, unfinished.Config.Harnesses), r2)
 	checks.print(p)
 	if checks.blocked() {
 		return &preflightError{checks: checks}

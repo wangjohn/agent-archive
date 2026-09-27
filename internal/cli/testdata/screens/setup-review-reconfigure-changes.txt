@@ -4,7 +4,6 @@ Checking installed applications...
   ✓ Claude Code hooks: ~/.claude/settings.json
   ✓ Cursor hooks: ~/.cursor/hooks.json
   ✓ Background job: launchctl answers
-  ✓ Keychain: opens, for the R2 key
 Agent Archive is already set up. What would you like to change?
   1) Apps and projects
   2) Storage (bucket and credentials)

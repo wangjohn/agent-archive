@@ -3,7 +3,6 @@ Checking installed applications...
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Claude Code hooks: ~/.claude/settings.json
   ✓ Background job: launchctl answers
-  ✓ Keychain: opens, for the R2 key
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 You have an unfinished setup. What would you like to do?
   1) Continue where you left off
