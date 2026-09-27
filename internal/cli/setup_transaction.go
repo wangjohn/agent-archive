@@ -158,8 +158,11 @@ func reviewChanges(home string, old, next config.Config, p *prompter, env Env) e
 				count++
 			}
 		}
+		// The cutoff is a time of day, so the date says "on or before": a
+		// session from earlier that day is counted too. It is the date where
+		// the user is, as now is.
 		if count > 0 {
-			p.warn(fmt.Sprintf("Shorter retention: %s captured before %s will be eligible for deletion.", countNoun(count, "session"), cutoff.UTC().Format("2006-01-02")),
+			p.warn(fmt.Sprintf("Shorter retention: %s captured on or before %s will be eligible for deletion.", countNoun(count, "session"), cutoff.Format(time.DateOnly)),
 				"Future cleanup also applies this policy.")
 		}
 	}

@@ -89,7 +89,10 @@ func TestShorterRetentionWarnsOnlyWhenSessionsBecomeDeletable(t *testing.T) {
 		want string
 	}{
 		{screenNow, ""},
-		{screenNow.Add(60 * 24 * time.Hour), "! Shorter retention: 1 session captured before 2026-10-25 will be eligible for deletion.\n    Future cleanup also applies this policy.\n"},
+		{screenNow.Add(60 * 24 * time.Hour), "! Shorter retention: 1 session captured on or before 2026-10-25 will be eligible for deletion.\n    Future cleanup also applies this policy.\n"},
+		// The date is the user's: the same cutoff, 12:00 UTC, is still the
+		// evening before 13 hours west of UTC.
+		{screenNow.Add(60 * 24 * time.Hour).In(time.FixedZone("UTC-13", -13*3600)), "! Shorter retention: 1 session captured on or before 2026-10-24 will be eligible for deletion.\n"},
 	} {
 		var out bytes.Buffer
 		env := f.env
