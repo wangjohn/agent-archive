@@ -76,7 +76,7 @@ func TestStatusExplainsWhyHookTrustIsUnknown(t *testing.T) {
 	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "granted inside the app and is not observable") {
+	if !strings.Contains(stdout.String(), "Run /hooks in Codex and approve the archive hooks; agent-archive can't see whether you have.") {
 		t.Fatalf("status does not explain unknown trust:\n%s", stdout.String())
 	}
 	stdout.Reset()

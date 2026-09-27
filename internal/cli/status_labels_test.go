@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -52,10 +53,10 @@ func TestStatusCountsSessionsWithCaptureGapsNotGapEntries(t *testing.T) {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 	text := out.String()
-	if !strings.Contains(text, "(1 session(s); 1 with a capture gap)") {
+	if !strings.Contains(text, "1 session archived") {
 		t.Fatalf("app line counts gap entries as sessions:\n%s", text)
 	}
-	if want := "Capture gaps: " + strconv.Itoa(len(app.CaptureGaps)) + " recorded across 1 session(s)"; !strings.Contains(text, want) {
+	if want := "1 session with a capture gap (" + strconv.Itoa(len(app.CaptureGaps)) + " gaps recorded"; !strings.Contains(text, want) {
 		t.Fatalf("missing %q:\n%s", want, text)
 	}
 }
@@ -94,14 +95,17 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 	}
 
 	// None of these is evidence for this configuration: another
-	// configuration's health, health without a configuration ID (which the
-	// Authentication line still reports as verified), and a failed check.
-	for name, h := range map[string]storageHealth{
-		"other configuration": {ConfigurationID: "other", State: "verified", CheckedAt: checked, Context: "background_collector"},
-		"no configuration":    {ConfigurationID: "", State: "verified", CheckedAt: checked, Context: "background_collector"},
-		"failed check":        {ConfigurationID: configurationID(cfg), State: "authentication_failed", CheckedAt: checked, Context: "background_collector"},
+	// configuration's health, health without a configuration ID (which
+	// status --json still reports as verified), and a failed check.
+	for name, tc := range map[string]struct {
+		health storageHealth
+		line   string
+	}{
+		"other configuration": {storageHealth{ConfigurationID: "other", State: "verified", CheckedAt: checked, Context: "background_collector"}, "! s3://bucket +storage settings changed since the last check\n"},
+		"no configuration":    {storageHealth{ConfigurationID: "", State: "verified", CheckedAt: checked, Context: "background_collector"}, "· s3://bucket +not checked yet\n"},
+		"failed check":        {storageHealth{ConfigurationID: configurationID(cfg), State: "authentication_failed", CheckedAt: checked, Context: "background_collector"}, "✗ s3://bucket +sign-in failed, checked 1 minute ago\n"},
 	} {
-		write(h)
+		write(tc.health)
 		view, err := readStatus(env)
 		if err != nil {
 			t.Fatal(err)
@@ -109,7 +113,7 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 		if !view.StorageAccessConfirmedAt.IsZero() || view.StorageAccessConfirmedBy != "" || !view.StorageVerifiedAt.IsZero() {
 			t.Fatalf("%s: confirmed=%v by=%q verified=%v", name, view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy, view.StorageVerifiedAt)
 		}
-		if out := text(); !strings.Contains(out, "Access:        not confirmed yet\n") {
+		if out := text(); !regexp.MustCompile(tc.line).MatchString(out) {
 			t.Fatalf("%s: access line:\n%s", name, out)
 		}
 	}
@@ -123,10 +127,7 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 		t.Fatalf("confirmed=%v by=%q verified=%v", view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy, view.StorageVerifiedAt)
 	}
 	out := text()
-	if !strings.Contains(out, "Storage:       s3 / bucket\n") {
-		t.Fatalf("storage line:\n%s", out)
-	}
-	if !strings.Contains(out, "Access:        confirmed "+formatTimeOrNever(checked)+" by the collector's last successful storage access\n") {
+	if !regexp.MustCompile("✓ s3://bucket +reachable, checked 1 minute ago\n").MatchString(out) {
 		t.Fatalf("access line:\n%s", out)
 	}
 
@@ -139,7 +140,7 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 	if view, err = readStatus(env); err != nil || !view.StorageVerifiedAt.Equal(cfg.StorageVerifiedAt) || !view.StorageAccessConfirmedAt.Equal(cfg.StorageVerifiedAt) || view.StorageAccessConfirmedBy != storageAccessConfirmedBySetup {
 		t.Fatalf("verified=%v confirmed=%v by=%q err=%v", view.StorageVerifiedAt, view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy, err)
 	}
-	if out := text(); !strings.Contains(out, "by setup's storage check (write, read, list, delete)") {
+	if out := text(); !regexp.MustCompile("✓ s3://bucket +reachable, checked by setup just now\n").MatchString(out) {
 		t.Fatalf("access line:\n%s", out)
 	}
 }

@@ -7,8 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -65,7 +68,10 @@ type appStatus struct {
 	VersionSupportReason    string              `json:"installed_version_support_reason,omitempty"`
 	Capabilities            captureCapabilities `json:"capabilities"`
 	verifiedHarnessVersions []string
-	Projects                []projectCaptureStatus `json:"projects"`
+	// readBackFailure is the read-back record VerificationDetail describes,
+	// for the text status to word without codes or ISO times.
+	readBackFailure verificationEvidence
+	Projects        []projectCaptureStatus `json:"projects"`
 
 	Code  string `json:"code"`
 	Hooks string `json:"hooks"`
@@ -138,6 +144,9 @@ type statusView struct {
 	// configured is whether a configuration exists; the text status shows
 	// only the state and next step without one.
 	configured bool
+	// problem names, in a few words, what Next fixes; the text status leads
+	// with it. It is set with Next, and empty when Next is only a tip.
+	problem string
 }
 
 func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
@@ -163,87 +172,11 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
 		return 0
 	}
-	terminal.Printf(stdout, "Agent Archive — %s\n\n", view.State)
-	if !view.configured {
-		// Nothing is installed to report on: no storage, collector, or apps.
-		terminal.Printf(stdout, "Next: %s\n", view.Next)
-		return 0
+	userHome, err := env.userHomeDir()
+	if err != nil {
+		userHome = "" // paths are then shown as they are
 	}
-	if view.Storage != "" {
-		terminal.Printf(stdout, "Storage:       %s\nAccess:        %s\n", view.Storage, storageAccessLine(view))
-		printBucketPrivacy(stdout, view.PrivacyEvidence)
-	}
-	checked := "not checked yet"
-	if !view.Authentication.CheckedAt.IsZero() {
-		checked = "checked " + formatTimeOrNever(view.Authentication.CheckedAt)
-	}
-	if view.Authentication.Context != "" {
-		checked += "; " + view.Authentication.Context
-	}
-	terminal.Printf(stdout, "Authentication: %s (%s)\n", view.Authentication.State, checked)
-	terminal.Printf(stdout, "Background:    %s\n", view.Background)
-	if view.Paused {
-		terminal.Println(stdout, "Collection:    paused")
-	}
-	terminal.Printf(stdout, "Projects:      %d included\nPending:       %d session(s)\nLast scan:     %s\nLast publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
-	if view.ImportedSessions > 0 {
-		imported := fmt.Sprintf("%d session(s), %d waiting to upload", view.ImportedSessions, view.ImportedPending)
-		if view.ImportedWithIssues > 0 {
-			imported += fmt.Sprintf(", %d with a capture gap or failed scan", view.ImportedWithIssues)
-		}
-		if view.LastImport != "" {
-			imported += "; last import " + view.LastImport
-		}
-		terminal.Printf(stdout, "Imported:      %s\n", imported)
-	}
-	for _, app := range view.Apps {
-		gaps := ""
-		if len(app.CaptureGaps) > 0 {
-			gaps = fmt.Sprintf("; %d with a capture gap", app.SessionsWithCaptureGaps)
-		}
-		terminal.Printf(stdout, "%s: %s (%d session(s)%s); hooks %s\n", appName(app.Name), app.State, app.Sessions, gaps, app.Hooks)
-		if app.Trust == "unknown" {
-			terminal.Println(stdout, "  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.")
-		}
-		terminal.Printf(stdout, "  Installed version: %s; support %s%s.\n", installedVersionLabel(app), app.VersionSupport, versionSupportNote(app))
-		if app.Capabilities.FreshStart.State == capabilityUnavailable {
-			terminal.Printf(stdout, "  Fresh-start capture: unavailable. %s\n", app.Capabilities.FreshStart.NextAction)
-		}
-		for _, pair := range app.Projects {
-			terminal.Printf(stdout, "  Project %s: %s.\n", pair.ProjectRoot, pair.VerificationState)
-		}
-		switch {
-		case app.ReadBackVerified && !app.VerifiedAt.IsZero():
-			terminal.Printf(stdout, "  Read-back verified: %s; evidence is for that publication.\n", formatTimeOrNever(app.VerifiedAt))
-		case !app.VerifiedAt.IsZero():
-			// Some evidence exists but not every project (or session) is
-			// covered, so do not call the app verified on the line below
-			// its "read-back pending" state.
-			terminal.Printf(stdout, "  Last read-back: %s (%s).\n", formatTimeOrNever(app.VerifiedAt), readBackProgress(app))
-		}
-		if app.VerificationDetail != "" {
-			terminal.Printf(stdout, "  Read-back: %s\n", app.VerificationDetail)
-		}
-		if len(app.CaptureGaps) > 0 {
-			terminal.Printf(stdout, "  Capture gaps: %d recorded across %d session(s); see status --json for details.\n", len(app.CaptureGaps), app.SessionsWithCaptureGaps)
-		}
-	}
-	for _, diagnostic := range view.CaptureDiagnostics {
-		terminal.Printf(stdout, "Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
-	}
-	if view.Collector.LastError != "" {
-		terminal.Printf(stdout, "Last error:    %s\n", view.Collector.LastError)
-	}
-	if n := len(view.Collector.QuarantinedFiles); n > 0 {
-		terminal.Printf(stdout, "Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)
-	}
-	if n := view.Collector.UnrefreshableSummaries; n > 0 {
-		terminal.Printf(stdout, "Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
-	}
-	for _, warning := range view.Warnings {
-		terminal.Printf(stdout, "Warning:       %s\n", warning)
-	}
-	terminal.Printf(stdout, "\nNext: %s\n", view.Next)
+	printStatus(stdout, view, statusScreen{style: styleFor(stdout), now: env.now(), home: userHome})
 	return 0
 }
 
@@ -255,18 +188,6 @@ const (
 	storageAccessConfirmedBySetup     storageAccessConfirmer = "setup"
 	storageAccessConfirmedByCollector storageAccessConfirmer = "collector"
 )
-
-// storageAccessLine is the text status's Access line: when access to the
-// destination was last confirmed, and by what.
-func storageAccessLine(view statusView) string {
-	switch view.StorageAccessConfirmedBy {
-	case storageAccessConfirmedBySetup:
-		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by setup's storage check (write, read, list, delete)"
-	case storageAccessConfirmedByCollector:
-		return "confirmed " + formatTimeOrNever(view.StorageAccessConfirmedAt) + " by the collector's last successful storage access"
-	}
-	return "not confirmed yet"
-}
 
 // storageLabel names the destination as "provider / bucket / prefix",
 // leaving out an empty prefix rather than ending in a bare separator.
@@ -294,21 +215,6 @@ func blockedReasonDetail(reason state.BlockedReason) string {
 	return "The current transcript can no longer be captured; the last published snapshot, if any, stays retained."
 }
 
-// versionSupportNote explains an unverified installed version in the text
-// status without changing the support state or reason code.
-func versionSupportNote(app appStatus) string {
-	//lint:ignore LV1001 the reason codes are untyped constants in capabilities.go, which computes this field
-	switch app.VersionSupportReason {
-	case supportReasonNoVerifiedCapture:
-		return " (no session from this version has been published and read back yet)"
-	case supportReasonNoMatchingVersion:
-		return " (verified sessions came from a different version)"
-	case supportReasonVersionSourceMismatch:
-		return " (installed version and captured versions use different numbering; cannot be compared)"
-	}
-	return ""
-}
-
 // readBackProgress summarises how much of an app's evidence is verified:
 // projects when the configuration has any, otherwise published sessions.
 func readBackProgress(app appStatus) string {
@@ -322,16 +228,6 @@ func readBackProgress(app appStatus) string {
 		}
 	}
 	return fmt.Sprintf("%d of %d projects verified", verified, len(app.Projects))
-}
-
-func installedVersionLabel(app appStatus) string {
-	if app.InstalledVersion != "" {
-		return app.InstalledVersion
-	}
-	if app.VersionState != "" {
-		return app.VersionState
-	}
-	return "unknown"
 }
 
 func readStatus(env Env) (view statusView, err error) {
@@ -387,14 +283,17 @@ func readStatus(env Env) (view statusView, err error) {
 func readSetupProgress(view *statusView, home string) {
 	if _, err := os.Stat(draftPath(home)); err == nil {
 		view.State = "Setup saved"
+		view.problem = "Setup stopped before it finished"
 		view.Next = "Run agent-archive setup to continue your saved choices."
 		if _, _, problem, _ := readDraft(home); problem != "" {
+			view.problem = "The saved setup can't be used"
 			view.Next = fmt.Sprintf("The saved setup in %s cannot be used (%s). Run agent-archive setup: it offers to move it aside and start again.", draftPath(home), problem)
 			view.Warnings = append(view.Warnings, view.Next)
 		}
 	}
 	if setupjournal.TransactionPending(home) {
 		view.State = "Setup needs recovery"
+		view.problem = "Setup was interrupted"
 		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}
 }
@@ -671,6 +570,7 @@ func (s statusSessions) addPublication(app *appStatus, pair *projectCaptureStatu
 		// back; a mismatch outranks a transient failure.
 		if verification.Outcome == verificationOutcomeMismatch || *readBackIssue != verificationOutcomeMismatch {
 			*readBackIssue = verification.Outcome
+			app.readBackFailure = verification
 			app.VerificationDetail = fmt.Sprintf("%s: %s (attempt %d; next retry %s)", verification.Outcome, verification.LastError, verification.Attempts, formatTimeOrNever(verification.NextRetryAt))
 		}
 	}
@@ -834,23 +734,31 @@ func readBackground(view *statusView, cfg config.Config, home, userHome string, 
 	return statusBackground{plist: plist, program: backgroundProgram, problem: backgroundProblem, environmentProblems: environmentProblems}
 }
 
+// scanStaleAfter is how old the last scan may be before status says
+// collection needs attention.
+const scanStaleAfter = 5 * time.Minute
+
 // chooseNextStep sets the overall state and the one next step status
 // suggests. Later checks outrank earlier ones: each overwrites the state and
 // step of any before it.
 func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, binaryProblem string, background statusBackground) {
 	view.State = "Ready"
+	view.problem = ""
 	view.Next = "Keep working. Run agent-archive list to inspect archived sessions."
 	if len(view.Apps) == 0 {
 		view.State = "Needs attention"
+		view.problem = "No apps are selected"
 		view.Next = "Run agent-archive setup and select at least one application."
 	} else if len(view.Projects) == 0 {
 		view.State = "Needs attention"
+		view.problem = "No projects are included"
 		view.Next = "Run agent-archive setup and include at least one project."
 	}
 	chooseCaptureStep(view)
 	chooseInstallationStep(view, background.plist)
-	if !view.Collector.LastScanAt.IsZero() && env.now().Sub(view.Collector.LastScanAt) > 5*time.Minute {
+	if !view.Collector.LastScanAt.IsZero() && env.now().Sub(view.Collector.LastScanAt) > scanStaleAfter {
 		view.State = "Needs attention"
+		view.problem = "No scan in over 5 minutes"
 		view.Next = "The last scan is over 5 minutes old. Run agent-archive sync to check collection."
 	}
 	// sync cannot help while another process holds the collector lock. The
@@ -858,10 +766,12 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 	// ago is never mistaken for a hung one.
 	if record, ok := readCollectorLockRecord(home); ok && env.now().Sub(record.Since) > collectLockStuckAfter && processAlive(record.PID) && collectorLockHeld(home) {
 		view.State = "Needs attention"
+		view.problem = "Collection is stuck"
 		view.Next = fmt.Sprintf("Collection is stuck: %s (process %d) has held the collector lock since %s, %s, well past a pass's time limit. If that command is no longer doing anything, quit process %d (in Activity Monitor or with kill %d); the next pass then resumes.", record.Holder, record.PID, record.Since.UTC().Format("2006-01-02 15:04 UTC"), durationAgo(env.now().Sub(record.Since)), record.PID, record.PID)
 	}
 	if view.Collector.LastError != "" {
 		view.State = "Needs attention"
+		view.problem = "The last pass failed"
 		view.Next = "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
 		// A Keychain failure has one specific fix; status.json keeps only
 		// the error text, so it is recognized from that.
@@ -869,15 +779,18 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 			view.Next = action
 		}
 		if strings.Contains(view.Collector.LastError, backgroundCredentialProcessFailure) {
+			view.problem = "The background collector couldn't get AWS credentials"
 			view.Next = "The background collector couldn't get credentials from your AWS profile's credential_process. It runs without most of your shell's environment: if the helper needs a setting the collector doesn't get (see Environment variables in the configuration reference), put it in the helper's own configuration; if it needs you to unlock it or sign in, do that. Check with agent-archive sync, then run agent-archive setup again from a shell where it works."
 		}
 	}
 	if len(background.environmentProblems) > 0 {
 		view.State = "Needs attention"
+		view.problem = "The background collector can't load your AWS profile"
 		view.Next = "The background collector cannot load your AWS profile (see the warning above). Run agent-archive setup again from a shell where the profile works, so the collector gets that shell's AWS settings files and PATH."
 	}
 	if cfg.Paused {
 		view.State = "Paused"
+		view.problem = "Collection is paused"
 		view.Next = "Run agent-archive resume when ready. Registered sessions can catch up after resume."
 	}
 	// A moved or deleted binary is the root cause of every symptom above (a
@@ -889,14 +802,17 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 			moved = background.program
 		}
 		view.State = "Needs attention"
+		view.problem = "agent-archive can't run from where setup installed it"
 		view.Next = fmt.Sprintf("agent-archive is no longer usable at %s. Run agent-archive setup from the binary's new location to point the hooks and background collector at it.", moved)
 	}
 	if !cfg.Archive.Enabled {
 		view.State = "Not installed"
+		view.problem = "Agent Archive is uninstalled"
 		view.Next = "Local data is kept. Run agent-archive setup to reinstall."
 	}
 	if setupjournal.TransactionPending(home) {
 		view.State = "Setup needs recovery"
+		view.problem = "Setup was interrupted"
 		view.Next = "Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now."
 	}
 }
@@ -910,12 +826,15 @@ func chooseCaptureStep(view *statusView) {
 				continue
 			}
 			view.State = "Waiting for capture"
+			view.problem = "Waiting for the first " + appName(app.Name) + " session"
 			switch {
 			case app.Capabilities.FreshStart.State == capabilityUnavailable && !pair.HookObserved:
 				view.Next = app.Capabilities.FreshStart.NextAction
 			case pair.Published:
+				view.problem = appName(app.Name) + "'s upload hasn't been read back yet"
 				view.Next = "Run agent-archive sync to retry read-back verification for " + appName(app.Name) + " in " + pair.ProjectRoot + "."
 			case pair.HookObserved:
+				view.problem = appName(app.Name) + " session seen but not uploaded yet"
 				view.Next = "Run agent-archive sync to capture and publish the " + appName(app.Name) + " session in " + pair.ProjectRoot + "."
 			default:
 				view.Next = "Review hook approval in " + appName(app.Name) + ", then start a new session in " + pair.ProjectRoot + "."
@@ -934,9 +853,14 @@ func chooseInstallationStep(view *statusView, plist string) {
 	for _, app := range view.Apps {
 		if app.Hooks != "installed" {
 			view.State = "Needs attention"
+			view.problem = appName(app.Name) + " hooks aren't installed"
+			if app.Hooks == "unknown" {
+				view.problem = appName(app.Name) + " hooks couldn't be checked"
+			}
 			view.Next = "Run agent-archive setup to check the hooks for " + appName(app.Name) + "."
 			if len(app.OtherInstallations) > 0 {
 				// setup refuses to install beside them, so it is not the way out.
+				view.problem = "Another installation's hooks are in " + appName(app.Name)
 				view.Next = "Another agent-archive installation's hooks are in " + appName(app.Name) + "'s hook file (see the warning above). Remove that installation, or give this one its own HOME, then run agent-archive setup."
 			}
 			break
@@ -944,9 +868,11 @@ func chooseInstallationStep(view *statusView, plist string) {
 	}
 	if !setupjournal.JobActive(view.Background) {
 		view.State = "Needs attention"
+		view.problem = "The background collector isn't running"
 		view.Next = "Run agent-archive setup to restore the background collector."
 		if view.Background == setupjournal.JobAnotherInstallation {
 			// setup refuses to replace that job, so it is not the way out.
+			view.problem = "Another installation's collector has this installation's label"
 			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchLabel(plist))
 		}
 	}
@@ -1054,3 +980,470 @@ func statusCode(label string) string {
 	}
 	return "unknown"
 }
+
+// statusScreen is what the text status is drawn with: the output's style,
+// the clock times are shown relative to, and the home folder shown as ~.
+type statusScreen struct {
+	style textStyle
+	now   time.Time
+	home  string
+}
+
+// printStatus writes the text status: the overall state, what to do about
+// it, the Capture and Storage sections, and anything else worth knowing.
+// Codes and exact times are left to status --json.
+func printStatus(out io.Writer, view statusView, sc statusScreen) {
+	s := sc.style
+	terminal.Printf(out, "%s  %s\n", s.bold("Agent Archive"), sc.stateLabel(view.State))
+	if view.State != "Ready" {
+		terminal.Println(out)
+		sc.printNextStep(out, view)
+	}
+	if !view.configured {
+		return
+	}
+	terminal.Printf(out, "\n%s\n", s.bold("Capture"))
+	sc.printRows(out, sc.captureRows(view))
+	terminal.Printf(out, "\n%s\n", s.bold("Storage"))
+	sc.printRows(out, sc.storageRows(view))
+	if notes := sc.noteRows(view); len(notes) > 0 {
+		terminal.Printf(out, "\n%s\n", s.bold("Notes"))
+		sc.printRows(out, notes)
+	}
+	terminal.Println(out)
+	if view.State == "Ready" {
+		terminal.Println(out, s.hang(s.dim("Next:")+" ", sc.prose(view.Next)))
+	}
+	terminal.Printf(out, "%s %s\n", s.dim("Details:"), s.cmd("agent-archive status --json"))
+}
+
+// stateLabel is the overall state after a dot, green when all is well and
+// yellow when it needs the user.
+func (sc statusScreen) stateLabel(state string) string {
+	label := "● " + state
+	//lint:ignore LV1001 the overall state is an open-ended label (statusView.State); statusCode maps it to the stable code
+	switch state {
+	case "Ready":
+		return sc.style.ok(label)
+	case "Not installed":
+		return sc.style.dim(label)
+	}
+	return sc.style.warn(label)
+}
+
+// printNextStep writes the one thing to do now: what is wrong, and under it
+// how to fix it.
+func (sc statusScreen) printNextStep(out io.Writer, view statusView) {
+	next := sc.prose(view.Next)
+	if view.problem == "" {
+		terminal.Println(out, sc.style.hang("  ", next))
+		return
+	}
+	terminal.Println(out, sc.style.hang("  "+sc.style.warnMark()+" ", view.problem))
+	terminal.Println(out, sc.style.hang("    ", next))
+}
+
+// statusRow is one line of a status section: a colored symbol, columns
+// aligned with the section's other rows, dim detail after them, and notes on
+// the lines below.
+type statusRow struct {
+	mark   string
+	cells  []string
+	detail string
+	notes  []statusNote
+}
+
+// statusNote is a line under a row: an optional symbol and its text.
+type statusNote struct {
+	mark string
+	text string
+}
+
+// info is the symbol of a row that is only information.
+func (sc statusScreen) info() string { return sc.style.dim("·") }
+
+// printRows writes rows, aligning the columns of those that have more than
+// one column or a detail. On a terminal too narrow for a row's detail beside
+// its columns, the detail goes on the lines under it.
+func (sc statusScreen) printRows(out io.Writer, rows []statusRow) {
+	var widths []int
+	for _, row := range rows {
+		for i, cell := range row.cells {
+			if i == len(row.cells)-1 && row.detail == "" {
+				break
+			}
+			if i == len(widths) {
+				widths = append(widths, 0)
+			}
+			widths[i] = max(widths[i], visibleWidth(cell))
+		}
+	}
+	for _, row := range rows {
+		prefix := "  " + row.mark + " "
+		text := ""
+		for i, cell := range row.cells {
+			if i == len(row.cells)-1 && row.detail == "" {
+				text = cell
+				break
+			}
+			prefix += cell + strings.Repeat(" ", widths[i]-visibleWidth(cell)+3)
+		}
+		if row.detail != "" {
+			text = sc.style.dim(row.detail)
+		}
+		if sc.style.width > 0 && row.detail != "" && visibleWidth(prefix+text) > sc.style.width {
+			// Too narrow for the detail beside the columns: it goes under them.
+			terminal.Println(out, strings.TrimRight(prefix, " "))
+			prefix = "    "
+		}
+		terminal.Println(out, strings.TrimRight(sc.style.hang(prefix, text), " "))
+		for _, note := range row.notes {
+			lead := "    "
+			if note.mark != "" {
+				lead += note.mark + " "
+			}
+			terminal.Println(out, sc.style.hang(lead, note.text))
+		}
+	}
+}
+
+// captureRows are the Capture section: one row per app, then what capture
+// skipped, the included projects, and imports.
+func (sc statusScreen) captureRows(view statusView) []statusRow {
+	var rows []statusRow
+	for _, app := range view.Apps {
+		rows = append(rows, sc.appRow(app))
+	}
+	for _, diagnostic := range view.CaptureDiagnostics {
+		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{fmt.Sprintf("%s skipped a session in %s %s: %s", appName(diagnostic.Harness), sc.path(diagnostic.ProjectRoot), relativeAge(sc.now, diagnostic.ObservedAt), capture.DiagnosticMessage(diagnostic.Code))}})
+	}
+	projects := "none included"
+	if len(view.Projects) > 0 {
+		shown := make([]string, len(view.Projects))
+		for i, project := range view.Projects {
+			shown[i] = sc.path(project)
+		}
+		projects = strings.Join(shown, ", ")
+	}
+	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Projects: " + projects}})
+	if view.ImportedSessions > 0 {
+		imported := fmt.Sprintf("Imported: %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
+		if view.ImportedWithIssues > 0 {
+			imported += fmt.Sprintf(", %d with a capture gap or failed scan", view.ImportedWithIssues)
+		}
+		if view.LastImport != "" {
+			imported += "; last import " + view.LastImport
+		}
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{imported}})
+	}
+	return rows
+}
+
+// appRow is one app's capture: its hooks, how far its sessions have got,
+// and anything that needs a closer look.
+func (sc statusScreen) appRow(app appStatus) statusRow {
+	s := sc.style
+	name := appName(app.Name)
+	if app.InstalledVersion != "" {
+		name += " " + app.InstalledVersion
+	}
+	row := statusRow{mark: s.okMark(), cells: []string{name, hooksLabel(app.Hooks)}}
+	switch {
+	case app.Hooks == hooksBroken:
+		row.mark = s.failMark()
+	case app.Hooks != "installed", app.readBackFailure.Attempts > 0:
+		row.mark = s.warnMark()
+	}
+	//lint:ignore LV1001 an app's state is an open-ended label (appStatus.State); statusCode maps it to the stable code
+	switch app.State {
+	case "published; source verified":
+		row.detail = plural(app.PublishedSessions, "session") + " archived, verified " + relativeAge(sc.now, app.VerifiedAt)
+	case "published; read-back pending":
+		row.detail = "uploaded, read-back pending"
+		if !app.VerifiedAt.IsZero() {
+			row.detail += " (" + readBackProgress(app) + ")"
+		}
+	case "captured locally":
+		row.detail = "captured, not uploaded yet"
+	case "hook observed; waiting for capture":
+		row.detail = "session seen, not captured yet"
+	default:
+		row.detail = "waiting for first session"
+	}
+	if approve, ok := hookApproval[app.Name]; ok && app.Hooks == "installed" && !app.HookObserved {
+		row.notes = append(row.notes, statusNote{sc.info(), fmt.Sprintf(approve, s.cmd("/hooks"))})
+	}
+	if app.Capabilities.FreshStart.State == capabilityUnavailable {
+		row.notes = append(row.notes, statusNote{s.warnMark(), "New sessions can't be captured yet: " + app.Capabilities.FreshStart.NextAction})
+	}
+	if len(app.Projects) > 1 && !app.ReadBackVerified {
+		for _, pair := range app.Projects {
+			mark := sc.info()
+			if pair.ReadBackVerified {
+				mark = s.okMark()
+			}
+			row.notes = append(row.notes, statusNote{mark, sc.path(pair.ProjectRoot) + ": " + pairProgress(pair)})
+		}
+	}
+	if failure := app.readBackFailure; failure.Attempts > 0 {
+		row.notes = append(row.notes, statusNote{s.warnMark(), sc.readBackFailure(failure)})
+	}
+	//lint:ignore LV1001 the reason codes are untyped constants in capabilities.go, which computes this field
+	switch app.VersionSupportReason {
+	case supportReasonNoMatchingVersion:
+		row.notes = append(row.notes, statusNote{sc.info(), "Sessions verified so far came from a different " + appName(app.Name) + " version."})
+	case supportReasonVersionSourceMismatch:
+		row.notes = append(row.notes, statusNote{sc.info(), "The installed version and the sessions' versions are numbered differently, so they can't be compared."})
+	}
+	if len(app.CaptureGaps) > 0 {
+		row.notes = append(row.notes, statusNote{sc.info(), fmt.Sprintf("%s with a capture gap (%s recorded; details in status --json)", plural(app.SessionsWithCaptureGaps, "session"), plural(len(app.CaptureGaps), "gap"))})
+	}
+	return row
+}
+
+// hookApproval explains, for an app that runs new hooks only once the user
+// approves them (hookNextStep), how to, until its first session shows they
+// run. %s is the command.
+var hookApproval = map[string]string{
+	"codex": "Run %s in Codex and approve the archive hooks; agent-archive can't see whether you have.",
+}
+
+// hooksLabel words an app's hook state.
+func hooksLabel(state string) string {
+	//lint:ignore LV1001 appStatus.Hooks is a plain string, set as literals in readInstalledApps
+	switch state {
+	case "missing or incomplete":
+		return "hooks missing"
+	case "unknown":
+		return "hooks not checked"
+	}
+	return "hooks " + state
+}
+
+// pairProgress words how far one project's capture has got.
+func pairProgress(pair projectCaptureStatus) string {
+	switch {
+	case pair.ReadBackVerified:
+		return "verified"
+	case pair.Published:
+		return "uploaded, read-back pending"
+	case pair.CapturedLocally:
+		return "captured, not uploaded yet"
+	case pair.HookObserved:
+		return "session seen, not captured yet"
+	}
+	return "waiting for first session"
+}
+
+// readBackFailure words a publication that could not be read back, and
+// when the collector tries again.
+func (sc statusScreen) readBackFailure(failure verificationEvidence) string {
+	text := "Read-back failed"
+	if failure.Outcome == verificationOutcomeMismatch {
+		text = "Read-back doesn't match what this Mac uploaded"
+	}
+	if failure.LastError != "" {
+		text += ": " + failure.LastError
+	}
+	retry := "retrying on the next pass"
+	if failure.NextRetryAt.After(sc.now) {
+		retry = "retrying in " + strings.TrimSuffix(relativeAge(failure.NextRetryAt, sc.now), " ago")
+		retry = strings.Replace(retry, "in just now", "in under a minute", 1)
+	}
+	return fmt.Sprintf("%s (%s, %s so far)", text, retry, plural(failure.Attempts, "attempt"))
+}
+
+// storageRows are the Storage section: the destination, the bucket's
+// privacy, the background collector, the last error, and uploads.
+func (sc statusScreen) storageRows(view statusView) []statusRow {
+	var rows []statusRow
+	if view.Storage != "" {
+		rows = append(rows, sc.destinationRow(view), sc.privacyRow(view.PrivacyEvidence))
+	}
+	rows = append(rows, sc.backgroundRow(view))
+	if view.Collector.LastError != "" {
+		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{"Last error: " + view.Collector.LastError}})
+	}
+	uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
+	rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
+	return rows
+}
+
+// destinationRow is where sessions go, and whether storage was last found
+// reachable with the configured credentials.
+func (sc statusScreen) destinationRow(view statusView) statusRow {
+	s := sc.style
+	row := statusRow{cells: []string{storageURL(view.Storage)}}
+	auth := view.Authentication
+	checked := ""
+	if !auth.CheckedAt.IsZero() {
+		checked = ", checked " + relativeAge(sc.now, auth.CheckedAt)
+	}
+	//lint:ignore LV1001 storageHealth.State is an untyped string set in collect.go and verification.go
+	switch auth.State {
+	case "authentication_failed":
+		row.mark, row.detail = s.failMark(), "sign-in failed"+checked
+	case "credentials_expired":
+		row.mark, row.detail = s.failMark(), "credentials expired"+checked
+	case "credentials_unavailable":
+		row.mark, row.detail = s.failMark(), "credentials unavailable"+checked
+	case "storage_unavailable":
+		row.mark, row.detail = s.failMark(), "unreachable"+checked
+	case "stale_configuration":
+		row.mark, row.detail = s.warnMark(), "storage settings changed since the last check"
+	case "stale":
+		row.mark, row.detail = s.warnMark(), "last reachable "+relativeAge(sc.now, auth.CheckedAt)+"; the collector checks every few minutes"
+	}
+	if row.mark != "" {
+		return row
+	}
+	switch view.StorageAccessConfirmedBy {
+	case storageAccessConfirmedByCollector:
+		row.mark, row.detail = s.okMark(), "reachable, checked "+relativeAge(sc.now, view.StorageAccessConfirmedAt)
+	case storageAccessConfirmedBySetup:
+		row.mark, row.detail = s.okMark(), "reachable, checked by setup "+relativeAge(sc.now, view.StorageAccessConfirmedAt)
+	default:
+		row.mark, row.detail = sc.info(), "not checked yet"
+	}
+	return row
+}
+
+// storageURL shows a "provider / bucket / prefix" label as
+// provider://bucket/prefix.
+func storageURL(label string) string {
+	parts := strings.SplitN(label, " / ", 3)
+	if len(parts) < 2 {
+		return label
+	}
+	return parts[0] + "://" + strings.Join(parts[1:], "/")
+}
+
+// privacyRow is what the last inspection found about the bucket's public
+// access, with the provider's guidance when it is not known to be private.
+func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
+	s := sc.style
+	checked := ""
+	if report.CheckedAt != nil {
+		checked = ", checked " + relativeAge(sc.now, *report.CheckedAt)
+	}
+	review := statusNote{text: "Review: " + s.cmd(report.GuidanceURL)}
+	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
+	switch report.State {
+	case "verified_private":
+		return statusRow{mark: s.okMark(), cells: []string{"Bucket is private"}, detail: "public access blocked" + checked}
+	case "public_or_risky":
+		detail := "public access is allowed"
+		//lint:ignore LV1001 storage.PrivacyReport.Reason is an untyped string owned by package storage
+		switch report.Reason {
+		case "public_bucket_policy":
+			detail = "its bucket policy is public"
+		case "public_bucket_acl":
+			detail = "its access list grants public access"
+		}
+		return statusRow{mark: s.failMark(), cells: []string{"Bucket may be public"}, detail: detail + checked, notes: []statusNote{review}}
+	}
+	detail := ""
+	//lint:ignore LV1001 storage.PrivacyReport.Reason is an untyped string owned by package storage
+	switch report.Reason {
+	case "inspection_unavailable":
+		detail = "this storage can't be inspected"
+	case "r2_management_credentials_not_configured":
+		detail = "R2 object credentials can't inspect public access"
+	case "public_access_controls_not_fully_verified":
+		detail = "some public access settings couldn't be read" + checked
+	case "inspection_stale":
+		detail = "the last check is over a day old" + checked
+	case "storage_configuration_changed":
+		detail = "storage settings changed since the last check"
+	}
+	return statusRow{mark: s.warnMark(), cells: []string{"Bucket privacy not checked"}, detail: detail, notes: []statusNote{review}}
+}
+
+// backgroundRow is the background collector: whether launchd runs it, and
+// when it last scanned.
+func (sc statusScreen) backgroundRow(view statusView) statusRow {
+	s := sc.style
+	scan := "last scan " + sc.ago(view.Collector.LastScanAt)
+	if view.Collector.LastScanAt.IsZero() {
+		scan = "no scan yet"
+	}
+	switch {
+	case view.Background == backgroundBroken:
+		return statusRow{mark: s.failMark(), cells: []string{"Background collector is broken"}, detail: "the program it runs is gone or can't be run"}
+	case view.Background == setupjournal.JobAnotherInstallation:
+		return statusRow{mark: s.warnMark(), cells: []string{"Background collector belongs to another installation"}}
+	case view.Background == "unknown":
+		return statusRow{mark: s.warnMark(), cells: []string{"Background collector state unknown"}, detail: "launchctl couldn't say"}
+	case !setupjournal.JobActive(view.Background):
+		return statusRow{mark: s.warnMark(), cells: []string{"Background collector isn't running"}}
+	case view.Paused:
+		return statusRow{mark: sc.info(), cells: []string{"Background collector paused"}, detail: scan}
+	case !view.Collector.LastScanAt.IsZero() && sc.now.Sub(view.Collector.LastScanAt) > scanStaleAfter:
+		return statusRow{mark: s.warnMark(), cells: []string{"Background collector on"}, detail: scan}
+	}
+	return statusRow{mark: s.okMark(), cells: []string{"Background collector on"}, detail: scan}
+}
+
+// noteRows are what the collector could not read or refresh, and status's
+// warnings.
+func (sc statusScreen) noteRows(view statusView) []statusRow {
+	var rows []statusRow
+	if n := len(view.Collector.QuarantinedFiles); n > 0 {
+		text := "1 local state file couldn't be read and was moved aside; its session keeps its other evidence."
+		if n > 1 {
+			text = fmt.Sprintf("%d local state files couldn't be read and were moved aside; their sessions keep their other evidence.", n)
+		}
+		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{text + " See status --json for the files, then delete them."}})
+	}
+	if n := view.Collector.UnrefreshableSummaries; n > 0 {
+		text := "1 session summary can't be refreshed by this version and stays as published until the session changes."
+		if n > 1 {
+			text = fmt.Sprintf("%d session summaries can't be refreshed by this version and stay as published until their sessions change.", n)
+		}
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{text}})
+	}
+	for _, warning := range view.Warnings {
+		rows = append(rows, statusRow{mark: sc.style.warnMark(), cells: []string{sc.tilde(warning)}})
+	}
+	return rows
+}
+
+// ago is how long ago t was, or "never".
+func (sc statusScreen) ago(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	return relativeAge(sc.now, t)
+}
+
+// path shows path with the home folder as ~.
+func (sc statusScreen) path(path string) string {
+	if sc.home == "" {
+		return path
+	}
+	return displayPath(path, sc.home)
+}
+
+// tilde shows the paths under the home folder in text as ~ paths.
+func (sc statusScreen) tilde(text string) string {
+	if sc.home == "" {
+		return text
+	}
+	home := strings.TrimSuffix(filepath.Clean(sc.home), string(filepath.Separator)) + string(filepath.Separator)
+	return strings.ReplaceAll(text, home, "~"+string(filepath.Separator))
+}
+
+// prose readies a next step for the screen: ~ paths, the warnings it refers
+// to are below it rather than above, and its first command is highlighted,
+// the one to run.
+func (sc statusScreen) prose(text string) string {
+	text = strings.ReplaceAll(sc.tilde(text), "the warning above", "the warning below")
+	if loc := proseCommand.FindStringIndex(text); loc != nil {
+		text = text[:loc[0]] + sc.style.cmd(text[loc[0]:loc[1]]) + text[loc[1]:]
+	}
+	return text
+}
+
+// proseCommand matches an agent-archive command, with its flags, in a
+// sentence.
+var proseCommand = regexp.MustCompile(`agent-archive (?:` + strings.Join(slices.Sorted(maps.Keys(commandHelp)), "|") + `)\b(?: --[a-z][a-z-]*)*`)

@@ -1,0 +1,20 @@
+$ agent-archive status
+\e[1mAgent Archive\e[0m  \e[33m● Waiting for capture\e[0m
+
+  \e[33m!\e[0m Waiting for the first Codex session
+    Review hook approval in Codex, then start a new session in ~/src/web-app.
+
+\e[1mCapture\e[0m
+  \e[32m✓\e[0m Codex   hooks installed   \e[2mwaiting for first session\e[0m
+    \e[2m·\e[0m Run \e[36m/hooks\e[0m in Codex and approve the archive hooks; agent-archive can't see whether you have.
+  \e[2m·\e[0m Projects: ~/src/web-app
+
+\e[1mStorage\e[0m
+  \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now\e[0m
+  \e[33m!\e[0m Bucket privacy not checked         \e[2mthis storage can't be inspected\e[0m
+    Review: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+  \e[32m✓\e[0m Background collector on            \e[2mno scan yet\e[0m
+  \e[2m·\e[0m Last upload: never · 0 pending
+
+\e[2mDetails:\e[0m \e[36magent-archive status --json\e[0m
+[exit 0]

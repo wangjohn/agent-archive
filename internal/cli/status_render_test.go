@@ -1,0 +1,216 @@
+package cli
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
+)
+
+// renderNow is the clock the rendering tests draw status with.
+var renderNow = time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+
+// busyStatusView is a status with something in every row: several apps in
+// different states, a failing read-back, gaps, diagnostics, imports,
+// warnings, and the codes and exact times status --json carries for each.
+func busyStatusView() statusView {
+	checked := renderNow.Add(-3 * time.Hour)
+	return statusView{
+		configured: true,
+		State:      "Needs attention",
+		problem:    "The last pass failed",
+		Next:       "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage.",
+		Storage:    "s3 / team-archive / agent-archive/",
+		Authentication: storageHealth{
+			ConfigurationID: "id", State: "verified", CheckedAt: renderNow.Add(-2 * time.Minute), Context: "manual_sync",
+		},
+		StorageAccessConfirmedAt: renderNow.Add(-2 * time.Minute),
+		StorageAccessConfirmedBy: storageAccessConfirmedByCollector,
+		PrivacyEvidence:          storage.PrivacyReport{State: "not_verified", Reason: "inspection_stale", CheckedAt: &checked, GuidanceURL: "https://example.com/guide"},
+		Background:               "loaded",
+		Projects:                 []string{"/Users/alex/src/web-app", "/Users/alex/src/api"},
+		Apps: []appStatus{
+			{
+				Name: "codex", InstalledVersion: "0.121.0", Hooks: "installed", Trust: "unknown",
+				State: "published; source verified", VerificationState: "verified_at_recorded_time",
+				HookObserved: true, Published: true, ReadBackVerified: true, PublishedSessions: 2, Sessions: 2,
+				VerifiedAt: renderNow.Add(-26 * time.Hour), VersionSupport: "unverified", VersionSupportReason: supportReasonNoMatchingVersion,
+				CaptureGaps:             []archive.CaptureGap{{Code: "transcript_rewritten"}, {Code: "record_too_large"}},
+				SessionsWithCaptureGaps: 1,
+			},
+			{
+				Name: "claude", InstalledVersion: "2.1.90", Hooks: "installed", Trust: "unknown",
+				State: "published; read-back pending", VerificationState: "read_back_failed",
+				HookObserved: true, Published: true, PublishedSessions: 1, Sessions: 1, VerifiedAt: renderNow.Add(-time.Hour),
+				VerificationDetail: "failed: not found (attempt 2; next retry 2026-09-25T12:05:00Z)",
+				readBackFailure:    verificationEvidence{Outcome: verificationOutcomeFailed, Attempts: 2, LastError: "not found", NextRetryAt: renderNow.Add(5 * time.Minute)},
+				Projects: []projectCaptureStatus{
+					{ProjectRoot: "/Users/alex/src/web-app", Published: true, ReadBackVerified: true, VerificationState: "verified_at_recorded_time"},
+					{ProjectRoot: "/Users/alex/src/api", Published: true, VerificationState: "incomplete"},
+				},
+			},
+			{Name: "cursor", Hooks: "missing or incomplete", Trust: "unknown", State: "waiting for first session", VerificationState: "not_verified", VersionSupport: "absent"},
+		},
+		CaptureDiagnostics: []capture.Diagnostic{{Code: capture.DiagnosticSetupInProgress, ProjectRoot: "/Users/alex/src/api", Harness: "claude", ObservedAt: renderNow.Add(-40 * time.Minute)}},
+		Collector: state.Status{
+			LastScanAt: renderNow.Add(-time.Minute), LastPublishedAt: renderNow.Add(-50 * time.Minute), PendingCount: 3,
+			LastError:        "list registrations: AccessDenied: Access Denied",
+			QuarantinedFiles: []string{"registrations/x.json.corrupt", "registrations/y.json.corrupt"}, UnrefreshableSummaries: 1,
+		},
+		ImportedSessions: 4, ImportedPending: 1, LastImport: "import-7",
+		Warnings: []string{"Installed versions could not be read from /Users/alex/.agent-archive/application-versions.json: bad JSON. Run agent-archive setup to refresh them."},
+	}
+}
+
+func renderStatus(view statusView, color bool) string {
+	var out strings.Builder
+	printStatus(&out, view, statusScreen{style: textStyle{color: color}, now: renderNow, home: "/Users/alex"})
+	return out.String()
+}
+
+// The text status words everything: exact times and the codes status --json
+// carries stay there.
+func TestStatusTextShowsNoCodesOrExactTimes(t *testing.T) {
+	t.Parallel()
+	text := renderStatus(busyStatusView(), false)
+	if exact := regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}`).FindString(text); exact != "" {
+		t.Errorf("status shows the exact time %s:\n%s", exact, text)
+	}
+	// Codes are snake_case words; the file names in a warning are not.
+	if code := regexp.MustCompile(`\b[a-z]+_[a-z_]+\b`).FindString(regexp.MustCompile(`\S+\.json\S*`).ReplaceAllString(text, "")); code != "" {
+		t.Errorf("status shows the code %s:\n%s", code, text)
+	}
+	for _, want := range []string{
+		"Agent Archive  ● Needs attention\n",
+		"  ! The last pass failed\n",
+		"    Check storage access and run agent-archive sync.",
+		"2 sessions archived, verified 26 hours ago",
+		"uploaded, read-back pending (1 of 2 projects verified)",
+		"Read-back failed: not found (retrying in 5 minutes, 2 attempts so far)",
+		"Claude Code skipped a session in ~/src/api 40 minutes ago: setup was still in progress",
+		"· Projects: ~/src/web-app, ~/src/api\n",
+		"· Imported: 4 sessions, 1 waiting to upload; last import import-7\n",
+		"reachable, checked 2 minutes ago",
+		"the last check is over a day old, checked 3 hours ago",
+		"    Review: https://example.com/guide\n",
+		"last scan 1 minute ago",
+		"✗ Last error: list registrations: AccessDenied: Access Denied\n",
+		"· Last upload: 50 minutes ago · 3 pending\n",
+		"! 2 local state files couldn't be read and were moved aside",
+		"· 1 session summary can't be refreshed",
+		"! Installed versions could not be read from ~/.agent-archive/application-versions.json",
+		"Details: agent-archive status --json\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("status is missing %q:\n%s", want, text)
+		}
+	}
+}
+
+// Color is a role, never the only signal, and a line colors at most one
+// element: the symbol, not the sentence after it.
+func TestStatusColorsAtMostOneElementPerLine(t *testing.T) {
+	t.Parallel()
+	for name, view := range map[string]statusView{"busy": busyStatusView(), "ready": func() statusView {
+		v := busyStatusView()
+		v.State, v.problem, v.Next = "Ready", "", "Keep working. Run agent-archive list to inspect archived sessions."
+		return v
+	}()} {
+		colored := renderStatus(view, true)
+		color := regexp.MustCompile("\x1b\\[3[0-9]m")
+		for line := range strings.SplitSeq(colored, "\n") {
+			if n := len(color.FindAllString(line, -1)); n > 1 {
+				t.Errorf("%s: %d colored elements on %q", name, n, line)
+			}
+		}
+		// Without color the screen says the same thing.
+		plain := regexp.MustCompile("\x1b\\[[0-9;]*m").ReplaceAllString(colored, "")
+		if plain != renderStatus(view, false) {
+			t.Errorf("%s: the colored screen differs from the plain one beyond its colors:\n%s", name, plain)
+		}
+	}
+}
+
+// The state line is green only when all is well, and yellow when status
+// needs the user.
+func TestStatusStateLineColor(t *testing.T) {
+	t.Parallel()
+	sc := statusScreen{style: textStyle{color: true}}
+	for state, code := range map[string]string{"Ready": "32", "Needs attention": "33", "Waiting for capture": "33", "Paused": "33", "Not set up": "33", "Not installed": "2"} {
+		if got, want := sc.stateLabel(state), "\x1b["+code+"m● "+state+"\x1b[0m"; got != want {
+			t.Errorf("%s: %q want %q", state, got, want)
+		}
+	}
+}
+
+// A next step shows home paths as ~, points at the warnings below it, and
+// highlights only its first command.
+func TestStatusNextStepProse(t *testing.T) {
+	t.Parallel()
+	sc := statusScreen{style: textStyle{color: true}, home: "/Users/alex"}
+	got := sc.prose("Another installation's hooks are in Codex's hook file (see the warning above) at /Users/alex/.codex and not /Users/alexandra. Run agent-archive setup --yes, then agent-archive sync.")
+	want := "Another installation's hooks are in Codex's hook file (see the warning below) at ~/.codex and not /Users/alexandra. Run \x1b[36magent-archive setup --yes\x1b[0m, then agent-archive sync."
+	if got != want {
+		t.Fatalf("prose:\n%q\nwant\n%q", got, want)
+	}
+	if got := sc.prose("agent-archive is no longer usable at /opt/bin/agent-archive."); strings.Contains(got, "\x1b") {
+		t.Fatalf("highlighted something that is not a command: %q", got)
+	}
+}
+
+func TestStatusStorageURL(t *testing.T) {
+	t.Parallel()
+	for label, want := range map[string]string{
+		"s3 / team-archive / agent-archive/": "s3://team-archive/agent-archive/",
+		"s3 / bucket":                        "s3://bucket",
+		"r2 / bucket / a/b":                  "r2://bucket/a/b",
+		"odd":                                "odd",
+	} {
+		if got := storageURL(label); got != want {
+			t.Errorf("storageURL(%q) = %q want %q", label, got, want)
+		}
+	}
+}
+
+// A read-back failure says when the collector tries again, relative to now.
+func TestStatusReadBackFailureRetry(t *testing.T) {
+	t.Parallel()
+	sc := statusScreen{now: renderNow}
+	for _, tc := range []struct {
+		failure verificationEvidence
+		want    string
+	}{
+		{verificationEvidence{Outcome: verificationOutcomeFailed, Attempts: 1, LastError: "timeout", NextRetryAt: renderNow.Add(30 * time.Second)}, "Read-back failed: timeout (retrying in under a minute, 1 attempt so far)"},
+		{verificationEvidence{Outcome: verificationOutcomeMismatch, Attempts: 3, NextRetryAt: renderNow.Add(-time.Minute)}, "Read-back doesn't match what this Mac uploaded (retrying on the next pass, 3 attempts so far)"},
+		{verificationEvidence{Outcome: verificationOutcomeFailed, Attempts: 4, NextRetryAt: renderNow.Add(6 * time.Hour)}, "Read-back failed (retrying in 6 hours, 4 attempts so far)"},
+	} {
+		if got := sc.readBackFailure(tc.failure); got != tc.want {
+			t.Errorf("got %q want %q", got, tc.want)
+		}
+	}
+}
+
+// Long rows wrap under their own text on a narrow terminal.
+func TestStatusWrapsToTheTerminal(t *testing.T) {
+	t.Parallel()
+	var out strings.Builder
+	printStatus(&out, busyStatusView(), statusScreen{style: textStyle{width: 60}, now: renderNow, home: "/Users/alex"})
+	for line := range strings.SplitSeq(out.String(), "\n") {
+		if visibleWidth(line) > 60 && strings.Contains(strings.TrimSpace(line), " ") {
+			t.Errorf("line wider than the terminal: %q", line)
+		}
+	}
+	for _, want := range []string{
+		"\n    Check storage access and run agent-archive sync. To\n    change credentials,",
+		"\n  ✓ Codex 0.121.0        hooks installed\n    2 sessions archived, verified 26 hours ago\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("status does not wrap as %q:\n%s", want, out.String())
+		}
+	}
+}

@@ -50,20 +50,26 @@ agent-archive status --json
 ```
 
 Status uses local evidence and a read-only launchd check; it never downloads
-conversations. `status --json` separates configured, hook-observed, captured,
-published, and read-back-verified evidence.
+conversations. The text status leads with the overall state and, unless it is
+Ready, the one thing to fix and how. Below that, **Capture** has a row per app
+and **Storage** a row each for the destination, bucket privacy, and the
+background collector: ✓ is fine, ! needs you, ✗ is blocked. Times are shown
+relative to now. `status --json` has the exact times and codes, and separates
+configured, hook-observed, captured, published, and read-back-verified
+evidence.
 
 - **Before setup**, status shows only that setup is needed (`--json`:
   background `missing`, authentication `not_configured`).
-- **Background** `loaded` means launchd knows the scheduled job; `running`
-  means a pass is executing; `another_installation` means launchd runs this
-  installation's label from a different plist. That job belongs to another
+- **Background collector on** (`--json`: background `loaded`, or `running`
+  while a pass is executing) means launchd knows the scheduled job. When it
+  **belongs to another installation** (`another_installation`), launchd runs
+  this installation's label from a different plist. That job belongs to another
   installation and is left alone: set `AGENT_ARCHIVE_HOME` to a data
   directory of this installation's own, or uninstall the other one.
-- **Hooks or background `broken`** means the configuration is in place but
-  runs an `agent-archive` executable that has since been moved, deleted, or
-  made non-executable. Rerun `agent-archive setup` from the binary's new
-  location.
+- **Hooks or background collector broken** means the configuration is in
+  place but runs an `agent-archive` executable that has since been moved,
+  deleted, or made non-executable. Rerun `agent-archive setup` from the
+  binary's new location.
 - **The background collector cannot load your AWS profile** (S3): the
   collector runs with the AWS files and `PATH` setup recorded in its
   LaunchAgent, and one of them no longer works: an `AWS_CONFIG_FILE` that
@@ -87,13 +93,13 @@ published, and read-back-verified evidence.
 - **Capture** distinguishes waiting for a session, observed hooks, local
   capture, and published sources with verified checksums. Configuration
   alone never establishes capture.
-- **Access** shows when the bucket was last confirmed reachable with the
-  configured credentials, and by whom: setup's check, or the collector (its
-  access probe, or a pass that uploaded). The collector checks storage with
-  one synthetic round trip for a new configuration, retries failed checks,
-  and refreshes the check after four minutes. **Authentication** calls a
-  verified check stale after ten minutes, unless collection is paused, when
-  the last check is shown with its time.
+- **The storage row** shows when the bucket was last found reachable with
+  the configured credentials, and whether by setup's check or the collector
+  (its access probe, or a pass that uploaded), or why the last check failed.
+  The collector checks storage with one synthetic round trip for a new
+  configuration, retries failed checks, and refreshes the check after four
+  minutes. A check over ten minutes old is flagged, unless collection is
+  paused, when the last check is shown with its time.
 - **Capture gaps.** `status --json` counts, per app, the sessions whose
   last capture recorded a gap (`sessions_with_capture_gaps`). The fields are
   described in [JSON output](../reference/json-output.md#status---json).
@@ -107,9 +113,9 @@ published, and read-back-verified evidence.
   the command and its process ID.
 - **Quarantined state.** Status counts local state files a pass could not read
   and moved aside, and session summaries this version cannot refresh.
-- **Authentication** says whether its evidence came from a manual `sync` or
-  the background environment. App versions a hook doesn't report stay
-  unknown.
+- **Authentication** in `status --json` says whether the storage check came
+  from a manual `sync` or the background environment. App versions a hook
+  doesn't report stay unknown.
 
 ## An interrupted setup
 
