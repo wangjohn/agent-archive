@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -147,11 +148,19 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			if errors.As(err, &blocker) {
 				terminal.Println(stderr, blocker.guidance())
 			}
-			return 1
+			return setupExitCode(err)
 		}
 		return 0
 	}
 	if err := setup(stdin, stdout, stderr, env, opts.verbose); err != nil {
+		// The checks above already name each blocker, marked ✗, so the exit
+		// only says what to do. setup --yes names them again on standard
+		// error, which is what a script reads.
+		var blocker *preflightError
+		if errors.As(err, &blocker) {
+			terminal.Println(stderr, "Setup incomplete. "+blocker.guidance())
+			return 1
+		}
 		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
 		var blocked *setupjournal.RecoveryBlockedError
 		if errors.As(err, &blocked) {
@@ -163,13 +172,8 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			terminal.Println(stderr, other.guidance())
 			return 1
 		}
-		var blocker *preflightError
-		if errors.As(err, &blocker) {
-			terminal.Println(stderr, blocker.guidance())
-			return 1
-		}
 		terminal.Println(stderr, "Run agent-archive setup to continue.")
-		return 1
+		return setupExitCode(err)
 	}
 	return 0
 }
@@ -414,10 +418,10 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 				}
 			}
 			draft.FailedRegion = ""
-			terminal.Println(out, "\nChecking your storage connection…")
-			connectErr, e := verifyStorage(&draft.Config, env)
-			if connectErr != nil {
-				e = connectErr
+			terminal.Println(out, "")
+			e := runStorageCheck(p, &draft.Config, env)
+			if errors.Is(e, errStorageCheckInterrupted) {
+				return e
 			}
 			if e != nil {
 				d := printStorageFailure(p, draft.Config.Storage, e, verbose, "agent-archive setup --verbose")
@@ -463,7 +467,6 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 				continue
 			}
 			verifiedStorage = draft.Config.Storage
-			terminal.Println(out, p.style.ok("✓ Connected."))
 		}
 
 		if draft.Config.RetentionDays <= 0 {
@@ -565,15 +568,116 @@ func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
 	return nil, nil
 }
 
+// errStorageCheckInterrupted is the storage check's error when Ctrl-C (or
+// another interrupt) stopped it.
+var errStorageCheckInterrupted = errors.New("the storage check was interrupted")
+
+// storageCheckInterruptedError is errStorageCheckInterrupted with the signal
+// that stopped the check, so setup still exits with the shell's status for
+// it, as it does when a signal stops it anywhere else.
+type storageCheckInterruptedError struct{ sig os.Signal }
+
+func (e *storageCheckInterruptedError) Error() string { return errStorageCheckInterrupted.Error() }
+
+func (e *storageCheckInterruptedError) Is(target error) bool {
+	return target == errStorageCheckInterrupted
+}
+
+// setupExitCode is setup's exit status for err: the shell's status for a
+// signal that stopped the storage check, else 1.
+func setupExitCode(err error) int {
+	var interrupted *storageCheckInterruptedError
+	if errors.As(err, &interrupted) {
+		if s, ok := interrupted.sig.(syscall.Signal); ok {
+			return 128 + int(s)
+		}
+	}
+	return 1
+}
+
+// storageCheckMayPrompt reports whether the storage check may run a program
+// that asks the user something on the terminal: an S3 profile's
+// credential_process, which the AWS SDK runs with the terminal's standard
+// input and error so a helper such as aws-vault can ask for an MFA code. A
+// spinner would draw over that question.
+func storageCheckMayPrompt(storage credentials.Config, env Env) bool {
+	if storage.Provider != credentials.ProviderS3 || storage.AWSProfile == "" {
+		return false
+	}
+	// The AWS files are under the user's home, as for profile discovery,
+	// not agent-archive's data directory.
+	userHome, err := env.userHomeDir()
+	if err != nil {
+		return true
+	}
+	configFile, credentialsFile := awsFiles(userHome, env.lookupEnv)
+	return credentialProcess(configFile, credentialsFile, storage.AWSProfile) != ""
+}
+
+// runStorageCheck runs the storage check on cfg, saying so on one line. Where
+// the terminal can redraw a line, a spinner runs on it and the line then
+// resolves in place: to "✓ Connected to your storage.", or on a failure to
+// the diagnosis's own ✗ headline, which the caller prints next. Elsewhere
+// the line is written plainly, and a failure leaves a blank line after it.
+// No spinner runs while a profile's credential_process may be asking
+// something on the terminal. The spinner is stopped on every path before
+// anything else is written. An
+// interrupt stops the spinner and returns at once with
+// errStorageCheckInterrupted.
+func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
+	const label = "Checking your storage connection…"
+	style := p.style
+	if style.live && storageCheckMayPrompt(cfg.Storage, env) {
+		style.live = false
+	}
+	if !style.live {
+		terminal.Println(p.out, label)
+	}
+	sp := style.spin(p.out, label)
+	defer sp.stop()
+	interrupts, stopInterrupts := env.interrupts()
+	defer stopInterrupts()
+	// The check runs on a copy, so a check still running after an
+	// interrupt, which setup does not wait for, can never write to cfg.
+	checked := *cfg
+	done := make(chan error, 1)
+	go func() {
+		connectErr, accessErr := verifyStorage(&checked, env)
+		if connectErr != nil {
+			accessErr = connectErr
+		}
+		done <- accessErr
+	}()
+	var err error
+	select {
+	case err = <-done:
+	case sig := <-interrupts:
+		sp.stop()
+		terminal.Println(p.out, p.style.failMark()+" Stopped checking your storage connection.")
+		return &storageCheckInterruptedError{sig: sig}
+	}
+	sp.stop()
+	if err != nil {
+		if !style.live {
+			terminal.Println(p.out, "")
+		}
+		return err
+	}
+	*cfg = checked
+	terminal.Println(p.out, p.style.okMark()+" Connected to your storage.")
+	return nil
+}
+
 // hookNextStep says what each app needs before it captures: Codex asks to
 // review new hooks in /hooks, while Claude Code and Cursor read them when a
 // session starts.
 // Codex and Claude Code prove a fresh start with SessionStart's source,
 // which /clear sets too; Cursor proves it from the transcript, so only a new
-// chat counts there.
+// chat counts there. What the user types is in backquotes, painted as a
+// command when printed.
 var hookNextStep = map[string]string{
-	"codex":  "Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).",
-	"claude": "Claude Code: nothing to approve; start a new session (or /clear).",
+	"codex":  "Codex: run `/hooks` and approve the archive hooks, then start a new session (or `/clear`).",
+	"claude": "Claude Code: nothing to approve; start a new session (or `/clear`).",
 	"cursor": "Cursor: nothing to approve; start a new Agent chat.",
 }
 
@@ -589,10 +693,10 @@ func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, una
 		terminal.Println(p.out, "\nNext, in each app:")
 		for _, app := range cfg.Harnesses {
 			if step, ok := hookNextStep[app]; ok {
-				terminal.Println(p.out, "  "+step)
+				terminal.Println(p.out, p.style.hang("  ", paintCommands(p.style, step)))
 			}
 		}
-		terminal.Println(p.out, "Sessions already open are not captured: only one started after setup, in an included project, counts.")
+		terminal.Println(p.out, "Sessions already open are not captured. Start a new one in an included project.")
 		if unattended {
 			terminal.Println(p.out, "Import sessions from before setup with "+p.style.cmd("agent-archive backfill")+".")
 		}
@@ -1074,7 +1178,7 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 		label = "Projects: "
 	}
 	for {
-		answer, err := p.line(label)
+		answer, err := p.line(p.labelText(label))
 		if err != nil {
 			return nil, err
 		}

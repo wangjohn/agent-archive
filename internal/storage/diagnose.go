@@ -106,7 +106,7 @@ func Diagnose(err error) Diagnosis {
 	return Diagnosis{
 		Cause:       CauseOther,
 		Explanation: "agent-archive couldn't use the storage settings.",
-		Fix:         "Check the storage provider, bucket, region and endpoint, then run setup again.",
+		Fix:         "Check the storage provider, bucket, region and endpoint, then try again.",
 	}
 }
 

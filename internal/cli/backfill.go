@@ -475,7 +475,7 @@ func checkStorage(env Env, cfg config.Config) error {
 // archived (backfill.ApplyToConfig refuses it too).
 func confirmImport(p *prompter, out io.Writer, plan *backfill.Plan, configured int) (bool, error) {
 	for {
-		answer, err := p.line(fmt.Sprintf("Import %s from %s? [y/N/edit] ", countNoun(len(plan.Imported()), "session"), countNoun(len(plan.Projects()), "project")))
+		answer, err := p.line(p.labelText(fmt.Sprintf("Import %s from %s? [y/N/edit] ", countNoun(len(plan.Imported()), "session"), countNoun(len(plan.Projects()), "project"))))
 		if err != nil {
 			return false, err
 		}

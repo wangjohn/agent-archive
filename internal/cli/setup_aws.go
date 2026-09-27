@@ -440,7 +440,7 @@ const maxListedBuckets = 20
 // default is def's number when listed, else def itself. A positive limit
 // caps how many are listed; the rest can be typed.
 func pickByNumber(p *prompter, question string, names, notes []string, def, kind string, limit int) (string, error) {
-	terminal.Println(p.out, question)
+	p.heading(question)
 	listed := names
 	if limit > 0 && len(listed) > limit {
 		listed = listed[:limit]
@@ -461,7 +461,7 @@ func pickByNumber(p *prompter, question string, names, notes []string, def, kind
 	}
 	label := fmt.Sprintf("Enter 1-%d, or another %s", len(listed), kind)
 	for {
-		answer, err := p.withDefault(label, defNum)
+		answer, err := p.choose(label, defNum)
 		if err != nil {
 			return "", err
 		}

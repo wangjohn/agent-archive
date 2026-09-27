@@ -57,7 +57,7 @@ func TestSetupYesConfiguresR2WithoutQuestions(t *testing.T) {
 				args = append(args, "--r2-access-key-id", "KEY")
 			}
 			output := setupYes(t, env, stdin, 0, args...)
-			if strings.Contains(output, "private-secret") || !strings.Contains(output, "✓ Connected.") || !strings.Contains(output, "Codex: run /hooks") {
+			if strings.Contains(output, "private-secret") || !strings.Contains(output, "✓ Connected to your storage.") || !strings.Contains(output, "Codex: run /hooks") {
 				t.Fatalf("output:\n%s", output)
 			}
 			cfg, found, _ := config.Load(home)

@@ -78,14 +78,69 @@ func (p *prompter) line(label string) (string, error) {
 	return strings.TrimSpace(text), nil
 }
 
-// withDefault prompts once, returning def when the answer is blank. A blank
-// default shows no bracketed value rather than a confusing "[]".
-func (p *prompter) withDefault(label, def string) (string, error) {
-	prompt := label + ": "
-	if def != "" {
-		prompt = fmt.Sprintf("%s [%s]: ", label, def)
+// ask writes a prompt and reads its answer. The prompt is question, then
+// the choices in brackets with choices[def] the default, then the input
+// cursor. A color terminal shows the question in bold when bold is set, the
+// default choice in bold, and "›" as the cursor; plain output ends the
+// prompt with plainEnd instead, as it always has, so a script reading it
+// sees the same text. def outside choices marks no default.
+func (p *prompter) ask(question string, bold bool, choices []string, def int, plainEnd string) (string, error) {
+	return p.line(p.promptText(question, bold, choices, def, plainEnd))
+}
+
+func (p *prompter) promptText(question string, bold bool, choices []string, def int, plainEnd string) string {
+	if question == "" && len(choices) == 0 {
+		return ""
 	}
-	answer, err := p.line(prompt)
+	if !p.style.color {
+		text := question
+		if len(choices) > 0 {
+			text += " [" + strings.Join(choices, "/") + "]"
+		}
+		return text + plainEnd
+	}
+	text := question
+	if bold {
+		text = p.style.bold(question)
+	}
+	if len(choices) > 0 {
+		styled := make([]string, len(choices))
+		for i, c := range choices {
+			styled[i] = c
+			if i == def {
+				styled[i] = p.style.bold(c)
+			}
+		}
+		text += " [" + strings.Join(styled, "/") + "]"
+	}
+	if text == "" {
+		return promptCursor + " "
+	}
+	return text + " " + promptCursor + " "
+}
+
+// promptCursor ends every prompt on a color terminal.
+const promptCursor = "›"
+
+// withDefault prompts once with a question, returning def when the answer
+// is blank. A blank default shows no bracketed value rather than a
+// confusing "[]".
+func (p *prompter) withDefault(label, def string) (string, error) {
+	return p.defaulted(label, true, def)
+}
+
+// choose is withDefault for a menu's answer line, such as "Enter 1-3 [1]":
+// the question above it is the bold one, so only the default is.
+func (p *prompter) choose(label, def string) (string, error) {
+	return p.defaulted(label, false, def)
+}
+
+func (p *prompter) defaulted(label string, bold bool, def string) (string, error) {
+	var choices []string
+	if def != "" {
+		choices = []string{def}
+	}
+	answer, err := p.ask(label, bold, choices, 0, ": ")
 	if err != nil {
 		return "", err
 	}
@@ -96,12 +151,12 @@ func (p *prompter) withDefault(label, def string) (string, error) {
 }
 
 func (p *prompter) yesNo(label string, def bool) (bool, error) {
-	hint := "Y/n"
+	choices, defIndex := []string{"Y", "n"}, 0
 	if !def {
-		hint = "y/N"
+		choices, defIndex = []string{"y", "N"}, 1
 	}
 	for {
-		answer, err := p.line(fmt.Sprintf("%s [%s] ", label, hint))
+		answer, err := p.ask(label, true, choices, defIndex, " ")
 		if err != nil {
 			return false, err
 		}
@@ -118,6 +173,13 @@ func (p *prompter) yesNo(label string, def bool) (bool, error) {
 	}
 }
 
+// heading writes a question that the lines after it answer, such as a
+// menu's, in bold. Blank lines leading it stay outside the bold.
+func (p *prompter) heading(question string) {
+	rest := strings.TrimLeft(question, "\n")
+	terminal.Println(p.out, question[:len(question)-len(rest)]+p.style.bold(rest))
+}
+
 // option is one numbered entry in a menu. Key is what the caller receives;
 // Label is what the user reads.
 type option struct {
@@ -130,7 +192,7 @@ type option struct {
 // option's key, or an unambiguous prefix of it such as y for yes, is also
 // accepted, so scripted input keeps working.
 func (p *prompter) menu(question, def string, options ...option) (string, error) {
-	terminal.Println(p.out, question)
+	p.heading(question)
 	defNum := ""
 	for i, o := range options {
 		terminal.Printf(p.out, "  %d) %s\n", i+1, o.Label)
@@ -140,7 +202,7 @@ func (p *prompter) menu(question, def string, options ...option) (string, error)
 	}
 	label := fmt.Sprintf("Enter 1-%d", len(options))
 	for {
-		answer, err := p.withDefault(label, defNum)
+		answer, err := p.choose(label, defNum)
 		if err != nil {
 			return "", err
 		}
@@ -214,7 +276,7 @@ func (p *prompter) secret(label string) (string, error) {
 			case <-done:
 			}
 		}()
-		terminal.Print(p.out, label)
+		terminal.Print(p.out, p.labelText(label))
 		value, err := term.ReadPassword(fd)
 		terminal.Println(p.out)
 		if err != nil {
@@ -224,7 +286,33 @@ func (p *prompter) secret(label string) (string, error) {
 	}
 	// Redirected input is read without reproducing its contents. Callers must
 	// supply it via a private stream, never a command argument.
-	return p.line(label)
+	return p.line(p.labelText(label))
+}
+
+// labelText styles a prompt written whole, such as "Projects: " or
+// "Import 3 sessions? [y/N/edit] ", as ask would: its trailing ": " or " "
+// is the plain end, and a bracketed list of choices at its end marks its
+// default with a capital letter, as in [y/N].
+func (p *prompter) labelText(label string) string {
+	if !p.style.color {
+		return label
+	}
+	question := strings.TrimRight(label, " ")
+	question = strings.TrimSuffix(question, ":")
+	var choices []string
+	def := -1
+	if strings.HasSuffix(question, "]") {
+		if open := strings.LastIndex(question, " ["); open >= 0 {
+			choices = strings.Split(question[open+2:len(question)-1], "/")
+			question = question[:open]
+			for i, c := range choices {
+				if c != strings.ToLower(c) {
+					def = i
+				}
+			}
+		}
+	}
+	return p.promptText(question, true, choices, def, "")
 }
 
 func (p *prompter) required(label, def string) (string, error) {

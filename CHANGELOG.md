@@ -44,6 +44,9 @@ follow [Semantic Versioning](https://semver.org/).
   again instead of re-running the same check.
 - `setup --yes` reports every missing or wrong answer together, one per
   line with the flag that fixes it, instead of stopping at the first.
+- `setup` questions and their defaults are bold with a `›` cursor, every
+  command to type is cyan, and the storage check shows a spinner that ends
+  in ✓ or ✗ on the same line (none when a `credential_process` may prompt).
 
 ## [0.1.0] - 2026-09-25
 
