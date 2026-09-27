@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -255,6 +257,94 @@ func TestSetupYesStorageFailureLeavesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(draftPath(home)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("failure left a draft")
+	}
+}
+
+// Every missing or wrong answer is reported in one run, one per line with
+// the flag that fixes it, before launchctl or the Keychain is asked and
+// before anything is read from a terminal or changed.
+func TestSetupYesListsEveryMissingAnswer(t *testing.T) {
+	t.Parallel()
+	project := t.TempDir()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"apps and project", []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1"}, []string{"pass --apps", "pass --project"}},
+		{"apps, project and storage", []string{"--yes"}, []string{"pass --apps", "pass --project", "pass --provider"}},
+		{"r2 flags", []string{"--yes", "--provider", "r2", "--region", "us-east-1", "--project", project, "--apps", "codex"}, []string{"are for --provider s3", "needs --r2-account", "pass --r2-access-key-id"}},
+		{"r2 bucket", []string{"--yes", "--provider", "r2", "--r2-account", testR2Account, "--project", project, "--apps", "codex"}, []string{"pass --r2-access-key-id", "--bucket is required"}},
+		{"apps", []string{"--yes", "--apps", "codex,foo,bar", "--provider", "s3", "--aws-profile", "p", "--region", "us-east-1"}, []string{`not "foo" or "bar"`, "pass --project", "--bucket is required"}},
+		{"s3 flags", []string{"--yes", "--provider", "s3", "--region", "US East", "--project", project, "--apps", "codex"}, []string{"needs --aws-profile", `--region "US East" isn't`, "--bucket is required"}},
+		{"projects", []string{"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex", "--project", filepath.Join(project, "one"), "--project", filepath.Join(project, "two"), "--project", filepath.Join(project, "one")}, []string{"one does not exist", "two does not exist"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, userHome := t.TempDir(), t.TempDir()
+			kc := newFakeKeychain()
+			env := setupTestEnv(t, home, userHome, kc, time.Now())
+			env.DetectHarnesses = func(string) []string { return nil }
+			env.JobState = func(string) string { t.Error("launchctl was asked"); return "missing" }
+			env.Keychain = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
+			env.IsTerminal = func(any) bool { return false }
+			var out, errOut bytes.Buffer
+			if code := Run(append([]string{"setup"}, tc.args...), unreadable{t}, &out, &errOut, env); code != 1 {
+				t.Fatalf("exit %d want 1\n%s%s", code, &out, &errOut)
+			}
+			output := out.String() + errOut.String()
+			header := fmt.Sprintf("Setup incomplete: %d answers are missing or wrong; nothing was changed:\n", len(tc.want))
+			if !strings.Contains(output, header) {
+				t.Fatalf("missing %q:\n%s", header, output)
+			}
+			lines := strings.Split(output[strings.Index(output, header)+len(header):], "\n")
+			if len(lines) < len(tc.want) {
+				t.Fatalf("want %d problem lines:\n%s", len(tc.want), output)
+			}
+			for i, want := range tc.want {
+				if !strings.HasPrefix(lines[i], "  - ") || !strings.Contains(lines[i], want) {
+					t.Fatalf("line %d is %q, want %q:\n%s", i+1, lines[i], want, output)
+				}
+			}
+			if _, found, _ := config.Load(home); found || len(kc.items) != 0 {
+				t.Fatal("a refusal changed something")
+			}
+			if _, err := os.Stat(draftPath(home)); !os.IsNotExist(err) {
+				t.Fatal("a refusal saved a draft")
+			}
+		})
+	}
+}
+
+// unreadable is a standard input that fails the test when read.
+type unreadable struct{ t *testing.T }
+
+func (u unreadable) Read([]byte) (int, error) {
+	u.t.Error("standard input was read")
+	return 0, errors.New("standard input was read")
+}
+
+// A script's missing R2 secret is reported once the other answers check
+// out, before launchctl or the Keychain is asked.
+func TestSetupYesReportsMissingR2SecretBeforePreflight(t *testing.T) {
+	t.Parallel()
+	kc := newFakeKeychain()
+	env := setupTestEnv(t, t.TempDir(), t.TempDir(), kc, time.Now())
+	env.JobState = func(string) string { t.Error("launchctl was asked"); return "missing" }
+	env.Keychain = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--r2-access-key-id", "id", "--project", t.TempDir(), "--apps", "codex")
+	if !strings.Contains(output, "Setup incomplete: the R2 secret access key is needed") {
+		t.Fatalf("output:\n%s", output)
+	}
+}
+
+// A single missing answer reads as it always has: the problem alone.
+func TestSetupYesReportsOneMissingAnswerAlone(t *testing.T) {
+	t.Parallel()
+	env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
+	output := setupYes(t, env, "", 1, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--apps", "codex")
+	if !strings.Contains(output, "Setup incomplete: no project is included; pass --project DIR\n") || strings.Contains(output, "answers are missing") {
+		t.Fatalf("output:\n%s", output)
 	}
 }
 

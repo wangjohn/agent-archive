@@ -42,6 +42,8 @@ follow [Semantic Versioning](https://semver.org/).
   (raw error text only with `--verbose`), the menu defaults to fixing the
   answer that failed, and "Continue where you left off" asks that answer
   again instead of re-running the same check.
+- `setup --yes` reports every missing or wrong answer together, one per
+  line with the flag that fixes it, instead of stopping at the first.
 
 ## [0.1.0] - 2026-09-25
 
