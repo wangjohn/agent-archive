@@ -591,19 +591,34 @@ func anotherMacCommand(cfg config.Config, userHome string) string {
 		if !project.Included {
 			continue
 		}
-		path := project.Root
-		if userHome != "" && local.PathWithin(path, userHome) {
-			rel, err := filepath.Rel(userHome, path)
-			if err == nil {
-				path = filepath.ToSlash(filepath.Join("~", rel))
-			}
-		}
-		args = append(args, "--project", path)
+		args = append(args, "--project", homeRelative(project.Root, userHome))
 	}
 	for i, arg := range args {
 		args[i] = shellWord(arg)
 	}
 	return strings.Join(args, " ")
+}
+
+// homeRelative writes path from ~ when it is in the home folder. Project
+// roots are saved with symlinks resolved, so the home folder is compared
+// resolved too (on macOS a folder under /tmp resolves to /private/tmp).
+func homeRelative(path, userHome string) string {
+	if userHome == "" {
+		return path
+	}
+	homes := []string{userHome}
+	if resolved, err := filepath.EvalSymlinks(userHome); err == nil && resolved != userHome {
+		homes = append(homes, resolved)
+	}
+	for _, home := range homes {
+		if !local.PathWithin(path, home) {
+			continue
+		}
+		if rel, err := filepath.Rel(home, path); err == nil {
+			return filepath.ToSlash(filepath.Join("~", rel))
+		}
+	}
+	return path
 }
 
 // shellWord quotes s for a POSIX shell when it needs quoting. A leading ~

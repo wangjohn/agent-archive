@@ -222,3 +222,22 @@ func TestAnotherMacCommand(t *testing.T) {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// A project in the home folder is written from ~ even when the home folder's
+// path runs through a symlink, as project roots are saved resolved.
+func TestAnotherMacCommandResolvesTheHomeFolder(t *testing.T) {
+	t.Parallel()
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "home")
+	must(t, os.Symlink(target, link))
+	resolved, err := filepath.EvalSymlinks(target)
+	must(t, err)
+	cfg := config.Config{
+		Storage:   credentials.Config{Provider: credentials.ProviderS3, Bucket: "b", AWSProfile: "p"},
+		Harnesses: []string{"claude"},
+		Archive:   archive.Config{Projects: []archive.ProjectActivation{{Root: filepath.Join(resolved, "src", "app"), Included: true}}},
+	}
+	if got := anotherMacCommand(cfg, link); !strings.HasSuffix(got, " --project ~/src/app") {
+		t.Fatalf("got %s", got)
+	}
+}
