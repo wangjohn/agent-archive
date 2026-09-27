@@ -25,6 +25,10 @@ follow [Semantic Versioning](https://semver.org/).
 - `setup` suggests `AWS_PROFILE` when it is set, marks AWS profiles that
   have no credentials configured, and defaults to S3 when a usable profile
   exists (R2 otherwise).
+- `status` is redesigned: a colored state line, the one fix to make on top,
+  and grouped Capture and Storage rows with ✓/!/✗, relative times and `~`
+  paths. Internal codes and exact times stay in `status --json`, which is
+  unchanged.
 
 ## [0.1.0] - 2026-09-25
 
