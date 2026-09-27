@@ -289,6 +289,9 @@ func TestSetupYesRefusesAPublicBucket(t *testing.T) {
 				report.State, report.Reason = tc.privacy.State, tc.privacy.Reason
 				return privacyReportStore{ObjectStore: storagetest.NewMemoryStore(), report: report}, nil
 			}
+			loaded := 0
+			load := env.LoadLaunchAgent
+			env.LoadLaunchAgent = func(path string) error { loaded++; return load(path) }
 			output := setupYes(t, env, "", tc.exit, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--apps", "claude", "--project", project)
 			for _, want := range tc.want {
 				if !strings.Contains(output, want) {
@@ -300,6 +303,10 @@ func TestSetupYesRefusesAPublicBucket(t *testing.T) {
 				t.Fatalf("configuration saved: %v, want %v\n%s", found, tc.exit == 0, output)
 			}
 			if tc.exit == 0 {
+				// The checks below would see the job a successful run starts.
+				if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); err != nil || loaded == 0 {
+					t.Fatalf("a successful run installed no LaunchAgent (loaded %d times): %v", loaded, err)
+				}
 				return
 			}
 			if _, err := os.Stat(draftPath(home)); !errors.Is(err, os.ErrNotExist) {
@@ -307,6 +314,9 @@ func TestSetupYesRefusesAPublicBucket(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(userHome, ".claude", "settings.json")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("refusal installed hooks")
+			}
+			if _, err := os.Stat(env.installation(home, userHome).collectorPlist()); !errors.Is(err, os.ErrNotExist) || loaded != 0 {
+				t.Fatalf("refusal installed the LaunchAgent (loaded %d times)", loaded)
 			}
 		})
 	}

@@ -163,14 +163,20 @@ func TestSetupCancelAndResumeDraft(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	input := s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project)
-	setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0)
+	const needBucket = "You’ll need a private Cloudflare R2 or Amazon S3 bucket."
+	if output := setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0); !strings.Contains(output, needBucket) {
+		t.Fatalf("a first setup did not say a bucket is needed:\n%s", output)
+	}
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("cancel activated config")
 	}
 	if _, err := os.Stat(filepath.Join(userHome, ".codex", "hooks.json")); !os.IsNotExist(err) {
 		t.Fatal("cancel installed hooks")
 	}
-	setupRun(t, env, "continue\ny\n", 0)
+	// The draft names a bucket, so the reminder is not said again.
+	if output := setupRun(t, env, "continue\ny\n", 0); strings.Contains(output, needBucket) {
+		t.Fatalf("resuming a draft with a bucket said a bucket is needed:\n%s", output)
+	}
 	if _, found, _ := config.Load(home); !found {
 		t.Fatal("resume did not install")
 	}
