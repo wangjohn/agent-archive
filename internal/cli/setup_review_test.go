@@ -165,7 +165,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 			env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 			env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
 			env.WorkingDir = func() (string, error) { return project, nil }
-			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{"personal", "us-west-2"}}, nil }
+			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "personal", Region: "us-west-2"}}, nil }
 			probes := 0
 			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { probes++; return storagetest.NewMemoryStore(), nil }
 			out := setupRun(t, env, "\n\n\ns3\ntest-bucket\n\n"+tc.edits, 0)
