@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,4 +267,68 @@ func TestReviewChecklistShowsCodexStepOnlyWhenNew(t *testing.T) {
 		!step(setupReview{existing: config.Config{Harnesses: []string{"claude"}}, reconfiguring: true}) {
 		t.Fatal("Codex step shown wrongly")
 	}
+}
+
+// A hook file that breaks while setup asks its questions shows ✗ at the
+// review, which then neither offers nor accepts starting. Once the file is
+// fixed, Check again clears the ✗ and setup can start.
+func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
+	hooksFile := filepath.Join(userHome, ".codex", "hooks.json")
+	must(t, os.MkdirAll(filepath.Dir(hooksFile), 0o700))
+	env.IsTerminal = func(stream any) bool { _, ok := stream.(*hookFixingAnswers); return ok }
+	broken := false
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		// The storage check comes after the checks before the first
+		// question, so this is the file breaking in between.
+		if !broken {
+			broken = true
+			must(t, os.WriteFile(hooksFile, []byte("{\n  // a comment\n}\n"), 0o600))
+		}
+		return storagetest.NewMemoryStore(), nil
+	}
+	answers := []string{"y", "n", "n", project, "", "s3", "profile", "bucket", "us-east-1",
+		"y",     // refused: starting is not a choice
+		"check", // the file is fixed just before this answer
+		"y"}
+	in := &hookFixingAnswers{answers: answers, fixAt: 10, fix: func() { must(t, os.WriteFile(hooksFile, []byte("{}\n"), 0o600)) }}
+	var out bytes.Buffer
+	if code := Run([]string{"setup"}, in, &out, &out, env); code != 0 {
+		t.Fatalf("setup exit %d\n%s", code, &out)
+	}
+	output := out.String()
+	blocked := strings.Index(output, "✗ Codex hook file is invalid")
+	refused := strings.Index(output, "Enter a number from 1 to 3.")
+	if blocked < 0 || refused < blocked || !strings.Contains(output, "Fix what is marked ✗ above first.\n  1) Check again") {
+		t.Fatalf("✗ did not block starting:\n%s", output)
+	}
+	if !strings.Contains(output[refused:], "✓ Hook file is valid") || !strings.Contains(output[refused:], "1) Yes, start archiving") {
+		t.Fatalf("check again did not clear the ✗:\n%s", output)
+	}
+	if _, found, err := config.Load(home); err != nil || !found {
+		t.Fatalf("setup did not start after the fix: %v", err)
+	}
+}
+
+// hookFixingAnswers hands setup one answer per read, running fix just
+// before the answer at index fixAt.
+type hookFixingAnswers struct {
+	answers []string
+	next    int
+	fixAt   int
+	fix     func()
+}
+
+func (a *hookFixingAnswers) Read(p []byte) (int, error) {
+	if a.next == len(a.answers) {
+		return 0, io.EOF
+	}
+	if a.next == a.fixAt {
+		a.fix()
+	}
+	line := a.answers[a.next] + "\n"
+	a.next++
+	return copy(p, line), nil
 }

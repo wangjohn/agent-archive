@@ -130,10 +130,11 @@ func reviewDiscoveries(discoveries map[string]applicationDiscovery, detected []s
 }
 
 // showSetupReview prints the summary of what will be saved, then the
-// checklist of what setup found. When reconfiguring, a value that differs
-// from the active configuration is marked, with the old value beneath it,
-// so only those lines need checking.
-func showSetupReview(p *prompter, cfg config.Config, review setupReview) {
+// checklist of what setup found, and reports whether a row of it is ✗,
+// which blocks starting. When reconfiguring, a value that differs from the
+// active configuration is marked, with the old value beneath it, so only
+// those lines need checking.
+func showSetupReview(p *prompter, cfg config.Config, review setupReview) (blocked bool) {
 	title := "Ready to start"
 	if review.reconfiguring {
 		title = "Review your changes"
@@ -146,7 +147,14 @@ func showSetupReview(p *prompter, cfg config.Config, review setupReview) {
 		terminal.Println(p.out, p.style.dim("\n  * changed from your current settings"))
 	}
 	terminal.Println(p.out, "")
-	printReviewChecklist(p, reviewChecklist(cfg, review, p.clock()))
+	checks := reviewChecklist(cfg, review, p.clock())
+	printReviewChecklist(p, checks)
+	for _, check := range checks {
+		if check.mark == symbolFail {
+			blocked = true
+		}
+	}
+	return blocked
 }
 
 // printReviewRows prints the summary rows and returns how many changed.
@@ -372,14 +380,19 @@ func privacyReasonText(reason string) string {
 }
 
 // reviewAction asks the final confirmation, returning start, edit, or cancel.
-// y, n, and e still work for scripted input.
-func reviewAction(p *prompter, reconfiguring bool) (string, error) {
-	label, yes := "Start archiving?", "Yes, start archiving"
+// y, n, and e still work for scripted input. When the checklist is blocked
+// (a row is ✗), starting is neither offered nor accepted: the first choice
+// checks again instead, returning check.
+func reviewAction(p *prompter, reconfiguring, blocked bool) (string, error) {
+	label, first := "Start archiving?", option{"yes", "Yes, start archiving"}
 	if reconfiguring {
-		label, yes = "Save these changes?", "Yes, save"
+		label, first = "Save these changes?", option{"yes", "Yes, save"}
 	}
-	choice, err := p.menu("\n"+label, "yes",
-		option{"yes", yes},
+	if blocked {
+		label, first = "Fix what is marked ✗ above first.", option{"check", "Check again"}
+	}
+	choice, err := p.menu("\n"+label, first.Key,
+		first,
 		option{"edit", "Edit a setting"},
 		option{"no", "Cancel (your setup draft is kept)"})
 	//lint:ignore LV1001 menu keys are the option keys listed just above

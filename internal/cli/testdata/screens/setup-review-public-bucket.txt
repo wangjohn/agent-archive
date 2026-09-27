@@ -45,8 +45,8 @@ Step 3 of 3 · Ready to start
   Filtering is best effort; sensitive text may remain in archived sessions.
   What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
-Start archiving?
-  1) Yes, start archiving
+Fix what is marked ✗ above first.
+  1) Check again
   2) Edit a setting
   3) Cancel (your setup draft is kept)
 Enter 1-3 [1]: 3

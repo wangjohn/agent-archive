@@ -153,9 +153,25 @@ func TestMenuRejectsAmbiguousPrefix(t *testing.T) {
 func TestReviewActionMapsChoices(t *testing.T) {
 	t.Parallel()
 	for input, want := range map[string]string{"1\n": "start", "\n": "start", "2\n": "edit", "3\n": "cancel", "y\n": "start", "n\n": "cancel", "e\n": "edit"} {
-		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false)
+		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false, false)
 		if err != nil || got != want {
 			t.Fatalf("input %q: got %q, %v; want %q", input, got, err, want)
+		}
+	}
+}
+
+// With a ✗ on the checklist, starting is neither offered nor accepted: the
+// first choice checks again, and y is asked again rather than taken.
+func TestReviewActionRefusesStartWhenBlocked(t *testing.T) {
+	t.Parallel()
+	for input, want := range map[string]string{"1\n": "check", "\n": "check", "c\n": "check", "2\n": "edit", "e\n": "edit", "3\n": "cancel", "n\n": "cancel", "y\ne\n": "edit", "yes\n3\n": "cancel"} {
+		var out bytes.Buffer
+		got, err := reviewAction(newPrompter(strings.NewReader(input), &out), false, true)
+		if err != nil || got != want {
+			t.Fatalf("input %q: got %q, %v; want %q\n%s", input, got, err, want, &out)
+		}
+		if strings.Contains(out.String(), "start archiving") || !strings.Contains(out.String(), "1) Check again") {
+			t.Fatalf("input %q offered start:\n%s", input, &out)
 		}
 	}
 }

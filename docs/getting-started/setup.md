@@ -134,7 +134,10 @@ deletion period is 90 days by default; older sessions are deleted from the
 bucket automatically. When you reconfigure, each changed value is marked `*`
 with its old value beneath it.
 
-In the checklist, ✓ is fine, ! needs you, and ✗ needs fixing first:
+In the checklist, ✓ is fine, ! needs you, and ✗ needs fixing first. While
+any row is ✗, setup does not offer to start: fix what it names, then choose
+"Check again", which checks storage and the hook files again.
+
 
 - **Storage connected**: the storage check wrote, read, listed and deleted a
   test file.
