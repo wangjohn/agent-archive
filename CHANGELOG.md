@@ -25,6 +25,9 @@ follow [Semantic Versioning](https://semver.org/).
 - `setup` suggests `AWS_PROFILE` when it is set, marks AWS profiles that
   have no credentials configured, and defaults to S3 when a usable profile
   exists (R2 otherwise).
+- `setup` always shows your recent projects with each one's session count,
+  with the current repository pre-selected; `a` selects them all, and
+  leaving every project out asks again instead of ending setup.
 
 ## [0.1.0] - 2026-09-25
 
