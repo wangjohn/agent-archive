@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -147,7 +148,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			if errors.As(err, &blocker) {
 				terminal.Println(stderr, blocker.guidance())
 			}
-			return 1
+			return setupExitCode(err)
 		}
 		return 0
 	}
@@ -172,7 +173,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			return 1
 		}
 		terminal.Println(stderr, "Run agent-archive setup to continue.")
-		return 1
+		return setupExitCode(err)
 	}
 	return 0
 }
@@ -571,20 +572,66 @@ func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
 // another interrupt) stopped it.
 var errStorageCheckInterrupted = errors.New("the storage check was interrupted")
 
+// storageCheckInterruptedError is errStorageCheckInterrupted with the signal
+// that stopped the check, so setup still exits with the shell's status for
+// it, as it does when a signal stops it anywhere else.
+type storageCheckInterruptedError struct{ sig os.Signal }
+
+func (e *storageCheckInterruptedError) Error() string { return errStorageCheckInterrupted.Error() }
+
+func (e *storageCheckInterruptedError) Is(target error) bool {
+	return target == errStorageCheckInterrupted
+}
+
+// setupExitCode is setup's exit status for err: the shell's status for a
+// signal that stopped the storage check, else 1.
+func setupExitCode(err error) int {
+	var interrupted *storageCheckInterruptedError
+	if errors.As(err, &interrupted) {
+		if s, ok := interrupted.sig.(syscall.Signal); ok {
+			return 128 + int(s)
+		}
+	}
+	return 1
+}
+
+// storageCheckMayPrompt reports whether the storage check may run a program
+// that asks the user something on the terminal: an S3 profile's
+// credential_process, which the AWS SDK runs with the terminal's standard
+// input and error so a helper such as aws-vault can ask for an MFA code. A
+// spinner would draw over that question.
+func storageCheckMayPrompt(storage credentials.Config, env Env) bool {
+	if storage.Provider != credentials.ProviderS3 || storage.AWSProfile == "" {
+		return false
+	}
+	home, err := env.home()
+	if err != nil {
+		return true
+	}
+	configFile, credentialsFile := awsFiles(home, env.lookupEnv)
+	return credentialProcess(configFile, credentialsFile, storage.AWSProfile) != ""
+}
+
 // runStorageCheck runs the storage check on cfg, saying so on one line. Where
 // the terminal can redraw a line, a spinner runs on it and the line then
 // resolves in place: to "✓ Connected to your storage.", or on a failure to
 // the diagnosis's own ✗ headline, which the caller prints next. Elsewhere
 // the line is written plainly, and a failure leaves a blank line after it.
-// The spinner is stopped on every path before anything else is written. An
+// No spinner runs while a profile's credential_process may be asking
+// something on the terminal. The spinner is stopped on every path before
+// anything else is written. An
 // interrupt stops the spinner and returns at once with
 // errStorageCheckInterrupted.
 func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 	const label = "Checking your storage connection…"
-	if !p.style.live {
+	style := p.style
+	if style.live && storageCheckMayPrompt(cfg.Storage, env) {
+		style.live = false
+	}
+	if !style.live {
 		terminal.Println(p.out, label)
 	}
-	sp := p.style.spin(p.out, label)
+	sp := style.spin(p.out, label)
 	defer sp.stop()
 	interrupts, stopInterrupts := env.interrupts()
 	defer stopInterrupts()
@@ -602,14 +649,14 @@ func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 	var err error
 	select {
 	case err = <-done:
-	case <-interrupts:
+	case sig := <-interrupts:
 		sp.stop()
 		terminal.Println(p.out, p.style.failMark()+" Stopped checking your storage connection.")
-		return errStorageCheckInterrupted
+		return &storageCheckInterruptedError{sig: sig}
 	}
 	sp.stop()
 	if err != nil {
-		if !p.style.live {
+		if !style.live {
 			terminal.Println(p.out, "")
 		}
 		return err

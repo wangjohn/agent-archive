@@ -4,13 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -244,5 +248,56 @@ func TestStorageCheckStopsCleanlyOnInterrupt(t *testing.T) {
 	}
 	if !cfg.StorageVerifiedAt.IsZero() {
 		t.Error("an interrupted check recorded a verification")
+	}
+}
+
+// A profile whose credential_process may ask for something, such as an MFA
+// code, on the terminal gets the plain line instead of a spinner, which
+// would draw over that question.
+func TestStorageCheckSkipsSpinnerForCredentialProcess(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(home, ".aws"), 0o700))
+	must(t, os.WriteFile(filepath.Join(home, ".aws", "config"), []byte("[profile work]\ncredential_process = aws-vault export --format=json work\n"), 0o600))
+	env := storageCheckEnv(storagetest.NewMemoryStore(), nil)
+	env.Home = func() (string, error) { return home, nil }
+	env.LookupEnv = func(string) (string, bool) { return "", false }
+	var out bytes.Buffer
+	p := styledPrompter("", &out, textStyle{color: true, live: true})
+	cfg := config.Config{Storage: credentials.Config{Provider: credentials.ProviderS3, AWSProfile: "work", Bucket: "team-archive", Region: "us-east-1"}}
+	must(t, runStorageCheck(p, &cfg, env))
+	if got, want := out.String(), "Checking your storage connection…\n\x1b[32m✓\x1b[0m Connected to your storage.\n"; got != want {
+		t.Errorf("wrote %q, want %q", got, want)
+	}
+}
+
+// A signal that stops the storage check still ends setup with the shell's
+// status for it, as the signal does anywhere else in setup.
+func TestStorageCheckInterruptKeepsTheSignalsExitStatus(t *testing.T) {
+	t.Parallel()
+	for sig, want := range map[os.Signal]int{os.Interrupt: 130, syscall.SIGTERM: 143, syscall.SIGHUP: 129} {
+		signals := make(chan os.Signal, 1)
+		release := make(chan struct{})
+		env := Env{
+			OpenStore: func(config.Config) (storage.ObjectStore, error) {
+				signals <- sig
+				<-release
+				return storagetest.NewMemoryStore(), nil
+			},
+			Now:        func() time.Time { return screenNow },
+			Interrupts: func() (<-chan os.Signal, func()) { return signals, func() {} },
+		}
+		var out bytes.Buffer
+		err := runStorageCheck(styledPrompter("", &out, textStyle{}), &config.Config{}, env)
+		close(release)
+		if !errors.Is(err, errStorageCheckInterrupted) {
+			t.Fatalf("%v: err = %v, want the check interrupted", sig, err)
+		}
+		if got := setupExitCode(fmt.Errorf("wrapped: %w", err)); got != want {
+			t.Errorf("%v: exit status %d, want %d", sig, got, want)
+		}
+	}
+	if got := setupExitCode(errors.New("the storage check failed")); got != 1 {
+		t.Errorf("exit status %d for a failure, want 1", got)
 	}
 }
