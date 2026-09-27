@@ -1086,15 +1086,17 @@ func (sc statusScreen) printRows(out io.Writer, rows []statusRow) {
 		}
 	}
 	for _, row := range rows {
-		prefix := "  " + row.mark + " "
+		var columns strings.Builder
+		columns.WriteString("  " + row.mark + " ")
 		text := ""
 		for i, cell := range row.cells {
 			if i == len(row.cells)-1 && row.detail == "" {
 				text = cell
 				break
 			}
-			prefix += cell + strings.Repeat(" ", widths[i]-visibleWidth(cell)+3)
+			columns.WriteString(cell + strings.Repeat(" ", widths[i]-visibleWidth(cell)+3))
 		}
+		prefix := columns.String()
 		if row.detail != "" {
 			text = sc.style.dim(row.detail)
 		}
