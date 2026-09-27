@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -120,8 +121,11 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	}
 	p := newPrompter(stdin, out)
 	p.now = env.now
-	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env, scriptR2Secret(p, stdin, env))
+	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env)
 	if err != nil {
+		return err
+	}
+	if secret.SecretAccessKey, err = scriptR2Secret(secret, p, stdin, env); err != nil {
 		return err
 	}
 	// The checks interactive setup makes before its first question, for the
@@ -141,7 +145,8 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if cfg.Storage.Provider == credentials.ProviderR2 && !(credentials.R2Location{Endpoint: cfg.Storage.R2Endpoint}).Cloudflare() {
 		p.warn("--r2-account isn't a Cloudflare R2 address; it is used as an S3-compatible endpoint.")
 	}
-	if cfg.Storage.Provider == credentials.ProviderR2 && secret.AccessKeyID != "" && secret.SecretAccessKey == "" {
+	// Only --provider r2 gives a new access key ID.
+	if secret.AccessKeyID != "" && secret.SecretAccessKey == "" {
 		if secret.SecretAccessKey, err = readR2Secret(p, stdin, env); err != nil {
 			return err
 		}
@@ -201,48 +206,49 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 
 // setupAnswers is the configuration setup --yes saves, before its storage
 // is checked: existing with the flags' answers. secret carries a new R2
-// access key, if one was given, with the secret when readSecret could read
-// it without asking. Every missing or wrong answer is reported together.
-func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env, readSecret func() (string, error)) (config.Config, credentials.R2Credentials, error) {
+// access key ID, if one was given; its secret is read once the answers
+// check out. Every missing or wrong answer is reported together.
+func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
 	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
-	var problems []error
-	if err := setupApps(&cfg, opts.apps, env.detectHarnesses(userHome), installed); err != nil {
-		problems = append(problems, err)
-	} else if other := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(other) > 0 {
-		return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: other}
+	problems := setupApps(&cfg, opts.apps, env.detectHarnesses(userHome), installed)
+	if len(problems) == 0 {
+		if other := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(other) > 0 {
+			return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: other}
+		}
 	}
-	problems = append(problems, setupProjects(&cfg, opts.projects, userHome))
-	secret, err := setupStorageFromFlags(&cfg, opts, env, readSecret)
-	problems = append(problems, err)
+	problems = append(problems, setupProjects(&cfg, opts.projects, userHome)...)
+	secret, storageProblems := setupStorageFromFlags(&cfg, opts, env)
+	problems = append(problems, storageProblems...)
 	if cfg.RetentionDays <= 0 {
 		cfg.RetentionDays = defaultRetentionDays
 	}
 	return cfg, secret, answersError(problems)
 }
 
-// scriptR2Secret reads a script's R2 secret, set in the environment or
-// piped in, with the other answers, so a missing one is reported with
-// theirs. A terminal is asked for it only after the preflight checks, so it
-// returns nothing then.
-func scriptR2Secret(p *prompter, stdin io.Reader, env Env) func() (string, error) {
-	return func() (string, error) {
-		if env.isTerminal(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "" {
-			return "", nil
-		}
-		return readR2Secret(p, stdin, env)
+// scriptR2Secret reads a script's R2 secret for the new key in secret, set
+// in the environment or piped in. setup --yes calls it once every other
+// answer checks out, so nothing is read from standard input for a run that
+// is refused, and a missing secret is reported before launchctl or the
+// Keychain is asked. A terminal is asked for it only after the preflight
+// checks, so it returns nothing then.
+func scriptR2Secret(secret credentials.R2Credentials, p *prompter, stdin io.Reader, env Env) (string, error) {
+	if secret.AccessKeyID == "" || (env.isTerminal(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "") {
+		return "", nil
 	}
+	return readR2Secret(p, stdin, env)
 }
 
 // answersError is setup --yes refused for its answers: a single problem as
 // it is, or several listed one per line, each naming the flag that fixes
-// it. Joined errors count one problem each; nil ones are skipped.
+// it. A problem found twice, such as one --project given twice, is listed
+// once.
 func answersError(errs []error) error {
 	var problems []error
+	seen := map[string]bool{}
 	for _, err := range errs {
-		if joined, ok := err.(interface{ Unwrap() []error }); ok {
-			problems = append(problems, joined.Unwrap()...)
-		} else if err != nil {
+		if !seen[err.Error()] {
+			seen[err.Error()] = true
 			problems = append(problems, err)
 		}
 	}
@@ -295,19 +301,22 @@ func providerName(provider string) string {
 // else takes the detected ones. An app it includes is no longer declined.
 // It never removes an app: when installed, --apps must name every app whose
 // hooks are installed, since taking them out is a choice for interactive
-// setup, which shows the hooks it removes.
-func setupApps(cfg *config.Config, apps string, detected []string, installed bool) error {
-	var chosen []string
+// setup, which shows the hooks it removes. It returns every problem with
+// --apps.
+func setupApps(cfg *config.Config, apps string, detected []string, installed bool) []error {
+	var chosen, unknown []string
 	switch {
 	case apps != "":
 		for app := range strings.SplitSeq(apps, ",") {
 			app = strings.TrimSpace(app)
 			if !containsString(allHarnesses, app) {
-				return fmt.Errorf("--apps takes codex, claude, and cursor, not %q", app)
-			}
-			if !containsString(chosen, app) {
+				unknown = append(unknown, strconv.Quote(app))
+			} else if !containsString(chosen, app) {
 				chosen = append(chosen, app)
 			}
+		}
+		if len(unknown) > 0 {
+			return []error{fmt.Errorf("--apps takes codex, claude, and cursor, not %s", strings.Join(unknown, " or "))}
 		}
 	case len(cfg.Harnesses) > 0:
 		chosen = cfg.Harnesses
@@ -318,7 +327,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 			}
 		}
 		if len(chosen) == 0 {
-			return errors.New("no apps were found on this Mac; pass --apps (codex, claude, cursor)")
+			return []error{errors.New("no apps were found on this Mac; pass --apps (codex, claude, cursor)")}
 		}
 	}
 	if installed {
@@ -329,7 +338,7 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 			}
 		}
 		if len(dropped) > 0 {
-			return fmt.Errorf("--apps leaves out %s, which this Mac captures now; --yes never removes an app's hooks, so name every app in --apps, or run agent-archive setup to remove one", appList(dropped))
+			return []error{fmt.Errorf("--apps leaves out %s, which this Mac captures now; --yes never removes an app's hooks, so name every app in --apps, or run agent-archive setup to remove one", appList(dropped))}
 		}
 	}
 	var ordered, declined []string
@@ -345,8 +354,8 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 }
 
 // setupProjects includes each --project directory in cfg, beside the
-// projects already saved.
-func setupProjects(cfg *config.Config, paths []string, userHome string) error {
+// projects already saved. It returns every problem with --project.
+func setupProjects(cfg *config.Config, paths []string, userHome string) []error {
 	var problems []error
 	for _, path := range paths {
 		root, err := projectDir(path, userHome)
@@ -365,25 +374,24 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) error {
 		}
 	}
 	if len(problems) > 0 {
-		return errors.Join(problems...)
+		return problems
 	}
 	if includedProjects(cfg.Archive.Projects) == 0 {
-		return errors.New("no project is included; pass --project DIR")
+		return []error{errors.New("no project is included; pass --project DIR")}
 	}
 	return nil
 }
 
 // setupStorageFromFlags sets cfg's storage from the flags, or keeps the
 // saved storage when no storage flag was passed. For R2, the returned
-// credentials carry the access key when a new key is to be stored, with the
-// secret readSecret returns: empty when it is to be asked for later, once
-// everything else checks out. Every problem with the flags is returned,
-// joined.
-func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env, readSecret func() (string, error)) (credentials.R2Credentials, error) {
+// credentials carry the access key ID when a new key is to be stored; the
+// secret is read later, once everything else checks out. Every problem with
+// the flags is returned.
+func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env) (credentials.R2Credentials, []error) {
 	var secret credentials.R2Credentials
 	if !opts.storageFlagsSupplied {
 		if cfg.Storage.Provider == "" {
-			return secret, errors.New("storage is not set up yet; pass --provider r2 or --provider s3 and the bucket's details")
+			return secret, []error{errors.New("storage is not set up yet; pass --provider r2 or --provider s3 and the bucket's details")}
 		}
 		return secret, nil
 	}
@@ -398,41 +406,42 @@ func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env, readS
 	//lint:ignore LV1001 --provider is raw user input; anything else is refused below
 	switch opts.provider {
 	case credentials.ProviderR2:
-		secret, problems, checkBucket = r2FromFlags(&next, opts, previous, env, readSecret)
+		secret, problems, checkBucket = r2FromFlags(&next, opts, previous, env)
 	case credentials.ProviderS3:
 		problems = s3FromFlags(&next, opts, env)
 	case "":
-		return secret, errors.New("--bucket and the other storage flags need --provider r2 or --provider s3")
+		return secret, []error{errors.New("--bucket and the other storage flags need --provider r2 or --provider s3")}
 	default:
-		return secret, fmt.Errorf("--provider must be r2 or s3, not %q", opts.provider)
+		return secret, []error{fmt.Errorf("--provider must be r2 or s3, not %q", opts.provider)}
 	}
 	if checkBucket && next.Bucket == "" {
 		problems = append(problems, errors.New("--bucket is required"))
 	}
 	if len(problems) > 0 {
-		return secret, errors.Join(problems...)
+		return secret, problems
 	}
 	cfg.Storage = next
 	return secret, nil
 }
 
-// r2FromFlags sets next from the R2 flags. It returns the new key, if one
-// is given, and every problem with the flags. checkBucket is false when
-// --r2-account doesn't parse, since its URL may name the bucket.
-func r2FromFlags(next *credentials.Config, opts setupOptions, previous credentials.Config, env Env, readSecret func() (string, error)) (secret credentials.R2Credentials, problems []error, checkBucket bool) {
-	checkBucket = true
+// r2FromFlags sets next from the R2 flags. It returns the new key's access
+// key ID, if one is given, and every problem with the flags. checkBucket is
+// false when --r2-account is missing or doesn't parse, since its URL may
+// name the bucket.
+func r2FromFlags(next *credentials.Config, opts setupOptions, previous credentials.Config, env Env) (secret credentials.R2Credentials, problems []error, checkBucket bool) {
 	if opts.awsProfile != "" || opts.region != "" {
 		problems = append(problems, errors.New("--aws-profile and --region are for --provider s3"))
 	}
 	if opts.r2Account == "" {
 		problems = append(problems, errors.New("--provider r2 needs --r2-account (the account ID, or the bucket URL from the dashboard)"))
 	} else if loc, err := credentials.ParseR2Location(opts.r2Account); err != nil {
-		problems, checkBucket = append(problems, fmt.Errorf("--r2-account: %w", err)), false
+		problems = append(problems, fmt.Errorf("--r2-account: %w", err))
 	} else if next.R2Endpoint, err = credentials.R2Endpoint(loc.Endpoint, loc.AccountID); err != nil {
-		problems, checkBucket = append(problems, fmt.Errorf("--r2-account: %w", err)), false
+		problems = append(problems, fmt.Errorf("--r2-account: %w", err))
 	} else if loc.Bucket != "" && next.Bucket != "" && loc.Bucket != next.Bucket {
 		problems = append(problems, fmt.Errorf("--bucket %s differs from the bucket in --r2-account's URL (%s)", next.Bucket, loc.Bucket))
 	} else {
+		checkBucket = true
 		next.Bucket = firstNonEmpty(next.Bucket, loc.Bucket)
 		next.R2AccountID = loc.AccountID
 	}
@@ -443,10 +452,6 @@ func r2FromFlags(next *credentials.Config, opts setupOptions, previous credentia
 	}
 	if secret.AccessKeyID == "" {
 		problems = append(problems, fmt.Errorf("--provider r2 needs the access key ID: pass --r2-access-key-id or set %s", envR2AccessKeyID))
-	}
-	var err error
-	if secret.SecretAccessKey, err = readSecret(); err != nil {
-		problems = append(problems, err)
 	}
 	return secret, problems, checkBucket
 }
