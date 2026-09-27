@@ -166,7 +166,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if accessErr != nil {
 		return discard(fmt.Errorf("storage test failed: %w; nothing was changed", accessErr))
 	}
-	terminal.Println(out, p.style.green("✓ Connected."))
+	terminal.Println(out, p.style.ok("✓ Connected."))
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
 	// A reconfiguration's warnings, or its refusal (sessions pending at the
 	// old destination).
