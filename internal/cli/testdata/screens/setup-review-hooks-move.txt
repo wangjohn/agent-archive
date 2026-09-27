@@ -28,8 +28,9 @@ Step 3 of 3 · Review your changes
   ✓ Hook file is valid      ~/codex-elsewhere/hooks.json
   ! Codex needs one step    approve the hooks with /hooks after setup
   ! Codex hooks move to ~/codex-elsewhere/hooks.json from ~/.codex/hooks.json.
-    CODEX_HOME in this shell differs from when setup last ran. To keep them where they are,
-    cancel and run agent-archive setup from a shell without CODEX_HOME.
+    CODEX_HOME in this shell differs from when setup last ran.
+    To keep them where they are, cancel and run agent-archive setup
+    from a shell without CODEX_HOME.
 
   Filtering is best effort; sensitive text may remain in archived sessions.
   What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md

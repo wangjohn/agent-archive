@@ -37,13 +37,13 @@ Checking your storage connection…
   \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2mus-east-1 · profile work\e[0m
   \e[2mKeep for  \e[0m 90 days
 
-  \e[32m✓\e[0m Storage connected       write, read, list, delete
-  \e[31m✗\e[0m Bucket is public        a bucket policy allows public access
+  \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
+  \e[31m✗\e[0m Bucket is public        \e[2ma bucket policy allows public access\e[0m
     Fix its access before archiving: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
-  \e[32m✓\e[0m Hook file is valid      ~/.claude/settings.json
+  \e[32m✓\e[0m Hook file is valid      \e[2m~/.claude/settings.json\e[0m
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-\e[2m  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 Start archiving?
   1) Yes, start archiving

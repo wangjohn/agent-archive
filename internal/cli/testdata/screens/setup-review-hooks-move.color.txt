@@ -22,17 +22,18 @@ Checking your storage connection…
 \e[2m
   Nothing above differs from your current settings.\e[0m
 
-  \e[32m✓\e[0m Storage connected       write, read, list, delete
-  \e[33m!\e[0m Bucket privacy unknown  public-access settings could not be read
+  \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
+  \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
     Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
-  \e[32m✓\e[0m Hook file is valid      ~/codex-elsewhere/hooks.json
-  \e[33m!\e[0m Codex needs one step    approve the hooks with /hooks after setup
+  \e[32m✓\e[0m Hook file is valid      \e[2m~/codex-elsewhere/hooks.json\e[0m
+  \e[33m!\e[0m Codex needs one step    \e[2mapprove the hooks with /hooks after setup\e[0m
   \e[33m!\e[0m Codex hooks move to ~/codex-elsewhere/hooks.json from ~/.codex/hooks.json.
-    CODEX_HOME in this shell differs from when setup last ran. To keep them where they are,
-    cancel and run agent-archive setup from a shell without CODEX_HOME.
+    CODEX_HOME in this shell differs from when setup last ran.
+    To keep them where they are, cancel and run \e[36magent-archive setup\e[0m
+    from a shell without CODEX_HOME.
 
 \e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
-\e[2m  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+  \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
 
 Save these changes?
   1) Yes, save

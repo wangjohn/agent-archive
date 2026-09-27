@@ -285,7 +285,7 @@ func printReviewChecklist(p *prompter, checks []reviewCheck) {
 	paint := map[string]func(string) string{symbolOK: p.style.ok, symbolWarn: p.style.warn, symbolFail: p.style.fail}
 	for _, check := range checks {
 		mark := paint[check.mark](check.mark)
-		terminal.Println(p.out, p.style.hang(fmt.Sprintf("  %s %-22s  ", mark, check.label), check.detail))
+		terminal.Println(p.out, p.style.hang(fmt.Sprintf("  %s %-22s  ", mark, check.label), p.style.dim(check.detail)))
 		for i, line := range check.more {
 			if i == len(check.more)-1 && check.link != "" {
 				line += " " + p.style.cmd(check.link)
@@ -308,12 +308,12 @@ func reviewHookFiles(p *prompter, apps []string, next, previous hooks.Files, ins
 		if !containsString(installed, app) || previous[app] == next[app] {
 			continue
 		}
-		reason := variable[app] + " in this shell differs from when setup last ran. To keep them where they are,"
+		reason := []string{variable[app] + " in this shell differs from when setup last ran.", "To keep them where they are, cancel and run " + p.style.cmd("agent-archive setup")}
 		if !recorded {
-			reason = fmt.Sprintf("An earlier release installed them at the fixed path; %s is set in this shell. To keep them there,", variable[app])
+			reason = []string{"An earlier release installed them at the fixed path,", "and " + variable[app] + " is set in this shell.", "To keep them there, cancel and run " + p.style.cmd("agent-archive setup")}
 		}
-		p.warn(fmt.Sprintf("%s hooks move to %s from %s.", appName(app), displayPath(next[app], userHome), displayPath(previous[app], userHome)), reason,
-			fmt.Sprintf("cancel and run agent-archive setup from a shell without %s.", variable[app]))
+		p.warn(fmt.Sprintf("%s hooks move to %s from %s.", appName(app), displayPath(next[app], userHome), displayPath(previous[app], userHome)),
+			append(reason, "from a shell without "+variable[app]+".")...)
 	}
 }
 
@@ -325,7 +325,7 @@ const privacyDocURL = "https://github.com/wangjohn/agent-archive/blob/main/docs/
 func printReviewNotes(p *prompter) {
 	terminal.Println(p.out, "")
 	terminal.Println(p.out, p.style.dim(p.style.hang("  ", "Filtering is best effort; sensitive text may remain in archived sessions.")))
-	terminal.Println(p.out, p.style.dim(p.style.hang("  ", "What leaves your Mac: "+privacyDocURL)))
+	terminal.Println(p.out, p.style.hang("  ", p.style.dim("What leaves your Mac:")+" "+p.style.cmd(privacyDocURL)))
 }
 
 // printReviewPrivacy reports the saved bucket privacy evidence as of the
