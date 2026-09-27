@@ -236,12 +236,12 @@ var screens = []screen{
 	},
 	{
 		// After a wrong-region failure that named no region, continuing
-		// asks the storage questions again, where S3 now names the bucket's
-		// region, and then asks the region anyway, before checking, with
-		// that one as the default. The check passes; this run leaves at
-		// the review.
+		// asks the storage questions again. S3 can't say where the bucket
+		// is, so rather than check the region that failed again, setup
+		// says so and asks for the region. The check passes; this run
+		// leaves at the review.
 		name:    "setup-storage-failure-continue",
-		answers: []string{"1", "", "", "", "", "3"},
+		answers: []string{"1", "", "", "", "eu-west-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
@@ -256,7 +256,8 @@ var screens = []screen{
 				return putErrorStore{f.bucket, &err}, nil
 			}
 			f.setup(t, 1, storageFailureAnswers...)
-			f.env.AWSBuckets = fakeBuckets{names: []string{"photos", "team-archive"}, regions: map[string]string{"team-archive": "eu-west-1"}}.open
+			// S3 now refuses the region lookup, so the region is asked.
+			f.env.AWSBuckets = fakeBuckets{names: []string{"photos", "team-archive"}, regionErr: errAccessDenied}.open
 		},
 	},
 	{

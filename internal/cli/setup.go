@@ -41,10 +41,9 @@ type setupDraft struct {
 	// stop publishing. Config.ImportedHarnesses itself always comes from the
 	// committed configuration (see carriedImportedHarnesses).
 	StopImported []string `json:"stop_imported,omitempty"`
-	// AskRegion asks for the S3 bucket region before the next storage
-	// check, which the storage questions would otherwise keep without
-	// asking. It is set after a check the provider failed for the region.
-	AskRegion bool `json:"ask_region,omitempty"`
+	// FailedRegion is the S3 region a storage check just failed for. Setup
+	// asks for the region again, rather than checking that one again.
+	FailedRegion string `json:"failed_region,omitempty"`
 }
 
 // draftFormat is the setupDraft.Version this release writes and reads.
@@ -357,10 +356,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 		}
 		if draft.Step == 1 {
 			p.step(2, "Connect storage")
-			cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env)
+			cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env, draft.FailedRegion)
 			if e != nil {
 				return e
 			}
+			// The storage questions asked for a failed region again.
+			draft.FailedRegion = ""
 			if saveSecret {
 				keychain, e := env.keychain()
 				if e != nil {
@@ -405,14 +406,14 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 			}
 		}
 		if draft.Config.Storage != verifiedStorage {
-			// Only S3 has a region to ask: storage changed to R2 since the
-			// failure keeps R2's own.
-			if draft.AskRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
-				if draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", draft.Config.Storage.Region); err != nil {
+			// A draft resumed past the storage questions (after changing
+			// apps, say) still doesn't check a failed region again.
+			if s := &draft.Config.Storage; s.Provider == credentials.ProviderS3 && draft.FailedRegion != "" && s.Region == draft.FailedRegion {
+				if s.Region, err = askFailedRegion(p, s.Region); err != nil {
 					return err
 				}
 			}
-			draft.AskRegion = false
+			draft.FailedRegion = ""
 			terminal.Println(out, "\nChecking your storage connection…")
 			connectErr, e := verifyStorage(&draft.Config, env)
 			if connectErr != nil {
@@ -436,18 +437,20 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 				}
 				// Retry and "Change other settings" keep the draft as it
 				// is, at the check.
-				if choice == "fix" {
-					draft = reopenStorage(draft, d)
-					if draft.AskRegion {
-						// The region is the one answer to change. When S3
-						// didn't name it, ask S3 for it, as the storage
-						// questions would, so the default is not the
-						// region that just failed.
-						draft.Step = 2
-						if d.Region == "" {
-							draft.Config.Storage.Region = firstNonEmpty(lookUpBucketRegion(p, env, draft.Config.Storage), draft.Config.Storage.Region)
-						}
+				if choice == "fix" && d.Cause == storage.CauseWrongRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
+					// The region is the one answer to change, asked right
+					// under the diagnosis. When S3 didn't name the bucket's
+					// region, ask S3 for it, as the storage questions would,
+					// so the default is not the region that just failed.
+					region := d.Region
+					if region == "" {
+						region = firstNonEmpty(lookUpBucketRegion(p, env, draft.Config.Storage), draft.Config.Storage.Region)
 					}
+					if draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", region); err != nil {
+						return err
+					}
+				} else if choice == "fix" {
+					draft = reopenStorage(draft, d)
 				}
 				if choice == "edit" {
 					if err = editSetupReview(p, &draft, userHome, backfilledProjects(env), known); err != nil {
@@ -665,7 +668,7 @@ func storedCredentialReadable(env Env, ref string) bool {
 	return err == nil
 }
 
-func promptStorage(p *prompter, existing credentials.Config, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
+func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
 	var secret credentials.R2Credentials
 	providers := []option{
@@ -734,7 +737,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 				}
 			}
 		}
-	} else if err = promptS3Location(p, &cfg, env); err != nil {
+	} else if err = promptS3Location(p, &cfg, env, failedRegion); err != nil {
 		return cfg, secret, false, err
 	}
 	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)

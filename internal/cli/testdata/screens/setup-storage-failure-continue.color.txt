@@ -23,8 +23,9 @@ Which bucket should sessions be stored in?
   1) photos
   2) team-archive
 Enter 1-2, or another bucket name [2]: 
-Bucket team-archive is in eu-west-1; using that region.
-Bucket region [eu-west-1]: 
+Couldn't look up the region of bucket team-archive (access denied).
+The last storage check failed with region us-east-1.
+Bucket region [us-east-1]: eu-west-1
 
 Checking your storage connection…
 \e[32m✓ Connected.\e[0m

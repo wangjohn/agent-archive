@@ -172,9 +172,10 @@ func lookUpBucketRegion(p *prompter, env Env, cfg credentials.Config) string {
 // reopenStorage returns draft set to ask the storage questions again after a
 // check that failed as d says, with its answers as the defaults. The answer
 // d blames is one those questions would keep without asking, so it is
-// cleared or marked to be asked: the R2 access key after R2 refused it, and
-// the S3 region (defaulting to the bucket's own, when S3 named it) after a
-// wrong-region failure. The other answers are all asked again.
+// replaced, cleared or marked to be asked: after a wrong-region failure the
+// S3 region becomes the bucket's own when S3 named it, and the region that
+// failed is recorded as FailedRegion, to be asked for again rather than
+// checked again; after R2 refused the access key, the key is cleared. The other answers are all asked again.
 func reopenStorage(draft setupDraft, d storage.Diagnosis) setupDraft {
 	draft.Step = 1
 	s := &draft.Config.Storage
@@ -183,10 +184,17 @@ func reopenStorage(draft setupDraft, d storage.Diagnosis) setupDraft {
 		s.R2CredentialRef = ""
 	}
 	if d.Cause == storage.CauseWrongRegion && s.Provider == credentials.ProviderS3 {
+		draft.FailedRegion = s.Region
 		if d.Region != "" {
 			s.Region = d.Region
 		}
-		draft.AskRegion = true
 	}
 	return draft
+}
+
+// askFailedRegion asks for the bucket region again after a storage check
+// failed for region, saying why first.
+func askFailedRegion(p *prompter, region string) (string, error) {
+	terminal.Printf(p.out, "The last storage check failed with region %s.\n", region)
+	return promptRegion(p, "Bucket region", region)
 }

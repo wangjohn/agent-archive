@@ -208,13 +208,20 @@ func TestStorageDiagnosisGivesR2NoRegionHint(t *testing.T) {
 // check fails, naming that region, for any other.
 func wrongRegionEnv(t *testing.T, home string) Env {
 	t.Helper()
+	return wrongRegionEnvNaming(t, home, http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}})
+}
+
+// wrongRegionEnvNaming is wrongRegionEnv whose failures carry header, which
+// names the bucket's region or not.
+func wrongRegionEnvNaming(t *testing.T, home string, header http.Header) Env {
+	t.Helper()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	bucket := storagetest.NewMemoryStore()
 	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
 		var failure error
 		if cfg.Storage.Region != "eu-west-1" {
 			failure = &smithyhttp.ResponseError{
-				Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}}},
+				Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: header}},
 				Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
 			}
 		}
@@ -223,9 +230,9 @@ func wrongRegionEnv(t *testing.T, home string) Env {
 	return env
 }
 
-// Stopping at a wrong-region failure saves the bucket's own region, so that
-// continuing, which keeps a saved region without asking, checks that one
-// rather than repeating the check that failed.
+// Stopping at a wrong-region failure that named the bucket's region saves
+// that region, so continuing checks it, without asking, rather than
+// repeating the check that failed.
 func TestSetupContinueAfterWrongRegionUsesTheBucketsRegion(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -237,10 +244,9 @@ func TestSetupContinueAfterWrongRegionUsesTheBucketsRegion(t *testing.T) {
 		t.Fatalf("draft step %d region %q (found=%v problem=%q err=%v), want step 1 in eu-west-1", draft.Step, draft.Config.Storage.Region, found, problem, err)
 	}
 
-	// Continue, keep every storage answer and the region offered, and
-	// start archiving.
-	output := setupRun(t, env, "continue\n\n\n\n\ny\n", 0)
-	if strings.Contains(output, "The bucket is in another region.") || !strings.Contains(output, "Bucket region [eu-west-1]") {
+	// Continue, keep every storage answer, and start archiving.
+	output := setupRun(t, env, "continue\n\n\n\ny\n", 0)
+	if strings.Contains(output, "The bucket is in another region.") || !strings.Contains(output, "Using region eu-west-1.") || strings.Contains(output, "Bucket region [") {
 		t.Fatalf("continuing repeated the failed check:\n%s", output)
 	}
 	if cfg, _, _ := config.Load(home); cfg.Storage.Region != "eu-west-1" {
@@ -269,7 +275,8 @@ func TestSetupWrongRegionAnswerMustBeARegion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			home := t.TempDir()
-			env := wrongRegionEnv(t, home)
+			// Continue asks the region only when S3 didn't name it.
+			env := wrongRegionEnvNaming(t, home, http.Header{})
 			input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 			var output string
 			if tc.cancel {
@@ -467,7 +474,8 @@ func TestSetupContinueAfterEachFailureAsksBeforeChecking(t *testing.T) {
 		failure error
 		// open, when set, replaces the failing bucket.
 		open func(storage.ObjectStore) (storage.ObjectStore, error)
-		// ask is the question Continue must ask before checking.
+		// ask is what Continue must ask, or for a region S3 named, say it
+		// uses, before checking.
 		ask string
 		// lookupAsk, when set, is that question when S3 answers the
 		// bucket region lookup with eu-west-2.
@@ -477,8 +485,8 @@ func TestSetupContinueAfterEachFailureAsksBeforeChecking(t *testing.T) {
 		{name: "R2 key refused", r2: true, failure: &smithy.GenericAPIError{Code: "InvalidAccessKeyId"}, ask: "Access key ID"},
 		{name: "access denied", failure: &smithy.GenericAPIError{Code: "AccessDenied"}, ask: storageQuestion},
 		{name: "no such bucket", failure: &smithy.GenericAPIError{Code: "NoSuchBucket"}, ask: "Bucket name [bucket]"},
-		{name: "wrong region named", failure: redirect(http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}), ask: "Bucket region [eu-west-1]", lookupAsk: "Bucket region [eu-west-2]"},
-		{name: "wrong region unnamed", failure: redirect(http.Header{}), ask: "Bucket region [us-east-1]", lookupAsk: "Bucket region [eu-west-2]"},
+		{name: "wrong region named", failure: redirect(http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}), ask: "Using region eu-west-1.", lookupAsk: "Bucket region [eu-west-2]"},
+		{name: "wrong region unnamed", failure: redirect(http.Header{}), ask: "The last storage check failed with region us-east-1.\nBucket region [us-east-1]", lookupAsk: "The last storage check failed with region eu-west-2.\nBucket region [eu-west-2]"},
 		{name: "network", failure: &smithyhttp.RequestSendError{Err: errors.New("no such host")}, ask: storageQuestion},
 		{name: "other", failure: errors.New("incorrect region or folder"), ask: storageQuestion},
 		{name: "read-back", open: func(bucket storage.ObjectStore) (storage.ObjectStore, error) {
@@ -530,6 +538,10 @@ func TestSetupContinueAfterEachFailureAsksBeforeChecking(t *testing.T) {
 				asked := strings.Index(output, ask)
 				if asked < 0 || check >= 0 && check < asked {
 					t.Fatalf("Continue checked before asking %q:\n%s", ask, output)
+				}
+				// Setup doesn't promise to keep a region it is about to ask.
+				if strings.Contains(ask, "The last storage check failed") && strings.Contains(output, "You can change it at the final review.") {
+					t.Fatalf("Continue said it would use the region it then asked for:\n%s", output)
 				}
 				if tc.r2 && strings.Contains(output, "Keep stored R2 credentials?") {
 					t.Fatalf("Continue offered to keep the refused key:\n%s", output)
