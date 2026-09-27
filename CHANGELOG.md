@@ -55,6 +55,9 @@ follow [Semantic Versioning](https://semver.org/).
   and grouped Capture and Storage rows with ✓/!/✗, relative times and `~`
   paths. Internal codes and exact times stay in `status --json`, which is
   unchanged.
+- `status --verbose` adds a Details section with the internal codes, exact
+  times, bucket privacy evidence and per-app notes, and the default view
+  names a storage failure's cause in plain words instead of SDK text.
 
 ## [0.1.0] - 2026-09-25
 
