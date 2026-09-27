@@ -879,23 +879,88 @@ const maxKnownProjects = 12
 // project in or out. a includes every listed project. A project in existing
 // keeps its activation time.
 func addProjects(p *prompter, result, existing []archive.ProjectActivation, known []backfill.KnownProject, current string, userHomes ...string) ([]archive.ProjectActivation, error) {
-	home := ""
-	if len(userHomes) > 0 {
-		home = userHomes[0]
+	picker := newProjectPicker(p, result, existing, userHomes...)
+	offered := picker.offer(known, current)
+	label := "Project path: "
+	if len(offered) > 0 {
+		label = "Projects: "
 	}
-	// result is edited in place below; existing may share its array.
-	result = slices.Clone(result)
-	seen := map[string]bool{}
-	// excluded are the projects result holds as exclusions, which leaving
+	for {
+		answer, err := p.line(label)
+		if err != nil {
+			return nil, err
+		}
+		if answer == "" {
+			return picker.result, nil
+		}
+		if len(offered) > 0 && (strings.EqualFold(answer, "a") || strings.EqualFold(answer, "all")) {
+			for _, project := range offered {
+				if !picker.seen[project.Root] {
+					picker.include(project.Root)
+				}
+			}
+			picker.printSelection()
+			continue
+		}
+		if numbers, ok, inRange := parseNumbers(answer, len(offered)); ok && len(offered) > 0 {
+			if !inRange {
+				terminal.Printf(p.out, "Enter numbers from 1 to %d, a for all, or a project path.\n", len(offered))
+				continue
+			}
+			for _, n := range numbers {
+				switch root := offered[n-1].Root; {
+				case !picker.seen[root]:
+					picker.include(root)
+				case current != "":
+					picker.leaveOut(root)
+				}
+			}
+			picker.printSelection()
+			continue
+		}
+		picker.include(answer)
+	}
+}
+
+// projectPicker holds the projects addProjects is choosing.
+type projectPicker struct {
+	p        *prompter
+	home     string
+	result   []archive.ProjectActivation
+	existing []archive.ProjectActivation
+	// seen are the included projects.
+	seen map[string]bool
+	// excluded are the projects result held as exclusions, which leaving
 	// them out again restores.
-	excluded := map[string]bool{}
+	excluded map[string]bool
+}
+
+// newProjectPicker starts from result, the projects chosen so far.
+func newProjectPicker(p *prompter, result, existing []archive.ProjectActivation, userHomes ...string) *projectPicker {
+	picker := &projectPicker{
+		p: p,
+		// result is edited in place; existing may share its array.
+		result:   slices.Clone(result),
+		existing: existing,
+		seen:     map[string]bool{},
+		excluded: map[string]bool{},
+	}
+	if len(userHomes) > 0 {
+		picker.home = userHomes[0]
+	}
 	for _, project := range result {
 		if project.Included {
-			seen[project.Root] = true
+			picker.seen[project.Root] = true
 		} else {
-			excluded[project.Root] = true
+			picker.excluded[project.Root] = true
 		}
 	}
+	return picker
+}
+
+// offer prints the projects to choose from, current first, and how to
+// answer, and returns the listed projects in their numbered order.
+func (k *projectPicker) offer(known []backfill.KnownProject, current string) []backfill.KnownProject {
 	var offered []backfill.KnownProject
 	if current != "" {
 		entry := backfill.KnownProject{Root: current}
@@ -907,133 +972,105 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 		offered = append(offered, entry)
 	}
 	for _, project := range known {
-		if !seen[project.Root] && project.Root != current && len(offered) < maxKnownProjects {
+		if !k.seen[project.Root] && project.Root != current && len(offered) < maxKnownProjects {
 			offered = append(offered, project)
 		}
 	}
+	out := k.p.out
+	switch {
+	case len(offered) == 0:
+		terminal.Println(out, "Add project directories, one per line. Enter a blank line when finished.")
+		return nil
+	case current != "":
+		terminal.Println(out, "Projects to archive (✓ included):")
+	default:
+		terminal.Println(out, "Projects with recent sessions:")
+	}
 	width := 0
 	for _, project := range offered {
-		width = max(width, visibleWidth(displayPath(project.Root, home)))
+		width = max(width, visibleWidth(displayPath(project.Root, k.home)))
 	}
-	label := "Project path: "
-	if len(offered) > 0 {
-		if current != "" {
-			terminal.Println(p.out, "Projects to archive (✓ included):")
-		} else {
-			terminal.Println(p.out, "Projects with recent sessions:")
-		}
-		for i, project := range offered {
-			// Only a list that starts with a project included marks one.
-			mark := ""
-			switch {
-			case seen[project.Root]:
-				mark = p.style.okMark() + " "
-			case current != "":
-				mark = "  "
-			}
-			path := displayPath(project.Root, home)
-			terminal.Printf(p.out, "  %d) %s%s%s  %s\n", i+1, mark, path, strings.Repeat(" ", width-visibleWidth(path)), p.style.dim(projectDetails(project, current, p.clock())))
-		}
+	for i, project := range offered {
+		// Only a list that starts with a project included marks one.
+		mark := ""
 		switch {
-		case current != "" && len(offered) == 1:
-			terminal.Println(p.out, "Enter 1 to include or leave it out, or a project path to add another. Enter a blank line when finished.")
+		case k.seen[project.Root]:
+			mark = k.p.style.okMark() + " "
 		case current != "":
-			terminal.Println(p.out, "Enter numbers to include or leave out (for example 2 3), a for all, or a project path. Enter a blank line when finished.")
-		default:
-			terminal.Println(p.out, "Enter the numbers to include (for example 1 3), a for all, or a project path. Enter a blank line when finished.")
+			mark = "  "
 		}
-		label = "Projects: "
-	} else {
-		terminal.Println(p.out, "Add project directories, one per line. Enter a blank line when finished.")
+		path := displayPath(project.Root, k.home)
+		terminal.Printf(out, "  %d) %s%s%s  %s\n", i+1, mark, path, strings.Repeat(" ", width-visibleWidth(path)), k.p.style.dim(projectDetails(project, current, k.p.clock())))
 	}
-	include := func(root string) {
-		root, err := projectDir(root, home)
-		if err != nil {
-			terminal.Println(p.out, err.Error()+". Enter an existing project directory.")
-			return
-		}
-		if seen[root] {
-			terminal.Println(p.out, "That project is already included.")
-			return
-		}
-		seen[root] = true
-		for i := range result {
-			if result[i].Root == root {
-				result[i].Included = true
-				return
-			}
-		}
-		// ActivatedAt is left zero here; setup stamps it when it commits.
-		project := archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true}
-		for _, old := range existing {
-			if old.Root == root {
-				project.ActivatedAt = old.ActivatedAt
-			}
-		}
-		result = append(result, project)
+	switch {
+	case current != "" && len(offered) == 1:
+		terminal.Println(out, "Enter 1 to include or leave it out, or a project path to add another. Enter a blank line when finished.")
+	case current != "":
+		terminal.Println(out, "Enter numbers to include or leave out (for example 2 3), a for all, or a project path. Enter a blank line when finished.")
+	default:
+		terminal.Println(out, "Enter the numbers to include (for example 1 3), a for all, or a project path. Enter a blank line when finished.")
 	}
-	leaveOut := func(root string) {
-		delete(seen, root)
-		for i := range result {
-			if result[i].Root != root {
-				continue
-			}
-			if excluded[root] {
-				result[i].Included = false
-			} else {
-				result = slices.Delete(result, i, i+1)
-			}
+	return offered
+}
+
+// include adds the project at path, as typed or listed.
+func (k *projectPicker) include(path string) {
+	root, err := projectDir(path, k.home)
+	if err != nil {
+		terminal.Println(k.p.out, err.Error()+". Enter an existing project directory.")
+		return
+	}
+	if k.seen[root] {
+		terminal.Println(k.p.out, "That project is already included.")
+		return
+	}
+	k.seen[root] = true
+	for i := range k.result {
+		if k.result[i].Root == root {
+			k.result[i].Included = true
 			return
 		}
 	}
-	selection := func() {
-		var names []string
-		for _, project := range result {
-			if project.Included {
-				names = append(names, displayPath(project.Root, home))
-			}
+	// ActivatedAt is left zero here; setup stamps it when it commits.
+	project := archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true}
+	for _, old := range k.existing {
+		if old.Root == root {
+			project.ActivatedAt = old.ActivatedAt
 		}
-		if len(names) == 0 {
-			terminal.Println(p.out, "No project included yet.")
-			return
-		}
-		terminal.Println(p.out, p.style.hang("Included: ", strings.Join(names, ", ")))
 	}
-	for {
-		answer, err := p.line(label)
-		if err != nil {
-			return nil, err
-		}
-		if answer == "" {
-			return result, nil
-		}
-		if len(offered) > 0 && (strings.EqualFold(answer, "a") || strings.EqualFold(answer, "all")) {
-			for _, project := range offered {
-				if !seen[project.Root] {
-					include(project.Root)
-				}
-			}
-			selection()
+	k.result = append(k.result, project)
+}
+
+// leaveOut undoes including root: a project result held as an exclusion is
+// excluded again, and any other is dropped.
+func (k *projectPicker) leaveOut(root string) {
+	delete(k.seen, root)
+	for i := range k.result {
+		if k.result[i].Root != root {
 			continue
 		}
-		if numbers, ok, inRange := parseNumbers(answer, len(offered)); ok && len(offered) > 0 {
-			if !inRange {
-				terminal.Printf(p.out, "Enter numbers from 1 to %d, a for all, or a project path.\n", len(offered))
-				continue
-			}
-			for _, n := range numbers {
-				switch root := offered[n-1].Root; {
-				case !seen[root]:
-					include(root)
-				case current != "":
-					leaveOut(root)
-				}
-			}
-			selection()
-			continue
+		if k.excluded[root] {
+			k.result[i].Included = false
+		} else {
+			k.result = slices.Delete(k.result, i, i+1)
 		}
-		include(answer)
+		return
 	}
+}
+
+// printSelection says which projects are included now.
+func (k *projectPicker) printSelection() {
+	var names []string
+	for _, project := range k.result {
+		if project.Included {
+			names = append(names, displayPath(project.Root, k.home))
+		}
+	}
+	if len(names) == 0 {
+		terminal.Println(k.p.out, "No project included yet.")
+		return
+	}
+	terminal.Println(k.p.out, k.p.style.hang("Included: ", strings.Join(names, ", ")))
 }
 
 // projectDetails describes a listed project: whether it is the folder setup
