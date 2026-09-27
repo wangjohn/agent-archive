@@ -552,8 +552,8 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 // configured bucket, and records the bucket's privacy evidence and the check
 // time in cfg. connectErr is a failure to build a client at all; accessErr
 // is a failed check, which new settings may fix.
-func verifyStorage(ctx context.Context, cfg *config.Config, env Env) (connectErr, accessErr error) {
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	store, err := env.openStore(*cfg)
 	if err != nil {
@@ -577,7 +577,7 @@ var errStorageCheckInterrupted = errors.New("the storage check was interrupted")
 // the diagnosis's own ✗ headline, which the caller prints next. Elsewhere
 // the line is written plainly, and a failure leaves a blank line after it.
 // The spinner is stopped on every path before anything else is written. An
-// interrupt stops the spinner and the check, and returns
+// interrupt stops the spinner and returns at once with
 // errStorageCheckInterrupted.
 func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 	const label = "Checking your storage connection…"
@@ -588,14 +588,12 @@ func runStorageCheck(p *prompter, cfg *config.Config, env Env) error {
 	defer sp.stop()
 	interrupts, stopInterrupts := env.interrupts()
 	defer stopInterrupts()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	// The check runs on a copy, so an interrupted check still running can
-	// never write to cfg.
+	// The check runs on a copy, so a check still running after an
+	// interrupt, which setup does not wait for, can never write to cfg.
 	checked := *cfg
 	done := make(chan error, 1)
 	go func() {
-		connectErr, accessErr := verifyStorage(ctx, &checked, env)
+		connectErr, accessErr := verifyStorage(&checked, env)
 		if connectErr != nil {
 			accessErr = connectErr
 		}
