@@ -20,6 +20,12 @@ follow [Semantic Versioning](https://semver.org/).
   line, column and reason for JSONC comments, trailing commas and duplicate
   keys, without changing anything.
 
+### Changed
+
+- `setup` suggests `AWS_PROFILE` when it is set, marks AWS profiles that
+  have no credentials configured, and defaults to S3 when a usable profile
+  exists (R2 otherwise).
+
 ## [0.1.0] - 2026-09-25
 
 The first release.
