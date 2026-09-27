@@ -8,9 +8,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/term"
+	"golang.org/x/text/width"
 
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -129,31 +131,82 @@ func hangingIndent(prefix, text string, width int) string {
 		}
 		b.WriteString(lead)
 		column := visibleWidth(lead)
-		start := column
-		for word := range strings.FieldsSeq(paragraph) {
+		// The spacing before each word is kept as written, including a
+		// paragraph's own indentation, except where the line breaks.
+		gapStart := 0
+		for _, span := range wordSpan.FindAllStringIndex(paragraph, -1) {
+			gap, word := paragraph[gapStart:span[0]], paragraph[span[0]:span[1]]
+			gapStart = span[1]
 			w := visibleWidth(word)
-			if column > start {
-				if column+1+w > width {
-					b.WriteString("\n" + indent)
-					column = len(indent)
-				} else {
-					b.WriteString(" ")
-					column++
-				}
+			if column > len(indent) && column+visibleWidth(gap)+w > width {
+				b.WriteString("\n" + indent)
+				column = len(indent)
+				gap = ""
 			}
-			b.WriteString(word)
-			column += w
+			b.WriteString(gap + word)
+			column += visibleWidth(gap) + w
 		}
 	}
 	return b.String()
 }
 
+// wordSpan matches a run of text between spaces.
+var wordSpan = regexp.MustCompile(`[^ ]+`)
+
 var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
-// visibleWidth is the number of columns text takes on a terminal: its
-// characters, not counting color codes.
+// visibleWidth is the number of columns text takes on a terminal: wide
+// characters such as CJK take two, combining marks none, and color codes
+// none.
 func visibleWidth(text string) int {
-	return utf8.RuneCountInString(ansiEscape.ReplaceAllString(text, ""))
+	n := 0
+	for _, r := range ansiEscape.ReplaceAllString(text, "") {
+		n += runeWidth(r)
+	}
+	return n
+}
+
+func runeWidth(r rune) int {
+	if unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf) {
+		return 0
+	}
+	switch width.LookupRune(r).Kind() {
+	case width.EastAsianWide, width.EastAsianFullwidth:
+		return 2
+	}
+	return 1
+}
+
+// truncateVisible cuts text to at most limit columns. Color codes are kept
+// whole, and a cut through colored text ends with a reset so the color
+// does not run on.
+func truncateVisible(text string, limit int) string {
+	if visibleWidth(text) <= limit {
+		return text
+	}
+	var b strings.Builder
+	column := 0
+	colored := false
+	for text != "" {
+		if loc := ansiEscape.FindStringIndex(text); loc != nil && loc[0] == 0 {
+			code := text[:loc[1]]
+			b.WriteString(code)
+			colored = code != "\x1b[0m" && code != "\x1b[m"
+			text = text[loc[1]:]
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(text)
+		if column+runeWidth(r) > limit {
+			break
+		}
+		b.WriteString(text[:size])
+		column += runeWidth(r)
+		text = text[size:]
+	}
+	if colored {
+		b.WriteString("\x1b[0m")
+	}
+	return b.String()
 }
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -183,9 +236,7 @@ func (s textStyle) spinEvery(out io.Writer, label string, every time.Duration) *
 	// A label wider than the terminal would wrap, and "\r" could not take
 	// the spinner's line back.
 	if s.width > 2 {
-		if runes := []rune(label); len(runes) > s.width-3 {
-			label = string(runes[:s.width-3])
-		}
+		label = truncateVisible(label, s.width-3)
 	}
 	sp.done = make(chan struct{})
 	sp.finished = make(chan struct{})

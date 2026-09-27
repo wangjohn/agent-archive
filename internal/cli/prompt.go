@@ -33,7 +33,7 @@ func (p *prompter) step(n int, title string) {
 // warn and note print one review item. Continuation lines, such as a link,
 // are indented under the item's text.
 func (p *prompter) warn(text string, continuation ...string) {
-	p.item(p.style.warn("!"), text, continuation)
+	p.item(p.style.warnMark(), text, continuation)
 }
 
 func (p *prompter) note(text string, continuation ...string) {

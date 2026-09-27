@@ -267,3 +267,65 @@ func TestDisplayPathShowsHomeAsTilde(t *testing.T) {
 		}
 	}
 }
+
+func TestHangingIndentKeepsSpacingItDoesNotBreakAt(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		text  string
+		width int
+		want  string
+	}{
+		{"aligned columns", "bucket    my-bucket", 40, "- bucket    my-bucket"},
+		{"a paragraph's own indent", "Open:\n    https://example.com", 40, "- Open:\n      https://example.com"},
+		{"spacing at a break is dropped", "aaaa    bbbb", 8, "- aaaa\n  bbbb"},
+	}
+	for _, c := range cases {
+		if got := hangingIndent("- ", c.text, c.width); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+		// The same text unwrapped keeps its spacing too.
+		if got, want := hangingIndent("- ", c.text, 0), "- "+strings.ReplaceAll(c.text, "\n", "\n  "); got != want {
+			t.Errorf("%s unwrapped: got %q, want %q", c.name, got, want)
+		}
+	}
+}
+
+func TestVisibleWidthCountsWideCharactersAsTwoColumns(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		text string
+		want int
+	}{
+		{"~/项目/app", 10},
+		{"· ✗ !", 5},
+		{"é", 1},
+	}
+	for _, c := range cases {
+		if got := visibleWidth(c.text); got != c.want {
+			t.Errorf("visibleWidth(%q) = %d, want %d", c.text, got, c.want)
+		}
+	}
+	if got, want := hangingIndent("- ", "项目项目 项目项目", 11), "- 项目项目\n  项目项目"; got != want {
+		t.Errorf("wrapping wide text = %q, want %q", got, want)
+	}
+}
+
+func TestSpinnerLabelCutKeepsColorCodesWhole(t *testing.T) {
+	t.Parallel()
+	label := "Checking \x1b[36maws s3 ls s3://bucket\x1b[0m"
+	out := &notifyingWriter{n: 1, wrote: make(chan struct{})}
+	sp := textStyle{live: true, width: 16}.spinEvery(out, label, time.Hour)
+	<-out.wrote
+	sp.stop()
+	first := strings.Split(strings.TrimPrefix(out.String(), "\r"), "\r")[0]
+	if want := spinnerFrames[0] + " Checking \x1b[36maws \x1b[0m"; first != want {
+		t.Errorf("spinner line = %q, want %q", first, want)
+	}
+	if got := truncateVisible("项目项目", 3); got != "项" {
+		t.Errorf("truncateVisible of wide text = %q, want %q", got, "项")
+	}
+	if got := truncateVisible(label, 100); got != label {
+		t.Errorf("truncateVisible of text that fits = %q, want it unchanged", got)
+	}
+}
