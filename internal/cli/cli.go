@@ -112,7 +112,10 @@ type Env struct {
 	// function) when a signal stops backfill at once.
 	exitOnSignal func(os.Signal)
 	AWSProfiles  func() ([]AWSProfile, error)
-	WorkingDir   func() (string, error)
+	// AWSBuckets lists an AWS profile's buckets and reads their regions
+	// for setup. Defaults to asking S3 with the profile's credentials.
+	AWSBuckets func(profile, region string) (BucketFinder, error)
+	WorkingDir func() (string, error)
 	// JobState reports loaded, running, missing, or unknown without changing launchd.
 	JobState func(string) string
 	Home     func() (string, error)

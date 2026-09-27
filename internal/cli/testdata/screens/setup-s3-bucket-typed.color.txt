@@ -1,14 +1,15 @@
 $ agent-archive setup
 Checking installed applications...
-  \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
-  \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
-  \e[32m✓\e[0m Cursor hooks: ~/.cursor/hooks.json
   \e[32m✓\e[0m Background job: launchctl responds
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-Include Codex, Claude Code, and Cursor? [Y/n] 
+No apps found automatically.
+Choose which apps to include:
+Include Codex? [y/N] y
+Include Claude Code? [y/N] n
+Include Cursor? [y/N] n
 Projects to archive (✓ included):
   1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
 Enter 1 to include or leave it out, or a path to add a project.
@@ -23,18 +24,19 @@ Where should sessions be stored?
   3) Show setup instructions
 Enter 1-3 [1]: 2
 AWS profile: work
-Which bucket should sessions be stored in?
-  1) photos
-  2) team-archive
-Enter 1-2, or another bucket name: 2
-Bucket team-archive is in us-east-1; using that region.
+Couldn't list buckets for profile work (access denied). Type the bucket name.
+Bucket name: team-archive
+Couldn't look up the region of bucket team-archive (access denied).
+Bucket region (for example us-east-1): ~/code/api
+"~/code/api" isn't an AWS region. Enter one like us-east-1 or eu-west-2.
+Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
 \e[32m✓ Connected.\e[0m
 
 \e[1mStep 3 of 3 · Ready to start\e[0m
 
-  \e[2mApps     \e[0m Codex 0.121.0, Claude Code 2.1.90, Cursor 3.21.13
+  \e[2mApps     \e[0m Codex (version unknown)
   \e[2mProjects \e[0m /Users/alex/src/web-app
   \e[2mKeep for \e[0m 90 days, then deleted automatically
   \e[2mStorage  \e[0m Amazon S3
@@ -43,25 +45,16 @@ Checking your storage connection…
 
 \e[1mBefore you confirm\e[0m
   \e[2m·\e[0m Codex hooks: /Users/alex/.codex/hooks.json
-  \e[2m·\e[0m Claude Code hooks: /Users/alex/.claude/settings.json
-  \e[2m·\e[0m Cursor hooks: /Users/alex/.cursor/hooks.json
   \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   \e[2m·\e[0m Filtering is best effort; sensitive text may remain in archived sessions.
-  \e[2m·\e[0m Capture with Codex 0.121.0, Claude Code 2.1.90, Cursor 3.21.13 is not confirmed until a session is archived.
+  \e[2m·\e[0m Capture with Codex (version unknown) is not confirmed until a session is archived.
     After your first session, check it with agent-archive status.
 
 Start archiving?
   1) Yes, start archiving
   2) Edit a setting
   3) Cancel (your setup draft is kept)
-Enter 1-3 [1]: 
-
-Configuration saved.
-Next, in each app:
-  Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
-  Claude Code: nothing to approve; start a new session (or /clear).
-  Cursor: nothing to approve; start a new Agent chat.
-Sessions already open are not captured: only one started after setup, in an included project, counts.
-Check progress with agent-archive status.
+Enter 1-3 [1]: 3
+Cancelled. Active settings are unchanged; your setup draft is saved.
 [exit 0]

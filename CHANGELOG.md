@@ -19,12 +19,22 @@ follow [Semantic Versioning](https://semver.org/).
 - A read-only check of each app's hook settings file that reports the file,
   line, column and reason for JSONC comments, trailing commas and duplicate
   keys, without changing anything.
+- `setup` checks before the first question that each app's hook file is
+  valid, that `launchctl` responds, and, when R2 is used, that the Keychain
+  opens. A problem stops setup with the file and line to fix.
 
 ### Changed
 
 - `setup` suggests `AWS_PROFILE` when it is set, marks AWS profiles that
   have no credentials configured, and defaults to S3 when a usable profile
   exists (R2 otherwise).
+- `setup` always shows your recent projects with each one's session count,
+  with the current repository pre-selected; `a` selects them all, and
+  leaving every project out asks again instead of ending setup.
+- `setup` lists the chosen AWS profile's buckets to pick from (an
+  `agent-archive*` bucket is pre-selected) and uses the bucket's own region.
+  A region that isn't shaped like one is refused, and a saved one of that
+  kind is dropped on reconfigure.
 
 ## [0.1.0] - 2026-09-25
 

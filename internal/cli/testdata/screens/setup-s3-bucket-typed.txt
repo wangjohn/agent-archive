@@ -1,15 +1,20 @@
 $ agent-archive setup
 Checking installed applications...
-  ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
-You have an unfinished setup. What would you like to do?
-  1) Continue where you left off
-  2) Change apps and projects
-  3) Change storage
-  4) Change how long sessions are kept
-  5) Start over
-Enter 1-5 [1]: 1
+
+Step 1 of 3 · Choose what to capture
+
+No apps found automatically.
+Choose which apps to include:
+Include Codex? [y/N] y
+Include Claude Code? [y/N] n
+Include Cursor? [y/N] n
+Projects to archive (✓ included):
+  1) ✓ ~/src/web-app  this folder
+Enter 1 to include or leave it out, or a path to add a project.
+Enter a blank line when finished.
+Projects: 
 
 Step 2 of 3 · Connect storage
 
@@ -17,14 +22,14 @@ Where should sessions be stored?
   1) Cloudflare R2
   2) Amazon S3
   3) Show setup instructions
-Enter 1-3 [2]: 
-AWS profile [work]: 
-Which bucket should sessions be stored in?
-  1) photos
-  2) team-archive
-Enter 1-2, or another bucket name [2]: 
-Bucket team-archive is in eu-west-1; using that region.
-Bucket region [eu-west-1]: 
+Enter 1-3 [1]: 2
+AWS profile: work
+Couldn't list buckets for profile work (access denied). Type the bucket name.
+Bucket name: team-archive
+Couldn't look up the region of bucket team-archive (access denied).
+Bucket region (for example us-east-1): ~/code/api
+"~/code/api" isn't an AWS region. Enter one like us-east-1 or eu-west-2.
+Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
 ✓ Connected.
@@ -36,7 +41,7 @@ Step 3 of 3 · Ready to start
   Keep for  90 days, then deleted automatically
   Storage   Amazon S3
   Bucket    team-archive
-  AWS       profile work · eu-west-1
+  AWS       profile work · us-east-1
 
 Before you confirm
   · Codex hooks: /Users/alex/.codex/hooks.json

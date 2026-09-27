@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
@@ -62,7 +64,7 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
-	input := strings.Join([]string{"y", project, "", "s3", "test-bucket", "profile", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"y", project, "", "s3", "profile", "test-bucket", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	// The Sessions row is left out while it shows the default.
 	for _, unwanted := range []string{"Detected settings", "capture policy", "Include Cursor?", "Include Codex?", "All new sessions, with or without skills"} {
@@ -178,7 +180,7 @@ func TestSetupRemembersDeclinedApps(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"cursor"} }
-	setupRun(t, env, strings.Join([]string{"y", project, "", "s3", "test-bucket", "profile", "us-east-1", "y"}, "\n")+"\n", 0)
+	setupRun(t, env, strings.Join([]string{"y", project, "", "s3", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
 
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude", "cursor"} }
 	// Apps and projects; decline the found apps; change nothing else; keep
@@ -236,7 +238,7 @@ func TestSetupRemembersAppRemovedByHand(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	env.DetectHarnesses = func(string) []string { return []string{"codex", "claude"} }
-	setupRun(t, env, strings.Join([]string{"y", project, "", "s3", "test-bucket", "profile", "us-east-1", "y"}, "\n")+"\n", 0)
+	setupRun(t, env, strings.Join([]string{"y", project, "", "s3", "profile", "test-bucket", "us-east-1", "y"}, "\n")+"\n", 0)
 
 	// Apps and projects; change apps: Codex no, Claude Code yes, Cursor no;
 	// keep the project; add none; start archiving.
@@ -298,16 +300,84 @@ func TestDecliningSuggestedProjectUsesManualSelection(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
 	var cfg config.Config
 	var out bytes.Buffer
-	err := chooseCapture(newPrompter(strings.NewReader("y\nn\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
+	err := chooseCapture(newPrompter(strings.NewReader("y\n1\n"+other+"\n\n"), &out), &cfg, t.TempDir(), env, nil)
 	if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other {
 		t.Fatalf("config=%+v err=%v", cfg, err)
+	}
+}
+
+// Leaving every project out asks for one again instead of ending setup,
+// inside a repository and outside one.
+//
+// Regression: 2026-09 onboarding review #7.
+func TestLeavingEveryProjectOutAsksAgain(t *testing.T) {
+	t.Parallel()
+	for _, inRepo := range []bool{true, false} {
+		t.Run(map[bool]string{true: "repository", false: "no-repository"}[inRepo], func(t *testing.T) {
+			t.Parallel()
+			other := t.TempDir()
+			other, _ = filepath.EvalSymlinks(other)
+			env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
+			env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+			input := "y\n\n" + other + "\n\n"
+			if inRepo {
+				current := gitRepo(t)
+				env.WorkingDir = func() (string, error) { return current, nil }
+				input = "y\n1\n\n" + other + "\n\n"
+			} else {
+				env.WorkingDir = func() (string, error) { return other, nil }
+			}
+			var cfg config.Config
+			var out bytes.Buffer
+			err := chooseCapture(newPrompter(strings.NewReader(input), &out), &cfg, t.TempDir(), env, nil)
+			if err != nil || len(cfg.Archive.Projects) != 1 || cfg.Archive.Projects[0].Root != other || !strings.Contains(out.String(), "Choose at least one project") {
+				t.Fatalf("config=%+v err=%v\n%s", cfg, err, &out)
+			}
+		})
+	}
+}
+
+// a includes every listed project, and each line says how many sessions the
+// apps' history holds for it.
+//
+// Regression: 2026-09 onboarding review #8.
+func TestRecentProjectsShowCountsAndATakesAll(t *testing.T) {
+	t.Parallel()
+	one, two := gitRepo(t), gitRepo(t)
+	known := []backfill.KnownProject{{Root: one, Sessions: 12}, {Root: two, Sessions: 1}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("a\n\n"), &out), nil, nil, known, "")
+	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
+		t.Fatalf("projects=%+v err=%v", projects, err)
+	}
+	if !strings.Contains(out.String(), "12 sessions") || !strings.Contains(out.String(), "1 session") || !strings.Contains(out.String(), "a for all") {
+		t.Fatalf("output:\n%s", &out)
+	}
+}
+
+// Switching a listed project off undoes only this answer: a project the
+// list added is dropped, and an exclusion setup kept stays an exclusion,
+// so a later backfill still skips it. With nothing left, it asks again.
+func TestLeavingAListedProjectOutRestoresItsState(t *testing.T) {
+	t.Parallel()
+	current, excluded := gitRepo(t), gitRepo(t)
+	result := []archive.ProjectActivation{
+		{ProjectID: archive.ProjectID(current), Root: current, Included: true},
+		{ProjectID: archive.ProjectID(excluded), Root: excluded},
+	}
+	known := []backfill.KnownProject{{Root: excluded, Sessions: 3}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("2\n1 2\n\n1\n\n"), &out), result, result, known, current)
+	want := []archive.ProjectActivation{{ProjectID: archive.ProjectID(excluded), Root: excluded}, {ProjectID: archive.ProjectID(current), Root: current, Included: true}}
+	if err != nil || !reflect.DeepEqual(projects, want) {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
 }
 
 func TestStorageHelpReturnsToSelection(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3\nbucket\nprofile\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }})
+	cfg, _, _, err := promptStorage(newPrompter(strings.NewReader("help\ns3\nprofile\nbucket\nus-east-1\n"), &out), credentials.Config{}, Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }})
 	if err != nil || cfg.Provider != "s3" || !strings.Contains(out.String(), "Manage API tokens") {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
@@ -329,5 +399,76 @@ func TestManualProjectsExpandInjectedHomeAndDeduplicateSymlinks(t *testing.T) {
 	canonical, _ := filepath.EvalSymlinks(project)
 	if err != nil || len(projects) != 1 || projects[0].Root != canonical {
 		t.Fatalf("projects=%+v err=%v", projects, err)
+	}
+}
+
+// A project dropped on reconfigure and chosen again when setup asks for at
+// least one keeps its activation time, so sessions already running in it
+// still count. The review's projects edit goes through the same prompt.
+func TestProjectChosenAgainAfterDroppingAllKeepsItsActivation(t *testing.T) {
+	t.Parallel()
+	root := gitRepo(t)
+	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	existing := []archive.ProjectActivation{{ProjectID: archive.ProjectID(root), Root: root, Included: true, ActivatedAt: activated}}
+	var out bytes.Buffer
+	projects, err := promptProjects(newPrompter(strings.NewReader("n\n\n1\n\n"), &out), existing, nil, nil)
+	if err != nil || !reflect.DeepEqual(projects, existing) || !strings.Contains(out.String(), "Choose at least one project") {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
+	}
+}
+
+// In the list headed by the current repository, a number given twice in one
+// answer, as in overlapping ranges, includes the project once rather than
+// switching it back out.
+func TestRepeatedNumberIncludesOnce(t *testing.T) {
+	t.Parallel()
+	current, one, two := gitRepo(t), gitRepo(t), gitRepo(t)
+	result := []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
+	known := []backfill.KnownProject{{Root: one}, {Root: two}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("2-3 3 2\n\n"), &out), result, nil, known, current)
+	if err != nil || includedProjects(projects) != 3 {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
+	}
+}
+
+// A repository nested in the current one is part of it once the current one
+// is configured, so its sessions count toward the current repository and
+// it is not listed on its own.
+func TestNestedProjectsFoldIntoTheCurrentRepository(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	known := []backfill.KnownProject{
+		{Root: "/src/app/vendor/lib", Sessions: 2, LastUsed: now},
+		{Root: "/src/other", Sessions: 1, LastUsed: now.Add(-time.Hour)},
+		{Root: "/src/app", Sessions: 3, LastUsed: now.Add(-2 * time.Hour), Kind: backfill.ProjectKindRepository},
+		{Root: "/src/application", Sessions: 4},
+	}
+	want := []backfill.KnownProject{
+		{Root: "/src/app", Sessions: 5, LastUsed: now, Kind: backfill.ProjectKindRepository},
+		{Root: "/src/other", Sessions: 1, LastUsed: now.Add(-time.Hour)},
+		{Root: "/src/application", Sessions: 4},
+	}
+	if got := foldInto(known, "/src/app"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// With more projects included than the list shows, as after a large import,
+// each answer reports a count rather than every path.
+func TestSelectionWithManyProjectsPrintsACount(t *testing.T) {
+	t.Parallel()
+	var result []archive.ProjectActivation
+	for i := 0; i <= maxKnownProjects; i++ {
+		root := fmt.Sprintf("/imported/%d", i)
+		result = append(result, archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true})
+	}
+	known := []backfill.KnownProject{{Root: gitRepo(t)}}
+	var out bytes.Buffer
+	if _, err := addProjects(newPrompter(strings.NewReader("1\n\n"), &out), result, result, known, ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("Included: %d projects.", maxKnownProjects+2); !strings.Contains(out.String(), want) || strings.Contains(out.String(), "/imported/0") {
+		t.Fatalf("output:\n%s", &out)
 	}
 }

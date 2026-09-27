@@ -50,7 +50,7 @@ func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
 	env.DiscoverApplications = func(string) map[string]applicationDiscovery {
 		return map[string]applicationDiscovery{"codex": {VersionState: "absent"}}
 	}
-	input := strings.Join([]string{"y", project, "", "s3", "test", "profile", "us-east-1", "y"}, "\n") + "\n"
+	input := strings.Join([]string{"y", project, "", "s3", "profile", "test", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
 	if !strings.Contains(output, "Codex (version unknown)") || strings.Contains(output, "not found") {
 		t.Fatalf("detected app shown as not found:\n%s", output)
@@ -168,7 +168,7 @@ func TestShortSetupAndReviewEdits(t *testing.T) {
 			env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "personal", Region: "us-west-2"}}, nil }
 			probes := 0
 			env.OpenStore = func(config.Config) (storage.ObjectStore, error) { probes++; return storagetest.NewMemoryStore(), nil }
-			out := setupRun(t, env, "\n\n\ns3\ntest-bucket\n\n"+tc.edits, 0)
+			out := setupRun(t, env, "\n\ns3\n\ntest-bucket\n"+tc.edits, 0)
 			cfg, found, err := config.Load(home)
 			if err != nil || !found {
 				t.Fatalf("load: %v", err)

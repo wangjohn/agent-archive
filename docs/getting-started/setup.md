@@ -14,6 +14,29 @@ provider instructions. Setup asks questions, so it needs a terminal: without one
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
+## Before the first question
+
+Setup first checks what starting to archive will need, and prints one line
+for each check: a ✓, or a ✗ with the problem and how to fix it.
+
+- **Hook files.** The file of each app setup found, or that your saved
+  settings or an unfinished setup include, must be one setup can add its
+  hooks to: plain JSON, without comments, trailing commas, or duplicate
+  keys. A problem names the file, line, and column, such as
+  `~/.claude/settings.json:2:3`. A file that doesn't exist yet is fine;
+  setup creates it.
+- **Background job.** `launchctl` must say whether the collector's job is
+  already loaded.
+- **Keychain.** When your saved settings or an unfinished setup store in
+  R2, the macOS Keychain, where the R2 key is kept, must open.
+
+A ✗ stops setup before it asks anything: nothing is changed, and an
+unfinished setup is kept. Fix what is marked, then run `agent-archive setup`
+again. To leave out an app whose file you don't want to change, choose the
+apps with [`setup --yes --apps`](#set-up-without-questions). `setup --yes`
+makes the same checks, for the apps it would include, and checks the
+Keychain when it stores in R2.
+
 Setup captures only **new** sessions in the projects you include. To import
 conversations already on this Mac, run [`agent-archive
 backfill`](../guides/backfill.md) afterwards.
@@ -26,20 +49,23 @@ found, it opens the individual choices immediately. On reconfiguration, it
 lists the apps included and not included, then asks "Change which apps are
 included? [y/N]".
 
-If setup finds the current Git project, it shows its full path and asks
-"Archive sessions in this project?" Accept, then answer "Add another
-project? [y/N]" to add more, or decline to choose projects yourself.
+Setup then lists projects to archive: the ones Claude Code and Codex
+sessions on this Mac ran in, most recent first, with how many sessions each
+has and when one was last used. Enter their numbers (`1 3`, or a range such
+as `2-4`), `a` for all of them, or type a project path; a blank line
+finishes. With no history to offer, it asks for paths.
 
-To choose projects, setup lists the ones Claude Code and Codex sessions on
-this Mac ran in, most recent first. Enter their numbers (`1 3`, or a range
-such as `2-4`), or type a project path; a blank line finishes. With no
-history to offer, it asks for paths. Include each project explicitly; nothing
-outside an included project is captured.
+If you run setup inside a Git project, that project heads the list, marked
+✓ as already included, so a blank line archives just it. Here a number
+switches a project in or out: enter `1` to leave the current project out.
+
+Include each project explicitly; nothing outside an included project is
+captured. If you finish with no project included, setup asks again.
 
 ## 2. Storage
 
-Setup suggests S3 when your AWS settings already have a profile with
-credentials, and R2 otherwise.
+Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
+already have a profile with credentials, and R2 otherwise.
 
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
@@ -47,17 +73,27 @@ credentials, and R2 otherwise.
   account and the bucket, so the bucket isn't asked for. Any other S3 API
   endpoint (such as an EU jurisdiction's) works too. Secret input is hidden
   on a terminal and stored in the macOS Keychain.
-- **S3:** enter the bucket and choose an existing AWS profile. Setup offers
-  the profiles in your AWS settings and uses the profile's region when it has
-  one; it asks for a region only when one is missing. The profiles come
+- **S3:** choose an existing AWS profile, then the bucket. Setup offers
+  the profiles in your AWS settings. The profiles come
   from `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` when your shell
   sets them. The suggested profile is `AWS_PROFILE` when your shell sets it,
   else `default`, or the only profile, when it has credentials. A profile
   whose settings name no credentials (no access keys, `credential_process`,
   SSO, login session, or role it can assume) is marked "no credentials
-  configured", as is a profile the AWS SDK cannot load. Setup only checks
-  which settings are present: it never runs `credential_process`, signs in,
-  or prints or saves a secret.
+  configured", as is a profile the AWS SDK cannot load. Profile discovery
+  only checks which settings are present: it never runs
+  `credential_process`, signs in, or prints or saves a secret.
+
+  With the profile chosen, setup lists the buckets it can see
+  (`s3:ListAllMyBuckets`) and offers them by number, suggesting the saved
+  bucket or else the first named `agent-archive…`; you can also type a
+  name. It then reads the bucket's own region (`s3:GetBucketLocation`) and
+  uses it, so a bucket in another region than the profile's works. When
+  the profile may not list buckets or read the location, setup says why in
+  one line and asks instead: for the bucket name, and for the region unless
+  the profile names one. A typed region must look like one, such as
+  `us-east-1`. These lookups use the profile's credentials only inside the
+  AWS SDK; setup never prints or saves them.
 
 Setup checks the connection with one temporary synthetic object
 (`.setup-test/<random>.json`), which it deletes again. That proves the
@@ -108,7 +144,8 @@ hooks.
 ## Set up without questions
 
 For a second Mac, or any scripted setup, pass the answers as flags with
-`--yes`. Setup then asks nothing, runs the same storage check, and saves;
+`--yes`. Setup then asks nothing, runs the same
+[checks](#before-the-first-question) and storage check, and saves;
 if an answer is missing or the check fails, it says so and changes nothing.
 
 ```sh
@@ -129,7 +166,8 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - If saving fails after the storage check, a new R2 key stays with the
   unfinished setup; run `agent-archive setup` to finish or discard it.
 - `--r2-account` also takes the bucket URL, which names the bucket too.
-- For S3, `--region` defaults to the profile's region.
+- For S3, `--region` defaults to the profile's region, and must look like a
+  region, such as `us-east-1`.
 - `--apps` defaults to the apps already set up, else those found on this Mac.
   It can add apps but never removes one: it must name every app already set
   up, and to remove an app (and its hooks) you run `agent-archive setup`.

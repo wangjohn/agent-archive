@@ -1,5 +1,8 @@
 $ agent-archive setup
 Checking installed applications...
+  ✓ Codex hooks: ~/.codex/hooks.json
+  ✓ Claude Code hooks: ~/.claude/settings.json
+  ✓ Background job: launchctl responds
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 You have an unfinished setup. What would you like to do?
   1) Continue where you left off
@@ -16,9 +19,12 @@ Where should sessions be stored?
   2) Amazon S3
   3) Show setup instructions
 Enter 1-3 [1]: 2
-Bucket name: team-archive
 AWS profile: work
-Bucket region (for example us-east-1): us-east-1
+Which bucket should sessions be stored in?
+  1) photos
+  2) team-archive
+Enter 1-2, or another bucket name: 2
+Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 ✓ Connected.
