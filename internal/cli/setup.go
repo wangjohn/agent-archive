@@ -568,6 +568,11 @@ func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, una
 		terminal.Println(p.out, "\nTo set up another Mac with this storage, run there:")
 	}
 	terminal.Println(p.out, "  "+p.style.cmd(anotherMacCommand(cfg, userHome)))
+	// setup --yes has no flag for the folder inside the bucket: it stores in
+	// the default one, which would split the archive from this Mac's.
+	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
+		terminal.Printf(p.out, "Then run %s there and set the folder inside the bucket to %s.\n", p.style.cmd("agent-archive setup"), prefix)
+	}
 }
 
 // anotherMacCommand is the setup --yes command that sets up another Mac

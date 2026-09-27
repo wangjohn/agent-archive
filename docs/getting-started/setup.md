@@ -256,7 +256,9 @@ Import the 214 past sessions from these projects? [Y/n]
 Yes runs the same import as `agent-archive backfill --project DIR` for each
 chosen project, with the same checks, and uploads the sessions; it ends with
 the import's ID, and `agent-archive backfill undo ID` removes them again (see
-[backfill](../guides/backfill.md)). No changes
+[backfill](../guides/backfill.md)). If the import stops or fails, setup
+stays done and prints the `agent-archive backfill` command that finishes
+it. No changes
 nothing; you can run `agent-archive backfill` any time. Setup skips the offer
 while capture is paused, when there is nothing to import, and with `--yes`,
 which asks nothing and mentions `agent-archive backfill` instead.
@@ -293,4 +295,6 @@ To set up another Mac with this storage, run there:
 
 Projects in your home folder are written from `~`. For R2 the command never
 carries the key: set `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
-`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other Mac first.
+`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other Mac first. `--yes` has
+no option for the folder inside the bucket, so when you changed it, setup
+adds a line saying to set it there with `agent-archive setup`.

@@ -318,7 +318,37 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 		terminal.Println(p.out, "Not imported. "+later)
 		return
 	}
-	importPlanLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), false)
+	started := env.now().UTC()
+	if importPlanLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), false) != 0 && !setupImportRegistered(home, plan, cfg, started) {
+		terminal.Println(p.out, "Setup is complete. To finish the import, run "+p.style.cmd(setupImportRetry(plan, cfg))+".")
+	}
+}
+
+// setupImportRegistered reports whether setup's import, started at started,
+// registered every session: its record is complete, so what is left, if
+// anything, is the upload, which the background collector finishes.
+func setupImportRegistered(home string, plan backfill.Plan, cfg config.Config, started time.Time) bool {
+	batches, err := backfill.LoadBatches(home)
+	if err != nil || len(batches) == 0 {
+		return false
+	}
+	last := batches[len(batches)-1]
+	return last.CompletedAt != nil && !last.CompletedAt.Before(started) && last.Matches(plan.BatchFilters(), cfg.DestinationID())
+}
+
+// setupImportRetry is the backfill command that continues setup's import:
+// the options its import record was made with, so the run finds the same
+// sessions and finishes the same import.
+func setupImportRetry(plan backfill.Plan, cfg config.Config) string {
+	flags, _ := plan.BatchFilters().Flags(plan, func(id string) (string, bool) {
+		for _, project := range cfg.Archive.Projects {
+			if project.ProjectID == id {
+				return project.Root, true
+			}
+		}
+		return "", false
+	})
+	return strings.TrimSpace("agent-archive backfill " + flags)
 }
 
 // interruptibleContext returns a context that the first Ctrl-C cancels,

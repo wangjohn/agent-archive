@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -239,5 +240,91 @@ func TestAnotherMacCommandResolvesTheHomeFolder(t *testing.T) {
 	}
 	if got := anotherMacCommand(cfg, link); !strings.HasSuffix(got, " --project ~/src/app") {
 		t.Fatalf("got %s", got)
+	}
+}
+
+// An import that fails keeps the setup it follows, and names the backfill
+// command that finishes that same import.
+func TestSetupImportFailureKeepsSetupAndNamesTheRetry(t *testing.T) {
+	t.Parallel()
+	f := newImportOfferFixture(t)
+	f.env.backfillHoldSteps = 1
+	crashed := false
+	f.env.backfillCheckpoint = func(step string) error {
+		if step == "registered" && !crashed {
+			crashed = true
+			return errors.New("simulated crash")
+		}
+		return nil
+	}
+	out := f.runSetup(t, setupImportAnswers("y"))
+	retry := "agent-archive backfill --harness claude --project ~/src/web-app"
+	if !strings.Contains(out, "Setup is complete. To finish the import, run "+retry+".") {
+		t.Fatalf("no retry:\n%s", out)
+	}
+	cfg, found, err := config.Load(f.home)
+	must(t, err)
+	if !found || !cfg.Archive.Enabled || includedProjects(cfg.Archive.Projects) != 1 {
+		t.Fatalf("setup not kept: %+v", cfg)
+	}
+	if _, e := os.Stat(draftPath(f.home)); !os.IsNotExist(e) {
+		t.Fatalf("draft left: %v", e)
+	}
+	f.env.backfillCheckpoint = nil
+	var rerun bytes.Buffer
+	args := []string{"backfill", "--yes", "--harness", "claude", "--project", filepath.Join(f.userHome, "src", "web-app")}
+	if code := Run(args, strings.NewReader(""), &rerun, &rerun, f.env); code != 0 {
+		t.Fatalf("retry exit %d\n%s", code, &rerun)
+	}
+	batches, err := backfill.LoadBatches(f.home)
+	must(t, err)
+	if len(batches) != 1 || batches[0].CompletedAt == nil {
+		t.Fatalf("the retry did not finish setup's import: %+v\n%s", batches, &rerun)
+	}
+	if ids := importedSessions(t, f.home); len(ids) != 2 {
+		t.Fatalf("imported %v", ids)
+	}
+}
+
+// When an import registers every session and only its upload falls behind,
+// the background collector finishes it: no retry is named.
+func TestSetupImportUploadFailureNamesNoRetry(t *testing.T) {
+	t.Parallel()
+	f := newImportOfferFixture(t)
+	f.env.backfillCheckpoint = func(step string) error {
+		if step == "uploading" {
+			return errors.New("simulated crash")
+		}
+		return nil
+	}
+	out := f.runSetup(t, setupImportAnswers("y"))
+	if strings.Contains(out, "To finish the import") || !strings.Contains(out, "Registered 2 sessions") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+// The command for another Mac names an R2 bucket on a custom endpoint by
+// that endpoint, and says how to set a folder inside the bucket, which
+// setup --yes cannot.
+func TestAnotherMacCommandCustomEndpointAndFolder(t *testing.T) {
+	t.Parallel()
+	endpoint := "https://" + testR2Account + ".eu.r2.cloudflarestorage.com"
+	cfg := config.Config{
+		Storage: credentials.Config{
+			Provider: credentials.ProviderR2, Bucket: "b", Prefix: "team/",
+			R2Endpoint: endpoint, R2CredentialRef: "ref-123",
+		},
+		Harnesses: []string{"claude"},
+		Archive:   archive.Config{Projects: []archive.ProjectActivation{{Root: "/Users/alex/src/app", Included: true}}},
+	}
+	var out bytes.Buffer
+	printNextSteps(newPrompter(strings.NewReader(""), &out), cfg, "/Users/alex", false, false)
+	got := out.String()
+	want := "  agent-archive setup --yes --provider r2 --bucket b --r2-account " + endpoint + " --apps claude --project ~/src/app\nThen run agent-archive setup there and set the folder inside the bucket to team/.\n"
+	if !strings.HasSuffix(got, want) || strings.Contains(got, "ref-123") {
+		t.Fatalf("got:\n%s", got)
+	}
+	if loc, err := credentials.ParseR2Location(endpoint); err != nil || loc.Endpoint != endpoint {
+		t.Fatalf("the endpoint does not read back: %+v %v", loc, err)
 	}
 }
