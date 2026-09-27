@@ -120,7 +120,7 @@ func showSetupReview(p *prompter, cfg, existing config.Config, reconfiguring boo
 		mark := "  "
 		if isChanged {
 			changed++
-			mark = p.style.yellow("* ")
+			mark = p.style.warn("* ")
 		}
 		values := row.values
 		if len(values) == 0 {
@@ -132,7 +132,7 @@ func showSetupReview(p *prompter, cfg, existing config.Config, reconfiguring boo
 				label = row.label
 			}
 			if isChanged {
-				value = p.style.yellow(value)
+				value = p.style.warn(value)
 			}
 			terminal.Printf(p.out, "%s%s %s\n", mark, p.style.dim(fmt.Sprintf("%-9s", label)), value)
 			mark = "  "
@@ -194,9 +194,9 @@ func printReviewPrivacy(p *prompter, cfg config.Config) {
 	report := currentBucketPrivacy(cfg, p.clock())
 	switch {
 	case report.State == "verified_private":
-		p.item(p.style.green("✓"), "Bucket privacy: native public access blocked at the last check.", nil)
+		p.item(p.style.ok("✓"), "Bucket privacy: native public access blocked at the last check.", nil)
 	case report.State == "public_or_risky":
-		p.item(p.style.red("!"), p.style.red("The bucket looks public ("+privacyReasonText(report.Reason)+")."), []string{"Fix its access before archiving: " + report.GuidanceURL})
+		p.item(p.style.fail("!"), p.style.fail("The bucket looks public ("+privacyReasonText(report.Reason)+")."), []string{"Fix its access before archiving: " + report.GuidanceURL})
 	case report.Reason == r2PrivacyUnreadable:
 		// Every R2 bucket reads this way, and nothing setup can do changes
 		// it, so it is a reminder rather than a warning.

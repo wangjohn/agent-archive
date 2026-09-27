@@ -25,42 +25,6 @@ type prompter struct {
 	style  textStyle
 }
 
-// textStyle adds ANSI emphasis only when writing to a color terminal, so
-// redirected output and tests see plain text.
-type textStyle struct{ color bool }
-
-// colorOutput is an output that says itself whether it is a color terminal.
-// The screen goldens write to one, so they can record the colored screens.
-type colorOutput interface{ colorTerminal() bool }
-
-func styleFor(out io.Writer) textStyle {
-	if c, ok := out.(colorOutput); ok {
-		return textStyle{color: c.colorTerminal()}
-	}
-	file, ok := out.(*os.File)
-	if !ok || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
-		return textStyle{}
-	}
-	return textStyle{color: term.IsTerminal(int(file.Fd()))}
-}
-
-func (s textStyle) wrap(code, text string) string {
-	if !s.color || text == "" {
-		return text
-	}
-	return "\x1b[" + code + "m" + text + "\x1b[0m"
-}
-
-func (s textStyle) bold(text string) string { return s.wrap("1", text) }
-
-func (s textStyle) dim(text string) string { return s.wrap("2", text) }
-
-func (s textStyle) green(text string) string { return s.wrap("32", text) }
-
-func (s textStyle) yellow(text string) string { return s.wrap("33", text) }
-
-func (s textStyle) red(text string) string { return s.wrap("31", text) }
-
 // step prints a wizard step heading, set apart from the prompts above it.
 func (p *prompter) step(n int, title string) {
 	terminal.Printf(p.out, "\n%s\n\n", p.style.bold(fmt.Sprintf("Step %d of 3 · %s", n, title)))
@@ -69,7 +33,7 @@ func (p *prompter) step(n int, title string) {
 // warn and note print one review item. Continuation lines, such as a link,
 // are indented under the item's text.
 func (p *prompter) warn(text string, continuation ...string) {
-	p.item(p.style.yellow("!"), text, continuation)
+	p.item(p.style.warnMark(), text, continuation)
 }
 
 func (p *prompter) note(text string, continuation ...string) {
