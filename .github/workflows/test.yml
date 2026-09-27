@@ -96,17 +96,19 @@ jobs:
           args: --disable=revive
       # Production code only tests reach belongs in a _test.go file (or a
       # test-only package); deadcode finds it. Listed exceptions: the test
-      # helper packages, a cgo probe (test files cannot use cgo), and a load
-      # counter other packages' cost tests read, and the terminal UI layer
-      # in internal/cli/ui.go, whose parts the onboarding screens adopt one
-      # PR at a time (they are listed by name: remove each as it gains a
-      # caller, and the exception once none is left).
+      # helper packages, a cgo probe (test files cannot use cgo), a load
+      # counter other packages' cost tests read, storage.Diagnose until
+      # setup calls it (onboarding PR A2 wires it in and drops this entry),
+      # and the terminal UI layer in internal/cli/ui.go, whose parts the
+      # onboarding screens adopt one PR at a time (they are listed by name:
+      # remove each as it gains a caller, and the exception once none is
+      # left).
       - name: No unreachable production code
         run: |
           go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./... > "$RUNNER_TEMP/deadcode.txt"
           # grep exits 1 when every line is an exception; 2 is a real failure.
           status=0
-          grep -v -E '^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(cmd|okMark|failMark|hang|spin|spinEvery)|hangingIndent|visibleWidth|runeWidth|truncateVisible|spinner\.stop)$' "$RUNNER_TEMP/deadcode.txt" > "$RUNNER_TEMP/unexpected.txt" || status=$?
+          grep -v -E '^internal/(state/statetest|storage/storagetest|testutil)/|^internal/credentials/keychain_darwin\.go:[0-9]+:[0-9]+: unreachable func: lookupForbidsUI$|^internal/state/published\.go:[0-9]+:[0-9]+: unreachable func: PublishedStateLoads$|^internal/cli/ui\.go:[0-9]+:[0-9]+: unreachable func: (textStyle\.(cmd|okMark|failMark|hang|spin|spinEvery)|hangingIndent|visibleWidth|runeWidth|truncateVisible|spinner\.stop)$|^internal/storage/diagnose\.go:[0-9]+:[0-9]+: unreachable func: (Diagnose|diagnoseCredentials|diagnoseCode|wrongRegion|bucketRegion|isNetworkError)$' "$RUNNER_TEMP/deadcode.txt" > "$RUNNER_TEMP/unexpected.txt" || status=$?
           if [ "$status" -gt 1 ]; then
             exit "$status"
           fi
