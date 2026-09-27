@@ -83,6 +83,7 @@ var screens = []screen{
 		name:    "setup-fresh-apps-git-cwd",
 		answers: []string{"", "", "", "2", "team-archive", "work", "us-east-1", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.withApps("codex", "claude", "cursor")
 			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
 		},
@@ -93,7 +94,10 @@ var screens = []screen{
 		name:    "setup-fresh-no-apps",
 		answers: []string{"y", "n", "n", "~/src/web-app", ""},
 		exit:    1,
-		arrange: func(t *testing.T, f *screenFixture) { f.project(t, "src/web-app") },
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.project(t, "src/web-app")
+		},
 	},
 	{
 		// Outside a repository, setup offers the projects the apps'
@@ -102,6 +106,7 @@ var screens = []screen{
 		answers: []string{"", "1 2", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.withApps("claude")
 			writeClaudeSession(t, f.userHome, "one", f.project(t, "src/api"), screenNow.Add(-72*time.Hour))
 			writeClaudeSession(t, f.userHome, "two", f.project(t, "src/web-app"), screenNow.Add(-time.Hour))
@@ -113,6 +118,7 @@ var screens = []screen{
 		name:    "setup-resume-menu",
 		answers: []string{"1", "2", "team-archive", "work", "us-east-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.withApps("codex", "claude")
 			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
 			f.setup(t, 1, "", "", "")
@@ -123,7 +129,10 @@ var screens = []screen{
 		// at the review.
 		name:    "setup-reconfigure-menu",
 		answers: []string{"3", "30", "3"},
-		arrange: func(t *testing.T, f *screenFixture) { f.installed(t) },
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+		},
 	},
 	{
 		// The storage check fails, and setup offers to edit, retry, or
@@ -132,6 +141,7 @@ var screens = []screen{
 		answers: []string{"y", "n", "n", "", "", "2", "team-archive", "work", "us-east-1", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
 				return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
@@ -143,6 +153,7 @@ var screens = []screen{
 		name:    "setup-review-fresh",
 		answers: []string{"y", "y", "n", "2", "team-archive", "work", "us-east-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.withApps("codex", "claude")
 			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
 		},
@@ -153,6 +164,7 @@ var screens = []screen{
 		name:    "setup-review-reconfigure-changes",
 		answers: []string{"4", "y", "y", "~/src/api", "", "", "", "", "2", "4", "30", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.installed(t)
 			f.withApps("codex", "claude", "cursor")
 			f.project(t, "src/api")
@@ -163,6 +175,7 @@ var screens = []screen{
 		name:    "setup-next-steps",
 		answers: []string{"y", "y", "y", "", "", "2", "team-archive", "work", "us-east-1", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
 		},
 	},
@@ -171,6 +184,7 @@ var screens = []screen{
 		name: "status-ready",
 		args: []string{"status"},
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.installed(t)
 			f.published(t)
 		},
@@ -180,6 +194,7 @@ var screens = []screen{
 		name: "status-needs-attention",
 		args: []string{"status"},
 		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
 			f.installed(t)
 			f.published(t)
 			store, err := state.Open(f.home)
@@ -196,9 +211,11 @@ var screens = []screen{
 // (shown as /Users/alex), its data directory in ~/.agent-archive, and an
 // in-memory bucket.
 type screenFixture struct {
-	root, userHome, home string
-	env                  Env
-	bucket               storage.ObjectStore
+	root     string
+	userHome string
+	home     string
+	env      Env
+	bucket   storage.ObjectStore
 }
 
 func newScreenFixture(t *testing.T) *screenFixture {
@@ -282,8 +299,7 @@ func (f *screenFixture) published(t *testing.T) {
 // returns the screen as its golden file holds it.
 func (f *screenFixture) run(t *testing.T, args, answers []string, color bool, exit int) []byte {
 	t.Helper()
-	var out screenOutput
-	out.color = color
+	out := screenOutput{color: color}
 	in := &echoAnswers{answers: answers, echo: &out}
 	code := Run(args, in, &out, &out, f.env)
 	screen := f.normalize(out.String())
