@@ -166,7 +166,9 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		accessErr = connectErr
 	}
 	if accessErr != nil {
-		printStorageFailure(p, cfg.Storage, accessErr, opts.verbose, "run again with --verbose")
+		// On standard error, with setup's last line, so a script that keeps
+		// only errors still learns why.
+		printStorageFailure(&prompter{out: errOut, style: styleFor(errOut)}, cfg.Storage, accessErr, opts.verbose, "run again with --verbose")
 		return discard(&storageCheckError{err: accessErr, outcome: "nothing was changed"})
 	}
 	terminal.Println(out, p.style.ok("✓ Connected."))

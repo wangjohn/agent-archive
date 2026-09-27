@@ -377,7 +377,15 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 				// left off" asks the storage questions again rather than
 				// repeating a check that just failed.
 				draft.Step = 1
-				if err = save(); err != nil {
+				// The storage questions keep a saved region without asking
+				// (promptAWSProfile), so a draft resumed with the region the
+				// provider refused would repeat the check: it keeps the
+				// bucket's own region instead, which those questions show.
+				resume := draft
+				if d.Cause == storage.CauseWrongRegion && d.Region != "" && draft.Config.Storage.Provider == credentials.ProviderS3 {
+					resume.Config.Storage.Region = d.Region
+				}
+				if err = local.Write(savedPath, resume); err != nil {
 					return err
 				}
 				choice, promptErr := p.menu("What next?", "fix",
@@ -390,6 +398,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 				}
 				if choice == "retry" {
 					draft.Step = 2
+				}
+				if choice == "fix" && d.Cause == storage.CauseNoCredentials && draft.Config.Storage.Provider == credentials.ProviderR2 {
+					// The fix promises to ask for the key, so don't offer
+					// to keep the one just refused. A staged key stays in
+					// StagedRefs for cleanup.
+					draft.Config.Storage.R2CredentialRef = ""
 				}
 				if choice == "fix" && d.Cause == storage.CauseWrongRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
 					// The storage questions reuse a region they already

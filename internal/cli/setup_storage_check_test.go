@@ -2,11 +2,14 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/credentials/processcreds"
 	"github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 
@@ -198,5 +201,125 @@ func TestStorageDiagnosisGivesR2NoRegionHint(t *testing.T) {
 	s3 := credentials.Config{Provider: credentials.ProviderS3, Bucket: "b"}
 	if got := storageDiagnosis(s3, err); !strings.Contains(got.Fix, "region") {
 		t.Errorf("S3 fix %q lost its region hint", got.Fix)
+	}
+}
+
+// wrongRegionEnv is a setup environment whose S3 bucket is in eu-west-1: the
+// check fails, naming that region, for any other.
+func wrongRegionEnv(t *testing.T, home string) Env {
+	t.Helper()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	bucket := storagetest.NewMemoryStore()
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		var failure error
+		if cfg.Storage.Region != "eu-west-1" {
+			failure = &smithyhttp.ResponseError{
+				Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}}},
+				Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+			}
+		}
+		return putErrorStore{bucket, &failure}, nil
+	}
+	return env
+}
+
+// Stopping at a wrong-region failure saves the bucket's own region, so that
+// continuing, which keeps a saved region without asking, checks that one
+// rather than repeating the check that failed.
+func TestSetupContinueAfterWrongRegionUsesTheBucketsRegion(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := wrongRegionEnv(t, home)
+	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
+	setupRun(t, env, input+"cancel\n", 1)
+	draft, found, problem, err := readDraft(home)
+	if err != nil || !found || problem != "" || draft.Step != 1 || draft.Config.Storage.Region != "eu-west-1" {
+		t.Fatalf("draft step %d region %q (found=%v problem=%q err=%v), want step 1 in eu-west-1", draft.Step, draft.Config.Storage.Region, found, problem, err)
+	}
+
+	// Continue, keep every storage answer, and start archiving.
+	output := setupRun(t, env, "continue\n\n\n\ny\n", 0)
+	if strings.Contains(output, "The bucket is in another region.") || !strings.Contains(output, "Using region eu-west-1.") {
+		t.Fatalf("continuing repeated the failed check:\n%s", output)
+	}
+	if cfg, _, _ := config.Load(home); cfg.Storage.Region != "eu-west-1" {
+		t.Fatalf("region %q", cfg.Storage.Region)
+	}
+}
+
+// For refused R2 credentials, the fix ("Enter the R2 access key again")
+// asks for the key, rather than offering to keep the one just refused.
+func TestSetupR2CredentialFixAsksForTheKey(t *testing.T) {
+	t.Parallel()
+	var failure error = &smithy.GenericAPIError{Code: "InvalidAccessKeyId"}
+	env := failingStorageEnv(t, t.TempDir(), &failure)
+	input := strings.TrimSuffix(r2SetupInput(t.TempDir(), "first-secret"), "y\n")
+	// The fix, the kept provider, account and bucket, a new key, and the
+	// second failure stops.
+	output := setupRun(t, env, input+"\n\n\n\nACCESS2\nsecond-secret\ncancel\n", 1)
+	if !strings.Contains(output, "1) Enter the R2 access key again") {
+		t.Fatalf("fix label:\n%s", output)
+	}
+	if strings.Contains(output, "Keep stored R2 credentials?") || strings.Count(output, "Access key ID") != 2 {
+		t.Fatalf("the fix did not ask for the key:\n%s", output)
+	}
+}
+
+// Even with --verbose, a credential_process failure's own text is withheld:
+// the SDK's message quotes what the program printed, which can be
+// credentials.
+func TestSetupVerboseWithholdsCredentialProcessOutput(t *testing.T) {
+	t.Parallel()
+	const secret = "printed-secret-access-key"
+	var failure error = &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &processcreds.ProviderError{Err: errors.New("parse failed of process output: {\"SecretAccessKey\":\"" + secret + "\"}")}}
+	env := failingStorageEnv(t, t.TempDir(), &failure)
+	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
+	var out strings.Builder
+	if code := Run([]string{"setup", "--verbose"}, strings.NewReader(input+"cancel\n"), &out, &out, env); code != 1 {
+		t.Fatalf("exit %d\n%s", code, &out)
+	}
+	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "Details: not shown") {
+		t.Fatalf("credential_process output printed:\n%s", &out)
+	}
+}
+
+// setup --yes prints the diagnosis on standard error, with its last line, so
+// a script that keeps only errors still learns the cause.
+func TestSetupYesStorageDiagnosisGoesToStandardError(t *testing.T) {
+	t.Parallel()
+	var failure error = &smithy.GenericAPIError{Code: "AccessDenied"}
+	env := failingStorageEnv(t, t.TempDir(), &failure)
+	env.IsTerminal = func(any) bool { return false }
+	var out, errOut strings.Builder
+	args := []string{"setup", "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex"}
+	if code := Run(args, strings.NewReader(""), &out, &errOut, env); code != 1 {
+		t.Fatalf("exit %d\n%s\n%s", code, &out, &errOut)
+	}
+	if !strings.Contains(errOut.String(), "Access to the bucket was refused.") || strings.Contains(out.String(), "refused") {
+		t.Fatalf("stdout:\n%s\nstderr:\n%s", &out, &errOut)
+	}
+}
+
+// The setup check's read-back failing is neither access nor the network:
+// each sentinel gets its own plain diagnosis, naming the test file.
+//
+// Regression: both fell to "agent-archive couldn't use the storage
+// settings", which blamed settings that had just worked for the upload.
+func TestStorageDiagnosisNamesTheReadBack(t *testing.T) {
+	t.Parallel()
+	s3 := credentials.Config{Provider: credentials.ProviderS3, Bucket: "b", AWSProfile: "work"}
+	for name, err := range map[string]error{
+		"changed": fmt.Errorf("setup test read: %w", storage.ErrChecksumMismatch),
+		"missing": fmt.Errorf("setup test read: %w", storage.ErrNotFound),
+	} {
+		d := storageDiagnosis(s3, err)
+		if d.Cause != storage.CauseOther || !strings.Contains(d.Explanation, "test file") || !strings.Contains(d.Explanation, "read back") {
+			t.Errorf("%s: %+v", name, d)
+		}
+	}
+	// storage.Diagnose itself says nothing of a test file: its other
+	// callers' reads share these sentinels.
+	if d := storage.Diagnose(storage.ErrNotFound); strings.Contains(d.Explanation, "test file") {
+		t.Errorf("Diagnose(ErrNotFound) = %+v", d)
 	}
 }
