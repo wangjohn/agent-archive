@@ -173,6 +173,7 @@ func fromMetadataService(err error) bool {
 // matched for those, so a 403 whose body names another code (such as
 // RequestTimeTooSkewed) is not taken for a refusal.
 func diagnoseCode(err error, code string) (Diagnosis, bool) {
+	//lint:ignore LV1001 API error codes are AWS's and R2's open set; any code not listed here is left to other checks
 	switch code {
 	case "ExpiredToken", "ExpiredTokenException", "TokenRefreshRequired":
 		return credentialsExpired, true
