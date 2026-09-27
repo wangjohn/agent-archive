@@ -19,6 +19,9 @@ follow [Semantic Versioning](https://semver.org/).
 - A read-only check of each app's hook settings file that reports the file,
   line, column and reason for JSONC comments, trailing commas and duplicate
   keys, without changing anything.
+- `setup` checks before the first question that each app's hook file is
+  valid, that `launchctl` responds, and, when R2 is used, that the Keychain
+  opens. A problem stops setup with the file and line to fix.
 
 ### Changed
 
