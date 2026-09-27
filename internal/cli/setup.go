@@ -985,16 +985,18 @@ type projectPicker struct {
 
 // newProjectPicker starts from result, the projects chosen so far.
 func newProjectPicker(p *prompter, result, existing []archive.ProjectActivation, userHomes ...string) *projectPicker {
+	var home string
+	if len(userHomes) > 0 {
+		home = userHomes[0]
+	}
 	picker := &projectPicker{
-		p: p,
+		p:    p,
+		home: home,
 		// result is edited in place; existing may share its array.
 		result:   slices.Clone(result),
 		existing: existing,
 		seen:     map[string]bool{},
 		excluded: map[string]bool{},
-	}
-	if len(userHomes) > 0 {
-		picker.home = userHomes[0]
 	}
 	for _, project := range result {
 		if project.Included {
