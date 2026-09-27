@@ -77,6 +77,23 @@ func Diagnose(err error) Diagnosis {
 			return d
 		}
 	}
+	// The setup check reads back what it just wrote. The provider answered
+	// both calls, so this is neither access nor the network: something
+	// between them lost or changed the object.
+	if errors.Is(err, ErrChecksumMismatch) {
+		return Diagnosis{
+			Cause:       CauseOther,
+			Explanation: "The test file read back from the bucket didn't match what was written.",
+			Fix:         "Check for a proxy, or a bucket rule, that changes stored objects, then try again.",
+		}
+	}
+	if errors.Is(err, ErrNotFound) {
+		return Diagnosis{
+			Cause:       CauseOther,
+			Explanation: "The test file wasn't in the bucket when it was read back, just after it was written.",
+			Fix:         "Check the bucket's settings (a lifecycle rule or replication that removes new objects), then try again.",
+		}
+	}
 	// A cancelled call never got its answer either, but because the caller
 	// stopped waiting, not because the provider couldn't be reached.
 	if errors.Is(err, context.Canceled) {

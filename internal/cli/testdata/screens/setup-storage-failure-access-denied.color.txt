@@ -2,7 +2,7 @@ $ agent-archive setup
 Checking installed applications...
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 
-Step 1 of 3 · Choose what to capture
+\e[1mStep 1 of 3 · Choose what to capture\e[0m
 
 No apps found automatically.
 Choose which apps to include:
@@ -13,7 +13,7 @@ Project: /Users/alex/src/web-app
 Archive sessions in this project? [Y/n] 
 Add another project? [y/N] 
 
-Step 2 of 3 · Connect storage
+\e[1mStep 2 of 3 · Connect storage\e[0m
 
 Where should sessions be stored?
   1) Cloudflare R2
@@ -26,14 +26,14 @@ Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
 
-  ✗ Can't sign in to AWS.
-    No credentials were found for the storage profile.
+  \e[31m✗ Access to the bucket was refused.\e[0m
+    The storage provider refused access to the bucket.
 
-    Fix: Add them with aws configure --profile work, or sign in with aws sso login --profile work for an SSO profile, then try again.
-    Details: agent-archive setup --verbose
+    Fix: Check that the credentials are current and allowed to list, read, write and delete in the bucket, then try again.
+\e[2m    Details: agent-archive setup --verbose\e[0m
 
 What next?
-  1) Pick another profile
+  1) Change storage settings
   2) Retry the check
   3) Change other settings
   4) Stop for now (your answers are kept)

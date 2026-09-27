@@ -2,15 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -135,16 +140,80 @@ var screens = []screen{
 		},
 	},
 	{
-		// The storage check fails, and setup offers to edit, retry, or
-		// cancel.
+		// The storage check fails for want of AWS credentials: setup says
+		// why, and how to fix it, and offers the fix first. This run stops
+		// there.
 		name:    "setup-storage-failure",
-		answers: []string{"y", "n", "n", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: errors.New("dial tcp 169.254.169.254:80: connect: host is down")}}),
+	},
+	{
+		// The same failure with --verbose: the storage error is printed
+		// under the diagnosis, once.
+		name:    "setup-storage-failure-verbose",
+		args:    []string{"setup", "--verbose"},
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}}),
+	},
+	{
+		// After a failed check, continuing asks the storage questions again
+		// before checking.
+		name:    "setup-storage-failure-continue",
+		answers: []string{"1", "", "", "", "4"},
+		exit:    1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			failUploads(&smithy.GenericAPIError{Code: "AccessDenied"})(t, f)
+			f.setup(t, 1, storageFailureAnswers...)
+		},
+	},
+	{
+		name:    "setup-storage-failure-access-denied",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.GenericAPIError{Code: "AccessDenied"}),
+	},
+	{
+		name:    "setup-storage-failure-no-such-bucket",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.GenericAPIError{Code: "NoSuchBucket"}),
+	},
+	{
+		name:    "setup-storage-failure-wrong-region",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}}},
+			Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+		}),
+	},
+	{
+		name:    "setup-storage-failure-network",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithyhttp.RequestSendError{Err: errors.New("dial tcp: lookup team-archive.s3.us-east-1.amazonaws.com: no such host")}),
+	},
+	{
+		// A failure the provider did not answer, and Diagnose does not
+		// recognize.
+		name:    "setup-storage-failure-other",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(errors.New("incorrect region or folder")),
+	},
+	{
+		// The object the check wrote read back changed.
+		name:    "setup-storage-failure-read-back",
+		answers: storageFailureAnswers,
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
-				return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
+				return changedReadStore{f.bucket}, nil
 			}
 		},
 	},
@@ -205,6 +274,28 @@ var screens = []screen{
 			must(t, store.SaveStatus(status))
 		},
 	},
+}
+
+// storageFailureAnswers set up Codex in ~/src/web-app with S3 storage, and
+// stop at the storage check's failure menu.
+var storageFailureAnswers = []string{"y", "n", "n", "", "", "2", "team-archive", "work", "us-east-1", "4"}
+
+// failUploads makes the bucket refuse every upload with err.
+func failUploads(err error) func(*testing.T, *screenFixture) {
+	return func(t *testing.T, f *screenFixture) {
+		t.Helper()
+		f.inWebApp(t)
+		f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+			return putErrorStore{f.bucket, &err}, nil
+		}
+	}
+}
+
+// changedReadStore reads back other bytes than were written.
+type changedReadStore struct{ storage.ObjectStore }
+
+func (changedReadStore) Get(context.Context, string) ([]byte, error) {
+	return []byte("changed"), nil
 }
 
 // screenFixture is one screen's Mac: a home folder at root/Users/alex

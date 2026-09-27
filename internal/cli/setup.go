@@ -144,7 +144,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return 0
 	}
-	if err := setup(stdin, stdout, stderr, env); err != nil {
+	if err := setup(stdin, stdout, stderr, env, opts.verbose); err != nil {
 		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
 		var blocked *setupjournal.RecoveryBlockedError
 		if errors.As(err, &blocked) {
@@ -162,7 +162,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	return 0
 }
 
-func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
+// setup is interactive setup. verbose prints a failed storage check's own
+// error under its diagnosis.
+func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -367,27 +369,48 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			terminal.Println(out, "\nChecking your storage connection…")
 			connectErr, e := verifyStorage(&draft.Config, env)
 			if connectErr != nil {
-				draft.Step = 1
-				_ = save()
-				return connectErr
+				e = connectErr
 			}
 			if e != nil {
-				failure := fmt.Errorf("storage test failed: %w (check access and retry; saved choices are kept)", e)
-				terminal.Println(out, failure)
-				choice, promptErr := p.menu("What would you like to do?", "cancel",
-					option{"edit", "Edit settings"},
-					option{"retry", "Retry the storage check"},
-					option{"cancel", "Cancel (your choices are kept)"})
+				d := printStorageFailure(p, draft.Config.Storage, e, verbose, "agent-archive setup --verbose")
+				// Saved at the storage step, so that "Continue where you
+				// left off" asks the storage questions again rather than
+				// repeating a check that just failed.
+				draft.Step = 1
+				if err = save(); err != nil {
+					return err
+				}
+				choice, promptErr := p.menu("What next?", "fix",
+					option{"fix", storageFixLabel(draft.Config.Storage, d)},
+					option{"retry", "Retry the check"},
+					option{"edit", "Change other settings"},
+					option{"cancel", "Stop for now (your answers are kept)"})
 				if promptErr != nil || choice == "cancel" {
-					return failure
+					return &storageCheckError{err: e, outcome: "your answers are kept"}
+				}
+				if choice == "retry" {
+					draft.Step = 2
+				}
+				if choice == "fix" && d.Cause == storage.CauseWrongRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
+					// The storage questions reuse a region they already
+					// have, so ask for this one answer directly.
+					region := d.Region
+					if region == "" {
+						region = draft.Config.Storage.Region
+					}
+					if draft.Config.Storage.Region, err = p.required("Bucket region", region); err != nil {
+						return err
+					}
+					draft.Step = 2
 				}
 				if choice == "edit" {
+					draft.Step = 2
 					if err = editSetupReview(p, &draft, userHome, backfilledProjects(env), known); err != nil {
 						return err
 					}
-					if err = save(); err != nil {
-						return err
-					}
+				}
+				if err = save(); err != nil {
+					return err
 				}
 				continue
 			}

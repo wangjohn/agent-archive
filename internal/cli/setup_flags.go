@@ -35,6 +35,7 @@ type setupOptions struct {
 	apps                 string
 	projects             []string
 	yes                  bool
+	verbose              bool
 	storageFlagsSupplied bool
 }
 
@@ -61,6 +62,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
+	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
 	if !fs.parseFlagsOnly(args) {
 		return opts, false
 	}
@@ -161,10 +163,11 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	terminal.Println(out, "Checking your storage connection…")
 	connectErr, accessErr := verifyStorage(&cfg, env)
 	if connectErr != nil {
-		return discard(connectErr)
+		accessErr = connectErr
 	}
 	if accessErr != nil {
-		return discard(fmt.Errorf("storage test failed: %w; nothing was changed", accessErr))
+		printStorageFailure(p, cfg.Storage, accessErr, opts.verbose, "run again with --verbose")
+		return discard(&storageCheckError{err: accessErr, outcome: "nothing was changed"})
 	}
 	terminal.Println(out, p.style.ok("✓ Connected."))
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
