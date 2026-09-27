@@ -182,7 +182,7 @@ func pickAWSProfile(p *prompter, profiles []AWSProfile, def string) (string, err
 	for i, profile := range profiles {
 		note := ""
 		if profile.NoCredentials {
-			note = " (no credentials configured)"
+			note = " " + p.style.dim("(no credentials configured)")
 		}
 		terminal.Printf(p.out, "  %d) %s%s\n", i+1, profile.Name, note)
 		if profile.Name == def {
