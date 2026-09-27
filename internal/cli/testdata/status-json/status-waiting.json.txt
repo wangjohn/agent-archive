@@ -1,0 +1,103 @@
+$ agent-archive status --json
+{
+  "privacy_evidence": {
+    "state": "not_verified",
+    "reason": "inspection_unavailable",
+    "scope": "native_bucket_public_access",
+    "checked_at": "2026-09-25T12:00:00Z",
+    "configuration_id": "ID",
+    "guidance_url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html"
+  },
+  "configuration_id": "ID",
+  "authentication": {
+    "configuration_id": "",
+    "state": "unknown",
+    "context": ""
+  },
+  "code": "awaiting_capture",
+  "schema_version": 3,
+  "state": "Waiting for capture",
+  "storage": "s3 / team-archive / agent-archive/",
+  "storage_verified_at": "2026-09-25T12:00:00Z",
+  "storage_access_confirmed_at": "2026-09-25T12:00:00Z",
+  "storage_access_confirmed_by": "setup",
+  "privacy": "not_verified",
+  "background": "loaded",
+  "paused": false,
+  "projects": [
+    "/Users/alex/src/web-app"
+  ],
+  "applications": [
+    {
+      "published_sessions": 0,
+      "verified_sessions": 0,
+      "configured": true,
+      "hook_observed": false,
+      "captured_locally": false,
+      "published": false,
+      "read_back_verified": false,
+      "verification_state": "not_verified",
+      "trust": "unknown",
+      "installed": false,
+      "installed_version_state": "unknown",
+      "installed_version_support": "unknown",
+      "capabilities": {
+        "fresh_start": {
+          "state": "documented",
+          "evidence": "SessionStart.source distinguishes startup/clear from resume/compact."
+        },
+        "transcript": {
+          "state": "documented",
+          "evidence": "Hooks provide transcript_path; official documentation says its format is not stable."
+        },
+        "lifecycle": {
+          "state": "documented",
+          "evidence": "SessionStart, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop are documented."
+        },
+        "skill_evidence": {
+          "state": "unavailable",
+          "evidence": "No supported native eligibility/use contract has been verified.",
+          "next_action": "Treat eligibility comparisons as unavailable."
+        },
+        "subagent_linkage": {
+          "state": "unavailable",
+          "evidence": "A lifecycle event alone does not provide a verified child transcript and parent link.",
+          "next_action": "Validate child identity, parent identity, and transcript path for the installed version."
+        },
+        "adapter_fixtures": {
+          "state": "documented",
+          "evidence": "Synthetic fixtures exercise the bounded adapter; they do not prove an installed version."
+        }
+      },
+      "projects": [
+        {
+          "project_id": "project-ID",
+          "project_root": "/Users/alex/src/web-app",
+          "activated_at": "2026-09-25T12:00:00Z",
+          "configured": true,
+          "hook_observed": false,
+          "captured_locally": false,
+          "published": false,
+          "read_back_verified": false,
+          "published_sessions": 0,
+          "verified_sessions": 0,
+          "verification_state": "not_verified"
+        }
+      ],
+      "code": "awaiting_session",
+      "hooks": "installed",
+      "name": "codex",
+      "state": "waiting for first session",
+      "sessions": 0
+    }
+  ],
+  "collector": {
+    "pending_count": 0
+  },
+  "imported_sessions": 0,
+  "imported_pending": 0,
+  "imported_with_issues": 0,
+  "last_import": "",
+  "next_action": "Review hook approval in Codex, then start a new session in /Users/alex/src/web-app."
+}
+[exit 0]

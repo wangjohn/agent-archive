@@ -1,5 +1,8 @@
 $ agent-archive status
-Agent Archive  ● Ready
+Agent Archive  ● Paused
+
+  ! Collection is paused
+    Run agent-archive resume when ready. Registered sessions can catch up after resume.
 
 Capture
   ✓ Codex   hooks installed   1 session archived, verified just now
@@ -9,9 +12,8 @@ Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
   ! Bucket privacy not verified        this storage can't be inspected
     Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  ✓ Background collector on            last scan just now
+  · Background collector paused        last scan just now
   · Last upload: just now · 0 pending
 
-Next: Keep working. Run agent-archive list to inspect archived sessions.
 Details: agent-archive status --json
 [exit 0]

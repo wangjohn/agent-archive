@@ -39,8 +39,8 @@ R2 or Amazon S3 bucket. There is no account, hosted service, or telemetry.
    then start a **new** session. Sessions already open aren't captured.
 
 5. **Check it:** once that session has run for a minute or two,
-   `agent-archive status` should say `Ready`; anything else comes with a
-   `Next:` step. Optionally, `agent-archive backfill` imports the sessions
+   `agent-archive status` should say `Ready`; anything else says what to
+   fix first, and how. Optionally, `agent-archive backfill` imports the sessions
    already on this Mac.
 
 To add a second Mac, install and run setup there with the same bucket, or
@@ -52,7 +52,7 @@ script it with [`agent-archive setup --yes`](docs/getting-started/setup.md#set-u
 | Command | What it does |
 | --- | --- |
 | `setup` | First-time setup, or change apps, projects, storage, or retention. |
-| `status` | Storage, collector, hooks, and capture health, with a `Next:` step. |
+| `status` | Storage, collector, hooks, and capture health, led by the one thing to fix and how. |
 | `list`, `show` | Browse archived sessions (`--json` for scripts). |
 | `handoff` | Print a session as a prompt another agent can continue from. |
 | `backfill` | Import sessions already on this Mac; `backfill undo` removes them. |

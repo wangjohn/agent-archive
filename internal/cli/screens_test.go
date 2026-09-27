@@ -411,6 +411,34 @@ var screens = []screen{
 		},
 	},
 	{
+		// Status before setup.
+		name: "status-not-set-up",
+		args: []string{"status"},
+	},
+	{
+		// Status after setup, before the first session.
+		name: "status-waiting",
+		args: []string{"status"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+		},
+	},
+	{
+		// Status while collection is paused.
+		name: "status-paused",
+		args: []string{"status"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+			f.published(t)
+			var out bytes.Buffer
+			if code := Run([]string{"pause"}, strings.NewReader(""), &out, &out, f.env); code != 0 {
+				t.Fatalf("pause exit %d\n%s", code, &out)
+			}
+		},
+	},
+	{
 		// Status when the last pass could not reach storage.
 		name: "status-needs-attention",
 		args: []string{"status"},

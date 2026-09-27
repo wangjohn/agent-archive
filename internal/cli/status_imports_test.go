@@ -81,7 +81,7 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "Imported:      2 session(s), 1 waiting to upload\n") {
+	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· Imported: 2 sessions, 1 waiting to upload\n") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
 	}
 	out.Reset()
@@ -143,7 +143,7 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 		t.Fatalf("imported=%d with issues=%d app gaps=%#v", view.ImportedSessions, view.ImportedWithIssues, view.Apps[0].CaptureGaps)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "Imported:      3 session(s), 0 waiting to upload, 2 with a capture gap or failed scan\n") {
+	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· Imported: 3 sessions, 0 waiting to upload, 2 with a capture gap or failed scan\n") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
 	}
 	out.Reset()

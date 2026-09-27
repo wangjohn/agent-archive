@@ -202,14 +202,14 @@ func TestStatusTextDoesNotCallPartialReadBackVerified(t *testing.T) {
 	if code := runStatusCommand(nil, &out, &out, env); code != 0 {
 		t.Fatalf("status exit %d: %s", code, out.String())
 	}
-	if text := out.String(); strings.Contains(text, "Read-back verified:") || !strings.Contains(text, "Last read-back: "+now.Format(time.RFC3339)+" (1 of 2 projects verified).") {
+	if text := out.String(); strings.Contains(text, "archived, verified") || !strings.Contains(text, "uploaded, read-back pending (1 of 2 projects verified)") {
 		t.Fatalf("partial read-back reported as verified:\n%s", text)
 	}
 	if summary, err := verifyPublications(home, cfg, testEnv(t, home, now), store, remote); err != nil || summary.Verified != 1 {
 		t.Fatalf("verify summary=%#v err=%v", summary, err)
 	}
 	out.Reset()
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "Read-back verified: "+now.Format(time.RFC3339)+"; evidence is for that publication.") {
+	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "2 sessions archived, verified just now") {
 		t.Fatalf("complete read-back not reported as verified (exit %d):\n%s", code, out.String())
 	}
 }
@@ -287,7 +287,7 @@ func TestStatusSuggestsCursorCaptureOnceFreshStartIsProvable(t *testing.T) {
 		t.Fatalf("status did not ask for the session that would prove capture: %q", view.Next)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "Fresh-start capture: unavailable") {
+	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || strings.Contains(out.String(), "New sessions can't be captured yet") {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 }

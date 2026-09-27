@@ -106,7 +106,7 @@ func TestStatusReportsAMovedOrDeletedBinaryAsBroken(t *testing.T) {
 				}
 			}
 			var out strings.Builder
-			if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || !strings.Contains(out.String(), "hooks broken") || !strings.Contains(out.String(), "Background:    broken") {
+			if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || !strings.Contains(out.String(), "hooks broken") || !strings.Contains(out.String(), "✗ Background collector is broken") {
 				t.Errorf("status exit=%d output=%s", code, out.String())
 			}
 		})

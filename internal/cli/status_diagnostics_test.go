@@ -78,7 +78,7 @@ func TestCursorWaitingChatShowsInStatus(t *testing.T) {
 	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("status: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	if out := stdout.String(); strings.Contains(out, "Last error") || !strings.Contains(out, "hook observed; waiting for capture") || !strings.Contains(out, "Pending:       1 session(s)") {
+	if out := stdout.String(); strings.Contains(out, "Last error") || !strings.Contains(out, "session seen, not captured yet") || !strings.Contains(out, " · 1 pending") {
 		t.Fatalf("status = %s", out)
 	}
 }
@@ -95,7 +95,7 @@ func TestExcludedProjectDiagnosticLeavesStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || !strings.Contains(out.String(), "Capture skipped in /work/widget") {
+	if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 || !strings.Contains(out.String(), "Cursor skipped a session in /work/widget") {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 	// The project is excluded afterwards: its path must stop appearing.

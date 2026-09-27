@@ -3,12 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
-	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 type privacyInspector interface {
@@ -75,21 +73,4 @@ func currentBucketPrivacy(cfg config.Config, at time.Time) storage.PrivacyReport
 		report.Reason = "inspection_stale"
 	}
 	return report
-}
-
-func printBucketPrivacy(out io.Writer, report storage.PrivacyReport) {
-	//lint:ignore LV1001 storage.PrivacyReport.State is an untyped string owned by package storage
-	switch report.State {
-	case "verified_private":
-		terminal.Println(out, "Bucket privacy: native public access blocked at the last check.")
-	case "public_or_risky":
-		terminal.Println(out, "Bucket privacy: public configuration detected; review access before archiving.")
-	default:
-		terminal.Println(out, "Bucket privacy not verified.")
-	}
-	checked := "never"
-	if report.CheckedAt != nil {
-		checked = formatTimeOrNever(*report.CheckedAt)
-	}
-	terminal.Printf(out, "  Checked: %s; %s.\n  Review: %s\n", checked, report.Reason, report.GuidanceURL)
 }

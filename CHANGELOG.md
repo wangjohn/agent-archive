@@ -51,6 +51,10 @@ follow [Semantic Versioning](https://semver.org/).
   R2 address) followed by a ✓/!/✗ checklist: storage connected, bucket
   private, hook files valid, and each app's next step. A ✗ blocks starting
   until it's fixed.
+- `status` is redesigned: a colored state line, the one fix to make on top,
+  and grouped Capture and Storage rows with ✓/!/✗, relative times and `~`
+  paths. Internal codes and exact times stay in `status --json`, which is
+  unchanged.
 
 ## [0.1.0] - 2026-09-25
 
