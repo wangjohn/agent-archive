@@ -83,7 +83,7 @@ func TestStorageProviderDefaultSkipsDiscoveryWhenProviderSaved(t *testing.T) {
 	called := false
 	env := Env{AWSProfiles: func() ([]AWSProfile, error) { called = true; return nil, nil }}
 	var out bytes.Buffer
-	_, _, _, _ = promptStorage(newPrompter(strings.NewReader(""), &out), credentials.Config{Provider: credentials.ProviderS3}, env)
+	_, _, _, _ = promptStorage(newPrompter(strings.NewReader(""), &out), credentials.Config{Provider: credentials.ProviderS3}, env, "")
 	if called {
 		t.Fatal("AWS profile discovery ran although a provider was saved")
 	}
@@ -97,7 +97,7 @@ func TestAWSProfileSwitchDoesNotReuseOldRegion(t *testing.T) {
 	cfg := credentials.Config{AWSProfile: "old", Region: "us-east-1"}
 	env := Env{AWSProfiles: func() ([]AWSProfile, error) { return []AWSProfile{{Name: "new"}}, nil }}
 	var out bytes.Buffer
-	err := promptS3Location(newPrompter(strings.NewReader("new\nbucket\neu-west-1\n"), &out), &cfg, env)
+	err := promptS3Location(newPrompter(strings.NewReader("new\nbucket\neu-west-1\n"), &out), &cfg, env, "")
 	if err != nil || cfg.Region != "eu-west-1" || cfg.AWSProfile != "new" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
@@ -176,7 +176,7 @@ func TestPromptAWSProfileDefaultsToAWSProfileVariable(t *testing.T) {
 		},
 	}
 	var out bytes.Buffer
-	err := promptS3Location(newPrompter(strings.NewReader("\nbucket\n"), &out), &cfg, env)
+	err := promptS3Location(newPrompter(strings.NewReader("\nbucket\n"), &out), &cfg, env, "")
 	if err != nil || cfg.AWSProfile != "work" || cfg.Region != "eu-west-1" {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
@@ -200,7 +200,7 @@ func TestStorageProviderDefaultFollowsAWSProfiles(t *testing.T) {
 		env := Env{AWSProfiles: func() ([]AWSProfile, error) { return tc.profiles, tc.err }}
 		var out bytes.Buffer
 		// The reader ends after the provider question, so setup stops there.
-		_, _, _, err := promptStorage(newPrompter(strings.NewReader(""), &out), credentials.Config{Provider: tc.existing}, env)
+		_, _, _, err := promptStorage(newPrompter(strings.NewReader(""), &out), credentials.Config{Provider: tc.existing}, env, "")
 		if err == nil || !strings.Contains(out.String(), "Enter 1-3 "+tc.want) {
 			t.Errorf("%s: err=%v output %q, want default %q", tc.name, err, &out, tc.want)
 		}
@@ -274,7 +274,7 @@ func TestS3LocationUsesTheListedBucketAndItsOwnRegion(t *testing.T) {
 	env := s3LocationEnv([]AWSProfile{{Name: "work", Region: "us-east-1"}},
 		fakeBuckets{names: []string{"photos", "team-archive"}, regions: map[string]string{"team-archive": "ap-southeast-2"}, opened: &opened})
 	var out bytes.Buffer
-	if err := promptS3Location(newPrompter(strings.NewReader("\n2\n"), &out), &cfg, env); err != nil {
+	if err := promptS3Location(newPrompter(strings.NewReader("\n2\n"), &out), &cfg, env, ""); err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Bucket != "team-archive" || cfg.Region != "ap-southeast-2" || cfg.AWSProfile != "work" {
@@ -307,7 +307,7 @@ func TestS3LocationBucketDefault(t *testing.T) {
 		cfg := credentials.Config{AWSProfile: "work", Bucket: tc.saved}
 		env := s3LocationEnv([]AWSProfile{{Name: "work"}}, fakeBuckets{names: names, regions: regions})
 		var out bytes.Buffer
-		if err := promptS3Location(newPrompter(strings.NewReader("\n\n"), &out), &cfg, env); err != nil || cfg.Bucket != tc.want {
+		if err := promptS3Location(newPrompter(strings.NewReader("\n\n"), &out), &cfg, env, ""); err != nil || cfg.Bucket != tc.want {
 			t.Errorf("%s: bucket %q err=%v, want %q", tc.name, cfg.Bucket, err, tc.want)
 		}
 		if !strings.Contains(out.String(), tc.prompt) {
@@ -325,7 +325,7 @@ func TestS3LocationListsAtMostTwentyBuckets(t *testing.T) {
 	cfg := credentials.Config{AWSProfile: "work"}
 	env := s3LocationEnv([]AWSProfile{{Name: "work"}}, fakeBuckets{names: names, regions: map[string]string{"bucket-25": "us-west-2"}})
 	var out bytes.Buffer
-	if err := promptS3Location(newPrompter(strings.NewReader("\nbucket-25\n"), &out), &cfg, env); err != nil || cfg.Bucket != "bucket-25" || cfg.Region != "us-west-2" {
+	if err := promptS3Location(newPrompter(strings.NewReader("\nbucket-25\n"), &out), &cfg, env, ""); err != nil || cfg.Bucket != "bucket-25" || cfg.Region != "us-west-2" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
 	if !strings.Contains(out.String(), "  20) bucket-20\n  (5 more not listed)\nEnter 1-20, or another bucket name: ") || strings.Contains(out.String(), "21) ") {
@@ -371,7 +371,7 @@ func TestS3LocationFallsBackToTyping(t *testing.T) {
 	} {
 		cfg := credentials.Config{}
 		var out bytes.Buffer
-		err := promptS3Location(newPrompter(strings.NewReader(tc.input), &out), &cfg, s3LocationEnv(profiles, tc.buckets))
+		err := promptS3Location(newPrompter(strings.NewReader(tc.input), &out), &cfg, s3LocationEnv(profiles, tc.buckets), "")
 		if err != nil || cfg.Bucket != "typed" || cfg.Region != tc.region {
 			t.Errorf("%s: cfg=%+v err=%v", tc.name, cfg, err)
 		}
@@ -390,7 +390,7 @@ func TestS3LocationUsesTheRegionAWrongRegionRefusalNames(t *testing.T) {
 	cfg := credentials.Config{}
 	env := s3LocationEnv([]AWSProfile{{Name: "work", Region: "us-east-1"}}, fakeBuckets{names: []string{"team-archive"}, regionErr: moved})
 	var out bytes.Buffer
-	if err := promptS3Location(newPrompter(strings.NewReader("\n1\n"), &out), &cfg, env); err != nil || cfg.Region != "eu-central-1" {
+	if err := promptS3Location(newPrompter(strings.NewReader("\n1\n"), &out), &cfg, env, ""); err != nil || cfg.Region != "eu-central-1" {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }
@@ -401,7 +401,7 @@ func TestS3LocationSkipsListingForAProfileWithoutCredentials(t *testing.T) {
 	cfg := credentials.Config{}
 	env := s3LocationEnv([]AWSProfile{{Name: "bare", NoCredentials: true}}, fakeBuckets{opened: &opened})
 	var out bytes.Buffer
-	if err := promptS3Location(newPrompter(strings.NewReader("1\nteam-archive\nus-east-2\n"), &out), &cfg, env); err != nil || cfg.Bucket != "team-archive" || cfg.Region != "us-east-2" {
+	if err := promptS3Location(newPrompter(strings.NewReader("1\nteam-archive\nus-east-2\n"), &out), &cfg, env, ""); err != nil || cfg.Bucket != "team-archive" || cfg.Region != "us-east-2" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
 	if len(opened) != 0 || !strings.Contains(out.String(), "Profile bare has no credentials configured, so type the bucket name.\n") {
@@ -414,7 +414,7 @@ func TestS3LocationRejectsATypedRegionThatIsNotARegion(t *testing.T) {
 	cfg := credentials.Config{}
 	env := s3LocationEnv(nil, fakeBuckets{listErr: errAccessDenied, regionErr: errAccessDenied})
 	var out bytes.Buffer
-	if err := promptS3Location(newPrompter(strings.NewReader("work\nteam-archive\n~/code/api\nus-east-1\n"), &out), &cfg, env); err != nil || cfg.Region != "us-east-1" {
+	if err := promptS3Location(newPrompter(strings.NewReader("work\nteam-archive\n~/code/api\nus-east-1\n"), &out), &cfg, env, ""); err != nil || cfg.Region != "us-east-1" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
 	if !strings.Contains(out.String(), `"~/code/api" isn't an AWS region. Enter one like us-east-1 or eu-west-2.`) {
@@ -423,7 +423,7 @@ func TestS3LocationRejectsATypedRegionThatIsNotARegion(t *testing.T) {
 	// A saved region that isn't one is asked for again, not reused.
 	cfg = credentials.Config{AWSProfile: "work", Bucket: "team-archive", Region: "~/code/api"}
 	out.Reset()
-	if err := promptS3Location(newPrompter(strings.NewReader("\n\neu-west-1\n"), &out), &cfg, env); err != nil || cfg.Region != "eu-west-1" {
+	if err := promptS3Location(newPrompter(strings.NewReader("\n\neu-west-1\n"), &out), &cfg, env, ""); err != nil || cfg.Region != "eu-west-1" {
 		t.Fatalf("cfg=%+v err=%v output=%s", cfg, err, &out)
 	}
 }
@@ -438,7 +438,7 @@ func TestS3LocationNeverPrintsTheDiscoveryError(t *testing.T) {
 		cfg := credentials.Config{}
 		env := s3LocationEnv([]AWSProfile{{Name: "work", Region: "us-east-1"}}, buckets)
 		var out bytes.Buffer
-		if err := promptS3Location(newPrompter(strings.NewReader("\nb\n"), &out), &cfg, env); err != nil {
+		if err := promptS3Location(newPrompter(strings.NewReader("\nb\n"), &out), &cfg, env, ""); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(out.String(), "AKIA") || strings.Contains(out.String(), "wJalr") {
@@ -447,7 +447,7 @@ func TestS3LocationNeverPrintsTheDiscoveryError(t *testing.T) {
 	}
 	env := Env{AWSProfiles: func() ([]AWSProfile, error) { return nil, nil }, AWSBuckets: func(string, string) (BucketFinder, error) { return nil, leak }}
 	var out bytes.Buffer
-	if err := promptS3Location(newPrompter(strings.NewReader("work\nb\nus-east-1\n"), &out), &credentials.Config{}, env); err != nil {
+	if err := promptS3Location(newPrompter(strings.NewReader("work\nb\nus-east-1\n"), &out), &credentials.Config{}, env, ""); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "AKIA") || !strings.Contains(out.String(), "Couldn't list buckets for profile work (the lookup failed). Type the bucket name.\n") {
@@ -502,7 +502,7 @@ func TestS3LocationNeverOpensDiscoveryWithASavedRegionThatIsNotARegion(t *testin
 	env := s3LocationEnv([]AWSProfile{{Name: "work", Region: "eu-west-2"}},
 		fakeBuckets{names: []string{"team-archive"}, regions: map[string]string{"team-archive": "eu-west-2"}, opened: &opened})
 	var out bytes.Buffer
-	if err := promptS3Location(newPrompter(strings.NewReader("\n1\n"), &out), &cfg, env); err != nil || cfg.Region != "eu-west-2" {
+	if err := promptS3Location(newPrompter(strings.NewReader("\n1\n"), &out), &cfg, env, ""); err != nil || cfg.Region != "eu-west-2" {
 		t.Fatalf("cfg=%+v err=%v", cfg, err)
 	}
 	if !reflect.DeepEqual(opened, []string{"work eu-west-2"}) {
@@ -528,7 +528,7 @@ func TestS3LocationSkipsTheRegionLookupWhenListingCannotWork(t *testing.T) {
 		env := s3LocationEnv([]AWSProfile{{Name: "work", Region: "us-west-2"}},
 			fakeBuckets{listErr: tc.listErr, regions: map[string]string{"typed": "us-west-2"}, regionCalls: &calls})
 		var out bytes.Buffer
-		if err := promptS3Location(newPrompter(strings.NewReader("\ntyped\n"), &out), &cfg, env); err != nil || cfg.Region != "us-west-2" {
+		if err := promptS3Location(newPrompter(strings.NewReader("\ntyped\n"), &out), &cfg, env, ""); err != nil || cfg.Region != "us-west-2" {
 			t.Fatalf("%s: cfg=%+v err=%v", tc.name, cfg, err)
 		}
 		if calls != tc.calls || strings.Count(out.String(), "Couldn't") != 1 {
@@ -602,7 +602,7 @@ func TestStorageDefaultsFollowAWSProfileVariable(t *testing.T) {
 		AWSBuckets: fakeBuckets{}.open,
 	}
 	var out bytes.Buffer
-	_, _, _, err := promptStorage(newPrompter(strings.NewReader("\n\n"), &out), credentials.Config{}, env)
+	_, _, _, err := promptStorage(newPrompter(strings.NewReader("\n\n"), &out), credentials.Config{}, env, "")
 	if err == nil {
 		t.Fatal("setup went past the bucket question")
 	}

@@ -31,12 +31,19 @@ Enter 1-2, or another bucket name: 2
 Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
-storage test failed: setup test upload ".setup-test/KEY.json" (relative to the configured prefix): incorrect region or folder (check access and retry; saved choices are kept)
-What would you like to do?
-  1) Edit settings
-  2) Retry the storage check
-  3) Cancel (your choices are kept)
-Enter 1-3 [3]: 
-Setup incomplete: storage test failed: setup test upload ".setup-test/KEY.json" (relative to the configured prefix): incorrect region or folder (check access and retry; saved choices are kept)
+
+  \e[31m✗\e[0m Can't sign in to AWS.
+    No credentials were found for the storage profile.
+
+    Fix: Add them with \e[36maws configure --profile work\e[0m, or sign in with \e[36maws sso login --profile work\e[0m for an SSO profile, then try again.
+    \e[2mDetails:\e[0m \e[36magent-archive setup --verbose\e[0m
+
+What next?
+  1) Pick another profile
+  2) Retry the check
+  3) Change other settings
+  4) Stop for now (your answers are kept)
+Enter 1-4 [1]: 4
+Setup incomplete: the storage check failed; your answers are kept
 Run agent-archive setup to continue.
 [exit 1]

@@ -120,8 +120,9 @@ the folder inside the bucket, or the AWS region. The folder inside the
 bucket (the prefix) is `agent-archive/` unless you change it. Retention is
 a whole number of days from 1 to 36,500; there is no "keep forever" (36,500
 days is about a century). Storage changes are checked
-again before starting. If the connection test fails, choose "Edit settings"
-or "Retry" after restoring access.
+again before starting. If the connection test fails, setup says why and
+how to fix it; see [when setup's storage check
+fails](../guides/troubleshooting.md#when-setups-storage-check-fails).
 
 Filtering is best effort, so archived text can still contain sensitive
 information. Read [what leaves your Mac](../security/privacy.md) before

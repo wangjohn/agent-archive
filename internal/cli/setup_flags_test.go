@@ -232,7 +232,8 @@ func TestSetupYesRefusesMissingAnswers(t *testing.T) {
 }
 
 // A failed storage check leaves nothing behind: no configuration, no draft,
-// and no staged key.
+// and no staged key. It prints the diagnosis, and the storage error itself
+// only with --verbose.
 func TestSetupYesStorageFailureLeavesNothing(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
@@ -243,13 +244,35 @@ func TestSetupYesStorageFailureLeavesNothing(t *testing.T) {
 	}
 	env = withEnvironment(env, map[string]string{envR2SecretAccessKey: "private-secret"})
 	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--bucket", "b", "--r2-account", testR2Account, "--r2-access-key-id", "KEY", "--project", project, "--apps", "codex")
-	if !strings.Contains(output, "storage test failed") || strings.Contains(output, "private-secret") {
+	if !strings.Contains(output, "The storage check failed.") || !strings.Contains(output, "the storage check failed; nothing was changed") || strings.Contains(output, "private-secret") {
 		t.Fatalf("output:\n%s", output)
+	}
+	if strings.Contains(output, "incorrect region or folder") || !strings.Contains(output, "Details: run again with --verbose") {
+		t.Fatalf("the storage error was printed without --verbose:\n%s", output)
 	}
 	if _, found, _ := config.Load(home); found || len(kc.items) != 0 {
 		t.Fatal("failure left configuration or a key")
 	}
 	if _, err := os.Stat(draftPath(home)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("failure left a draft")
+	}
+}
+
+// With --verbose, a failed storage check also prints the storage error, once.
+//
+// Regression: the error was always printed, twice (under the check, and
+// again as setup exited), and ran to several hundred characters of SDK text.
+func TestSetupYesVerboseStorageFailure(t *testing.T) {
+	t.Parallel()
+	env := setupTestEnv(t, t.TempDir(), t.TempDir(), newFakeKeychain(), time.Now())
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
+	}
+	output := setupYes(t, env, "", 1, "--yes", "--verbose", "--provider", "s3", "--bucket", "b", "--aws-profile", "work", "--region", "us-east-1", "--project", t.TempDir(), "--apps", "codex")
+	if n := strings.Count(output, "incorrect region or folder"); n != 1 {
+		t.Fatalf("storage error printed %d times, want once:\n%s", n, output)
+	}
+	if !strings.Contains(output, "Details: setup test upload") {
+		t.Fatalf("no details line:\n%s", output)
 	}
 }
