@@ -102,7 +102,7 @@ func s3SetupInput(bucket, region, profile string, codex, claude, cursor bool, pr
 		}
 		return "n"
 	}
-	return strings.Join([]string{yn(codex), yn(claude), yn(cursor), project, "", "s3", bucket, profile, region, "y"}, "\n") + "\n"
+	return strings.Join([]string{yn(codex), yn(claude), yn(cursor), project, "", "s3", profile, bucket, region, "y"}, "\n") + "\n"
 }
 
 func r2SetupInput(project, secret string) string {
@@ -342,7 +342,7 @@ func TestSetupDestinationRejectsPendingAndRetiresPublishedSessions(t *testing.T)
 	if err := capture.HandleEvent(home, "codex", payload, now); err != nil {
 		t.Fatal(err)
 	}
-	input := "storage\ns3\nother-bucket\nprofile\ny\n"
+	input := "storage\ns3\nprofile\nother-bucket\ny\n"
 	output := setupRun(t, env, input, 1)
 	if !strings.Contains(output, "pending") {
 		t.Fatal(output)
@@ -386,7 +386,7 @@ func TestDraftStorageEditKeepsCaptureChoices(t *testing.T) {
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
 	input := s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project)
 	setupRun(t, env, strings.TrimSuffix(input, "y\n")+"n\n", 0)
-	setupRun(t, env, "storage\ns3\nother-bucket\nprofile\ny\n", 0)
+	setupRun(t, env, "storage\ns3\nprofile\nother-bucket\ny\n", 0)
 	cfg, _, _ := config.Load(home)
 	if cfg.Storage.Bucket != "other-bucket" || len(cfg.Archive.Projects) != 1 || len(cfg.Harnesses) != 1 {
 		t.Fatal("edit lost capture choices")

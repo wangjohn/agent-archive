@@ -640,15 +640,10 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 		{"s3", "Amazon S3"},
 		{"help", "Show setup instructions"},
 	}
-	// S3 is offered first when an AWS profile with credentials is already
-	// configured; otherwise R2, which needs nothing installed.
 	// A saved provider wins, so discovery runs only when there is none.
 	defaultProvider := existing.Provider
 	if defaultProvider == "" {
-		defaultProvider = credentials.ProviderR2
-		if profiles, e := env.awsProfiles(); e == nil && len(usableAWSProfiles(profiles)) > 0 {
-			defaultProvider = credentials.ProviderS3
-		}
+		defaultProvider = defaultStorageProvider(env)
 	}
 	choice, err := p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	for err == nil && choice == "help" {
@@ -706,13 +701,8 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 				}
 			}
 		}
-	} else {
-		if cfg.Bucket, err = p.required("Bucket name", cfg.Bucket); err != nil {
-			return cfg, secret, false, err
-		}
-		if err = promptAWSProfile(p, &cfg, env); err != nil {
-			return cfg, secret, false, err
-		}
+	} else if err = promptS3Location(p, &cfg, env); err != nil {
+		return cfg, secret, false, err
 	}
 	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)
 
