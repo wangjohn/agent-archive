@@ -91,30 +91,52 @@ func (f Files) path(harness string) (string, error) {
 func Plan(files Files, hook Hook, harnesses []string) ([]Change, error) {
 	changes := []Change{}
 	for _, h := range harnesses {
-		path, err := files.path(h)
+		change, err := planFile(files, h, hook)
 		if err != nil {
 			return nil, err
 		}
-		before, err := os.ReadFile(path)
-		exists := err == nil
-		if err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("cannot read %s", path)
-		}
-		after, err := Merge(before, h, hook)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		mode := os.FileMode(0600)
-		if exists {
-			info, e := os.Stat(path)
-			if e != nil {
-				return nil, e
-			}
-			mode = info.Mode().Perm()
-		}
-		changes = append(changes, Change{Path: path, Before: before, After: after, Existed: exists, Mode: mode})
+		changes = append(changes, change)
 	}
 	return changes, nil
+}
+
+// readError is Plan's error for a hook file that is there but cannot be
+// read. Its message names only the path; the cause is kept for Validate.
+type readError struct {
+	path  string
+	cause error
+}
+
+func (e *readError) Error() string { return "cannot read " + e.path }
+
+func (e *readError) Unwrap() error { return e.cause }
+
+// planFile prepares installing hook for harness into its file in files. It
+// is the one place Plan and Validate check a file, so the two cannot
+// disagree about which files setup can install into.
+func planFile(files Files, harness string, hook Hook) (Change, error) {
+	path, err := files.path(harness)
+	if err != nil {
+		return Change{}, err
+	}
+	before, err := os.ReadFile(path)
+	exists := err == nil
+	if err != nil && !os.IsNotExist(err) {
+		return Change{}, &readError{path: path, cause: err}
+	}
+	after, err := Merge(before, harness, hook)
+	if err != nil {
+		return Change{}, fmt.Errorf("%s: %w", path, err)
+	}
+	mode := os.FileMode(0600)
+	if exists {
+		info, e := os.Stat(path)
+		if e != nil {
+			return Change{}, e
+		}
+		mode = info.Mode().Perm()
+	}
+	return Change{Path: path, Before: before, After: after, Existed: exists, Mode: mode}, nil
 }
 
 // Problem is why setup cannot install into one hook file, as Validate finds
@@ -154,32 +176,24 @@ var validationHook = Hook{Executable: string(filepath.Separator)}
 func Validate(files Files) []Problem {
 	var problems []Problem
 	for _, harness := range slices.Sorted(maps.Keys(files)) {
-		path, err := files.path(harness)
-		if err != nil {
-			problems = append(problems, Problem{Harness: harness, Path: files[harness], Reason: err.Error(), Err: err})
+		_, err := planFile(files, harness, validationHook)
+		if err == nil {
 			continue
 		}
-		data, err := os.ReadFile(path)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			reason := "the file cannot be read"
-			if cause := errors.Unwrap(err); cause != nil {
-				reason += ": " + cause.Error()
-			}
-			problems = append(problems, Problem{Harness: harness, Path: path, Reason: reason, Err: fmt.Errorf("cannot read %s", path)})
-			continue
-		}
-		if _, err = Merge(data, harness, validationHook); err == nil {
-			continue
-		}
-		p := Problem{Harness: harness, Path: path, Reason: err.Error(), Err: fmt.Errorf("%s: %w", path, err)}
+		path := files[harness]
+		p := Problem{Harness: harness, Path: path, Err: err}
+		var unread *readError
 		var located *configError
 		switch {
+		case errors.As(err, &unread):
+			p.Reason = "the file cannot be read"
+			if cause := errors.Unwrap(unread.cause); cause != nil {
+				p.Reason += ": " + cause.Error()
+			}
 		case errors.As(err, &located):
 			p.Line, p.Column, p.Reason = located.line, located.column, located.reason
-		case errors.Is(err, errInvalidConfiguration):
+		default:
+			p.Reason = strings.TrimPrefix(err.Error(), path+": ")
 			p.Reason = strings.TrimPrefix(p.Reason, errInvalidConfiguration.Error()+": ")
 		}
 		problems = append(problems, p)

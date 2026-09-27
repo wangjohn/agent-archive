@@ -27,6 +27,8 @@ func TestValidateReportsWhereAndWhatPlanRefuses(t *testing.T) {
 		{"block comment", "cursor", "{\n  \"version\": 1 /* x */\n}\n", 2, 16, "comments (JSONC) are not JSON"},
 		{"trailing comma in object", "codex", "{\n  \"hooks\": {},\n}\n", 2, 14, "trailing comma"},
 		{"trailing comma in array", "claude", `{"a": [1, 2,]}`, 1, 12, "trailing comma"},
+		{"comment after the object", "claude", "{\"a\": 1}\n// mine\n", 2, 1, "comments (JSONC) are not JSON"},
+		{"comma after the object", "codex", "{\"a\": 1},\n", 1, 9, "trailing comma"},
 		{"byte-order mark", "claude", "\xef\xbb\xbf{\"a\":1}", 1, 1, "byte-order mark (BOM)"},
 		{"CRLF, broken", "claude", "{\r\n  \"a\": ,\r\n}\r\n", 2, 8, "invalid character ','"},
 		{"truncated", "codex", `{"a": `, 1, 7, "EOF"},

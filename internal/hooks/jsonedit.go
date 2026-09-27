@@ -267,7 +267,7 @@ func invalid(src []byte, err error) error {
 	switch {
 	case bytes.HasPrefix(rest, []byte("//")) || bytes.HasPrefix(rest, []byte("/*")):
 		hint = "; comments (JSONC) are not JSON, so remove them"
-	case bytes.HasPrefix(rest, []byte(",")) && (bytes.HasPrefix(after, []byte("}")) || bytes.HasPrefix(after, []byte("]"))):
+	case bytes.HasPrefix(rest, []byte(",")) && (len(after) == 0 || bytes.HasPrefix(after, []byte("}")) || bytes.HasPrefix(after, []byte("]"))):
 		hint = "; a comma before a closing brace or bracket (a trailing comma) is not JSON, so remove it"
 	}
 	reason := err.Error() + hint
@@ -340,7 +340,12 @@ func parseDocument(src []byte) (*document, error) {
 		return nil, refused(d.src, -1, "the file must hold one JSON object")
 	}
 	d.close = int(dec.InputOffset()) - 1
-	if _, err = dec.Token(); !errors.Is(err, io.EOF) {
+	// After the object, only the end of the file: text the decoder cannot
+	// read there, such as a comment or a comma, is reported as what it is.
+	var syntaxErr *json.SyntaxError
+	if _, err = dec.Token(); errors.As(err, &syntaxErr) {
+		return nil, invalid(d.src, err)
+	} else if !errors.Is(err, io.EOF) {
 		return nil, refused(d.src, skipSpace(d.src, d.close+1), "more than one JSON value in the file")
 	}
 	if !d.created {
