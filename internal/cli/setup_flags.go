@@ -124,6 +124,20 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	}
 	p := newPrompter(stdin, out)
 	p.now = env.now
+	// The checks interactive setup makes before its first question, for the
+	// apps these answers install and, when they store in R2, the Keychain.
+	// They follow the answers' own checks, so a script learns of every
+	// mistake in its flags without launchctl or the Keychain being asked.
+	var kept []string
+	if installed {
+		kept = existing.Harnesses
+	}
+	scope := preflightScope{apps: cfg.Harnesses, kept: kept, r2: cfg.Storage.Provider == credentials.ProviderR2, credentialRef: cfg.Storage.R2CredentialRef}
+	checks := preflight(env, home, userHome, scope)
+	checks.print(p)
+	if checks.blocked() {
+		return &preflightError{checks: checks, yes: true}
+	}
 	if cfg.Storage.Provider == credentials.ProviderR2 && !(credentials.R2Location{Endpoint: cfg.Storage.R2Endpoint}).Cloudflare() {
 		p.warn("--r2-account isn't a Cloudflare R2 address; it is used as an S3-compatible endpoint.")
 	}

@@ -140,6 +140,10 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			if errors.As(err, &other) {
 				terminal.Println(stderr, other.guidance())
 			}
+			var blocker *preflightError
+			if errors.As(err, &blocker) {
+				terminal.Println(stderr, blocker.guidance())
+			}
 			return 1
 		}
 		return 0
@@ -154,6 +158,11 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		var other *otherInstallationError
 		if errors.As(err, &other) {
 			terminal.Println(stderr, other.guidance())
+			return 1
+		}
+		var blocker *preflightError
+		if errors.As(err, &blocker) {
+			terminal.Println(stderr, blocker.guidance())
 			return 1
 		}
 		terminal.Println(stderr, "Run agent-archive setup to continue.")
@@ -199,7 +208,8 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	discoveries := env.discoverApplications(userHome)
 	discoveredAt := env.now()
 	// The review shows these; discoveries themselves are recorded unchanged.
-	reviewed := reviewDiscoveries(discoveries, env.detectHarnesses(userHome))
+	detected := env.detectHarnesses(userHome)
+	reviewed := reviewDiscoveries(discoveries, detected)
 	p := newPrompter(stdin, out)
 	p.now = env.now
 	known := knownProjectsOnce(env, userHome)
@@ -207,6 +217,31 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 	// beside another installation's (see applySetup).
 	for _, problem := range env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), allHarnesses) {
 		p.warn(problem)
+	}
+	// What applying the setup needs is checked before any question, so a
+	// hook file setup cannot edit, or a launchctl or Keychain that does not
+	// answer, stops setup here rather than after every answer. The Keychain
+	// is checked when the saved or unfinished setup stores in R2; choosing
+	// R2 later finds a Keychain that does not open at that question. A
+	// draft that cannot be read is dealt with after these checks. While a
+	// draft is saved, setup --yes refuses to run, so no fix may send the
+	// user there; nor may one for an installed app, which --yes keeps.
+	unfinished, draftSaved, _, _ := readDraft(home)
+	scope := preflightScope{
+		apps:          preflightApps(detected, existing.Harnesses, slices.Concat(existing.DeclinedHarnesses, unfinished.Config.DeclinedHarnesses), unfinished.Config.Harnesses),
+		r2:            existing.Storage.Provider == credentials.ProviderR2 || unfinished.Config.Storage.Provider == credentials.ProviderR2,
+		credentialRef: firstNonEmpty(existing.Storage.R2CredentialRef, unfinished.Config.Storage.R2CredentialRef),
+	}
+	switch {
+	case draftSaved:
+		scope.kept = scope.apps
+	case installed:
+		scope.kept = existing.Harnesses
+	}
+	checks := preflight(env, home, userHome, scope)
+	checks.print(p)
+	if checks.blocked() {
+		return &preflightError{checks: checks}
 	}
 	if !found {
 		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
