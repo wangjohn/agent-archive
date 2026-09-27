@@ -288,6 +288,86 @@ func TestSetupWrongRegionAnswerMustBeARegion(t *testing.T) {
 	}
 }
 
+// secondRegionLookup is a BucketFinder whose buckets can't be listed and
+// whose first region lookup is refused; later ones find region.
+type secondRegionLookup struct {
+	region string
+	calls  *int
+}
+
+func (f secondRegionLookup) Buckets(context.Context) ([]string, error) { return nil, errAccessDenied }
+
+func (f secondRegionLookup) Region(context.Context, string) (string, error) {
+	*f.calls++
+	if *f.calls == 1 {
+		return "", errAccessDenied
+	}
+	return f.region, nil
+}
+
+// When S3 refuses the check for the region without naming one, the fix
+// asks S3 for the bucket's region, as the storage questions do, and offers
+// it, rather than the region that just failed.
+func TestSetupWrongRegionFixLooksUpTheRegion(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	bucket := storagetest.NewMemoryStore()
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		var failure error
+		if cfg.Storage.Region != "eu-west-1" {
+			failure = &smithyhttp.ResponseError{
+				Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{}}},
+				Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+			}
+		}
+		return putErrorStore{bucket, &failure}, nil
+	}
+	calls := 0
+	env.AWSBuckets = func(string, string) (BucketFinder, error) {
+		return secondRegionLookup{region: "eu-west-1", calls: &calls}, nil
+	}
+	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
+	output := setupRun(t, env, input+"\n\ny\n", 0)
+	if !strings.Contains(output, "Bucket bucket is in eu-west-1.\nBucket region [eu-west-1]") {
+		t.Fatalf("the fix did not offer the looked-up region:\n%s", output)
+	}
+	if cfg, _, _ := config.Load(home); cfg.Storage.Region != "eu-west-1" {
+		t.Fatalf("region %q", cfg.Storage.Region)
+	}
+}
+
+// After an S3 wrong-region failure, storage changed to R2 on Continue asks
+// no AWS region: R2 keeps its own.
+//
+// Regression: the region the failure set to ask was asked whatever the
+// provider, and promptRegion refused a blank answer and R2's "auto".
+func TestSetupWrongRegionThenR2AsksNoRegion(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	bucket := storagetest.NewMemoryStore()
+	env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		var failure error
+		if cfg.Storage.Provider == credentials.ProviderS3 {
+			failure = &smithyhttp.ResponseError{
+				Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}}},
+				Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+			}
+		}
+		return putErrorStore{bucket, &failure}, nil
+	}
+	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
+	setupRun(t, env, input+"cancel\n", 1)
+	output := setupRun(t, env, "continue\nr2\n0123456789abcdef0123456789abcdef\ntest-bucket\nACCESS\nsecret\ny\n", 0)
+	if strings.Contains(output, "Bucket region") {
+		t.Fatalf("R2 was asked an AWS region:\n%s", output)
+	}
+	if cfg, _, _ := config.Load(home); cfg.Storage.Provider != credentials.ProviderR2 {
+		t.Fatalf("storage %+v", cfg.Storage)
+	}
+}
+
 // For refused R2 credentials, the fix ("Enter the R2 access key again")
 // asks for the key, rather than offering to keep the one just refused.
 func TestSetupR2CredentialFixAsksForTheKey(t *testing.T) {

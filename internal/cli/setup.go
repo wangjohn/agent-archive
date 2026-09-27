@@ -405,12 +405,14 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 			}
 		}
 		if draft.Config.Storage != verifiedStorage {
-			if draft.AskRegion {
+			// Only S3 has a region to ask: storage changed to R2 since the
+			// failure keeps R2's own.
+			if draft.AskRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
 				if draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", draft.Config.Storage.Region); err != nil {
 					return err
 				}
-				draft.AskRegion = false
 			}
+			draft.AskRegion = false
 			terminal.Println(out, "\nChecking your storage connection…")
 			connectErr, e := verifyStorage(&draft.Config, env)
 			if connectErr != nil {
@@ -437,8 +439,14 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 				if choice == "fix" {
 					draft = reopenStorage(draft, d)
 					if draft.AskRegion {
-						// The region is the one answer to change.
+						// The region is the one answer to change. When S3
+						// didn't name it, ask S3 for it, as the storage
+						// questions would, so the default is not the
+						// region that just failed.
 						draft.Step = 2
+						if d.Region == "" {
+							draft.Config.Storage.Region = firstNonEmpty(lookUpBucketRegion(p, env, draft.Config.Storage), draft.Config.Storage.Region)
+						}
 					}
 				}
 				if choice == "edit" {

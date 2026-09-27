@@ -154,6 +154,21 @@ func paintCommands(s textStyle, sentence string) string {
 	return strings.Join(parts, "")
 }
 
+// lookUpBucketRegion asks S3 for the region of cfg's bucket, with cfg's
+// profile, and says which it is. It returns "" when the lookup fails.
+func lookUpBucketRegion(p *prompter, env Env, cfg credentials.Config) string {
+	finder, err := env.awsBuckets(cfg.AWSProfile, cfg.Region)
+	if err != nil {
+		return ""
+	}
+	region, err := bucketRegion(finder, cfg.Bucket)
+	if err != nil {
+		return ""
+	}
+	terminal.Printf(p.out, "Bucket %s is in %s.\n", cfg.Bucket, region)
+	return region
+}
+
 // reopenStorage returns draft set to ask the storage questions again after a
 // check that failed as d says, with its answers as the defaults. The answer
 // d blames is one those questions would keep without asking, so it is
