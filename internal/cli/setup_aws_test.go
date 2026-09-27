@@ -568,7 +568,12 @@ func TestBucketDiscoveryConfigKeepsTheSDKRegion(t *testing.T) {
 	t.Setenv("AWS_CONFIG_FILE", configFile)
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "credentials"))
 	t.Setenv("AWS_DEFAULT_REGION", "")
-	for _, tc := range []struct{ profile, region, awsRegion, want string }{
+	for _, tc := range []struct {
+		profile   string
+		region    string
+		awsRegion string
+		want      string
+	}{
 		{"gov", "", "", "us-gov-west-1"},
 		{"bare", "", "cn-north-1", "cn-north-1"},
 		{"bare", "", "", "us-east-1"},

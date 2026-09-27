@@ -399,9 +399,11 @@ func discoveryReason(err error) string {
 		return "S3 couldn't be reached"
 	case storage.CauseWrongRegion:
 		return "the bucket is in another region"
+	case storage.CauseOther:
+		// This includes local failures, such as an unusable profile, where
+		// S3 was never asked.
+		return "the lookup failed"
 	default:
-		// CauseOther includes local failures, such as an unusable profile,
-		// where S3 was never asked.
 		return "the lookup failed"
 	}
 }
