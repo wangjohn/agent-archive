@@ -344,7 +344,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 			terminal.Println(p.out, "Use a relative folder name, such as agent-archive/; do not include .. or a leading slash.")
 		}
 	case "region":
-		draft.Config.Storage.Region, err = p.required("Bucket region", draft.Config.Storage.Region)
+		draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", draft.Config.Storage.Region)
 	}
 	return err
 }

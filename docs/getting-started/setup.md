@@ -38,8 +38,8 @@ outside an included project is captured.
 
 ## 2. Storage
 
-Setup suggests S3 when your AWS settings already have a profile with
-credentials, and R2 otherwise.
+Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
+already have a profile with credentials, and R2 otherwise.
 
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
@@ -47,17 +47,27 @@ credentials, and R2 otherwise.
   account and the bucket, so the bucket isn't asked for. Any other S3 API
   endpoint (such as an EU jurisdiction's) works too. Secret input is hidden
   on a terminal and stored in the macOS Keychain.
-- **S3:** enter the bucket and choose an existing AWS profile. Setup offers
-  the profiles in your AWS settings and uses the profile's region when it has
-  one; it asks for a region only when one is missing. The profiles come
+- **S3:** choose an existing AWS profile, then the bucket. Setup offers
+  the profiles in your AWS settings. The profiles come
   from `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE` when your shell
   sets them. The suggested profile is `AWS_PROFILE` when your shell sets it,
   else `default`, or the only profile, when it has credentials. A profile
   whose settings name no credentials (no access keys, `credential_process`,
   SSO, login session, or role it can assume) is marked "no credentials
-  configured", as is a profile the AWS SDK cannot load. Setup only checks
-  which settings are present: it never runs `credential_process`, signs in,
-  or prints or saves a secret.
+  configured", as is a profile the AWS SDK cannot load. Profile discovery
+  only checks which settings are present: it never runs
+  `credential_process`, signs in, or prints or saves a secret.
+
+  With the profile chosen, setup lists the buckets it can see
+  (`s3:ListAllMyBuckets`) and offers them by number, suggesting the saved
+  bucket or else the first named `agent-archive…`; you can also type a
+  name. It then reads the bucket's own region (`s3:GetBucketLocation`) and
+  uses it, so a bucket in another region than the profile's works. When
+  the profile may not list buckets or read the location, setup says why in
+  one line and asks instead: for the bucket name, and for the region unless
+  the profile names one. A typed region must look like one, such as
+  `us-east-1`. These lookups use the profile's credentials only inside the
+  AWS SDK; setup never prints or saves them.
 
 Setup checks the connection with one temporary synthetic object
 (`.setup-test/<random>.json`), which it deletes again. That proves the
@@ -128,7 +138,8 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
 - If saving fails after the storage check, a new R2 key stays with the
   unfinished setup; run `agent-archive setup` to finish or discard it.
 - `--r2-account` also takes the bucket URL, which names the bucket too.
-- For S3, `--region` defaults to the profile's region.
+- For S3, `--region` defaults to the profile's region, and must look like a
+  region, such as `us-east-1`.
 - `--apps` defaults to the apps already set up, else those found on this Mac.
   It can add apps but never removes one: it must name every app already set
   up, and to remove an app (and its hooks) you run `agent-archive setup`.

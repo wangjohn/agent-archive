@@ -1,13 +1,17 @@
 $ agent-archive setup
 Checking installed applications...
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
-You have an unfinished setup. What would you like to do?
-  1) Continue where you left off
-  2) Change apps and projects
-  3) Change storage
-  4) Change how long sessions are kept
-  5) Start over
-Enter 1-5 [1]: 1
+
+Step 1 of 3 · Choose what to capture
+
+No apps found automatically.
+Choose which apps to include:
+Include Codex? [y/N] y
+Include Claude Code? [y/N] n
+Include Cursor? [y/N] n
+Project: /Users/alex/src/web-app
+Archive sessions in this project? [Y/n] 
+Add another project? [y/N] 
 
 Step 2 of 3 · Connect storage
 
@@ -17,18 +21,19 @@ Where should sessions be stored?
   3) Show setup instructions
 Enter 1-3 [1]: 2
 AWS profile: work
-Which bucket should sessions be stored in?
-  1) photos
-  2) team-archive
-Enter 1-2, or another bucket name: 2
-Bucket team-archive is in us-east-1; using that region.
+Couldn't list the buckets of profile work (access denied), so type the name.
+Bucket name: team-archive
+Couldn't look up the region of bucket team-archive (access denied).
+Bucket region (for example us-east-1): ~/code/api
+"~/code/api" isn't an AWS region. Enter one like us-east-1 or eu-west-2.
+Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
 ✓ Connected.
 
 Step 3 of 3 · Ready to start
 
-  Apps      Codex 0.121.0, Claude Code 2.1.90
+  Apps      Codex (version unknown)
   Projects  /Users/alex/src/web-app
   Keep for  90 days, then deleted automatically
   Storage   Amazon S3
@@ -37,11 +42,10 @@ Step 3 of 3 · Ready to start
 
 Before you confirm
   · Codex hooks: /Users/alex/.codex/hooks.json
-  · Claude Code hooks: /Users/alex/.claude/settings.json
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   · Filtering is best effort; sensitive text may remain in archived sessions.
-  · Capture with Codex 0.121.0, Claude Code 2.1.90 is not confirmed until a session is archived.
+  · Capture with Codex (version unknown) is not confirmed until a session is archived.
     After your first session, check it with agent-archive status.
 
 Start archiving?
