@@ -20,8 +20,9 @@ type AWSProfile struct {
 	Name   string
 	Region string
 	// NoCredentials is true when the profile's settings name no credential
-	// source: no access keys, credential_process, SSO, login session, or
-	// role. Discovery checks only that such a setting is present.
+	// source (no access keys, credential_process, SSO, login session, or
+	// role with a source to assume it from) or the SDK cannot load it.
+	// Discovery checks only that such a setting is present.
 	NoCredentials bool
 }
 
@@ -51,7 +52,8 @@ func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
-			// Only section names are used; values may contain credentials and are ignored.
+			// This scan uses only section names. The SDK parses the values below, but
+			// discovery keeps only the region and whether a credential setting is present.
 			if !strings.HasPrefix(line, "[") {
 				continue
 			}
@@ -83,7 +85,10 @@ func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {
 			o.CredentialsFiles = []string{credentialsPath}
 		})
 		if err != nil {
-			profiles = append(profiles, AWSProfile{Name: name})
+			// The SDK cannot load this profile (a broken source_profile
+			// chain, a missing sso-session section, conflicting credential
+			// settings), so it cannot supply credentials either.
+			profiles = append(profiles, AWSProfile{Name: name, NoCredentials: true})
 			continue
 		}
 		profiles = append(profiles, AWSProfile{Name: name, Region: cfg.Region, NoCredentials: !hasCredentialSource(cfg)})
@@ -94,11 +99,11 @@ func readAWSProfiles(configPath, credentialsPath string) ([]AWSProfile, error) {
 
 // hasCredentialSource reports whether a profile names any way to get
 // credentials. It looks only at which settings are present; nothing is
-// retrieved or run.
+// retrieved or run. A role counts only with something to assume it from.
 func hasCredentialSource(cfg awsconfig.SharedConfig) bool {
-	return cfg.Credentials.HasKeys() || cfg.CredentialProcess != "" || cfg.CredentialSource != "" ||
-		cfg.WebIdentityTokenFile != "" || cfg.RoleARN != "" || cfg.SSOSessionName != "" ||
-		cfg.SSOStartURL != "" || cfg.LoginSession != ""
+	role := cfg.RoleARN != "" && (cfg.SourceProfileName != "" || cfg.CredentialSource != "" || cfg.WebIdentityTokenFile != "")
+	return cfg.Credentials.HasKeys() || cfg.CredentialProcess != "" || cfg.WebIdentityTokenFile != "" ||
+		role || cfg.SSOSessionName != "" || cfg.SSOStartURL != "" || cfg.LoginSession != ""
 }
 
 // usableAWSProfiles names the discovered profiles that have a credential
@@ -120,8 +125,8 @@ func defaultAWSProfile(saved string, profiles []AWSProfile, env Env) string {
 	if saved != "" {
 		return saved
 	}
-	if name, _ := env.lookupEnv("AWS_PROFILE"); strings.TrimSpace(name) != "" {
-		return strings.TrimSpace(name)
+	if name := lookupEnvTrimmed(env, "AWS_PROFILE"); name != "" {
+		return name
 	}
 	usable := usableAWSProfiles(profiles)
 	if containsString(usable, "default") {

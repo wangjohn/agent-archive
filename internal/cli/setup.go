@@ -591,11 +591,14 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 	}
 	// S3 is offered first when an AWS profile with credentials is already
 	// configured; otherwise R2, which needs nothing installed.
-	defaultProvider := credentials.ProviderR2
-	if profiles, e := env.awsProfiles(); e == nil && len(usableAWSProfiles(profiles)) > 0 {
-		defaultProvider = credentials.ProviderS3
+	// A saved provider wins, so discovery runs only when there is none.
+	defaultProvider := existing.Provider
+	if defaultProvider == "" {
+		defaultProvider = credentials.ProviderR2
+		if profiles, e := env.awsProfiles(); e == nil && len(usableAWSProfiles(profiles)) > 0 {
+			defaultProvider = credentials.ProviderS3
+		}
 	}
-	defaultProvider = firstNonEmpty(existing.Provider, defaultProvider)
 	choice, err := p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	for err == nil && choice == "help" {
 		terminal.Println(p.out, "Cloudflare R2, in the dashboard at https://dash.cloudflare.com:")

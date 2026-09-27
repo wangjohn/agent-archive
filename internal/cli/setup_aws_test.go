@@ -44,6 +44,47 @@ func TestAWSProfileDiscoveryReadsSettingsWithoutRunningCredentials(t *testing.T)
 	}
 }
 
+func TestAWSProfileDiscoveryMarksProfilesThatCannotSupplyCredentials(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config")
+	data := "[profile base]\nregion = us-east-1\n" +
+		// Assumes a role from a profile that has no credentials.
+		"[profile chained]\nrole_arn = arn:aws:iam::111111111111:role/archive\nsource_profile = base\n" +
+		// A role with nothing to assume it from.
+		"[profile lonerole]\nrole_arn = arn:aws:iam::111111111111:role/archive\n" +
+		// Names an sso-session section that does not exist.
+		"[profile badsso]\nsso_session = missing\n" +
+		"[profile webid]\nrole_arn = arn:aws:iam::111111111111:role/archive\nweb_identity_token_file = /nonexistent/token\n"
+	if err := os.WriteFile(configPath, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := readAWSProfiles(configPath, filepath.Join(dir, "credentials"))
+	want := []AWSProfile{
+		{Name: "badsso", NoCredentials: true},
+		{Name: "base", Region: "us-east-1", NoCredentials: true},
+		{Name: "chained", NoCredentials: true},
+		{Name: "lonerole", NoCredentials: true},
+		{Name: "webid"},
+	}
+	if err != nil || !reflect.DeepEqual(profiles, want) {
+		t.Fatalf("profiles=%+v err=%v", profiles, err)
+	}
+}
+
+func TestStorageProviderDefaultSkipsDiscoveryWhenProviderSaved(t *testing.T) {
+	t.Parallel()
+	called := false
+	env := Env{AWSProfiles: func() ([]AWSProfile, error) { called = true; return nil, nil }}
+	var out bytes.Buffer
+	_, _, _, _ = promptStorage(newPrompter(strings.NewReader(""), &out), credentials.Config{Provider: credentials.ProviderS3}, env)
+	if called {
+		t.Fatal("AWS profile discovery ran although a provider was saved")
+	}
+	if !strings.Contains(out.String(), "Enter 1-3 [2]: ") {
+		t.Fatalf("output %q, want the saved S3 as default", &out)
+	}
+}
+
 func TestAWSProfileSwitchDoesNotReuseOldRegion(t *testing.T) {
 	t.Parallel()
 	cfg := credentials.Config{AWSProfile: "old", Region: "us-east-1"}

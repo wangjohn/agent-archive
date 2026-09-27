@@ -54,9 +54,10 @@ credentials, and R2 otherwise.
   sets them. The suggested profile is `AWS_PROFILE` when your shell sets it,
   else `default`, or the only profile, when it has credentials. A profile
   whose settings name no credentials (no access keys, `credential_process`,
-  SSO, login session, or role) is marked "no credentials configured". Setup
-  only checks which settings are present: it never reads a secret, runs
-  `credential_process`, or signs in.
+  SSO, login session, or role it can assume) is marked "no credentials
+  configured", as is a profile the AWS SDK cannot load. Setup only checks
+  which settings are present: it never runs `credential_process`, signs in,
+  or prints or saves a secret.
 
 Setup checks the connection with one temporary synthetic object
 (`.setup-test/<random>.json`), which it deletes again. That proves the
