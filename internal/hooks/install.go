@@ -125,11 +125,13 @@ type Problem struct {
 	// Path is the file as files names it: a symbolic link is reported by
 	// its own path, not the file it points to.
 	Path string
-	// Line and Column say where in the file the problem is, both 1-based,
-	// the column counted in bytes. Both are 0 when the problem is not at
-	// one place, such as a duplicate key under "hooks", which Reason names
-	// by its path in the JSON instead.
-	Line, Column int
+	// Line is the 1-based line of the file the problem is on. It is 0 when
+	// the problem is not at one place, such as a duplicate key under
+	// "hooks", which Reason names by its path in the JSON instead.
+	Line int
+	// Column is the 1-based column on Line, counted in bytes, or 0 with
+	// Line.
+	Column int
 	// Reason is what is wrong and, for the usual mistakes, how to fix it,
 	// without the path, line and column.
 	Reason string

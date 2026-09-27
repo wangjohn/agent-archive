@@ -318,11 +318,11 @@ func parseDocument(src []byte) (*document, error) {
 		if !ok {
 			return nil, refused(d.src, -1, "an object key is not a string")
 		}
+		keyStart := skipUntil(d.src, before, '"')
 		// Setup would edit one of two members that tools resolve
 		// differently (the last wins in Go and JavaScript, not everywhere),
 		// so a duplicate of a member it owns is refused.
 		//lint:ignore LV1001 top-level member names of a user's JSON file are an open set; only these two are setup's
-		keyStart := skipUntil(d.src, before, '"')
 		if _, dup := d.span(key); dup && (key == "hooks" || key == "version") {
 			return nil, refused(d.src, keyStart, fmt.Sprintf("more than one top-level %q key; remove the duplicate", key))
 		}

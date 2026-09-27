@@ -16,11 +16,12 @@ import (
 // says where and what: the same checks, and word for word the same error.
 func TestValidateReportsWhereAndWhatPlanRefuses(t *testing.T) {
 	cases := []struct {
-		name         string
-		harness      string
-		input        string
-		line, column int
-		reason       string
+		name    string
+		harness string
+		input   string
+		line    int
+		column  int
+		reason  string
 	}{
 		{"line comment", "claude", "{\n  // mine\n  \"model\": \"x\"\n}\n", 2, 3, "comments (JSONC) are not JSON"},
 		{"block comment", "cursor", "{\n  \"version\": 1 /* x */\n}\n", 2, 16, "comments (JSONC) are not JSON"},
