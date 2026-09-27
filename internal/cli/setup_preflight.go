@@ -108,7 +108,6 @@ func preflight(env Env, home, userHome string, apps []string, keychain bool) pre
 
 	plist := env.installation(home, userHome).collectorPlist()
 	job := preflightCheck{Label: "Background job", Detail: "launchctl answers", OK: true}
-	//lint:ignore LV1001 Env.JobState reports launchd states as plain strings
 	switch env.jobState(plist) {
 	case "unknown":
 		job.OK = false
@@ -122,15 +121,22 @@ func preflight(env Env, home, userHome string, apps []string, keychain bool) pre
 	checks = append(checks, job)
 
 	if keychain {
-		check := preflightCheck{Label: "Keychain", Detail: "opens, for the R2 key", OK: true}
-		if _, err := env.keychain(); err != nil {
-			check.OK = false
-			check.Detail = "cannot be opened, so an R2 key cannot be kept (" + strings.TrimSuffix(err.Error(), ".") + ")"
-			check.Fix = "Use the release build of agent-archive, which can open the Keychain, or store in Amazon S3 with agent-archive setup --yes --provider s3."
-		}
-		checks = append(checks, check)
+		checks = append(checks, keychainCheck(env))
 	}
 	return checks
+}
+
+// keychainCheck checks that the Keychain, where setup keeps an R2 key,
+// opens.
+func keychainCheck(env Env) preflightCheck {
+	if _, err := env.keychain(); err != nil {
+		return preflightCheck{
+			Label:  "Keychain",
+			Detail: "cannot be opened, so an R2 key cannot be kept (" + strings.TrimSuffix(err.Error(), ".") + ")",
+			Fix:    "Use the release build of agent-archive, which can open the Keychain, or store in Amazon S3 with agent-archive setup --yes --provider s3.",
+		}
+	}
+	return preflightCheck{Label: "Keychain", Detail: "opens, for the R2 key", OK: true}
 }
 
 // preflightApps are the apps whose hook files interactive setup checks

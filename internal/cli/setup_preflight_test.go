@@ -128,17 +128,17 @@ func TestSetupYesStopsOnACommentedSettingsFile(t *testing.T) {
 // they would stop it only when applying otherwise.
 func TestSetupStopsBeforeAnyQuestionWhenLaunchctlCannotTell(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct{ state, want string }{
-		{"unknown", "✗ Background job: launchctl did not say whether"},
-		{setupjournal.JobAnotherInstallation, "belongs to another installation"},
-	} {
-		t.Run(c.state, func(t *testing.T) {
+	states := []string{"unknown", setupjournal.JobAnotherInstallation}
+	wants := []string{"✗ Background job: launchctl did not say whether", "belongs to another installation"}
+	for i, state := range states {
+		want := wants[i]
+		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			env, _, _ := preflightEnv(t)
-			env.JobState = func(string) string { return c.state }
+			env.JobState = func(string) string { return state }
 			for _, args := range [][]string{nil, {"--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "p", "--region", "us-east-1", "--project", t.TempDir()}} {
 				output, code, in := runUnanswered(t, env, args...)
-				if code != 1 || in.reads != 0 || !strings.Contains(output, c.want) || strings.Contains(output, "Checking your storage") {
+				if code != 1 || in.reads != 0 || !strings.Contains(output, want) || strings.Contains(output, "Checking your storage") {
 					t.Fatalf("setup %v: exit %d after %d reads\n%s", args, code, in.reads, output)
 				}
 			}
@@ -176,7 +176,11 @@ func TestSetupStopsBeforeAnyQuestionWhenTheKeychainDoesNotOpen(t *testing.T) {
 func TestPreflightApps(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		detected, saved, declined, draft, want []string
+		detected []string
+		saved    []string
+		declined []string
+		draft    []string
+		want     []string
 	}{
 		{detected: []string{"claude", "codex"}, want: []string{"codex", "claude"}},
 		{detected: []string{"claude", "cursor"}, declined: []string{"cursor"}, want: []string{"claude"}},
