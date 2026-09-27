@@ -71,7 +71,7 @@ func TestSetupStopsBeforeAnyQuestionOnACommentedSettingsFile(t *testing.T) {
 	}
 	for _, want := range []string{
 		"✗ Claude Code hooks: ~/.claude/settings.json:2:3\n",
-		"comments (JSONC) are not JSON, so remove them",
+		"This is a comment (JSONC); comments are not JSON, so remove it.",
 		"Fix the file, then run",
 		"✓ Background job: launchctl responds",
 		"Nothing was changed, and any unfinished setup is kept.",

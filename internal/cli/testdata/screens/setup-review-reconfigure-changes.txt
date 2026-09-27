@@ -9,7 +9,8 @@ Agent Archive is already set up. What would you like to change?
   2) Storage (bucket and credentials)
   3) How long sessions are kept
   4) All settings
-Enter 1-4 [1]: 4
+  5) Nothing, exit
+Enter 1-5 [1]: 4
 
 Step 1 of 3 · Choose what to capture
 
@@ -93,8 +94,6 @@ Step 3 of 3 · Review your changes
   ! Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
-  ! Shorter retention: 0 session(s) captured before 2026-08-26 12:00 UTC become eligible for deletion.
-    Future cleanup also applies this policy.
 
   Filtering is best effort; sensitive text may remain in archived sessions.
   What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md

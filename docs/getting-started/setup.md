@@ -175,9 +175,10 @@ Setup saves non-secret choices after each completed step. If it is
 interrupted, run it again to continue or start over. After a plain
 `agent-archive uninstall`, setup sets up again with your saved answers as
 the defaults. Reconfiguration lets you
-edit capture, storage, or retention separately, and keeps the machine
-identity, existing project activation times, paused state, and unrelated
-hooks.
+edit capture, storage, or retention separately (its headings then drop
+"Step n of 3"), or choose "Nothing, exit" to leave without changing
+anything, and keeps the machine identity, existing project activation
+times, paused state, and unrelated hooks.
 
 ## Set up without questions
 
@@ -185,6 +186,9 @@ For a second Mac, or any scripted setup, pass the answers as flags with
 `--yes`. Setup then asks nothing, runs the same
 [checks](#before-the-first-question) and storage check, and saves;
 if an answer is missing or the check fails, it says so and changes nothing.
+A bucket that allows public access stops it the same way, marked ✗ with a
+link on fixing it, as it blocks the review of interactive setup; a bucket
+whose public-access settings could not be read is only marked !.
 Every missing or wrong answer is listed at once, one per line with the flag
 that fixes it, before any check runs.
 

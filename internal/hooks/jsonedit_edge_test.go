@@ -20,14 +20,14 @@ func TestInvalidHookFilesSayWhereAndWhat(t *testing.T) {
 		want  string
 	}{
 		{"byte-order mark", "\xef\xbb\xbf{\"a\":1}", "byte-order mark"},
-		{"line comment", "{\n  // mine\n  \"a\": 1\n}\n", "line 2, column 3: .*comments \\(JSONC\\)"},
-		{"block comment", "{\n  \"a\": 1 /* x */\n}\n", "line 2, column 10: .*comments \\(JSONC\\)"},
-		{"trailing comma in object", "{\n  \"a\": 1,\n}\n", "line 2, column 9: .*trailing comma"},
-		{"trailing comma in array", "{\"a\": [1, 2,]}", "line 1, column 12: .*trailing comma"},
-		{"truncated", "{\"a\": ", "line 1, column 7"},
+		{"line comment", "{\n  // mine\n  \"a\": 1\n}\n", "line 2, column 3: this is a comment \\(JSONC\\); comments are not JSON"},
+		{"block comment", "{\n  \"a\": 1 /* x */\n}\n", "line 2, column 10: this is a comment \\(JSONC\\); comments are not JSON"},
+		{"trailing comma in object", "{\n  \"a\": 1,\n}\n", "line 2, column 9: this comma comes before a closing brace or bracket \\(a trailing comma\\)"},
+		{"trailing comma in array", "{\"a\": [1, 2,]}", "line 1, column 12: this comma comes before a closing brace or bracket \\(a trailing comma\\)"},
+		{"truncated", "{\"a\": ", "line 1, column 7: the file ends before its JSON is complete"},
 		{"not an object", "[]", "one JSON object"},
 		{"two values", "{} {}", "more than one JSON value"},
-		{"CRLF, broken", "{\r\n  \"a\": ,\r\n}\r\n", "line 2, column 8"},
+		{"CRLF, broken", "{\r\n  \"a\": ,\r\n}\r\n", "line 2, column 8: this is not valid JSON \\(invalid character ','"},
 	}
 	for _, c := range cases {
 		for _, harness := range []string{"claude", "cursor"} {

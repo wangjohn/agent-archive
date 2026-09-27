@@ -1,0 +1,10 @@
+$ agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app
+  ✓ Claude Code hooks: ~/.claude/settings.json
+  ✓ Background job: launchctl responds
+Checking your storage connection…
+✓ Connected to your storage.
+Apps: Claude Code. Projects: 1. Storage: Amazon S3 bucket team-archive.
+  ✗ Bucket is public        a bucket policy allows public access
+    Fix its access before archiving: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+Setup incomplete: bucket team-archive allows public access (a bucket policy allows public access); nothing was changed. Fix its access (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html), then run the same agent-archive setup --yes command again
+[exit 1]

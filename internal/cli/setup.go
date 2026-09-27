@@ -252,7 +252,8 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 	if checks.blocked() {
 		return &preflightError{checks: checks}
 	}
-	if !found {
+	// A saved draft that names a bucket has already been past this.
+	if !found && unfinished.Config.Storage.Bucket == "" {
 		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
 	}
 	draft := setupDraft{Version: draftFormat, Config: existing}
@@ -311,10 +312,17 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 			option{"capture", "Apps and projects"},
 			option{"storage", "Storage (bucket and credentials)"},
 			option{"retention", "How long sessions are kept"},
-			option{"all", "All settings"})
+			option{"all", "All settings"},
+			option{"exit", "Nothing, exit"})
 		if e != nil {
 			return e
 		}
+		if choice == "exit" {
+			terminal.Println(out, "Nothing was changed.")
+			return nil
+		}
+		// One area is not three steps: its headings go without "Step n of 3".
+		p.singleArea = choice != "all"
 		//lint:ignore LV1001 menu keys are the option keys listed just above
 		switch choice {
 		case "storage":
@@ -893,7 +901,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 		terminal.Println(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
 		terminal.Println(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
 		terminal.Println(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
-		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers[:2]...)
+		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	}
 	if err != nil {
 		return cfg, secret, false, err

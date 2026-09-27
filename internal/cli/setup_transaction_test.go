@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,5 +69,35 @@ func TestResumeDraftLeftAfterDestinationCommitPreservesOwnership(t *testing.T) {
 	}
 	if resumed.AcceptSession(archive.SessionRegistration{SessionStartedAt: now.Add(-time.Minute), Harness: archive.Harness{Name: "codex"}, ProjectRoot: resumed.Archive.Projects[0].Root}) {
 		t.Fatal("retired session became eligible")
+	}
+}
+
+// Shortening retention warns with the number of sessions it makes
+// deletable, counted in words, and the cutoff date; when there are none,
+// it says nothing.
+func TestShorterRetentionWarnsOnlyWhenSessionsBecomeDeletable(t *testing.T) {
+	t.Parallel()
+	f := newScreenFixture(t)
+	f.installed(t)
+	f.published(t)
+	old, _, err := config.Load(f.home)
+	must(t, err)
+	next := old
+	next.RetentionDays = 30
+	for _, tc := range []struct {
+		now  time.Time
+		want string
+	}{
+		{screenNow, ""},
+		{screenNow.Add(60 * 24 * time.Hour), "! Shorter retention: 1 session captured before 2026-10-25 will be eligible for deletion.\n    Future cleanup also applies this policy.\n"},
+	} {
+		var out bytes.Buffer
+		env := f.env
+		env.Now = func() time.Time { return tc.now }
+		p := newPrompter(strings.NewReader(""), &out)
+		must(t, reviewChanges(f.home, old, next, p, env))
+		if got := out.String(); !strings.Contains(got, tc.want) || (tc.want == "" && got != "") {
+			t.Errorf("at %s: output %q, want %q", tc.now.Format(time.DateOnly), got, tc.want)
+		}
 	}
 }

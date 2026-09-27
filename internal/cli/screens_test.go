@@ -217,6 +217,25 @@ var screens = []screen{
 		},
 	},
 	{
+		// Setup on an installed Mac can leave without changing anything.
+		name:    "setup-reconfigure-exit",
+		answers: []string{"5"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+		},
+	},
+	{
+		// Changing only storage on an installed Mac: its headings do not
+		// count steps. This run leaves at the review.
+		name:    "setup-reconfigure-storage",
+		answers: []string{"2", "", "", "", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+		},
+	},
+	{
 		// The storage check fails for want of AWS credentials: setup says
 		// why, and how to fix it, and offers the fix first. This run stops
 		// there.
@@ -398,6 +417,18 @@ var screens = []screen{
 			t.Helper()
 			f.project(t, "src/web-app")
 			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
+		},
+	},
+	{
+		// setup --yes refuses a public bucket, as the review's ✗ row
+		// blocks interactive setup, before anything is committed.
+		name: "setup-yes-public-bucket",
+		args: []string{"setup", "--yes", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--apps", "claude", "--project", "~/src/web-app"},
+		exit: 1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.project(t, "src/web-app")
+			f.bucketPrivacy("public_or_risky", "public_bucket_policy")
 		},
 	},
 	{

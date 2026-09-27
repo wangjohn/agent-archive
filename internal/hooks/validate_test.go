@@ -23,15 +23,15 @@ func TestValidateReportsWhereAndWhatPlanRefuses(t *testing.T) {
 		column  int
 		reason  string
 	}{
-		{"line comment", "claude", "{\n  // mine\n  \"model\": \"x\"\n}\n", 2, 3, "comments (JSONC) are not JSON"},
-		{"block comment", "cursor", "{\n  \"version\": 1 /* x */\n}\n", 2, 16, "comments (JSONC) are not JSON"},
+		{"line comment", "claude", "{\n  // mine\n  \"model\": \"x\"\n}\n", 2, 3, "a comment (JSONC); comments are not JSON, so remove it"},
+		{"block comment", "cursor", "{\n  \"version\": 1 /* x */\n}\n", 2, 16, "a comment (JSONC); comments are not JSON, so remove it"},
 		{"trailing comma in object", "codex", "{\n  \"hooks\": {},\n}\n", 2, 14, "trailing comma"},
 		{"trailing comma in array", "claude", `{"a": [1, 2,]}`, 1, 12, "trailing comma"},
-		{"comment after the object", "claude", "{\"a\": 1}\n// mine\n", 2, 1, "comments (JSONC) are not JSON"},
+		{"comment after the object", "claude", "{\"a\": 1}\n// mine\n", 2, 1, "a comment (JSONC); comments are not JSON, so remove it"},
 		{"comma after the object", "codex", "{\"a\": 1},\n", 1, 9, "trailing comma"},
 		{"byte-order mark", "claude", "\xef\xbb\xbf{\"a\":1}", 1, 1, "byte-order mark (BOM)"},
-		{"CRLF, broken", "claude", "{\r\n  \"a\": ,\r\n}\r\n", 2, 8, "invalid character ','"},
-		{"truncated", "codex", `{"a": `, 1, 7, "EOF"},
+		{"CRLF, broken", "claude", "{\r\n  \"a\": ,\r\n}\r\n", 2, 8, "this is not valid JSON (invalid character ','"},
+		{"truncated", "codex", `{"a": `, 1, 7, "the file ends before its JSON is complete"},
 		{"not an object", "claude", "\n  []", 2, 3, "the file must hold one JSON object"},
 		{"two values", "claude", "{}\n{}", 2, 1, "more than one JSON value"},
 		{"two top-level hooks keys", "claude", "{\n  \"hooks\": {},\n  \"hooks\": {}\n}", 3, 3, `more than one top-level "hooks" key`},
@@ -192,7 +192,7 @@ func TestInvalidConfigurationErrorsStillWrapTheirCause(t *testing.T) {
 	if !errors.Is(err, errInvalidConfiguration) || !errors.As(err, &syntaxErr) {
 		t.Errorf("%v does not wrap both errInvalidConfiguration and the syntax error", err)
 	}
-	if want := "invalid existing hook configuration: line 2, column 8: invalid character 'x' looking for beginning of value"; err.Error() != want {
+	if want := "invalid existing hook configuration: line 2, column 8: this is not valid JSON (invalid character 'x' looking for beginning of value)"; err.Error() != want {
 		t.Errorf("message %q, want %q", err, want)
 	}
 	_, err = Merge([]byte("\xef\xbb\xbf{}"), "claude", testHook("/bin/agent-archive"))
