@@ -1,0 +1,49 @@
+$ agent-archive setup
+Checking installed applications...
+  ✓ Background job: launchctl responds
+You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
+
+Step 1 of 3 · Choose what to capture
+
+No apps found automatically.
+Choose which apps to include:
+Include Codex? [y/N] y
+Include Claude Code? [y/N] n
+Include Cursor? [y/N] n
+Projects to archive (✓ included):
+  1) ✓ ~/src/web-app  this folder
+Enter 1 to include or leave it out, or a path to add a project.
+Enter a blank line when finished.
+Projects: 
+
+Step 2 of 3 · Connect storage
+
+Where should sessions be stored?
+  1) Cloudflare R2
+  2) Amazon S3
+  3) Show setup instructions
+Enter 1-3 [1]: 2
+AWS profile: work
+Which bucket should sessions be stored in?
+  1) photos
+  2) team-archive
+Enter 1-2, or another bucket name: 2
+Bucket team-archive is in us-east-1; using that region.
+
+Checking your storage connection…
+
+  ✗ Bucket team-archive wasn't found.
+    The bucket doesn't exist, or its name is misspelled.
+
+    Fix: Check the bucket name, or create the bucket, then try again.
+    Details: agent-archive setup --verbose
+
+What next?
+  1) Change the bucket name
+  2) Retry the check
+  3) Change other settings
+  4) Stop for now (your answers are kept)
+Enter 1-4 [1]: 4
+Setup incomplete: the storage check failed; your answers are kept
+Run agent-archive setup to continue.
+[exit 1]

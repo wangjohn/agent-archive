@@ -1,0 +1,9 @@
+$ agent-archive setup
+Checking installed applications...
+  ✓ Codex hooks: ~/.codex/hooks.json
+  ✗ Claude Code hooks: ~/.claude/settings.json:2:3
+    Invalid character '/' looking for beginning of value; comments (JSONC) are not JSON, so remove them.
+    Setup edits only plain JSON. Fix the file, then run agent-archive setup again. To set up without Claude Code, run agent-archive setup --yes with --apps naming the apps you want.
+  ✓ Background job: launchctl responds
+Setup incomplete. Nothing was changed, and any unfinished setup is kept. Fix what is marked ✗ above, then run agent-archive setup again.
+[exit 1]

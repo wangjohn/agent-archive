@@ -78,6 +78,11 @@ func TestSetupReviewReadsPrivacyWithEnvClock(t *testing.T) {
 	if !strings.Contains(out.String(), "native public access blocked") || strings.Contains(out.String(), "inspection_stale") {
 		t.Fatal(out.String())
 	}
+	out.Reset()
+	showSetupReview(p, cfg, setupReview{})
+	if !strings.Contains(out.String(), "✓ Bucket is private") || strings.Contains(out.String(), "the last check is more than a day old") {
+		t.Fatal(out.String())
+	}
 }
 
 func TestCollectionRefreshesBucketPrivacyEvidence(t *testing.T) {
@@ -156,7 +161,7 @@ func TestSetupPersistsPrivacyAndStatusNeverInspects(t *testing.T) {
 	remote := &privateTestStore{MemoryStore: storagetest.NewMemoryStore()}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return remote, nil }
 	output := setupRun(t, env, s3SetupInput("synthetic", "us-east-1", "profile", true, false, false, project), 0)
-	if !strings.Contains(output, "native public access blocked") {
+	if !strings.Contains(output, "✓ Bucket is private       all public access blocked") {
 		t.Fatal(output)
 	}
 	cfg, found, err := config.Load(home)

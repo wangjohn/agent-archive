@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -74,6 +75,9 @@ func isolateProcessForTesting() func() {
 	openKeychain = func() (credentials.CredentialStore, error) {
 		panic("a test reached the real Keychain: set Env.Keychain (newFakeKeychain)")
 	}
+	openAWSBuckets = func(string, string) (BucketFinder, error) {
+		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
+	}
 	return func() { _ = os.RemoveAll(home); _ = os.RemoveAll(tmp) }
 }
 
@@ -96,6 +100,9 @@ func TestIsolationFailsClosed(t *testing.T) {
 	panics("R2 store", func() {
 		_, _ = Env{}.openStore(config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "r"}})
 	})
+	if _, err := (Env{}).awsBuckets("default", "us-east-1"); err == nil {
+		t.Error("Env{}.awsBuckets reached AWS instead of failing")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)

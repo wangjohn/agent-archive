@@ -1,5 +1,8 @@
 $ agent-archive setup
 Checking installed applications...
+  ✓ Codex hooks: ~/.codex/hooks.json
+  ✓ Claude Code hooks: ~/.claude/settings.json
+  ✓ Background job: launchctl responds
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 You have an unfinished setup. What would you like to do?
   1) Continue where you left off
@@ -16,30 +19,31 @@ Where should sessions be stored?
   2) Amazon S3
   3) Show setup instructions
 Enter 1-3 [1]: 2
-Bucket name: team-archive
 AWS profile: work
-Bucket region (for example us-east-1): us-east-1
+Which bucket should sessions be stored in?
+  1) photos
+  2) team-archive
+Enter 1-2, or another bucket name: 2
+Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
-✓ Connected.
+✓ Connected to your storage.
 
 Step 3 of 3 · Ready to start
 
-  Apps      Codex 0.121.0, Claude Code 2.1.90
-  Projects  /Users/alex/src/web-app
-  Keep for  90 days, then deleted automatically
-  Storage   Amazon S3
-  Bucket    team-archive
-  AWS       profile work · us-east-1
+  Apps       Codex 0.121.0 · Claude Code 2.1.90
+  Projects   ~/src/web-app
+  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
+  Keep for   90 days
 
-Before you confirm
-  · Codex hooks: /Users/alex/.codex/hooks.json
-  · Claude Code hooks: /Users/alex/.claude/settings.json
-  ! Bucket privacy not verified: public-access settings could not be read.
+  ✓ Storage connected       write, read, list, delete
+  ! Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  · Filtering is best effort; sensitive text may remain in archived sessions.
-  · Capture with Codex 0.121.0, Claude Code 2.1.90 is not confirmed until a session is archived.
-    After your first session, check it with agent-archive status.
+  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json
+  ! Codex needs one step    approve the hooks with /hooks after setup
+
+  Filtering is best effort; sensitive text may remain in archived sessions.
+  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Start archiving?
   1) Yes, start archiving

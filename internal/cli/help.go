@@ -12,7 +12,7 @@ import (
 )
 
 var commandHelp = map[string]string{
-	"setup": `Usage: agent-archive setup [--abandon-recovery]
+	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
 
 Choose apps and projects, connect storage, then review and enable capture.
@@ -23,6 +23,8 @@ An interrupted setup is recovered on the next run.
   --abandon-recovery    If recovery stops because a file it changed was
                         edited since, keep every file as it is now and
                         discard the interrupted setup; then run setup again
+  --verbose             If the storage check fails, also show the storage
+                        provider's own error under the diagnosis
   --yes                 Ask nothing: take the answers below, the saved
                         settings, and the apps found; run the same storage
                         check; and save. Refuses if an answer is missing

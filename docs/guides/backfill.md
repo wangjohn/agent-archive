@@ -1,7 +1,10 @@
 # Import existing sessions (backfill)
 
 `agent-archive backfill` imports the Claude Code, Codex, and Cursor sessions
-already on this Mac. Run it after [setup](../getting-started/setup.md). With
+already on this Mac. Run it after [setup](../getting-started/setup.md), which
+itself offers to import the past sessions of the projects you chose (an
+import like `backfill --project DIR`, listed in `backfill history` and undone
+with `backfill undo`); run `backfill` for anything else. With
 no options it imports every session it finds, but first it shows each project
 with its session count per app, what it will skip and why, and the date
 retention will delete the imported sessions. Nothing changes until you answer

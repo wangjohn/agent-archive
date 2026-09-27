@@ -2,15 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -81,7 +86,7 @@ var screens = []screen{
 		// A first run on a Mac with all three apps, from inside a Git
 		// repository, through to the next steps.
 		name:    "setup-fresh-apps-git-cwd",
-		answers: []string{"", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: []string{"", "", "2", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude", "cursor")
@@ -114,14 +119,91 @@ var screens = []screen{
 		},
 	},
 	{
+		// Inside a repository, the recent-projects list starts with it,
+		// included, and each project's session count.
+		name:    "setup-recent-projects-git-cwd",
+		answers: []string{"", "3", ""},
+		exit:    1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			writeClaudeSession(t, f.userHome, "one", f.project(t, "src/api"), screenNow.Add(-72*time.Hour))
+			writeClaudeSession(t, f.userHome, "two", f.project(t, "src/web-app"), screenNow.Add(-time.Hour))
+			writeClaudeSession(t, f.userHome, "three", f.project(t, "src/web-app"), screenNow.Add(-2*time.Hour))
+			writeClaudeSession(t, f.userHome, "four", f.project(t, "src/docs"), screenNow.Add(-40*24*time.Hour))
+		},
+	},
+	{
+		// Leaving every project out asks again; a includes them all.
+		name:    "setup-recent-projects-none-left",
+		answers: []string{"", "1", "", "a", ""},
+		exit:    1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			writeClaudeSession(t, f.userHome, "one", f.project(t, "src/api"), screenNow.Add(-72*time.Hour))
+		},
+	},
+	{
 		// A setup left after its first step offers to continue.
 		name:    "setup-resume-menu",
-		answers: []string{"1", "2", "team-archive", "work", "us-east-1", "3"},
+		answers: []string{"1", "2", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
 			f.inWebApp(t)
 			f.setup(t, 1, "", "", "")
+		},
+	},
+	{
+		// With the AWS profile chosen, setup lists its buckets, pre-selects
+		// the one named like agent-archive*, and uses that bucket's own
+		// region rather than the profile's.
+		name:    "setup-s3-bucket-list",
+		answers: []string{"y", "n", "n", "", "2", "", "", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.inWebApp(t)
+			f.env.AWSProfiles = func() ([]AWSProfile, error) {
+				return []AWSProfile{{Name: "default", Region: "us-east-1"}, {Name: "personal", NoCredentials: true}}, nil
+			}
+			f.env.AWSBuckets = fakeBuckets{names: []string{"agent-archive-alex", "photos", "team-archive"}, regions: map[string]string{"agent-archive-alex": "eu-west-2"}}.open
+		},
+	},
+	{
+		// S3 refuses both lookups, so setup says why and asks for the
+		// bucket and region, turning away a path typed as the region.
+		name:    "setup-s3-bucket-typed",
+		answers: []string{"y", "n", "n", "", "2", "work", "team-archive", "~/code/api", "us-east-1", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.inWebApp(t)
+			f.env.AWSBuckets = fakeBuckets{listErr: errAccessDenied, regionErr: errAccessDenied}.open
+		},
+	},
+	{
+		// Claude Code's settings.json holds a comment, so setup stops
+		// before its first question and says where and how to fix it.
+		name: "setup-preflight-blocked",
+		exit: 1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex", "claude")
+			settings := filepath.Join(f.userHome, ".claude", "settings.json")
+			must(t, os.MkdirAll(filepath.Dir(settings), 0o700))
+			must(t, os.WriteFile(settings, []byte("{\n  // my model\n  \"model\": \"opus\"\n}\n"), 0o600))
+		},
+	},
+	{
+		// setup --yes makes the same checks first.
+		name: "setup-yes-preflight",
+		args: []string{"setup", "--yes", "--apps", "codex", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--project", "~/src/web-app"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex")
+			f.project(t, "src/web-app")
 		},
 	},
 	{
@@ -135,27 +217,143 @@ var screens = []screen{
 		},
 	},
 	{
-		// The storage check fails, and setup offers to edit, retry, or
-		// cancel.
+		// The storage check fails for want of AWS credentials: setup says
+		// why, and how to fix it, and offers the fix first. This run stops
+		// there.
 		name:    "setup-storage-failure",
-		answers: []string{"y", "n", "n", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: errors.New("dial tcp 169.254.169.254:80: connect: host is down")}}),
+	},
+	{
+		// The same failure with --verbose: the storage error is printed
+		// under the diagnosis, once.
+		name:    "setup-storage-failure-verbose",
+		args:    []string{"setup", "--verbose"},
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}}),
+	},
+	{
+		// After a wrong-region failure that named no region, continuing
+		// asks the storage questions again. S3 can't say where the bucket
+		// is, so rather than check the region that failed again, setup
+		// says so and asks for the region. The check passes; this run
+		// leaves at the review.
+		name:    "setup-storage-failure-continue",
+		answers: []string{"1", "", "", "", "eu-west-1", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.inWebApp(t)
+			f.env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+				var err error
+				if cfg.Storage.Region != "eu-west-1" {
+					err = &smithyhttp.ResponseError{
+						Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{}}},
+						Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+					}
+				}
+				return putErrorStore{f.bucket, &err}, nil
+			}
+			f.setup(t, 1, storageFailureAnswers...)
+			// S3 now refuses the region lookup, so the region is asked.
+			f.env.AWSBuckets = fakeBuckets{names: []string{"photos", "team-archive"}, regionErr: errAccessDenied}.open
+		},
+	},
+	{
+		name:    "setup-storage-failure-access-denied",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.GenericAPIError{Code: "AccessDenied"}),
+	},
+	{
+		name:    "setup-storage-failure-no-such-bucket",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.GenericAPIError{Code: "NoSuchBucket"}),
+	},
+	{
+		name:    "setup-storage-failure-wrong-region",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}}},
+			Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+		}),
+	},
+	{
+		name:    "setup-storage-failure-network",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithyhttp.RequestSendError{Err: errors.New("dial tcp: lookup team-archive.s3.us-east-1.amazonaws.com: no such host")}),
+	},
+	{
+		// A failure the provider did not answer, and Diagnose does not
+		// recognize.
+		name:    "setup-storage-failure-other",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(errors.New("incorrect region or folder")),
+	},
+	{
+		// The object the check wrote read back changed.
+		name:    "setup-storage-failure-read-back",
+		answers: storageFailureAnswers,
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
-				return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
+				return changedReadStore{f.bucket}, nil
 			}
 		},
 	},
 	{
-		// The review before a first setup commits, cancelled there.
+		// The review before a first setup commits, to a bucket that blocks
+		// public access, cancelled there.
 		name:    "setup-review-fresh",
-		answers: []string{"y", "y", "n", "2", "team-archive", "work", "us-east-1", "3"},
+		answers: []string{"y", "", "2", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
 			f.inWebApp(t)
+			f.bucketPrivacy("verified_private", "all_bucket_public_access_blocks_enabled")
+		},
+	},
+	{
+		// The review before a first setup to Cloudflare R2, whose keys
+		// cannot read public-access settings, cancelled there.
+		name:    "setup-review-fresh-r2",
+		answers: []string{"", "", "1", "0123456789abcdef0123456789abcdef", "team-archive", "ACCESSKEYID", "SECRET", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+		},
+	},
+	{
+		// The review when the bucket allows public access, cancelled
+		// there.
+		name:    "setup-review-public-bucket",
+		answers: []string{"", "", "2", "work", "2", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			f.bucketPrivacy("public_or_risky", "public_bucket_policy")
+		},
+	},
+	{
+		// Reconfiguring from a shell whose CODEX_HOME differs from when
+		// setup ran: the review warns that the hooks move, and stops there.
+		name:    "setup-review-hooks-move",
+		answers: []string{"3", "90", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+			elsewhere := filepath.Join(f.userHome, "codex-elsewhere")
+			must(t, os.MkdirAll(elsewhere, 0o700))
+			f.env.LookupEnv = func(k string) (string, bool) { return elsewhere, k == "CODEX_HOME" }
 		},
 	},
 	{
@@ -173,10 +371,33 @@ var screens = []screen{
 	{
 		// What a committed first setup ends with.
 		name:    "setup-next-steps",
-		answers: []string{"y", "y", "y", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		answers: []string{"y", "y", "y", "", "2", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
+		},
+	},
+	{
+		// A first setup whose project has past sessions offers to import
+		// them, and imports them.
+		name:    "setup-import-offer",
+		answers: []string{"", "", "2", "work", "2", "", ""},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
+			f.pastSession(t, "two", "src/web-app", screenNow.Add(-2*time.Hour))
+		},
+	},
+	{
+		// setup --yes asks nothing: it points at backfill instead.
+		name: "setup-yes-next-steps",
+		args: []string{"setup", "--yes", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--apps", "claude", "--project", "~/src/web-app"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.project(t, "src/web-app")
+			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
 		},
 	},
 	{
@@ -235,6 +456,46 @@ var screens = []screen{
 	},
 }
 
+// storageFailureAnswers set up Codex in ~/src/web-app with S3 storage, and
+// stop at the storage check's failure menu.
+var storageFailureAnswers = []string{"y", "n", "n", "", "2", "work", "2", "4"}
+
+// failUploads makes the bucket refuse every upload with err.
+func failUploads(err error) func(*testing.T, *screenFixture) {
+	return func(t *testing.T, f *screenFixture) {
+		t.Helper()
+		f.inWebApp(t)
+		f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+			return putErrorStore{f.bucket, &err}, nil
+		}
+	}
+}
+
+// bucketPrivacy makes the bucket report its public-access settings as
+// state, for reason.
+func (f *screenFixture) bucketPrivacy(state, reason string) {
+	f.env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		report := storage.UnknownPrivacy(cfg.Storage.Provider)
+		report.State, report.Reason = state, reason
+		return privacyReportStore{ObjectStore: f.bucket, report: report}, nil
+	}
+}
+
+// privacyReportStore reports fixed public-access settings.
+type privacyReportStore struct {
+	storage.ObjectStore
+	report storage.PrivacyReport
+}
+
+func (s privacyReportStore) InspectPrivacy(context.Context) storage.PrivacyReport { return s.report }
+
+// changedReadStore reads back other bytes than were written.
+type changedReadStore struct{ storage.ObjectStore }
+
+func (changedReadStore) Get(context.Context, string) ([]byte, error) {
+	return []byte("changed"), nil
+}
+
 // screenFixture is one screen's Mac: a home folder at root/Users/alex
 // (shown as /Users/alex), its data directory in ~/.agent-archive, and an
 // in-memory bucket.
@@ -268,6 +529,9 @@ func newScreenFixture(t *testing.T) *screenFixture {
 	env.TempDir = func() string { return tempDir }
 	f := &screenFixture{root: root, userHome: userHome, home: home, env: env, bucket: storagetest.NewMemoryStore()}
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return f.bucket, nil }
+	// The profile setup is given can list two buckets; team-archive is in
+	// us-east-1.
+	f.env.AWSBuckets = fakeBuckets{names: []string{"photos", "team-archive"}, regions: map[string]string{"team-archive": "us-east-1"}}.open
 	f.env.IsTerminal = func(stream any) bool {
 		switch stream.(type) {
 		case *strings.Reader, *echoAnswers:
@@ -313,6 +577,26 @@ func (f *screenFixture) withApps(t *testing.T, apps ...string) {
 	}
 }
 
+// pastSession writes a Claude Code session with a conversation, started at
+// start in the project at rel under the home folder. Its file is padded to a
+// fixed size, so the sizes an import prints do not depend on the temporary
+// folder's path.
+func (f *screenFixture) pastSession(t *testing.T, id, rel string, start time.Time) {
+	t.Helper()
+	cwd := f.project(t, rel)
+	records := fmt.Sprintf(`{"type":"user","uuid":"a","sessionId":%q,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":"please check it"}}
+{"type":"assistant","uuid":"b","sessionId":%q,"timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":"Checked."}]}}
+`, id, cwd, start.Format(time.RFC3339), id, start.Add(time.Minute).Format(time.RFC3339))
+	const size = 2048
+	pad := `{"pad":"` + strings.Repeat("x", size-len(records)-len(`{"pad":"",`)) + `",`
+	content := strings.Replace(records, "{", pad, 1)
+	path := filepath.Join(f.userHome, ".claude", "projects", strings.ReplaceAll(rel, "/", "-"), id+".jsonl")
+	must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	must(t, os.WriteFile(path, []byte(content), 0o600))
+	written := start.Add(time.Hour)
+	must(t, os.Chtimes(path, written, written))
+}
+
 // setup runs setup unrecorded with these answers.
 func (f *screenFixture) setup(t *testing.T, exit int, answers ...string) {
 	t.Helper()
@@ -327,7 +611,7 @@ func (f *screenFixture) setup(t *testing.T, exit int, answers ...string) {
 func (f *screenFixture) installed(t *testing.T) {
 	t.Helper()
 	project := f.project(t, "src/web-app")
-	f.setup(t, 0, "y", "n", "n", project, "", "2", "team-archive", "work", "us-east-1", "")
+	f.setup(t, 0, "y", "n", "n", project, "", "2", "work", "2", "")
 }
 
 // published captures and publishes one Codex session in ~/src/web-app.

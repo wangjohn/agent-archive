@@ -19,12 +19,38 @@ follow [Semantic Versioning](https://semver.org/).
 - A read-only check of each app's hook settings file that reports the file,
   line, column and reason for JSONC comments, trailing commas and duplicate
   keys, without changing anything.
+- `setup` checks before the first question that each app's hook file is
+  valid, that `launchctl` responds, and, when R2 is used, that the Keychain
+  opens. A problem stops setup with the file and line to fix.
+- At the end of `setup`, an offer to import the past sessions of the
+  projects you chose, and a copy-paste `agent-archive setup --yes …` line
+  for setting up another Mac.
 
 ### Changed
 
 - `setup` suggests `AWS_PROFILE` when it is set, marks AWS profiles that
   have no credentials configured, and defaults to S3 when a usable profile
   exists (R2 otherwise).
+- `setup` always shows your recent projects with each one's session count,
+  with the current repository pre-selected; `a` selects them all, and
+  leaving every project out asks again instead of ending setup.
+- `setup` lists the chosen AWS profile's buckets to pick from (an
+  `agent-archive*` bucket is pre-selected) and uses the bucket's own region.
+  A region that isn't shaped like one is refused, and a saved one of that
+  kind is dropped on reconfigure.
+- When the storage check fails, `setup` shows the cause once with its fix
+  (raw error text only with `--verbose`), the menu defaults to fixing the
+  answer that failed, and "Continue where you left off" asks that answer
+  again instead of re-running the same check.
+- `setup --yes` reports every missing or wrong answer together, one per
+  line with the flag that fixes it, instead of stopping at the first.
+- `setup` questions and their defaults are bold with a `›` cursor, every
+  command to type is cyan, and the storage check shows a spinner that ends
+  in ✓ or ✗ on the same line (none when a `credential_process` may prompt).
+- The `setup` review is a short list of settings (storage as one `s3://` or
+  R2 address) followed by a ✓/!/✗ checklist: storage connected, bucket
+  private, hook files valid, and each app's next step. A ✗ blocks starting
+  until it's fixed.
 - `status` is redesigned: a colored state line, the one fix to make on top,
   and grouped Capture and Storage rows with ✓/!/✗, relative times and `~`
   paths. Internal codes and exact times stay in `status --json`, which is

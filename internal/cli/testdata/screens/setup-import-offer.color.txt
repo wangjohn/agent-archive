@@ -1,0 +1,71 @@
+$ agent-archive setup
+Checking installed applications...
+  \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
+  \e[32m✓\e[0m Background job: launchctl responds
+You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
+
+\e[1mStep 1 of 3 · Choose what to capture\e[0m
+
+\e[1mInclude Claude Code?\e[0m [\e[1mY\e[0m/n] › 
+Projects to archive (✓ included):
+  1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder · 2 sessions · today\e[0m
+Enter 1 to include or leave it out, or a path to add a project.
+Enter a blank line when finished.
+\e[1mProjects\e[0m › 
+
+\e[1mStep 2 of 3 · Connect storage\e[0m
+
+\e[1mWhere should sessions be stored?\e[0m
+  1) Cloudflare R2
+  2) Amazon S3
+  3) Show setup instructions
+Enter 1-3 [\e[1m1\e[0m] › 2
+\e[1mAWS profile\e[0m › work
+\e[1mWhich bucket should sessions be stored in?\e[0m
+  1) photos
+  2) team-archive
+Enter 1-2, or another bucket name › 2
+Bucket team-archive is in us-east-1; using that region.
+
+Checking your storage connection…
+\e[32m✓\e[0m Connected to your storage.
+
+\e[1mStep 3 of 3 · Ready to start\e[0m
+
+  \e[2mApps      \e[0m Claude Code 2.1.90
+  \e[2mProjects  \e[0m ~/src/web-app
+  \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2mus-east-1 · profile work\e[0m
+  \e[2mKeep for  \e[0m 90 days
+
+  \e[32m✓\e[0m Storage connected       \e[2mwrite, read, list, delete\e[0m
+  \e[33m!\e[0m Bucket privacy unknown  \e[2mpublic-access settings could not be read\e[0m
+    Make sure public access is off: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
+  \e[32m✓\e[0m Hook file is valid      \e[2m~/.claude/settings.json\e[0m
+
+\e[2m  Filtering is best effort; sensitive text may remain in archived sessions.\e[0m
+  \e[2mWhat leaves your Mac:\e[0m \e[36mhttps://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md\e[0m
+
+\e[1mStart archiving?\e[0m
+  1) Yes, start archiving
+  2) Edit a setting
+  3) Cancel (your setup draft is kept)
+Enter 1-3 [\e[1m1\e[0m] › 
+
+Configuration saved.
+
+Looking for past sessions in these projects… 2 found.
+\e[1mImport the 2 past sessions from these projects?\e[0m [\e[1mY\e[0m/n] › 
+Registered 2 sessions as import 2026-09-25-1.
+Uploading: 2 of 2 sessions, 4 KB of 4 KB
+Uploaded 2 sessions (4 KB).
+See them with \e[36magent-archive list --imported\e[0m.
+Undo with \e[36magent-archive backfill undo 2026-09-25-1\e[0m.
+
+Next, in each app:
+  Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
+Sessions already open are not captured. Start a new one in an included project.
+Check progress with \e[36magent-archive status\e[0m.
+
+To set up another Mac with this storage, run there:
+  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app\e[0m
+[exit 0]
