@@ -1,0 +1,22 @@
+$ agent-archive status
+Agent Archive — Ready
+
+Storage:       s3 / team-archive / agent-archive/
+Access:        confirmed 2026-09-25T12:00:00Z by setup's storage check (write, read, list, delete)
+Bucket privacy not verified.
+  Checked: 2026-09-25T12:00:00Z; inspection_unavailable.
+  Review: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+Authentication: verified (checked 2026-09-25T12:00:00Z; manual_sync)
+Background:    loaded
+Projects:      1 included
+Pending:       0 session(s)
+Last scan:     2026-09-25T12:00:00Z
+Last publish:  2026-09-25T12:00:00Z
+Codex: published; source verified (1 session(s)); hooks installed
+  Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.
+  Installed version: unknown; support unknown.
+  Project /Users/alex/src/web-app: verified_at_recorded_time.
+  Read-back verified: 2026-09-25T12:00:00Z; evidence is for that publication.
+
+Next: Keep working. Run agent-archive list to inspect archived sessions.
+[exit 0]

@@ -191,6 +191,25 @@ LaunchAgent runs) are not part of the user interface and may change.
   rejects it (`TestEveryTestedPackageKnowsUpdate`). A new golden test uses
   `golden.Check`; a package with tests but no goldens imports the package
   blank.
+- Screen goldens (`internal/cli/testdata/screens/`, `TestScreens` in
+  `internal/cli/screens_test.go`) record what `setup` and `status` print,
+  whole, for the screens users meet most: a first run with and without apps,
+  the recent-projects list, the resume and reconfigure menus, a failed
+  storage check, the review, the next steps, and status when ready and when
+  it needs attention. Each is recorded twice: `NAME.txt` as a pipe or
+  `NO_COLOR` shows it, and `NAME.color.txt` as a color terminal does, with
+  each escape character written `\e`. Setup's answers are echoed after their
+  prompts, and the paths (home `/Users/alex`) and the clock (2026-09-25
+  12:00 UTC) are fixed. A change to what setup or status prints rewrites
+  them, so review the diff as the change's screenshots:
+
+  ```sh
+  go test ./internal/cli -run Screens -update
+  git diff internal/cli/testdata/screens
+  ```
+
+  A new screen is one more entry in `screens`: its answers, its exit code,
+  and an `arrange` function that prepares the Mac through the fixture.
 - A bug fix comes with a test that fails without the fix. Check by reverting
   the fix.
 

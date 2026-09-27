@@ -51,18 +51,18 @@ flowchart LR
 | `collector` | The scan, build, publish loop; change detection; subagent capture. |
 | `state` | Per-session local state: registrations, requests, published and pending publications, change detection, removal records, and the per-session locks (`Store`; see [local state](../../docs/reference/local-state.md)). `state/statetest` has test helpers. |
 | `retention` | Deleting superseded snapshots and expired sessions, with the remote metadata as the source of truth. |
-| `storage` | The object-store contract and the S3/R2 implementation; checksums, read-back, bucket privacy inspection. Keys are relative to the configured prefix. `storage/storagetest` has the in-memory store tests use. |
+| `storage` | The object-store contract and the S3/R2 implementation; checksums, read-back, bucket privacy inspection, and `Diagnose`, which names a storage failure's cause in plain words. Keys are relative to the configured prefix. `storage/storagetest` has the in-memory store tests use. |
 | `credentials` | Resolving storage credentials: AWS profiles, and R2 secrets in the Keychain (cgo, Security.framework). |
 | `config` | `config.json`: the one record of how this Mac is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
-| `hooks` | Planning, installing, and removing hook entries and the LaunchAgent. |
+| `hooks` | Checking, planning, installing, and removing hook entries and the LaunchAgent. |
 | `capture` | The hook runtime: classifying a hook event, admitting a new session or continuing a registered one, lifecycle and final-response evidence, subagent links, and the content-free capture diagnostics status shows. It imports nothing from the command line, even transitively, and does not itself import anything that runs a program, opens the Keychain, or uses the network (`credentials` and `storage` come in only through `config`, for their types); depguard and `TestCaptureImportBoundary` enforce this. |
 | `setupjournal` | Setup's transaction (`setup-transaction.json`): writing the journal before any hook file or the LaunchAgent changes, rolling a failed setup back, recovering an interrupted one without overwriting later edits, and retiring the prototype's job and collectors installed under earlier labels. launchd is reached only through the `Launchd` its caller passes (cli's `Env`). Every command and the hook check whether a journal is pending. |
 | `evidence` | Skill inventories and snapshots, as privacy-filtered evidence. |
 | `cursorstore` | Reading Cursor's `state.vscdb` without writing to it or beside it. |
 | `backfill` | Discovery, the import plan, registration, and undo. |
 | `reader` | Listing metadata and loading verified sources, with a disposable metadata cache. |
-| `cli` | Every command: flags, prompts, rendering, and the wiring between packages. Process state (args, stdio, the clock, the home directory, launchctl, the Keychain) reaches commands through an injectable `Env`. A few lower packages still read the process directly: `local` (`AGENT_ARCHIVE_HOME` and `$HOME`), `credentials` (AWS configuration files and the Keychain), and `cursorstore` (the user's temporary directory). |
+| `cli` | Every command: flags, prompts, rendering, and the wiring between packages. Terminal output takes its colors, symbols, wrapping, and spinner from `ui.go`, which prints plain text when output is not a terminal, `NO_COLOR` is set, or `TERM` is `dumb`. Process state (args, stdio, the clock, the home directory, launchctl, the Keychain) reaches commands through an injectable `Env`. A few lower packages still read the process directly: `local` (`AGENT_ARCHIVE_HOME` and `$HOME`), `credentials` (AWS configuration files and the Keychain), and `cursorstore` (the user's temporary directory). |
 | `doclinks` | A test that the documentation's relative links resolve. |
 
 ## Package dependencies

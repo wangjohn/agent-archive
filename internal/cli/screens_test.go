@@ -1,0 +1,378 @@
+package cli
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/capture"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/state"
+	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/testutil/golden"
+)
+
+// The screen goldens record what setup and status print, whole, for the
+// screens a user meets most. Each screen is recorded twice under
+// testdata/screens/: NAME.txt as a pipe or NO_COLOR shows it, and
+// NAME.color.txt as a color terminal shows it, with each escape character
+// written \e so the codes read as text. The answers setup reads are echoed
+// after their prompts, as a terminal would show them. Paths are fixed: the
+// home folder is /Users/alex, the clock is 2026-09-25 12:00 UTC. A screen
+// that ends in "no more input" stopped where its answers did.
+//
+// A change to what setup or status prints changes these files. Rewrite them
+// and read the diff:
+//
+//	go test ./internal/cli -run Screens -update
+//	git diff internal/cli/testdata/screens
+func TestScreens(t *testing.T) {
+	t.Parallel()
+	for _, sc := range screens {
+		for _, color := range []bool{false, true} {
+			name := sc.name + ".txt"
+			if color {
+				name = sc.name + ".color.txt"
+			}
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				f := newScreenFixture(t)
+				if sc.arrange != nil {
+					sc.arrange(t, f)
+				}
+				args := sc.args
+				if args == nil {
+					args = []string{"setup"}
+				}
+				got := f.run(t, args, sc.answers, color, sc.exit)
+				golden.Check(t, filepath.Join("testdata", "screens", name), got)
+			})
+		}
+	}
+}
+
+// screenNow is the screens' clock.
+var screenNow = time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+
+// screenHome is the home folder the screens show.
+const screenHome = "/Users/alex"
+
+type screen struct {
+	name string
+	// args default to setup.
+	args    []string
+	answers []string
+	exit    int
+	// arrange prepares the Mac and the data directory before the recorded
+	// run.
+	arrange func(*testing.T, *screenFixture)
+}
+
+var screens = []screen{
+	{
+		// A first run on a Mac with all three apps, from inside a Git
+		// repository, through to the next steps.
+		name:    "setup-fresh-apps-git-cwd",
+		answers: []string{"", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex", "claude", "cursor")
+			f.inWebApp(t)
+		},
+	},
+	{
+		// A first run on a Mac with none of the apps, outside any
+		// repository, up to the storage question.
+		name:    "setup-fresh-no-apps",
+		answers: []string{"y", "n", "n", "~/src/web-app", ""},
+		exit:    1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.project(t, "src/web-app")
+		},
+	},
+	{
+		// Outside a repository, setup offers the projects the apps'
+		// history mentions, up to the storage question.
+		name:    "setup-recent-projects",
+		answers: []string{"", "1 2", ""},
+		exit:    1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			writeClaudeSession(t, f.userHome, "one", f.project(t, "src/api"), screenNow.Add(-72*time.Hour))
+			writeClaudeSession(t, f.userHome, "two", f.project(t, "src/web-app"), screenNow.Add(-time.Hour))
+			writeClaudeSession(t, f.userHome, "three", f.project(t, "src/docs"), screenNow.Add(-40*24*time.Hour))
+		},
+	},
+	{
+		// A setup left after its first step offers to continue.
+		name:    "setup-resume-menu",
+		answers: []string{"1", "2", "team-archive", "work", "us-east-1", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex", "claude")
+			f.inWebApp(t)
+			f.setup(t, 1, "", "", "")
+		},
+	},
+	{
+		// Setup on an installed Mac asks what to change; this run leaves
+		// at the review.
+		name:    "setup-reconfigure-menu",
+		answers: []string{"3", "30", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+		},
+	},
+	{
+		// The storage check fails, and setup offers to edit, retry, or
+		// cancel.
+		name:    "setup-storage-failure",
+		answers: []string{"y", "n", "n", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		exit:    1,
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.inWebApp(t)
+			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+				return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
+			}
+		},
+	},
+	{
+		// The review before a first setup commits, cancelled there.
+		name:    "setup-review-fresh",
+		answers: []string{"y", "y", "n", "2", "team-archive", "work", "us-east-1", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "codex", "claude")
+			f.inWebApp(t)
+		},
+	},
+	{
+		// The review of a reconfiguration that changes apps, projects and
+		// retention, saved.
+		name:    "setup-review-reconfigure-changes",
+		answers: []string{"4", "y", "y", "~/src/api", "", "", "", "", "2", "4", "30", ""},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+			f.withApps(t, "codex", "claude", "cursor")
+			f.project(t, "src/api")
+		},
+	},
+	{
+		// What a committed first setup ends with.
+		name:    "setup-next-steps",
+		answers: []string{"y", "y", "y", "", "", "2", "team-archive", "work", "us-east-1", ""},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.inWebApp(t)
+		},
+	},
+	{
+		// Status after a session was captured and published.
+		name: "status-ready",
+		args: []string{"status"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+			f.published(t)
+		},
+	},
+	{
+		// Status when the last pass could not reach storage.
+		name: "status-needs-attention",
+		args: []string{"status"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+			f.published(t)
+			store, err := state.Open(f.home)
+			must(t, err)
+			status, err := store.LoadStatus()
+			must(t, err)
+			status.LastError = "list registrations: AccessDenied: Access Denied"
+			must(t, store.SaveStatus(status))
+		},
+	},
+}
+
+// screenFixture is one screen's Mac: a home folder at root/Users/alex
+// (shown as /Users/alex), its data directory in ~/.agent-archive, and an
+// in-memory bucket.
+type screenFixture struct {
+	root     string
+	userHome string
+	home     string
+	env      Env
+	bucket   storage.ObjectStore
+}
+
+func newScreenFixture(t *testing.T) *screenFixture {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	must(t, err)
+	userHome := filepath.Join(root, "Users", "alex")
+	home := filepath.Join(userHome, ".agent-archive")
+	must(t, os.MkdirAll(home, 0o700))
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), screenNow)
+	account := filepath.Join(root, "Users", "account")
+	must(t, os.MkdirAll(account, 0o700))
+	env.AccountHome = func() (string, error) { return account, nil }
+	executable := filepath.Join(root, "opt", "homebrew", "bin", "agent-archive")
+	must(t, os.MkdirAll(filepath.Dir(executable), 0o755))
+	must(t, os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	env.Executable = func() (string, error) { return executable, nil }
+	// The temporary folder is under root too, so normalize hides it if a
+	// screen ever prints it.
+	tempDir := filepath.Join(root, "tmp")
+	must(t, os.MkdirAll(tempDir, 0o700))
+	env.TempDir = func() string { return tempDir }
+	f := &screenFixture{root: root, userHome: userHome, home: home, env: env, bucket: storagetest.NewMemoryStore()}
+	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return f.bucket, nil }
+	f.env.IsTerminal = func(stream any) bool {
+		switch stream.(type) {
+		case *strings.Reader, *echoAnswers:
+			return true
+		}
+		return false
+	}
+	return f
+}
+
+// project makes a Git repository at rel under the home folder.
+func (f *screenFixture) project(t *testing.T, rel string) string {
+	t.Helper()
+	dir := filepath.Join(f.userHome, rel)
+	must(t, os.MkdirAll(filepath.Join(dir, ".git"), 0o700))
+	return dir
+}
+
+// inWebApp makes the Git repository ~/src/web-app and runs the recorded
+// command from inside it.
+func (f *screenFixture) inWebApp(t *testing.T) {
+	t.Helper()
+	dir := f.project(t, "src/web-app")
+	f.env.WorkingDir = func() (string, error) { return dir, nil }
+}
+
+// withApps makes setup find these apps installed, at fixed versions.
+func (f *screenFixture) withApps(t *testing.T, apps ...string) {
+	t.Helper()
+	versions := map[string]string{"codex": "0.121.0", "claude": "2.1.90", "cursor": "3.21.13"}
+	for _, app := range apps {
+		if versions[app] == "" {
+			t.Fatalf("withApps: no fixed version for app %q", app)
+		}
+	}
+	f.env.DetectHarnesses = func(string) []string { return apps }
+	f.env.DiscoverApplications = func(string) map[string]applicationDiscovery {
+		found := map[string]applicationDiscovery{}
+		for _, app := range apps {
+			found[app] = applicationDiscovery{Installed: true, Version: versions[app], VersionSource: "test", VersionKind: versionKindCLI, VersionState: "known", ObservedAt: screenNow}
+		}
+		return found
+	}
+}
+
+// setup runs setup unrecorded with these answers.
+func (f *screenFixture) setup(t *testing.T, exit int, answers ...string) {
+	t.Helper()
+	input := strings.Join(answers, "\n") + "\n"
+	var out bytes.Buffer
+	if code := Run([]string{"setup"}, strings.NewReader(input), &out, &out, f.env); code != exit {
+		t.Fatalf("setup exit %d want %d\n%s", code, exit, &out)
+	}
+}
+
+// installed sets the Mac up for Codex in ~/src/web-app, storing in S3.
+func (f *screenFixture) installed(t *testing.T) {
+	t.Helper()
+	project := f.project(t, "src/web-app")
+	f.setup(t, 0, "y", "n", "n", project, "", "2", "team-archive", "work", "us-east-1", "")
+}
+
+// published captures and publishes one Codex session in ~/src/web-app.
+func (f *screenFixture) published(t *testing.T) {
+	t.Helper()
+	project := f.project(t, "src/web-app")
+	path := writeCodexTranscript(t, project)
+	must(t, capture.HandleEvent(f.home, "codex", map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "native", "cwd": project, "transcript_path": path}, screenNow))
+	result, err := runOnePass(f.env, false)
+	if err != nil || len(result.Published) != 1 {
+		t.Fatalf("publish: %+v %v", result, err)
+	}
+}
+
+// run runs args with the answers, recording stdout and stderr together, and
+// returns the screen as its golden file holds it.
+func (f *screenFixture) run(t *testing.T, args, answers []string, color bool, exit int) []byte {
+	t.Helper()
+	out := screenOutput{color: color}
+	in := &echoAnswers{answers: answers, echo: &out}
+	code := Run(args, in, &out, &out, f.env)
+	screen := f.normalize(out.String())
+	if color {
+		screen = strings.ReplaceAll(screen, "\x1b", `\e`)
+	}
+	if code != exit {
+		t.Fatalf("%s: exit %d want %d\n%s", strings.Join(args, " "), code, exit, screen)
+	}
+	if in.next < len(answers) {
+		t.Fatalf("%s: %d answer(s) left unread\n%s", strings.Join(args, " "), len(answers)-in.next, screen)
+	}
+	header := fmt.Sprintf("$ agent-archive %s\n", strings.Join(args, " "))
+	footer := fmt.Sprintf("[exit %d]\n", code)
+	return []byte(header + screen + footer)
+}
+
+// setupKeyPattern matches the random name of the object setup's storage
+// check writes.
+var setupKeyPattern = regexp.MustCompile(`\.setup-test/[0-9a-f]+\.json`)
+
+// normalize replaces what changes from run to run: the temporary folders
+// and the storage check's object name.
+func (f *screenFixture) normalize(s string) string {
+	s = strings.ReplaceAll(s, f.userHome, screenHome)
+	s = strings.ReplaceAll(s, f.root, "")
+	return setupKeyPattern.ReplaceAllString(s, ".setup-test/KEY.json")
+}
+
+// screenOutput is stdout and stderr together, a color terminal or not.
+type screenOutput struct {
+	bytes.Buffer
+	color bool
+}
+
+func (o *screenOutput) colorTerminal() bool { return o.color }
+
+// echoAnswers hands setup one answer per read and echoes it to the screen,
+// as a terminal shows what the user typed after the prompt.
+type echoAnswers struct {
+	answers []string
+	next    int
+	echo    *screenOutput
+}
+
+func (e *echoAnswers) Read(p []byte) (int, error) {
+	if e.next == len(e.answers) {
+		return 0, io.EOF
+	}
+	line := e.answers[e.next] + "\n"
+	if len(p) < len(line) {
+		return 0, errors.New("screen answer longer than the read buffer")
+	}
+	e.next++
+	e.echo.WriteString(line)
+	return copy(p, line), nil
+}

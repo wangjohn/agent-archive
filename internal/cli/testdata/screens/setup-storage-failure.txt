@@ -1,0 +1,36 @@
+$ agent-archive setup
+Checking installed applications...
+You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
+
+Step 1 of 3 · Choose what to capture
+
+No apps found automatically.
+Choose which apps to include:
+Include Codex? [y/N] y
+Include Claude Code? [y/N] n
+Include Cursor? [y/N] n
+Project: /Users/alex/src/web-app
+Archive sessions in this project? [Y/n] 
+Add another project? [y/N] 
+
+Step 2 of 3 · Connect storage
+
+Where should sessions be stored?
+  1) Cloudflare R2
+  2) Amazon S3
+  3) Show setup instructions
+Enter 1-3 [1]: 2
+Bucket name: team-archive
+AWS profile: work
+Bucket region (for example us-east-1): us-east-1
+
+Checking your storage connection…
+storage test failed: setup test upload ".setup-test/KEY.json" (relative to the configured prefix): incorrect region or folder (check access and retry; saved choices are kept)
+What would you like to do?
+  1) Edit settings
+  2) Retry the storage check
+  3) Cancel (your choices are kept)
+Enter 1-3 [3]: 
+Setup incomplete: storage test failed: setup test upload ".setup-test/KEY.json" (relative to the configured prefix): incorrect region or folder (check access and retry; saved choices are kept)
+Run agent-archive setup to continue.
+[exit 1]

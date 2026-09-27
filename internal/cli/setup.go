@@ -392,7 +392,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 				continue
 			}
 			verifiedStorage = draft.Config.Storage
-			terminal.Println(out, p.style.green("✓ Connected."))
+			terminal.Println(out, p.style.ok("✓ Connected."))
 		}
 
 		if draft.Config.RetentionDays <= 0 {
@@ -1024,16 +1024,6 @@ func parseNumbers(answer string, limit int) (numbers []int, ok, inRange bool) {
 		}
 	}
 	return numbers, len(numbers) > 0 || !inRange, inRange
-}
-
-// displayPath shows path with the home directory as ~.
-func displayPath(path, home string) string {
-	if home != "" {
-		if rel, err := filepath.Rel(home, path); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-			return filepath.Join("~", rel)
-		}
-	}
-	return path
 }
 
 // lastUsed says how long ago a project was last used, in days.

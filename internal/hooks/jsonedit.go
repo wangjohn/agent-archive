@@ -199,13 +199,50 @@ type edit struct {
 
 var errInvalidConfiguration = errors.New("invalid existing hook configuration")
 
+// configError is errInvalidConfiguration for one file. Its message is what
+// setup shows; it also keeps apart the parts that message runs together,
+// where in the file the problem is and what it is, for Validate.
+type configError struct {
+	message string
+	line    int // 1-based; 0 when the problem is not at one place
+	column  int // 1-based, in bytes, like the message's
+	reason  string
+	cause   error
+}
+
+func (e *configError) Error() string { return e.message }
+
+func (e *configError) Unwrap() []error {
+	if e.cause == nil {
+		return []error{errInvalidConfiguration}
+	}
+	return []error{errInvalidConfiguration, e.cause}
+}
+
+// refused is a configError whose message is reason alone: at is where in
+// src the problem is (offset of its first byte), or -1 when it is not at
+// one place.
+func refused(src []byte, at int, reason string) error {
+	line, column := position(src, at)
+	return &configError{message: errInvalidConfiguration.Error() + ": " + reason, line: line, column: column, reason: reason}
+}
+
+// position is the line and column (in bytes) of offset in src, both
+// 1-based, or 0, 0 for an offset outside src.
+func position(src []byte, offset int) (line, column int) {
+	if offset < 0 || offset > len(src) {
+		return 0, 0
+	}
+	return 1 + bytes.Count(src[:offset], []byte("\n")), offset - bytes.LastIndexByte(src[:offset], '\n')
+}
+
 // invalid is errInvalidConfiguration for src, saying where and, for the
 // forms people most often put in these files by accident, what: a
 // byte-order mark, a comment (JSONC), or a trailing comma, none of which is
 // JSON. The applications themselves read the files as plain JSON.
 func invalid(src []byte, err error) error {
 	if bytes.HasPrefix(src, []byte("\xef\xbb\xbf")) {
-		return fmt.Errorf("%w: the file starts with a byte-order mark (BOM), which JSON does not allow; save it as UTF-8 without one", errInvalidConfiguration)
+		return refused(src, 0, "the file starts with a byte-order mark (BOM), which JSON does not allow; save it as UTF-8 without one")
 	}
 	var syntaxErr *json.SyntaxError
 	offset := -1
@@ -216,25 +253,31 @@ func invalid(src []byte, err error) error {
 		offset = len(src)
 	}
 	if offset < 0 || offset > len(src) {
-		return fmt.Errorf("%w: %w", errInvalidConfiguration, err)
+		return &configError{message: fmt.Sprintf("%s: %s", errInvalidConfiguration, err), reason: err.Error(), cause: err}
 	}
 	// Offset counts the bytes read, which ends just after the one that
 	// failed; step back over whitespace to the character itself.
 	for offset > 0 && offset < len(src) && (src[offset] == ' ' || src[offset] == '\n' || src[offset] == '\r' || src[offset] == '\t') {
 		offset--
 	}
-	line := 1 + bytes.Count(src[:offset], []byte("\n"))
-	column := offset - bytes.LastIndexByte(src[:offset], '\n')
+	line, column := position(src, offset)
 	hint := ""
 	rest := src[offset:]
 	after := bytes.TrimLeft(bytes.TrimPrefix(rest, []byte(",")), " \t\r\n")
 	switch {
 	case bytes.HasPrefix(rest, []byte("//")) || bytes.HasPrefix(rest, []byte("/*")):
 		hint = "; comments (JSONC) are not JSON, so remove them"
-	case bytes.HasPrefix(rest, []byte(",")) && (bytes.HasPrefix(after, []byte("}")) || bytes.HasPrefix(after, []byte("]"))):
+	case bytes.HasPrefix(rest, []byte(",")) && (len(after) == 0 || bytes.HasPrefix(after, []byte("}")) || bytes.HasPrefix(after, []byte("]"))):
 		hint = "; a comma before a closing brace or bracket (a trailing comma) is not JSON, so remove it"
 	}
-	return fmt.Errorf("%w: line %d, column %d: %w%s", errInvalidConfiguration, line, column, err, hint)
+	reason := err.Error() + hint
+	return &configError{
+		message: fmt.Sprintf("%s: line %d, column %d: %s", errInvalidConfiguration, line, column, reason),
+		line:    line,
+		column:  column,
+		reason:  reason,
+		cause:   err,
+	}
 }
 
 // parseDocument reads src, which must be empty or a single JSON object.
@@ -261,7 +304,7 @@ func parseDocument(src []byte) (*document, error) {
 		return nil, invalid(d.src, err)
 	}
 	if delim, ok := token.(json.Delim); !ok || delim != '{' {
-		return nil, fmt.Errorf("%w: the file must hold one JSON object", errInvalidConfiguration)
+		return nil, refused(d.src, skipSpace(d.src, 0), "the file must hold one JSON object")
 	}
 	d.open = int(dec.InputOffset()) - 1
 	d.root = &object{}
@@ -273,16 +316,16 @@ func parseDocument(src []byte) (*document, error) {
 		}
 		key, ok := keyToken.(string)
 		if !ok {
-			return nil, fmt.Errorf("%w: an object key is not a string", errInvalidConfiguration)
+			return nil, refused(d.src, -1, "an object key is not a string")
 		}
+		keyStart := skipUntil(d.src, before, '"')
 		// Setup would edit one of two members that tools resolve
 		// differently (the last wins in Go and JavaScript, not everywhere),
 		// so a duplicate of a member it owns is refused.
 		//lint:ignore LV1001 top-level member names of a user's JSON file are an open set; only these two are setup's
 		if _, dup := d.span(key); dup && (key == "hooks" || key == "version") {
-			return nil, fmt.Errorf("%w: more than one top-level %q key; remove the duplicate", errInvalidConfiguration, key)
+			return nil, refused(d.src, keyStart, fmt.Sprintf("more than one top-level %q key; remove the duplicate", key))
 		}
-		keyStart := skipUntil(d.src, before, '"')
 		valStart := skipSpace(d.src, skipSpace(d.src, int(dec.InputOffset()))+1)
 		value, err := decodeValue(dec)
 		if err != nil {
@@ -294,11 +337,16 @@ func parseDocument(src []byte) (*document, error) {
 	if token, err = dec.Token(); err != nil {
 		return nil, invalid(d.src, err)
 	} else if token != json.Delim('}') {
-		return nil, fmt.Errorf("%w: the file must hold one JSON object", errInvalidConfiguration)
+		return nil, refused(d.src, -1, "the file must hold one JSON object")
 	}
 	d.close = int(dec.InputOffset()) - 1
-	if _, err = dec.Token(); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("%w: more than one JSON value in the file", errInvalidConfiguration)
+	// After the object, only the end of the file: text the decoder cannot
+	// read there, such as a comment or a comma, is reported as what it is.
+	var syntaxErr *json.SyntaxError
+	if _, err = dec.Token(); errors.As(err, &syntaxErr) {
+		return nil, invalid(d.src, err)
+	} else if !errors.Is(err, io.EOF) {
+		return nil, refused(d.src, skipSpace(d.src, d.close+1), "more than one JSON value in the file")
 	}
 	if !d.created {
 		d.indent = d.memberIndent()
