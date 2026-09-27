@@ -208,6 +208,29 @@ var screens = []screen{
 		},
 	},
 	{
+		// A first setup whose project has past sessions offers to import
+		// them, and imports them.
+		name:    "setup-import-offer",
+		answers: []string{"", "", "2", "team-archive", "work", "us-east-1", "", ""},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
+			f.pastSession(t, "two", "src/web-app", screenNow.Add(-2*time.Hour))
+		},
+	},
+	{
+		// setup --yes asks nothing: it points at backfill instead.
+		name: "setup-yes-next-steps",
+		args: []string{"setup", "--yes", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--apps", "claude", "--project", "~/src/web-app"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.project(t, "src/web-app")
+			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
+		},
+	},
+	{
 		// Status after a session was captured and published.
 		name: "status-ready",
 		args: []string{"status"},
@@ -311,6 +334,26 @@ func (f *screenFixture) withApps(t *testing.T, apps ...string) {
 		}
 		return found
 	}
+}
+
+// pastSession writes a Claude Code session with a conversation, started at
+// start in the project at rel under the home folder. Its file is padded to a
+// fixed size, so the sizes an import prints do not depend on the temporary
+// folder's path.
+func (f *screenFixture) pastSession(t *testing.T, id, rel string, start time.Time) {
+	t.Helper()
+	cwd := f.project(t, rel)
+	records := fmt.Sprintf(`{"type":"user","uuid":"a","sessionId":%q,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":"please check it"}}
+{"type":"assistant","uuid":"b","sessionId":%q,"timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":"Checked."}]}}
+`, id, cwd, start.Format(time.RFC3339), id, start.Add(time.Minute).Format(time.RFC3339))
+	const size = 2048
+	pad := `{"pad":"` + strings.Repeat("x", size-len(records)-len(`{"pad":"",`)) + `",`
+	content := strings.Replace(records, "{", pad, 1)
+	path := filepath.Join(f.userHome, ".claude", "projects", strings.ReplaceAll(rel, "/", "-"), id+".jsonl")
+	must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	must(t, os.WriteFile(path, []byte(content), 0o600))
+	written := start.Add(time.Hour)
+	must(t, os.Chtimes(path, written, written))
 }
 
 // setup runs setup unrecorded with these answers.

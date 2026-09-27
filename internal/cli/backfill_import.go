@@ -51,7 +51,16 @@ func importPlan(env Env, stdout, stderr io.Writer, home string, plan backfill.Pl
 		return fail("setup or another backfill is running; run backfill again when it finishes. Nothing was changed.")
 	}
 	defer releaseSetup()
+	return importPlanLocked(env, stdout, stderr, home, plan, fingerprint, background)
+}
 
+// importPlanLocked is importPlan for a caller that already holds setup.lock:
+// setup, which offers the import once its configuration is committed.
+func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backfill.Plan, fingerprint string, background bool) int {
+	fail := func(format string, args ...any) int {
+		terminal.Printf(stderr, "agent-archive: backfill: "+format+"\n", args...)
+		return 1
+	}
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
 	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
 	if err != nil {

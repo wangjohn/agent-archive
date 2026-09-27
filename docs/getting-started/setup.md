@@ -210,7 +210,23 @@ into your real launchd: stub `launchctl` in tests (see
 
 ## After setup
 
-Setup ends with one line per app on what to do next:
+When the projects you chose have past sessions on this Mac that aren't in
+the archive yet, setup offers to import them:
+
+```text
+Looking for past sessions in these projects… 214 found.
+Import the 214 past sessions from these projects? [Y/n]
+```
+
+Yes runs the same import as `agent-archive backfill --project DIR` for each
+chosen project, with the same checks, and uploads the sessions; it ends with
+the import's ID, and `agent-archive backfill undo ID` removes them again (see
+[backfill](../guides/backfill.md)). No changes
+nothing; you can run `agent-archive backfill` any time. Setup skips the offer
+while capture is paused, when there is nothing to import, and with `--yes`,
+which asks nothing and mentions `agent-archive backfill` instead.
+
+Then setup says, with one line per app, what to do next:
 
 - **Codex:** run `/hooks` and approve the archive hooks, then start a new
   session. Codex doesn't run hooks it hasn't approved, and this is the most
@@ -230,3 +246,16 @@ agent-archive status --json
 
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
+
+Setup's last line is the command that sets up another Mac with the same
+storage, apps and projects ([without questions](#set-up-without-questions)),
+ready to copy:
+
+```text
+To set up another Mac with this storage, run there:
+  agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE --region us-east-1 --apps codex,claude --project ~/code/app
+```
+
+Projects in your home folder are written from `~`. For R2 the command never
+carries the key: set `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
+`AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` on the other Mac first.

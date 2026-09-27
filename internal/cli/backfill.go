@@ -271,6 +271,56 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	return importPlan(env, stdout, stderr, home, plan, configFingerprint(cfg), *background)
 }
 
+// offerSetupImport follows a committed interactive setup: when the chosen
+// projects have sessions on this Mac that are not in the archive, it asks
+// whether to import them, and imports them as agent-archive backfill
+// --project would, with the same plan, safety checks and import record, so
+// backfill undo removes them again. setup already holds setup.lock and has
+// just checked storage. Setup is done whatever happens here, so a failure
+// is reported, never returned.
+func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env Env) {
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || importRefusal(home, cfg) != "" {
+		return
+	}
+	var roots []string
+	for _, project := range cfg.Archive.Projects {
+		if project.Included {
+			roots = append(roots, project.Root)
+		}
+	}
+	if len(roots) == 0 || len(cfg.Harnesses) == 0 {
+		return
+	}
+	filters := backfill.Filters{Harnesses: cfg.Harnesses, Projects: roots}
+	later := "Import them later with " + p.style.cmd("agent-archive backfill") + "."
+	terminal.Print(p.out, "\nLooking for past sessions in these projects… ")
+	planCtx, stopPlanning := interruptibleContext(env, errOut)
+	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
+	interrupted := planCtx.Err() != nil
+	stopPlanning()
+	switch {
+	case interrupted:
+		terminal.Println(p.out, "stopped. "+later)
+		return
+	case err != nil:
+		terminal.Println(p.out)
+		terminal.Printf(errOut, "agent-archive: backfill: %v\n", err)
+		terminal.Println(p.out, later)
+		return
+	case len(plan.Imported()) == 0:
+		terminal.Println(p.out, "none to import.")
+		return
+	}
+	terminal.Printf(p.out, "%d found.\n", len(plan.Imported()))
+	yes, err := p.yesNo(fmt.Sprintf("Import the %s from these projects?", countNoun(len(plan.Imported()), "past session")), true)
+	if err != nil || !yes {
+		terminal.Println(p.out, "Not imported. "+later)
+		return
+	}
+	importPlanLocked(env, p.out, errOut, home, plan, configFingerprint(cfg), false)
+}
+
 // interruptibleContext returns a context that the first Ctrl-C cancels,
 // saying on out that it is stopping. A second Ctrl-C, or SIGTERM or SIGHUP
 // at any point, ends the process at once, after removing this process's

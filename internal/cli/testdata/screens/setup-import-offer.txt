@@ -4,9 +4,9 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 
 Step 1 of 3 · Choose what to capture
 
-Include Codex, Claude Code, and Cursor? [Y/n] 
+Include Claude Code? [Y/n] 
 Projects to archive (✓ included):
-  1) ✓ ~/src/web-app  this folder
+  1) ✓ ~/src/web-app  this folder · 2 sessions · today
 Enter 1 to include or leave it out, or a path to add a project.
 Enter a blank line when finished.
 Projects: 
@@ -27,7 +27,7 @@ Checking your storage connection…
 
 Step 3 of 3 · Ready to start
 
-  Apps      Codex 0.121.0, Claude Code 2.1.90, Cursor 3.21.13
+  Apps      Claude Code 2.1.90
   Projects  /Users/alex/src/web-app
   Keep for  90 days, then deleted automatically
   Storage   Amazon S3
@@ -35,13 +35,11 @@ Step 3 of 3 · Ready to start
   AWS       profile work · us-east-1
 
 Before you confirm
-  · Codex hooks: /Users/alex/.codex/hooks.json
   · Claude Code hooks: /Users/alex/.claude/settings.json
-  · Cursor hooks: /Users/alex/.cursor/hooks.json
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
   · Filtering is best effort; sensitive text may remain in archived sessions.
-  · Capture with Codex 0.121.0, Claude Code 2.1.90, Cursor 3.21.13 is not confirmed until a session is archived.
+  · Capture with Claude Code 2.1.90 is not confirmed until a session is archived.
     After your first session, check it with agent-archive status.
 
 Start archiving?
@@ -52,15 +50,19 @@ Enter 1-3 [1]:
 
 Configuration saved.
 
-Looking for past sessions in these projects… none to import.
+Looking for past sessions in these projects… 2 found.
+Import the 2 past sessions from these projects? [Y/n] 
+Registered 2 sessions as import 2026-09-25-1.
+Uploading: 2 of 2 sessions, 4 KB of 4 KB
+Uploaded 2 sessions (4 KB).
+See them with `agent-archive list --imported`.
+Undo with `agent-archive backfill undo 2026-09-25-1`.
 
 Next, in each app:
-  Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
   Claude Code: nothing to approve; start a new session (or /clear).
-  Cursor: nothing to approve; start a new Agent chat.
 Sessions already open are not captured: only one started after setup, in an included project, counts.
 Check progress with agent-archive status.
 
 To set up another Mac with this storage, run there:
-  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --project ~/src/web-app
+  agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app
 [exit 0]

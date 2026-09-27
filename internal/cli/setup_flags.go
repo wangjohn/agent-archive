@@ -182,7 +182,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		}
 		return err
 	}
-	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt)
+	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome})
 }
 
 // setupAnswers is the configuration setup --yes saves, before its storage
