@@ -2,15 +2,20 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -212,16 +217,94 @@ var screens = []screen{
 		},
 	},
 	{
-		// The storage check fails, and setup offers to edit, retry, or
-		// cancel.
+		// The storage check fails for want of AWS credentials: setup says
+		// why, and how to fix it, and offers the fix first. This run stops
+		// there.
 		name:    "setup-storage-failure",
-		answers: []string{"y", "n", "n", "", "2", "work", "2", ""},
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: errors.New("dial tcp 169.254.169.254:80: connect: host is down")}}),
+	},
+	{
+		// The same failure with --verbose: the storage error is printed
+		// under the diagnosis, once.
+		name:    "setup-storage-failure-verbose",
+		args:    []string{"setup", "--verbose"},
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}}),
+	},
+	{
+		// After a wrong-region failure that named no region, continuing
+		// asks the storage questions again. S3 can't say where the bucket
+		// is, so rather than check the region that failed again, setup
+		// says so and asks for the region. The check passes; this run
+		// leaves at the review.
+		name:    "setup-storage-failure-continue",
+		answers: []string{"1", "", "", "", "eu-west-1", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.inWebApp(t)
+			f.env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+				var err error
+				if cfg.Storage.Region != "eu-west-1" {
+					err = &smithyhttp.ResponseError{
+						Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{}}},
+						Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+					}
+				}
+				return putErrorStore{f.bucket, &err}, nil
+			}
+			f.setup(t, 1, storageFailureAnswers...)
+			// S3 now refuses the region lookup, so the region is asked.
+			f.env.AWSBuckets = fakeBuckets{names: []string{"photos", "team-archive"}, regionErr: errAccessDenied}.open
+		},
+	},
+	{
+		name:    "setup-storage-failure-access-denied",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.GenericAPIError{Code: "AccessDenied"}),
+	},
+	{
+		name:    "setup-storage-failure-no-such-bucket",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithy.GenericAPIError{Code: "NoSuchBucket"}),
+	},
+	{
+		name:    "setup-storage-failure-wrong-region",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}}},
+			Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+		}),
+	},
+	{
+		name:    "setup-storage-failure-network",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(&smithyhttp.RequestSendError{Err: errors.New("dial tcp: lookup team-archive.s3.us-east-1.amazonaws.com: no such host")}),
+	},
+	{
+		// A failure the provider did not answer, and Diagnose does not
+		// recognize.
+		name:    "setup-storage-failure-other",
+		answers: storageFailureAnswers,
+		exit:    1,
+		arrange: failUploads(errors.New("incorrect region or folder")),
+	},
+	{
+		// The object the check wrote read back changed.
+		name:    "setup-storage-failure-read-back",
+		answers: storageFailureAnswers,
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.inWebApp(t)
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
-				return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
+				return changedReadStore{f.bucket}, nil
 			}
 		},
 	},
@@ -257,6 +340,29 @@ var screens = []screen{
 		},
 	},
 	{
+		// A first setup whose project has past sessions offers to import
+		// them, and imports them.
+		name:    "setup-import-offer",
+		answers: []string{"", "", "2", "work", "2", "", ""},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
+			f.pastSession(t, "two", "src/web-app", screenNow.Add(-2*time.Hour))
+		},
+	},
+	{
+		// setup --yes asks nothing: it points at backfill instead.
+		name: "setup-yes-next-steps",
+		args: []string{"setup", "--yes", "--provider", "s3", "--bucket", "team-archive", "--aws-profile", "work", "--region", "us-east-1", "--apps", "claude", "--project", "~/src/web-app"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.project(t, "src/web-app")
+			f.pastSession(t, "one", "src/web-app", screenNow.Add(-72*time.Hour))
+		},
+	},
+	{
 		// Status after a session was captured and published.
 		name: "status-ready",
 		args: []string{"status"},
@@ -282,6 +388,28 @@ var screens = []screen{
 			must(t, store.SaveStatus(status))
 		},
 	},
+}
+
+// storageFailureAnswers set up Codex in ~/src/web-app with S3 storage, and
+// stop at the storage check's failure menu.
+var storageFailureAnswers = []string{"y", "n", "n", "", "2", "work", "2", "4"}
+
+// failUploads makes the bucket refuse every upload with err.
+func failUploads(err error) func(*testing.T, *screenFixture) {
+	return func(t *testing.T, f *screenFixture) {
+		t.Helper()
+		f.inWebApp(t)
+		f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+			return putErrorStore{f.bucket, &err}, nil
+		}
+	}
+}
+
+// changedReadStore reads back other bytes than were written.
+type changedReadStore struct{ storage.ObjectStore }
+
+func (changedReadStore) Get(context.Context, string) ([]byte, error) {
+	return []byte("changed"), nil
 }
 
 // screenFixture is one screen's Mac: a home folder at root/Users/alex
@@ -363,6 +491,26 @@ func (f *screenFixture) withApps(t *testing.T, apps ...string) {
 		}
 		return found
 	}
+}
+
+// pastSession writes a Claude Code session with a conversation, started at
+// start in the project at rel under the home folder. Its file is padded to a
+// fixed size, so the sizes an import prints do not depend on the temporary
+// folder's path.
+func (f *screenFixture) pastSession(t *testing.T, id, rel string, start time.Time) {
+	t.Helper()
+	cwd := f.project(t, rel)
+	records := fmt.Sprintf(`{"type":"user","uuid":"a","sessionId":%q,"cwd":%q,"timestamp":%q,"message":{"role":"user","content":"please check it"}}
+{"type":"assistant","uuid":"b","sessionId":%q,"timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":"Checked."}]}}
+`, id, cwd, start.Format(time.RFC3339), id, start.Add(time.Minute).Format(time.RFC3339))
+	const size = 2048
+	pad := `{"pad":"` + strings.Repeat("x", size-len(records)-len(`{"pad":"",`)) + `",`
+	content := strings.Replace(records, "{", pad, 1)
+	path := filepath.Join(f.userHome, ".claude", "projects", strings.ReplaceAll(rel, "/", "-"), id+".jsonl")
+	must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	must(t, os.WriteFile(path, []byte(content), 0o600))
+	written := start.Add(time.Hour)
+	must(t, os.Chtimes(path, written, written))
 }
 
 // setup runs setup unrecorded with these answers.

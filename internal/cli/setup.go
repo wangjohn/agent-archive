@@ -41,6 +41,9 @@ type setupDraft struct {
 	// stop publishing. Config.ImportedHarnesses itself always comes from the
 	// committed configuration (see carriedImportedHarnesses).
 	StopImported []string `json:"stop_imported,omitempty"`
+	// FailedRegion is the S3 region a storage check just failed for. Setup
+	// asks for the region again, rather than checking that one again.
+	FailedRegion string `json:"failed_region,omitempty"`
 }
 
 // draftFormat is the setupDraft.Version this release writes and reads.
@@ -148,7 +151,7 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 		return 0
 	}
-	if err := setup(stdin, stdout, stderr, env); err != nil {
+	if err := setup(stdin, stdout, stderr, env, opts.verbose); err != nil {
 		terminal.Printf(stderr, "Setup incomplete: %v\n", err)
 		var blocked *setupjournal.RecoveryBlockedError
 		if errors.As(err, &blocked) {
@@ -171,7 +174,9 @@ func runSetupCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	return 0
 }
 
-func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
+// setup is interactive setup. verbose prints a failed storage check's own
+// error under its diagnosis.
+func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error {
 	home, err := env.home()
 	if err != nil {
 		return err
@@ -351,10 +356,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		}
 		if draft.Step == 1 {
 			p.step(2, "Connect storage")
-			cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env)
+			cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env, draft.FailedRegion)
 			if e != nil {
 				return e
 			}
+			// The storage questions asked for a failed region again.
+			draft.FailedRegion = ""
 			if saveSecret {
 				keychain, e := env.keychain()
 				if e != nil {
@@ -399,30 +406,59 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 			}
 		}
 		if draft.Config.Storage != verifiedStorage {
+			// A draft resumed past the storage questions (after changing
+			// apps, say) still doesn't check a failed region again.
+			if s := &draft.Config.Storage; s.Provider == credentials.ProviderS3 && draft.FailedRegion != "" && s.Region == draft.FailedRegion {
+				if s.Region, err = askFailedRegion(p, s.Region); err != nil {
+					return err
+				}
+			}
+			draft.FailedRegion = ""
 			terminal.Println(out, "\nChecking your storage connection…")
 			connectErr, e := verifyStorage(&draft.Config, env)
 			if connectErr != nil {
-				draft.Step = 1
-				_ = save()
-				return connectErr
+				e = connectErr
 			}
 			if e != nil {
-				failure := fmt.Errorf("storage test failed: %w (check access and retry; saved choices are kept)", e)
-				terminal.Println(out, failure)
-				choice, promptErr := p.menu("What would you like to do?", "cancel",
-					option{"edit", "Edit settings"},
-					option{"retry", "Retry the storage check"},
-					option{"cancel", "Cancel (your choices are kept)"})
+				d := printStorageFailure(p, draft.Config.Storage, e, verbose, "agent-archive setup --verbose")
+				// Saved to ask the storage questions again, so that
+				// "Continue where you left off" never repeats a check that
+				// just failed.
+				if err = local.Write(savedPath, reopenStorage(draft, d)); err != nil {
+					return err
+				}
+				choice, promptErr := p.menu("What next?", "fix",
+					option{"fix", storageFixLabel(draft.Config.Storage, d)},
+					option{"retry", "Retry the check"},
+					option{"edit", "Change other settings"},
+					option{"cancel", "Stop for now (your answers are kept)"})
 				if promptErr != nil || choice == "cancel" {
-					return failure
+					return &storageCheckError{err: e, outcome: "your answers are kept"}
+				}
+				// Retry and "Change other settings" keep the draft as it
+				// is, at the check.
+				if choice == "fix" && d.Cause == storage.CauseWrongRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
+					// The region is the one answer to change, asked right
+					// under the diagnosis. When S3 didn't name the bucket's
+					// region, ask S3 for it, as the storage questions would,
+					// so the default is not the region that just failed.
+					region := d.Region
+					if region == "" {
+						region = firstNonEmpty(lookUpBucketRegion(p, env, draft.Config.Storage), draft.Config.Storage.Region)
+					}
+					if draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", region); err != nil {
+						return err
+					}
+				} else if choice == "fix" {
+					draft = reopenStorage(draft, d)
 				}
 				if choice == "edit" {
 					if err = editSetupReview(p, &draft, userHome, backfilledProjects(env), known); err != nil {
 						return err
 					}
-					if err = save(); err != nil {
-						return err
-					}
+				}
+				if err = save(); err != nil {
+					return err
 				}
 				continue
 			}
@@ -473,14 +509,23 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env) error {
 		if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
 			return err
 		}
-		return finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt)
+		return finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true})
 	}
 }
 
+// setupFinish is what finishSetup needs beyond the committed
+// configuration: the Mac it runs on, and whether it may ask to import past
+// sessions (interactive setup) or only point at backfill (setup --yes).
+type setupFinish struct {
+	env         Env
+	userHome    string
+	offerImport bool
+}
+
 // finishSetup follows a committed setup: it records the apps' versions,
-// removes the saved draft, drops diagnostics of excluded projects, and says
-// what to do next.
-func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, paused bool, discoveries map[string]applicationDiscovery, discoveredAt time.Time) error {
+// removes the saved draft, drops diagnostics of excluded projects, offers to
+// import the chosen projects' past sessions, and says what to do next.
+func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, paused bool, discoveries map[string]applicationDiscovery, discoveredAt time.Time, finish setupFinish) error {
 	if err := recordApplicationDiscoveries(home, discoveries, discoveredAt); err != nil {
 		terminal.Printf(p.out, "Warning: installed application versions could not be recorded: %v\n", err)
 	}
@@ -492,7 +537,12 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if e := capture.PruneDiagnostics(home, cfg.Archive.Projects); e != nil {
 		terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
 	}
-	printNextSteps(p, cfg.Harnesses, paused)
+	terminal.Println(p.out, "\nConfiguration saved.")
+	// A paused Mac imports nothing (backfill refuses too); resume says so.
+	if finish.offerImport && !paused {
+		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
+	}
+	printNextSteps(p, cfg, finish.userHome, paused, !finish.offerImport)
 	return nil
 }
 
@@ -529,21 +579,99 @@ var hookNextStep = map[string]string{
 
 // printNextSteps ends a committed setup with one line per app on what to do
 // next. Capture needs a proven fresh start (provesFreshSessionStart), so it
-// says that sessions already open are not captured.
-func printNextSteps(p *prompter, apps []string, paused bool) {
-	terminal.Println(p.out, "\nConfiguration saved.")
+// says that sessions already open are not captured. setup --yes asks
+// nothing, so it points at backfill for past sessions instead. The last line
+// sets up another Mac with the same storage.
+func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, unattended bool) {
 	if paused {
-		terminal.Println(p.out, "Next: run agent-archive resume when you’re ready to start archiving.")
-		return
+		terminal.Println(p.out, "\nNext: run "+p.style.cmd("agent-archive resume")+" when you’re ready to start archiving.")
+	} else {
+		terminal.Println(p.out, "\nNext, in each app:")
+		for _, app := range cfg.Harnesses {
+			if step, ok := hookNextStep[app]; ok {
+				terminal.Println(p.out, "  "+step)
+			}
+		}
+		terminal.Println(p.out, "Sessions already open are not captured: only one started after setup, in an included project, counts.")
+		if unattended {
+			terminal.Println(p.out, "Import sessions from before setup with "+p.style.cmd("agent-archive backfill")+".")
+		}
+		terminal.Println(p.out, "Check progress with "+p.style.cmd("agent-archive status")+".")
 	}
-	terminal.Println(p.out, "Next, in each app:")
-	for _, app := range apps {
-		if step, ok := hookNextStep[app]; ok {
-			terminal.Println(p.out, "  "+step)
+	if cfg.Storage.Provider == credentials.ProviderR2 {
+		terminal.Printf(p.out, "\nTo set up another Mac with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
+	} else {
+		terminal.Println(p.out, "\nTo set up another Mac with this storage, run there:")
+	}
+	terminal.Println(p.out, "  "+p.style.cmd(anotherMacCommand(cfg, userHome)))
+	// setup --yes has no flag for the folder inside the bucket: it stores in
+	// the default one, which would split the archive from this Mac's.
+	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
+		terminal.Printf(p.out, "Then run %s there and set the folder inside the bucket to %s.\n", p.style.cmd("agent-archive setup"), prefix)
+	}
+}
+
+// anotherMacCommand is the setup --yes command that sets up another Mac
+// like this one: the same storage, apps and projects. Projects in the home
+// folder are written from ~, which setup resolves on that Mac. An R2 key is
+// never written: setup --yes reads it from its environment variables there.
+func anotherMacCommand(cfg config.Config, userHome string) string {
+	args := []string{"agent-archive", "setup", "--yes", "--provider", cfg.Storage.Provider, "--bucket", cfg.Storage.Bucket}
+	if cfg.Storage.Provider == credentials.ProviderR2 {
+		args = append(args, "--r2-account", firstNonEmpty(cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
+	} else {
+		args = append(args, "--aws-profile", cfg.Storage.AWSProfile)
+		if cfg.Storage.Region != "" {
+			args = append(args, "--region", cfg.Storage.Region)
 		}
 	}
-	terminal.Println(p.out, "Sessions already open are not captured: only one started after setup, in an included project, counts.")
-	terminal.Println(p.out, "Check progress with agent-archive status.")
+	if len(cfg.Harnesses) > 0 {
+		args = append(args, "--apps", strings.Join(cfg.Harnesses, ","))
+	}
+	for _, project := range cfg.Archive.Projects {
+		if !project.Included {
+			continue
+		}
+		args = append(args, "--project", homeRelative(project.Root, userHome))
+	}
+	for i, arg := range args {
+		args[i] = shellWord(arg)
+	}
+	return strings.Join(args, " ")
+}
+
+// homeRelative writes path from ~ when it is in the home folder. Project
+// roots are saved with symlinks resolved, so the home folder is compared
+// resolved too (on macOS a folder under /tmp resolves to /private/tmp).
+func homeRelative(path, userHome string) string {
+	if userHome == "" {
+		return path
+	}
+	homes := []string{userHome}
+	if resolved, err := filepath.EvalSymlinks(userHome); err == nil && resolved != userHome {
+		homes = append(homes, resolved)
+	}
+	for _, home := range homes {
+		if !local.PathWithin(path, home) {
+			continue
+		}
+		if rel, err := filepath.Rel(home, path); err == nil {
+			return filepath.ToSlash(filepath.Join("~", rel))
+		}
+	}
+	return path
+}
+
+// shellWord quotes s for a POSIX shell when it needs quoting. A leading ~
+// stays inside the quotes, where setup's --project expands it itself.
+func shellWord(s string) string {
+	plain := func(r rune) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("~/._-,:=@+%", r)
+	}
+	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !plain(r) }) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // chooseCapture asks for the apps and projects to capture. known, when not
@@ -632,7 +760,7 @@ func storedCredentialReadable(env Env, ref string) bool {
 	return err == nil
 }
 
-func promptStorage(p *prompter, existing credentials.Config, env Env) (credentials.Config, credentials.R2Credentials, bool, error) {
+func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
 	var secret credentials.R2Credentials
 	providers := []option{
@@ -701,7 +829,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env) (credentia
 				}
 			}
 		}
-	} else if err = promptS3Location(p, &cfg, env); err != nil {
+	} else if err = promptS3Location(p, &cfg, env, failedRegion); err != nil {
 		return cfg, secret, false, err
 	}
 	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)

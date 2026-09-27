@@ -246,8 +246,9 @@ func promptRegion(p *prompter, label, def string) (string, error) {
 // the region. With the profile chosen, setup lists its buckets to pick from
 // and reads the chosen bucket's own region, so a bucket outside the
 // profile's region works. When S3 refuses either lookup, setup says why in
-// one line and asks instead.
-func promptS3Location(p *prompter, cfg *credentials.Config, env Env) error {
+// one line and asks instead. A region the last storage check failed for
+// (failedRegion) is asked for again rather than kept.
+func promptS3Location(p *prompter, cfg *credentials.Config, env Env, failedRegion string) error {
 	profiles, err := env.awsProfiles()
 	if err != nil {
 		terminal.Println(p.out, "Could not read AWS profiles automatically. Enter an existing profile name below.")
@@ -302,6 +303,10 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env) error {
 
 	if finder != nil {
 		region, err := bucketRegion(finder, cfg.Bucket)
+		if err == nil && region == failedRegion {
+			cfg.Region, err = askFailedRegion(p, region)
+			return err
+		}
 		if err == nil {
 			cfg.Region = region
 			terminal.Printf(p.out, "Bucket %s is in %s; using that region.\n", cfg.Bucket, region)
@@ -314,6 +319,10 @@ func promptS3Location(p *prompter, cfg *credentials.Config, env Env) error {
 	}
 	if cfg.Region == "" {
 		cfg.Region, err = promptRegion(p, "Bucket region (for example us-east-1)", "")
+		return err
+	}
+	if cfg.Region == failedRegion {
+		cfg.Region, err = askFailedRegion(p, cfg.Region)
 		return err
 	}
 	terminal.Printf(p.out, "Using region %s. You can change it at the final review.\n", cfg.Region)

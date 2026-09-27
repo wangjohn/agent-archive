@@ -22,6 +22,9 @@ follow [Semantic Versioning](https://semver.org/).
 - `setup` checks before the first question that each app's hook file is
   valid, that `launchctl` responds, and, when R2 is used, that the Keychain
   opens. A problem stops setup with the file and line to fix.
+- At the end of `setup`, an offer to import the past sessions of the
+  projects you chose, and a copy-paste `agent-archive setup --yes …` line
+  for setting up another Mac.
 
 ### Changed
 
@@ -35,6 +38,10 @@ follow [Semantic Versioning](https://semver.org/).
   `agent-archive*` bucket is pre-selected) and uses the bucket's own region.
   A region that isn't shaped like one is refused, and a saved one of that
   kind is dropped on reconfigure.
+- When the storage check fails, `setup` shows the cause once with its fix
+  (raw error text only with `--verbose`), the menu defaults to fixing the
+  answer that failed, and "Continue where you left off" asks that answer
+  again instead of re-running the same check.
 
 ## [0.1.0] - 2026-09-25
 

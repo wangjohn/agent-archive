@@ -36,6 +36,7 @@ type setupOptions struct {
 	apps                 string
 	projects             []string
 	yes                  bool
+	verbose              bool
 	storageFlagsSupplied bool
 }
 
@@ -62,6 +63,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
+	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
 	if !fs.parseFlagsOnly(args) {
 		return opts, false
 	}
@@ -180,10 +182,13 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	terminal.Println(out, "Checking your storage connection…")
 	connectErr, accessErr := verifyStorage(&cfg, env)
 	if connectErr != nil {
-		return discard(connectErr)
+		accessErr = connectErr
 	}
 	if accessErr != nil {
-		return discard(fmt.Errorf("storage test failed: %w; nothing was changed", accessErr))
+		// On standard error, with setup's last line, so a script that keeps
+		// only errors still learns why.
+		printStorageFailure(&prompter{out: errOut, style: styleFor(errOut)}, cfg.Storage, accessErr, opts.verbose, "run again with --verbose")
+		return discard(&storageCheckError{err: accessErr, outcome: "nothing was changed"})
 	}
 	terminal.Println(out, p.style.ok("✓ Connected."))
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
@@ -201,7 +206,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		}
 		return err
 	}
-	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt)
+	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome})
 }
 
 // setupAnswers is the configuration setup --yes saves, before its storage
