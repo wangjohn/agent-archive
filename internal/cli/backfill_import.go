@@ -298,8 +298,9 @@ func printRegistered(out io.Writer, batchID string, added int, result backfill.R
 }
 
 func printImportHints(out io.Writer, batchID string) {
-	terminal.Println(out, "See them with `agent-archive list --imported`.")
-	terminal.Printf(out, "Undo with `agent-archive backfill undo %s`.\n", batchID)
+	s := styleFor(underlyingWriter(out))
+	terminal.Println(out, "See them with "+s.cmd("agent-archive list --imported")+".")
+	terminal.Println(out, "Undo with "+s.cmd("agent-archive backfill undo "+batchID)+".")
 }
 
 // uploadBusyGiveUp is how long upload waits on a collector pass that holds
