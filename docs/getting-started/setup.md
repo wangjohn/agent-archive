@@ -146,6 +146,8 @@ For a second Mac, or any scripted setup, pass the answers as flags with
 `--yes`. Setup then asks nothing, runs the same
 [checks](#before-the-first-question) and storage check, and saves;
 if an answer is missing or the check fails, it says so and changes nothing.
+Every missing or wrong answer is listed at once, one per line with the flag
+that fixes it, before any check runs.
 
 ```sh
 export AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY=...   # or pipe it on standard input

@@ -118,12 +118,12 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if _, saved, _, e := readDraft(home); e != nil || saved {
 		return fmt.Errorf("an unfinished setup is saved in %s; run agent-archive setup to finish or discard it first", draftPath(home))
 	}
-	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env)
+	p := newPrompter(stdin, out)
+	p.now = env.now
+	cfg, secret, err := setupAnswers(existing, opts, home, userHome, installed, env, scriptR2Secret(p, stdin, env))
 	if err != nil {
 		return err
 	}
-	p := newPrompter(stdin, out)
-	p.now = env.now
 	// The checks interactive setup makes before its first question, for the
 	// apps these answers install and, when they store in R2, the Keychain.
 	// They follow the answers' own checks, so a script learns of every
@@ -141,7 +141,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	if cfg.Storage.Provider == credentials.ProviderR2 && !(credentials.R2Location{Endpoint: cfg.Storage.R2Endpoint}).Cloudflare() {
 		p.warn("--r2-account isn't a Cloudflare R2 address; it is used as an S3-compatible endpoint.")
 	}
-	if cfg.Storage.Provider == credentials.ProviderR2 && secret.AccessKeyID != "" {
+	if cfg.Storage.Provider == credentials.ProviderR2 && secret.AccessKeyID != "" && secret.SecretAccessKey == "" {
 		if secret.SecretAccessKey, err = readR2Secret(p, stdin, env); err != nil {
 			return err
 		}
@@ -201,24 +201,62 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 
 // setupAnswers is the configuration setup --yes saves, before its storage
 // is checked: existing with the flags' answers. secret carries a new R2
-// access key ID, if one was given.
-func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
+// access key, if one was given, with the secret when readSecret could read
+// it without asking. Every missing or wrong answer is reported together.
+func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env, readSecret func() (string, error)) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
 	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
+	var problems []error
 	if err := setupApps(&cfg, opts.apps, env.detectHarnesses(userHome), installed); err != nil {
-		return cfg, credentials.R2Credentials{}, err
+		problems = append(problems, err)
+	} else if other := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(other) > 0 {
+		return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: other}
 	}
-	if problems := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), cfg.Harnesses); len(problems) > 0 {
-		return cfg, credentials.R2Credentials{}, &otherInstallationError{problems: problems}
-	}
-	if err := setupProjects(&cfg, opts.projects, userHome); err != nil {
-		return cfg, credentials.R2Credentials{}, err
-	}
-	secret, err := setupStorageFromFlags(&cfg, opts, env)
+	problems = append(problems, setupProjects(&cfg, opts.projects, userHome))
+	secret, err := setupStorageFromFlags(&cfg, opts, env, readSecret)
+	problems = append(problems, err)
 	if cfg.RetentionDays <= 0 {
 		cfg.RetentionDays = defaultRetentionDays
 	}
-	return cfg, secret, err
+	return cfg, secret, answersError(problems)
+}
+
+// scriptR2Secret reads a script's R2 secret, set in the environment or
+// piped in, with the other answers, so a missing one is reported with
+// theirs. A terminal is asked for it only after the preflight checks, so it
+// returns nothing then.
+func scriptR2Secret(p *prompter, stdin io.Reader, env Env) func() (string, error) {
+	return func() (string, error) {
+		if env.isTerminal(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "" {
+			return "", nil
+		}
+		return readR2Secret(p, stdin, env)
+	}
+}
+
+// answersError is setup --yes refused for its answers: a single problem as
+// it is, or several listed one per line, each naming the flag that fixes
+// it. Joined errors count one problem each; nil ones are skipped.
+func answersError(errs []error) error {
+	var problems []error
+	for _, err := range errs {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			problems = append(problems, joined.Unwrap()...)
+		} else if err != nil {
+			problems = append(problems, err)
+		}
+	}
+	switch len(problems) {
+	case 0:
+		return nil
+	case 1:
+		return problems[0]
+	}
+	lines := make([]string, 0, len(problems))
+	for _, err := range problems {
+		lines = append(lines, "\n  - "+err.Error())
+	}
+	return fmt.Errorf("%d answers are missing or wrong; nothing was changed:%s", len(problems), strings.Join(lines, ""))
 }
 
 // stageR2Key saves a new R2 key in the Keychain under a fresh reference,
@@ -309,10 +347,12 @@ func setupApps(cfg *config.Config, apps string, detected []string, installed boo
 // setupProjects includes each --project directory in cfg, beside the
 // projects already saved.
 func setupProjects(cfg *config.Config, paths []string, userHome string) error {
+	var problems []error
 	for _, path := range paths {
 		root, err := projectDir(path, userHome)
 		if err != nil {
-			return fmt.Errorf("--project %w", err)
+			problems = append(problems, fmt.Errorf("--project %w", err))
+			continue
 		}
 		included := false
 		for i := range cfg.Archive.Projects {
@@ -324,6 +364,9 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) error {
 			cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true})
 		}
 	}
+	if len(problems) > 0 {
+		return errors.Join(problems...)
+	}
 	if includedProjects(cfg.Archive.Projects) == 0 {
 		return errors.New("no project is included; pass --project DIR")
 	}
@@ -332,9 +375,11 @@ func setupProjects(cfg *config.Config, paths []string, userHome string) error {
 
 // setupStorageFromFlags sets cfg's storage from the flags, or keeps the
 // saved storage when no storage flag was passed. For R2, the returned
-// credentials carry the access key ID when a new key is to be stored; the
-// secret is read later, once everything else checks out.
-func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env) (credentials.R2Credentials, error) {
+// credentials carry the access key when a new key is to be stored, with the
+// secret readSecret returns: empty when it is to be asked for later, once
+// everything else checks out. Every problem with the flags is returned,
+// joined.
+func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env, readSecret func() (string, error)) (credentials.R2Credentials, error) {
 	var secret credentials.R2Credentials
 	if !opts.storageFlagsSupplied {
 		if cfg.Storage.Provider == "" {
@@ -348,69 +393,91 @@ func setupStorageFromFlags(cfg *config.Config, opts setupOptions, env Env) (cred
 		next.Prefix = previous.Prefix
 	}
 	next.Prefix = firstNonEmpty(next.Prefix, defaultPrefix)
+	var problems []error
+	checkBucket := true
 	//lint:ignore LV1001 --provider is raw user input; anything else is refused below
 	switch opts.provider {
 	case credentials.ProviderR2:
-		if opts.awsProfile != "" || opts.region != "" {
-			return secret, errors.New("--aws-profile and --region are for --provider s3")
-		}
-		if opts.r2Account == "" {
-			return secret, errors.New("--provider r2 needs --r2-account (the account ID, or the bucket URL from the dashboard)")
-		}
-		loc, err := credentials.ParseR2Location(opts.r2Account)
-		if err != nil {
-			return secret, fmt.Errorf("--r2-account: %w", err)
-		}
-		if loc.Bucket != "" && next.Bucket != "" && loc.Bucket != next.Bucket {
-			return secret, fmt.Errorf("--bucket %s differs from the bucket in --r2-account's URL (%s)", next.Bucket, loc.Bucket)
-		}
-		next.Bucket = firstNonEmpty(next.Bucket, loc.Bucket)
-		if next.R2Endpoint, err = credentials.R2Endpoint(loc.Endpoint, loc.AccountID); err != nil {
-			return secret, fmt.Errorf("--r2-account: %w", err)
-		}
-		next.R2AccountID = loc.AccountID
-		secret.AccessKeyID = firstNonEmpty(opts.r2KeyID, lookupEnvTrimmed(env, envR2AccessKeyID))
-		if secret.AccessKeyID == "" {
-			if previous.Provider != credentials.ProviderR2 || previous.R2CredentialRef == "" {
-				return secret, fmt.Errorf("--provider r2 needs the access key ID: pass --r2-access-key-id or set %s", envR2AccessKeyID)
-			}
-			next.R2CredentialRef = previous.R2CredentialRef
-		}
+		secret, problems, checkBucket = r2FromFlags(&next, opts, previous, env, readSecret)
 	case credentials.ProviderS3:
-		if opts.r2Account != "" || opts.r2KeyID != "" {
-			return secret, errors.New("--r2-account and --r2-access-key-id are for --provider r2")
-		}
-		if opts.awsProfile == "" {
-			return secret, errors.New("--provider s3 needs --aws-profile")
-		}
-		next.AWSProfile, next.Region = opts.awsProfile, opts.region
-		if next.Region == "" {
-			profiles, _ := env.awsProfiles()
-			for _, profile := range profiles {
-				if profile.Name == next.AWSProfile {
-					next.Region = profile.Region
-				}
-			}
-			if next.Region == "" {
-				return secret, fmt.Errorf("AWS profile %s names no region; pass --region", next.AWSProfile)
-			}
-		}
-		if !validRegion(next.Region) {
-			if opts.region != "" {
-				return secret, fmt.Errorf("--region %q isn't an AWS region; use a lowercase name such as us-east-1", next.Region)
-			}
-			return secret, fmt.Errorf("AWS profile %s names region %q, which isn't an AWS region; pass --region, such as --region us-east-1", next.AWSProfile, next.Region)
-		}
+		problems = s3FromFlags(&next, opts, env)
 	case "":
 		return secret, errors.New("--bucket and the other storage flags need --provider r2 or --provider s3")
 	default:
 		return secret, fmt.Errorf("--provider must be r2 or s3, not %q", opts.provider)
 	}
-	if next.Bucket == "" {
-		return secret, errors.New("--bucket is required")
+	if checkBucket && next.Bucket == "" {
+		problems = append(problems, errors.New("--bucket is required"))
+	}
+	if len(problems) > 0 {
+		return secret, errors.Join(problems...)
 	}
 	cfg.Storage = next
 	return secret, nil
+}
+
+// r2FromFlags sets next from the R2 flags. It returns the new key, if one
+// is given, and every problem with the flags. checkBucket is false when
+// --r2-account doesn't parse, since its URL may name the bucket.
+func r2FromFlags(next *credentials.Config, opts setupOptions, previous credentials.Config, env Env, readSecret func() (string, error)) (secret credentials.R2Credentials, problems []error, checkBucket bool) {
+	checkBucket = true
+	if opts.awsProfile != "" || opts.region != "" {
+		problems = append(problems, errors.New("--aws-profile and --region are for --provider s3"))
+	}
+	if opts.r2Account == "" {
+		problems = append(problems, errors.New("--provider r2 needs --r2-account (the account ID, or the bucket URL from the dashboard)"))
+	} else if loc, err := credentials.ParseR2Location(opts.r2Account); err != nil {
+		problems, checkBucket = append(problems, fmt.Errorf("--r2-account: %w", err)), false
+	} else if next.R2Endpoint, err = credentials.R2Endpoint(loc.Endpoint, loc.AccountID); err != nil {
+		problems, checkBucket = append(problems, fmt.Errorf("--r2-account: %w", err)), false
+	} else if loc.Bucket != "" && next.Bucket != "" && loc.Bucket != next.Bucket {
+		problems = append(problems, fmt.Errorf("--bucket %s differs from the bucket in --r2-account's URL (%s)", next.Bucket, loc.Bucket))
+	} else {
+		next.Bucket = firstNonEmpty(next.Bucket, loc.Bucket)
+		next.R2AccountID = loc.AccountID
+	}
+	secret.AccessKeyID = firstNonEmpty(opts.r2KeyID, lookupEnvTrimmed(env, envR2AccessKeyID))
+	if secret.AccessKeyID == "" && previous.Provider == credentials.ProviderR2 && previous.R2CredentialRef != "" {
+		next.R2CredentialRef = previous.R2CredentialRef
+		return secret, problems, checkBucket
+	}
+	if secret.AccessKeyID == "" {
+		problems = append(problems, fmt.Errorf("--provider r2 needs the access key ID: pass --r2-access-key-id or set %s", envR2AccessKeyID))
+	}
+	var err error
+	if secret.SecretAccessKey, err = readSecret(); err != nil {
+		problems = append(problems, err)
+	}
+	return secret, problems, checkBucket
+}
+
+// s3FromFlags sets next from the S3 flags, with the profile's region when
+// --region isn't given, and returns every problem with them.
+func s3FromFlags(next *credentials.Config, opts setupOptions, env Env) []error {
+	var problems []error
+	if opts.r2Account != "" || opts.r2KeyID != "" {
+		problems = append(problems, errors.New("--r2-account and --r2-access-key-id are for --provider r2"))
+	}
+	next.AWSProfile, next.Region = opts.awsProfile, opts.region
+	if opts.awsProfile == "" {
+		problems = append(problems, errors.New("--provider s3 needs --aws-profile"))
+	} else if next.Region == "" {
+		profiles, _ := env.awsProfiles()
+		for _, profile := range profiles {
+			if profile.Name == next.AWSProfile {
+				next.Region = profile.Region
+			}
+		}
+		if next.Region == "" {
+			problems = append(problems, fmt.Errorf("AWS profile %s names no region; pass --region", next.AWSProfile))
+		} else if !validRegion(next.Region) {
+			problems = append(problems, fmt.Errorf("AWS profile %s names region %q, which isn't an AWS region; pass --region, such as --region us-east-1", next.AWSProfile, next.Region))
+		}
+	}
+	if opts.region != "" && !validRegion(opts.region) {
+		problems = append(problems, fmt.Errorf("--region %q isn't an AWS region; use a lowercase name such as us-east-1", opts.region))
+	}
+	return problems
 }
 
 // readR2Secret reads the R2 secret access key from its environment variable,
