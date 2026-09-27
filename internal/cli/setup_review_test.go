@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
@@ -52,7 +54,7 @@ func TestSetupReviewDoesNotCallDetectedAppsNotFound(t *testing.T) {
 	}
 	input := strings.Join([]string{"y", project, "", "s3", "profile", "test", "us-east-1", "y"}, "\n") + "\n"
 	output := setupRun(t, env, input, 0)
-	if !strings.Contains(output, "Codex (version unknown)") || strings.Contains(output, "not found") {
+	if !strings.Contains(output, "Codex (version not detected)") || strings.Contains(output, "not found") {
 		t.Fatalf("detected app shown as not found:\n%s", output)
 	}
 	// Only the display changes; the recorded discovery keeps what was seen.
@@ -70,7 +72,7 @@ func TestReviewDiscoveriesKeepsUndetectedAbsentApps(t *testing.T) {
 		"claude": {VersionState: "absent"},
 		"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"},
 	}, []string{"claude", "cursor"})
-	for app, want := range map[string]string{"codex": "Codex (not found)", "claude": "Claude Code (version unknown)", "cursor": "Cursor 3.21.13"} {
+	for app, want := range map[string]string{"codex": "Codex (not found)", "claude": "Claude Code (version not detected)", "cursor": "Cursor 3.21.13"} {
 		if line := appWithVersion(app, got[app]); line != want {
 			t.Fatalf("%s: got %q want %q", app, line, want)
 		}
@@ -114,8 +116,8 @@ func TestSetupReviewWarnsWhenHookFilesMove(t *testing.T) {
 	var out, errOut bytes.Buffer
 	Run([]string{"setup"}, strings.NewReader("3\n90\n3\n"), &out, &errOut, env)
 	output := out.String()
-	if !strings.Contains(output, "Claude Code hooks: "+filepath.Join(elsewhere, "settings.json")) ||
-		!strings.Contains(output, "hooks move here from "+filepath.Join(userHome, ".claude", "settings.json")) {
+	if !strings.Contains(output, "Hook file is valid      ~/elsewhere/settings.json") ||
+		!strings.Contains(output, "Claude Code hooks move to ~/elsewhere/settings.json from ~/.claude/settings.json.") {
 		t.Fatalf("no warning:\n%s%s", output, &errOut)
 	}
 	_ = home
@@ -209,4 +211,124 @@ func TestReviewEditCancellationDoesNotInstall(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The review checks each chosen app's hook file as it is at the review:
+// one that became invalid after the checks before the first question, or
+// that those checks did not cover, shows as ✗, each such file on a line of
+// its own.
+func TestReviewChecklistChecksHookFilesAsTheyAreNow(t *testing.T) {
+	t.Parallel()
+	userHome := t.TempDir()
+	settings := filepath.Join(userHome, ".claude", "settings.json")
+	cursor := filepath.Join(userHome, ".cursor", "hooks.json")
+	codex := filepath.Join(userHome, ".codex", "hooks.json")
+	for _, path := range []string{settings, cursor} {
+		must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		must(t, os.WriteFile(path, []byte("{\n  // a comment\n}\n"), 0o600))
+	}
+	files := hooks.Files{"codex": codex, "claude": settings, "cursor": cursor}
+	got := hookFilesChecks([]string{"codex"}, files, userHome)
+	if len(got) != 1 || got[0].mark != symbolOK || got[0].label != "Hook file is valid" || got[0].detail != "~/.codex/hooks.json" {
+		t.Fatalf("valid file not reported: %+v", got)
+	}
+	got = hookFilesChecks([]string{"codex", "claude", "cursor"}, files, userHome)
+	if len(got) != 3 ||
+		got[0].mark != symbolFail || got[0].label != "Claude Code hook file is invalid" || !strings.HasPrefix(got[0].detail, "~/.claude/settings.json:2:") ||
+		got[1].mark != symbolFail || got[1].label != "Cursor hook file is invalid" || !strings.HasPrefix(got[1].detail, "~/.cursor/hooks.json:2:") ||
+		got[2].mark != symbolOK || got[2].detail != "~/.codex/hooks.json" {
+		t.Fatalf("invalid files not each reported: %+v", got)
+	}
+	if got = hookFilesChecks(nil, files, userHome); len(got) != 0 {
+		t.Fatalf("a check without apps: %+v", got)
+	}
+}
+
+// Codex's /hooks step shows for a first setup, and on a reconfiguration
+// when Codex is newly included or its hooks move to a file it has not
+// approved.
+func TestReviewChecklistShowsCodexStepOnlyWhenNew(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{Harnesses: []string{"codex", "claude"}}
+	step := func(review setupReview) bool {
+		for _, check := range reviewChecklist(cfg, review, time.Now()) {
+			if check.label == "Codex needs one step" {
+				return check.mark == symbolWarn && strings.Contains(check.detail, "/hooks")
+			}
+		}
+		return false
+	}
+	installed := config.Config{Harnesses: []string{"codex"}}
+	here := hooks.Files{"codex": "/u/.codex/hooks.json"}
+	moved := hooks.Files{"codex": "/u/alt/hooks.json"}
+	if !step(setupReview{}) || !step(setupReview{existing: installed}) ||
+		step(setupReview{existing: installed, reconfiguring: true, hookFiles: here, installedHookFiles: here}) ||
+		!step(setupReview{existing: installed, reconfiguring: true, hookFiles: moved, installedHookFiles: here}) ||
+		!step(setupReview{existing: config.Config{Harnesses: []string{"claude"}}, reconfiguring: true}) {
+		t.Fatal("Codex step shown wrongly")
+	}
+}
+
+// A hook file that breaks while setup asks its questions shows ✗ at the
+// review, which then neither offers nor accepts starting. Once the file is
+// fixed, Check again clears the ✗ and setup can start.
+func TestSetupReviewBlocksStartOnHookFileBrokenAfterPreflight(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now().UTC())
+	hooksFile := filepath.Join(userHome, ".codex", "hooks.json")
+	must(t, os.MkdirAll(filepath.Dir(hooksFile), 0o700))
+	env.IsTerminal = func(stream any) bool { _, ok := stream.(*hookFixingAnswers); return ok }
+	broken := false
+	env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
+		// The storage check comes after the checks before the first
+		// question, so this is the file breaking in between.
+		if !broken {
+			broken = true
+			must(t, os.WriteFile(hooksFile, []byte("{\n  // a comment\n}\n"), 0o600))
+		}
+		return storagetest.NewMemoryStore(), nil
+	}
+	answers := []string{"y", "n", "n", project, "", "s3", "profile", "bucket", "us-east-1",
+		"y",     // refused: starting is not a choice
+		"check", // the file is fixed just before this answer
+		"y"}
+	in := &hookFixingAnswers{answers: answers, fixAt: 10, fix: func() { must(t, os.WriteFile(hooksFile, []byte("{}\n"), 0o600)) }}
+	var out bytes.Buffer
+	if code := Run([]string{"setup"}, in, &out, &out, env); code != 0 {
+		t.Fatalf("setup exit %d\n%s", code, &out)
+	}
+	output := out.String()
+	blocked := strings.Index(output, "✗ Codex hook file is invalid")
+	refused := strings.Index(output, "Enter a number from 1 to 3.")
+	if blocked < 0 || refused < blocked || !strings.Contains(output, "Fix what is marked ✗ above first.\n  1) Check again") {
+		t.Fatalf("✗ did not block starting:\n%s", output)
+	}
+	if !strings.Contains(output[refused:], "✓ Hook file is valid") || !strings.Contains(output[refused:], "1) Yes, start archiving") {
+		t.Fatalf("check again did not clear the ✗:\n%s", output)
+	}
+	if _, found, err := config.Load(home); err != nil || !found {
+		t.Fatalf("setup did not start after the fix: %v", err)
+	}
+}
+
+// hookFixingAnswers hands setup one answer per read, running fix just
+// before the answer at index fixAt.
+type hookFixingAnswers struct {
+	answers []string
+	next    int
+	fixAt   int
+	fix     func()
+}
+
+func (a *hookFixingAnswers) Read(p []byte) (int, error) {
+	if a.next == len(a.answers) {
+		return 0, io.EOF
+	}
+	if a.next == a.fixAt {
+		a.fix()
+	}
+	line := a.answers[a.next] + "\n"
+	a.next++
+	return copy(p, line), nil
 }

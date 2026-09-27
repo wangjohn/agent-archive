@@ -35,22 +35,19 @@ Checking your storage connection…
 
 Step 3 of 3 · Ready to start
 
-  Apps      Codex (version unknown), Claude Code (version unknown), Cursor (version unknown)
-  Projects  /Users/alex/src/web-app
-  Keep for  90 days, then deleted automatically
-  Storage   Amazon S3
-  Bucket    team-archive
-  AWS       profile work · us-east-1
+  Apps       Codex (version not detected) · Claude Code (version not detected) · Cursor (version not detected)
+  Projects   ~/src/web-app
+  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
+  Keep for   90 days
 
-Before you confirm
-  · Codex hooks: /Users/alex/.codex/hooks.json
-  · Claude Code hooks: /Users/alex/.claude/settings.json
-  · Cursor hooks: /Users/alex/.cursor/hooks.json
-  ! Bucket privacy not verified: public-access settings could not be read.
+  ✓ Storage connected       write, read, list, delete
+  ! Bucket privacy unknown  public-access settings could not be read
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  · Filtering is best effort; sensitive text may remain in archived sessions.
-  · Capture with Codex (version unknown), Claude Code (version unknown), Cursor (version unknown) is not confirmed until a session is archived.
-    After your first session, check it with agent-archive status.
+  ✓ Hook files are valid    ~/.codex/hooks.json, ~/.claude/settings.json, ~/.cursor/hooks.json
+  ! Codex needs one step    approve the hooks with /hooks after setup
+
+  Filtering is best effort; sensitive text may remain in archived sessions.
+  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Start archiving?
   1) Yes, start archiving

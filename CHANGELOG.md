@@ -47,6 +47,10 @@ follow [Semantic Versioning](https://semver.org/).
 - `setup` questions and their defaults are bold with a `›` cursor, every
   command to type is cyan, and the storage check shows a spinner that ends
   in ✓ or ✗ on the same line (none when a `credential_process` may prompt).
+- The `setup` review is a short list of settings (storage as one `s3://` or
+  R2 address) followed by a ✓/!/✗ checklist: storage connected, bucket
+  private, hook files valid, and each app's next step. A ✗ blocks starting
+  until it's fixed.
 
 ## [0.1.0] - 2026-09-25
 

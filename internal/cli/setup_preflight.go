@@ -18,6 +18,8 @@ import (
 // that a problem only applying the setup would otherwise find stops it
 // while nothing has been asked or changed.
 type preflightCheck struct {
+	// App is the app whose hook file was checked; empty for other checks.
+	App string
 	// Label names what was checked, such as "Claude Code hooks".
 	Label string
 	// Detail is what was found: the file checked, or where the problem is.
@@ -113,39 +115,13 @@ type preflightScope struct {
 // background job, and, when scope.r2 is set, that the Keychain opens for
 // an R2 key.
 func preflight(env Env, home, userHome string, scope preflightScope) preflightChecks {
-	var checks preflightChecks
-	files := hooks.Files{}
-	all := env.hookFiles(userHome)
-	for _, app := range allHarnesses {
-		if containsString(scope.apps, app) {
-			files[app] = all[app]
+	checks := hookFileChecks(scope.apps, env.hookFiles(userHome), userHome, func(app string) string {
+		fix := "Setup edits only plain JSON. Fix the file, then run agent-archive setup again."
+		if !containsString(scope.kept, app) {
+			fix += " To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
 		}
-	}
-	problems := map[string]hooks.Problem{}
-	for _, problem := range hooks.Validate(files) {
-		problems[problem.Harness] = problem
-	}
-	for _, app := range allHarnesses {
-		path, ok := files[app]
-		if !ok {
-			continue
-		}
-		check := preflightCheck{Label: appName(app) + " hooks", Detail: displayPath(path, userHome), OK: true}
-		if problem, found := problems[app]; found {
-			where := check.Detail
-			if problem.Line > 0 {
-				where = fmt.Sprintf("%s:%d:%d", where, problem.Line, problem.Column)
-			}
-			check.OK = false
-			check.Detail = where
-			check.Problem = sentence(problem.Reason)
-			check.Fix = "Setup edits only plain JSON. Fix the file, then run agent-archive setup again."
-			if !containsString(scope.kept, app) {
-				check.Fix += " To set up without " + appName(app) + ", run agent-archive setup --yes with --apps naming the apps you want."
-			}
-		}
-		checks = append(checks, check)
-	}
+		return fix
+	})
 
 	plist := env.installation(home, userHome).collectorPlist()
 	job := preflightCheck{Label: "Background job", Detail: "launchctl responds", OK: true}
@@ -163,6 +139,41 @@ func preflight(env Env, home, userHome string, scope preflightScope) preflightCh
 
 	if scope.r2 {
 		checks = append(checks, keychainCheck(env, scope.credentialRef))
+	}
+	return checks
+}
+
+// hookFileChecks checks, in allHarnesses order, that the hook file of
+// each of apps, as all names it, is one setup can install into. A failed
+// check names the file, and the line when the problem is at one, and fix
+// says how to fix it.
+func hookFileChecks(apps []string, all hooks.Files, userHome string, fix func(app string) string) preflightChecks {
+	files := hooks.Files{}
+	for _, app := range allHarnesses {
+		if containsString(apps, app) {
+			files[app] = all[app]
+		}
+	}
+	problems := map[string]hooks.Problem{}
+	for _, problem := range hooks.Validate(files) {
+		problems[problem.Harness] = problem
+	}
+	var checks preflightChecks
+	for _, app := range allHarnesses {
+		path, ok := files[app]
+		if !ok {
+			continue
+		}
+		label, where := appName(app)+" hooks", displayPath(path, userHome)
+		problem, found := problems[app]
+		if !found {
+			checks = append(checks, preflightCheck{App: app, Label: label, Detail: where, OK: true})
+			continue
+		}
+		if problem.Line > 0 {
+			where = fmt.Sprintf("%s:%d:%d", where, problem.Line, problem.Column)
+		}
+		checks = append(checks, preflightCheck{App: app, Label: label, Detail: where, Problem: sentence(problem.Reason), Fix: fix(app)})
 	}
 	return checks
 }

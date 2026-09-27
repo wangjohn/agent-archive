@@ -474,20 +474,26 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 		}
 		// Review what will be committed, not what a draft may have saved.
 		draft.Config.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
-		showSetupReview(p, draft.Config, existing, installed, reviewed)
-		terminal.Println(out, "\n"+p.style.bold("Before you confirm"))
+		hookFiles, installedHookFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, existing)
+		blocked := showSetupReview(p, draft.Config, setupReview{existing: existing, reconfiguring: installed, discoveries: reviewed, hookFiles: hookFiles, installedHookFiles: installedHookFiles, userHome: userHome})
 		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
 			return err
 		}
 		if existing.Paused {
 			p.note("Capture stays paused until you run agent-archive resume.")
 		}
-		reviewHookFiles(p, draft.Config.Harnesses, env.hookFiles(userHome), env.installedHookFiles(userHome, existing), existing.Harnesses, len(existing.HookFiles) > 0)
-		printReviewNotes(p, draft.Config, reviewed)
+		reviewHookFiles(p, draft.Config.Harnesses, hookFiles, installedHookFiles, existing.Harnesses, len(existing.HookFiles) > 0, userHome)
 		warnCollectorEnvironment(p, draft.Config.Storage, userHome, env)
-		action, e := reviewAction(p, installed)
+		printReviewNotes(p)
+		action, e := reviewAction(p, installed, blocked)
 		if e != nil {
 			return e
+		}
+		if action == "check" {
+			// The storage check runs again too, which reads the bucket's
+			// public-access settings again.
+			verifiedStorage = credentials.Config{}
+			continue
 		}
 		if action == "cancel" {
 			terminal.Println(out, "Cancelled. Active settings are unchanged; your setup draft is saved.")

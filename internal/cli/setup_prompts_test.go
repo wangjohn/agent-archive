@@ -72,7 +72,7 @@ func TestDetectedAppsSetupSkipsIndividualQuestions(t *testing.T) {
 			t.Fatalf("unexpected %q in %s", unwanted, output)
 		}
 	}
-	for _, want := range []string{"Include Codex and Claude Code?", "90 days, then deleted automatically", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
+	for _, want := range []string{"Include Codex and Claude Code?", "Keep for   90 days\n", "Start archiving?\n  1) Yes, start archiving\n  2) Edit a setting\n  3) Cancel"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("missing %q in %s", want, output)
 		}
@@ -92,15 +92,15 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 	next.Storage.R2AccountID = "newaccount"
 	var out bytes.Buffer
 	p := newPrompter(strings.NewReader(""), &out)
-	showSetupReview(p, next, old, true, map[string]applicationDiscovery{"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"}})
+	showSetupReview(p, next, setupReview{existing: old, reconfiguring: true, discoveries: map[string]applicationDiscovery{"cursor": {Installed: true, Version: "3.21.13", VersionState: "observed"}}})
 	got := out.String()
-	for _, want := range []string{"Apps      Cursor 3.21.13", "* Account   newaccount", "was oldaccount", "* changed from your current settings"} {
+	for _, want := range []string{"Apps       Cursor 3.21.13", "* Storage    r2://agent-archive/agent-archive/  account newaccount", "was r2://agent-archive/agent-archive/  account oldaccount", "* changed from your current settings"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in:\n%s", want, got)
 		}
 	}
 	if strings.Count(got, "* ") != 2 || strings.Contains(got, "\x1b[") {
-		t.Fatalf("only the account should be marked, with no color in a buffer:\n%s", got)
+		t.Fatalf("only the storage should be marked, with no color in a buffer:\n%s", got)
 	}
 }
 
@@ -153,9 +153,25 @@ func TestMenuRejectsAmbiguousPrefix(t *testing.T) {
 func TestReviewActionMapsChoices(t *testing.T) {
 	t.Parallel()
 	for input, want := range map[string]string{"1\n": "start", "\n": "start", "2\n": "edit", "3\n": "cancel", "y\n": "start", "n\n": "cancel", "e\n": "edit"} {
-		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false)
+		got, err := reviewAction(newPrompter(strings.NewReader(input), &bytes.Buffer{}), false, false)
 		if err != nil || got != want {
 			t.Fatalf("input %q: got %q, %v; want %q", input, got, err, want)
+		}
+	}
+}
+
+// With a ✗ on the checklist, starting is neither offered nor accepted: the
+// first choice checks again, and y is asked again rather than taken.
+func TestReviewActionRefusesStartWhenBlocked(t *testing.T) {
+	t.Parallel()
+	for input, want := range map[string]string{"1\n": "check", "\n": "check", "c\n": "check", "2\n": "edit", "e\n": "edit", "3\n": "cancel", "n\n": "cancel", "y\ne\n": "edit", "yes\n3\n": "cancel"} {
+		var out bytes.Buffer
+		got, err := reviewAction(newPrompter(strings.NewReader(input), &out), false, true)
+		if err != nil || got != want {
+			t.Fatalf("input %q: got %q, %v; want %q\n%s", input, got, err, want, &out)
+		}
+		if strings.Contains(out.String(), "start archiving") || !strings.Contains(out.String(), "1) Check again") {
+			t.Fatalf("input %q offered start:\n%s", input, &out)
 		}
 	}
 }
@@ -281,9 +297,9 @@ func TestSetupReviewShowsDeclinedApps(t *testing.T) {
 	next := old
 	next.DeclinedHarnesses = []string{"codex", "claude"}
 	var out bytes.Buffer
-	showSetupReview(newPrompter(strings.NewReader(""), &out), next, old, true, nil)
+	showSetupReview(newPrompter(strings.NewReader(""), &out), next, setupReview{existing: old, reconfiguring: true})
 	got := out.String()
-	if !strings.Contains(got, "* Skipped   Codex and Claude Code (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)") || strings.Contains(got, "Nothing above differs") {
+	if !strings.Contains(got, "* Skipped    Codex and Claude Code (setup will not offer again; to add back, choose Apps and projects in agent-archive setup)") || strings.Contains(got, "Nothing above differs") {
 		t.Fatalf("declining found apps not shown as a change:\n%s", got)
 	}
 }

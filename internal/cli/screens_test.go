@@ -309,13 +309,51 @@ var screens = []screen{
 		},
 	},
 	{
-		// The review before a first setup commits, cancelled there.
+		// The review before a first setup commits, to a bucket that blocks
+		// public access, cancelled there.
 		name:    "setup-review-fresh",
 		answers: []string{"y", "", "2", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
 			f.inWebApp(t)
+			f.bucketPrivacy("verified_private", "all_bucket_public_access_blocks_enabled")
+		},
+	},
+	{
+		// The review before a first setup to Cloudflare R2, whose keys
+		// cannot read public-access settings, cancelled there.
+		name:    "setup-review-fresh-r2",
+		answers: []string{"", "", "1", "0123456789abcdef0123456789abcdef", "team-archive", "ACCESSKEYID", "SECRET", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+		},
+	},
+	{
+		// The review when the bucket allows public access, cancelled
+		// there.
+		name:    "setup-review-public-bucket",
+		answers: []string{"", "", "2", "work", "2", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			f.bucketPrivacy("public_or_risky", "public_bucket_policy")
+		},
+	},
+	{
+		// Reconfiguring from a shell whose CODEX_HOME differs from when
+		// setup ran: the review warns that the hooks move, and stops there.
+		name:    "setup-review-hooks-move",
+		answers: []string{"3", "90", "3"},
+		arrange: func(t *testing.T, f *screenFixture) {
+			t.Helper()
+			f.installed(t)
+			elsewhere := filepath.Join(f.userHome, "codex-elsewhere")
+			must(t, os.MkdirAll(elsewhere, 0o700))
+			f.env.LookupEnv = func(k string) (string, bool) { return elsewhere, k == "CODEX_HOME" }
 		},
 	},
 	{
@@ -404,6 +442,24 @@ func failUploads(err error) func(*testing.T, *screenFixture) {
 		}
 	}
 }
+
+// bucketPrivacy makes the bucket report its public-access settings as
+// state, for reason.
+func (f *screenFixture) bucketPrivacy(state, reason string) {
+	f.env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+		report := storage.UnknownPrivacy(cfg.Storage.Provider)
+		report.State, report.Reason = state, reason
+		return privacyReportStore{ObjectStore: f.bucket, report: report}, nil
+	}
+}
+
+// privacyReportStore reports fixed public-access settings.
+type privacyReportStore struct {
+	storage.ObjectStore
+	report storage.PrivacyReport
+}
+
+func (s privacyReportStore) InspectPrivacy(context.Context) storage.PrivacyReport { return s.report }
 
 // changedReadStore reads back other bytes than were written.
 type changedReadStore struct{ storage.ObjectStore }

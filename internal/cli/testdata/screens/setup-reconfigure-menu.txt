@@ -15,25 +15,23 @@ Checking your storage connection…
 
 Step 3 of 3 · Review your changes
 
-  Apps      Codex (version unknown)
-  Projects  /Users/alex/src/web-app
-* Keep for  30 days, then deleted automatically
-            was 90 days, then deleted automatically
-  Storage   Amazon S3
-  Bucket    team-archive
-  AWS       profile work · us-east-1
+  Apps       Codex (version not detected)
+  Projects   ~/src/web-app
+  Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
+* Keep for   30 days
+             was 90 days
 
   * changed from your current settings
 
-Before you confirm
+  ✓ Storage connected       write, read, list, delete
+  ! Bucket privacy unknown  public-access settings could not be read
+    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ✓ Hook file is valid      ~/.codex/hooks.json
   ! Shorter retention: 0 session(s) captured before 2026-08-26 12:00 UTC become eligible for deletion.
     Future cleanup also applies this policy.
-  · Codex hooks: /Users/alex/.codex/hooks.json
-  ! Bucket privacy not verified: public-access settings could not be read.
-    Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
-  · Filtering is best effort; sensitive text may remain in archived sessions.
-  · Capture with Codex (version unknown) is not confirmed until a session is archived.
-    After your first session, check it with agent-archive status.
+
+  Filtering is best effort; sensitive text may remain in archived sessions.
+  What leaves your Mac: https://github.com/wangjohn/agent-archive/blob/main/docs/security/privacy.md
 
 Save these changes?
   1) Yes, save
