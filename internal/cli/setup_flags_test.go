@@ -80,7 +80,7 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 	t.Parallel()
 	home, project := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
-	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{"archive", "eu-west-1"}}, nil }
+	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "archive", Region: "eu-west-1"}}, nil }
 	env.DetectHarnesses = func(string) []string { return []string{"cursor"} }
 	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--project", project)
 	cfg, _, _ := config.Load(home)
