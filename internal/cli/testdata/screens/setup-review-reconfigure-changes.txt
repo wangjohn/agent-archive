@@ -1,5 +1,9 @@
 $ agent-archive setup
 Checking installed applications...
+  ✓ Codex hooks: ~/.codex/hooks.json
+  ✓ Claude Code hooks: ~/.claude/settings.json
+  ✓ Cursor hooks: ~/.cursor/hooks.json
+  ✓ Background job: launchctl responds
 Agent Archive is already set up. What would you like to change?
   1) Apps and projects
   2) Storage (bucket and credentials)

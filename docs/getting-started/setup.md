@@ -14,6 +14,29 @@ provider instructions. Setup asks questions, so it needs a terminal: without one
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
+## Before the first question
+
+Setup first checks what starting to archive will need, and prints one line
+for each check: a ✓, or a ✗ with the problem and how to fix it.
+
+- **Hook files.** The file of each app setup found, or that your saved
+  settings or an unfinished setup include, must be one setup can add its
+  hooks to: plain JSON, without comments, trailing commas, or duplicate
+  keys. A problem names the file, line, and column, such as
+  `~/.claude/settings.json:2:3`. A file that doesn't exist yet is fine;
+  setup creates it.
+- **Background job.** `launchctl` must say whether the collector's job is
+  already loaded.
+- **Keychain.** When your saved settings or an unfinished setup store in
+  R2, the macOS Keychain, where the R2 key is kept, must open.
+
+A ✗ stops setup before it asks anything: nothing is changed, and an
+unfinished setup is kept. Fix what is marked, then run `agent-archive setup`
+again. To leave out an app whose file you don't want to change, choose the
+apps with [`setup --yes --apps`](#set-up-without-questions). `setup --yes`
+makes the same checks, for the apps it would include, and checks the
+Keychain when it stores in R2.
+
 Setup captures only **new** sessions in the projects you include. To import
 conversations already on this Mac, run [`agent-archive
 backfill`](../guides/backfill.md) afterwards.
@@ -120,7 +143,8 @@ hooks.
 ## Set up without questions
 
 For a second Mac, or any scripted setup, pass the answers as flags with
-`--yes`. Setup then asks nothing, runs the same storage check, and saves;
+`--yes`. Setup then asks nothing, runs the same
+[checks](#before-the-first-question) and storage check, and saves;
 if an answer is missing or the check fails, it says so and changes nothing.
 
 ```sh
