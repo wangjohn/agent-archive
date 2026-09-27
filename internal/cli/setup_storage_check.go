@@ -128,7 +128,6 @@ func storageFixLabel(cfg credentials.Config, d storage.Diagnosis) string {
 func printStorageFailure(p *prompter, cfg credentials.Config, err error, verbose bool, details string) storage.Diagnosis {
 	d := storageDiagnosis(cfg, err)
 	s := p.style
-	terminal.Println(p.out, "")
 	terminal.Println(p.out, s.hang("  "+s.failMark()+" ", storageFailureHeadline(cfg, d)))
 	terminal.Println(p.out, s.hang("    ", d.Explanation))
 	terminal.Println(p.out, "")

@@ -36,7 +36,7 @@ Enter 1-2, or another bucket name [2]:
 Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
-✓ Connected.
+✓ Connected to your storage.
 
 Step 3 of 3 · Review your changes
 

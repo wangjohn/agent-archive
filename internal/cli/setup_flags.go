@@ -179,10 +179,9 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		return fmt.Errorf("the stored R2 key can't be read from the Keychain; pass --r2-access-key-id and the secret (see agent-archive setup --help)")
 	}
 
-	terminal.Println(out, "Checking your storage connection…")
-	connectErr, accessErr := verifyStorage(&cfg, env)
-	if connectErr != nil {
-		accessErr = connectErr
+	accessErr := runStorageCheck(p, &cfg, env)
+	if errors.Is(accessErr, errStorageCheckInterrupted) {
+		return discard(accessErr)
 	}
 	if accessErr != nil {
 		// On standard error, with setup's last line, so a script that keeps
@@ -190,7 +189,6 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		printStorageFailure(&prompter{out: errOut, style: styleFor(errOut)}, cfg.Storage, accessErr, opts.verbose, "run again with --verbose")
 		return discard(&storageCheckError{err: accessErr, outcome: "nothing was changed"})
 	}
-	terminal.Println(out, p.style.ok("✓ Connected."))
 	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, nil)
 	// A reconfiguration's warnings, or its refusal (sessions pending at the
 	// old destination).
