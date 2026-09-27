@@ -158,14 +158,25 @@ var screens = []screen{
 		arrange: failUploads(&smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.GenericAPIError{Code: "AccessDenied", Message: "Access Denied"}}),
 	},
 	{
-		// After a failed check, continuing asks the storage questions again
-		// before checking.
+		// After a wrong-region failure that named no region, continuing
+		// asks the storage questions again and then the region, before
+		// checking; this run answers with the bucket's region, and the
+		// check passes. It leaves at the review.
 		name:    "setup-storage-failure-continue",
-		answers: []string{"1", "", "", "", "4"},
-		exit:    1,
+		answers: []string{"1", "", "", "", "eu-west-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			failUploads(&smithy.GenericAPIError{Code: "AccessDenied"})(t, f)
+			f.inWebApp(t)
+			f.env.OpenStore = func(cfg config.Config) (storage.ObjectStore, error) {
+				var err error
+				if cfg.Storage.Region != "eu-west-1" {
+					err = &smithyhttp.ResponseError{
+						Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: http.Header{}}},
+						Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+					}
+				}
+				return putErrorStore{f.bucket, &err}, nil
+			}
 			f.setup(t, 1, storageFailureAnswers...)
 		},
 	},

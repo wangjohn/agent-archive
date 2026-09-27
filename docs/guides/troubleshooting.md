@@ -154,7 +154,9 @@ refused, a bucket that doesn't exist, an S3 bucket in another region, and
 no connection to the provider. The first choice, the default, goes to the
 answer the cause points at (for a region, just the region). Stopping keeps
 your answers: the next `agent-archive setup` offers to continue, and
-continuing asks the storage questions again rather than repeating the check.
+continuing asks the storage questions again, with your answers as defaults,
+rather than repeating the check. After a region failure it also asks for the
+region, and after R2 refused the access key, for the key.
 
 The provider's own error is not shown, since it runs to several hundred
 characters of SDK text. Run `agent-archive setup --verbose` (or add

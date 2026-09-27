@@ -237,9 +237,10 @@ func TestSetupContinueAfterWrongRegionUsesTheBucketsRegion(t *testing.T) {
 		t.Fatalf("draft step %d region %q (found=%v problem=%q err=%v), want step 1 in eu-west-1", draft.Step, draft.Config.Storage.Region, found, problem, err)
 	}
 
-	// Continue, keep every storage answer, and start archiving.
-	output := setupRun(t, env, "continue\n\n\n\ny\n", 0)
-	if strings.Contains(output, "The bucket is in another region.") || !strings.Contains(output, "Using region eu-west-1.") {
+	// Continue, keep every storage answer and the region offered, and
+	// start archiving.
+	output := setupRun(t, env, "continue\n\n\n\n\ny\n", 0)
+	if strings.Contains(output, "The bucket is in another region.") || !strings.Contains(output, "Bucket region [eu-west-1]") {
 		t.Fatalf("continuing repeated the failed check:\n%s", output)
 	}
 	if cfg, _, _ := config.Load(home); cfg.Storage.Region != "eu-west-1" {
@@ -321,5 +322,75 @@ func TestStorageDiagnosisNamesTheReadBack(t *testing.T) {
 	// callers' reads share these sentinels.
 	if d := storage.Diagnose(storage.ErrNotFound); strings.Contains(d.Explanation, "test file") {
 		t.Errorf("Diagnose(ErrNotFound) = %+v", d)
+	}
+}
+
+// After a failed check and Stop, the next setup's "Continue where you left
+// off" asks the storage questions again before any check, whatever the
+// cause, and asks again for the answer the cause blames when the storage
+// questions would otherwise keep it: the region, and the R2 key.
+//
+// Regression: after a wrong-region failure that named no region, or an R2
+// key the provider refused, Continue kept the failed answer without asking
+// and repeated the same check.
+func TestSetupContinueAfterEachFailureAsksBeforeChecking(t *testing.T) {
+	t.Parallel()
+	redirect := func(header http.Header) error {
+		return &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: http.StatusMovedPermanently, Header: header}},
+			Err:      &smithy.GenericAPIError{Code: "PermanentRedirect"},
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		r2      bool
+		failure error
+		// open, when set, replaces the failing bucket.
+		open func(storage.ObjectStore) (storage.ObjectStore, error)
+		// ask is the question Continue must ask before checking.
+		ask string
+	}{
+		{name: "no credentials", failure: &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithy.OperationError{ServiceID: "ec2imds", OperationName: "GetMetadata", Err: errors.New("host is down")}}, ask: "AWS profile [profile]"},
+		{name: "R2 key refused", r2: true, failure: &smithy.GenericAPIError{Code: "InvalidAccessKeyId"}, ask: "Access key ID"},
+		{name: "access denied", failure: &smithy.GenericAPIError{Code: "AccessDenied"}, ask: storageQuestion},
+		{name: "no such bucket", failure: &smithy.GenericAPIError{Code: "NoSuchBucket"}, ask: "Bucket name [bucket]"},
+		{name: "wrong region named", failure: redirect(http.Header{"X-Amz-Bucket-Region": {"eu-west-1"}}), ask: "Bucket region [eu-west-1]"},
+		{name: "wrong region unnamed", failure: redirect(http.Header{}), ask: "Bucket region [us-east-1]"},
+		{name: "network", failure: &smithyhttp.RequestSendError{Err: errors.New("no such host")}, ask: storageQuestion},
+		{name: "other", failure: errors.New("incorrect region or folder"), ask: storageQuestion},
+		{name: "read-back", open: func(bucket storage.ObjectStore) (storage.ObjectStore, error) {
+			return changedReadStore{bucket}, nil
+		}, ask: storageQuestion},
+		{name: "connect", open: func(storage.ObjectStore) (storage.ObjectStore, error) {
+			return nil, errors.New("offline")
+		}, ask: storageQuestion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			failure := tc.failure
+			env := failingStorageEnv(t, home, &failure)
+			if tc.open != nil {
+				bucket := storagetest.NewMemoryStore()
+				env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return tc.open(bucket) }
+			}
+			input := s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir())
+			if tc.r2 {
+				input = r2SetupInput(t.TempDir(), "first-secret")
+			}
+			setupRun(t, env, strings.TrimSuffix(input, "y\n")+"cancel\n", 1)
+
+			// A real second run on the saved draft: Continue, then keep
+			// every default until the answers run out.
+			output := setupRun(t, env, "continue\n"+strings.Repeat("\n", 8), 1)
+			check := strings.Index(output, "Checking your storage connection")
+			asked := strings.Index(output, tc.ask)
+			if asked < 0 || check >= 0 && check < asked {
+				t.Fatalf("Continue checked before asking %q:\n%s", tc.ask, output)
+			}
+			if tc.r2 && strings.Contains(output, "Keep stored R2 credentials?") {
+				t.Fatalf("Continue offered to keep the refused key:\n%s", output)
+			}
+		})
 	}
 }
