@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -356,7 +357,7 @@ func TestRecentProjectsShowCountsAndATakesAll(t *testing.T) {
 
 // Switching a listed project off undoes only this answer: a project the
 // list added is dropped, and an exclusion setup kept stays an exclusion,
-// so a later backfill still skips it.
+// so a later backfill still skips it. With nothing left, it asks again.
 func TestLeavingAListedProjectOutRestoresItsState(t *testing.T) {
 	t.Parallel()
 	current, excluded := gitRepo(t), gitRepo(t)
@@ -366,8 +367,8 @@ func TestLeavingAListedProjectOutRestoresItsState(t *testing.T) {
 	}
 	known := []backfill.KnownProject{{Root: excluded, Sessions: 3}}
 	var out bytes.Buffer
-	projects, err := addProjects(newPrompter(strings.NewReader("2\n1 2\n\n"), &out), result, result, known, current)
-	want := []archive.ProjectActivation{{ProjectID: archive.ProjectID(excluded), Root: excluded}}
+	projects, err := addProjects(newPrompter(strings.NewReader("2\n1 2\n\n1\n\n"), &out), result, result, known, current)
+	want := []archive.ProjectActivation{{ProjectID: archive.ProjectID(excluded), Root: excluded}, {ProjectID: archive.ProjectID(current), Root: current, Included: true}}
 	if err != nil || !reflect.DeepEqual(projects, want) {
 		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
@@ -398,5 +399,76 @@ func TestManualProjectsExpandInjectedHomeAndDeduplicateSymlinks(t *testing.T) {
 	canonical, _ := filepath.EvalSymlinks(project)
 	if err != nil || len(projects) != 1 || projects[0].Root != canonical {
 		t.Fatalf("projects=%+v err=%v", projects, err)
+	}
+}
+
+// A project dropped on reconfigure and chosen again when setup asks for at
+// least one keeps its activation time, so sessions already running in it
+// still count. The review's projects edit goes through the same prompt.
+func TestProjectChosenAgainAfterDroppingAllKeepsItsActivation(t *testing.T) {
+	t.Parallel()
+	root := gitRepo(t)
+	activated := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	existing := []archive.ProjectActivation{{ProjectID: archive.ProjectID(root), Root: root, Included: true, ActivatedAt: activated}}
+	var out bytes.Buffer
+	projects, err := promptProjects(newPrompter(strings.NewReader("n\n\n1\n\n"), &out), existing, nil, nil)
+	if err != nil || !reflect.DeepEqual(projects, existing) || !strings.Contains(out.String(), "Choose at least one project") {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
+	}
+}
+
+// In the list headed by the current repository, a number given twice in one
+// answer, as in overlapping ranges, includes the project once rather than
+// switching it back out.
+func TestRepeatedNumberIncludesOnce(t *testing.T) {
+	t.Parallel()
+	current, one, two := gitRepo(t), gitRepo(t), gitRepo(t)
+	result := []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
+	known := []backfill.KnownProject{{Root: one}, {Root: two}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("2-3 3 2\n\n"), &out), result, nil, known, current)
+	if err != nil || includedProjects(projects) != 3 {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
+	}
+}
+
+// A repository nested in the current one is part of it once the current one
+// is configured, so its sessions count toward the current repository and
+// it is not listed on its own.
+func TestNestedProjectsFoldIntoTheCurrentRepository(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	known := []backfill.KnownProject{
+		{Root: "/src/app/vendor/lib", Sessions: 2, LastUsed: now},
+		{Root: "/src/other", Sessions: 1, LastUsed: now.Add(-time.Hour)},
+		{Root: "/src/app", Sessions: 3, LastUsed: now.Add(-2 * time.Hour), Kind: backfill.ProjectKindRepository},
+		{Root: "/src/application", Sessions: 4},
+	}
+	want := []backfill.KnownProject{
+		{Root: "/src/app", Sessions: 5, LastUsed: now, Kind: backfill.ProjectKindRepository},
+		{Root: "/src/other", Sessions: 1, LastUsed: now.Add(-time.Hour)},
+		{Root: "/src/application", Sessions: 4},
+	}
+	if got := foldInto(known, "/src/app"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// With more projects included than the list shows, as after a large import,
+// each answer reports a count rather than every path.
+func TestSelectionWithManyProjectsPrintsACount(t *testing.T) {
+	t.Parallel()
+	var result []archive.ProjectActivation
+	for i := 0; i <= maxKnownProjects; i++ {
+		root := fmt.Sprintf("/imported/%d", i)
+		result = append(result, archive.ProjectActivation{ProjectID: archive.ProjectID(root), Root: root, Included: true})
+	}
+	known := []backfill.KnownProject{{Root: gitRepo(t)}}
+	var out bytes.Buffer
+	if _, err := addProjects(newPrompter(strings.NewReader("1\n\n"), &out), result, result, known, ""); err != nil {
+		t.Fatal(err)
+	}
+	if want := fmt.Sprintf("Included: %d projects.", maxKnownProjects+2); !strings.Contains(out.String(), want) || strings.Contains(out.String(), "/imported/0") {
+		t.Fatalf("output:\n%s", &out)
 	}
 }

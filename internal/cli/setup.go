@@ -537,8 +537,13 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 			current = suggestedProject(dir)
 		}
 	}
+	// addProjects asks again while no project is included, so both paths
+	// end with at least one.
 	if current != "" {
-		offered := known(*cfg)
+		// Scanned before the repository is configured, so the list can give
+		// its session count; foldInto then applies the nearest-configured-
+		// ancestor rule the scan skipped.
+		offered := foldInto(known(*cfg), current)
 		cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
 		cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, nil, offered, current, userHome)
 	} else {
@@ -547,18 +552,38 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	if err != nil {
 		return err
 	}
-	// Leaving every project out asks again rather than ending setup.
-	for includedProjects(cfg.Archive.Projects) == 0 {
-		terminal.Println(p.out, p.style.warnMark()+" Choose at least one project: only sessions in included projects are archived.")
-		cfg.Archive.Projects, err = addProjects(p, cfg.Archive.Projects, cfg.Archive.Projects, known(*cfg), current, userHome)
-		if err != nil {
-			return err
-		}
-	}
 	if cfg.RetentionDays <= 0 {
 		cfg.RetentionDays = defaultRetentionDays
 	}
 	return nil
+}
+
+// foldInto merges the listed projects inside root, such as a repository
+// nested in it, into root's own entry, as they resolve once root is a
+// configured project: their sessions count toward it, and they are not
+// offered on their own.
+func foldInto(known []backfill.KnownProject, root string) []backfill.KnownProject {
+	merged := backfill.KnownProject{Root: root, Kind: backfill.ProjectKindRepository}
+	folded := false
+	var out []backfill.KnownProject
+	for _, project := range known {
+		if !local.PathWithin(project.Root, root) {
+			out = append(out, project)
+			continue
+		}
+		if project.Root == root {
+			merged.Kind = project.Kind
+		}
+		folded = true
+		merged.Sessions += project.Sessions
+		if project.LastUsed.After(merged.LastUsed) {
+			merged.LastUsed = project.LastUsed
+		}
+	}
+	if folded {
+		out = append([]backfill.KnownProject{merged}, out...)
+	}
+	return out
 }
 
 // storedCredentialReadable reports whether the Keychain item ref can be
@@ -891,7 +916,18 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 			return nil, err
 		}
 		if answer == "" {
-			return picker.result, nil
+			if includedProjects(picker.result) > 0 {
+				return picker.result, nil
+			}
+			// Leaving every project out asks again rather than ending
+			// setup, offering again the projects this answer dropped.
+			terminal.Println(p.out, p.style.warnMark()+" Choose at least one project: only sessions in included projects are archived.")
+			offered = picker.offer(picker.dropped(known), current)
+			label = "Project path: "
+			if len(offered) > 0 {
+				label = "Projects: "
+			}
+			continue
 		}
 		if len(offered) > 0 && (strings.EqualFold(answer, "a") || strings.EqualFold(answer, "all")) {
 			for _, project := range offered {
@@ -907,7 +943,9 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 				terminal.Printf(p.out, "Enter numbers from 1 to %d, a for all, or a project path.\n", len(offered))
 				continue
 			}
-			for _, n := range numbers {
+			// A number given twice is one choice, never a switch back.
+			slices.Sort(numbers)
+			for _, n := range slices.Compact(numbers) {
 				switch root := offered[n-1].Root; {
 				case !picker.seen[root]:
 					picker.include(root)
@@ -1013,6 +1051,23 @@ func (k *projectPicker) offer(known []backfill.KnownProject, current string) []b
 	return offered
 }
 
+// dropped returns known headed by the projects existing included that
+// are not included now, so they can be chosen again by number.
+func (k *projectPicker) dropped(known []backfill.KnownProject) []backfill.KnownProject {
+	var out []backfill.KnownProject
+	listed := map[string]bool{}
+	for _, project := range known {
+		listed[project.Root] = true
+	}
+	for _, old := range k.existing {
+		if old.Included && !k.seen[old.Root] && !listed[old.Root] {
+			listed[old.Root] = true
+			out = append(out, backfill.KnownProject{Root: old.Root})
+		}
+	}
+	return append(out, known...)
+}
+
 // include adds the project at path, as typed or listed.
 func (k *projectPicker) include(path string) {
 	root, err := projectDir(path, k.home)
@@ -1066,8 +1121,13 @@ func (k *projectPicker) printSelection() {
 			names = append(names, displayPath(project.Root, k.home))
 		}
 	}
-	if len(names) == 0 {
+	switch {
+	case len(names) == 0:
 		terminal.Println(k.p.out, "No project included yet.")
+		return
+	case len(names) > maxKnownProjects:
+		// A reconfigure can hold hundreds that backfill added.
+		terminal.Printf(k.p.out, "Included: %d projects.\n", len(names))
 		return
 	}
 	terminal.Println(k.p.out, k.p.style.hang("Included: ", strings.Join(names, ", ")))

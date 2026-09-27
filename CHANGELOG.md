@@ -14,6 +14,13 @@ follow [Semantic Versioning](https://semver.org/).
 - Golden transcripts of the setup and status screens, in color and plain, so
   changes to what you see are reviewed line by line.
 
+### Changed
+
+- `setup` always lists recent projects, with each one's session count, and
+  `a` includes them all. Inside a Git project, that project heads the list
+  already included, instead of a separate question. Leaving every project
+  out asks again rather than ending setup.
+
 ## [0.1.0] - 2026-09-25
 
 The first release.
