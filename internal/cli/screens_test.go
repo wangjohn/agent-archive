@@ -85,7 +85,7 @@ var screens = []screen{
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude", "cursor")
-			f.inProject(t, "src/web-app")
+			f.inWebApp(t)
 		},
 	},
 	{
@@ -120,7 +120,7 @@ var screens = []screen{
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
-			f.inProject(t, "src/web-app")
+			f.inWebApp(t)
 			f.setup(t, 1, "", "", "")
 		},
 	},
@@ -142,7 +142,7 @@ var screens = []screen{
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			f.inProject(t, "src/web-app")
+			f.inWebApp(t)
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
 				return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
 			}
@@ -155,7 +155,7 @@ var screens = []screen{
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
-			f.inProject(t, "src/web-app")
+			f.inWebApp(t)
 		},
 	},
 	{
@@ -176,7 +176,7 @@ var screens = []screen{
 		answers: []string{"y", "y", "y", "", "", "2", "team-archive", "work", "us-east-1", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			f.inProject(t, "src/web-app")
+			f.inWebApp(t)
 		},
 	},
 	{
@@ -258,11 +258,11 @@ func (f *screenFixture) project(t *testing.T, rel string) string {
 	return dir
 }
 
-// inProject makes a Git repository at rel under the home folder and runs
-// the recorded command from inside it.
-func (f *screenFixture) inProject(t *testing.T, rel string) {
+// inWebApp makes the Git repository ~/src/web-app and runs the recorded
+// command from inside it.
+func (f *screenFixture) inWebApp(t *testing.T) {
 	t.Helper()
-	dir := f.project(t, rel)
+	dir := f.project(t, "src/web-app")
 	f.env.WorkingDir = func() (string, error) { return dir, nil }
 }
 
