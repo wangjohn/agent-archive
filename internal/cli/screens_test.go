@@ -260,7 +260,7 @@ var screens = []screen{
 		// A first setup whose project has past sessions offers to import
 		// them, and imports them.
 		name:    "setup-import-offer",
-		answers: []string{"", "", "2", "team-archive", "work", "us-east-1", "", ""},
+		answers: []string{"", "", "2", "work", "2", "", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
