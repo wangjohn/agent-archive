@@ -35,6 +35,10 @@ follow [Semantic Versioning](https://semver.org/).
   `agent-archive*` bucket is pre-selected) and uses the bucket's own region.
   A region that isn't shaped like one is refused, and a saved one of that
   kind is dropped on reconfigure.
+- When the storage check fails, `setup` shows the cause once with its fix
+  (raw error text only with `--verbose`), the menu defaults to fixing the
+  answer that failed, and "Continue where you left off" asks that answer
+  again instead of re-running the same check.
 
 ## [0.1.0] - 2026-09-25
 
