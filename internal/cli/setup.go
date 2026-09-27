@@ -691,10 +691,10 @@ func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, una
 		terminal.Println(p.out, "\nNext, in each app:")
 		for _, app := range cfg.Harnesses {
 			if step, ok := hookNextStep[app]; ok {
-				terminal.Println(p.out, "  "+paintCommands(p.style, step))
+				terminal.Println(p.out, p.style.hang("  ", paintCommands(p.style, step)))
 			}
 		}
-		terminal.Println(p.out, "Sessions already open are not captured: only one started after setup, in an included project, counts.")
+		terminal.Println(p.out, "Sessions already open are not captured. Start a new one in an included project.")
 		if unattended {
 			terminal.Println(p.out, "Import sessions from before setup with "+p.style.cmd("agent-archive backfill")+".")
 		}

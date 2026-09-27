@@ -65,7 +65,7 @@ Undo with \e[36magent-archive backfill undo 2026-09-25-1\e[0m.
 
 Next, in each app:
   Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
-Sessions already open are not captured: only one started after setup, in an included project, counts.
+Sessions already open are not captured. Start a new one in an included project.
 Check progress with \e[36magent-archive status\e[0m.
 
 To set up another Mac with this storage, run there:

@@ -65,7 +65,7 @@ Next, in each app:
   Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session (or \e[36m/clear\e[0m).
   Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
   Cursor: nothing to approve; start a new Agent chat.
-Sessions already open are not captured: only one started after setup, in an included project, counts.
+Sessions already open are not captured. Start a new one in an included project.
 Check progress with \e[36magent-archive status\e[0m.
 
 To set up another Mac with this storage, run there:

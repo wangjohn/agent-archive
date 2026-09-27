@@ -11,7 +11,7 @@ Configuration saved.
 
 Next, in each app:
   Claude Code: nothing to approve; start a new session (or /clear).
-Sessions already open are not captured: only one started after setup, in an included project, counts.
+Sessions already open are not captured. Start a new one in an included project.
 Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.
 
