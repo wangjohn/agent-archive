@@ -26,11 +26,11 @@ Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
 
-  \e[31m✗ The bucket is in another region.\e[0m
+  \e[31m✗\e[0m The bucket is in another region.
     The bucket is in eu-west-1, not the AWS region configured.
 
     Fix: Set the region to eu-west-1, then try again.
-\e[2m    Details: agent-archive setup --verbose\e[0m
+    \e[2mDetails:\e[0m \e[36magent-archive setup --verbose\e[0m
 
 What next?
   1) Change the region

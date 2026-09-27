@@ -22,11 +22,11 @@ Using region us-east-1. You can change it at the final review.
 
 Checking your storage connection…
 
-  \e[31m✗ Access to the bucket was refused.\e[0m
+  \e[31m✗\e[0m Access denied.
     The storage provider refused access to the bucket.
 
     Fix: Check that the credentials are current and allowed to list, read, write and delete in the bucket, then try again.
-\e[2m    Details: agent-archive setup --verbose\e[0m
+    \e[2mDetails:\e[0m \e[36magent-archive setup --verbose\e[0m
 
 What next?
   1) Change storage settings

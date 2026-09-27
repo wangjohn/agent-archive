@@ -81,7 +81,7 @@ func storageFailureHeadline(cfg credentials.Config, d storage.Diagnosis) string 
 		return "Can't sign in to AWS."
 	}
 	if d.Cause == storage.CauseAccessDenied {
-		return "Access to the bucket was refused."
+		return "Access denied."
 	}
 	if d.Cause == storage.CauseNoSuchBucket {
 		return "Bucket " + cfg.Bucket + " wasn't found."
@@ -93,7 +93,7 @@ func storageFailureHeadline(cfg credentials.Config, d storage.Diagnosis) string 
 		return "The bucket is in another region."
 	}
 	if d.Cause == storage.CauseNetwork {
-		return "Can't reach the storage provider."
+		return "No connection to the storage provider."
 	}
 	return "The storage check failed."
 }
@@ -118,8 +118,8 @@ func storageFixLabel(cfg credentials.Config, d storage.Diagnosis) string {
 	return "Change storage settings"
 }
 
-// printStorageFailure prints why the storage check failed, once: a red
-// headline, the cause, and the fix, with any command in it in the command
+// printStorageFailure prints why the storage check failed, once: a
+// headline after a red ✗, the cause, and the fix, with any command in it in the command
 // color. The check's own error, which can run to several hundred characters
 // of SDK text, is printed only when verbose; otherwise a dim line says how
 // to see it (details is that command). Even with verbose, an error from a
@@ -129,7 +129,7 @@ func printStorageFailure(p *prompter, cfg credentials.Config, err error, verbose
 	d := storageDiagnosis(cfg, err)
 	s := p.style
 	terminal.Println(p.out, "")
-	terminal.Println(p.out, s.hang("  ", s.fail(symbolFail+" "+storageFailureHeadline(cfg, d))))
+	terminal.Println(p.out, s.hang("  "+s.failMark()+" ", storageFailureHeadline(cfg, d)))
 	terminal.Println(p.out, s.hang("    ", d.Explanation))
 	terminal.Println(p.out, "")
 	terminal.Println(p.out, s.hang("    Fix: ", paintCommands(s, d.Fix)))
@@ -138,7 +138,7 @@ func printStorageFailure(p *prompter, cfg credentials.Config, err error, verbose
 	} else if verbose {
 		terminal.Println(p.out, s.dim(s.hang("    Details: ", err.Error())))
 	} else {
-		terminal.Println(p.out, s.dim("    Details: "+details))
+		terminal.Println(p.out, "    "+s.dim("Details:")+" "+s.cmd(details))
 	}
 	terminal.Println(p.out, "")
 	return d

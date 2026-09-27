@@ -26,11 +26,11 @@ Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
 
-  \e[31m✗ Can't reach the storage provider.\e[0m
+  \e[31m✗\e[0m No connection to the storage provider.
     agent-archive couldn't reach the storage provider.
 
     Fix: Check your internet connection, and any VPN or proxy, then try again.
-\e[2m    Details: agent-archive setup --verbose\e[0m
+    \e[2mDetails:\e[0m \e[36magent-archive setup --verbose\e[0m
 
 What next?
   1) Change storage settings

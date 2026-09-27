@@ -26,7 +26,7 @@ Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
 
-  \e[31m✗ Access to the bucket was refused.\e[0m
+  \e[31m✗\e[0m Access denied.
     The storage provider refused access to the bucket.
 
     Fix: Check that the credentials are current and allowed to list, read, write and delete in the bucket, then try again.

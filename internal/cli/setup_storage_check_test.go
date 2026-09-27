@@ -59,7 +59,7 @@ func TestSetupContinueAfterAccessFailureAsksForStorage(t *testing.T) {
 	env := failingStorageEnv(t, home, &failure)
 	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, t.TempDir()), "y\n")
 	output := setupRun(t, env, input+"cancel\n", 1)
-	if !strings.Contains(output, "Access to the bucket was refused.") {
+	if !strings.Contains(output, "Access denied.") {
 		t.Fatalf("no diagnosis:\n%s", output)
 	}
 
@@ -102,7 +102,7 @@ func TestSetupStorageFailureMenu(t *testing.T) {
 			if n := strings.Count(output, storageQuestion); n != tc.questions {
 				t.Fatalf("storage asked %d times, want %d:\n%s", n, tc.questions, output)
 			}
-			if n := strings.Count(output, "Access to the bucket was refused."); n != 2 {
+			if n := strings.Count(output, "Access denied."); n != 2 {
 				t.Fatalf("diagnosis printed %d times, want once per check:\n%s", n, output)
 			}
 			if !strings.Contains(output, "What next?\n  1) Change storage settings\n") || !strings.Contains(output, "Enter 1-4 [1]") {
@@ -295,7 +295,7 @@ func TestSetupYesStorageDiagnosisGoesToStandardError(t *testing.T) {
 	if code := Run(args, strings.NewReader(""), &out, &errOut, env); code != 1 {
 		t.Fatalf("exit %d\n%s\n%s", code, &out, &errOut)
 	}
-	if !strings.Contains(errOut.String(), "Access to the bucket was refused.") || strings.Contains(out.String(), "refused") {
+	if !strings.Contains(errOut.String(), "Access denied.") || strings.Contains(out.String(), "refused") {
 		t.Fatalf("stdout:\n%s\nstderr:\n%s", &out, &errOut)
 	}
 }

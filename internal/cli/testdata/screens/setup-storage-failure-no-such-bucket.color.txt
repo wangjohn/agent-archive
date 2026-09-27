@@ -26,11 +26,11 @@ Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
 
-  \e[31m✗ Bucket team-archive wasn't found.\e[0m
+  \e[31m✗\e[0m Bucket team-archive wasn't found.
     The bucket doesn't exist, or its name is misspelled.
 
     Fix: Check the bucket name, or create the bucket, then try again.
-\e[2m    Details: agent-archive setup --verbose\e[0m
+    \e[2mDetails:\e[0m \e[36magent-archive setup --verbose\e[0m
 
 What next?
   1) Change the bucket name

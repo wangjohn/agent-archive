@@ -22,7 +22,7 @@ Using region us-east-1. You can change it at the final review.
 
 Checking your storage connection…
 
-  ✗ Access to the bucket was refused.
+  ✗ Access denied.
     The storage provider refused access to the bucket.
 
     Fix: Check that the credentials are current and allowed to list, read, write and delete in the bucket, then try again.
