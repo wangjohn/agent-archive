@@ -86,7 +86,8 @@ func (s textStyle) warn(text string) string { return s.paint("33", text) }
 // fail marks something that blocks.
 func (s textStyle) fail(text string) string { return s.paint("31", text) }
 
-// cmd marks a command, path, or link the user types or opens.
+// cmd marks a command, slash command, or link the user types or opens.
+// Paths are not commands: show them with displayPath, dim when secondary.
 func (s textStyle) cmd(text string) string { return s.paint("36", text) }
 
 // dim marks secondary detail.
