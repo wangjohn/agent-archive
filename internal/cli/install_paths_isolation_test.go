@@ -338,8 +338,10 @@ func TestAnotherInstallationsJobIsNeverStopped(t *testing.T) {
 	})
 	var out, errOut bytes.Buffer
 	code := Run([]string{"setup"}, strings.NewReader(s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir())), &out, &errOut, env)
-	if code != 1 || !strings.Contains(errOut.String(), "another installation") {
-		t.Fatalf("setup: exit %d\n%s", code, &errOut)
+	// The check that blocks is marked ✗ on standard output; the exit
+	// line on standard error points at it.
+	if code != 1 || !strings.Contains(out.String(), "another installation") || !strings.Contains(errOut.String(), "Fix what is marked ✗ above") {
+		t.Fatalf("setup: exit %d\n%s%s", code, &out, &errOut)
 	}
 	for _, call := range calls {
 		if !strings.HasPrefix(call, "print ") {

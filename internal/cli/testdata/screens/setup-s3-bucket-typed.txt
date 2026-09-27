@@ -32,7 +32,7 @@ Bucket region (for example us-east-1): ~/code/api
 Bucket region (for example us-east-1): us-east-1
 
 Checking your storage connection…
-✓ Connected.
+✓ Connected to your storage.
 
 Step 3 of 3 · Ready to start
 

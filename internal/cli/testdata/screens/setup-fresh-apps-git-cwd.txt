@@ -30,7 +30,7 @@ Enter 1-2, or another bucket name: 2
 Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
-✓ Connected.
+✓ Connected to your storage.
 
 Step 3 of 3 · Ready to start
 
@@ -62,7 +62,7 @@ Next, in each app:
   Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
   Claude Code: nothing to approve; start a new session (or /clear).
   Cursor: nothing to approve; start a new Agent chat.
-Sessions already open are not captured: only one started after setup, in an included project, counts.
+Sessions already open are not captured. Start a new one in an included project.
 Check progress with agent-archive status.
 
 To set up another Mac with this storage, run there:

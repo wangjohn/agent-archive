@@ -28,7 +28,7 @@ The last storage check failed with region us-east-1.
 Bucket region [us-east-1]: eu-west-1
 
 Checking your storage connection…
-✓ Connected.
+✓ Connected to your storage.
 
 Step 3 of 3 · Ready to start
 

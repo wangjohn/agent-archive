@@ -38,7 +38,8 @@ p = subprocess.Popen([sys.argv[1], '-test.run=^TestSecretTerminalChild$'], stdin
 try:
     deadline = time.monotonic() + 10
     output = b''
-    while b'Secret (hidden): ' not in output:
+    # A color terminal ends the prompt with the › cursor, NO_COLOR with ": ".
+    while b'Secret (hidden)' not in output or not (output.endswith('\u203a '.encode()) or output.endswith(b': ')):
         if time.monotonic() > deadline: raise RuntimeError('prompt timeout')
         if select.select([master], [], [], .1)[0]: output += os.read(master, 4096)
     while termios.tcgetattr(slave)[3] & termios.ECHO:
@@ -80,7 +81,8 @@ p = subprocess.Popen([sys.argv[1], '-test.run=^TestSecretTerminalChild$'], stdin
 try:
     deadline = time.monotonic() + 10
     output = b''
-    while b'Secret (hidden): ' not in output:
+    # A color terminal ends the prompt with the › cursor, NO_COLOR with ": ".
+    while b'Secret (hidden)' not in output or not (output.endswith('\u203a '.encode()) or output.endswith(b': ')):
         if time.monotonic() > deadline: raise RuntimeError('prompt timeout')
         if select.select([master], [], [], .1)[0]: output += os.read(master, 4096)
     while termios.tcgetattr(slave)[3] & termios.ECHO:

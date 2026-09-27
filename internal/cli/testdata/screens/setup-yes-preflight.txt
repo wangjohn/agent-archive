@@ -2,7 +2,7 @@ $ agent-archive setup --yes --apps codex --provider s3 --bucket team-archive --a
   ✓ Codex hooks: ~/.codex/hooks.json
   ✓ Background job: launchctl responds
 Checking your storage connection…
-✓ Connected.
+✓ Connected to your storage.
 Apps: Codex. Projects: 1. Storage: Amazon S3 bucket team-archive.
   ! Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
@@ -11,7 +11,7 @@ Configuration saved.
 
 Next, in each app:
   Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
-Sessions already open are not captured: only one started after setup, in an included project, counts.
+Sessions already open are not captured. Start a new one in an included project.
 Import sessions from before setup with agent-archive backfill.
 Check progress with agent-archive status.
 

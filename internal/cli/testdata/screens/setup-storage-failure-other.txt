@@ -35,7 +35,7 @@ Checking your storage connection…
   ✗ The storage check failed.
     agent-archive couldn't use the storage settings.
 
-    Fix: Check the storage provider, bucket, region and endpoint, then run setup again.
+    Fix: Check the storage provider, bucket, region and endpoint, then try again.
     Details: agent-archive setup --verbose
 
 What next?
