@@ -16,6 +16,9 @@ follow [Semantic Versioning](https://semver.org/).
 - A plain-words diagnosis for storage failures (no credentials, access
   denied, no such bucket, wrong region, network), each with a fix to try.
   The AWS SDK no longer prints its own warnings to the terminal.
+- A read-only check of each app's hook settings file that reports the file,
+  line, column and reason for JSONC comments, trailing commas and duplicate
+  keys, without changing anything.
 
 ## [0.1.0] - 2026-09-25
 
