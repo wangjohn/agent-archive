@@ -52,7 +52,7 @@ script it with [`agent-archive setup --yes`](docs/getting-started/setup.md#set-u
 | Command | What it does |
 | --- | --- |
 | `setup` | First-time setup, or change apps, projects, storage, or retention. |
-| `status` | Storage, collector, hooks, and capture health, with a `Next:` step. |
+| `status` | Storage, collector, hooks, and capture health, led by the one thing to fix and how. |
 | `list`, `show` | Browse archived sessions (`--json` for scripts). |
 | `handoff` | Print a session as a prompt another agent can continue from. |
 | `backfill` | Import sessions already on this Mac; `backfill undo` removes them. |

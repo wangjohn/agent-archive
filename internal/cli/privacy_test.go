@@ -59,7 +59,7 @@ func TestPrivacyEvidenceIsScopedAndExpires(t *testing.T) {
 	var out bytes.Buffer
 	sc := statusScreen{now: at}
 	sc.printRows(&out, []statusRow{sc.privacyRow(changed)})
-	if !strings.Contains(out.String(), "https://") || !strings.Contains(out.String(), "Bucket privacy not checked") || !strings.Contains(out.String(), "storage settings changed since the last check") || strings.Contains(out.String(), "checked 0") {
+	if !strings.Contains(out.String(), "https://") || !strings.Contains(out.String(), "Bucket privacy not verified") || !strings.Contains(out.String(), "storage settings changed since the last check") || strings.Contains(out.String(), "checked 0") {
 		t.Fatal(out.String())
 	}
 }

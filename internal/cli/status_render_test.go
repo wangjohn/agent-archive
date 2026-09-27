@@ -214,3 +214,92 @@ func TestStatusWrapsToTheTerminal(t *testing.T) {
 		}
 	}
 }
+
+// A storage check newer than the recorded storage health, as setup's after
+// new credentials, outranks the failure or staleness that health recorded.
+func TestStatusDestinationNewerStorageCheckOutranksOlderHealth(t *testing.T) {
+	t.Parallel()
+	sc := statusScreen{now: renderNow}
+	for _, health := range []string{"authentication_failed", "stale", "stale_configuration"} {
+		view := statusView{
+			Storage:                  "s3 / team-archive",
+			Authentication:           storageHealth{State: health, CheckedAt: renderNow.Add(-30 * time.Minute)},
+			StorageAccessConfirmedAt: renderNow.Add(-time.Minute),
+			StorageAccessConfirmedBy: storageAccessConfirmedBySetup,
+		}
+		if row := sc.destinationRow(view); row.mark != "✓" || row.detail != "reachable, checked by setup 1 minute ago" {
+			t.Errorf("%s then a newer setup check: %q %q", health, row.mark, row.detail)
+		}
+		// The same health after the last storage check still shows.
+		view.StorageAccessConfirmedAt = renderNow.Add(-time.Hour)
+		if row := sc.destinationRow(view); row.mark == "✓" {
+			t.Errorf("%s after the last storage check shows as reachable: %q", health, row.detail)
+		}
+	}
+}
+
+// A background collector launchctl could not report on is not called
+// stopped, though the next step is the same.
+func TestStatusBackgroundUnknownIsNotCalledStopped(t *testing.T) {
+	t.Parallel()
+	view := statusView{Background: "unknown", Apps: []appStatus{{Name: "codex", Hooks: "installed"}}}
+	chooseInstallationStep(&view, "/Users/alex/Library/LaunchAgents/x.plist")
+	if view.problem != "The background collector couldn't be checked" || view.Next != "Run agent-archive setup to restore the background collector." {
+		t.Fatalf("problem %q next %q", view.problem, view.Next)
+	}
+}
+
+// Only paths that start at the home folder are shown with ~.
+func TestStatusTildeOnlyPathsStartingAtHome(t *testing.T) {
+	t.Parallel()
+	sc := statusScreen{home: "/Users/jo"}
+	for text, want := range map[string]string{
+		"at /Users/jo/src and (/Users/jo/.codex)": "at ~/src and (~/.codex)",
+		"/Users/jo/a":                   "~/a",
+		"/Volumes/Backup/Users/jo/proj": "/Volumes/Backup/Users/jo/proj",
+		"/Users/joe/a and x/Users/jo/b": "/Users/joe/a and x/Users/jo/b",
+	} {
+		if got := sc.tilde(text); got != want {
+			t.Errorf("tilde(%q) = %q want %q", text, got, want)
+		}
+	}
+	root := statusScreen{home: "/"}
+	if got := root.tilde("runs /opt/bin/agent-archive"); got != "runs /opt/bin/agent-archive" {
+		t.Errorf("with HOME=/: %q", got)
+	}
+}
+
+// Privacy evidence that was checked is not called unchecked, and evidence
+// dated after now is not called over a day old.
+func TestStatusPrivacyRowWording(t *testing.T) {
+	t.Parallel()
+	sc := statusScreen{now: renderNow}
+	past, future := renderNow.Add(-5*time.Minute), renderNow.Add(time.Hour)
+	row := sc.privacyRow(storage.PrivacyReport{State: "not_verified", Reason: "public_access_controls_not_fully_verified", CheckedAt: &past})
+	if row.cells[0] != "Bucket privacy not verified" || row.detail != "some public access settings couldn't be read, checked 5 minutes ago" {
+		t.Errorf("partly read: %q %q", row.cells[0], row.detail)
+	}
+	row = sc.privacyRow(storage.PrivacyReport{State: "not_verified", Reason: "inspection_stale", CheckedAt: &future})
+	if strings.Contains(row.detail, "over a day old") || strings.Contains(row.detail, "just now") {
+		t.Errorf("future-dated check: %q", row.detail)
+	}
+}
+
+// A new project of an app already captured elsewhere is not called the
+// app's first session.
+func TestStatusWaitingProjectOfCapturedApp(t *testing.T) {
+	t.Parallel()
+	view := statusView{Apps: []appStatus{{Name: "codex", VerifiedSessions: 3, Projects: []projectCaptureStatus{
+		{ProjectRoot: "/Users/alex/a", ReadBackVerified: true},
+		{ProjectRoot: "/Users/alex/b"},
+	}}}}
+	chooseCaptureStep(&view)
+	if view.problem != "Waiting for a Codex session in /Users/alex/b" {
+		t.Fatalf("problem %q", view.problem)
+	}
+	var out strings.Builder
+	statusScreen{home: "/Users/alex"}.printNextStep(&out, view)
+	if !strings.Contains(out.String(), "! Waiting for a Codex session in ~/b\n") {
+		t.Fatalf("screen:\n%s", out.String())
+	}
+}

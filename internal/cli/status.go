@@ -147,6 +147,9 @@ type statusView struct {
 	// problem names, in a few words, what Next fixes; the text status leads
 	// with it. It is set with Next, and empty when Next is only a tip.
 	problem string
+	// userHome is the home folder readStatus resolved, for the text status
+	// to show paths under it as ~; empty before setup.
+	userHome string
 }
 
 func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
@@ -172,11 +175,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
 		return 0
 	}
-	userHome, err := env.userHomeDir()
-	if err != nil {
-		userHome = "" // paths are then shown as they are
-	}
-	printStatus(stdout, view, statusScreen{style: styleFor(stdout), now: env.now(), home: userHome})
+	printStatus(stdout, view, statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome})
 	return 0
 }
 
@@ -272,6 +271,7 @@ func readStatus(env Env) (view statusView, err error) {
 	if err != nil {
 		return view, err
 	}
+	view.userHome = userHome
 	binaryProblem := readInstalledApps(&view, cfg, home, userHome, env)
 	background := readBackground(&view, cfg, home, userHome, env)
 	chooseNextStep(&view, cfg, home, env, binaryProblem, background)
@@ -827,6 +827,10 @@ func chooseCaptureStep(view *statusView) {
 			}
 			view.State = "Waiting for capture"
 			view.problem = "Waiting for the first " + appName(app.Name) + " session"
+			if app.VerifiedSessions > 0 {
+				// The app is captured elsewhere; only this project is new.
+				view.problem = "Waiting for a " + appName(app.Name) + " session in " + pair.ProjectRoot
+			}
 			switch {
 			case app.Capabilities.FreshStart.State == capabilityUnavailable && !pair.HookObserved:
 				view.Next = app.Capabilities.FreshStart.NextAction
@@ -869,6 +873,9 @@ func chooseInstallationStep(view *statusView, plist string) {
 	if !setupjournal.JobActive(view.Background) {
 		view.State = "Needs attention"
 		view.problem = "The background collector isn't running"
+		if view.Background == "unknown" {
+			view.problem = "The background collector couldn't be checked"
+		}
 		view.Next = "Run agent-archive setup to restore the background collector."
 		if view.Background == setupjournal.JobAnotherInstallation {
 			// setup refuses to replace that job, so it is not the way out.
@@ -1039,7 +1046,7 @@ func (sc statusScreen) printNextStep(out io.Writer, view statusView) {
 		terminal.Println(out, sc.style.hang("  ", next))
 		return
 	}
-	terminal.Println(out, sc.style.hang("  "+sc.style.warnMark()+" ", view.problem))
+	terminal.Println(out, sc.style.hang("  "+sc.style.warnMark()+" ", sc.tilde(view.problem)))
 	terminal.Println(out, sc.style.hang("    ", next))
 }
 
@@ -1279,8 +1286,14 @@ func (sc statusScreen) destinationRow(view statusView) statusRow {
 	if !auth.CheckedAt.IsZero() {
 		checked = ", checked " + relativeAge(sc.now, auth.CheckedAt)
 	}
+	// A storage check newer than the recorded health (setup's, after new
+	// credentials) outranks it: the health is then out of date, not wrong now.
+	health := auth.State
+	if view.StorageAccessConfirmedAt.After(auth.CheckedAt) {
+		health = ""
+	}
 	//lint:ignore LV1001 storageHealth.State is an untyped string set in collect.go and verification.go
-	switch auth.State {
+	switch health {
 	case "authentication_failed":
 		row.mark, row.detail = s.failMark(), "sign-in failed"+checked
 	case "credentials_expired":
@@ -1353,10 +1366,13 @@ func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
 		detail = "some public access settings couldn't be read" + checked
 	case "inspection_stale":
 		detail = "the last check is over a day old" + checked
+		if report.CheckedAt != nil && report.CheckedAt.After(sc.now) {
+			detail = "the last check is dated in the future; the clock may have changed"
+		}
 	case "storage_configuration_changed":
 		detail = "storage settings changed since the last check"
 	}
-	return statusRow{mark: s.warnMark(), cells: []string{"Bucket privacy not checked"}, detail: detail, notes: []statusNote{review}}
+	return statusRow{mark: s.warnMark(), cells: []string{"Bucket privacy not verified"}, detail: detail, notes: []statusNote{review}}
 }
 
 // backgroundRow is the background collector: whether launchd runs it, and
@@ -1429,8 +1445,33 @@ func (sc statusScreen) tilde(text string) string {
 	if sc.home == "" {
 		return text
 	}
-	home := strings.TrimSuffix(filepath.Clean(sc.home), string(filepath.Separator)) + string(filepath.Separator)
-	return strings.ReplaceAll(text, home, "~"+string(filepath.Separator))
+	home := filepath.Clean(sc.home) + string(filepath.Separator)
+	if home == "//" {
+		return text // every path is under /; ~ would only obscure them
+	}
+	var b strings.Builder
+	for {
+		i := strings.Index(text, home)
+		if i < 0 {
+			break
+		}
+		// Only a path that starts at the home folder: not one that merely
+		// contains it, like /Volumes/Backup/Users/jo/.
+		if i > 0 && pathByte(text[i-1]) {
+			b.WriteString(text[:i+1])
+			text = text[i+1:]
+			continue
+		}
+		b.WriteString(text[:i] + "~" + string(filepath.Separator))
+		text = text[i+len(home):]
+	}
+	return b.String() + text
+}
+
+// pathByte reports whether c can be part of a path, so that a home folder
+// right after it is not where the path starts.
+func pathByte(c byte) bool {
+	return c == '/' || c == '.' || c == '_' || c == '-' || c == '~' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
 }
 
 // prose readies a next step for the screen: ~ paths, the warnings it refers

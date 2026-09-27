@@ -1,0 +1,31 @@
+$ agent-archive status --json
+{
+  "privacy_evidence": {
+    "state": "",
+    "reason": "",
+    "scope": "",
+    "guidance_url": ""
+  },
+  "authentication": {
+    "configuration_id": "",
+    "state": "not_configured",
+    "context": ""
+  },
+  "code": "not_configured",
+  "schema_version": 3,
+  "state": "Not set up",
+  "privacy": "not_verified",
+  "background": "missing",
+  "paused": false,
+  "projects": [],
+  "applications": [],
+  "collector": {
+    "pending_count": 0
+  },
+  "imported_sessions": 0,
+  "imported_pending": 0,
+  "imported_with_issues": 0,
+  "last_import": "",
+  "next_action": "Run agent-archive setup to get started."
+}
+[exit 0]

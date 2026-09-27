@@ -14,6 +14,13 @@ follow [Semantic Versioning](https://semver.org/).
 - Golden transcripts of the setup and status screens, in color and plain, so
   changes to what you see are reviewed line by line.
 
+### Changed
+
+- `status` leads with the overall state and, unless it is Ready, the one
+  thing to fix and how. Below that, **Capture** and **Storage** have a ✓, !
+  or ✗ row each, with times relative to now and no internal codes.
+  `status --json` is unchanged and keeps the exact times and codes.
+
 ## [0.1.0] - 2026-09-25
 
 The first release.
