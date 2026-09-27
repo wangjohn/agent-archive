@@ -269,13 +269,7 @@ func hookFilesCheck(apps []string, checks preflightChecks, files hooks.Files, us
 			}
 		}
 		if !found {
-			check = preflightCheck{App: app, Detail: displayPath(files[app], userHome), OK: true}
-			if problems := hooks.Validate(hooks.Files{app: files[app]}); len(problems) > 0 {
-				check.OK, check.Problem = false, sentence(problems[0].Reason)
-				if problems[0].Line > 0 {
-					check.Detail = fmt.Sprintf("%s:%d:%d", check.Detail, problems[0].Line, problems[0].Column)
-				}
-			}
+			check = checkHookFile(app, files[app], userHome)
 		}
 		if !check.OK && bad == nil {
 			bad = &check
@@ -293,6 +287,20 @@ func hookFilesCheck(apps []string, checks preflightChecks, files hooks.Files, us
 		label = "Hook file is valid"
 	}
 	return reviewCheck{mark: symbolOK, label: label, detail: strings.Join(paths, ", ")}, true
+}
+
+// checkHookFile checks app's hook file at path, as the checks before the
+// first question do.
+func checkHookFile(app, path, userHome string) preflightCheck {
+	problems := hooks.Validate(hooks.Files{app: path})
+	if len(problems) == 0 {
+		return preflightCheck{App: app, Detail: displayPath(path, userHome), OK: true}
+	}
+	where := displayPath(path, userHome)
+	if problems[0].Line > 0 {
+		where = fmt.Sprintf("%s:%d:%d", where, problems[0].Line, problems[0].Column)
+	}
+	return preflightCheck{App: app, Detail: where, Problem: sentence(problems[0].Reason)}
 }
 
 // printReviewChecklist prints the checklist with its details in a column.
