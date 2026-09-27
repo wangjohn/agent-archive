@@ -9,7 +9,8 @@ Projects to archive (✓ included):
   1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder · 2 sessions · today\e[0m
   2)   ~/src/api      \e[2m1 session · 3 days ago\e[0m
   3)   ~/src/docs     \e[2m1 session · 40 days ago\e[0m
-Enter numbers to include or leave out (for example 2 3), a for all, or a project path. Enter a blank line when finished.
+Enter numbers to include or leave out (such as 2 3), a for all, or a path.
+Enter a blank line when finished.
 Projects: 3
 Included: ~/src/web-app, ~/src/docs
 Projects: 

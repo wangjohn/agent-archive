@@ -7,7 +7,8 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 Include Codex and Claude Code? [Y/n] y
 Projects to archive (✓ included):
   1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
-Enter 1 to include or leave it out, or a project path to add another. Enter a blank line when finished.
+Enter 1 to include or leave it out, or a path to add a project.
+Enter a blank line when finished.
 Projects: 
 
 \e[1mStep 2 of 3 · Connect storage\e[0m

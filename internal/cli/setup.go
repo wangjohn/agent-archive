@@ -1040,14 +1040,15 @@ func (k *projectPicker) offer(known []backfill.KnownProject, current string) []b
 		path := displayPath(project.Root, k.home)
 		terminal.Printf(out, "  %d) %s%s%s  %s\n", i+1, mark, path, strings.Repeat(" ", width-visibleWidth(path)), k.p.style.dim(projectDetails(project, current, k.p.clock())))
 	}
+	hint := "Enter numbers to include (for example 1 3), a for all, or a project path."
 	switch {
 	case current != "" && len(offered) == 1:
-		terminal.Println(out, "Enter 1 to include or leave it out, or a project path to add another. Enter a blank line when finished.")
+		hint = "Enter 1 to include or leave it out, or a path to add a project."
 	case current != "":
-		terminal.Println(out, "Enter numbers to include or leave out (for example 2 3), a for all, or a project path. Enter a blank line when finished.")
-	default:
-		terminal.Println(out, "Enter the numbers to include (for example 1 3), a for all, or a project path. Enter a blank line when finished.")
+		hint = "Enter numbers to include or leave out (such as 2 3), a for all, or a path."
 	}
+	terminal.Println(out, k.p.style.hang("", hint))
+	terminal.Println(out, "Enter a blank line when finished.")
 	return offered
 }
 

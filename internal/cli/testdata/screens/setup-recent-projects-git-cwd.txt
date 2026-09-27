@@ -9,7 +9,8 @@ Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder · 2 sessions · today
   2)   ~/src/api      1 session · 3 days ago
   3)   ~/src/docs     1 session · 40 days ago
-Enter numbers to include or leave out (for example 2 3), a for all, or a project path. Enter a blank line when finished.
+Enter numbers to include or leave out (such as 2 3), a for all, or a path.
+Enter a blank line when finished.
 Projects: 3
 Included: ~/src/web-app, ~/src/docs
 Projects: 

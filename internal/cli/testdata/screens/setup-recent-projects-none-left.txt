@@ -8,7 +8,8 @@ Include Claude Code? [Y/n]
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
   2)   ~/src/api      1 session · 3 days ago
-Enter numbers to include or leave out (for example 2 3), a for all, or a project path. Enter a blank line when finished.
+Enter numbers to include or leave out (such as 2 3), a for all, or a path.
+Enter a blank line when finished.
 Projects: 1
 No project included yet.
 Projects: 
@@ -16,7 +17,8 @@ Projects:
 Projects to archive (✓ included):
   1)   ~/src/web-app  this folder
   2)   ~/src/api      1 session · 3 days ago
-Enter numbers to include or leave out (for example 2 3), a for all, or a project path. Enter a blank line when finished.
+Enter numbers to include or leave out (such as 2 3), a for all, or a path.
+Enter a blank line when finished.
 Projects: a
 Included: ~/src/web-app, ~/src/api
 Projects: 

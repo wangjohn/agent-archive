@@ -11,7 +11,8 @@ Include Claude Code? [y/N] n
 Include Cursor? [y/N] n
 Projects to archive (✓ included):
   1) ✓ ~/src/web-app  this folder
-Enter 1 to include or leave it out, or a project path to add another. Enter a blank line when finished.
+Enter 1 to include or leave it out, or a path to add a project.
+Enter a blank line when finished.
 Projects: 
 
 Step 2 of 3 · Connect storage
