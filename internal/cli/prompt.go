@@ -29,7 +29,14 @@ type prompter struct {
 // redirected output and tests see plain text.
 type textStyle struct{ color bool }
 
+// colorOutput is an output that says itself whether it is a color terminal.
+// The screen goldens write to one, so they can record the colored screens.
+type colorOutput interface{ colorTerminal() bool }
+
 func styleFor(out io.Writer) textStyle {
+	if c, ok := out.(colorOutput); ok {
+		return textStyle{color: c.colorTerminal()}
+	}
 	file, ok := out.(*os.File)
 	if !ok || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
 		return textStyle{}
