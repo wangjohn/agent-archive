@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
@@ -1510,12 +1511,17 @@ func (sc statusScreen) prose(text string) string {
 
 // proseLines readies a next step for the screen as prose does, one line for
 // each sentence that names a command, so that every command is highlighted
-// and no line highlights two. A sentence without a command stays on the line
-// before it.
+// and no line highlights two. A sentence that names two commands is split
+// after the comma or semicolon before the second. A sentence without a
+// command stays on the line before it.
 func (sc statusScreen) proseLines(text string) []string {
+	var pieces []string
+	for _, sentence := range sentences(text) {
+		pieces = append(pieces, clauses(sentence)...)
+	}
 	var lines []string
 	line := ""
-	for _, sentence := range sentences(text) {
+	for _, sentence := range pieces {
 		if line != "" && proseCommand.MatchString(line) && proseCommand.MatchString(sentence) {
 			lines = append(lines, sc.prose(line))
 			line = ""
@@ -1543,6 +1549,26 @@ func sentences(text string) []string {
 }
 
 var sentenceEnd = regexp.MustCompile(`\. [A-Z]`)
+
+// clauses splits a sentence that names more than one command after the last
+// ", " or "; " before each command but the first, so each part names one.
+// A command with no such break before it stays with the one before it.
+func clauses(sentence string) []string {
+	commands := proseCommand.FindAllStringIndex(sentence, -1)
+	var out []string
+	start := 0
+	for i := 1; i < len(commands); i++ {
+		between := sentence[commands[i-1][1]:commands[i][0]]
+		cut := max(strings.LastIndex(between, ", "), strings.LastIndex(between, "; "))
+		if cut < 0 {
+			continue
+		}
+		cut += commands[i-1][1] + 1
+		out = append(out, sentence[start:cut])
+		start = cut + 1
+	}
+	return append(out, sentence[start:])
+}
 
 // proseCommand matches an agent-archive command, with its flags, in a
 // sentence.
@@ -1573,7 +1599,17 @@ func lastErrorText(lastError string) string {
 // so the provider's error code is read back from where the SDK writes it
 // ("api error AccessDenied: Access Denied") and diagnosed as a code; a
 // message that merely mentions a code elsewhere is not taken for it.
+//
+// Like storage.Diagnose, a failure while fetching credentials (an STS, SSO
+// or other sign-in service call inside the storage call) is a credential
+// problem whatever its code, not a refusal by the bucket. Such text is left
+// as recorded, since the code alone would misname it.
 func storageErrorCause(text string) string {
+	for _, match := range recordedOperationService.FindAllStringSubmatch(text, -1) {
+		if match[1] != s3.ServiceID {
+			return ""
+		}
+	}
 	for _, match := range recordedErrorCode.FindAllStringSubmatch(text, -1) {
 		switch storage.Diagnose(&smithy.GenericAPIError{Code: match[1]}).Cause {
 		case storage.CauseAccessDenied:
@@ -1594,6 +1630,11 @@ func storageErrorCause(text string) string {
 // recordedErrorCode matches a provider error code where an error's text puts
 // it: after "api error " or a ": ", and before ": ".
 var recordedErrorCode = regexp.MustCompile(`(?:^|api error |: )([A-Z][A-Za-z]+): `)
+
+// recordedOperationService matches the service of each SDK call an error's
+// text names ("operation error STS: AssumeRole"), the way storage.Diagnose
+// reads the chain of operation errors.
+var recordedOperationService = regexp.MustCompile(`operation error ([^:]+): `)
 
 // printStatusDetails writes the Details section of status --verbose: every
 // line the text status printed before it was redesigned, with its codes,

@@ -379,6 +379,9 @@ func TestStatusLastErrorPlainCause(t *testing.T) {
 		"2 session(s) failed to scan or publish; list registrations: api error AccessDenied: Access Denied":          "Last error: 2 session(s) failed to scan or publish; Storage refused access",
 		"list registrations: operation error S3: ListObjectsV2, api error SlowDown: Please reduce your request rate": "Last error: list registrations: operation error S3: ListObjectsV2, api error SlowDown: Please reduce your request rate",
 		"the note says AccessDenied: is expected here":                                                               "Last error: the note says AccessDenied: is expected here",
+		// A refusal by the role or sign-in service is a credential problem,
+		// not the bucket's, as storage.Diagnose has it: shown as recorded.
+		"list registrations: operation error S3: ListObjectsV2, get identity: get credentials: failed to refresh cached credentials, operation error STS: AssumeRole, https response error StatusCode: 403, RequestID: R, api error AccessDenied: User is not authorized to perform: sts:AssumeRole": "Last error: list registrations: operation error S3: ListObjectsV2, get identity: get credentials: failed to refresh cached credentials, operation error STS: AssumeRole, https response error StatusCode: 403, RequestID: R, api error AccessDenied: User is not authorized to perform: sts:AssumeRole",
 	} {
 		if got := lastErrorText(recorded); got != want {
 			t.Errorf("%q: %q want %q", recorded, got, want)
@@ -399,6 +402,14 @@ func TestStatusNextStepOneCommandPerLine(t *testing.T) {
 		},
 		"Keep working. Run agent-archive list to inspect archived sessions.": {
 			"Keep working. Run \x1b[36magent-archive list\x1b[0m to inspect archived sessions.",
+		},
+		"It runs elsewhere. Check with agent-archive sync, then run agent-archive setup again from a shell where it works.": {
+			"It runs elsewhere. Check with \x1b[36magent-archive sync\x1b[0m,",
+			"then run \x1b[36magent-archive setup\x1b[0m again from a shell where it works.",
+		},
+		"Run agent-archive setup to recover the interrupted installation. If setup reports a file changed outside setup, agent-archive setup --abandon-recovery keeps your files as they are now.": {
+			"Run \x1b[36magent-archive setup\x1b[0m to recover the interrupted installation.",
+			"If setup reports a file changed outside setup, \x1b[36magent-archive setup --abandon-recovery\x1b[0m keeps your files as they are now.",
 		},
 		"Run agent-archive resume when ready. Registered sessions can catch up after resume.": {
 			"Run \x1b[36magent-archive resume\x1b[0m when ready. Registered sessions can catch up after resume.",
