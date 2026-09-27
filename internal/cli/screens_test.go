@@ -84,8 +84,8 @@ var screens = []screen{
 		answers: []string{"", "", "", "2", "team-archive", "work", "us-east-1", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			f.withApps("codex", "claude", "cursor")
-			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
+			f.withApps(t, "codex", "claude", "cursor")
+			f.inProject(t, "src/web-app")
 		},
 	},
 	{
@@ -107,7 +107,7 @@ var screens = []screen{
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			f.withApps("claude")
+			f.withApps(t, "claude")
 			writeClaudeSession(t, f.userHome, "one", f.project(t, "src/api"), screenNow.Add(-72*time.Hour))
 			writeClaudeSession(t, f.userHome, "two", f.project(t, "src/web-app"), screenNow.Add(-time.Hour))
 			writeClaudeSession(t, f.userHome, "three", f.project(t, "src/docs"), screenNow.Add(-40*24*time.Hour))
@@ -119,8 +119,8 @@ var screens = []screen{
 		answers: []string{"1", "2", "team-archive", "work", "us-east-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			f.withApps("codex", "claude")
-			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
+			f.withApps(t, "codex", "claude")
+			f.inProject(t, "src/web-app")
 			f.setup(t, 1, "", "", "")
 		},
 	},
@@ -142,7 +142,7 @@ var screens = []screen{
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
+			f.inProject(t, "src/web-app")
 			f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) {
 				return settingsProbeStore{storagetest.NewMemoryStore(), true}, nil
 			}
@@ -154,8 +154,8 @@ var screens = []screen{
 		answers: []string{"y", "y", "n", "2", "team-archive", "work", "us-east-1", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			f.withApps("codex", "claude")
-			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
+			f.withApps(t, "codex", "claude")
+			f.inProject(t, "src/web-app")
 		},
 	},
 	{
@@ -166,7 +166,7 @@ var screens = []screen{
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.installed(t)
-			f.withApps("codex", "claude", "cursor")
+			f.withApps(t, "codex", "claude", "cursor")
 			f.project(t, "src/api")
 		},
 	},
@@ -176,7 +176,7 @@ var screens = []screen{
 		answers: []string{"y", "y", "y", "", "", "2", "team-archive", "work", "us-east-1", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
-			f.env.WorkingDir = func() (string, error) { return f.project(t, "src/web-app"), nil }
+			f.inProject(t, "src/web-app")
 		},
 	},
 	{
@@ -233,6 +233,11 @@ func newScreenFixture(t *testing.T) *screenFixture {
 	must(t, os.MkdirAll(filepath.Dir(executable), 0o755))
 	must(t, os.WriteFile(executable, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	env.Executable = func() (string, error) { return executable, nil }
+	// The temporary folder is under root too, so normalize hides it if a
+	// screen ever prints it.
+	tempDir := filepath.Join(root, "tmp")
+	must(t, os.MkdirAll(tempDir, 0o700))
+	env.TempDir = func() string { return tempDir }
 	f := &screenFixture{root: root, userHome: userHome, home: home, env: env, bucket: storagetest.NewMemoryStore()}
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return f.bucket, nil }
 	f.env.IsTerminal = func(stream any) bool {
@@ -253,9 +258,23 @@ func (f *screenFixture) project(t *testing.T, rel string) string {
 	return dir
 }
 
+// inProject makes a Git repository at rel under the home folder and runs
+// the recorded command from inside it.
+func (f *screenFixture) inProject(t *testing.T, rel string) {
+	t.Helper()
+	dir := f.project(t, rel)
+	f.env.WorkingDir = func() (string, error) { return dir, nil }
+}
+
 // withApps makes setup find these apps installed, at fixed versions.
-func (f *screenFixture) withApps(apps ...string) {
+func (f *screenFixture) withApps(t *testing.T, apps ...string) {
+	t.Helper()
 	versions := map[string]string{"codex": "0.121.0", "claude": "2.1.90", "cursor": "3.21.13"}
+	for _, app := range apps {
+		if versions[app] == "" {
+			t.Fatalf("withApps: no fixed version for app %q", app)
+		}
+	}
 	f.env.DetectHarnesses = func(string) []string { return apps }
 	f.env.DiscoverApplications = func(string) map[string]applicationDiscovery {
 		found := map[string]applicationDiscovery{}
