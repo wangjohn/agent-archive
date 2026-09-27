@@ -128,10 +128,11 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 	// apps these answers install and, when they store in R2, the Keychain.
 	// They follow the answers' own checks, so a script learns of every
 	// mistake in its flags without launchctl or the Keychain being asked.
-	scope := preflightScope{apps: cfg.Harnesses, r2: cfg.Storage.Provider == credentials.ProviderR2, credentialRef: cfg.Storage.R2CredentialRef}
+	var kept []string
 	if installed {
-		scope.kept = existing.Harnesses
+		kept = existing.Harnesses
 	}
+	scope := preflightScope{apps: cfg.Harnesses, kept: kept, r2: cfg.Storage.Provider == credentials.ProviderR2, credentialRef: cfg.Storage.R2CredentialRef}
 	checks := preflight(env, home, userHome, scope)
 	checks.print(p)
 	if checks.blocked() {

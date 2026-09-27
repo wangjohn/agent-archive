@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
@@ -254,8 +255,11 @@ func TestPreflightFixOffersOnlyARunnableSetupYes(t *testing.T) {
 	settings := env.hookFiles(userHome)["claude"]
 	must(t, os.MkdirAll(filepath.Dir(settings), 0o700))
 	must(t, os.WriteFile(settings, commented, 0o600))
-	cfg := config.Config{Harnesses: []string{"claude"}, Storage: credentials.Config{Provider: credentials.ProviderS3, Bucket: "b", AWSProfile: "p", Region: "us-east-1"}}
-	cfg.Archive.Enabled = true
+	cfg := config.Config{
+		Harnesses: []string{"claude"},
+		Storage:   credentials.Config{Provider: credentials.ProviderS3, Bucket: "b", AWSProfile: "p", Region: "us-east-1"},
+		Archive:   archive.Config{Enabled: true},
+	}
 	must(t, config.Save(home, cfg))
 	output, code, _ := runUnanswered(t, env)
 	if code != 1 || !strings.Contains(output, "✗ Claude Code hooks") || strings.Contains(output, leaveOut) {
