@@ -11,6 +11,8 @@ follow [Semantic Versioning](https://semver.org/).
 - A shared terminal style for setup and status: green ✓, yellow !, red ✗,
   cyan commands, dim details, and your home folder shown as `~`. Plain
   output with `NO_COLOR`, `TERM=dumb`, or when piped is unchanged.
+- Golden transcripts of the setup and status screens, in color and plain, so
+  changes to what you see are reviewed line by line.
 
 ## [0.1.0] - 2026-09-25
 

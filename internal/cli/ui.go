@@ -47,9 +47,16 @@ type textStyle struct {
 	width int
 }
 
+// colorOutput is an output that says itself whether it is a color terminal.
+// The screen goldens write to one, so they can record the colored screens.
+type colorOutput interface{ colorTerminal() bool }
+
 // styleFor returns the style for writing to out: plain unless out is a
 // terminal, and without color when NO_COLOR is set or TERM is dumb.
 func styleFor(out io.Writer) textStyle {
+	if c, ok := out.(colorOutput); ok {
+		return textStyle{color: c.colorTerminal()}
+	}
 	file, ok := out.(*os.File)
 	if !ok || !term.IsTerminal(int(file.Fd())) {
 		return textStyle{}
