@@ -119,7 +119,6 @@ func preflight(env Env, home, userHome string, apps []string, keychain bool) pre
 
 	plist := env.installation(home, userHome).collectorPlist()
 	job := preflightCheck{Label: "Background job", Detail: "launchctl responds", OK: true}
-	//lint:ignore LV1001 Env.JobState reports launchd states as plain strings
 	switch env.jobState(plist) {
 	case "unknown":
 		job.OK = false
