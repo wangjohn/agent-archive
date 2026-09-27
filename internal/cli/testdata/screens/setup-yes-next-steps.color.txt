@@ -1,20 +1,20 @@
-$ agent-archive setup --yes --apps codex --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --project ~/src/web-app
-  \e[32m✓\e[0m Codex hooks: ~/.codex/hooks.json
+$ agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app
+  \e[32m✓\e[0m Claude Code hooks: ~/.claude/settings.json
   \e[32m✓\e[0m Background job: launchctl responds
 Checking your storage connection…
 \e[32m✓ Connected.\e[0m
-Apps: Codex. Projects: 1. Storage: Amazon S3 bucket team-archive.
+Apps: Claude Code. Projects: 1. Storage: Amazon S3 bucket team-archive.
   \e[33m!\e[0m Bucket privacy not verified: public-access settings could not be read.
     Make sure public access is off: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
 Configuration saved.
 
 Next, in each app:
-  Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
+  Claude Code: nothing to approve; start a new session (or /clear).
 Sessions already open are not captured: only one started after setup, in an included project, counts.
 Import sessions from before setup with \e[36magent-archive backfill\e[0m.
 Check progress with \e[36magent-archive status\e[0m.
 
 To set up another Mac with this storage, run there:
-  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex --project ~/src/web-app\e[0m
+  \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps claude --project ~/src/web-app\e[0m
 [exit 0]

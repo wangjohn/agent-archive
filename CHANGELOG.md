@@ -22,6 +22,9 @@ follow [Semantic Versioning](https://semver.org/).
 - `setup` checks before the first question that each app's hook file is
   valid, that `launchctl` responds, and, when R2 is used, that the Keychain
   opens. A problem stops setup with the file and line to fix.
+- At the end of `setup`, an offer to import the past sessions of the
+  projects you chose, and a copy-paste `agent-archive setup --yes …` line
+  for setting up another Mac.
 
 ### Changed
 

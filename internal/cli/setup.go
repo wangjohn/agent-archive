@@ -509,14 +509,23 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 		if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
 			return err
 		}
-		return finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt)
+		return finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true})
 	}
 }
 
+// setupFinish is what finishSetup needs beyond the committed
+// configuration: the Mac it runs on, and whether it may ask to import past
+// sessions (interactive setup) or only point at backfill (setup --yes).
+type setupFinish struct {
+	env         Env
+	userHome    string
+	offerImport bool
+}
+
 // finishSetup follows a committed setup: it records the apps' versions,
-// removes the saved draft, drops diagnostics of excluded projects, and says
-// what to do next.
-func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, paused bool, discoveries map[string]applicationDiscovery, discoveredAt time.Time) error {
+// removes the saved draft, drops diagnostics of excluded projects, offers to
+// import the chosen projects' past sessions, and says what to do next.
+func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, paused bool, discoveries map[string]applicationDiscovery, discoveredAt time.Time, finish setupFinish) error {
 	if err := recordApplicationDiscoveries(home, discoveries, discoveredAt); err != nil {
 		terminal.Printf(p.out, "Warning: installed application versions could not be recorded: %v\n", err)
 	}
@@ -528,7 +537,12 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if e := capture.PruneDiagnostics(home, cfg.Archive.Projects); e != nil {
 		terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
 	}
-	printNextSteps(p, cfg.Harnesses, paused)
+	terminal.Println(p.out, "\nConfiguration saved.")
+	// A paused Mac imports nothing (backfill refuses too); resume says so.
+	if finish.offerImport && !paused {
+		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
+	}
+	printNextSteps(p, cfg, finish.userHome, paused, !finish.offerImport)
 	return nil
 }
 
@@ -565,21 +579,99 @@ var hookNextStep = map[string]string{
 
 // printNextSteps ends a committed setup with one line per app on what to do
 // next. Capture needs a proven fresh start (provesFreshSessionStart), so it
-// says that sessions already open are not captured.
-func printNextSteps(p *prompter, apps []string, paused bool) {
-	terminal.Println(p.out, "\nConfiguration saved.")
+// says that sessions already open are not captured. setup --yes asks
+// nothing, so it points at backfill for past sessions instead. The last line
+// sets up another Mac with the same storage.
+func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, unattended bool) {
 	if paused {
-		terminal.Println(p.out, "Next: run agent-archive resume when you’re ready to start archiving.")
-		return
+		terminal.Println(p.out, "\nNext: run "+p.style.cmd("agent-archive resume")+" when you’re ready to start archiving.")
+	} else {
+		terminal.Println(p.out, "\nNext, in each app:")
+		for _, app := range cfg.Harnesses {
+			if step, ok := hookNextStep[app]; ok {
+				terminal.Println(p.out, "  "+step)
+			}
+		}
+		terminal.Println(p.out, "Sessions already open are not captured: only one started after setup, in an included project, counts.")
+		if unattended {
+			terminal.Println(p.out, "Import sessions from before setup with "+p.style.cmd("agent-archive backfill")+".")
+		}
+		terminal.Println(p.out, "Check progress with "+p.style.cmd("agent-archive status")+".")
 	}
-	terminal.Println(p.out, "Next, in each app:")
-	for _, app := range apps {
-		if step, ok := hookNextStep[app]; ok {
-			terminal.Println(p.out, "  "+step)
+	if cfg.Storage.Provider == credentials.ProviderR2 {
+		terminal.Printf(p.out, "\nTo set up another Mac with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
+	} else {
+		terminal.Println(p.out, "\nTo set up another Mac with this storage, run there:")
+	}
+	terminal.Println(p.out, "  "+p.style.cmd(anotherMacCommand(cfg, userHome)))
+	// setup --yes has no flag for the folder inside the bucket: it stores in
+	// the default one, which would split the archive from this Mac's.
+	if prefix := cfg.Storage.Prefix; prefix != "" && prefix != defaultPrefix {
+		terminal.Printf(p.out, "Then run %s there and set the folder inside the bucket to %s.\n", p.style.cmd("agent-archive setup"), prefix)
+	}
+}
+
+// anotherMacCommand is the setup --yes command that sets up another Mac
+// like this one: the same storage, apps and projects. Projects in the home
+// folder are written from ~, which setup resolves on that Mac. An R2 key is
+// never written: setup --yes reads it from its environment variables there.
+func anotherMacCommand(cfg config.Config, userHome string) string {
+	args := []string{"agent-archive", "setup", "--yes", "--provider", cfg.Storage.Provider, "--bucket", cfg.Storage.Bucket}
+	if cfg.Storage.Provider == credentials.ProviderR2 {
+		args = append(args, "--r2-account", firstNonEmpty(cfg.Storage.R2AccountID, cfg.Storage.R2Endpoint))
+	} else {
+		args = append(args, "--aws-profile", cfg.Storage.AWSProfile)
+		if cfg.Storage.Region != "" {
+			args = append(args, "--region", cfg.Storage.Region)
 		}
 	}
-	terminal.Println(p.out, "Sessions already open are not captured: only one started after setup, in an included project, counts.")
-	terminal.Println(p.out, "Check progress with agent-archive status.")
+	if len(cfg.Harnesses) > 0 {
+		args = append(args, "--apps", strings.Join(cfg.Harnesses, ","))
+	}
+	for _, project := range cfg.Archive.Projects {
+		if !project.Included {
+			continue
+		}
+		args = append(args, "--project", homeRelative(project.Root, userHome))
+	}
+	for i, arg := range args {
+		args[i] = shellWord(arg)
+	}
+	return strings.Join(args, " ")
+}
+
+// homeRelative writes path from ~ when it is in the home folder. Project
+// roots are saved with symlinks resolved, so the home folder is compared
+// resolved too (on macOS a folder under /tmp resolves to /private/tmp).
+func homeRelative(path, userHome string) string {
+	if userHome == "" {
+		return path
+	}
+	homes := []string{userHome}
+	if resolved, err := filepath.EvalSymlinks(userHome); err == nil && resolved != userHome {
+		homes = append(homes, resolved)
+	}
+	for _, home := range homes {
+		if !local.PathWithin(path, home) {
+			continue
+		}
+		if rel, err := filepath.Rel(home, path); err == nil {
+			return filepath.ToSlash(filepath.Join("~", rel))
+		}
+	}
+	return path
+}
+
+// shellWord quotes s for a POSIX shell when it needs quoting. A leading ~
+// stays inside the quotes, where setup's --project expands it itself.
+func shellWord(s string) string {
+	plain := func(r rune) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("~/._-,:=@+%", r)
+	}
+	if s != "" && strings.IndexFunc(s, func(r rune) bool { return !plain(r) }) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // chooseCapture asks for the apps and projects to capture. known, when not
