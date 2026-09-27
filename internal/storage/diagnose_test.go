@@ -497,11 +497,14 @@ type readBackStore struct {
 }
 
 func (s readBackStore) Put(context.Context, string, []byte) error { return nil }
+
 func (s readBackStore) Get(context.Context, string) ([]byte, error) {
 	return s.got, s.err
 }
+
 func (s readBackStore) List(context.Context, string) ([]Object, error) { return nil, nil }
-func (s readBackStore) Delete(context.Context, string) error           { return nil }
+
+func (s readBackStore) Delete(context.Context, string) error { return nil }
 
 // The setup check's read-back failing is neither access nor the network:
 // each sentinel gets its own plain diagnosis, not the generic one.
