@@ -1,9 +1,9 @@
 $ agent-archive setup
 Checking installed applications...
-  ✓ Background job: launchctl responds
+  \e[32m✓\e[0m Background job: launchctl responds
 You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.
 
-Step 1 of 3 · Choose what to capture
+\e[1mStep 1 of 3 · Choose what to capture\e[0m
 
 No apps found automatically.
 Choose which apps to include:
@@ -11,12 +11,12 @@ Include Codex? [y/N] y
 Include Claude Code? [y/N] n
 Include Cursor? [y/N] n
 Projects to archive (✓ included):
-  1) ✓ ~/src/web-app  this folder
+  1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
 Enter 1 to include or leave it out, or a path to add a project.
 Enter a blank line when finished.
 Projects: 
 
-Step 2 of 3 · Connect storage
+\e[1mStep 2 of 3 · Connect storage\e[0m
 
 Where should sessions be stored?
   1) Cloudflare R2
@@ -32,14 +32,14 @@ Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 
-  ✗ Can't sign in to AWS.
-    No credentials were found for the storage profile.
+  \e[31m✗\e[0m Access denied.
+    The storage provider refused access to the bucket.
 
-    Fix: Add them with aws configure --profile work, or sign in with aws sso login --profile work for an SSO profile, then try again.
-    Details: agent-archive setup --verbose
+    Fix: Check that the credentials are current and allowed to list, read, write and delete in the bucket, then try again.
+    \e[2mDetails:\e[0m \e[36magent-archive setup --verbose\e[0m
 
 What next?
-  1) Pick another profile
+  1) Change storage settings
   2) Retry the check
   3) Change other settings
   4) Stop for now (your answers are kept)

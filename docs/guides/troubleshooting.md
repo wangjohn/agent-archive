@@ -127,6 +127,42 @@ and `backfill` refuse to start.
   `agent-archive setup --abandon-recovery`, then `agent-archive setup` to
   review your settings and reinstall anything missing.
 
+## When setup's storage check fails
+
+Setup checks the bucket before it saves anything: it writes a small test
+file, reads it back, lists it, and deletes it. When that fails, setup says
+why in a few lines, with the fix:
+
+```text
+Checking your storage connection…
+
+  ✗ Can't sign in to AWS.
+    No credentials were found for the storage profile.
+
+    Fix: Add them with aws configure --profile work, or sign in with aws sso login --profile work for an SSO profile, then try again.
+    Details: agent-archive setup --verbose
+
+What next?
+  1) Pick another profile
+  2) Retry the check
+  3) Change other settings
+  4) Stop for now (your answers are kept)
+```
+
+The causes it tells apart are missing or expired credentials, access
+refused, a bucket that doesn't exist, an S3 bucket in another region, and
+no connection to the provider. The first choice, the default, goes to the
+answer the cause points at (for a region, just the region). Stopping keeps
+your answers: the next `agent-archive setup` offers to continue, and
+continuing asks the storage questions again, with your answers as defaults,
+rather than repeating the check. After a region failure it asks for the
+region again unless S3 names a different one, and after R2 refused the access
+key, it asks for the key.
+
+The provider's own error is not shown, since it runs to several hundred
+characters of SDK text. Run `agent-archive setup --verbose` (or add
+`--verbose` to `setup --yes`) to see it under the diagnosis.
+
 ## Changing storage
 
 A storage change is blocked while known work is pending; sync the current

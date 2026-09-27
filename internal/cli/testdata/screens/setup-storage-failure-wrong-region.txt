@@ -32,14 +32,14 @@ Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
 
-  ✗ Can't sign in to AWS.
-    No credentials were found for the storage profile.
+  ✗ The bucket is in another region.
+    The bucket is in eu-west-1, not the AWS region configured.
 
-    Fix: Add them with aws configure --profile work, or sign in with aws sso login --profile work for an SSO profile, then try again.
+    Fix: Set the region to eu-west-1, then try again.
     Details: agent-archive setup --verbose
 
 What next?
-  1) Pick another profile
+  1) Change the region
   2) Retry the check
   3) Change other settings
   4) Stop for now (your answers are kept)
