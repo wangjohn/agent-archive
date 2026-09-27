@@ -306,13 +306,9 @@ func checkHookFile(app, path, userHome string) preflightCheck {
 // printReviewChecklist prints the checklist with its details in a column.
 // Only the symbol is colored, and a link, which the user opens.
 func printReviewChecklist(p *prompter, checks []reviewCheck) {
+	paint := map[string]func(string) string{symbolOK: p.style.ok, symbolWarn: p.style.warn, symbolFail: p.style.fail}
 	for _, check := range checks {
-		mark := p.style.okMark()
-		if check.mark == symbolWarn {
-			mark = p.style.warnMark()
-		} else if check.mark == symbolFail {
-			mark = p.style.failMark()
-		}
+		mark := paint[check.mark](check.mark)
 		terminal.Println(p.out, p.style.hang(fmt.Sprintf("  %s %-22s  ", mark, check.label), check.detail))
 		for i, line := range check.more {
 			if i == len(check.more)-1 && check.link != "" {
