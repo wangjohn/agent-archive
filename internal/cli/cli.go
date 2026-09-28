@@ -394,7 +394,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		stdin = strings.NewReader("")
 	}
 	if len(args) == 0 {
-		if browseInteractive(env, stdin, stdout, false) && !notSetUp(env) {
+		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
 		if notSetUp(env) {

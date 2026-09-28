@@ -142,7 +142,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		Now: env.now(), Verbose: opts.verbose, Projects: projectLabels(cfg), Style: styleFor(stdout),
 		GroupByProject: true,
 	}
-	if browseInteractive(env, stdin, stdout, false) {
+	if browseInteractive(env, stdin, stdout) {
 		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, true)
 	}
 	if err := withPager(stdout, stderr, env, opts.noPager, func(w io.Writer) error {
@@ -380,7 +380,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	*harness = canonical
 
-	if sessionID == "" && !browseInteractive(env, stdin, stdout, false) {
+	if sessionID == "" && !browseInteractive(env, stdin, stdout) {
 		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
 	}
 
@@ -398,7 +398,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if *normalized {
 			return fs.usageError("--normalized needs a SESSION_ID; pick a session with show, then run show SESSION_ID --normalized")
 		}
-		shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{limit: defaultListLimit}, stderr)
+		shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: *harness}, limit: defaultListLimit}, stderr)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1

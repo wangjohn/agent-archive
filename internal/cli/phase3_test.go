@@ -38,6 +38,19 @@ func TestShowResolvesTitleSubstring(t *testing.T) {
 	if !strings.Contains(out.String(), id) || !strings.Contains(out.String(), "Fix flaky OAuth") {
 		t.Fatalf("show by title:\n%s", out.String())
 	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"show", "OAuth callback", "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("show by title with harness: code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), id) {
+		t.Fatalf("show by title with harness returned wrong session:\n%s", out.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"show", id[:minShortSessionID], "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("show by short ID with harness: code=%d stderr=%s", code, errOut.String())
+	}
 }
 
 func TestBareCommandBrowsesOnTTY(t *testing.T) {
@@ -80,6 +93,22 @@ func TestListGroupsByProject(t *testing.T) {
 	betaAt := strings.Index(text, "beta (1)")
 	if alphaAt < 0 || betaAt < alphaAt {
 		t.Fatalf("group order:\n%s", text)
+	}
+}
+
+func TestListKeepsProjectsWithSameNameSeparate(t *testing.T) {
+	t.Parallel()
+	rows := []listRow{
+		{Index: 1, Title: "one", ShortID: "aaaaaaaa", Project: "app", ProjectID: "project-1", Harness: "claude"},
+		{Index: 2, Title: "two", ShortID: "bbbbbbbb", Project: "app", ProjectID: "project-2", Harness: "codex"},
+	}
+	var out bytes.Buffer
+	if err := printSessionTable(&out, rows, listFormatOptions{GroupByProject: true}); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, "app [project-1] (1)") || !strings.Contains(text, "app [project-2] (1)") {
+		t.Fatalf("same-name projects were combined:\n%s", text)
 	}
 }
 

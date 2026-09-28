@@ -21,9 +21,16 @@ func printSessionTable(w io.Writer, rows []listRow, opts listFormatOptions) erro
 func distinctProjects(rows []listRow) int {
 	seen := map[string]bool{}
 	for _, r := range rows {
-		seen[r.Project] = true
+		seen[projectGroupKey(r)] = true
 	}
 	return len(seen)
+}
+
+func projectGroupKey(row listRow) string {
+	if row.ProjectID != "" {
+		return "id:" + row.ProjectID
+	}
+	return "name:" + row.Project
 }
 
 func printSessionTableFlat(w io.Writer, rows []listRow, opts listFormatOptions) error {
@@ -36,21 +43,36 @@ func printSessionTableFlat(w io.Writer, rows []listRow, opts listFormatOptions) 
 }
 
 func printSessionTableGrouped(w io.Writer, rows []listRow, opts listFormatOptions) error {
-	order := make([]string, 0)
+	order := make([]listRow, 0)
 	seen := map[string]bool{}
+	labelGroups := map[string]int{}
 	for _, r := range rows {
-		if !seen[r.Project] {
-			seen[r.Project] = true
-			order = append(order, r.Project)
+		key := projectGroupKey(r)
+		if !seen[key] {
+			seen[key] = true
+			order = append(order, r)
+			labelGroups[r.Project]++
 		}
 	}
-	for i, project := range order {
+	projectIDs := make([]string, len(order))
+	for i, group := range order {
+		projectIDs[i] = group.ProjectID
+	}
+	shortIDs := uniqueShortIDs(projectIDs)
+	for i, group := range order {
 		if i > 0 {
 			terminal.Println(w)
 		}
-		label := project
+		label := group.Project
 		if label == "-" {
 			label = "unknown project"
+		}
+		if labelGroups[group.Project] > 1 {
+			if group.ProjectID != "" {
+				label += " [" + archive.DisplayLine(shortIDs[i]) + "]"
+			} else {
+				label += " [unidentified]"
+			}
 		}
 		heading := label
 		if opts.Style.color {
@@ -58,7 +80,7 @@ func printSessionTableGrouped(w io.Writer, rows []listRow, opts listFormatOption
 		}
 		count := 0
 		for _, r := range rows {
-			if r.Project == project {
+			if projectGroupKey(r) == projectGroupKey(group) {
 				count++
 			}
 		}
@@ -66,7 +88,7 @@ func printSessionTableGrouped(w io.Writer, rows []listRow, opts listFormatOption
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		printSessionHeader(tw, opts)
 		for _, r := range rows {
-			if r.Project != project {
+			if projectGroupKey(r) != projectGroupKey(group) {
 				continue
 			}
 			printSessionRow(tw, r, opts)

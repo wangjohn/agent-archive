@@ -15,8 +15,8 @@ import (
 // browseInteractive reports whether list/show should offer a session picker:
 // both stdin and stdout are terminals, and the caller is not forcing JSON.
 // Interactive list skips the pager so the prompt stays with the table.
-func browseInteractive(env Env, stdin io.Reader, stdout io.Writer, jsonOut bool) bool {
-	return !jsonOut && env.isTerminal(stdin) && env.isTerminal(stdout)
+func browseInteractive(env Env, stdin io.Reader, stdout io.Writer) bool {
+	return env.isTerminal(stdin) && env.isTerminal(stdout)
 }
 
 // runSessionBrowser prints a numbered session table and lets the user pick

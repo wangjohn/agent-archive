@@ -26,25 +26,28 @@ type showLookup struct {
 // a TTY open a one-shot picker that returns the chosen session (so the caller
 // can still honor --normalized); off a TTY they error with the candidates.
 func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env Env, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string) (showLookup, int) {
-	key, err := locateMetadataKey(ctx, store, harness, query)
-	if err == nil {
-		parts := strings.Split(strings.TrimPrefix(key, archiveSessionsPrefix+"/"), "/")
-		if len(parts) >= 2 {
-			return showLookup{SessionID: parts[1], Harness: parts[0]}, 0
+	// Full archive IDs use the direct-read path. With --harness, a short ID
+	// or title would otherwise be mistaken for a literal object key.
+	if harness == "" || len(query) == 32 {
+		key, err := locateMetadataKey(ctx, store, harness, query)
+		if err == nil {
+			parts := strings.Split(strings.TrimPrefix(key, archiveSessionsPrefix+"/"), "/")
+			if len(parts) >= 2 {
+				return showLookup{SessionID: parts[1], Harness: parts[0]}, 0
+			}
+			return showLookup{SessionID: query, Harness: harness}, 0
 		}
-		return showLookup{SessionID: query, Harness: harness}, 0
-	}
-	// Exact-id miss or a query that is not a valid SESSION_ID (spaces,
-	// punctuation) may fall through to short-id / title search. Ambiguous
-	// harnesses, explicit --harness, and storage errors stop here.
-	miss := strings.Contains(err.Error(), "no archived session") ||
-		strings.Contains(err.Error(), "invalid archive session ID")
-	if harness != "" || !miss {
-		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-		return showLookup{}, 1
+		// Exact-id misses fall through to short-id / title search. Keep
+		// ambiguous harnesses and storage failures as errors.
+		miss := strings.Contains(err.Error(), "no archived session") ||
+			strings.Contains(err.Error(), "invalid archive session ID")
+		if !miss {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return showLookup{}, 1
+		}
 	}
 
-	sessions, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{}, reader.ListOptions{
+	sessions, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{Harness: harness}, reader.ListOptions{
 		Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"),
 	})
 	if err != nil {
@@ -61,7 +64,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env Env, s
 	case 1:
 		return showLookup{SessionID: matches[0].SessionID, Harness: matches[0].Harness.Name}, 0
 	}
-	if !browseInteractive(env, stdin, stdout, false) {
+	if !browseInteractive(env, stdin, stdout) {
 		terminal.Printf(stderr, "agent-archive: show: %q matches %d sessions; pass a SESSION_ID or run show on a terminal to pick one\n", archive.DisplayLine(query), len(matches))
 		for _, m := range matches {
 			label := m.Title

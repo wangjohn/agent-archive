@@ -33,16 +33,16 @@ func TestFormatSessionRowsDefaultAndVerbose(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
 	m := archive.Metadata{
-		SessionID:  "abcdef0123456789abcdef0123456789",
-		Title:      "Fix flaky OAuth callback tests",
+		SessionID:   "abcdef0123456789abcdef0123456789",
+		Title:       "Fix flaky OAuth callback tests",
 		ProjectName: "agent-archive",
-		CapturedAt: now.Add(-2 * time.Hour),
-		Harness:    archive.Harness{Name: "claude"},
-		ProjectID:  "proj",
-		Parser:     archive.ParserInfo{Status: archive.ParserStatusPartial},
-		Models:     []archive.ModelSummary{{Attributes: map[string]string{"gen_ai.request.model": "claude-opus-5"}}},
-		SkillsUsed: []archive.SkillUse{{Name: "code-review"}},
-		Origin:     archive.SessionOriginImport,
+		CapturedAt:  now.Add(-2 * time.Hour),
+		Harness:     archive.Harness{Name: "claude"},
+		ProjectID:   "proj",
+		Parser:      archive.ParserInfo{Status: archive.ParserStatusPartial},
+		Models:      []archive.ModelSummary{{Attributes: map[string]string{"gen_ai.request.model": "claude-opus-5"}}},
+		SkillsUsed:  []archive.SkillUse{{Name: "code-review"}},
+		Origin:      archive.SessionOriginImport,
 	}
 	rows := formatSessionRows([]archive.Metadata{m}, listFormatOptions{
 		Now: now, Projects: map[string]string{"proj": "ignored-local"},

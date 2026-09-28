@@ -340,7 +340,13 @@ func collapseSessionTitle(text string) string {
 // Callers pass the registration's ProjectRoot at publish time.
 func (m *Metadata) ApplyProjectName(projectRoot string) {
 	base := filepath.Base(filepath.Clean(strings.TrimSpace(projectRoot)))
-	if base == "" || base == "." || base == string(filepath.Separator) {
+	if base == "" {
+		return
+	}
+	if base == "." {
+		return
+	}
+	if base == string(filepath.Separator) {
 		return
 	}
 	m.ProjectName = base
