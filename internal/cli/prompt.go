@@ -23,6 +23,9 @@ type prompter struct {
 	source io.Reader
 	now    func() time.Time
 	style  textStyle
+	// spaceAfterAnswer separates interactive setup answers from what follows.
+	// Other commands use this prompter too and retain their existing output.
+	spaceAfterAnswer bool
 	// singleArea is set while setup changes one area of an installed
 	// setup, where step headings do not count steps.
 	singleArea bool
@@ -73,7 +76,9 @@ func (p *prompter) line(label string) (string, error) {
 	if err != nil {
 		if errors.Is(err, io.EOF) && text != "" {
 			// A final answer with no trailing newline is still a real one.
-			terminal.Println(p.out)
+			if p.spaceAfterAnswer {
+				terminal.Println(p.out)
+			}
 			return strings.TrimSpace(text), nil
 		}
 		// No more input at all: treated as an error, never as a silent
@@ -83,7 +88,9 @@ func (p *prompter) line(label string) (string, error) {
 		// so setup could commit real changes the user never confirmed.
 		return "", fmt.Errorf("no more input: %w", err)
 	}
-	terminal.Println(p.out)
+	if p.spaceAfterAnswer {
+		terminal.Println(p.out)
+	}
 	return strings.TrimSpace(text), nil
 }
 
@@ -291,7 +298,9 @@ func (p *prompter) secret(label string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("cannot hide credential input: %w", err)
 		}
-		terminal.Println(p.out)
+		if p.spaceAfterAnswer {
+			terminal.Println(p.out)
+		}
 		return strings.TrimSpace(string(value)), nil
 	}
 	// Redirected input is read without reproducing its contents. Callers must

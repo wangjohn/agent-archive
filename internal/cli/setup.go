@@ -220,6 +220,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 	detected := env.detectHarnesses(userHome)
 	reviewed := reviewDiscoveries(discoveries, detected)
 	p := newPrompter(stdin, out)
+	p.spaceAfterAnswer = true
 	p.now = env.now
 	known := knownProjectsOnce(env, userHome)
 	// Said before any question: setup will refuse to install an app's hooks
@@ -1191,14 +1192,14 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 	picker := newProjectPicker(p, result, existing, userHomes...)
 	offered := picker.offer(known, current)
 	defaultAll := current == "" && len(existing) == 0 && len(result) == 0 && len(offered) > 0
-	label := "Project path: "
-	if len(offered) > 0 {
-		label = "Projects: "
-		if defaultAll {
-			label = "Projects [A]: "
-		}
-	}
 	for {
+		label := "Project path: "
+		if len(offered) > 0 {
+			label = "Projects: "
+			if defaultAll {
+				label = "Projects [A]: "
+			}
+		}
 		answer, err := p.line(p.labelText(label))
 		if err != nil {
 			return nil, err
@@ -1208,8 +1209,11 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 				for _, project := range offered {
 					picker.include(project.Root)
 				}
-				picker.printSelection()
-				return picker.result, nil
+				defaultAll = false
+				if includedProjects(picker.result) > 0 {
+					picker.printSelection()
+					return picker.result, nil
+				}
 			}
 			if includedProjects(picker.result) > 0 {
 				return picker.result, nil
@@ -1218,18 +1222,11 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 			// setup, offering again the projects this answer dropped.
 			terminal.Println(p.out, p.style.warnMark()+" Choose at least one project: only sessions in included projects are archived.")
 			offered = picker.offer(picker.dropped(known), current)
-			label = "Project path: "
-			if len(offered) > 0 {
-				label = "Projects: "
-			}
 			defaultAll = false
 			continue
 		}
-		defaultAll = false
-		if len(offered) > 0 {
-			label = "Projects: "
-		}
 		if len(offered) > 0 && (strings.EqualFold(answer, "a") || strings.EqualFold(answer, "all")) {
+			defaultAll = false
 			for _, project := range offered {
 				if !picker.seen[project.Root] {
 					picker.include(project.Root)
@@ -1254,9 +1251,15 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 				}
 			}
 			picker.printSelection()
+			if includedProjects(picker.result) > 0 {
+				defaultAll = false
+			}
 			continue
 		}
 		picker.include(answer)
+		if includedProjects(picker.result) > 0 {
+			defaultAll = false
+		}
 	}
 }
 
