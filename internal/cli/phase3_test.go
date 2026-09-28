@@ -123,3 +123,53 @@ func TestShowAmbiguousHarnessDoesNotFuzzyMatch(t *testing.T) {
 		t.Fatalf("stderr=%s", errOut.String())
 	}
 }
+
+func TestShowTitleDisambiguationHonorsNormalized(t *testing.T) {
+	t.Parallel()
+	env, mem, id := publishedFixture(t)
+	key, err := archive.MetadataObjectKey("codex", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := mem.Get(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first archive.Metadata
+	if err := json.Unmarshal(raw, &first); err != nil {
+		t.Fatal(err)
+	}
+	first.Title = "Shared title alpha"
+	encoded, _ := json.Marshal(first)
+	if err := mem.Put(t.Context(), key, encoded); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.SessionID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	second.Title = "Shared title beta"
+	secondKey, err := archive.MetadataObjectKey("codex", second.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ = json.Marshal(second)
+	if err := mem.Put(t.Context(), secondKey, encoded); err != nil {
+		t.Fatal(err)
+	}
+	// Also need a source bundle for --normalized on the chosen session.
+	stdin := strings.NewReader(id[:8] + "\n")
+	var out, errOut bytes.Buffer
+	env.IsTerminal = func(stream any) bool {
+		return stream == any(stdin) || stream == any(&out)
+	}
+	code := Run([]string{"show", "--normalized", "Shared title"}, stdin, &out, &errOut, env)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%s out=%s", code, errOut.String(), out.String())
+	}
+	text := out.String()
+	if !strings.Contains(text, id) {
+		t.Fatalf("expected published session after pick:\n%s", text)
+	}
+	if strings.Count(text, "{") < 2 {
+		t.Fatalf("expected metadata + normalized JSON after pick:\n%s", text)
+	}
+}

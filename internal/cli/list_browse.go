@@ -23,35 +23,13 @@ func browseInteractive(env Env, stdin io.Reader, stdout io.Writer, jsonOut bool)
 // sessions to show. When loop is true (list), it keeps prompting until q;
 // when false (bare show), it shows one selection and returns.
 func runSessionBrowser(stdin io.Reader, stdout, stderr io.Writer, store storage.ObjectStore, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, loop bool) int {
-	format.Numbered = true
-	rows := formatSessionRows(sessions, format)
-	if err := printSessionTable(stdout, rows, format); err != nil {
-		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
-		return 1
-	}
-	printListFooter(stdout, len(sessions), totalMatched, truncated)
-	if len(rows) == 0 {
-		return 0
-	}
-	p := newPrompter(stdin, stdout)
 	for {
-		terminal.Println(stdout)
-		answer, err := p.line(p.promptText("Enter number (or short SESSION_ID) to show, or q to quit", true, nil, -1, ": "))
-		if err != nil {
-			if strings.Contains(err.Error(), "no more input") {
-				return 0
-			}
-			terminal.Printf(stderr, "agent-archive: %v\n", err)
-			return 1
+		row, ok, code := pickBrowseSession(stdin, stdout, stderr, sessions, totalMatched, truncated, format)
+		if code != 0 {
+			return code
 		}
-		answer = strings.TrimSpace(answer)
-		if answer == "" || strings.EqualFold(answer, "q") || strings.EqualFold(answer, "quit") {
-			return 0
-		}
-		row, ok := matchBrowseRow(answer, rows)
 		if !ok {
-			terminal.Println(stdout, "Enter a listed number or short SESSION_ID, or q to quit.")
-			continue
+			return 0
 		}
 		if code := showSessionMetadata(stdout, stderr, store, row.SessionID, row.HarnessKey); code != 0 {
 			return code
@@ -59,6 +37,43 @@ func runSessionBrowser(stdin io.Reader, stdout, stderr io.Writer, store storage.
 		if !loop {
 			return 0
 		}
+	}
+}
+
+// pickBrowseSession prints the numbered table once and prompts until the user
+// selects a row (ok=true), quits (ok=false, code=0), or an error occurs.
+func pickBrowseSession(stdin io.Reader, stdout, stderr io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions) (row listRow, ok bool, code int) {
+	format.Numbered = true
+	rows := formatSessionRows(sessions, format)
+	if err := printSessionTable(stdout, rows, format); err != nil {
+		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		return listRow{}, false, 1
+	}
+	printListFooter(stdout, len(sessions), totalMatched, truncated)
+	if len(rows) == 0 {
+		return listRow{}, false, 0
+	}
+	p := newPrompter(stdin, stdout)
+	for {
+		terminal.Println(stdout)
+		answer, err := p.line(p.promptText("Enter number (or short SESSION_ID) to show, or q to quit", true, nil, -1, ": "))
+		if err != nil {
+			if strings.Contains(err.Error(), "no more input") {
+				return listRow{}, false, 0
+			}
+			terminal.Printf(stderr, "agent-archive: %v\n", err)
+			return listRow{}, false, 1
+		}
+		answer = strings.TrimSpace(answer)
+		if answer == "" || strings.EqualFold(answer, "q") || strings.EqualFold(answer, "quit") {
+			return listRow{}, false, 0
+		}
+		row, matched := matchBrowseRow(answer, rows)
+		if !matched {
+			terminal.Println(stdout, "Enter a listed number or short SESSION_ID, or q to quit.")
+			continue
+		}
+		return row, true, 0
 	}
 }
 

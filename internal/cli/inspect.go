@@ -419,8 +419,8 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if code != 0 {
 		return code
 	}
-	if lookup.Done {
-		return lookup.DoneCode
+	if lookup.Cancelled {
+		return 0
 	}
 	sessionID, *harness = lookup.SessionID, lookup.Harness
 

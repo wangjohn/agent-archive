@@ -15,16 +15,16 @@ import (
 type showLookup struct {
 	SessionID string
 	Harness   string
-	// Done is set when an interactive disambiguation picker already printed
-	// the session (caller should return DoneCode).
-	Done     bool
-	DoneCode int
+	// Cancelled is set when the user quit an interactive disambiguation
+	// picker without choosing a session (caller should exit 0).
+	Cancelled bool
 }
 
 // resolveShowQuery turns a show argument into a session. Exact SESSION_ID
 // lookups win. Otherwise it matches short ids and case-insensitive title
 // substrings among archived metadata (capped like list). Multiple matches on
-// a TTY open a one-shot picker; off a TTY they error with the candidates.
+// a TTY open a one-shot picker that returns the chosen session (so the caller
+// can still honor --normalized); off a TTY they error with the candidates.
 func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env Env, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string) (showLookup, int) {
 	key, err := locateMetadataKey(ctx, store, harness, query)
 	if err == nil {
@@ -72,8 +72,14 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env Env, s
 		return showLookup{}, 1
 	}
 	format := listFormatOptions{Now: env.now(), Projects: cfgProjects, Style: styleFor(stdout), GroupByProject: true}
-	code := runSessionBrowser(stdin, stdout, stderr, store, matches, len(matches), false, format, false)
-	return showLookup{Done: true, DoneCode: code}, 0
+	row, ok, code := pickBrowseSession(stdin, stdout, stderr, matches, len(matches), false, format)
+	if code != 0 {
+		return showLookup{}, code
+	}
+	if !ok {
+		return showLookup{Cancelled: true}, 0
+	}
+	return showLookup{SessionID: row.SessionID, Harness: row.HarnessKey}, 0
 }
 
 // matchSessionsByQuery returns sessions whose short id, full id, or title
