@@ -275,7 +275,7 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 	}
 	deriveHookModels(bundle, &metadata)
 	deriveSkills(bundle, view.NativeSkillUses, &metadata)
-	metadata.Title = deriveSessionTitle(view)
+	metadata.Title = deriveSessionTitle(view, bundle.NativeText)
 	feedback := 0
 	for _, e := range bundle.SupplementalEvidence {
 		if e.Kind == EvidenceKindExplicitFeedback {
@@ -289,15 +289,34 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 // sessionTitleLimit is the maximum rune length of Metadata.Title.
 const sessionTitleLimit = 72
 
-// deriveSessionTitle returns a one-line preview of the first human prompt in
-// view, or "" when none has usable text. The text is already filter-retained.
-func deriveSessionTitle(view NormalizedView) string {
+// deriveSessionTitle returns a one-line preview of the first human prompt:
+// from normalized JSONL turns when present, otherwise from the first user
+// section of a filtered NativeText transcript (Cursor text sessions).
+func deriveSessionTitle(view NormalizedView, texts []TextTranscript) string {
 	for _, turn := range view.Turns {
 		if turn.Kind != TurnKindHumanPrompt {
 			continue
 		}
 		if title := collapseSessionTitle(turn.Text); title != "" {
 			return title
+		}
+	}
+	for _, transcript := range texts {
+		parsed, _ := parseTextSections(transcript.Content)
+		for _, section := range parsed.sections {
+			if section.role != textRoleUser {
+				continue
+			}
+			parts := make([]string, 0, len(section.lines))
+			if header := strings.TrimSpace(section.header); header != "" {
+				parts = append(parts, header)
+			}
+			if len(section.lines) > 1 {
+				parts = append(parts, section.lines[1:]...)
+			}
+			if title := collapseSessionTitle(strings.Join(parts, "\n")); title != "" {
+				return title
+			}
 		}
 	}
 	return ""

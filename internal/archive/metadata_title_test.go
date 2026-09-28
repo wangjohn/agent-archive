@@ -41,7 +41,15 @@ func TestDeriveSessionTitleSkipsEmptyPrompts(t *testing.T) {
 		{Kind: TurnKindAssistant, Text: "hello"},
 		{Kind: TurnKindHumanPrompt, Text: "Real question"},
 	}}
-	if got := deriveSessionTitle(view); got != "Real question" {
+	if got := deriveSessionTitle(view, nil); got != "Real question" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestDeriveSessionTitleFromNativeText(t *testing.T) {
+	t.Parallel()
+	texts := []TextTranscript{{Format: "cursor-text", Content: "user: Tighten the intro.\nassistant: Done.\n"}}
+	if got := deriveSessionTitle(NormalizedView{}, texts); got != "Tighten the intro." {
 		t.Fatalf("got %q", got)
 	}
 }
