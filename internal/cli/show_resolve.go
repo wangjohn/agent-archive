@@ -51,8 +51,9 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env Env, s
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1
 	}
-	shown, _, _ := applyListLimit(sessions, defaultListLimit)
-	matches := matchSessionsByQuery(shown, query)
+	// Search every listed sidecar — do not apply list's --limit window, or
+	// older title matches would be silently invisible.
+	matches := matchSessionsByQuery(sessions, query)
 	switch len(matches) {
 	case 0:
 		terminal.Printf(stderr, "agent-archive: show: no archived session %q (see `agent-archive list`)\n", archive.DisplayLine(query))
