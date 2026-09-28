@@ -32,7 +32,9 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	}
 	// Like every command: what was asked for goes to stdout; why it was not
 	// done (or not all of it) goes to stderr, with exit 1.
+	stopScan := startActivity(stdout, "Scanning sessions…")
 	result, err := runOnePass(env, false)
+	stopScan()
 	if err != nil {
 		switch {
 		case errors.Is(err, errPaused), errors.Is(err, errNotSetUp):

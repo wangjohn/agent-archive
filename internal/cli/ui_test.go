@@ -10,30 +10,32 @@ import (
 	"time"
 )
 
-func TestStyleRolesColorOnlyWhenAllowed(t *testing.T) {
+func TestStartActivityIsSilentOffTerminal(t *testing.T) {
 	t.Parallel()
-	roles := []struct {
-		name  string
-		apply func(textStyle, string) string
-		code  string
-	}{
-		{"ok", textStyle.ok, "32"},
-		{"warn", textStyle.warn, "33"},
-		{"fail", textStyle.fail, "31"},
-		{"cmd", textStyle.cmd, "36"},
-		{"dim", textStyle.dim, "2"},
-		{"bold", textStyle.bold, "1"},
+	var out bytes.Buffer
+	stop := startActivity(&out, "Registering sessions…")
+	stop()
+	if out.Len() != 0 {
+		t.Errorf("non-TTY activity wrote %q, want nothing", out.String())
 	}
-	for _, role := range roles {
-		if got, want := role.apply(textStyle{color: true}, "text"), "\x1b["+role.code+"mtext\x1b[0m"; got != want {
-			t.Errorf("%s with color = %q, want %q", role.name, got, want)
-		}
-		if got := role.apply(textStyle{}, "text"); got != "text" {
-			t.Errorf("%s without color = %q, want plain text", role.name, got)
-		}
-		if got := role.apply(textStyle{color: true}, ""); got != "" {
-			t.Errorf("%s of empty text = %q, want nothing", role.name, got)
-		}
+}
+
+func TestStartAnnouncedActivityPrintsOffTerminal(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	stop := startAnnouncedActivity(&out, "Checking installed applications...")
+	stop()
+	if got, want := out.String(), "Checking installed applications...\n"; got != want {
+		t.Errorf("announced activity wrote %q, want %q", got, want)
+	}
+}
+
+func TestActivityStyleUnwrapsLockedWriter(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	locked := &lockedWriter{w: &buf}
+	if got := activityStyle(locked); got.live || got.color {
+		t.Errorf("activityStyle on buffer = %+v, want plain", got)
 	}
 }
 

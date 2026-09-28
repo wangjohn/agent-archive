@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Long-running CLI steps show a short TTY spinner (registering sessions,
+  finishing upload, waiting for the collector, scanning, listing, loading a
+  session, looking for past sessions, checking storage). Piped and CI output
+  stay plain.
+
 ## [0.1.1] - 2026-09-28
 
 Setup and status UX polish since the first tagged commit. No filter or

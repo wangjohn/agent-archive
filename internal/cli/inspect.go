@@ -143,7 +143,14 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
+	var stopList func()
+	if !*jsonOut {
+		stopList = startActivity(stdout, "Listing sessions…")
+	} else {
+		stopList = func() {}
+	}
 	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, filter, reader.ListOptions{Cache: listCache(env, *noCache), Skipped: warnSkippedSidecar(stderr, "list")})
+	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
@@ -297,8 +304,10 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	ctx := context.Background()
+	stopShow := startActivity(stdout, "Loading session…")
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
 	if err != nil {
+		stopShow()
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return 1
 	}
@@ -306,14 +315,18 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if !*normalized {
 		metadata, err := reader.ReadMetadata(ctx, store, key)
 		if err != nil {
+			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		return printJSON(stdout, stderr, metadataWithLinks(ctx, store, metadata))
+		view := metadataWithLinks(ctx, store, metadata)
+		stopShow()
+		return printJSON(stdout, stderr, view)
 	}
 
 	metadata, bundle, err := reader.RefreshAndLoad(ctx, store, key, reader.Limits{})
 	if err != nil {
+		stopShow()
 		if errors.Is(err, reader.ErrRefreshRequired) {
 			terminal.Printf(stderr, "agent-archive: show: the session's source bundle is not available (it may have just been replaced or deleted by retention); retry, or run `agent-archive show %s` without --normalized for its metadata\n", sessionID)
 		} else {
@@ -322,11 +335,13 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 1
 	}
 	view, err := archive.ParseNormalized(bundle)
+	linked := metadataWithLinks(ctx, store, metadata)
+	stopShow()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
 		return 1
 	}
-	if code := printJSON(stdout, stderr, metadataWithLinks(ctx, store, metadata)); code != 0 {
+	if code := printJSON(stdout, stderr, linked); code != 0 {
 		return code
 	}
 	return printJSON(stdout, stderr, normalizedOutput{Turns: view.Turns, ToolCalls: view.ToolCalls, ToolResults: view.ToolResults, HookFinals: view.HookFinals})
