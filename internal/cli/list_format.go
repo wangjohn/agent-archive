@@ -38,11 +38,11 @@ type listRow struct {
 
 // listFormatOptions controls how session rows are built and printed.
 type listFormatOptions struct {
-	Now       time.Time
-	Verbose   bool
-	Numbered  bool
-	Projects  map[string]string // project_id → display label (basename)
-	Style     textStyle
+	Now      time.Time
+	Verbose  bool
+	Numbered bool
+	Projects map[string]string // project_id → display label (basename)
+	Style    textStyle
 }
 
 // formatSessionRows builds display rows for sessions. Short IDs are unique
@@ -141,7 +141,13 @@ func projectLabels(cfg config.Config) map[string]string {
 			continue
 		}
 		base := filepath.Base(filepath.Clean(p.Root))
-		if base == "" || base == "." || base == string(filepath.Separator) {
+		if base == "" {
+			continue
+		}
+		if base == "." {
+			continue
+		}
+		if base == string(filepath.Separator) {
 			continue
 		}
 		labels[p.ProjectID] = base
