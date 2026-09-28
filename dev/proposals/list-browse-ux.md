@@ -1,10 +1,10 @@
 # List and browse UX: implementation plan
 
-> **Implementation in review.** This is the original design proposal, not the
-> current CLI contract. See [list and show](../../docs/guides/list-and-show.md)
-> for released behavior.
+> **Design record.** This is the original proposal, not the current CLI
+> contract. See [list and show](../../docs/guides/list-and-show.md) for
+> released behavior.
 
-Status: prepared 2026-09-28; implementation is under review in [Phase 1 (#99)](https://github.com/wangjohn/agent-archive/pull/99), [Phase 2 (#100)](https://github.com/wangjohn/agent-archive/pull/100), and [Phase 3 (#101)](https://github.com/wangjohn/agent-archive/pull/101). These draft PRs are stacked and have not been released. The “current state” below records the baseline when the proposal was written; decisions and scope may differ in the implementation.
+Prepared 2026-09-28. Implementation work is tracked in [Phase 1 (#99)](https://github.com/wangjohn/agent-archive/pull/99), [Phase 2 (#100)](https://github.com/wangjohn/agent-archive/pull/100), and [Phase 3 (#101)](https://github.com/wangjohn/agent-archive/pull/101). The “baseline when proposed” below records the CLI at the time this plan was written; decisions and scope may differ in the implementation.
 
 ## Purpose
 
