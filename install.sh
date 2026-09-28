@@ -83,20 +83,26 @@ main() {
 
   installed_version="$("$target" --version 2>&1)" ||
     fail "installed ${target}, but it failed to run: ${installed_version}"
-  say "Installed agent-archive ${installed_version} to ${target}"
+  say "✓ installed agent-archive ${installed_version} to ${target}"
 
   case ":${PATH}:" in
-    *":${install_dir}:"*)
-      say ""
-      say "Next, run:  agent-archive setup"
-      ;;
+    *":${install_dir}:"*) ;;
     *)
       say ""
-      say "${install_dir} is not on your PATH. Add it with:"
-      say "  echo 'export PATH=\"${install_dir}:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
-      say "Then run:  agent-archive setup"
+      case "${SHELL:-}" in
+        */bash) profile="~/.bash_profile" ;;
+        */zsh) profile="~/.zshrc" ;;
+        *) profile="your shell profile" ;;
+      esac
+      say "${install_dir} is not on your PATH. Add this line to ${profile}:"
+      say "  export PATH=\"${install_dir}:\$PATH\""
+      say "Open a new terminal after updating your profile."
       ;;
   esac
+  say ""
+  say "To get started, run:"
+  say ""
+  say "agent-archive setup"
 }
 
 detect_arch() {

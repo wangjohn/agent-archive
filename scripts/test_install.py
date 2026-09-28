@@ -90,12 +90,26 @@ class InstallScriptTest(unittest.TestCase):
         return subprocess.run(['sh', str(script or self.install_sh)], env=env, capture_output=True, text=True)
 
     def test_installs_verified_binary_for_apple_silicon(self):
-        result = self.run_install()
+        result = self.run_install(extra_env={'SHELL': '/bin/bash'})
         self.assertEqual(result.returncode, 0, result.stderr)
         target = self.home / '.local' / 'bin' / 'agent-archive'
         self.assertEqual(subprocess.run([str(target)], capture_output=True, text=True).stdout, 'v9.9.9-arm64\n')
         self.assertIn('not on your PATH', result.stdout)
+        self.assertIn('Add this line to ~/.bash_profile:', result.stdout)
+        self.assertIn('export PATH="' + str(target.parent) + ':$PATH"', result.stdout)
+        self.assertIn(f'✓ installed agent-archive v9.9.9-arm64 to {target}\n', result.stdout)
+        self.assertTrue(result.stdout.endswith('\nTo get started, run:\n\nagent-archive setup\n'))
         self.assertEqual([p.name for p in target.parent.iterdir()], ['agent-archive'])
+
+    def test_zsh_path_instructions(self):
+        result = self.run_install(extra_env={'SHELL': '/bin/zsh'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Add this line to ~/.zshrc:', result.stdout)
+
+    def test_unknown_shell_path_instructions(self):
+        result = self.run_install(extra_env={'SHELL': '/bin/fish'})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Add this line to your shell profile:', result.stdout)
 
     @unittest.skipIf(os.access('/usr/local/bin', os.W_OK), '/usr/local/bin is writable here')
     def test_defaults_to_home_local_bin(self):
@@ -119,7 +133,7 @@ class InstallScriptTest(unittest.TestCase):
         result = self.run_install(path_dirs=[existing], default_dir=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f'to {existing}/agent-archive', result.stdout)
-        self.assertIn('Next, run:  agent-archive setup', result.stdout)
+        self.assertTrue(result.stdout.endswith('\nTo get started, run:\n\nagent-archive setup\n'))
         self.assertFalse((self.home / '.local').exists())
 
     def test_honors_install_dir_override(self):
