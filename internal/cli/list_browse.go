@@ -53,7 +53,7 @@ func runSessionBrowser(stdin io.Reader, stdout, stderr io.Writer, store storage.
 			terminal.Println(stdout, "Enter a listed number or short SESSION_ID, or q to quit.")
 			continue
 		}
-		if code := showSessionMetadata(stdout, stderr, store, row.SessionID, ""); code != 0 {
+		if code := showSessionMetadata(stdout, stderr, store, row.SessionID, row.HarnessKey); code != 0 {
 			return code
 		}
 		if !loop {
@@ -62,25 +62,32 @@ func runSessionBrowser(stdin io.Reader, stdout, stderr io.Writer, store storage.
 	}
 }
 
-// matchBrowseRow resolves a typed answer to one listed row: a 1-based index,
-// a short id unique in the table, or a unique prefix of a session id.
+// matchBrowseRow resolves a typed answer to one listed row. Exact short or
+// full SESSION_ID matches win first so an all-decimal short id is never
+// mistaken for a row number. A small integer (shorter than a short id) then
+// selects a 1-based index. Otherwise a unique SESSION_ID prefix matches.
 func matchBrowseRow(answer string, rows []listRow) (listRow, bool) {
-	if n, err := strconv.Atoi(answer); err == nil {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return listRow{}, false
+	}
+	lower := strings.ToLower(answer)
+	for _, r := range rows {
+		if lower == strings.ToLower(r.SessionID) || lower == strings.ToLower(r.ShortID) {
+			return r, true
+		}
+	}
+	if n, err := strconv.Atoi(answer); err == nil && len(answer) < minShortSessionID {
 		if n >= 1 && n <= len(rows) {
 			return rows[n-1], true
 		}
 		return listRow{}, false
 	}
-	answer = strings.ToLower(answer)
 	var match listRow
 	matches := 0
 	for _, r := range rows {
 		id := strings.ToLower(r.SessionID)
-		short := strings.ToLower(r.ShortID)
-		if answer == id || answer == short {
-			return r, true
-		}
-		if strings.HasPrefix(id, answer) {
+		if strings.HasPrefix(id, lower) {
 			match = r
 			matches++
 		}

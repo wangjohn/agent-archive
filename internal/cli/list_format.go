@@ -23,6 +23,7 @@ type listRow struct {
 	Index      int
 	SessionID  string
 	ShortID    string
+	HarnessKey string // raw harness name for show / locateMetadataKey
 	When       string
 	CapturedAt string
 	Harness    string
@@ -79,6 +80,7 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 			Index:      i + 1,
 			SessionID:  m.SessionID,
 			ShortID:    shorts[i],
+			HarnessKey: m.Harness.Name,
 			When:       relativeAge(opts.Now, m.CapturedAt),
 			CapturedAt: formatTimeOrNever(m.CapturedAt),
 			Harness:    archive.DisplayLine(m.Harness.Name),

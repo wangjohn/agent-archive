@@ -76,14 +76,18 @@ func TestProjectLabelsUsesBasename(t *testing.T) {
 func TestMatchBrowseRow(t *testing.T) {
 	t.Parallel()
 	rows := []listRow{
-		{Index: 1, SessionID: "aaaabbbbccccddddeeeeffff00001111", ShortID: "aaaabbbb"},
-		{Index: 2, SessionID: "bbbbccccddddeeeeffff000011112222", ShortID: "bbbbcccc"},
+		{Index: 1, SessionID: "aaaabbbbccccddddeeeeffff00001111", ShortID: "aaaabbbb", HarnessKey: "claude"},
+		{Index: 2, SessionID: "1234567890abcdef1234567890abcdef", ShortID: "12345678", HarnessKey: "codex"},
 	}
 	if got, ok := matchBrowseRow("2", rows); !ok || got.SessionID != rows[1].SessionID {
 		t.Fatalf("number match: ok=%v got=%+v", ok, got)
 	}
 	if got, ok := matchBrowseRow("aaaabbbb", rows); !ok || got.Index != 1 {
 		t.Fatalf("short id: ok=%v got=%+v", ok, got)
+	}
+	// An all-decimal short id must not be treated as a row index.
+	if got, ok := matchBrowseRow("12345678", rows); !ok || got.SessionID != rows[1].SessionID {
+		t.Fatalf("decimal short id: ok=%v got=%+v", ok, got)
 	}
 	if _, ok := matchBrowseRow("9", rows); ok {
 		t.Fatal("out of range should miss")
