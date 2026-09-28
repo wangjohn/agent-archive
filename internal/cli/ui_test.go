@@ -47,7 +47,7 @@ func TestActivityStopConcurrentSetAndInvoke(t *testing.T) {
 	stop := func() { calls.Add(1) }
 
 	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
