@@ -10,33 +10,37 @@ Keep selected Claude Code, Codex, and Cursor sessions in a bucket you own, then 
 
 ## What you get
 
-This is an **entirely synthetic** example. The session ID and model are invented; no real transcript or path is shown. After a new session has been captured and uploaded:
+This is an **entirely synthetic** example. The title, session ID, project, and
+model are invented; no real transcript or path is shown. After a new session
+has been captured and uploaded:
 
 ```text
 $ agent-archive list --no-pager
-SESSION           HARNESS  CAPTURED              ORIGIN  PARSER    MODELS      SKILLS USED
-demo-session-001  codex    2026-09-28T12:00:00Z  hook    complete  demo-model  -
+TITLE                            WHEN           HARNESS  PROJECT   ID
+Fix flaky OAuth callback tests  2 minutes ago  codex    demo-app  8f3a2c91
 1 session(s).
 
-$ agent-archive show demo-session-001
+$ agent-archive show 8f3a2c91
 ```
 
 Selected fields from the `show` metadata JSON:
 
 ```json
 {
-  "session_id": "demo-session-001",
+  "session_id": "8f3a2c91a4b5c6d7e8f90123456789ab",
+  "title": "Fix flaky OAuth callback tests",
+  "project_name": "demo-app",
   "captured_at": "2026-09-28T12:00:00Z",
   "harness": { "name": "codex" },
-  "parser": { "name": "codex", "version": "0.11.0", "status": "complete" }
+  "parser": { "name": "codex", "version": "0.12.0", "status": "complete" }
 }
 ```
 
 ```sh
-agent-archive handoff demo-session-001
+agent-archive handoff 8f3a2c91a4b5c6d7e8f90123456789ab
 ```
 
-`handoff` prints a filtered prompt with the session's work for another coding agent. `list` filters **metadata** by app, model, skill, or capture time; it does not search transcript text. Use `show --normalized` when you want the verified conversation content. See [list and show](docs/guides/list-and-show.md) and [handoff](docs/guides/handoff.md).
+`handoff` prints a filtered prompt with the session's work for another coding agent. `list` filters **metadata** by app, model, skill, or capture time; it does not search transcript text. Copy the displayed short ID into `show`, or use the full ID from `list --verbose`. Use `show --normalized` when you want the verified conversation content. See [list and show](docs/guides/list-and-show.md) and [handoff](docs/guides/handoff.md).
 
 ## Before setup: what leaves your Mac
 
