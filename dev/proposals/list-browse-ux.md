@@ -1,8 +1,10 @@
 # List and browse UX: implementation plan
 
-> **Proposed.** Not implemented. See [list and show](../../docs/guides/list-and-show.md) for current behavior.
+> **Implementation in review.** This is the original design proposal, not the
+> current CLI contract. See [list and show](../../docs/guides/list-and-show.md)
+> for released behavior.
 
-Status: proposed plan for review; not scheduled for implementation. Prepared 2026-09-28 from a review of the current `list` table (hash-first, wide ops columns) and how comparable CLIs present session- or issue-like inventories.
+Status: prepared 2026-09-28; implementation is under review in [Phase 1 (#99)](https://github.com/wangjohn/agent-archive/pull/99), [Phase 2 (#100)](https://github.com/wangjohn/agent-archive/pull/100), and [Phase 3 (#101)](https://github.com/wangjohn/agent-archive/pull/101). These draft PRs are stacked and have not been released. The “current state” below records the baseline when the proposal was written; decisions and scope may differ in the implementation.
 
 ## Purpose
 
@@ -28,7 +30,7 @@ These come from the [archive design](../specs/archive.md) and the current `list`
 | Strings printed to a TTY go through `archive.DisplayLine` / `DisplayJSON` | Titles and labels stay escape-safe like every other cell |
 | Optional metadata fields do not bump `MetadataSchemaVersion` | Phase 2 can add `title` without an incompatible schema bump; bump `DefaultParserVersion` ([versions](../maintainers/versions.md)) |
 
-## Current state
+## Baseline when proposed
 
 `runListCommand` in `internal/cli/inspect.go` prints:
 
