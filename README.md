@@ -4,60 +4,22 @@
 [![Go 1.27](https://img.shields.io/badge/go-1.27.1-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Keep selected Claude Code, Codex, and Cursor sessions in a bucket you own, then browse their metadata, inspect a session, or turn it into a prompt another agent can continue from.
+A lightweight CLI that stores Claude Code, Codex, and Cursor sessions in S3 for you so that you can easily switch between coding agents and have a single, private source of memory across all of your coding agents.
 
-`agent-archive` is a macOS command-line tool for Apple Silicon and Intel. **Beta:** interfaces and the bucket layout may change before `v1.0`. You need a private Cloudflare R2 or Amazon S3 bucket and a storage-provider account; there is no agent-archive account, hosted service, or telemetry.
+OpenAI and Anthropic are constantly one-upping each other or the best model, but it's a pain to switch between their coding agents. Every time you switch, you lose your history, and then don't have a single source of truth for where all your sessions live. Also, if you run out of limits in the middle of a session, it's very annoying to have to figure out how to hand that session over to the other coding agent.
 
-## What you get
+`agent-archive` solves these problems, and can perform the following:
 
-This is an **entirely synthetic** example. The title, session ID, project, and
-model are invented; no real transcript or path is shown. After a new session
-has been captured and uploaded:
+- Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
+- Hand off a session from one agent to another with `agent-archive handoff`, useful especially if you run into rate limits halfway through a session.
+- View all of your past sessions across coding agents with `agent-archive list`,
+  then inspect one with `agent-archive show SHORT_ID` using the ID in the list.
 
-```text
-$ agent-archive list --no-pager
-TITLE                            WHEN           HARNESS  PROJECT   ID
-Fix flaky OAuth callback tests  2 minutes ago  codex    demo-app  8f3a2c91
-1 session(s).
-
-$ agent-archive show 8f3a2c91
-```
-
-Selected fields from the `show` metadata JSON:
-
-```json
-{
-  "session_id": "8f3a2c91a4b5c6d7e8f90123456789ab",
-  "title": "Fix flaky OAuth callback tests",
-  "project_name": "demo-app",
-  "captured_at": "2026-09-28T12:00:00Z",
-  "harness": { "name": "codex" },
-  "parser": { "name": "codex", "version": "0.12.0", "status": "complete" }
-}
-```
-
-```sh
-agent-archive handoff 8f3a2c91a4b5c6d7e8f90123456789ab
-```
-
-`handoff` prints a filtered prompt with the session's work for another coding agent. `list` filters **metadata** by app, model, skill, or capture time; it does not search transcript text. Copy the displayed short ID into `show`, or use the full ID from `list --verbose`. Use `show --normalized` when you want the verified conversation content. See [list and show](docs/guides/list-and-show.md) and [handoff](docs/guides/handoff.md).
-
-## Before setup: what leaves your Mac
-
-For **new sessions in projects you explicitly include**, agent-archive uploads filtered prompts, replies, tool calls and results, plus metadata such as working directories, branch names, models, and token counts. It may also upload filtered text from visible user-level `SKILL.md` files, **even when those skills are outside the selected projects**. Existing sessions are included only if you opt into [`backfill`](docs/guides/backfill.md).
-
-The filter drops hidden reasoning, injected instructions, images, binary content, and unknown fields, and redacts recognizable credentials on a **best-effort** basis. A secret without a recognizable name or shape may remain. There is **no client-side encryption**: anyone who can read your bucket can read the archive. Keep it private and use [narrow credentials](docs/security/bucket-permissions.md). Read the [privacy details and limits](docs/security/privacy.md) before connecting storage.
+This is especially useful for setting up analytics automations to understand how you're using your agents, how different agents perform across different tasks, and for performing meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
 
 ## Quickstart
 
 1. **Install** on macOS:
-
-   ```sh
-   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
-   agent-archive --version
-   ```
-
-   Read the [installer script](install.sh) first if you prefer. It checks the release checksum and a valid Developer ID signature from the pinned signing team, then installs the binary; it **does not run setup**. The published release is signed and notarized; the installer does not separately check notarization. See [manual installation](docs/getting-started/install.md#install-a-release-build-by-hand), [build from source](docs/getting-started/install.md#build-from-source), or the [published v0.1.1 release](https://github.com/wangjohn/agent-archive/releases/tag/v0.1.1) for a pinned version:
 
    ```sh
    curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
@@ -68,23 +30,12 @@ The filter drops hidden reasoning, injected instructions, images, binary content
 3. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
 
    ```sh
-   cd ~/code/my-project
    agent-archive setup
    ```
 
-4. **Start a new session and send a prompt** in an included project. For Codex, approve the hooks with `/hooks` first. Sessions already open before inclusion are not captured.
+That's it -- as soon as you start a new session after setup, it will get sent into object storage and you'll be able to see it. You can verify status by running `agent-archive status` and take a look at past sessions that have been archived with `agent-archive list`.
 
-5. **Verify capture:** after a minute or two, run `agent-archive status`; use `agent-archive sync` to collect now if needed. Check that the app shows a published, read-back verified session, then find it with `agent-archive list` and inspect it with `agent-archive show SESSION_ID`. A `Ready` label or installed hooks alone do not prove a session was archived. See [first-success steps](docs/README.md) and [troubleshooting](docs/guides/troubleshooting.md).
-
-To add a second Mac, install and run setup there with the same bucket, or use [`agent-archive setup --yes`](docs/getting-started/setup.md#set-up-without-questions) ([multiple Macs](docs/guides/multiple-macs.md)).
-
-## Fit and limits
-
-| Good fit | Limits to know |
-| --- | --- |
-| Keep a browsable record of selected coding-agent work in your own bucket. | Capture starts with new sessions in included projects; [`backfill`](docs/guides/backfill.md) is an opt-in import. |
-| Inspect session metadata or read a verified conversation, then hand its context to another agent. | Filtering uses metadata, not full-text transcript search or automatic comparison. Handoff is a prompt, not a live session transfer. |
-| Run capture on Apple Silicon or Intel Macs. | Capture needs macOS and supported app hooks; new app versions may be reported `unverified` until a session is published and read back ([tested versions](docs/reference/capture-capabilities.md#tested-app-versions)). |
+To add a second Mac, install and run setup there with the same bucket (see [multiple Macs](docs/guides/multiple-macs.md)).
 
 ## How it works
 
