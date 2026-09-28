@@ -4,7 +4,7 @@
 [![Go 1.27](https://img.shields.io/badge/go-1.27.1-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A lightweight CLI that stores Claude Code, Codex, and Cursor sessions in S3 for you so that you can easily switch between coding agents and have a single, private source of memory across all of your coding agents.
+A lightweight CLI that hooks into Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
 
 OpenAI and Anthropic are constantly one-upping each other or the best model, but it's a pain to switch between their coding agents. Every time you switch, you lose your history, and then don't have a single source of truth for where all your sessions live. Also, if you run out of limits in the middle of a session, it's very annoying to have to figure out how to hand that session over to the other coding agent.
 
@@ -12,9 +12,7 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 
 - Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
 - Hand off a session from one agent to another with `agent-archive handoff`, useful especially if you run into rate limits halfway through a session.
-- View all of your past sessions across coding agents with `agent-archive list`.
-
-This is especially useful for setting up analytics automations to understand how you're using your agents, how different agents perform across different tasks, and for performing meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
+- View all of your past sessions across coding agents with `agent-archive list`. This is useful for setting up analytics automations to understand how you're using your agents, how different agents perform across different tasks, and for performing meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
 
 ## Quickstart
 
