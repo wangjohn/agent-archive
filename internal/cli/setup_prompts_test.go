@@ -366,7 +366,21 @@ func TestRecentProjectsShowCountsAndATakesAll(t *testing.T) {
 	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
 		t.Fatalf("projects=%+v err=%v", projects, err)
 	}
-	if !strings.Contains(out.String(), "12 sessions") || !strings.Contains(out.String(), "1 session") || !strings.Contains(out.String(), "a for all") {
+	if !strings.Contains(out.String(), "12 sessions") || !strings.Contains(out.String(), "1 session") || !strings.Contains(out.String(), "a includes all listed projects (the default)") {
+		t.Fatalf("output:\n%s", &out)
+	}
+}
+
+func TestRecentProjectsEnterTakesDefaultAll(t *testing.T) {
+	t.Parallel()
+	one, two := gitRepo(t), gitRepo(t)
+	known := []backfill.KnownProject{{Root: one}, {Root: two}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("\n"), &out), nil, nil, known, "")
+	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
+	}
+	if !strings.Contains(out.String(), "Projects [A]: \n") || !strings.Contains(out.String(), "\nIncluded: ") {
 		t.Fatalf("output:\n%s", &out)
 	}
 }

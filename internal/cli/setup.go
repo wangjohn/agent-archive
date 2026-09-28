@@ -959,6 +959,9 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 // Cloudflare's dashboard shows fills in the bucket as well (see
 // credentials.ParseR2Location), and fromURL says it did.
 func promptR2Location(p *prompter, cfg *credentials.Config) (fromURL bool, err error) {
+	terminal.Println(p.out, "Find your Account ID or S3 API endpoint in Cloudflare Dashboard > Storage & databases > R2 > Overview:")
+	terminal.Println(p.out, "https://developers.cloudflare.com/r2/get-started/s3/")
+	terminal.Println(p.out, "Example bucket URL: https://<account-id>.r2.cloudflarestorage.com/<bucket>")
 	for {
 		answer, err := p.required("R2 account ID or bucket URL", firstNonEmpty(cfg.R2AccountID, cfg.R2Endpoint))
 		if err != nil {
@@ -1187,9 +1190,13 @@ const maxKnownProjects = 12
 func addProjects(p *prompter, result, existing []archive.ProjectActivation, known []backfill.KnownProject, current string, userHomes ...string) ([]archive.ProjectActivation, error) {
 	picker := newProjectPicker(p, result, existing, userHomes...)
 	offered := picker.offer(known, current)
+	defaultAll := current == "" && len(existing) == 0 && len(result) == 0 && len(offered) > 0
 	label := "Project path: "
 	if len(offered) > 0 {
 		label = "Projects: "
+		if defaultAll {
+			label = "Projects [A]: "
+		}
 	}
 	for {
 		answer, err := p.line(p.labelText(label))
@@ -1197,6 +1204,13 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 			return nil, err
 		}
 		if answer == "" {
+			if defaultAll {
+				for _, project := range offered {
+					picker.include(project.Root)
+				}
+				picker.printSelection()
+				return picker.result, nil
+			}
 			if includedProjects(picker.result) > 0 {
 				return picker.result, nil
 			}
@@ -1208,7 +1222,12 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 			if len(offered) > 0 {
 				label = "Projects: "
 			}
+			defaultAll = false
 			continue
+		}
+		defaultAll = false
+		if len(offered) > 0 {
+			label = "Projects: "
 		}
 		if len(offered) > 0 && (strings.EqualFold(answer, "a") || strings.EqualFold(answer, "all")) {
 			for _, project := range offered {
@@ -1323,15 +1342,21 @@ func (k *projectPicker) offer(known []backfill.KnownProject, current string) []b
 		path := displayPath(project.Root, k.home)
 		terminal.Printf(out, "  %d) %s%s%s  %s\n", i+1, mark, path, strings.Repeat(" ", width-visibleWidth(path)), k.p.style.dim(projectDetails(project, current, k.p.clock())))
 	}
-	hint := "Enter numbers to include (for example 1 3), a for all, or a project path."
+	hint := "a includes all listed projects (the default). Or enter numbers (for example 1 3) or a project path."
 	switch {
 	case current != "" && len(offered) == 1:
-		hint = "Enter 1 to include or leave it out, or a path to add a project."
+		hint = "a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project."
 	case current != "":
-		hint = "Enter numbers to include or leave out (such as 2 3), a for all, or a path."
+		hint = "a includes all listed projects. Or enter numbers to include or leave out (such as 2 3), or a path."
+	case len(k.existing) > 0 || len(k.result) > 0:
+		hint = "a includes all listed projects. Or enter numbers (for example 1 3) or a project path."
 	}
 	terminal.Println(out, k.p.style.hang("", hint))
-	terminal.Println(out, "Enter a blank line when finished.")
+	if current == "" && len(k.existing) == 0 && len(k.result) == 0 {
+		terminal.Println(out, "Press Enter to include all, or enter a blank line after a selection to finish.")
+	} else {
+		terminal.Println(out, "Enter a blank line when finished.")
+	}
 	return offered
 }
 
