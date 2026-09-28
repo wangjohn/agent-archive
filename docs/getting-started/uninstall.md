@@ -53,36 +53,48 @@ or `backfill undo`, and only while that Mac runs agent-archive and isn't
 paused. The sessions of a Mac you uninstall, wipe, retire, or pause for good
 stay in the bucket indefinitely, and nothing else cleans them up.
 
-To delete everything under your prefix now (with the AWS CLI, and
-credentials that can list and delete there):
+To delete everything under your prefix now, pause or uninstall **every** Mac
+that uploads there. Use the [cleanup preparation block](../security/privacy.md#after-a-filter-upgrade)
+first in a bash or zsh shell. It defines `purge_prepare` and `purge_apply`,
+lists and validates all metadata, and shows an initial unreferenced-source
+plan without deleting it. The AWS CLI and `jq` must be installed, and your
+credentials need list, read, and delete access. In that same shell, set your
+bucket and prefix and make a fresh full-prefix plan:
 
+<!-- purge-recipe:all -->
 ```sh
-aws s3 rm "s3://my-archive-bucket/agent-archive/sessions/" --recursive
-aws s3 rm "s3://my-archive-bucket/agent-archive/.setup-test/" --recursive   # an interrupted setup's test object
-# For R2, add to each command: --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+bucket=my-archive-bucket
+prefix=agent-archive/          # your prefix with its trailing slash, or empty for the whole bucket
+purge_prepare all
 ```
 
-Use your own bucket and prefix. Pause or uninstall every Mac that uploads
-there first, or they will publish their sessions again. To delete only one
-Mac's sessions, find its machine ID first (`jq -r .machine_id config.json`
+Review **every printed key**. An empty prefix plans the entire bucket. If the
+plan contains exactly what you intend, run `purge_apply` within five minutes
+in the same shell. A failed listing or metadata read means zero deletions;
+rerun `purge_prepare all` after fixing it. A delete failure reports the keys
+already removed and those still pending. There is no rollback. External
+writers can race these shell commands, so keep all uploading Macs paused
+throughout.
+
+To delete only one Mac's sessions, find its machine ID first (`jq -r .machine_id config.json`
 in that Mac's data directory, or the `machine_id` that `show` prints for one
-of its sessions), then, with that Mac paused or uninstalled:
+of its sessions). Pause **every** uploading Mac, run the linked preparation
+block above in the same shell, and make a new machine plan:
 
 <!-- purge-recipe:machine (scripts/test_purge_recipe.py runs this block) -->
 ```sh
 bucket=my-archive-bucket
 prefix=agent-archive/          # your prefix with its trailing slash, or empty
 machine=0123456789abcdef0123456789abcdef
-aws s3api list-objects-v2 --bucket "$bucket" --prefix "${prefix}sessions/" \
-  --query 'Contents[].Key' --output text | tr '\t' '\n' | grep '/metadata\.json$' |
-while read -r meta; do
-  owner=$(aws s3 cp "s3://$bucket/$meta" - </dev/null | jq -r '.machine_id | strings')
-  if [ -n "$owner" ] && [ "$owner" = "$machine" ]; then
-    aws s3 rm "s3://$bucket/$meta" </dev/null &&
-      aws s3 rm "s3://$bucket/${meta%metadata.json}" --recursive </dev/null
-  fi
-done
+purge_prepare machine "$machine"
 ```
+
+Review the exact keys, then run `purge_apply` in the same shell within five
+minutes. It rechecks the complete listing and every metadata object before
+the first delete; a changed object aborts the plan. On partial failure, make
+a new plan and inspect what remains. On a versioned S3 bucket, ordinary
+deletion hides current versions; remove noncurrent versions separately or
+use a lifecycle rule.
 
 ### A lifecycle rule as a backstop
 
