@@ -278,6 +278,33 @@ func (sp *spinner) stop() {
 	<-sp.finished
 }
 
+// activityStyle is styleFor after unwrapping a lockedWriter, so a spinner
+// still detects the real terminal when stdout is wrapped for interrupt
+// messages.
+func activityStyle(out io.Writer) textStyle {
+	return styleFor(underlyingWriter(out))
+}
+
+// startActivity runs a spinner with label on a live terminal. Elsewhere it
+// prints nothing: the caller's result line is the only trace, matching spin.
+// Call stop before writing anything else to out.
+func startActivity(out io.Writer, label string) (stop func()) {
+	sp := activityStyle(out).spin(out, label)
+	return sp.stop
+}
+
+// startAnnouncedActivity is startActivity, but on a non-live stream it prints
+// label once so scripts and CI still see what is running.
+func startAnnouncedActivity(out io.Writer, label string) (stop func()) {
+	style := activityStyle(out)
+	if !style.live {
+		terminal.Println(out, label)
+		return func() {}
+	}
+	sp := style.spin(out, label)
+	return sp.stop
+}
+
 // displayPath shows path with the home directory as ~.
 func displayPath(path, home string) string {
 	if !local.PathWithin(path, home) {

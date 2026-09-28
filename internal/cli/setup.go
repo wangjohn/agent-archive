@@ -213,11 +213,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 	// its answers are the defaults, but this is setting up again, not a
 	// change to a running installation.
 	installed := found && existing.Archive.Enabled
-	terminal.Println(out, "Checking installed applications...")
+	stopApps := startAnnouncedActivity(out, "Checking installed applications...")
 	discoveries := env.discoverApplications(userHome)
 	discoveredAt := env.now()
 	// The review shows these; discoveries themselves are recorded unchanged.
 	detected := env.detectHarnesses(userHome)
+	stopApps()
 	reviewed := reviewDiscoveries(discoveries, detected)
 	p := newPrompter(stdin, out)
 	p.now = env.now

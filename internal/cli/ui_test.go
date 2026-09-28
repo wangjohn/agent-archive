@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -34,6 +35,62 @@ func TestStyleRolesColorOnlyWhenAllowed(t *testing.T) {
 		if got := role.apply(textStyle{color: true}, ""); got != "" {
 			t.Errorf("%s of empty text = %q, want nothing", role.name, got)
 		}
+	}
+}
+
+func TestStartActivityIsSilentOffTerminal(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	stop := startActivity(&out, "Registering sessions…")
+	stop()
+	if out.Len() != 0 {
+		t.Errorf("non-TTY activity wrote %q, want nothing", out.String())
+	}
+}
+
+func TestStartAnnouncedActivityPrintsOffTerminal(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	stop := startAnnouncedActivity(&out, "Checking installed applications...")
+	stop()
+	if got, want := out.String(), "Checking installed applications...\n"; got != want {
+		t.Errorf("announced activity wrote %q, want %q", got, want)
+	}
+}
+
+func TestActivityStyleUnwrapsLockedWriter(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	locked := &lockedWriter{w: &buf}
+	if got := activityStyle(locked); got.live || got.color {
+		t.Errorf("activityStyle on buffer = %+v, want plain", got)
+	}
+}
+
+func TestActivityStopConcurrentSetAndInvoke(t *testing.T) {
+	t.Parallel()
+	var activity activityStop
+	var calls atomic.Int32
+	stop := func() { calls.Add(1) }
+
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			activity.set(stop)
+			activity.clear()
+			activity.set(stop)
+		}()
+		go func() {
+			defer wg.Done()
+			activity.invoke()
+		}()
+	}
+	wg.Wait()
+	activity.clear()
+	if calls.Load() < 0 {
+		t.Fatal("unreachable")
 	}
 }
 

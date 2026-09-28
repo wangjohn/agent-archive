@@ -188,8 +188,18 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return 1
 	}
 
+	style := styleFor(stdout)
+	var stopLooking func()
 	if !*jsonOut {
-		terminal.Print(stdout, backfill.SearchLine(filters)+" ")
+		label := backfill.SearchLine(filters)
+		if style.live {
+			stopLooking = style.spin(stdout, label).stop
+		} else {
+			terminal.Print(stdout, label+" ")
+			stopLooking = func() {}
+		}
+	} else {
+		stopLooking = func() {}
 	}
 	// Ctrl-C during planning cancels it, so the plan's copy of Cursor's
 	// database is removed on the way out instead of left in the temporary
@@ -199,9 +209,20 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
+	stopLooking()
 	if err != nil {
 		if !*jsonOut {
-			terminal.Println(stdout)
+			label := backfill.SearchLine(filters)
+			switch {
+			case interrupted && style.live:
+				terminal.Println(stdout, label+" stopped.")
+			case interrupted:
+				terminal.Println(stdout, "stopped.")
+			case style.live:
+				terminal.Println(stdout, label+" failed.")
+			default:
+				terminal.Println(stdout)
+			}
 		}
 		if interrupted {
 			terminal.Println(stderr, "agent-archive: backfill: stopped. Nothing was changed.")
@@ -217,7 +238,11 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		}
 		return 0
 	}
-	terminal.Printf(stdout, "%d found.\n", plan.Found())
+	if style.live {
+		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(filters), plan.Found())
+	} else {
+		terminal.Printf(stdout, "%d found.\n", plan.Found())
+	}
 	if *dryRun {
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
@@ -239,9 +264,21 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 
 	// Step 2: storage must work before anything is confirmed. The check
 	// writes one test object and deletes it again.
-	terminal.Print(stdout, "Checking storage… ")
+	checkStyle := activityStyle(stdout)
+	var stopCheck func()
+	if checkStyle.live {
+		stopCheck = checkStyle.spin(stdout, "Checking storage…").stop
+	} else {
+		terminal.Print(stdout, "Checking storage… ")
+		stopCheck = func() {}
+	}
 	if err := checkStorage(env, cfg); err != nil {
-		terminal.Println(stdout, "failed.")
+		stopCheck()
+		if checkStyle.live {
+			terminal.Println(stdout, "Checking storage… failed.")
+		} else {
+			terminal.Println(stdout, "failed.")
+		}
 		terminal.Printf(stderr, "agent-archive: backfill: storage check failed: %v\n", err)
 		if action := credentials.RecoveryAction(err); action != "" {
 			terminal.Println(stderr, "agent-archive: backfill: "+action)
@@ -249,7 +286,12 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		terminal.Println(stderr, "agent-archive: backfill: nothing was imported.")
 		return 1
 	}
-	terminal.Println(stdout, "ready.")
+	stopCheck()
+	if checkStyle.live {
+		terminal.Println(stdout, "Checking storage… ready.")
+	} else {
+		terminal.Println(stdout, "ready.")
+	}
 	terminal.Println(stdout)
 	backfill.RenderText(stdout, plan)
 	terminal.Println(stdout)
@@ -294,25 +336,49 @@ func offerSetupImport(p *prompter, errOut io.Writer, home, userHome string, env 
 	}
 	filters := backfill.Filters{Harnesses: cfg.Harnesses, Projects: roots}
 	later := "Import them later with " + p.style.cmd("agent-archive backfill") + "."
-	terminal.Print(p.out, "\nLooking for past sessions in these projects… ")
+	var stopLooking func()
+	if p.style.live {
+		terminal.Print(p.out, "\n")
+		stopLooking = p.style.spin(p.out, "Looking for past sessions…").stop
+	} else {
+		terminal.Print(p.out, "\nLooking for past sessions in these projects… ")
+		stopLooking = func() {}
+	}
 	planCtx, stopPlanning := interruptibleContext(env, errOut)
 	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
+	stopLooking()
 	switch {
 	case interrupted:
-		terminal.Println(p.out, "stopped. "+later)
+		if p.style.live {
+			terminal.Println(p.out, "Looking for past sessions… stopped. "+later)
+		} else {
+			terminal.Println(p.out, "stopped. "+later)
+		}
 		return
 	case err != nil:
-		terminal.Println(p.out)
+		if p.style.live {
+			terminal.Println(p.out, "Looking for past sessions… failed.")
+		} else {
+			terminal.Println(p.out)
+		}
 		terminal.Printf(errOut, "agent-archive: backfill: %v\n", err)
 		terminal.Println(p.out, later)
 		return
 	case len(plan.Imported()) == 0:
-		terminal.Println(p.out, "none to import.")
+		if p.style.live {
+			terminal.Println(p.out, "Looking for past sessions… none to import.")
+		} else {
+			terminal.Println(p.out, "none to import.")
+		}
 		return
 	}
-	terminal.Printf(p.out, "%d found.\n", len(plan.Imported()))
+	if p.style.live {
+		terminal.Printf(p.out, "Looking for past sessions… %d found.\n", len(plan.Imported()))
+	} else {
+		terminal.Printf(p.out, "%d found.\n", len(plan.Imported()))
+	}
 	yes, err := p.yesNo(fmt.Sprintf("Import the %s from these projects?", countNoun(len(plan.Imported()), "past session")), true)
 	if err != nil || !yes {
 		terminal.Println(p.out, "Not imported. "+later)

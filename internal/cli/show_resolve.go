@@ -47,9 +47,11 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env Env, s
 		}
 	}
 
+	stopSearch := startActivity(stdout, "Finding sessions…")
 	sessions, err := reader.ListMetadataWithOptions(ctx, store, archiveSessionsPrefix, reader.Filter{Harness: harness}, reader.ListOptions{
 		Cache: listCache(env, false), Skipped: warnSkippedSidecar(stderr, "show"),
 	})
+	stopSearch()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1

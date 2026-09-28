@@ -112,7 +112,7 @@ func TestBackfillPlanningStopsOnInterrupt(t *testing.T) {
 	f.env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
 	before := snapshotTree(t, f.data)
 	out, errOut, code := f.command(t, "backfill", "--dry-run")
-	if code != 1 || !strings.Contains(errOut, "stopped. Nothing was changed.") || !strings.Contains(errOut, "stopping; press Ctrl-C again to quit") || strings.Contains(out, "Dry run") {
+	if code != 1 || !strings.Contains(out, "stopped.") || strings.Contains(out, "failed.") || !strings.Contains(errOut, "stopped. Nothing was changed.") || !strings.Contains(errOut, "stopping; press Ctrl-C again to quit") || strings.Contains(out, "Dry run") {
 		t.Fatalf("code %d\nstdout %s\nstderr %s", code, out, errOut)
 	}
 	if after := snapshotTree(t, f.data); after != before {

@@ -62,7 +62,9 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		return 1
 	}
 	// Step 4: commit the configuration, under collector.lock and hooks.lock.
+	stopWait := startActivity(stdout, "Waiting for collector…")
 	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
+	stopWait()
 	if err != nil {
 		return fail("a collector pass is still running; run backfill again. Nothing was changed.")
 	}
@@ -82,7 +84,8 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	// next session uploads. A second one, or SIGTERM or SIGHUP, quits at
 	// once, after removing any copy of Cursor's database this process made.
 	stdout = &lockedWriter{w: stdout}
-	interrupt := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", func() {})
+	var activity activityStop
+	interrupt := watchSignals(env, stdout, "Stopping after the current session; press Ctrl-C again to quit.", activity.invoke)
 	defer interrupt.release()
 
 	// Step 5: register, in short holds of hooks.lock.
@@ -92,6 +95,8 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	}
 	candidates := plan.Imported()
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].StartedAt.Before(candidates[j].StartedAt) })
+	stopRegister := startActivity(stdout, "Registering sessions…")
+	activity.set(stopRegister)
 	registration := backfill.Registration{
 		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
 		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(),
@@ -106,6 +111,8 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	}
 	result, err := registration.Run(candidates)
 	if err != nil {
+		stopRegister()
+		activity.clear()
 		// Whatever the last hold registered is in the store even if the
 		// batch file missed it; record it before stopping.
 		if reconcileErr := batch.Reconcile(store); reconcileErr == nil {
@@ -118,8 +125,12 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 		return fail("%v. %s registered before this; run agent-archive backfill again with the same options to finish.", err, countNoun(len(result.Sessions), "session"))
 	}
 	if err := completeBatch(env, home, store, &batch); err != nil {
+		stopRegister()
+		activity.clear()
 		return fail("%v", err)
 	}
+	stopRegister()
+	activity.clear()
 	releaseCollector()
 	printRegistered(stdout, batch.ID, added, result)
 
@@ -132,7 +143,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	if err := env.checkpoint("uploading"); err != nil {
 		return fail("%v", err)
 	}
-	return uploadImport(env, stdout, stderr, home, batch.ID, plan, interrupt)
+	return uploadImport(env, stdout, stderr, home, batch.ID, plan, interrupt, &activity)
 }
 
 // completeBatch rebuilds the batch's sessions from the registrations, which
@@ -164,7 +175,9 @@ func finishInterruptedBatch(env Env, stdout io.Writer, home string, plan backfil
 	}
 	defer release()
 	// No collector pass or retention may remove what is being listed.
+	stopWait := startActivity(stdout, "Waiting for collector…")
 	releaseCollector, err := lockCollectorWait(home, "backfill import", env.now(), backfillCollectorWait)
+	stopWait()
 	if err != nil {
 		return errors.New("a collector pass is still running; run backfill again")
 	}
@@ -206,6 +219,32 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+// activityStop holds the current spinner's stop func so Ctrl-C can clear the
+// line without racing the main goroutine as spinners start and stop.
+type activityStop struct {
+	mu sync.Mutex
+	fn func()
+}
+
+func (a *activityStop) set(fn func()) {
+	a.mu.Lock()
+	a.fn = fn
+	a.mu.Unlock()
+}
+
+func (a *activityStop) clear() { a.set(nil) }
+
+// invoke runs the current stop func, if any. It is safe to call from the
+// signal watcher while set/clear run on the main goroutine.
+func (a *activityStop) invoke() {
+	a.mu.Lock()
+	fn := a.fn
+	a.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // commitImport is step 4. With collector.lock held, it takes hooks.lock,
@@ -311,7 +350,7 @@ const uploadBusyGiveUp = 2 * time.Minute
 // session of the batch has work left or a pass makes no progress. Ctrl-C
 // ends the pass after the session in flight; what is left is uploaded by
 // the background collector.
-func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *signalWatch) int {
+func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan backfill.Plan, interrupt *signalWatch, activity *activityStop) int {
 	sizes := map[string]int64{}
 	for _, c := range plan.Candidates {
 		size := c.Bytes
@@ -321,6 +360,10 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 		sizes[c.Harness+"\x00"+c.NativeSessionID] = size
 	}
 	u := &upload{env: env, home: home, batch: batchID, sizes: sizes, terminal: env.isTerminal(underlyingWriter(stdout)), out: stdout}
+	if activity != nil {
+		activity.set(u.stopFinishing)
+		defer activity.clear()
+	}
 	if err := u.refresh(); err != nil {
 		terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
 		return 1
@@ -334,6 +377,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 	for len(u.pending) > 0 && !stop() {
 		before := len(u.pending)
 		_, err := runPass(env, false, passOptions{progress: u.observe, stop: stop})
+		u.stopFinishing()
 		if refreshErr := u.refresh(); refreshErr != nil && err == nil {
 			err = refreshErr
 		}
@@ -346,8 +390,16 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 			if time.Since(lastProgress) > uploadBusyGiveUp {
 				break
 			}
+			stopBusy := startActivity(stdout, "Waiting for collector…")
+			if activity != nil {
+				activity.set(stopBusy)
+			}
 			for wait := 0; wait < 20 && !stop(); wait++ {
 				time.Sleep(100 * time.Millisecond)
+			}
+			stopBusy()
+			if activity != nil {
+				activity.set(u.stopFinishing)
 			}
 			continue
 		}
@@ -360,6 +412,7 @@ func uploadImport(env Env, stdout, stderr io.Writer, home, batchID string, plan 
 			break
 		}
 	}
+	u.stopFinishing()
 	if u.terminal && u.drawn {
 		terminal.Println(stdout)
 	}
@@ -397,6 +450,11 @@ type upload struct {
 	terminal bool
 	out      io.Writer
 	drawn    bool
+	// finish is the spinner after every session of the batch has published
+	// but the collector pass is still wrapping up (read-back, status writes).
+	// finishMu guards it: observe may start it while Ctrl-C stops it.
+	finishMu sync.Mutex
+	finish   *spinner
 
 	total      int
 	totalBytes int64
@@ -465,14 +523,52 @@ func (u *upload) observe(p collector.Progress) {
 		return
 	}
 	delete(u.pending, p.ArchiveSessionID)
+	if len(u.pending) == 0 {
+		// Live terminals replace the count line with a finishing spinner
+		// while the pass wraps up. Non-TTY keeps one count line per pass
+		// (drawn after runPass returns), so a mid-pass empty pending set
+		// that refresh later revises does not print a false "done" line.
+		u.startFinishing()
+		return
+	}
 	if u.terminal {
 		u.draw(false)
+	}
+}
+
+// startFinishing replaces the upload progress line with a spinner while the
+// collector pass finishes after the last session of the batch has published.
+func (u *upload) startFinishing() {
+	u.finishMu.Lock()
+	defer u.finishMu.Unlock()
+	if u.finish != nil {
+		return
+	}
+	if u.terminal && u.drawn {
+		terminal.Print(u.out, "\r\x1b[K")
+		u.drawn = false
+	}
+	style := activityStyle(u.out)
+	if !style.live {
+		return
+	}
+	u.finish = style.spin(u.out, "Finishing upload…")
+}
+
+func (u *upload) stopFinishing() {
+	u.finishMu.Lock()
+	sp := u.finish
+	u.finish = nil
+	u.finishMu.Unlock()
+	if sp != nil {
+		sp.stop()
 	}
 }
 
 // draw shows the progress line: redrawn in place on a terminal, or printed
 // once per pass otherwise.
 func (u *upload) draw(newline bool) {
+	u.stopFinishing()
 	var pendingBytes int64
 	for _, size := range u.pending {
 		pendingBytes += size

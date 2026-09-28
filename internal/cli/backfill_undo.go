@@ -121,19 +121,36 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// The check writes one test object and deletes it again.
 	var bucket storage.ObjectStore
 	if plan.Counts().Deleted > 0 {
-		terminal.Print(stdout, "Checking storage… ")
+		checkStyle := activityStyle(stdout)
+		var stopCheck func()
+		if checkStyle.live {
+			stopCheck = checkStyle.spin(stdout, "Checking storage…").stop
+		} else {
+			terminal.Print(stdout, "Checking storage… ")
+			stopCheck = func() {}
+		}
 		if bucket, err = env.openStore(cfg); err == nil {
 			err = storage.VerifyAccess(context.Background(), bucket)
 		}
 		if err != nil {
-			terminal.Println(stdout, "failed.")
+			stopCheck()
+			if checkStyle.live {
+				terminal.Println(stdout, "Checking storage… failed.")
+			} else {
+				terminal.Println(stdout, "failed.")
+			}
 			terminal.Printf(stderr, "agent-archive: backfill undo: storage check failed: %v\n", err)
 			if action := credentials.RecoveryAction(err); action != "" {
 				terminal.Println(stderr, "agent-archive: backfill undo: "+action)
 			}
 			return fail("nothing was changed.")
 		}
-		terminal.Println(stdout, "ready.")
+		stopCheck()
+		if checkStyle.live {
+			terminal.Println(stdout, "Checking storage… ready.")
+		} else {
+			terminal.Println(stdout, "ready.")
+		}
 		terminal.Println(stdout)
 	}
 	backfill.RenderUndo(stdout, plan)
@@ -149,7 +166,9 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		}
 	}
 
+	stopWait := startActivity(stdout, "Waiting for collector…")
 	releaseCollector, err := lockCollectorWait(home, "backfill undo", env.now(), backfillCollectorWait)
+	stopWait()
 	if err != nil {
 		return fail("a collector pass is still running; run undo again. Nothing was changed.")
 	}
@@ -213,7 +232,9 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	if err := env.checkpoint("undo recorded"); err != nil {
 		return fail("%v", err)
 	}
+	stopRemove := startActivity(stdout, "Removing imported sessions…")
 	result := plan.Remove(context.Background(), store, bucket, now)
+	stopRemove()
 	return reportUndo(stdout, stderr, *batch, plan, changes, result)
 }
 

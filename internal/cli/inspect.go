@@ -124,7 +124,14 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
+	var stopList func()
+	if !opts.jsonOut {
+		stopList = startActivity(stdout, "Listing sessions…")
+	} else {
+		stopList = func() {}
+	}
 	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list")})
+	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
@@ -398,7 +405,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if *normalized {
 			return fs.usageError("--normalized needs a SESSION_ID; pick a session with show, then run show SESSION_ID --normalized")
 		}
+		stopBrowse := startActivity(stdout, "Finding sessions…")
 		shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: *harness}, limit: defaultListLimit}, stderr)
+		stopBrowse()
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
@@ -424,8 +433,10 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	sessionID, *harness = lookup.SessionID, lookup.Harness
 
+	stopShow := startActivity(stdout, "Loading session…")
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
 	if err != nil {
+		stopShow()
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return 1
 	}
@@ -433,14 +444,18 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if !*normalized {
 		metadata, err := reader.ReadMetadata(ctx, store, key)
 		if err != nil {
+			stopShow()
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
 		}
-		return printJSON(stdout, stderr, metadataWithLinks(ctx, store, metadata))
+		view := metadataWithLinks(ctx, store, metadata)
+		stopShow()
+		return printJSON(stdout, stderr, view)
 	}
 
 	metadata, bundle, err := reader.RefreshAndLoad(ctx, store, key, reader.Limits{})
 	if err != nil {
+		stopShow()
 		if errors.Is(err, reader.ErrRefreshRequired) {
 			terminal.Printf(stderr, "agent-archive: show: the session's source bundle is not available (it may have just been replaced or deleted by retention); retry, or run `agent-archive show %s` without --normalized for its metadata\n", sessionID)
 		} else {
@@ -449,11 +464,13 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 	view, err := archive.ParseNormalized(bundle)
+	linked := metadataWithLinks(ctx, store, metadata)
+	stopShow()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
 		return 1
 	}
-	if code := printJSON(stdout, stderr, metadataWithLinks(ctx, store, metadata)); code != 0 {
+	if code := printJSON(stdout, stderr, linked); code != 0 {
 		return code
 	}
 	return printJSON(stdout, stderr, normalizedOutput{Turns: view.Turns, ToolCalls: view.ToolCalls, ToolResults: view.ToolResults, HookFinals: view.HookFinals})
