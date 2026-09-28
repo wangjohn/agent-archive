@@ -69,7 +69,7 @@ func TestCollapseSessionTitleTruncates(t *testing.T) {
 func TestApplyProjectName(t *testing.T) {
 	t.Parallel()
 	var m Metadata
-	m.ApplyProjectName(filepath.Join("/Users", "alex", "src", "agent-archive"))
+	m.ApplyProjectName(filepath.Join(string(filepath.Separator), "Users", "alex", "src", "agent-archive"))
 	if m.ProjectName != "agent-archive" {
 		t.Fatalf("project_name=%q", m.ProjectName)
 	}
