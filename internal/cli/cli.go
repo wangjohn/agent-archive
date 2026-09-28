@@ -394,6 +394,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		stdin = strings.NewReader("")
 	}
 	if len(args) == 0 {
+		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+			return runListCommand(nil, stdin, stdout, stderr, env)
+		}
 		if notSetUp(env) {
 			terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
 			terminal.Println(stdout)

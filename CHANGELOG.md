@@ -21,7 +21,12 @@ follow [Semantic Versioning](https://semver.org/).
   status, and all models/skills.
 - On an interactive terminal (stdin and stdout), `list` and bare `show`
   offer a numbered picker to print a session's metadata; `q` quits. Piped
-  output and `--json` stay non-interactive.
+  output and `--json` stay non-interactive. Bare `agent-archive` on a TTY
+  opens the same interactive list when already set up.
+- `show` accepts a title substring (and short SESSION_ID) when the argument
+  is not an exact id; multiple matches use the picker on a TTY.
+- Human `list` groups rows under project headings when more than one project
+  appears in the page.
 - Metadata may include optional `title` (preview of the first filtered human
   prompt) and `project_name` (project basename at publish). Parser version
   is now `0.12.0` so existing sessions get titles on the next metadata

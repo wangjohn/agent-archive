@@ -31,11 +31,16 @@ agent-archive list --json
 agent-archive list --json --limit 0
 
 # One session's metadata sidecar, as JSON. With no SESSION_ID on a terminal,
-# the same interactive picker as list.
+# the same interactive picker as list. A title substring also works.
 agent-archive show
 agent-archive show SESSION_ID
+agent-archive show "OAuth callback"
+agent-archive show "OAuth callback" --harness codex  # search one app
 agent-archive show SESSION_ID --normalized   # also the verified conversation
 ```
+
+On an interactive terminal, bare `agent-archive` (no command) opens the
+same session browser as `list` when capture is already set up.
 
 The JSON documents are described in [JSON output](../reference/json-output.md).
 
@@ -47,7 +52,10 @@ version wrote it, is left out with a warning on stderr; the rest are listed.
 the first filtered human prompt, derived at publish time). Older sidecars
 without a title fall back to the short SESSION_ID in that column. `project_name`
 in metadata labels the project when present; otherwise `list` uses this Mac's
-configured project basename.
+configured project basename. The ID column is a short prefix you can pass to
+`show`; if multiple archived IDs share that prefix, use a longer ID from
+`list --verbose` or add `--harness`. Projects with the same basename stay in
+separate groups, labeled with their project ID prefixes.
 
 `show` prints conversation content only when asked: `--normalized` downloads
 the session's source bundle, verifies its checksum and identity against the

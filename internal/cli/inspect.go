@@ -140,8 +140,9 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: projectLabels(cfg), Style: styleFor(stdout),
+		GroupByProject: true,
 	}
-	if browseInteractive(env, stdin, stdout, false) {
+	if browseInteractive(env, stdin, stdout) {
 		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, true)
 	}
 	if err := withPager(stdout, stderr, env, opts.noPager, func(w io.Writer) error {
@@ -379,7 +380,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	*harness = canonical
 
-	if sessionID == "" && !browseInteractive(env, stdin, stdout, false) {
+	if sessionID == "" && !browseInteractive(env, stdin, stdout) {
 		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
 	}
 
@@ -397,7 +398,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if *normalized {
 			return fs.usageError("--normalized needs a SESSION_ID; pick a session with show, then run show SESSION_ID --normalized")
 		}
-		shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{limit: defaultListLimit}, stderr)
+		shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: *harness}, limit: defaultListLimit}, stderr)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 			return 1
@@ -408,22 +409,21 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		}
 		format := listFormatOptions{
 			Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout),
+			GroupByProject: true,
 		}
 		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, false)
 	}
 
 	ctx := context.Background()
-	// The default list prints short IDs. Resolve those against all archived
-	// sidecars before constructing an object key, including when --harness is
-	// supplied. Full IDs retain the direct-read path below.
-	if isShortArchiveID(sessionID) {
-		resolvedID, resolvedHarness, err := resolveShortArchiveID(ctx, store, env, stderr, *harness, sessionID)
-		if err != nil {
-			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-			return 1
-		}
-		sessionID, *harness = resolvedID, resolvedHarness
+	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, projectLabels(cfg))
+	if code != 0 {
+		return code
 	}
+	if lookup.Cancelled {
+		return 0
+	}
+	sessionID, *harness = lookup.SessionID, lookup.Harness
+
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
