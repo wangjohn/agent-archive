@@ -6,10 +6,11 @@ a session.
 
 ```sh
 # Newest archived sessions matching the filters (at most 50 by default):
-# short ID, relative time, harness, project, and model. Metadata only, never
-# transcript text. On an interactive terminal, pick a numbered row to show
-# that session's metadata (q to quit). Otherwise the table is paged through
-# $PAGER (or less); use --no-pager to print directly.
+# title (first filtered prompt preview), relative time, harness, project,
+# and short ID. Metadata only, never full transcript text. On an interactive
+# terminal, pick a numbered row to show that session's metadata (q to quit).
+# Otherwise the table is paged through $PAGER (or less); use --no-pager to
+# print directly.
 agent-archive list
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
@@ -41,6 +42,12 @@ The JSON documents are described in [JSON output](../reference/json-output.md).
 `list` reuses unchanged metadata from a local cache (`--no-cache` to skip
 it). A session whose metadata can't be read, for example because a newer
 version wrote it, is left out with a warning on stderr; the rest are listed.
+
+`list` shows each session's `title` when metadata has one (a short preview of
+the first filtered human prompt, derived at publish time). Older sidecars
+without a title fall back to the short SESSION_ID in that column. `project_name`
+in metadata labels the project when present; otherwise `list` uses this Mac's
+configured project basename.
 
 `show` prints conversation content only when asked: `--normalized` downloads
 the session's source bundle, verifies its checksum and identity against the

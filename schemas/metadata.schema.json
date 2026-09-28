@@ -42,6 +42,16 @@
       "type": "string",
       "minLength": 1
     },
+    "title": {
+      "description": "One-line preview of the first filtered human prompt, truncated for browsing. Omitted when no prompt text was available.",
+      "type": "string",
+      "minLength": 1
+    },
+    "project_name": {
+      "description": "Basename of the session's project root at publish time, for list without local config.",
+      "type": "string",
+      "minLength": 1
+    },
     "started_at": {
       "type": "string",
       "format": "date-time"

@@ -54,7 +54,9 @@ Security problems, including a way around the filter, are reported as
 For each captured session, two objects (see
 [bucket layout](../reference/bucket-layout.md)): the source bundle, which
 holds the filtered transcript, skill evidence, and hook observations, and
-the metadata sidecar.
+the metadata sidecar. The sidecar's optional `title` is a short, truncated
+preview of the first filtered human prompt (for `list`); it is still
+filter-derived text stored in the bucket, not a separate redaction pass.
 
 - **The filtered transcript**: your prompts; the agent's
   replies; tool calls with their arguments (Edit bodies, shell commands,

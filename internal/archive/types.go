@@ -548,13 +548,21 @@ type SkillUse struct {
 }
 
 // Metadata is the replaceable, source-first reader index. It contains no
-// transcript text or tool payloads.
+// tool payloads and no full transcript. Title is an optional short preview of
+// the first filtered human prompt, derived for browsing.
 type Metadata struct {
-	SchemaVersion       int                      `json:"schema_version"`
-	SessionID           string                   `json:"session_id"`
-	NativeSessionID     string                   `json:"native_session_id"`
-	MachineID           string                   `json:"machine_id"`
-	ProjectID           string                   `json:"project_id"`
+	SchemaVersion   int    `json:"schema_version"`
+	SessionID       string `json:"session_id"`
+	NativeSessionID string `json:"native_session_id"`
+	MachineID       string `json:"machine_id"`
+	ProjectID       string `json:"project_id"`
+	// Title is a one-line, truncated preview of the first human prompt after
+	// filtering. Omitted when no prompt text was available.
+	Title string `json:"title,omitempty"`
+	// ProjectName is the basename of the session's project root at publish
+	// time, so list can label the project without local config. Omitted when
+	// unknown.
+	ProjectName         string                   `json:"project_name,omitempty"`
 	StartedAt           time.Time                `json:"started_at"`
 	CapturedAt          time.Time                `json:"captured_at"`
 	MetadataDerivedAt   time.Time                `json:"metadata_derived_at"`
