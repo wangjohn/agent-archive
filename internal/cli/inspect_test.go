@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +73,11 @@ func TestListShowsPublishedSessionMetadataOnly(t *testing.T) {
 	if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
-	for _, want := range []string{id, "codex", "gpt-test", "2026-01-02T00:00:00Z", "1 session(s)."} {
+	short := id
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	for _, want := range []string{short, "codex", "gpt-test", "just now", "1 session(s).", "WHEN", "PROJECT"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("list output missing %q:\n%s", want, out.String())
 		}
@@ -109,7 +114,7 @@ func TestListFilters(t *testing.T) {
 		if code := Run(c.args, nil, &out, &errOut, env); code != 0 {
 			t.Fatalf("%v: code=%d stderr=%s", c.args, code, errOut.String())
 		}
-		if got := strings.Contains(out.String(), id); got != c.match {
+		if got := strings.Contains(out.String(), id[:min(8, len(id))]); got != c.match {
 			t.Fatalf("%v: matched=%v want=%v\n%s", c.args, got, c.match, out.String())
 		}
 		if !c.match && !strings.Contains(out.String(), "No archived sessions match.") {
@@ -162,7 +167,7 @@ func TestListFiltersExactSkillHashFromMetadataOnly(t *testing.T) {
 	} {
 		wantID, rejectID := ids[0], ids[1]
 		var out, errOut bytes.Buffer
-		if code := Run([]string{"list", "--skill", "review", "--skill-sha256", hash}, nil, &out, &errOut, env); code != 0 {
+		if code := Run([]string{"list", "--skill", "review", "--skill-sha256", hash, "--verbose"}, nil, &out, &errOut, env); code != 0 {
 			t.Fatalf("hash=%s code=%d stderr=%s", hash, code, errOut.String())
 		}
 		// One ID is a prefix of the other, and tabwriter pads columns with
@@ -175,13 +180,18 @@ func TestListFiltersExactSkillHashFromMetadataOnly(t *testing.T) {
 	}
 }
 
-// listedSessionIDs returns the session ID in the first column of each `list`
-// row, skipping the header and the trailing count line.
+// listedSessionIDs returns the SESSION column of each `list` row (short id by
+// default, full id with --verbose), skipping the header and count lines.
 func listedSessionIDs(out string) []string {
 	var ids []string
 	for line := range strings.SplitSeq(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 || fields[0] == "SESSION" || fields[0] == "Showing" || strings.Contains(line, "session(s).") {
+		if len(fields) == 0 || fields[0] == "SESSION" || fields[0] == "#" || fields[0] == "Showing" || strings.Contains(line, "session(s).") {
+			continue
+		}
+		// Numbered interactive tables put the index first.
+		if _, err := strconv.Atoi(fields[0]); err == nil && len(fields) > 1 {
+			ids = append(ids, fields[1])
 			continue
 		}
 		ids = append(ids, fields[0])
@@ -594,7 +604,7 @@ func TestListWarnsAboutInvalidSidecarAndListsTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"list", "--no-cache"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--no-cache", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), id) || !strings.Contains(out.String(), "1 session(s).") {

@@ -15,6 +15,13 @@ follow [Semantic Versioning](https://semver.org/).
 - On a terminal, `list` (text only) pages through `$AGENT_ARCHIVE_PAGER`,
   else `$PAGER`, else `less -FRX`. Use `--no-pager`, or set either env var
   to empty or `cat`, to print directly. `--json` is never paged.
+- Default `list` text is scannable: short session ID, relative capture time,
+  harness, project basename (from this Mac's config), and model, with a
+  skill hint when one was used. `--verbose` restores full IDs, absolute
+  times, origin, parser status, and all models/skills.
+- On an interactive terminal (stdin and stdout), `list` and bare `show`
+  offer a numbered picker to print a session's metadata; `q` quits. Piped
+  output and `--json` stay non-interactive.
 
 ## [0.1.1] - 2026-09-28
 

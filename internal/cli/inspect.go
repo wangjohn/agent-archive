@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -46,26 +45,27 @@ const eligibleNoUseUnavailableMessage = "--skill-usage eligible_no_use cannot re
 // machine lock or the pause check: `list` and `show` only read remote
 // objects and never touch local collector state, so they may run alongside
 // a scheduled `_collect` and while collection is paused. found is false,
-// with a nil error, when setup has never run.
-func openReadOnlyStore(env Env) (storage.ObjectStore, bool, error) {
+// with a nil error, when setup has never run. cfg is meaningful only when
+// found is true.
+func openReadOnlyStore(env Env) (storage.ObjectStore, config.Config, bool, error) {
 	// Read-only: before setup there is nothing to read, and no data
 	// directory is created just to say so.
 	home, err := env.readHome()
 	if err != nil {
-		return nil, false, fmt.Errorf("resolve home: %w", err)
+		return nil, config.Config{}, false, fmt.Errorf("resolve home: %w", err)
 	}
 	cfg, found, err := config.Load(home)
 	if err != nil {
-		return nil, false, fmt.Errorf("load config: %w", err)
+		return nil, config.Config{}, false, fmt.Errorf("load config: %w", err)
 	}
 	if !found {
-		return nil, false, nil
+		return nil, config.Config{}, false, nil
 	}
 	store, err := env.openStore(cfg)
 	if err != nil {
-		return nil, true, fmt.Errorf("open storage: %w", err)
+		return nil, cfg, true, fmt.Errorf("open storage: %w", err)
 	}
-	return store, true, nil
+	return store, cfg, true, nil
 }
 
 // runListCommand implements `agent-archive list`. It reads only metadata
@@ -73,8 +73,9 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, bool, error) {
 // metadata fields, so its output can never contain transcript content. It
 // reuses unchanged sidecars from the local metadata cache unless --no-cache.
 // Text listings are capped by --limit (default 50; 0 for all) and, on a
-// terminal, paged through $PAGER unless --no-pager or --json.
-func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
+// terminal, paged through $PAGER unless --no-pager, --json, or an interactive
+// browse (stdin and stdout are both terminals).
+func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("list", stderr)
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
 	model := fs.String("model", "", "only sessions that requested or observed this model")
@@ -88,6 +89,7 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
 	limit := fs.Int("limit", defaultListLimit, "show at most this many sessions, newest first (0 for all)")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
+	verbose := fs.Bool("verbose", false, "show full session IDs, absolute times, origin, parser, and all models/skills")
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the matching sessions' metadata")
 	if !fs.parseFlagsOnly(args) {
 		return 2
@@ -96,7 +98,7 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		harness: *harness, model: *model, skill: *skill, skillSHA256: *skillSHA256,
 		skillUsage: *skillUsage, since: *since, complete: *complete,
 		imported: *imported, hookCaptured: *hookCaptured, limit: *limit,
-		noCache: *noCache, noPager: *noPager, jsonOut: *jsonOut,
+		noCache: *noCache, noPager: *noPager, verbose: *verbose, jsonOut: *jsonOut,
 	}, env.now())
 	if code != 0 {
 		return code
@@ -113,7 +115,7 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		return 0
 	}
 
-	store, found, err := openReadOnlyStore(env)
+	store, cfg, found, err := openReadOnlyStore(env)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
@@ -136,8 +138,14 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Println(stdout, "No archived sessions match.")
 		return 0
 	}
+	format := listFormatOptions{
+		Now: env.now(), Verbose: opts.verbose, Projects: projectLabels(cfg), Style: styleFor(stdout),
+	}
+	if browseInteractive(env, stdin, stdout, false) {
+		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, true)
+	}
 	if err := withPager(stdout, stderr, env, opts.noPager, func(w io.Writer) error {
-		return printListTable(w, shown, totalMatched, truncated)
+		return printListTable(w, shown, totalMatched, truncated, format)
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
@@ -158,6 +166,7 @@ type listFlagValues struct {
 	hookCaptured bool
 	noCache      bool
 	noPager      bool
+	verbose      bool
 	jsonOut      bool
 	limit        int
 }
@@ -170,6 +179,7 @@ type listOptions struct {
 	hookCaptured bool
 	noCache      bool
 	noPager      bool
+	verbose      bool
 	jsonOut      bool
 	limit        int
 }
@@ -216,7 +226,7 @@ func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (li
 			RequireCompleteCoverage: v.complete, SkillUsage: usage, From: from,
 		},
 		skillUsage: usage, imported: v.imported, hookCaptured: v.hookCaptured,
-		noCache: v.noCache, noPager: v.noPager, jsonOut: v.jsonOut, limit: v.limit,
+		noCache: v.noCache, noPager: v.noPager, verbose: v.verbose, jsonOut: v.jsonOut, limit: v.limit,
 	}, 0
 }
 
@@ -255,27 +265,6 @@ func newListDocument(sessions []archive.Metadata, limit, totalMatched int, trunc
 		Limit: limit, Returned: len(sessions), TotalMatched: totalMatched,
 		Truncated: truncated,
 	}
-}
-
-// printListTable writes the human list table and trailing count line.
-func printListTable(w io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool) error {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	terminal.Println(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
-	for _, m := range sessions {
-		// Every cell but the fixed ones comes from bucket metadata, so it
-		// passes through archive.DisplayLine: no escape sequences reach the
-		// terminal, and no tab or newline breaks the table.
-		terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(m.SessionID), archive.DisplayLine(m.Harness.Name), formatTimeOrNever(m.CapturedAt), sessionOrigin(m), archive.DisplayLine(string(m.Parser.Status)), listOrDash(modelNames(m)), listOrDash(skillNames(m)))
-	}
-	if err := tw.Flush(); err != nil {
-		return err
-	}
-	if truncated {
-		terminal.Printf(w, "Showing %d of %d session(s). Use --limit 0 for all, or narrow with --since / --harness.\n", len(sessions), totalMatched)
-	} else {
-		terminal.Printf(w, "%d session(s).\n", len(sessions))
-	}
-	return nil
 }
 
 // harnessFlag checks a --harness value and returns its canonical name, as
@@ -371,7 +360,8 @@ func validLowerSHA256(value string) bool {
 // content — the normalized view derived from the verified source bundle —
 // is printed only when the user passes --normalized explicitly, keeping the
 // spec's rule that nothing prints transcript contents unless asked.
-func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
+// With no SESSION_ID on a TTY, it opens the same interactive picker as list.
+func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
 	normalized := fs.Bool("normalized", false, "also download, verify, and print the normalized conversation view (this prints transcript content)")
@@ -383,16 +373,17 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if !ok {
 		return 2
 	}
-	if sessionID == "" {
-		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
-	}
 	canonical, ok := harnessFlag(*harness)
 	if !ok {
 		return fs.usageError("%s", harnessFlagError(*harness))
 	}
 	*harness = canonical
 
-	store, found, err := openReadOnlyStore(env)
+	if sessionID == "" && !browseInteractive(env, stdin, stdout, false) {
+		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
+	}
+
+	store, cfg, found, err := openReadOnlyStore(env)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return 1
@@ -401,7 +392,38 @@ func runShowCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
+
+	if sessionID == "" {
+		if *normalized {
+			return fs.usageError("--normalized needs a SESSION_ID; pick a session with show, then run show SESSION_ID --normalized")
+		}
+		shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{limit: defaultListLimit}, stderr)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return 1
+		}
+		if totalMatched == 0 {
+			terminal.Println(stdout, "No archived sessions match.")
+			return 0
+		}
+		format := listFormatOptions{
+			Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout),
+		}
+		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, false)
+	}
+
 	ctx := context.Background()
+	// The default list prints short IDs. Resolve those against all archived
+	// sidecars before constructing an object key, including when --harness is
+	// supplied. Full IDs retain the direct-read path below.
+	if isShortArchiveID(sessionID) {
+		resolvedID, resolvedHarness, err := resolveShortArchiveID(ctx, store, env, stderr, *harness, sessionID)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return 1
+		}
+		sessionID, *harness = resolvedID, resolvedHarness
+	}
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
