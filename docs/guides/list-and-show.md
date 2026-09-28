@@ -31,11 +31,15 @@ agent-archive list --json
 agent-archive list --json --limit 0
 
 # One session's metadata sidecar, as JSON. With no SESSION_ID on a terminal,
-# the same interactive picker as list.
+# the same interactive picker as list. A title substring also works.
 agent-archive show
 agent-archive show SESSION_ID
+agent-archive show "OAuth callback"
 agent-archive show SESSION_ID --normalized   # also the verified conversation
 ```
+
+On an interactive terminal, bare `agent-archive` (no command) opens the
+same session browser as `list` when capture is already set up.
 
 The JSON documents are described in [JSON output](../reference/json-output.md).
 

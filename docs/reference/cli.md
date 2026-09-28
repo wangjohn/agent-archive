@@ -263,12 +263,13 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 Guide: [Inspect the archive](../guides/list-and-show.md).
 
 ```text
-Usage: agent-archive show [SESSION_ID] [--harness NAME] [--normalized] [--json]
+Usage: agent-archive show [SESSION_ID|TITLE] [options]
 
 Print session metadata as JSON (--json is accepted, as for list and status).
 An imported session also shows origin, imported_at, and started_at_source.
 With no SESSION_ID on a terminal, show the same interactive session picker
-as list and print the chosen session's metadata.
+as list and print the chosen session's metadata. A TITLE substring also
+matches; several matches on a terminal open the picker.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --normalized          Also download and verify the source bundle, and print

@@ -140,6 +140,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	format := listFormatOptions{
 		Now: env.now(), Verbose: opts.verbose, Projects: projectLabels(cfg), Style: styleFor(stdout),
+		GroupByProject: true,
 	}
 	if browseInteractive(env, stdin, stdout, false) {
 		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, true)
@@ -408,11 +409,21 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		}
 		format := listFormatOptions{
 			Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout),
+			GroupByProject: true,
 		}
 		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, false)
 	}
 
 	ctx := context.Background()
+	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, projectLabels(cfg))
+	if code != 0 {
+		return code
+	}
+	if lookup.Done {
+		return lookup.DoneCode
+	}
+	sessionID, *harness = lookup.SessionID, lookup.Harness
+
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)

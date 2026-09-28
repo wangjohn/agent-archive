@@ -5,7 +5,6 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -39,11 +38,12 @@ type listRow struct {
 
 // listFormatOptions controls how session rows are built and printed.
 type listFormatOptions struct {
-	Now       time.Time
-	Verbose   bool
-	Numbered  bool
-	Projects  map[string]string // project_id → display label (basename)
-	Style     textStyle
+	Now            time.Time
+	Verbose        bool
+	Numbered       bool
+	GroupByProject bool
+	Projects       map[string]string // project_id → display label (basename)
+	Style          textStyle
 }
 
 // formatSessionRows builds display rows for sessions. Short IDs are unique
@@ -155,51 +155,6 @@ func projectLabels(cfg config.Config) map[string]string {
 		labels[p.ProjectID] = base
 	}
 	return labels
-}
-
-// printSessionTable writes the human list table for rows.
-func printSessionTable(w io.Writer, rows []listRow, opts listFormatOptions) error {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if opts.Verbose {
-		if opts.Numbered {
-			terminal.Println(tw, "#\tTITLE\tSESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED\tPROJECT")
-		} else {
-			terminal.Println(tw, "TITLE\tSESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED\tPROJECT")
-		}
-		for _, r := range rows {
-			if opts.Numbered {
-				terminal.Printf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					r.Index, r.Title, archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
-			} else {
-				terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					r.Title, archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
-			}
-		}
-	} else {
-		if opts.Numbered {
-			terminal.Println(tw, "#\tTITLE\tWHEN\tHARNESS\tPROJECT\tID")
-		} else {
-			terminal.Println(tw, "TITLE\tWHEN\tHARNESS\tPROJECT\tID")
-		}
-		for _, r := range rows {
-			title := r.Title
-			if r.SkillHint != "" {
-				if opts.Style.color {
-					title += opts.Style.dim(r.SkillHint)
-				} else {
-					title += r.SkillHint
-				}
-			}
-			if opts.Numbered {
-				terminal.Printf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
-					r.Index, title, r.When, r.Harness, r.Project, archive.DisplayLine(r.ShortID))
-			} else {
-				terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\n",
-					title, r.When, r.Harness, r.Project, archive.DisplayLine(r.ShortID))
-			}
-		}
-	}
-	return tw.Flush()
 }
 
 // printListFooter writes the trailing count / truncation line.
