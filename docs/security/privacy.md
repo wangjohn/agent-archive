@@ -159,7 +159,12 @@ delete from the bucket the source objects no session's metadata points at.
 Pause every Mac that uploads to the bucket first, so no publication is in
 flight: a new source is uploaded before the metadata that points at it.
 This needs the [AWS CLI](https://aws.amazon.com/cli/) and `jq`, and
-credentials that can list, read, and delete under the prefix:
+credentials that can list, read, and delete under the prefix. Keep **every**
+uploading Mac paused until the plan has been applied. Run the following blocks
+in the **same bash or zsh shell**; a plan expires after five minutes and can
+only be applied once. If anything fails, start again with a new plan. External
+writers can still race a shell recipe, so these commands cannot provide an
+atomic deletion against concurrent writes.
 
 First, list what would be deleted:
 
@@ -172,51 +177,180 @@ prefix=agent-archive/          # your prefix with its trailing slash, or empty
 # export AWS_PROFILE=...       # a profile that can list, read, and delete
 # For R2: export AWS_ENDPOINT_URL=https://<ACCOUNT_ID>.r2.cloudflarestorage.com
 
-# Every key under sessions/, then the source each metadata.json points at.
-# Inside a loop, each aws reads from </dev/null so it can't swallow the list.
-aws s3api list-objects-v2 --bucket "$bucket" --prefix "${prefix}sessions/" \
-  --query 'Contents[].Key' --output text | tr '\t' '\n' | grep -v '^None$' | sort > keys.txt
-: > failed.txt
-grep '/metadata\.json$' keys.txt | while read -r meta; do
-  aws s3 cp "s3://$bucket/$meta" - </dev/null | jq -er --arg p "$prefix" '.source_bundle.key | strings | $p + .' ||
-    echo "$meta" >> failed.txt
-done | sort -u > current.txt
-
-# Sources no metadata points at: superseded copies, and leftovers of
-# interrupted deletions.
-grep '/source\.[0-9a-f]*\.jsonl\.gz$' keys.txt | comm -23 - current.txt > unreferenced.txt
-wc -l unreferenced.txt failed.txt   # sources to delete; metadata that could not be read
+purge_dir=                         # never inherit a previous plan
+purge_prepare() {
+  mode=$1; selector=${2:-}
+  purge_dir=                       # a failed new attempt cannot expose an old plan
+  case "$prefix" in ''|*/) ;; *) echo "Prefix must be empty or end in /." >&2; return 1 ;; esac
+  case "$mode" in
+    unreferenced|all) ;;
+    old) case "$selector" in ''|*[!0-9]*) echo "Invalid filter version." >&2; return 1 ;; esac ;;
+    machine) [ -n "$selector" ] || { echo "Missing machine ID." >&2; return 1; } ;;
+    *) echo "Invalid purge mode." >&2; return 1 ;;
+  esac
+  purge_dir=$(mktemp -d "${TMPDIR:-/tmp}/agent-archive-purge.XXXXXXXX") || return 1
+  printf '%s\n' "$bucket" > "$purge_dir/bucket" || return 1
+  printf '%s\n' "$prefix" > "$purge_dir/prefix" || return 1
+  printf '%s\n' "$mode" > "$purge_dir/mode" || return 1
+  # Fetch a complete listing before inspecting or deleting any object.
+  scope="${prefix}sessions/"; [ "$mode" = all ] && scope=$prefix
+  if ! aws s3api list-objects-v2 --bucket "$bucket" --prefix "$scope" \
+      --query 'Contents[].Key' --output json </dev/null > "$purge_dir/list.json"; then
+    echo "Listing failed; nothing deleted." >&2; return 1
+  fi
+  if ! jq -r --arg p "$scope" '
+      if . == null then empty
+      elif type == "array" and all(.[]; type == "string" and startswith($p) and
+          (explode | all(.[]; . >= 32))) then .[]
+      else error("incomplete listing") end
+    ' "$purge_dir/list.json" > "$purge_dir/unsorted"; then
+    echo "Listing invalid; nothing deleted." >&2; return 1
+  fi
+  LC_ALL=C sort -u "$purge_dir/unsorted" > "$purge_dir/keys" || return 1
+  : > "$purge_dir/metas" || return 1
+  while IFS= read -r key; do
+    case "$key" in "${prefix}sessions/"*/metadata.json)
+      printf '%s\n' "$key" >> "$purge_dir/metas" || return 1 ;;
+    esac
+  done < "$purge_dir/keys"
+  : > "$purge_dir/current" || return 1
+  : > "$purge_dir/selected" || return 1
+  n=0
+  while IFS= read -r meta; do
+    n=$((n + 1))
+    if ! aws s3 cp "s3://$bucket/$meta" - </dev/null > "$purge_dir/meta.$n"; then
+      echo "Cannot read $meta; nothing deleted." >&2; return 1
+    fi
+    # Require the source in this session, a decimal filter version, and a machine ID.
+    if ! jq -ser --arg dir "${meta%metadata.json}" --arg p "$prefix" '
+        if length == 1 and (.[0] | type) == "object" then .[0]
+        else error("metadata must contain one object") end |
+        .source_bundle.key as $s | .filter_version as $v | .machine_id as $m |
+        if ($s | type) == "string" and ($s | startswith(($dir | ltrimstr($p)))) and
+           ($s | ltrimstr(($dir | ltrimstr($p))) |
+             test("^source\\.[0-9a-f]{64}\\.jsonl\\.gz$")) and
+           ($s | explode | all(.[]; . >= 32)) and
+           ($v | tostring | test("^[0-9]+$")) and
+           ($m | type) == "string" and ($m | length > 0) then
+          [$s, ($v | tostring), $m] | @tsv
+        else error("invalid metadata") end
+      ' "$purge_dir/meta.$n" > "$purge_dir/fields.$n"; then
+      echo "Invalid $meta; nothing deleted." >&2; return 1
+    fi
+    IFS="$(printf '\t')" read -r source version owner < "$purge_dir/fields.$n" || return 1
+    if ! grep -Fxq -- "$prefix$source" "$purge_dir/keys"; then
+      echo "Current source missing for $meta; nothing deleted." >&2; return 1
+    fi
+    printf '%s%s\n' "$prefix" "$source" >> "$purge_dir/current" || return 1
+    if { [ "$mode" = old ] && [ "$version" -lt "$selector" ]; } ||
+       { [ "$mode" = machine ] && [ "$owner" = "$selector" ]; }; then
+      printf '%s\n' "$meta" >> "$purge_dir/selected" || return 1
+    fi
+  done < "$purge_dir/metas"
+  LC_ALL=C sort -u "$purge_dir/current" -o "$purge_dir/current" || return 1
+  : > "$purge_dir/targets" || return 1
+  if [ "$mode" = all ]; then
+    cp "$purge_dir/keys" "$purge_dir/targets" || return 1
+  elif [ "$mode" = unreferenced ]; then
+    jq -r --arg p "$prefix" '
+      if . == null then empty else .[] |
+        select((ltrimstr($p) |
+          test("^sessions/[^/]+/[^/]+/source\\.[0-9a-f]{64}\\.jsonl\\.gz$"))) end
+      ' "$purge_dir/list.json" > "$purge_dir/sources" || return 1
+    LC_ALL=C sort -u "$purge_dir/sources" -o "$purge_dir/sources" || return 1
+    LC_ALL=C comm -23 "$purge_dir/sources" "$purge_dir/current" > "$purge_dir/targets" || return 1
+  else
+    while IFS= read -r meta; do
+      printf '%s\n' "$meta" >> "$purge_dir/targets" || return 1
+      while IFS= read -r key; do
+        case "$key" in "${meta%metadata.json}"*)
+          [ "$key" = "$meta" ] || printf '%s\n' "$key" >> "$purge_dir/targets" || return 1 ;;
+        esac
+      done < "$purge_dir/keys"
+    done < "$purge_dir/selected"
+  fi
+  date +%s > "$purge_dir/created" || return 1
+  : > "$purge_dir/VALID" || return 1 # written only after every check succeeds
+  echo "Plan $purge_dir: $(wc -l < "$purge_dir/targets" | tr -d ' ') exact keys."
+  cat "$purge_dir/targets"
+}
+purge_apply() {
+  if [ -z "${purge_dir:-}" ] || [ ! -f "$purge_dir/VALID" ]; then
+    echo "No valid plan; nothing deleted." >&2; return 1
+  fi
+  rm "$purge_dir/VALID" || return 1 # a plan can be attempted only once
+  if [ "$(cat "$purge_dir/bucket")" != "$bucket" ] ||
+     [ "$(cat "$purge_dir/prefix")" != "$prefix" ] ||
+     [ "$(cat "$purge_dir/mode")" != "$mode" ]; then
+    echo "Bucket, prefix, or mode changed; nothing deleted." >&2; return 1
+  fi
+  now=$(date +%s); created=$(cat "$purge_dir/created")
+  if [ "$now" -lt "$created" ] || [ $((now - created)) -gt 300 ]; then
+    echo "Plan expired; nothing deleted." >&2; return 1
+  fi
+  scope="${prefix}sessions/"; [ "$mode" = all ] && scope=$prefix
+  if ! aws s3api list-objects-v2 --bucket "$bucket" --prefix "$scope" \
+      --query 'Contents[].Key' --output json </dev/null > "$purge_dir/recheck.json" ||
+     ! jq -r --arg p "$scope" '
+       if . == null then empty
+       elif type == "array" and all(.[]; type == "string" and startswith($p) and
+           (explode | all(.[]; . >= 32))) then .[]
+       else error("incomplete listing") end
+     ' "$purge_dir/recheck.json" > "$purge_dir/recheck.unsorted" ||
+     ! LC_ALL=C sort -u "$purge_dir/recheck.unsorted" > "$purge_dir/recheck.keys" ||
+     ! cmp -s "$purge_dir/keys" "$purge_dir/recheck.keys"; then
+    echo "Listing changed or failed; nothing deleted. Make a new plan." >&2; return 1
+  fi
+  n=0
+  while IFS= read -r meta; do
+    n=$((n + 1))
+    if ! aws s3 cp "s3://$bucket/$meta" - </dev/null > "$purge_dir/recheck.meta" ||
+       ! cmp -s "$purge_dir/meta.$n" "$purge_dir/recheck.meta"; then
+      echo "Metadata changed or failed at $meta; nothing deleted. Make a new plan." >&2
+      return 1
+    fi
+  done < "$purge_dir/metas"
+  : > "$purge_dir/removed"
+  cp "$purge_dir/targets" "$purge_dir/pending" || return 1
+  while IFS= read -r key; do
+    if ! aws s3 rm "s3://$bucket/$key" </dev/null; then
+      echo "Delete failed at $key. Already removed:" >&2
+      cat "$purge_dir/removed" >&2
+      echo "Not confirmed removed (including failed key):" >&2
+      cat "$purge_dir/pending" >&2
+      return 1
+    fi
+    if ! printf '%s\n' "$key" >> "$purge_dir/removed" ||
+       ! sed '1d' "$purge_dir/pending" > "$purge_dir/next" ||
+       ! mv "$purge_dir/next" "$purge_dir/pending"; then
+      echo "Progress log failed after removing $key; stopped. Inspect the bucket." >&2
+      return 1
+    fi
+  done < "$purge_dir/targets"
+  echo "Deleted $(wc -l < "$purge_dir/removed" | tr -d ' ') keys."
+}
+purge_prepare unreferenced
 ```
 
-Review `unreferenced.txt`. `failed.txt` must be empty: a metadata object
-that could not be read would make every source beside it look unreferenced,
-so the next block refuses to delete anything until the listing is run again
-without failures. Then delete:
+Review the printed exact keys. A failed listing or any unreadable or malformed
+metadata leaves no valid plan and must be fixed before trying again. Then,
+within five minutes and in the same shell, delete:
 
 <!-- purge-recipe:delete -->
 ```sh
-if [ -s failed.txt ]; then
-  echo "Some metadata could not be read (failed.txt); nothing deleted." >&2
-else
-  while read -r key; do aws s3 rm "s3://$bucket/$key" </dev/null; done < unreferenced.txt
-fi
+purge_apply
 ```
 
 To remove sessions whose current copy predates a filter version (here 10)
 as well, delete each one whole, metadata first:
 
+Run the preparation block above first in the same shell. The following makes
+a new plan. Review every printed key, then run the `purge_apply` block above
+within five minutes in that shell.
+
 <!-- purge-recipe:old-sessions -->
 ```sh
-grep '/metadata\.json$' keys.txt | while read -r meta; do
-  version=$(aws s3 cp "s3://$bucket/$meta" - </dev/null | jq -r '.filter_version | strings')
-  case "$version" in
-    '' | *[!0-9]*) echo "could not read $meta; skipped" >&2 ;;
-    *) if [ "$version" -lt 10 ]; then
-         aws s3 rm "s3://$bucket/$meta" </dev/null &&
-           aws s3 rm "s3://$bucket/${meta%metadata.json}" --recursive </dev/null
-       fi ;;
-  esac
-done
+purge_prepare old 10
 ```
 
 When you are done, run `agent-archive resume` on every Mac you paused.

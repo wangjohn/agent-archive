@@ -1,18 +1,26 @@
 # Create a bucket
 
 agent-archive stores sessions in a private bucket you own. Create it once;
-every Mac you set up can share it. Cloudflare R2 is the quickest to set up.
+every Mac you set up can share it. You need a Cloudflare or AWS account for
+the bucket; there is no agent-archive account or hosted service. Cloudflare
+R2 is the quickest to set up.
 
 ## Cloudflare R2 (recommended)
 
-1. In the [Cloudflare dashboard](https://dash.cloudflare.com), open **R2
-   Object Storage** and create a bucket, for example `agent-archive`. (The
-   first time, Cloudflare asks you to enable R2 and add a payment method;
-   usage within the free tier is not charged.) Leave public access off.
-2. On the R2 overview page, choose **Manage API tokens** → **Create API
-   token**. Give it **Object Read & Write** permission, applied to **only
-   that bucket**. Create it, then copy the **Access Key ID** and **Secret
-   Access Key** (the secret is shown once).
+1. In the [Cloudflare dashboard](https://dash.cloudflare.com), open
+   **Storage & databases → R2 → Overview** ([current Cloudflare
+   steps](https://developers.cloudflare.com/r2/get-started/)), enable an R2
+   subscription if prompted, and create a bucket, for example
+   `agent-archive`. Cloudflare may require a checkout flow. Check [current
+   R2 pricing and included
+   usage](https://developers.cloudflare.com/r2/pricing/) before enabling it;
+   charges depend on storage class and usage. Leave public access off.
+2. Under **Account Details** on the R2 overview page, choose **Manage** next
+   to **API Tokens**, then create an account or user API token. Give it
+   **Object Read & Write** permission, scoped to **only that bucket**. Create
+   it, then copy the **Access Key ID** and **Secret Access Key** (the secret
+   is shown once). See Cloudflare's current [R2 token instructions](https://developers.cloudflare.com/r2/api/tokens/)
+   if the dashboard wording changes.
 3. Copy your **Account ID** from the R2 overview page, or the bucket's S3 API
    URL from its **Settings** (`https://<account-id>.r2.cloudflarestorage.com/<bucket>`).
 
