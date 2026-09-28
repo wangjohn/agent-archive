@@ -134,7 +134,14 @@ now and paths under your home folder start with `~`.
 - **Capture** rows say how far each app has got: waiting for its first
   session, session seen, captured but not uploaded, uploaded with read-back
   pending, or archived and verified. Configuration alone never establishes
-  capture.
+  capture. An overall `Ready` state, installed hooks, or a reachable bucket
+  is not proof that a particular app has published a new session and had it
+  read back. Look for **archived, verified** on that app's row, then use
+  `agent-archive list` and `agent-archive show SESSION_ID` to inspect the
+  archived metadata.
+- **Paused** means no new sessions are admitted. Run `agent-archive resume`,
+  then start a new session in an included project; a session begun while
+  paused is not added later.
 - **The storage row** shows when the bucket was last found reachable with
   the configured credentials, and whether by setup's check or the collector
   (its access probe, or a pass that uploaded), or why the last check failed.
@@ -160,6 +167,18 @@ now and paths under your home folder start with `~`.
 - **Authentication** in `status --verbose` and `status --json` says whether
   the storage check came from a manual `sync` or the background environment.
   App versions a hook doesn't report stay unknown.
+
+## No Claude Code session
+
+Check that setup includes **Claude Code** and the project where the session runs (`agent-archive status --verbose` shows the Capture and project rows). Start a new session in that project; an open session resumed after setup is ineligible, while `/clear` starts a fresh one. There is no hook approval step for Claude Code. Send a prompt, run `agent-archive sync`, and check the Claude Code row again. If it says **captured, not uploaded yet** or **read-back pending**, follow the Storage and retry details under [reading status](#reading-status). If it is still waiting for a first session, inspect the hook state and capture diagnostics in `status --verbose`; [session eligibility](../reference/session-eligibility.md) explains other exclusions.
+
+## No Codex session
+
+Check that setup includes **Codex** and the project where the session runs (`agent-archive status --verbose` shows both). In Codex, run `/hooks` and approve the archive hooks; installed hook files alone do not mean Codex runs them. Start a new session in the included project (`/clear` also starts one), send a prompt, then run `agent-archive sync` and check the Codex Capture row. If the row shows local capture but no verified archive, use the Storage and read-back details under [reading status](#reading-status). If no session was seen, check hook approval, the hook state and capture diagnostics in `status --verbose`, and [session eligibility](../reference/session-eligibility.md).
+
+## No Cursor session
+
+Check that setup includes **Cursor** and the project where the Agent chat runs (`agent-archive status --verbose` shows both). Start a **new Agent chat** in that project and send its first prompt; continuing an older chat does not establish a fresh start, and `/clear` is not the Cursor path. Run `agent-archive sync` and check the Cursor Capture row. If it shows local capture but no verified archive, use the Storage and read-back details under [reading status](#reading-status). If no session was seen, check the hook state and capture diagnostics in `status --verbose`. A chat with transcripts disabled can register but has no transcript to upload; see [session eligibility](../reference/session-eligibility.md#cursor).
 
 ## An interrupted setup
 
