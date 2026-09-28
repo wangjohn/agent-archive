@@ -26,6 +26,7 @@ differ, the code and the user documentation describe current behavior.
 | [Backfill](specs/backfill.md) | Implemented. |
 | [Handoff](specs/handoff.md) | Implemented. |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
+| [List and browse UX](proposals/list-browse-ux.md) | Proposed; not implemented. |
 
 ## Maintainers
 
