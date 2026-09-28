@@ -24,6 +24,7 @@ type listRow struct {
 	SessionID  string
 	ShortID    string
 	HarnessKey string // raw harness name for show / locateMetadataKey
+	Title      string // display title (metadata title, else short ID)
 	When       string
 	CapturedAt string
 	Harness    string
@@ -58,7 +59,9 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 		models := modelNames(m)
 		skills := skillNames(m)
 		project := "-"
-		if label := opts.Projects[m.ProjectID]; label != "" {
+		if m.ProjectName != "" {
+			project = m.ProjectName
+		} else if label := opts.Projects[m.ProjectID]; label != "" {
 			project = label
 		}
 		model := "-"
@@ -76,11 +79,16 @@ func formatSessionRows(sessions []archive.Metadata, opts listFormatOptions) []li
 				skillHint += fmt.Sprintf(" +%d", len(skills)-1)
 			}
 		}
+		title := shorts[i]
+		if strings.TrimSpace(m.Title) != "" {
+			title = archive.DisplayLine(m.Title)
+		}
 		rows[i] = listRow{
 			Index:      i + 1,
 			SessionID:  m.SessionID,
 			ShortID:    shorts[i],
 			HarnessKey: m.Harness.Name,
+			Title:      title,
 			When:       relativeAge(opts.Now, m.CapturedAt),
 			CapturedAt: formatTimeOrNever(m.CapturedAt),
 			Harness:    archive.DisplayLine(m.Harness.Name),
@@ -154,40 +162,40 @@ func printSessionTable(w io.Writer, rows []listRow, opts listFormatOptions) erro
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	if opts.Verbose {
 		if opts.Numbered {
-			terminal.Println(tw, "#\tSESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED\tPROJECT")
+			terminal.Println(tw, "#\tTITLE\tSESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED\tPROJECT")
 		} else {
-			terminal.Println(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED\tPROJECT")
+			terminal.Println(tw, "TITLE\tSESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED\tPROJECT")
 		}
 		for _, r := range rows {
 			if opts.Numbered {
-				terminal.Printf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					r.Index, archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
+				terminal.Printf(tw, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					r.Index, r.Title, archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
 			} else {
-				terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
+				terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					r.Title, archive.DisplayLine(r.SessionID), r.Harness, r.CapturedAt, r.Origin, r.Parser, r.ModelAll, r.Skills, r.Project)
 			}
 		}
 	} else {
 		if opts.Numbered {
-			terminal.Println(tw, "#\tSESSION\tWHEN\tHARNESS\tPROJECT\tMODEL")
+			terminal.Println(tw, "#\tTITLE\tWHEN\tHARNESS\tPROJECT\tID")
 		} else {
-			terminal.Println(tw, "SESSION\tWHEN\tHARNESS\tPROJECT\tMODEL")
+			terminal.Println(tw, "TITLE\tWHEN\tHARNESS\tPROJECT\tID")
 		}
 		for _, r := range rows {
-			model := r.Model
+			title := r.Title
 			if r.SkillHint != "" {
 				if opts.Style.color {
-					model += opts.Style.dim(r.SkillHint)
+					title += opts.Style.dim(r.SkillHint)
 				} else {
-					model += r.SkillHint
+					title += r.SkillHint
 				}
 			}
 			if opts.Numbered {
 				terminal.Printf(tw, "%d\t%s\t%s\t%s\t%s\t%s\n",
-					r.Index, archive.DisplayLine(r.ShortID), r.When, r.Harness, r.Project, model)
+					r.Index, title, r.When, r.Harness, r.Project, archive.DisplayLine(r.ShortID))
 			} else {
 				terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\n",
-					archive.DisplayLine(r.ShortID), r.When, r.Harness, r.Project, model)
+					title, r.When, r.Harness, r.Project, archive.DisplayLine(r.ShortID))
 			}
 		}
 	}

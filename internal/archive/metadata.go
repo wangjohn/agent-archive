@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -274,6 +275,7 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 	}
 	deriveHookModels(bundle, &metadata)
 	deriveSkills(bundle, view.NativeSkillUses, &metadata)
+	metadata.Title = deriveSessionTitle(view)
 	feedback := 0
 	for _, e := range bundle.SupplementalEvidence {
 		if e.Kind == EvidenceKindExplicitFeedback {
@@ -282,6 +284,47 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 	}
 	metadata.Counts.ExplicitFeedback = &feedback
 	return metadata, nil
+}
+
+// sessionTitleLimit is the maximum rune length of Metadata.Title.
+const sessionTitleLimit = 72
+
+// deriveSessionTitle returns a one-line preview of the first human prompt in
+// view, or "" when none has usable text. The text is already filter-retained.
+func deriveSessionTitle(view NormalizedView) string {
+	for _, turn := range view.Turns {
+		if turn.Kind != TurnKindHumanPrompt {
+			continue
+		}
+		if title := collapseSessionTitle(turn.Text); title != "" {
+			return title
+		}
+	}
+	return ""
+}
+
+// collapseSessionTitle flattens whitespace to a single line and caps length.
+func collapseSessionTitle(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return ""
+	}
+	line := strings.Join(fields, " ")
+	runes := []rune(line)
+	if len(runes) <= sessionTitleLimit {
+		return line
+	}
+	return string(runes[:sessionTitleLimit]) + "…"
+}
+
+// ApplyProjectName sets ProjectName from the basename of projectRoot.
+// Callers pass the registration's ProjectRoot at publish time.
+func (m *Metadata) ApplyProjectName(projectRoot string) {
+	base := filepath.Base(filepath.Clean(strings.TrimSpace(projectRoot)))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return
+	}
+	m.ProjectName = base
 }
 
 type lifecycleObservation struct {

@@ -197,12 +197,12 @@ Guide: [Inspect the archive](../guides/list-and-show.md); `--json` in [JSON outp
 Usage: agent-archive list [options]
 
 Find sessions using metadata; does not download conversation content.
-Default text columns: a short SESSION_ID prefix, relative capture time,
-harness, project (from this Mac's config), and model (with a skill hint when
-one was used). On a terminal with an interactive stdin, list a numbered table
-and pick a session to show its metadata; q quits. Piped or --json output
-is never interactive. On a terminal without interactive stdin, text is
-paged through $PAGER unless --no-pager.
+Default text columns: TITLE (first filtered prompt preview, or a short
+SESSION_ID prefix when none), relative capture time, harness, project,
+and a short SESSION_ID. On a terminal with an interactive stdin, list a
+numbered table and pick a session to show its metadata; q quits. Piped
+or --json output is never interactive. On a terminal without interactive
+stdin, text is paged through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -225,7 +225,7 @@ paged through $PAGER unless --no-pager.
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
   --verbose                      Full SESSION_IDs, absolute times, origin,
-                                 parser status, and all models/skills
+                                 parser status, all models/skills, and title
   --no-pager                     Print directly; do not page through $PAGER
   --no-cache                     Download every metadata sidecar instead of
                                  reusing unchanged ones from the local

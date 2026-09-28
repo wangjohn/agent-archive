@@ -34,6 +34,8 @@ func TestFormatSessionRowsDefaultAndVerbose(t *testing.T) {
 	now := time.Date(2026, 1, 2, 1, 0, 0, 0, time.UTC)
 	m := archive.Metadata{
 		SessionID:  "abcdef0123456789abcdef0123456789",
+		Title:      "Fix flaky OAuth callback tests",
+		ProjectName: "agent-archive",
 		CapturedAt: now.Add(-2 * time.Hour),
 		Harness:    archive.Harness{Name: "claude"},
 		ProjectID:  "proj",
@@ -43,13 +45,13 @@ func TestFormatSessionRowsDefaultAndVerbose(t *testing.T) {
 		Origin:     archive.SessionOriginImport,
 	}
 	rows := formatSessionRows([]archive.Metadata{m}, listFormatOptions{
-		Now: now, Projects: map[string]string{"proj": "agent-archive"},
+		Now: now, Projects: map[string]string{"proj": "ignored-local"},
 	})
 	if len(rows) != 1 {
 		t.Fatalf("rows=%d", len(rows))
 	}
 	r := rows[0]
-	if r.ShortID != "abcdef01" || r.When != "2 hours ago" || r.Project != "agent-archive" {
+	if r.Title != "Fix flaky OAuth callback tests" || r.ShortID != "abcdef01" || r.When != "2 hours ago" || r.Project != "agent-archive" {
 		t.Fatalf("row=%+v", r)
 	}
 	if r.Model != "claude-opus-5" || r.SkillHint != " · code-review" || r.Origin != "imported" {

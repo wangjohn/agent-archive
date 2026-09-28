@@ -15,7 +15,7 @@ func TestListDefaultTableIsHumanReadable(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	text := out.String()
-	if !strings.Contains(text, "SESSION") || !strings.Contains(text, "WHEN") || !strings.Contains(text, "PROJECT") {
+	if !strings.Contains(text, "TITLE") || !strings.Contains(text, "WHEN") || !strings.Contains(text, "PROJECT") || !strings.Contains(text, "ID") {
 		t.Fatalf("missing human headers:\n%s", text)
 	}
 	if strings.Contains(text, "ORIGIN") || strings.Contains(text, "PARSER") || strings.Contains(text, "CAPTURED") {
