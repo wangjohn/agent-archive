@@ -181,7 +181,7 @@ func listedSessionIDs(out string) []string {
 	var ids []string
 	for line := range strings.SplitSeq(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 || fields[0] == "SESSION" || strings.HasSuffix(line, "session(s).") {
+		if len(fields) == 0 || fields[0] == "SESSION" || fields[0] == "Showing" || strings.Contains(line, "session(s).") {
 			continue
 		}
 		ids = append(ids, fields[0])
@@ -197,6 +197,7 @@ func TestListRejectsBadArguments(t *testing.T) {
 		{"list", "--skill-usage", "sometimes"},
 		{"list", "--skill-sha256", "abc"},
 		{"list", "--skill-sha256", strings.Repeat("A", 64)},
+		{"list", "--limit", "-1"},
 		{"list", "extra"},
 		{"list", "--bogus"},
 		{"show"},

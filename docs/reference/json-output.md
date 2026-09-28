@@ -12,22 +12,31 @@ explicitly.
 
 ```json
 {
-  "schema_version": 1,
-  "sessions": [ { "...": "one metadata sidecar per matching session" } ]
+  "schema_version": 2,
+  "sessions": [ { "...": "one metadata sidecar per matching session" } ],
+  "limit": 50,
+  "returned": 50,
+  "total_matched": 847,
+  "truncated": true
 }
 ```
 
 - `sessions` holds each matching session's metadata sidecar exactly as
   stored, newest capture first, filtered by the same flags as the text
   listing (`--harness`, `--model`, `--since`, `--skill`, `--complete`,
-  `--imported`, …). Each item is an instance of
+  `--imported`, `--limit`, …). Each item is an instance of
   [`metadata.schema.json`](schemas.md). An empty result is `[]`, never
   `null`.
+- `limit` is the `--limit` value (`50` by default; `0` means no cap).
+  `returned` is `sessions.length`. `total_matched` is how many sessions
+  passed the filters before `--limit`. `truncated` is present and `true`
+  only when `--limit` cut the list short.
 - `unavailable` is present only when the query can't return sessions yet
   (today: `--skill-usage eligible_no_use`); it holds the explanation the text
   listing prints, and `sessions` is empty.
 - A sidecar that can't be read (deleted mid-listing, or written by a newer
   version) is left out; a warning naming it goes to stderr, never stdout.
+- `--json` is never auto-paged, even on a terminal.
 
 ## `show`
 

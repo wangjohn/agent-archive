@@ -114,15 +114,19 @@ Find sessions using metadata; does not download conversation content.
                                  capture gaps
   --imported                     Only sessions agent-archive backfill imported
   --hook-captured                Only sessions hooks captured as they ran
+  --limit N                      Show at most N sessions, newest first
+                                 (default 50; 0 for all)
+  --no-pager                     Print directly; do not page through $PAGER
   --no-cache                     Download every metadata sidecar instead of
                                  reusing unchanged ones from the local
                                  metadata cache (metadata only; never
                                  conversation content)
-  --json                         Print {"schema_version": 1, "sessions": [...]}:
-                                 each matching session's metadata, as show
-                                 prints it (never conversation content). A
-                                 query that cannot return sessions yet has
-                                 "sessions": [] and an "unavailable" reason.
+  --json                         Print {"schema_version": 2, "sessions": [...],
+                                 "limit", "returned", "total_matched"}: each
+                                 matching session's metadata, as show prints
+                                 it (never conversation content). A query that
+                                 cannot return sessions yet has "sessions": []
+                                 and an "unavailable" reason. Never paged.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
 	"show": `Usage: agent-archive show SESSION_ID [--harness NAME] [--normalized] [--json]

@@ -24,13 +24,20 @@ func TestListJSONPrintsVersionedMetadataDocument(t *testing.T) {
 				Name string `json:"name"`
 			} `json:"harness"`
 		} `json:"sessions"`
-		Unavailable string `json:"unavailable"`
+		Limit        int    `json:"limit"`
+		Returned     int    `json:"returned"`
+		TotalMatched int    `json:"total_matched"`
+		Truncated    bool   `json:"truncated"`
+		Unavailable  string `json:"unavailable"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
 	}
 	if doc.Version != listSchemaVersion || len(doc.Sessions) != 1 || doc.Sessions[0].SessionID != id || doc.Sessions[0].Harness.Name == "" || doc.Unavailable != "" {
 		t.Fatalf("doc = %+v", doc)
+	}
+	if doc.Limit != defaultListLimit || doc.Returned != 1 || doc.TotalMatched != 1 || doc.Truncated {
+		t.Fatalf("limit fields = limit=%d returned=%d total=%d truncated=%v", doc.Limit, doc.Returned, doc.TotalMatched, doc.Truncated)
 	}
 
 	out.Reset()

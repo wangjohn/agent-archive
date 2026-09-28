@@ -72,6 +72,8 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, bool, error) {
 // sidecars (reader.ListMetadataWithOptions downloads no source bundle) and prints only
 // metadata fields, so its output can never contain transcript content. It
 // reuses unchanged sidecars from the local metadata cache unless --no-cache.
+// Text listings are capped by --limit (default 50; 0 for all) and, on a
+// terminal, paged through $PAGER unless --no-pager or --json.
 func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("list", stderr)
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
@@ -84,9 +86,14 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
+	limit := fs.Int("limit", defaultListLimit, "show at most this many sessions, newest first (0 for all)")
+	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the matching sessions' metadata")
 	if !fs.parseFlagsOnly(args) {
 		return 2
+	}
+	if *limit < 0 {
+		return fs.usageError("--limit must be 0 or more")
 	}
 	if *imported && *hookCaptured {
 		return fs.usageError("choose one of --imported and --hook-captured")
@@ -119,7 +126,11 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	// parser version emits that evidence.
 	if usage == reader.SkillUsageEligibleNoUse {
 		if *jsonOut {
-			return printJSON(stdout, stderr, listDocument{Version: listSchemaVersion, Sessions: []archive.Metadata{}, Unavailable: eligibleNoUseUnavailableMessage})
+			return printJSON(stdout, stderr, listDocument{
+				Version: listSchemaVersion, Sessions: []archive.Metadata{},
+				Limit: *limit, Returned: 0, TotalMatched: 0,
+				Unavailable: eligibleNoUseUnavailableMessage,
+			})
 		}
 		terminal.Println(stdout, eligibleNoUseUnavailableMessage)
 		return 0
@@ -157,29 +168,51 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 		sessions = kept
 	}
+	totalMatched := len(sessions)
+	truncated := false
+	if *limit > 0 && len(sessions) > *limit {
+		sessions = sessions[:*limit]
+		truncated = true
+	}
 	if *jsonOut {
 		if sessions == nil {
 			sessions = []archive.Metadata{}
 		}
-		return printJSON(stdout, stderr, listDocument{Version: listSchemaVersion, Sessions: sessions})
+		doc := listDocument{
+			Version: listSchemaVersion, Sessions: sessions,
+			Limit: *limit, Returned: len(sessions), TotalMatched: totalMatched,
+		}
+		if truncated {
+			doc.Truncated = true
+		}
+		return printJSON(stdout, stderr, doc)
 	}
-	if len(sessions) == 0 {
+	if totalMatched == 0 {
 		terminal.Println(stdout, "No archived sessions match.")
 		return 0
 	}
-	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	terminal.Println(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
-	for _, m := range sessions {
-		// Every cell but the fixed ones comes from bucket metadata, so it
-		// passes through archive.DisplayLine: no escape sequences reach the
-		// terminal, and no tab or newline breaks the table.
-		terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(m.SessionID), archive.DisplayLine(m.Harness.Name), formatTimeOrNever(m.CapturedAt), sessionOrigin(m), archive.DisplayLine(string(m.Parser.Status)), listOrDash(modelNames(m)), listOrDash(skillNames(m)))
-	}
-	if err := tw.Flush(); err != nil {
+	if err := withPager(stdout, stderr, env, *noPager, func(w io.Writer) error {
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		terminal.Println(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
+		for _, m := range sessions {
+			// Every cell but the fixed ones comes from bucket metadata, so it
+			// passes through archive.DisplayLine: no escape sequences reach the
+			// terminal, and no tab or newline breaks the table.
+			terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(m.SessionID), archive.DisplayLine(m.Harness.Name), formatTimeOrNever(m.CapturedAt), sessionOrigin(m), archive.DisplayLine(string(m.Parser.Status)), listOrDash(modelNames(m)), listOrDash(skillNames(m)))
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+		if truncated {
+			terminal.Printf(w, "Showing %d of %d session(s). Use --limit 0 for all, or narrow with --since / --harness.\n", len(sessions), totalMatched)
+		} else {
+			terminal.Printf(w, "%d session(s).\n", len(sessions))
+		}
+		return nil
+	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
-	terminal.Printf(stdout, "%d session(s).\n", len(sessions))
 	return 0
 }
 
@@ -201,16 +234,26 @@ func harnessFlagError(value string) string {
 }
 
 // listSchemaVersion versions the `list --json` document.
-const listSchemaVersion = 1
+const listSchemaVersion = 2
+
+// defaultListLimit is how many sessions `list` shows when --limit is omitted.
+const defaultListLimit = 50
 
 // listDocument is what `list --json` prints: each matching session's
 // metadata sidecar, as `show` prints one, and never conversation content.
-// Unavailable explains a query that cannot return sessions yet, where the
-// text listing prints the same explanation instead of a table.
+// Limit is the --limit value (0 means all). Returned is len(Sessions);
+// TotalMatched is how many passed the filters before --limit. Truncated is
+// set when Sessions is a prefix of the full match set. Unavailable explains
+// a query that cannot return sessions yet, where the text listing prints
+// the same explanation instead of a table.
 type listDocument struct {
-	Version     int                `json:"schema_version"`
-	Sessions    []archive.Metadata `json:"sessions"`
-	Unavailable string             `json:"unavailable,omitempty"`
+	Version      int                `json:"schema_version"`
+	Sessions     []archive.Metadata `json:"sessions"`
+	Limit        int                `json:"limit"`
+	Returned     int                `json:"returned"`
+	TotalMatched int                `json:"total_matched"`
+	Truncated    bool               `json:"truncated,omitempty"`
+	Unavailable  string             `json:"unavailable,omitempty"`
 }
 
 // warnSkippedSidecar reports, on stderr, a metadata sidecar a listing left

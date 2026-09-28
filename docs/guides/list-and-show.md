@@ -5,9 +5,13 @@ touching local collector state. `feedback` attaches your own assessment to
 a session.
 
 ```sh
-# Every archived session, newest first: ID, harness, capture time, origin,
-# parser status, models, and skills used. Metadata only, never transcript text.
+# Every archived session matching the filters, newest first (at most 50 by
+# default): ID, harness, capture time, origin, parser status, models, and
+# skills used. Metadata only, never transcript text. On a terminal the table
+# is paged through $PAGER (or less); use --no-pager to print directly.
 agent-archive list
+agent-archive list --limit 0          # every match, not just the newest 50
+agent-archive list --limit 200
 
 # Narrow it down. --since takes a date, an RFC 3339 time, or an age.
 agent-archive list --harness claude --model claude-opus-5 --since 7d
@@ -17,8 +21,10 @@ agent-archive list --skill review --skill-usage available
 agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 agent-archive list --complete          # complete parser coverage, no capture gaps
 
-# For scripts: {"schema_version": 1, "sessions": [<metadata>...]}
+# For scripts: {"schema_version": 2, "sessions": [...], "limit", "returned",
+# "total_matched"} (and "truncated" when --limit cut the list). Never paged.
 agent-archive list --json
+agent-archive list --json --limit 0
 
 # One session's metadata sidecar, as JSON.
 agent-archive show SESSION_ID
