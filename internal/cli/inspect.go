@@ -147,17 +147,31 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 
 // listFlagValues holds the parsed list flags before validation.
 type listFlagValues struct {
-	harness, model, skill, skillSHA256, skillUsage, since       string
-	complete, imported, hookCaptured, noCache, noPager, jsonOut bool
-	limit                                                       int
+	harness      string
+	model        string
+	skill        string
+	skillSHA256  string
+	skillUsage   string
+	since        string
+	complete     bool
+	imported     bool
+	hookCaptured bool
+	noCache      bool
+	noPager      bool
+	jsonOut      bool
+	limit        int
 }
 
 // listOptions is the validated list command configuration.
 type listOptions struct {
-	filter                                            reader.Filter
-	skillUsage                                        reader.SkillUsage
-	imported, hookCaptured, noCache, noPager, jsonOut bool
-	limit                                             int
+	filter       reader.Filter
+	skillUsage   reader.SkillUsage
+	imported     bool
+	hookCaptured bool
+	noCache      bool
+	noPager      bool
+	jsonOut      bool
+	limit        int
 }
 
 // listOptionsFromFlags validates list flags and builds the reader filter.
