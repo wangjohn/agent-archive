@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -36,6 +37,33 @@ func TestActivityStyleUnwrapsLockedWriter(t *testing.T) {
 	locked := &lockedWriter{w: &buf}
 	if got := activityStyle(locked); got.live || got.color {
 		t.Errorf("activityStyle on buffer = %+v, want plain", got)
+	}
+}
+
+func TestActivityStopConcurrentSetAndInvoke(t *testing.T) {
+	t.Parallel()
+	var activity activityStop
+	var calls atomic.Int32
+	stop := func() { calls.Add(1) }
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			activity.set(stop)
+			activity.clear()
+			activity.set(stop)
+		}()
+		go func() {
+			defer wg.Done()
+			activity.invoke()
+		}()
+	}
+	wg.Wait()
+	activity.clear()
+	if calls.Load() < 0 {
+		t.Fatal("unreachable")
 	}
 }
 
