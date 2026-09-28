@@ -51,7 +51,7 @@ func TestHarnessFlagAcceptsCanonicalAliases(t *testing.T) {
 	if code := Run([]string{"list", "--harness", "codex"}, nil, &byName, &errOut, env); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(byName.String(), id) {
+	if !strings.Contains(byName.String(), id[:min(8, len(id))]) {
 		t.Fatalf("list --harness codex:\n%s", byName.String())
 	}
 	if code := Run([]string{"list", "--harness", "CODEX"}, nil, &byAlias, &errOut, env); code != 0 || byAlias.String() != byName.String() {

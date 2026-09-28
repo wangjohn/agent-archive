@@ -5,13 +5,15 @@ touching local collector state. `feedback` attaches your own assessment to
 a session.
 
 ```sh
-# Every archived session matching the filters, newest first (at most 50 by
-# default): ID, harness, capture time, origin, parser status, models, and
-# skills used. Metadata only, never transcript text. On a terminal the table
-# is paged through $PAGER (or less); use --no-pager to print directly.
+# Newest archived sessions matching the filters (at most 50 by default):
+# short ID, relative time, harness, project, and model. Metadata only, never
+# transcript text. On an interactive terminal, pick a numbered row to show
+# that session's metadata (q to quit). Otherwise the table is paged through
+# $PAGER (or less); use --no-pager to print directly.
 agent-archive list
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
+agent-archive list --verbose          # full IDs, absolute times, origin, parser
 
 # Narrow it down. --since takes a date, an RFC 3339 time, or an age.
 agent-archive list --harness claude --model claude-opus-5 --since 7d
@@ -22,11 +24,14 @@ agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcde
 agent-archive list --complete          # complete parser coverage, no capture gaps
 
 # For scripts: {"schema_version": 2, "sessions": [...], "limit", "returned",
-# "total_matched"} (and "truncated" when --limit cut the list). Never paged.
+# "total_matched"} (and "truncated" when --limit cut the list). Never paged
+# or interactive.
 agent-archive list --json
 agent-archive list --json --limit 0
 
-# One session's metadata sidecar, as JSON.
+# One session's metadata sidecar, as JSON. With no SESSION_ID on a terminal,
+# the same interactive picker as list.
+agent-archive show
 agent-archive show SESSION_ID
 agent-archive show SESSION_ID --normalized   # also the verified conversation
 ```
