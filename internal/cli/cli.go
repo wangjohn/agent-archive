@@ -175,6 +175,11 @@ type Env struct {
 	// terminal. backfill asks for confirmation only on one, and redraws its
 	// progress line only on one. Defaults to checking the file descriptor.
 	IsTerminal func(any) bool
+	// RunPager runs a pager command with stdin as its input and stdout/
+	// stderr as its output. list uses it for interactive text listings.
+	// Defaults to `sh -c command`. Tests set it so a listing never
+	// spawns less.
+	RunPager func(command string, stdin io.Reader, stdout, stderr io.Writer) error
 	// Interrupts delivers the signals that stop backfill while it plans,
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
