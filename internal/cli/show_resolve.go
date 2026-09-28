@@ -34,9 +34,12 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env Env, s
 		}
 		return showLookup{SessionID: query, Harness: harness}, 0
 	}
-	// Only an exact-id miss may fall through to short-id / title search.
-	// Ambiguous harnesses, explicit --harness, and storage errors stop here.
-	if harness != "" || !strings.Contains(err.Error(), "no archived session") {
+	// Exact-id miss or a query that is not a valid SESSION_ID (spaces,
+	// punctuation) may fall through to short-id / title search. Ambiguous
+	// harnesses, explicit --harness, and storage errors stop here.
+	miss := strings.Contains(err.Error(), "no archived session") ||
+		strings.Contains(err.Error(), "invalid archive session ID")
+	if harness != "" || !miss {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
 		return showLookup{}, 1
 	}

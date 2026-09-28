@@ -31,7 +31,8 @@ func TestShowResolvesTitleSubstring(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"show", "OAuth"}, nil, &out, &errOut, env); code != 0 {
+	// Multi-word titles are not valid SESSION_ID keys; they must still match.
+	if code := Run([]string{"show", "OAuth callback"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), id) || !strings.Contains(out.String(), "Fix flaky OAuth") {
