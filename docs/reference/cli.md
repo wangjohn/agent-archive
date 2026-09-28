@@ -207,13 +207,10 @@ stdin, text is paged through $PAGER unless --no-pager.
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
   --skill-sha256 HEX             Filter by exact lowercase skill SHA-256
-  --skill-usage used|available|eligible_no_use
+  --skill-usage used|available
                                  How --skill matches (default used).
-                                 eligible_no_use cannot return sessions yet:
-                                 no parser version records both a complete
-                                 eligible-skill set and complete use
-                                 observation, so non-use is never proven. The
-                                 value stays accepted for forward compatibility.
+                                 Non-use queries are unsupported because no
+                                 parser proves complete eligibility and use.
   --since DATE|TIME|AGE          Captured at or after a date (2026-01-31,
                                  from midnight UTC; backfill's --since uses
                                  your local day), an RFC 3339 time, or an
@@ -231,13 +228,11 @@ stdin, text is paged through $PAGER unless --no-pager.
                                  reusing unchanged ones from the local
                                  metadata cache (metadata only; never
                                  conversation content)
-  --json                         Print {"schema_version": 2, "sessions": [...],
+  --json                         Print {"schema_version": 3, "sessions": [...],
                                  "limit", "returned", "total_matched"}: each
                                  matching session's metadata, as show prints
-                                 it (never conversation content). A query that
-                                 cannot return sessions yet has "sessions": []
-                                 and an "unavailable" reason. Never paged or
-                                 interactive.
+                                 it (never conversation content). Usage errors
+                                 print no JSON. Never paged or interactive.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 ```
 

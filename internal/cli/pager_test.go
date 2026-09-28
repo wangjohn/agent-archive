@@ -151,7 +151,7 @@ func TestListPagesOnTerminal(t *testing.T) {
 	if code := Run([]string{"list", "--json"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
-	if sawCommand != "" || !strings.Contains(out.String(), `"schema_version": 2`) {
+	if sawCommand != "" || !strings.Contains(out.String(), `"schema_version": 3`) {
 		t.Fatalf("json was paged (cmd=%q) or missing:\n%s", sawCommand, out.String())
 	}
 

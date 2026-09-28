@@ -12,7 +12,7 @@ explicitly.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "sessions": [ { "...": "one metadata sidecar per matching session" } ],
   "limit": 50,
   "returned": 50,
@@ -31,9 +31,10 @@ explicitly.
   `returned` is `sessions.length`. `total_matched` is how many sessions
   passed the filters before `--limit`. `truncated` is present and `true`
   only when `--limit` cut the list short.
-- `unavailable` is present only when the query can't return sessions yet
-  (today: `--skill-usage eligible_no_use`); it holds the explanation the text
-  listing prints, and `sessions` is empty.
+- Unsupported filter values return exit code `2` with an explanation on
+  stderr and no JSON on stdout. This includes `--skill-usage eligible_no_use`:
+  current parsers cannot prove non-use. Schema version `3` removes the
+  version `2` `unavailable` field, which only served that query.
 - A sidecar that can't be read (deleted mid-listing, or written by a newer
   version) is left out; a warning naming it goes to stderr, never stdout.
 - `--json` is never auto-paged, even on a terminal.
