@@ -5,6 +5,11 @@ capabilities, adapter fixture coverage, and actual read-back verification as
 separate facts. A configured or installed hook is not evidence that capture
 works for an installed application version.
 
+At each release, review the tested-version table below against dated adapter
+fixtures and live capture/read-back records. Update a row only when its stated
+evidence supports the new version; a newly published agent-archive release
+does not itself validate a newer app version.
+
 - Codex hooks document `SessionStart.source`, `transcript_path`, lifecycle
   events, and that the transcript format is not a stable hook interface:
   <https://learn.chatgpt.com/docs/hooks>.

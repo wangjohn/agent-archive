@@ -1,8 +1,7 @@
 # FAQ
 
 **Is there a hosted service or an account?**
-No. agent-archive talks only to the bucket you configure. There is no
-telemetry.
+There is no agent-archive account, hosted service, or telemetry. You do need a Cloudflare or AWS account to provide the private bucket and credentials that agent-archive uses for storage. See [create a bucket](../getting-started/bucket.md).
 
 **What exactly is uploaded?**
 Prompts, assistant text, tool inputs and outputs, commands, file paths,
@@ -16,7 +15,7 @@ encryption. See [privacy](../security/privacy.md#what-is-uploaded).
 
 **Can it capture sessions I had before installing it?**
 Yes, with [`agent-archive backfill`](backfill.md). Setup alone captures only
-new sessions.
+new sessions in explicitly included projects. If setup offers to import past sessions, you can decline and run `backfill` later.
 
 **Does it capture every project on my Mac?**
 No. Only projects you include in setup (or that a backfill adds, which it
@@ -24,16 +23,17 @@ tells you first). Sessions run from your home directory or a temporary
 directory are skipped by default.
 
 **What does it cost?**
-Your provider's storage and request charges. Sources are gzip-compressed
-filtered transcripts (tool results are capped at 64 KB per string), and a
-session is uploaded again only when it changed; retention deletes old
-snapshots and expired sessions. R2 has no egress fees; S3 charges for data
-you read back with `list`, `show`, and `handoff` from outside AWS. There is
-no typical figure to quote, since it depends on how long and how many your
-sessions are. To measure yours, `aws s3 ls s3://<bucket>/<prefix>sessions/
---recursive --summarize` prints the object count and total size (divide by
-the sessions `agent-archive list` counts), and your provider's billing page
-shows request counts.
+Your provider's storage, request, retrieval, and transfer charges, as
+applicable. Check the current [Cloudflare R2 pricing](https://developers.cloudflare.com/r2/pricing/)
+or [Amazon S3 pricing](https://aws.amazon.com/s3/pricing/) for the storage
+class and region you choose. Sources are gzip-compressed filtered
+transcripts (tool results are capped at 64 KB per string), and a session is
+uploaded again only when it changed; retention deletes old snapshots and
+expired sessions. There is no typical figure to quote, since it depends on
+how long and how many your sessions are. To measure yours, `aws s3 ls
+s3://<bucket>/<prefix>sessions/ --recursive --summarize` prints the object
+count and total size (divide by the sessions `agent-archive list` counts),
+and your provider's billing page shows request counts.
 
 **How do I stop it for a while?**
 `agent-archive pause`, then `agent-archive resume`. Pause persists across
@@ -85,7 +85,4 @@ status reports R2 privacy as `not_verified`. For S3, setup and the collector
 inspect Block Public Access, the bucket policy, and the ACL read-only.
 
 **Why didn't a session show up?**
-Check `agent-archive status` first; [troubleshooting](troubleshooting.md)
-explains each line. Common causes: the project isn't included, the app's
-hooks weren't approved (Codex: `/hooks`), the session resumed one that began
-before setup, or collection is paused.
+Check `agent-archive status` first. A connected bucket or `Ready` state does not by itself prove this app captured and read back a session. Follow the app-specific steps for [Claude Code](troubleshooting.md#no-claude-code-session), [Codex](troubleshooting.md#no-codex-session), or [Cursor](troubleshooting.md#no-cursor-session).

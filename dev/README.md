@@ -32,4 +32,5 @@ differ, the code and the user documentation describe current behavior.
 | Doc | For |
 | --- | --- |
 | [Releasing](maintainers/releasing.md) | Tagging, signing, and notarization. |
+| [Published-release acceptance](maintainers/open-source-acceptance.md) | Disposable Mac and bucket smoke test with recorded pass, fail, or pending evidence. |
 | [Versions](maintainers/versions.md) | Filter, adapter, parser, and schema versions, and when each is bumped. |
