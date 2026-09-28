@@ -1209,7 +1209,6 @@ func addProjects(p *prompter, result, existing []archive.ProjectActivation, know
 				for _, project := range offered {
 					picker.include(project.Root)
 				}
-				defaultAll = false
 				if includedProjects(picker.result) > 0 {
 					picker.printSelection()
 					return picker.result, nil
