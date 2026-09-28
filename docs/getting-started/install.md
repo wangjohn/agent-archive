@@ -74,14 +74,9 @@ location (`status` reports hooks and background as `broken` until you do).
    [latest release](https://github.com/wangjohn/agent-archive/releases/latest)
    (`agent-archive-darwin-arm64` for Apple Silicon, `agent-archive-darwin-amd64`
    for Intel), and `SHA256SUMS` from the same release.
-2. Verify the checksum:
-
-   ```sh
-   shasum -a 256 -c SHA256SUMS --ignore-missing
-   ```
-
-3. Select the binary for this Mac, then check its signature. Run these commands
-   in the directory containing the downloads:
+2. Select the binary for this Mac and verify its checksum. Run these commands
+   in the directory containing the downloads, in the same shell as the steps
+   below:
 
    ```sh
    case "$(uname -m)" in
@@ -90,6 +85,15 @@ location (`status` reports hooks and background as `broken` until you do).
      *) echo "Unsupported Mac architecture" >&2; exit 1 ;;
    esac
    test -f "$asset" || { echo "Missing $asset" >&2; exit 1; }
+   expected=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' SHA256SUMS)
+   test -n "$expected" || { echo "No checksum for $asset" >&2; exit 1; }
+   actual=$(shasum -a 256 "$asset" | awk '{ print $1 }')
+   test "$actual" = "$expected" || { echo "Checksum mismatch for $asset" >&2; exit 1; }
+   ```
+
+3. Check the selected binary's signature:
+
+   ```sh
    codesign --verify --strict --verbose=2 "$asset"
    codesign -dv "$asset" 2>&1 | grep TeamIdentifier
    ```
@@ -110,7 +114,9 @@ location (`status` reports hooks and background as `broken` until you do).
    Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (zsh) or
    `~/.bash_profile` (Bash) if that directory is not already on your `PATH`,
    then open a new terminal. If you already installed `agent-archive`
-   elsewhere, move or remove that older copy so your shell uses this one.
+   elsewhere, move or remove that older copy so your shell uses this one. If
+   its path changed, rerun `agent-archive setup` to update the hooks and
+   background collector.
 
 5. Confirm it runs: `agent-archive --version`.
 
