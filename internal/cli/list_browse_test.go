@@ -33,6 +33,23 @@ func TestListDefaultTableIsHumanReadable(t *testing.T) {
 	}
 }
 
+func TestShowAcceptsShortIDPrintedByList(t *testing.T) {
+	t.Parallel()
+	env, _, id := publishedFixture(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"show", id[:minShortSessionID]}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("show short ID: code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), id) {
+		t.Fatalf("show short ID returned wrong session: %s", out.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"show", id[:minShortSessionID], "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("show short ID with harness: code=%d stderr=%s", code, errOut.String())
+	}
+}
+
 func TestListVerboseKeepsOpsColumns(t *testing.T) {
 	t.Parallel()
 	env, _, id := publishedFixture(t)
