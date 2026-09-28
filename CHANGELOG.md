@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `list --limit N` caps how many sessions are shown (default 50, newest
+  first; `0` for all). A truncated text listing ends with
+  `Showing N of M session(s)…`; `list --json` is now `schema_version` 2
+  and includes `limit`, `returned`, `total_matched`, and `truncated`.
+- On a terminal, `list` (text only) pages through `$AGENT_ARCHIVE_PAGER`,
+  else `$PAGER`, else `less -FRX`. Use `--no-pager`, or set either env var
+  to empty or `cat`, to print directly. `--json` is never paged.
+
 ## [0.1.1] - 2026-09-28
 
 Setup and status UX polish since the first tagged commit. No filter or
