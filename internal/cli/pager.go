@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os/exec"
 
@@ -57,7 +58,7 @@ func (e Env) runPager(command string, stdin io.Reader, stdout, stderr io.Writer)
 	if e.RunPager != nil {
 		return e.RunPager(command, stdin, stdout, stderr)
 	}
-	cmd := exec.Command("sh", "-c", command)
+	cmd := exec.CommandContext(context.Background(), "sh", "-c", command)
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

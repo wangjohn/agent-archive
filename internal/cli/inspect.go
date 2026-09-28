@@ -92,58 +92,26 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	if *limit < 0 {
-		return fs.usageError("--limit must be 0 or more")
+	opts, code := listOptionsFromFlags(fs, listFlagValues{
+		harness: *harness, model: *model, skill: *skill, skillSHA256: *skillSHA256,
+		skillUsage: *skillUsage, since: *since, complete: *complete,
+		imported: *imported, hookCaptured: *hookCaptured, limit: *limit,
+		noCache: *noCache, noPager: *noPager, jsonOut: *jsonOut,
+	}, env.now())
+	if code != 0 {
+		return code
 	}
-	if *imported && *hookCaptured {
-		return fs.usageError("choose one of --imported and --hook-captured")
-	}
-	canonical, ok := harnessFlag(*harness)
-	if !ok {
-		return fs.usageError("%s", harnessFlagError(*harness))
-	}
-	*harness = canonical
-	if *skillSHA256 != "" && !validLowerSHA256(*skillSHA256) {
-		return fs.usageError("--skill-sha256 must be exactly 64 lowercase hexadecimal characters")
-	}
-	// The value is checked before the --skill/--skill-sha256 requirement so
-	// that a misspelled value is reported as the misspelling it is, rather
-	// than as a missing companion flag.
-	usage := reader.SkillUsage(*skillUsage)
-	switch usage {
-	case reader.SkillUsageUsed, reader.SkillUsageAvailable, reader.SkillUsageEligibleNoUse:
-	default:
-		return fs.usageError("--skill-usage must be used, available, or eligible_no_use, not %q", *skillUsage)
-	}
-	if usage != reader.SkillUsageUsed && *skill == "" && *skillSHA256 == "" {
-		return fs.usageError("--skill-usage requires --skill or --skill-sha256")
-	}
-	// No parser version records both a complete eligible-skill set and
-	// complete use observation, so nothing in the bucket can carry the
-	// observed_none detection this query compares against. Say so instead
-	// of scanning metadata and reporting an empty result that reads like an
-	// answer. The value stays accepted so scripts keep working once a
-	// parser version emits that evidence.
-	if usage == reader.SkillUsageEligibleNoUse {
-		if *jsonOut {
+	if opts.skillUsage == reader.SkillUsageEligibleNoUse {
+		if opts.jsonOut {
 			return printJSON(stdout, stderr, listDocument{
 				Version: listSchemaVersion, Sessions: []archive.Metadata{},
-				Limit: *limit, Returned: 0, TotalMatched: 0,
+				Limit: opts.limit, Returned: 0, TotalMatched: 0,
 				Unavailable: eligibleNoUseUnavailableMessage,
 			})
 		}
 		terminal.Println(stdout, eligibleNoUseUnavailableMessage)
 		return 0
 	}
-	var from time.Time
-	if *since != "" {
-		parsed, err := parseSince(*since, env.now())
-		if err != nil {
-			return fs.usageError("--since: %v", err)
-		}
-		from = parsed
-	}
-	filter := reader.Filter{Harness: *harness, Model: *model, Skill: *skill, SkillSHA256: *skillSHA256, RequireCompleteCoverage: *complete, SkillUsage: usage, From: from}
 
 	store, found, err := openReadOnlyStore(env)
 	if err != nil {
@@ -154,66 +122,146 @@ func runListCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, filter, reader.ListOptions{Cache: listCache(env, *noCache), Skipped: warnSkippedSidecar(stderr, "list")})
+	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list")})
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
-	if *imported || *hookCaptured {
-		kept := sessions[:0]
-		for _, m := range sessions {
-			if (m.Origin == archive.SessionOriginImport) == *imported {
-				kept = append(kept, m)
-			}
-		}
-		sessions = kept
-	}
-	totalMatched := len(sessions)
-	truncated := false
-	if *limit > 0 && len(sessions) > *limit {
-		sessions = sessions[:*limit]
-		truncated = true
-	}
-	if *jsonOut {
-		if sessions == nil {
-			sessions = []archive.Metadata{}
-		}
-		doc := listDocument{
-			Version: listSchemaVersion, Sessions: sessions,
-			Limit: *limit, Returned: len(sessions), TotalMatched: totalMatched,
-		}
-		if truncated {
-			doc.Truncated = true
-		}
-		return printJSON(stdout, stderr, doc)
+	sessions = filterListOrigin(sessions, opts.imported, opts.hookCaptured)
+	shown, totalMatched, truncated := applyListLimit(sessions, opts.limit)
+	if opts.jsonOut {
+		return printJSON(stdout, stderr, newListDocument(shown, opts.limit, totalMatched, truncated))
 	}
 	if totalMatched == 0 {
 		terminal.Println(stdout, "No archived sessions match.")
 		return 0
 	}
-	if err := withPager(stdout, stderr, env, *noPager, func(w io.Writer) error {
-		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		terminal.Println(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
-		for _, m := range sessions {
-			// Every cell but the fixed ones comes from bucket metadata, so it
-			// passes through archive.DisplayLine: no escape sequences reach the
-			// terminal, and no tab or newline breaks the table.
-			terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(m.SessionID), archive.DisplayLine(m.Harness.Name), formatTimeOrNever(m.CapturedAt), sessionOrigin(m), archive.DisplayLine(string(m.Parser.Status)), listOrDash(modelNames(m)), listOrDash(skillNames(m)))
-		}
-		if err := tw.Flush(); err != nil {
-			return err
-		}
-		if truncated {
-			terminal.Printf(w, "Showing %d of %d session(s). Use --limit 0 for all, or narrow with --since / --harness.\n", len(sessions), totalMatched)
-		} else {
-			terminal.Printf(w, "%d session(s).\n", len(sessions))
-		}
-		return nil
+	if err := withPager(stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+		return printListTable(w, shown, totalMatched, truncated)
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// listFlagValues holds the parsed list flags before validation.
+type listFlagValues struct {
+	harness, model, skill, skillSHA256, skillUsage, since       string
+	complete, imported, hookCaptured, noCache, noPager, jsonOut bool
+	limit                                                       int
+}
+
+// listOptions is the validated list command configuration.
+type listOptions struct {
+	filter                                            reader.Filter
+	skillUsage                                        reader.SkillUsage
+	imported, hookCaptured, noCache, noPager, jsonOut bool
+	limit                                             int
+}
+
+// listOptionsFromFlags validates list flags and builds the reader filter.
+// On a usage error it returns a non-zero exit code.
+func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (listOptions, int) {
+	if v.limit < 0 {
+		return listOptions{}, fs.usageError("--limit must be 0 or more")
+	}
+	if v.imported && v.hookCaptured {
+		return listOptions{}, fs.usageError("choose one of --imported and --hook-captured")
+	}
+	canonical, ok := harnessFlag(v.harness)
+	if !ok {
+		return listOptions{}, fs.usageError("%s", harnessFlagError(v.harness))
+	}
+	if v.skillSHA256 != "" && !validLowerSHA256(v.skillSHA256) {
+		return listOptions{}, fs.usageError("--skill-sha256 must be exactly 64 lowercase hexadecimal characters")
+	}
+	// The value is checked before the --skill/--skill-sha256 requirement so
+	// that a misspelled value is reported as the misspelling it is, rather
+	// than as a missing companion flag.
+	usage := reader.SkillUsage(v.skillUsage)
+	switch usage {
+	case reader.SkillUsageUsed, reader.SkillUsageAvailable, reader.SkillUsageEligibleNoUse:
+	default:
+		return listOptions{}, fs.usageError("--skill-usage must be used, available, or eligible_no_use, not %q", v.skillUsage)
+	}
+	if usage != reader.SkillUsageUsed && v.skill == "" && v.skillSHA256 == "" {
+		return listOptions{}, fs.usageError("--skill-usage requires --skill or --skill-sha256")
+	}
+	var from time.Time
+	if v.since != "" {
+		parsed, err := parseSince(v.since, now)
+		if err != nil {
+			return listOptions{}, fs.usageError("--since: %v", err)
+		}
+		from = parsed
+	}
+	return listOptions{
+		filter: reader.Filter{
+			Harness: canonical, Model: v.model, Skill: v.skill, SkillSHA256: v.skillSHA256,
+			RequireCompleteCoverage: v.complete, SkillUsage: usage, From: from,
+		},
+		skillUsage: usage, imported: v.imported, hookCaptured: v.hookCaptured,
+		noCache: v.noCache, noPager: v.noPager, jsonOut: v.jsonOut, limit: v.limit,
+	}, 0
+}
+
+// filterListOrigin keeps only imported or only hook-captured sessions when
+// one of those flags is set.
+func filterListOrigin(sessions []archive.Metadata, imported, hookCaptured bool) []archive.Metadata {
+	if !imported && !hookCaptured {
+		return sessions
+	}
+	kept := sessions[:0]
+	for _, m := range sessions {
+		if (m.Origin == archive.SessionOriginImport) == imported {
+			kept = append(kept, m)
+		}
+	}
+	return kept
+}
+
+// applyListLimit returns the newest-first prefix of sessions to show.
+// total is the match count before the limit; truncated is set when cut short.
+func applyListLimit(sessions []archive.Metadata, limit int) (shown []archive.Metadata, total int, truncated bool) {
+	total = len(sessions)
+	if limit > 0 && len(sessions) > limit {
+		return sessions[:limit], total, true
+	}
+	return sessions, total, false
+}
+
+// newListDocument builds the versioned list --json document.
+func newListDocument(sessions []archive.Metadata, limit, totalMatched int, truncated bool) listDocument {
+	if sessions == nil {
+		sessions = []archive.Metadata{}
+	}
+	return listDocument{
+		Version: listSchemaVersion, Sessions: sessions,
+		Limit: limit, Returned: len(sessions), TotalMatched: totalMatched,
+		Truncated: truncated,
+	}
+}
+
+// printListTable writes the human list table and trailing count line.
+func printListTable(w io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool) error {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	terminal.Println(tw, "SESSION\tHARNESS\tCAPTURED\tORIGIN\tPARSER\tMODELS\tSKILLS USED")
+	for _, m := range sessions {
+		// Every cell but the fixed ones comes from bucket metadata, so it
+		// passes through archive.DisplayLine: no escape sequences reach the
+		// terminal, and no tab or newline breaks the table.
+		terminal.Printf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(m.SessionID), archive.DisplayLine(m.Harness.Name), formatTimeOrNever(m.CapturedAt), sessionOrigin(m), archive.DisplayLine(string(m.Parser.Status)), listOrDash(modelNames(m)), listOrDash(skillNames(m)))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if truncated {
+		terminal.Printf(w, "Showing %d of %d session(s). Use --limit 0 for all, or narrow with --since / --harness.\n", len(sessions), totalMatched)
+	} else {
+		terminal.Printf(w, "%d session(s).\n", len(sessions))
+	}
+	return nil
 }
 
 // harnessFlag checks a --harness value and returns its canonical name, as
