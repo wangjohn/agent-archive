@@ -21,7 +21,8 @@ If `agent-archive` is already on your `PATH`, it replaces that copy,
 so the hooks and background collector keep pointing at it. Otherwise it uses
 `/usr/local/bin` when that is writable, and `~/.local/bin` if not, printing
 the line to add to your shell profile when the directory isn't on your
-`PATH`. It never runs setup.
+`PATH` (`~/.bash_profile` for Bash or `~/.zshrc` for zsh). Open a new terminal
+after adding it. It never runs setup.
 
 Run the same command again to upgrade. To pin both the installer script and
 the published release, or to choose a directory, use this `v0.1.1` example:
