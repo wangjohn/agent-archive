@@ -565,6 +565,7 @@ func renderPublication(candidate archive.SourceBundle, reg archive.SessionRegist
 	source := archive.SourceReference{Key: sourceKey, SHA256: compressed.SHA256, CompressedBytes: len(compressed.Bytes)}
 	metadata, buildErr := archive.BuildMetadata(candidate, opts.MachineID, reg.SessionStartedAt, now, source, archive.ParserInfo{Version: opts.parserVersion()})
 	metadata.ApplyRegistrationProvenance(reg)
+	metadata.ApplyProjectName(reg.ProjectRoot)
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		return renderedPublication{}, fmt.Errorf("derive metadata: %w", buildErr)
 	}

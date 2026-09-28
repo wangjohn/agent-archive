@@ -282,7 +282,7 @@ func TestBackfillListAndShow(t *testing.T) {
 	if len(parents) != 3 {
 		t.Fatalf("%d imported", len(parents))
 	}
-	out, errOut, code := f.command(t, "list", "--imported")
+	out, errOut, code := f.command(t, "list", "--imported", "--verbose")
 	if code != 0 || !strings.Contains(out, "3 session(s).") || strings.Count(out, " imported ") != 3 || !strings.Contains(out, "ORIGIN") {
 		t.Fatalf("list --imported: %d %s\n%s", code, errOut, out)
 	}

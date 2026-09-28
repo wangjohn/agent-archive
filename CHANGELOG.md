@@ -15,6 +15,22 @@ follow [Semantic Versioning](https://semver.org/).
 - On a terminal, `list` (text only) pages through `$AGENT_ARCHIVE_PAGER`,
   else `$PAGER`, else `less -FRX`. Use `--no-pager`, or set either env var
   to empty or `cat`, to print directly. `--json` is never paged.
+- Default `list` text is title-first: first filtered prompt preview (or a
+  short SESSION_ID when none), relative capture time, harness, project, and
+  short ID. `--verbose` restores full IDs, absolute times, origin, parser
+  status, and all models/skills.
+- On an interactive terminal (stdin and stdout), `list` and bare `show`
+  offer a numbered picker to print a session's metadata; `q` quits. Piped
+  output and `--json` stay non-interactive. Bare `agent-archive` on a TTY
+  opens the same interactive list when already set up.
+- `show` accepts a title substring (and short SESSION_ID) when the argument
+  is not an exact id; multiple matches use the picker on a TTY.
+- Human `list` groups rows under project headings when more than one project
+  appears in the page.
+- Metadata may include optional `title` (preview of the first filtered human
+  prompt) and `project_name` (project basename at publish). Parser version
+  is now `0.12.0` so existing sessions get titles on the next metadata
+  refresh.
 
 ### Changed
 

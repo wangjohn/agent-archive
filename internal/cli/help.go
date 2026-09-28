@@ -95,6 +95,12 @@ Example: agent-archive uninstall
 	"list": `Usage: agent-archive list [options]
 
 Find sessions using metadata; does not download conversation content.
+Default text columns: TITLE (first filtered prompt preview, or a short
+SESSION_ID prefix when none), relative capture time, harness, project,
+and a short SESSION_ID. On a terminal with an interactive stdin, list a
+numbered table and pick a session to show its metadata; q quits. Piped
+or --json output is never interactive. On a terminal without interactive
+stdin, text is paged through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -116,6 +122,8 @@ Find sessions using metadata; does not download conversation content.
   --hook-captured                Only sessions hooks captured as they ran
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
+  --verbose                      Full SESSION_IDs, absolute times, origin,
+                                 parser status, all models/skills, and title
   --no-pager                     Print directly; do not page through $PAGER
   --no-cache                     Download every metadata sidecar instead of
                                  reusing unchanged ones from the local
@@ -126,13 +134,17 @@ Find sessions using metadata; does not download conversation content.
                                  matching session's metadata, as show prints
                                  it (never conversation content). A query that
                                  cannot return sessions yet has "sessions": []
-                                 and an "unavailable" reason. Never paged.
+                                 and an "unavailable" reason. Never paged or
+                                 interactive.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
-	"show": `Usage: agent-archive show SESSION_ID [--harness NAME] [--normalized] [--json]
+	"show": `Usage: agent-archive show [SESSION_ID|TITLE] [options]
 
 Print session metadata as JSON (--json is accepted, as for list and status).
 An imported session also shows origin, imported_at, and started_at_source.
+With no SESSION_ID on a terminal, show the same interactive session picker
+as list and print the chosen session's metadata. A TITLE substring also
+matches; several matches on a terminal open the picker.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --normalized          Also download and verify the source bundle, and print

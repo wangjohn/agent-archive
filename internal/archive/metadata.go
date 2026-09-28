@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -274,6 +275,7 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 	}
 	deriveHookModels(bundle, &metadata)
 	deriveSkills(bundle, view.NativeSkillUses, &metadata)
+	metadata.Title = deriveSessionTitle(view, bundle.NativeText)
 	feedback := 0
 	for _, e := range bundle.SupplementalEvidence {
 		if e.Kind == EvidenceKindExplicitFeedback {
@@ -282,6 +284,72 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 	}
 	metadata.Counts.ExplicitFeedback = &feedback
 	return metadata, nil
+}
+
+// sessionTitleLimit is the maximum rune length of Metadata.Title.
+const sessionTitleLimit = 72
+
+// deriveSessionTitle returns a one-line preview of the first human prompt:
+// from normalized JSONL turns when present, otherwise from the first user
+// section of a filtered NativeText transcript (Cursor text sessions).
+func deriveSessionTitle(view NormalizedView, texts []TextTranscript) string {
+	for _, turn := range view.Turns {
+		if turn.Kind != TurnKindHumanPrompt {
+			continue
+		}
+		if title := collapseSessionTitle(turn.Text); title != "" {
+			return title
+		}
+	}
+	for _, transcript := range texts {
+		parsed, _ := parseTextSections(transcript.Content)
+		for _, section := range parsed.sections {
+			if section.role != textRoleUser {
+				continue
+			}
+			parts := make([]string, 0, len(section.lines))
+			if header := strings.TrimSpace(section.header); header != "" {
+				parts = append(parts, header)
+			}
+			if len(section.lines) > 1 {
+				parts = append(parts, section.lines[1:]...)
+			}
+			if title := collapseSessionTitle(strings.Join(parts, "\n")); title != "" {
+				return title
+			}
+		}
+	}
+	return ""
+}
+
+// collapseSessionTitle flattens whitespace to a single line and caps length.
+func collapseSessionTitle(text string) string {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return ""
+	}
+	line := strings.Join(fields, " ")
+	runes := []rune(line)
+	if len(runes) <= sessionTitleLimit {
+		return line
+	}
+	return string(runes[:sessionTitleLimit]) + "…"
+}
+
+// ApplyProjectName sets ProjectName from the basename of projectRoot.
+// Callers pass the registration's ProjectRoot at publish time.
+func (m *Metadata) ApplyProjectName(projectRoot string) {
+	base := filepath.Base(filepath.Clean(strings.TrimSpace(projectRoot)))
+	if base == "" {
+		return
+	}
+	if base == "." {
+		return
+	}
+	if base == string(filepath.Separator) {
+		return
+	}
+	m.ProjectName = base
 }
 
 type lifecycleObservation struct {

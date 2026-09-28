@@ -4,83 +4,35 @@
 [![Go 1.27](https://img.shields.io/badge/go-1.27.1-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Keep your Claude Code, Codex, and Cursor sessions in a bucket you own, so you
-can search them, compare them, and hand one agent's work to another.
+A lightweight CLI that hooks into Claude Code, Codex, and Cursor sessions and stores them in cloud storage (S3 or R2).
 
-`agent-archive` is a small macOS command-line tool. It hooks into each app,
-filters every session's transcript, and uploads it to your private Cloudflare
-R2 or Amazon S3 bucket. There is no account, hosted service, or telemetry.
+OpenAI and Anthropic are constantly one-upping each other or the best model, but it's a pain to switch between their coding agents. Every time you switch, you lose your history, and then don't have a single source of truth for where all your sessions live. Also, if you run out of limits in the middle of a session, it's very annoying to have to figure out how to hand that session over to the other coding agent.
 
-> **Status: beta.** Interfaces and the bucket layout may still change before
-> `v1.0`.
+`agent-archive` solves these problems, and can perform the following:
+
+- Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
+- Hand off a session from one agent to another with `agent-archive handoff`, useful especially if you run into rate limits halfway through a session.
+- View all of your past sessions across coding agents with `agent-archive list`. This is useful for setting up analytics automations to understand how you're using your agents, how different agents perform across different tasks, and for performing meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
 
 ## Quickstart
 
-1. **Install** (macOS, Apple Silicon or Intel):
+1. **Install** on macOS:
 
    ```sh
-   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | sh
+   curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 sh
    ```
 
-   Or [build from source](docs/getting-started/install.md#build-from-source).
+2. **Create a private bucket** and an access key for it ([R2 and S3 steps](docs/getting-started/bucket.md)).
 
-2. **Create a private bucket** and an access key for it: a few clicks in
-   Cloudflare R2 or AWS ([how](docs/getting-started/bucket.md)).
-
-3. **Run setup** from inside a project you want archived (or from anywhere,
-   and pick from the projects your apps have sessions in):
+3. **Run setup** inside a project you want to include, or choose projects when prompted ([setup guide](docs/getting-started/setup.md)):
 
    ```sh
-   cd ~/code/my-project
    agent-archive setup
    ```
 
-4. **Follow setup's last lines:** approve the hooks in Codex (`/hooks`),
-   then start a **new** session. Sessions already open aren't captured.
+That's it -- as soon as you start a new session after setup, it will get sent into object storage and you'll be able to see it. You can verify status by running `agent-archive status` and take a look at past sessions that have been archived with `agent-archive list`.
 
-5. **Check it:** once that session has run for a minute or two,
-   `agent-archive status` should say `Ready`; anything else says what to
-   fix first, and how. Optionally, `agent-archive backfill` imports the sessions
-   already on this Mac.
-
-To add a second Mac, install and run setup there with the same bucket, or
-script it with [`agent-archive setup --yes`](docs/getting-started/setup.md#set-up-without-questions)
-([multiple Macs](docs/guides/multiple-macs.md)).
-
-## Commands
-
-| Command | What it does |
-| --- | --- |
-| `setup` | First-time setup, or change apps, projects, storage, or retention. |
-| `status` | Storage, collector, hooks, and capture health, led by the one thing to fix and how. |
-| `list`, `show` | Browse archived sessions (`--json` for scripts). |
-| `handoff` | Print a session as a prompt another agent can continue from. |
-| `backfill` | Import sessions already on this Mac; `backfill undo` removes them. |
-| `sync` | Collect and upload now instead of waiting for the next pass. |
-| `pause`, `resume` | Suspend and restore capture. |
-| `feedback` | Attach your own rating or note to a session. |
-| `uninstall` | Remove hooks and the collector. Never touches the bucket. |
-
-`agent-archive help COMMAND` shows options and examples; the
-[CLI reference](docs/reference/cli.md) lists every flag and exit code.
-
-## What leaves your Mac
-
-- **Sessions, filtered**, only for projects you include: prompts, replies,
-  tool calls and results, working directories, branch names, models, and
-  token counts.
-- **Installed skills:** the text of each `SKILL.md` the app can see.
-- **Never:** hidden reasoning, system instructions, images and other binary
-  content, or any field the filter doesn't recognize.
-- **Redacted, best effort:** credentials with a recognizable name or shape
-  (API keys, tokens, passwords, private keys). A secret with neither is
-  archived as it appears.
-- **Only to your bucket**, unencrypted by agent-archive: anyone who can read
-  the bucket can read your sessions. Keep it private and use
-  [narrow credentials](docs/security/bucket-permissions.md).
-
-The [privacy](docs/security/privacy.md) page has the details and where the
-protections stop.
+To add a second Mac, install and run setup there with the same bucket (see [multiple Macs](docs/guides/multiple-macs.md)).
 
 ## How it works
 
@@ -95,19 +47,11 @@ flowchart LR
   T["transcripts already<br/>on this Mac"] --> BF["backfill"] --> S
 ```
 
-Setup edits only the `hooks` entry of each app's settings file and adds one
-LaunchAgent ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-mac)).
-Old sessions are deleted from the bucket after 90 days by default.
+Setup edits each included app's hook settings and adds one LaunchAgent; for Cursor it also adds a missing `version` field ([everything it changes](docs/getting-started/setup.md#what-setup-changes-on-your-mac)). Old sessions are deleted from the bucket after 90 days by default.
 
-## Requirements
+## Commands and docs
 
-- macOS, Apple Silicon or Intel.
-- A Cloudflare R2 or Amazon S3 bucket.
-- Claude Code 2.1.x, Codex CLI 0.155, or Cursor 3.21. Other versions are
-  reported as `unverified` rather than assumed to work
-  ([tested versions](docs/reference/capture-capabilities.md#tested-app-versions)).
-
-## Documentation
+`setup` configures capture; `status` reports health and evidence; `sync` collects now; `pause` and `resume` control capture; `backfill` imports existing sessions; `feedback` attaches your assessment to one; and `uninstall` removes hooks and the collector but never deletes the bucket. Run `agent-archive help COMMAND` for options or use the [CLI reference](docs/reference/cli.md).
 
 [Install](docs/getting-started/install.md) ·
 [Setup](docs/getting-started/setup.md) ·
@@ -116,9 +60,7 @@ Old sessions are deleted from the bucket after 90 days by default.
 [Privacy](docs/security/privacy.md) ·
 [All docs](docs/README.md)
 
-## Contributing
+## Contributing and security
 
-See [CONTRIBUTING.md](CONTRIBUTING.md); never test against your real Mac
-([sandbox recipe](dev/contributing/testing.md)). Report vulnerabilities
-privately as [SECURITY.md](SECURITY.md) describes. Changes are in
-[CHANGELOG.md](CHANGELOG.md). Released under the [MIT License](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md); test without touching your real Mac ([sandbox recipe](dev/contributing/testing.md)). Report vulnerabilities privately as [SECURITY.md](SECURITY.md) describes. Changes are in [CHANGELOG.md](CHANGELOG.md). Released under the [MIT License](LICENSE).
+

@@ -82,7 +82,7 @@ func TestShowReadsDirectlyAndListReusesTheMetadataCache(t *testing.T) {
 		{[]string{"list", "--no-cache"}, 1},
 		{[]string{"list", "--harness", "codex"}, 0},
 	} {
-		if out := run(step.args...); !strings.Contains(out, id) {
+		if out := run(step.args...); !strings.Contains(out, id[:min(8, len(id))]) {
 			t.Fatalf("%v output = %s", step.args, out)
 		}
 		lists, gets := recorder.take()

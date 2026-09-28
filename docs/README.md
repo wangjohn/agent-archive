@@ -4,6 +4,17 @@ Start with the [README](../README.md) for what agent-archive is. These docs
 are for people using it; specs and contributor guides are in
 [`dev/`](../dev/README.md).
 
+## First successful capture
+
+1. Read [what is uploaded](security/privacy.md#what-is-uploaded) before setup. Filtering and credential redaction are best effort, there is no client-side encryption, and visible user-level `SKILL.md` text can be uploaded even when you include only one project.
+2. [Install](getting-started/install.md) a macOS release, then run `agent-archive --version` to confirm the binary starts.
+3. [Create a private bucket and configure storage credentials](getting-started/bucket.md), using [narrow bucket permissions](security/bucket-permissions.md). You need a Cloudflare or AWS account for storage; there is no agent-archive account.
+4. From a project you want archived, run `agent-archive setup`. Include that project and your app, connect the bucket, and review the [setup choices](getting-started/setup.md). If setup offers to import past sessions, decline for this new-session check; [backfill](guides/backfill.md) is available later.
+5. In Codex, run `/hooks` and approve the archive hooks. Start a **new** Codex or Claude Code session in the included project, or a new Cursor Agent chat there, and send a prompt. An already open session does not qualify; [setup explains fresh starts](getting-started/setup.md#after-setup).
+6. Allow the background collector to run, or run `agent-archive sync`. Then run `agent-archive status`. A connected bucket, installed hooks, or an overall `Ready` state shows configuration or health; look for your app's **archived, verified** capture row to establish publication and read-back. Use `agent-archive status --verbose` for the per-project evidence. Finally, run `agent-archive list`, copy the new session ID, and run `agent-archive show SESSION_ID` to read its archived metadata. See [reading status](guides/troubleshooting.md#reading-status) and [list/show](guides/list-and-show.md) for detail.
+
+If your app still has no captured session, use its specific steps: [Claude Code](guides/troubleshooting.md#no-claude-code-session), [Codex](guides/troubleshooting.md#no-codex-session), or [Cursor](guides/troubleshooting.md#no-cursor-session).
+
 ## Using agent-archive
 
 | Doc | For |

@@ -21,6 +21,31 @@ variable, never expanded into a script's text.
 Update [CHANGELOG.md](../../CHANGELOG.md) before tagging; the release notes
 point at it and at the [install guide](../../docs/getting-started/install.md).
 
+## Repository settings and release evidence
+
+Before tagging, an owner checks the live GitHub settings and records **checker,
+UTC date, tag, commit SHA, result, and evidence link or screenshot** for each
+item in the release record. Mark inaccessible checks **unverified**, not
+absent. Workflow files and issue templates describe intent; they do not prove
+the corresponding settings or labels are active.
+
+| Check | Live evidence to record |
+| --- | --- |
+| `release` environment | Settings → Environments shows required reviewers, deployment tag restriction `v*.*.*`, `APPLE_SIGNING_ENABLED=true`, and the six Apple secrets scoped to this environment (names and scope only; never record values). |
+| `main` protection | Settings → Rules → Rulesets or Branches shows protection enabled and the exact required CI checks for `main`; compare their names with the current [test workflow](../../.github/workflows/test.yml). |
+| Private vulnerability reporting | Settings → Security → Code security and analysis shows private vulnerability reporting enabled; test the private reporting route described in [SECURITY.md](../../SECURITY.md) without submitting a real report. |
+| Issue labels | Confirm `bug`, `capture-gap`, and `enhancement` exist in live repository labels and match the [issue templates](../../.github/ISSUE_TEMPLATE/). |
+| Published tag | Confirm the release tag points to the tested `main` commit, the publish job completed signing and accepted notarization for both architectures, and the release has `agent-archive-darwin-arm64`, `agent-archive-darwin-amd64`, and `SHA256SUMS`. Download and verify both signatures and checksums. |
+| Provenance | Verify the downloaded assets with `gh attestation verify <file> --repo wangjohn/agent-archive`; record the verified subject digests and workflow run. |
+
+On 2026-09-28, the GitHub connector showed the repository public and a
+published `v0.1.1` release with both architecture assets and `SHA256SUMS`.
+Its branch-protection request returned HTTP 403 and the rulesets collection
+was empty. Those responses leave live `main` protection **unverified**; they
+do not establish that protection is absent. The other settings and the
+signing, notarization, and attestation checks above still need their own live
+evidence.
+
 ## Before the first release
 
 These are repository settings only the owner can make:
@@ -74,3 +99,16 @@ development only; they report `dev-<commit>` from `--version`.
 
 A release that changes what is filtered or how metadata is derived must
 already carry the matching version bumps; see [versions](versions.md).
+
+## Release-time documentation audit
+
+For every tag, check the [README](../../README.md) commands and synthetic
+output against that tag's CLI, confirm pinned install examples name a
+published tag and its installer script, and review the dated evidence in
+[tested app versions](../../docs/reference/capture-capabilities.md) before
+changing any version claim. Recheck the Cloudflare and AWS dashboard steps in
+the [bucket guide](../../docs/getting-started/bucket.md), follow its current
+provider pricing link, and open external links in the release-facing docs.
+Run the repository's relative-link and generated CLI-reference checks too;
+passing those checks does not establish that external URLs work. Record the
+documentation commit and any pending live checks beside the release evidence.

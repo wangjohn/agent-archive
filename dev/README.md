@@ -26,10 +26,12 @@ differ, the code and the user documentation describe current behavior.
 | [Backfill](specs/backfill.md) | Implemented. |
 | [Handoff](specs/handoff.md) | Implemented. |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
+| [List and browse UX](proposals/list-browse-ux.md) | Design record; implementation tracked in PRs #99–#101. |
 
 ## Maintainers
 
 | Doc | For |
 | --- | --- |
 | [Releasing](maintainers/releasing.md) | Tagging, signing, and notarization. |
+| [Published-release acceptance](maintainers/open-source-acceptance.md) | Disposable Mac and bucket smoke test with recorded pass, fail, or pending evidence. |
 | [Versions](maintainers/versions.md) | Filter, adapter, parser, and schema versions, and when each is bumped. |

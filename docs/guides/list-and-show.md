@@ -5,13 +5,16 @@ touching local collector state. `feedback` attaches your own assessment to
 a session.
 
 ```sh
-# Every archived session matching the filters, newest first (at most 50 by
-# default): ID, harness, capture time, origin, parser status, models, and
-# skills used. Metadata only, never transcript text. On a terminal the table
-# is paged through $PAGER (or less); use --no-pager to print directly.
+# Newest archived sessions matching the filters (at most 50 by default):
+# title (first filtered prompt preview), relative time, harness, project,
+# and short ID. Metadata only, never full transcript text. On an interactive
+# terminal, pick a numbered row to show that session's metadata (q to quit).
+# Otherwise the table is paged through $PAGER (or less); use --no-pager to
+# print directly.
 agent-archive list
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
+agent-archive list --verbose          # full IDs, absolute times, origin, parser
 
 # Narrow it down. --since takes a date, an RFC 3339 time, or an age.
 agent-archive list --harness claude --model claude-opus-5 --since 7d
@@ -22,20 +25,37 @@ agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcde
 agent-archive list --complete          # complete parser coverage, no capture gaps
 
 # For scripts: {"schema_version": 2, "sessions": [...], "limit", "returned",
-# "total_matched"} (and "truncated" when --limit cut the list). Never paged.
+# "total_matched"} (and "truncated" when --limit cut the list). Never paged
+# or interactive.
 agent-archive list --json
 agent-archive list --json --limit 0
 
-# One session's metadata sidecar, as JSON.
+# One session's metadata sidecar, as JSON. With no SESSION_ID on a terminal,
+# the same interactive picker as list. A title substring also works.
+agent-archive show
 agent-archive show SESSION_ID
+agent-archive show "OAuth callback"
+agent-archive show "OAuth callback" --harness codex  # search one app
 agent-archive show SESSION_ID --normalized   # also the verified conversation
 ```
+
+On an interactive terminal, bare `agent-archive` (no command) opens the
+same session browser as `list` when capture is already set up.
 
 The JSON documents are described in [JSON output](../reference/json-output.md).
 
 `list` reuses unchanged metadata from a local cache (`--no-cache` to skip
 it). A session whose metadata can't be read, for example because a newer
 version wrote it, is left out with a warning on stderr; the rest are listed.
+
+`list` shows each session's `title` when metadata has one (a short preview of
+the first filtered human prompt, derived at publish time). Older sidecars
+without a title fall back to the short SESSION_ID in that column. `project_name`
+in metadata labels the project when present; otherwise `list` uses this Mac's
+configured project basename. The ID column is a short prefix you can pass to
+`show`; if multiple archived IDs share that prefix, use a longer ID from
+`list --verbose` or add `--harness`. Projects with the same basename stay in
+separate groups, labeled with their project ID prefixes.
 
 `show` prints conversation content only when asked: `--normalized` downloads
 the session's source bundle, verifies its checksum and identity against the

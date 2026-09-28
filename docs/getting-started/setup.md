@@ -1,5 +1,7 @@
 # Set up capture
 
+Before enabling capture, read [what leaves your Mac](../security/privacy.md#what-is-uploaded): filtering and credential redaction are best effort, there is no client-side encryption, and visible user-level `SKILL.md` text may be uploaded even when you include only one project. Setup captures new sessions in explicitly included projects; [backfill](../guides/backfill.md) imports older sessions only when you choose it.
+
 ```sh
 agent-archive setup
 ```
@@ -161,10 +163,6 @@ days is about a century). Storage changes are checked
 again before starting. If the connection test fails, setup says why and
 how to fix it; see [when setup's storage check
 fails](../guides/troubleshooting.md#when-setups-storage-check-fails).
-
-Filtering is best effort, so archived text can still contain sensitive
-information. Read [what leaves your Mac](../security/privacy.md) before
-enabling.
 
 Run setup from the `agent-archive` you will keep using. Setup refuses a
 binary in a temporary folder, including the one `go run` builds and deletes
@@ -328,6 +326,7 @@ agent-archive status --json
 
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
+Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
 Setup's last line is the command that sets up another Mac with the same
 storage, apps and projects ([without questions](#set-up-without-questions)),

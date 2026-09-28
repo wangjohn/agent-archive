@@ -394,6 +394,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		stdin = strings.NewReader("")
 	}
 	if len(args) == 0 {
+		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
+			return runListCommand(nil, stdin, stdout, stderr, env)
+		}
 		if notSetUp(env) {
 			terminal.Println(stdout, "Not set up yet — run agent-archive setup.")
 			terminal.Println(stdout)
@@ -430,9 +433,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	case "uninstall":
 		return runUninstallCommand(args[1:], stdin, stdout, stderr, env)
 	case "list":
-		return runListCommand(args[1:], stdout, stderr, env)
+		return runListCommand(args[1:], stdin, stdout, stderr, env)
 	case "show":
-		return runShowCommand(args[1:], stdout, stderr, env)
+		return runShowCommand(args[1:], stdin, stdout, stderr, env)
 	case "feedback":
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":

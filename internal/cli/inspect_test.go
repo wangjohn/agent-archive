@@ -72,7 +72,11 @@ func TestListShowsPublishedSessionMetadataOnly(t *testing.T) {
 	if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
-	for _, want := range []string{id, "codex", "gpt-test", "2026-01-02T00:00:00Z", "1 session(s)."} {
+	short := id
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	for _, want := range []string{short, "codex", "just now", "1 session(s).", "WHEN", "PROJECT", "TITLE", "ID"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("list output missing %q:\n%s", want, out.String())
 		}
@@ -109,7 +113,7 @@ func TestListFilters(t *testing.T) {
 		if code := Run(c.args, nil, &out, &errOut, env); code != 0 {
 			t.Fatalf("%v: code=%d stderr=%s", c.args, code, errOut.String())
 		}
-		if got := strings.Contains(out.String(), id); got != c.match {
+		if got := strings.Contains(out.String(), id[:min(8, len(id))]); got != c.match {
 			t.Fatalf("%v: matched=%v want=%v\n%s", c.args, got, c.match, out.String())
 		}
 		if !c.match && !strings.Contains(out.String(), "No archived sessions match.") {
@@ -162,7 +166,7 @@ func TestListFiltersExactSkillHashFromMetadataOnly(t *testing.T) {
 	} {
 		wantID, rejectID := ids[0], ids[1]
 		var out, errOut bytes.Buffer
-		if code := Run([]string{"list", "--skill", "review", "--skill-sha256", hash}, nil, &out, &errOut, env); code != 0 {
+		if code := Run([]string{"list", "--skill", "review", "--skill-sha256", hash, "--verbose"}, nil, &out, &errOut, env); code != 0 {
 			t.Fatalf("hash=%s code=%d stderr=%s", hash, code, errOut.String())
 		}
 		// One ID is a prefix of the other, and tabwriter pads columns with
@@ -175,16 +179,39 @@ func TestListFiltersExactSkillHashFromMetadataOnly(t *testing.T) {
 	}
 }
 
-// listedSessionIDs returns the session ID in the first column of each `list`
-// row, skipping the header and the trailing count line.
+// listedSessionIDs returns each row's session identity from `list` text:
+// the SESSION column when --verbose, otherwise the trailing ID column.
 func listedSessionIDs(out string) []string {
 	var ids []string
+	verbose := false
 	for line := range strings.SplitSeq(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) == 0 || fields[0] == "SESSION" || fields[0] == "Showing" || strings.Contains(line, "session(s).") {
+		if len(fields) == 0 || fields[0] == "Showing" || strings.Contains(line, "session(s).") {
 			continue
 		}
-		ids = append(ids, fields[0])
+		if fields[0] == "TITLE" || (fields[0] == "#" && len(fields) > 1 && fields[1] == "TITLE") {
+			for _, f := range fields {
+				if f == "SESSION" {
+					verbose = true
+				}
+			}
+			continue
+		}
+		if fields[0] == "#" {
+			fields = fields[1:]
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		if verbose {
+			// TITLE SESSION HARNESS ...
+			if len(fields) < 2 {
+				continue
+			}
+			ids = append(ids, fields[1])
+			continue
+		}
+		ids = append(ids, fields[len(fields)-1])
 	}
 	return ids
 }
@@ -453,6 +480,7 @@ func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
 	if len(m.Models) == 0 {
 		t.Fatal("fixture has no model")
 	}
+	m.Title = "fix\x1b[2J this\tx\ny"
 	m.Models[0].Attributes = map[string]string{"gen_ai.request.model": "gpt\x1b]52;c;aGk=\x07\tx\ny"}
 	m.SkillsUsed = []archive.SkillUse{{Name: "rev\x1b[2Jiew\u009b31m\r", SHA256: strings.Repeat("a", 64), Evidence: archive.SkillUseEvidenceNativeInvocation}}
 	m.SkillDetection = archive.SkillDetectionObserved
@@ -472,8 +500,16 @@ func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
 	if got := len(strings.Split(strings.TrimSpace(out.String()), "\n")); got != 3 {
 		t.Fatalf("list printed %d lines, want header, one row, count:\n%s", got, out.String())
 	}
+	if !strings.Contains(out.String(), "fix[2J this x y") {
+		t.Fatalf("title not shown as text:\n%s", out.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"list", "--verbose"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("verbose code=%d stderr=%s", code, errOut.String())
+	}
 	if !strings.Contains(out.String(), "gpt]52;c;aGk= x y") || !strings.Contains(out.String(), "rev[2Jiew31m") {
-		t.Fatalf("names not shown as text:\n%s", out.String())
+		t.Fatalf("verbose names not shown as text:\n%s", out.String())
 	}
 }
 
@@ -594,7 +630,7 @@ func TestListWarnsAboutInvalidSidecarAndListsTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"list", "--no-cache"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--no-cache", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), id) || !strings.Contains(out.String(), "1 session(s).") {

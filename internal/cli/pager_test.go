@@ -63,7 +63,7 @@ func TestListLimitCapsNewestSessions(t *testing.T) {
 	t.Parallel()
 	env, newestFirst := publishNSessions(t, 5)
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"list", "--limit", "2"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--limit", "2", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	listed := listedSessionIDs(out.String())
@@ -76,7 +76,7 @@ func TestListLimitCapsNewestSessions(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Run([]string{"list", "--limit", "0"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--limit", "0", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	listed = listedSessionIDs(out.String())
@@ -183,7 +183,10 @@ func TestListPagesOnTerminal(t *testing.T) {
 func TestListPagerFailureFallsBack(t *testing.T) {
 	t.Parallel()
 	env, _, _ := publishedFixture(t)
-	env.IsTerminal = func(any) bool { return true }
+	env.IsTerminal = func(stream any) bool {
+		_, ok := stream.(*bytes.Buffer)
+		return ok
+	}
 	env.RunPager = func(string, io.Reader, io.Writer, io.Writer) error {
 		return errors.New("no less")
 	}
