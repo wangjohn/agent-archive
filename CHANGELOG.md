@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-28
+
+Setup and status UX polish since the first tagged commit. No filter or
+bucket-layout changes.
+
 ### Added
 
 - A shared terminal style for setup and status: green ✓, yellow !, red ✗,
@@ -137,5 +142,6 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0
