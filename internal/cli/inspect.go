@@ -413,6 +413,17 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 
 	ctx := context.Background()
+	// The default list prints short IDs. Resolve those against all archived
+	// sidecars before constructing an object key, including when --harness is
+	// supplied. Full IDs retain the direct-read path below.
+	if isShortArchiveID(sessionID) {
+		resolvedID, resolvedHarness, err := resolveShortArchiveID(ctx, store, env, stderr, *harness, sessionID)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+			return 1
+		}
+		sessionID, *harness = resolvedID, resolvedHarness
+	}
 	key, err := locateMetadataKey(ctx, store, *harness, sessionID)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
