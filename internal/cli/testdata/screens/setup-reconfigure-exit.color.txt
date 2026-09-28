@@ -9,5 +9,6 @@ Checking installed applications...
   4) All settings
   5) Nothing, exit
 Enter 1-5 [\e[1m1\e[0m] › 5
+
 Nothing was changed.
 [exit 0]

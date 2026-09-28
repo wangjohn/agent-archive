@@ -8,11 +8,16 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 No apps found automatically.
 Choose which apps to include:
 \e[1mInclude Codex?\e[0m [y/\e[1mN\e[0m] › y
+
 \e[1mInclude Claude Code?\e[0m [y/\e[1mN\e[0m] › n
+
 \e[1mInclude Cursor?\e[0m [y/\e[1mN\e[0m] › n
+
 Add project directories, one per line. Enter a blank line when finished.
 \e[1mProject path\e[0m › ~/src/web-app
+
 \e[1mProject path\e[0m › 
+
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
