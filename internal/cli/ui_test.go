@@ -11,6 +11,33 @@ import (
 	"time"
 )
 
+func TestStyleRolesColorOnlyWhenAllowed(t *testing.T) {
+	t.Parallel()
+	roles := []struct {
+		name  string
+		apply func(textStyle, string) string
+		code  string
+	}{
+		{"ok", textStyle.ok, "32"},
+		{"warn", textStyle.warn, "33"},
+		{"fail", textStyle.fail, "31"},
+		{"cmd", textStyle.cmd, "36"},
+		{"dim", textStyle.dim, "2"},
+		{"bold", textStyle.bold, "1"},
+	}
+	for _, role := range roles {
+		if got, want := role.apply(textStyle{color: true}, "text"), "\x1b["+role.code+"mtext\x1b[0m"; got != want {
+			t.Errorf("%s with color = %q, want %q", role.name, got, want)
+		}
+		if got := role.apply(textStyle{}, "text"); got != "text" {
+			t.Errorf("%s without color = %q, want plain text", role.name, got)
+		}
+		if got := role.apply(textStyle{color: true}, ""); got != "" {
+			t.Errorf("%s of empty text = %q, want nothing", role.name, got)
+		}
+	}
+}
+
 func TestStartActivityIsSilentOffTerminal(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer

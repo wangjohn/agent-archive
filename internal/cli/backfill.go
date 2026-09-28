@@ -212,9 +212,15 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	stopLooking()
 	if err != nil {
 		if !*jsonOut {
-			if style.live {
-				terminal.Println(stdout, backfill.SearchLine(filters)+" failed.")
-			} else {
+			label := backfill.SearchLine(filters)
+			switch {
+			case interrupted && style.live:
+				terminal.Println(stdout, label+" stopped.")
+			case interrupted:
+				terminal.Println(stdout, "stopped.")
+			case style.live:
+				terminal.Println(stdout, label+" failed.")
+			default:
 				terminal.Println(stdout)
 			}
 		}
