@@ -23,11 +23,11 @@ so the hooks and background collector keep pointing at it. Otherwise it uses
 the line to add to your shell profile when the directory isn't on your
 `PATH`. It never runs setup.
 
-Run the same command again to upgrade. To choose a release or a directory,
-set the variables on the `sh` side of the pipe:
+Run the same command again to upgrade. To pin both the installer script and
+the published release, or to choose a directory, use this `v0.1.1` example:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/main/install.sh | AGENT_ARCHIVE_VERSION=v0.1.0 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://raw.githubusercontent.com/wangjohn/agent-archive/v0.1.1/install.sh | AGENT_ARCHIVE_VERSION=v0.1.1 AGENT_ARCHIVE_INSTALL_DIR="$HOME/bin" sh
 ```
 
 ## Build from source
