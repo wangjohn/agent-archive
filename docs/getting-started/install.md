@@ -80,27 +80,43 @@ location (`status` reports hooks and background as `broken` until you do).
    shasum -a 256 -c SHA256SUMS --ignore-missing
    ```
 
-3. Make it executable and put it on your `PATH` as `agent-archive`:
+3. Select the binary for this Mac, then check its signature. Run these commands
+   in the directory containing the downloads:
 
    ```sh
-   chmod +x agent-archive-darwin-*
-   sudo mv agent-archive-darwin-* /usr/local/bin/agent-archive
+   case "$(uname -m)" in
+     arm64) asset=agent-archive-darwin-arm64 ;;
+     x86_64) asset=agent-archive-darwin-amd64 ;;
+     *) echo "Unsupported Mac architecture" >&2; exit 1 ;;
+   esac
+   test -f "$asset" || { echo "Missing $asset" >&2; exit 1; }
+   codesign --verify --strict --verbose=2 "$asset"
+   codesign -dv "$asset" 2>&1 | grep TeamIdentifier
    ```
 
-   On an Apple Silicon Mac with Homebrew, `/usr/local/bin` may not exist;
-   create it (`sudo mkdir -p /usr/local/bin`) or use `/opt/homebrew/bin`,
-   which needs no `sudo`.
+   Compare the reported `TeamIdentifier` with `team_id` in
+   [`install.sh`](../../install.sh). If you have the GitHub CLI, also run
+   `gh attestation verify "$asset" --repo wangjohn/agent-archive` to check
+   that this release asset was built by the repository's release workflow.
 
-4. Confirm it runs: `agent-archive --version`.
+4. Make the selected binary executable and install it in a directory you own:
+
+   ```sh
+   chmod +x "$asset"
+   mkdir -p "$HOME/.local/bin"
+   mv "$asset" "$HOME/.local/bin/agent-archive"
+   ```
+
+   Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (zsh) or
+   `~/.bash_profile` (Bash) if that directory is not already on your `PATH`,
+   then open a new terminal. If you already installed `agent-archive`
+   elsewhere, move or remove that older copy so your shell uses this one.
+
+5. Confirm it runs: `agent-archive --version`.
 
 Release binaries are signed with a Developer ID and notarized by Apple.
 Gatekeeper may need network access to check the notarization ticket on first
-launch. To check a download yourself, `codesign --verify --strict
---verbose=2 agent-archive-darwin-arm64` checks the signature, `codesign -dv
-agent-archive-darwin-arm64` shows the `TeamIdentifier` (compare it with
-`team_id` in `install.sh`), and, with the GitHub CLI, `gh attestation verify
-agent-archive-darwin-arm64 --repo wangjohn/agent-archive` checks that the
-file was built by this repository's release workflow.
+launch.
 
 ## Next
 

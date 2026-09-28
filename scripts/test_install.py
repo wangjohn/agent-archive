@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 INSTALL_SH = Path(__file__).resolve().parent.parent / 'install.sh'
+INSTALL_GUIDE = INSTALL_SH.parent / 'docs' / 'getting-started' / 'install.md'
 TEAM = 'SYNTH12345'
 
 
@@ -192,6 +193,39 @@ class InstallScriptTest(unittest.TestCase):
         self.assertIn('names no signing team yet', result.stderr)
         self.assertFalse((self.home / '.local').exists())
         self.assertFalse(self.codesign_log.exists())
+
+
+class ManualInstallGuideTest(unittest.TestCase):
+    def test_selects_only_the_native_asset_when_both_are_downloaded(self):
+        guide = INSTALL_GUIDE.read_text()
+        select = re.search(r'3\. Select the binary.*?```sh\n(.*?)\n   ```', guide, re.S)
+        install = re.search(r'4\. Make the selected binary.*?```sh\n(.*?)\n   ```', guide, re.S)
+        self.assertIsNotNone(select)
+        self.assertIsNotNone(install)
+        commands = select.group(1) + '\n' + install.group(1) + '\n'
+
+        for machine, expected in (('arm64', 'arm64'), ('x86_64', 'amd64')):
+            with self.subTest(machine=machine), tempfile.TemporaryDirectory() as root:
+                root = Path(root)
+                home = root / 'home'
+                home.mkdir()
+                shims = root / 'shims'
+                shims.mkdir()
+                write_executable(shims / 'uname', f'#!/bin/sh\necho {machine}\n')
+                write_executable(shims / 'codesign',
+                                 '#!/bin/sh\ncase "$1" in -dv) echo TeamIdentifier=568CGRV32C ;; esac\n')
+                for arch in ('arm64', 'amd64'):
+                    (root / f'agent-archive-darwin-{arch}').write_text(arch)
+
+                result = subprocess.run(
+                    ['sh', '-e', '-c', commands], cwd=root,
+                    env={'HOME': str(home), 'PATH': f'{shims}:/usr/bin:/bin'},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((home / '.local/bin/agent-archive').read_text(), expected)
+                other = 'amd64' if expected == 'arm64' else 'arm64'
+                self.assertTrue((root / f'agent-archive-darwin-{other}').exists())
 
 
 if __name__ == '__main__':
