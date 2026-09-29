@@ -109,6 +109,7 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 	env := testEnv(t, t.TempDir(), time.Now())
 	for _, args := range [][]string{
 		{},
+		{"--harness", "codex"},
 		{"abc", "--latest"},
 		{"--latest", "--file", "x.jsonl", "--harness", "codex"},
 		{"--file", "x.jsonl"},
@@ -160,6 +161,31 @@ func TestHandoffPickerQuitDoesNotRender(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "to hand off") || strings.Contains(out.String(), "## Where it left off") {
 		t.Fatalf("quitting picker rendered a handoff:\n%s", out.String())
+	}
+}
+
+func TestHandoffPickerWritesOnlyHandoffToOutputFile(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, true)
+	stdin := strings.NewReader("1\n")
+	var out, errOut bytes.Buffer
+	f.env.IsTerminal = func(stream any) bool {
+		return stream == any(stdin) || stream == any(&out)
+	}
+	path := filepath.Join(t.TempDir(), "handoff.md")
+	args := []string{"handoff", "--source", "archive", "--output", path}
+	if code := Run(args, stdin, &out, &errOut, f.env); code != 0 {
+		t.Fatalf("code=%d stderr=%s out=%s", code, errOut.String(), out.String())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "to hand off") || strings.Contains(out.String(), "## Where it left off") {
+		t.Fatalf("picker output mixed with handoff:\n%s", out.String())
+	}
+	if !strings.Contains(string(data), "## Where it left off") || !strings.Contains(string(data), "source: archive") || strings.Contains(string(data), "to hand off") {
+		t.Fatalf("output file is not a clean archive handoff:\n%s", data)
 	}
 }
 
