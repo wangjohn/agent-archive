@@ -280,7 +280,8 @@ its transcript, Enter or b to go back, or q to quit.
                         more than one
   --transcript          Download and verify the source bundle, and print the
                         conversation: prompts, replies, one line per tool call
-  --full                With --transcript, also print tool results (trimmed)
+  --full                With --transcript, also print tool results and shell
+                        command output (trimmed)
   --json                Print JSON: the metadata sidecar, which an imported
                         session extends with origin, imported_at, and
                         started_at_source; with --transcript, then the

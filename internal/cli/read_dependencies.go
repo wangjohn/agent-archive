@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"io"
 	"os"
 	"time"
@@ -59,7 +60,7 @@ type showQueryDependencies interface {
 type pagerDependencies interface {
 	isTerminal(any) bool
 	lookupEnv(string) (string, bool)
-	runPager(string, io.Reader, io.Writer, io.Writer) error
+	runPager(context.Context, string, io.Reader, io.Writer, io.Writer) error
 }
 
 type handoffResolverDependencies interface {

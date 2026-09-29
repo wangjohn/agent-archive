@@ -5,6 +5,10 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -19,34 +23,55 @@ func withPager(stdout, stderr io.Writer, env pagerDependencies, noPager bool, wr
 	if err := write(&buf); err != nil {
 		return err
 	}
-	_, err := pageText(stdout, stderr, env, noPager, false, buf.Bytes())
+	_, _, err := pageText(context.Background(), stdout, stderr, env, noPager, false, buf.Bytes())
 	return err
 }
 
 // defaultPager is the pager when neither AGENT_ARCHIVE_PAGER nor PAGER is
-// set. -F quits at once when the text fits on one screen.
+// set. -F quits at once when the text fits on one screen; -X leaves the
+// text on the screen after quitting.
 const defaultPager = "less -FRX"
 
 // pageText writes text through the pager withPager would choose, and
-// reports whether a pager showed it. stayOpen is for the session browser,
-// which redraws the screen when the pager exits: the default pager then
-// waits for q even when the text fits on one screen, rather than returning
-// at once to a redraw that would hide it.
-func pageText(stdout, stderr io.Writer, env pagerDependencies, noPager, stayOpen bool, text []byte) (paged bool, err error) {
+// reports whether a pager showed it. Cancelling ctx stops the pager.
+//
+// stayOpen is for the session browser, which redraws the screen when the
+// pager exits. less is then told not to quit at once when the text fits on
+// one screen (-+F overrides an -F from the command or $LESS), and waited
+// reports that the pager is known to wait for the user; another pager may
+// have returned at once, so the browser waits itself.
+func pageText(ctx context.Context, stdout, stderr io.Writer, env pagerDependencies, noPager, stayOpen bool, text []byte) (paged, waited bool, err error) {
 	command, page := resolvePagerCommand(env, noPager, stdout)
 	if !page {
 		_, err := stdout.Write(text)
-		return false, err
+		return false, false, err
 	}
-	if stayOpen && command == defaultPager {
-		command = "less -RX"
+	if stayOpen && isLess(command) {
+		if command == defaultPager {
+			command = "less -RX"
+		}
+		command += " -+F"
+		waited = true
 	}
-	if err := env.runPager(command, bytes.NewReader(text), stdout, stderr); err != nil {
+	if err := env.runPager(ctx, command, bytes.NewReader(text), stdout, stderr); err != nil {
+		if ctx.Err() != nil {
+			return true, waited, nil
+		}
 		terminal.Printf(stderr, "agent-archive: warning: pager %q failed (%v); printing directly\n", command, err)
 		_, copyErr := stdout.Write(text)
-		return false, copyErr
+		return false, false, copyErr
 	}
-	return true, nil
+	return true, waited, nil
+}
+
+// isLess reports whether command runs less by itself, so options can be
+// appended to it.
+func isLess(command string) bool {
+	if strings.ContainsAny(command, "|;&<>`$()") {
+		return false
+	}
+	fields := strings.Fields(command)
+	return len(fields) > 0 && filepath.Base(fields[0]) == "less"
 }
 
 // resolvePagerCommand chooses the pager command. An empty
@@ -71,11 +96,21 @@ func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) 
 	return defaultPager, true
 }
 
-func (e Env) runPager(command string, stdin io.Reader, stdout, stderr io.Writer) error {
+// pagerStopDelay is how long a pager asked to stop may take before it is
+// killed.
+const pagerStopDelay = 3 * time.Second
+
+// runPager runs command through sh. Cancelling ctx sends the pager SIGTERM
+// (sh execs a lone command, so the signal reaches the pager itself) and
+// waits for it to exit, killing it after pagerStopDelay, so no pager is
+// left behind on the terminal.
+func (e Env) runPager(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if e.RunPager != nil {
 		return e.RunPager(command, stdin, stdout, stderr)
 	}
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = pagerStopDelay
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

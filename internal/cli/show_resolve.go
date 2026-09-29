@@ -125,9 +125,8 @@ func sessionIDs(sessions []archive.Metadata) []string {
 	return ids
 }
 
+// shortSessionID is the first minShortSessionID bytes of id, cut on a
+// character boundary.
 func shortSessionID(id string) string {
-	if len(id) > minShortSessionID {
-		return id[:minShortSessionID]
-	}
-	return id
+	return archive.TruncateUTF8(id, minShortSessionID)
 }

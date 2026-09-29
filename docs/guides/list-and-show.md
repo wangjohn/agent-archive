@@ -55,8 +55,8 @@ claude · agent-archive · 2h ago                                      ✓ compl
 
   When      Sep 29, 10:14 → 11:02 (48m span)
   Agent     Claude Code 2.4.1
-  Model     claude-opus-5-5 (high reasoning) · 31 turns
-            claude-haiku-4-5 · 4 turns
+  Model     claude-opus-5-5 (high reasoning) · 31 responses
+            claude-haiku-4-5 · 4 responses
   Activity  35 turns · 212 messages · 148 tool calls · 3 shell commands ·
             1 compaction
   Skills    code-review, simplify
@@ -65,12 +65,13 @@ claude · agent-archive · 2h ago                                      ✓ compl
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
      origin hook · parser 0.12.0 (partial) · filter 12
 
-  Transcript: agent-archive show 03e60c25 --transcript
-  JSON:       agent-archive show 03e60c25 --json
+  Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --transcript
+  JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --json
 ```
 
 Rows the metadata has no data for are left out; a count that is unknown is
-not shown as zero. Times are in your local time zone. The metadata records
+not shown as zero, and shell commands and compactions are listed only when
+there were some. A model's count is how many responses it gave. Times are in your local time zone. The metadata records
 when a session started and when it was last captured, not when it ended, so
 the time between them is labelled a span. A session with capture gaps lists
 each gap's code once, with how often it occurs.
@@ -83,7 +84,9 @@ session's summary replace each other instead of piling up:
 
 - Enter a row number or short SESSION_ID to see that session's summary.
 - In the summary, `t` opens its transcript through the pager (quit the pager
-  to come back), Enter or `b` returns to the list, and `q` quits.
+  to come back), Enter or `b` returns to the list, and `q` quits. `less`
+  keeps even a one-screen transcript open until you press `q`; after another
+  pager, press Enter to return to the summary.
 - `q` (or an empty answer at the list, or Ctrl-D) quits from anywhere. The
   last summary you viewed is printed to the normal screen as the browser
   closes, so its ID stays in your scrollback.
@@ -114,9 +117,13 @@ separate groups, labeled with their project ID prefixes.
 the browser's `t`: it downloads the session's source bundle, verifies its
 checksum and identity against the metadata, and prints each prompt, the
 agent's replies, one line per tool call (`▸ Bash go test ./...`, marked ✗
-when the call failed), and any final response a hook reported that the
-transcript lacks. Edit bodies are never shown. `--full` adds each tool
-result, trimmed to its first and last lines. On a terminal the transcript is
+when the call failed), the `!` shell commands (`$ make test`) and local
+slash commands (`» /model`, with the app's reply) you ran, compaction
+summaries, notices the app posted (such as a background task finishing,
+with the agent's reply under it), and any final response a hook reported
+that the transcript lacks. Edit bodies are never shown. `--full` adds each
+tool result and shell command's output, trimmed to its first and last
+lines; it does not combine with `--json`, which has every retained result. On a terminal the transcript is
 paged like `list`; `--no-pager` prints it directly. `--transcript --json`
 prints the sidecar and then the normalized view (turns, tool calls, tool
 results, and hook-reported final messages) as JSON. `--normalized`, its

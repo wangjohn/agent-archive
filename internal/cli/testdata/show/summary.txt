@@ -3,8 +3,8 @@ claude · agent-archive · 2h ago                                      ✓ compl
 
   When      Sep 29, 10:14 → 11:02 (48m span)
   Agent     Claude Code 2.4.1
-  Model     claude-opus-5-5 (high reasoning) · 31 turns
-            claude-haiku-4-5 · 4 turns
+  Model     claude-opus-5-5 (high reasoning) · 31 responses
+            claude-haiku-4-5 · 4 responses
   Activity  35 turns · 212 messages · 148 tool calls · 3 shell commands ·
             1 compaction
   Skills    code-review, simplify
@@ -18,5 +18,5 @@ claude · agent-archive · 2h ago                                      ✓ compl
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
      origin imported · parser 0.12.0 (partial) · filter 12
 
-  Transcript: agent-archive show 03e60c25 --transcript
-  JSON:       agent-archive show 03e60c25 --json
+  Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --transcript
+  JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --json

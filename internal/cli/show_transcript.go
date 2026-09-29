@@ -34,17 +34,14 @@ func buildTranscript(bundle archive.SourceBundle) (archive.Transcript, error) {
 }
 
 // renderTranscript writes `show --transcript`: a short header, then each
-// exchange's prompt, the agent's replies, and one line per tool call. The
-// transcript's strings are already display text (archive.BuildTranscript),
-// so multi-line text is printed as it is.
+// exchange's prompt (or app notice), the agent's replies, one line per tool
+// call, and the shell and slash commands the person ran. The transcript's
+// strings are already display text (archive.BuildTranscript), so
+// multi-line text is printed as it is.
 func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts transcriptOptions) {
 	m := view.Metadata
 	s := opts.Style
-	title := strings.TrimSpace(archive.DisplayLine(m.Title))
-	if title == "" {
-		title = shortSessionID(m.SessionID)
-	}
-	terminal.Println(w, s.bold(title))
+	terminal.Println(w, s.bold(summaryTitle(m)))
 	header := []string{}
 	if agent := strings.TrimSpace(appName(archive.DisplayLine(m.Harness.Name)) + " " + archive.DisplayLine(m.Harness.Version)); agent != "" {
 		header = append(header, agent)
@@ -64,16 +61,21 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 	}
 	for _, exchange := range t.Exchanges {
 		terminal.Println(w)
-		heading := "You"
-		if exchange.Prompt == "" {
+		var heading string
+		switch exchange.Kind {
+		case archive.TranscriptExchangePrompt:
+			heading = "You"
+		case archive.TranscriptExchangeNotification:
+			heading = exchange.Text
+		case archive.TranscriptExchangeLeading:
 			heading = "Before the first prompt"
 		}
 		if at, err := time.Parse(time.RFC3339Nano, exchange.Timestamp); err == nil {
 			heading += " · " + formatSummaryTime(at, opts.summaryOptions)
 		}
 		terminal.Println(w, s.bold("── "+heading+" "+strings.Repeat("─", max(4, 40-visibleWidth(heading)))))
-		if exchange.Prompt != "" {
-			terminal.Println(w, exchange.Prompt)
+		if exchange.Kind == archive.TranscriptExchangePrompt && exchange.Text != "" {
+			terminal.Println(w, exchange.Text)
 		}
 		renderTranscriptSteps(w, exchange.Steps, opts)
 	}
@@ -88,29 +90,40 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 	}
 }
 
-func renderTranscriptSteps(w io.Writer, steps []archive.HandoffStep, opts transcriptOptions) {
+func renderTranscriptSteps(w io.Writer, steps []archive.TranscriptStep, opts transcriptOptions) {
 	s := opts.Style
-	// A blank line separates prose from the tool lines around it; a run of
-	// tool calls stays together.
-	previousTool := false
+	// A blank line separates prose from the command lines around it; a run
+	// of tool calls and commands stays together.
+	previousLine := false
 	for i, step := range steps {
-		isTool := step.Kind == archive.HandoffStepTool || step.Kind == archive.HandoffStepShell
-		if i == 0 || !isTool || !previousTool {
+		isLine := step.Kind != archive.TranscriptStepText && step.Kind != archive.TranscriptStepSummary
+		if i == 0 || !isLine || !previousLine {
 			terminal.Println(w)
 		}
-		previousTool = isTool
+		previousLine = isLine
 		switch step.Kind {
-		case archive.HandoffStepText:
+		case archive.TranscriptStepText:
 			terminal.Println(w, step.Text)
-		case archive.HandoffStepShell:
+		case archive.TranscriptStepShell:
+			// The person's own `!` command; its output only with --full.
 			terminal.Println(w, "  "+s.cmd("$ "+firstTextLine(step.Text)))
-		case archive.HandoffStepSummary:
+			if opts.Full {
+				renderOutput(w, step.Output, s)
+			}
+		case archive.TranscriptStepCommand:
+			// A local slash command's output is the app's short reply
+			// ("Set model to …"), so it is always shown.
+			terminal.Println(w, "  "+s.cmd("» "+firstTextLine(step.Text)))
+			renderOutput(w, step.Output, s)
+		case archive.TranscriptStepOutput:
+			if opts.Full {
+				renderOutput(w, step.Output, s)
+			}
+		case archive.TranscriptStepSummary:
 			terminal.Println(w, s.dim("[Compacted: the agent continued from this summary]"))
 			terminal.Println(w, s.dim(step.Text))
-		case archive.HandoffStepTool:
+		case archive.TranscriptStepTool:
 			renderToolLine(w, step.Tool, opts)
-		case archive.HandoffStepCollapsed:
-			terminal.Println(w, "  "+s.dim(step.Text))
 		}
 	}
 }
@@ -128,17 +141,28 @@ func renderToolLine(w io.Writer, tool *archive.HandoffToolCall, opts transcriptO
 		line += " " + s.failMark()
 	}
 	terminal.Println(w, line)
-	if !opts.Full || tool.Result == "" {
-		return
-	}
-	for resultLine := range strings.SplitSeq(tool.Result, "\n") {
-		terminal.Println(w, "      "+s.dim("│")+" "+resultLine)
+	if opts.Full {
+		renderOutput(w, tool.Result, s)
 	}
 }
 
-// firstTextLine is text up to its first line break.
+// renderOutput indents a result or command output under its line.
+func renderOutput(w io.Writer, output string, s textStyle) {
+	if output == "" {
+		return
+	}
+	for line := range strings.SplitSeq(output, "\n") {
+		terminal.Println(w, "      "+s.dim("│")+" "+line)
+	}
+}
+
+// firstTextLine is text up to its first line break, marked "…" when more
+// lines follow.
 func firstTextLine(text string) string {
-	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	line, rest, more := strings.Cut(strings.TrimSpace(text), "\n")
+	if more && strings.TrimSpace(rest) != "" {
+		return line + " …"
+	}
 	return line
 }
 
@@ -157,7 +181,7 @@ func loadVerifiedSession(ctx context.Context, store storage.ObjectStore, key str
 // cannot be read: retention may have replaced or deleted it.
 func describeBundleError(err error, sessionID, flag string) string {
 	if errors.Is(err, reader.ErrRefreshRequired) {
-		return fmt.Sprintf("the session's source bundle is not available (it may have just been replaced or deleted by retention); retry, or run `agent-archive show %s` without %s for its metadata", sessionID, flag)
+		return fmt.Sprintf("the session's source bundle is not available (it may have just been replaced or deleted by retention); retry, or run `agent-archive show %s` without %s for its metadata", shellWord(archive.DisplayLine(sessionID)), flag)
 	}
 	return err.Error()
 }

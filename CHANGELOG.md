@@ -34,9 +34,10 @@ follow [Semantic Versioning](https://semver.org/).
   is now `0.12.0` so existing sessions get titles on the next metadata
   refresh.
 - `show --transcript` prints a session's conversation to read: each prompt,
-  the agent's replies, and one line per tool call (✗ when it failed), paged
-  on a terminal (`--no-pager` to print directly). `--full` adds each tool
-  result, trimmed. `--transcript --json` prints what `--normalized` printed.
+  the agent's replies, one line per tool call (✗ when it failed), your `!`
+  shell and local slash commands, compactions, and app notices such as a
+  background task finishing, paged on a terminal (`--no-pager` to print
+  directly). `--full` adds tool results and shell output, trimmed. `--transcript --json` prints what `--normalized` printed.
 - Browsing on a terminal (`list`, bare `show`) opens a session's summary in
   place of the list, on the terminal's alternate screen: `t` shows its
   transcript, Enter or `b` goes back to the list, and `q` quits. The last

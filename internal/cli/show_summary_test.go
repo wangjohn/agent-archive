@@ -151,7 +151,7 @@ func TestSessionSummaryModelLines(t *testing.T) {
 		{Attributes: map[string]string{"gen_ai.request.model": "o4", "agent_archive.request.reasoning_level": "low"}, TurnCount: intPtr(2)},
 		{Attributes: map[string]string{}},
 	})
-	want := []string{"o4 (low reasoning) · 5 turns", "gpt-5-2026-08 · 1 turn", "Auto"}
+	want := []string{"o4 (low reasoning) · 5 responses", "gpt-5-2026-08 · 1 response", "Auto"}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("models = %q, want %q", got, want)
 	}
@@ -165,12 +165,9 @@ func TestSessionSummaryTruncatesLongLines(t *testing.T) {
 	for i := range 30 {
 		view.SkillsUsed = append(view.SkillsUsed, archive.SkillUse{Name: "skill-" + strings.Repeat("x", i)})
 	}
-	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: 60}})
+	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: 40}, Hints: true})
 	for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
-		if strings.HasPrefix(line, "  ID ") {
-			continue // the full ID is never cut, so it can be copied
-		}
-		if w := visibleWidth(line); w > 60 {
+		if w := visibleWidth(line); w > 40 {
 			t.Fatalf("line of %d columns: %q", w, line)
 		}
 	}
@@ -295,5 +292,83 @@ func TestShowTranscriptNeedsSessionID(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "--transcript needs a SESSION_ID") {
 		t.Fatalf("stderr=%s", errOut.String())
+	}
+}
+
+// Shell and local commands are shown where they ran; a shell command's
+// output only with --full, a local command's always. A notice from the app
+// heads its own exchange.
+func TestTranscriptRendersCommandsAndNotices(t *testing.T) {
+	t.Parallel()
+	transcript := archive.Transcript{Exchanges: []archive.TranscriptExchange{
+		{Kind: archive.TranscriptExchangeLeading, Steps: []archive.TranscriptStep{
+			{Kind: archive.TranscriptStepShell, Text: "git status\ngit log", Output: "On branch main"},
+			{Kind: archive.TranscriptStepCommand, Text: "/model", Output: "Set model to claude-opus-5"},
+		}},
+		{Kind: archive.TranscriptExchangeNotification, Text: "Background task completed", Steps: []archive.TranscriptStep{
+			{Kind: archive.TranscriptStepText, Text: "The reviewer finished."},
+		}},
+	}}
+	render := func(full bool) string {
+		var b bytes.Buffer
+		renderTranscript(&b, summaryFixture(), transcript, transcriptOptions{summaryOptions: summaryOptions{Now: summaryNow, Location: time.UTC}, Full: full})
+		return b.String()
+	}
+	plain, full := render(false), render(true)
+	for _, want := range []string{"  $ git status …\n", "  » /model\n      │ Set model to claude-opus-5\n", "── Background task completed ─", "The reviewer finished."} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "On branch main") || !strings.Contains(full, "  $ git status …\n      │ On branch main\n") {
+		t.Fatalf("shell output shown without --full, or not with it:\n%s\n---\n%s", plain, full)
+	}
+}
+
+// A session ID from the bucket is display text too, even as a fallback
+// title or in a hint.
+func TestSessionSummaryNeutralizesSessionID(t *testing.T) {
+	t.Parallel()
+	view := sessionView{Metadata: archive.Metadata{SessionID: "\x1b[2J\u202eé0123456789", Harness: archive.Harness{Name: "codex"}}}
+	for _, text := range []string{
+		renderSummaryText(view, summaryOptions{Now: summaryNow, Hints: true, HintHarness: "codex"}),
+		func() string {
+			var b bytes.Buffer
+			renderTranscript(&b, view, archive.Transcript{}, transcriptOptions{})
+			return b.String()
+		}(),
+	} {
+		for _, r := range text {
+			if (r < 0x20 && r != '\n') || (r >= 0x80 && r <= 0x9f) || (r >= 0x202a && r <= 0x202e) {
+				t.Fatalf("control %U in output:\n%q", r, text)
+			}
+		}
+	}
+	if got := shortSessionID("abcdefgé12"); got != "abcdefg" {
+		t.Fatalf("short ID cut a character: %q", got)
+	}
+}
+
+// The hints name the full ID, and the harness when show was given one.
+func TestShowHintsNameAnUnambiguousID(t *testing.T) {
+	t.Parallel()
+	env, _, id := publishedFixture(t)
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"show", id[:minShortSessionID], "--harness", "codex"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatalf("code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "agent-archive show "+id+" --harness codex --transcript") {
+		t.Fatalf("hint:\n%s", out.String())
+	}
+}
+
+func TestShowFullNeedsReadableTranscript(t *testing.T) {
+	t.Parallel()
+	env, _, id := publishedFixture(t)
+	for _, args := range [][]string{{"show", id, "--transcript", "--full", "--json"}, {"show", id, "--normalized", "--full"}} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, nil, &out, &errOut, env); code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "--full is for the readable transcript") {
+			t.Fatalf("%v: code=%d out=%s stderr=%s", args, code, out.String(), errOut.String())
+		}
 	}
 }

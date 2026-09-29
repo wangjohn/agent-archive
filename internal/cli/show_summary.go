@@ -27,11 +27,10 @@ type summaryOptions struct {
 	Style    textStyle
 	// Projects labels a project ID when the sidecar has no project_name.
 	Projects map[string]string
-	// ShortID is the ID the hints name; empty means the first
-	// minShortSessionID characters, which show accepts.
-	ShortID string
-	// Hints adds the lines naming the transcript and JSON commands.
-	Hints bool
+	// Hints adds the lines naming the transcript and JSON commands. They
+	// name the full session ID, and HintHarness when the ID needed one.
+	Hints       bool
+	HintHarness string
 }
 
 // summaryWidth is the column the header's status is aligned to, and the
@@ -48,16 +47,7 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 	m := view.Metadata
 	s := opts.Style
 	width := lineWidth(s)
-	short := opts.ShortID
-	if short == "" {
-		short = shortSessionID(m.SessionID)
-	}
-
-	title := strings.TrimSpace(archive.DisplayLine(m.Title))
-	if title == "" {
-		title = short
-	}
-	terminal.Println(w, s.bold(ellipsize(title, width)))
+	terminal.Println(w, s.bold(ellipsize(summaryTitle(m), width)))
 	context := ellipsize(strings.Join(summaryContext(m, opts), " · "), width-16)
 	if status := summaryStatus(m, s); status != "" {
 		gap := max(width-visibleWidth(context)-visibleWidth(status), 2)
@@ -86,18 +76,39 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 	}
 
 	terminal.Println(w)
-	id, provenance := "  "+s.dim("ID")+" "+archive.DisplayLine(m.SessionID), strings.Join(summaryProvenance(m), " · ")
-	if visibleWidth(id)+3+visibleWidth(provenance) <= width {
-		terminal.Println(w, id+"   "+s.dim(provenance))
+	// The ID and the commands are meant to be copied, so they are cut only
+	// to fit a terminal narrower than they are.
+	cut := func(text string, indent int) string {
+		if s.width > 0 {
+			return ellipsize(text, s.width-indent)
+		}
+		return text
+	}
+	id, provenance := archive.DisplayLine(m.SessionID), strings.Join(summaryProvenance(m), " · ")
+	if 5+visibleWidth(id)+3+visibleWidth(provenance) <= width {
+		terminal.Println(w, "  "+s.dim("ID")+" "+id+"   "+s.dim(provenance))
 	} else {
-		terminal.Println(w, id)
-		terminal.Println(w, "     "+s.dim(provenance))
+		terminal.Println(w, "  "+s.dim("ID")+" "+cut(id, 5))
+		terminal.Println(w, "     "+s.dim(ellipsize(provenance, width-5)))
 	}
 	if opts.Hints {
+		command := "agent-archive show " + shellWord(id)
+		if opts.HintHarness != "" {
+			command += " --harness " + shellWord(archive.DisplayLine(opts.HintHarness))
+		}
 		terminal.Println(w)
-		terminal.Printf(w, "  %s %s\n", s.dim("Transcript:"), s.cmd("agent-archive show "+short+" --transcript"))
-		terminal.Printf(w, "  %s %s\n", s.dim("JSON:      "), s.cmd("agent-archive show "+short+" --json"))
+		terminal.Printf(w, "  %s %s\n", s.dim("Transcript:"), s.cmd(cut(command+" --transcript", 14)))
+		terminal.Printf(w, "  %s %s\n", s.dim("JSON:      "), s.cmd(cut(command+" --json", 14)))
 	}
+}
+
+// summaryTitle is the session's title as one display line, or its short ID
+// when it has none.
+func summaryTitle(m archive.Metadata) string {
+	if title := strings.TrimSpace(archive.DisplayLine(m.Title)); title != "" {
+		return title
+	}
+	return archive.DisplayLine(shortSessionID(m.SessionID))
 }
 
 // summaryRow is one labelled row; values after the first continue it on
@@ -311,7 +322,7 @@ func summaryModels(models []archive.ModelSummary) []string {
 			line += " (" + e.reasoning + " reasoning)"
 		}
 		if e.turns != nil {
-			line += " · " + plural(*e.turns, "turn")
+			line += " · " + plural(*e.turns, "response")
 		}
 		lines = append(lines, line)
 	}
@@ -319,19 +330,21 @@ func summaryModels(models []archive.ModelSummary) []string {
 }
 
 // summaryActivity lists the counts the metadata knows, skipping unknown
-// (nil) ones rather than showing them as zero.
+// (nil) ones rather than showing them as zero. Shell commands and
+// compactions are occasional, so a known zero of either is left out too;
+// turns, messages, and tool calls are shown even when zero.
 func summaryActivity(c archive.Counts) []string {
 	var parts []string
-	add := func(n *int, unit string) {
-		if n != nil {
+	add := func(n *int, unit string, showZero bool) {
+		if n != nil && (showZero || *n != 0) {
 			parts = append(parts, plural(*n, unit))
 		}
 	}
-	add(c.Turns, "turn")
-	add(c.Messages, "message")
-	add(c.ToolCalls, "tool call")
-	add(c.UserShellCommands, "shell command")
-	add(c.Compactions, "compaction")
+	add(c.Turns, "turn", true)
+	add(c.Messages, "message", true)
+	add(c.ToolCalls, "tool call", true)
+	add(c.UserShellCommands, "shell command", false)
+	add(c.Compactions, "compaction", false)
 	return parts
 }
 

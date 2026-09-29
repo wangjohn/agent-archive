@@ -22,6 +22,8 @@ Size subtracts one. I'll fix it and track the rest.
   ▸ TodoWrite updated the plan
       │ Todos updated
 
+── Background task completed · Sep 22, 10:01 ────
+
 ── You · Sep 22, 10:02 ─────────────────────
 Use token = [REDACTED] when you rerun.
 

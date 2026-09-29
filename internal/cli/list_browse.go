@@ -52,14 +52,16 @@ type sessionBrowser struct {
 	screen  *altScreen
 	// last is the session whose details were shown last, printed to the
 	// normal screen on the way out so its ID stays in scrollback.
-	last      *sessionView
-	lastShort string
+	last *sessionView
 }
 
 // runSessionBrowser browses sessions until the user quits (q, an empty
 // answer at the list, or end of input), then prints the last session viewed.
 func runSessionBrowser(env sessionBrowserDependencies, p *prompter, stdout, stderr io.Writer, store storage.ObjectStore, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, noPager bool, command string) int {
 	b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: store, format: format, noPager: noPager, screen: enterAltScreen(stdout, env)}
+	// Deferred as well, so not even a panic leaves the terminal on the
+	// alternate screen; leave does nothing the second time.
+	defer b.screen.leave()
 	err := b.run(sessions, totalMatched, truncated)
 	b.screen.leave()
 	if err != nil {
@@ -67,7 +69,7 @@ func runSessionBrowser(env sessionBrowserDependencies, p *prompter, stdout, stde
 		return 1
 	}
 	if b.last != nil {
-		renderSessionSummary(stdout, *b.last, b.summaryOptions(b.lastShort, true))
+		renderSessionSummary(stdout, *b.last, b.summaryOptions(true))
 	}
 	return 0
 }
@@ -85,7 +87,7 @@ func (b *sessionBrowser) run(sessions []archive.Metadata, totalMatched int, trun
 		if err != nil {
 			return err
 		}
-		b.last, b.lastShort = &view, row.ShortID
+		b.last = &view
 		action, err := b.details(view, row)
 		if err != nil || action == browseQuit {
 			return err
@@ -97,7 +99,7 @@ func (b *sessionBrowser) run(sessions []archive.Metadata, totalMatched int, trun
 func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, error) {
 	for {
 		b.screen.clear()
-		renderSessionSummary(b.stdout, view, b.summaryOptions(row.ShortID, false))
+		renderSessionSummary(b.stdout, view, b.summaryOptions(false))
 		action, err := b.detailsPrompt(view, row)
 		if err != nil || action != browseRedraw {
 			return action, err
@@ -137,21 +139,39 @@ func (b *sessionBrowser) transcript(view sessionView, row listRow) (browseAction
 	text, err := b.renderTranscript(ctx, row)
 	stop()
 	if err != nil {
-		terminal.Printf(b.stderr, "agent-archive: show: %s\n", describeBundleError(err, row.ShortID, "--transcript"))
+		terminal.Printf(b.stderr, "agent-archive: show: %s\n", describeBundleError(err, row.SessionID, "--transcript"))
 		return browseStay, nil
 	}
 	b.screen.clear()
-	b.screen.paging.Store(true)
-	paged, err := pageText(b.stdout, b.stderr, b.env, b.noPager, true, text)
-	b.screen.paging.Store(false)
+	pagerCtx, stopPager := context.WithCancel(ctx)
+	b.screen.startPaging(stopPager)
+	paged, waited, err := pageText(pagerCtx, b.stdout, b.stderr, b.env, b.noPager, true, text)
+	sig := b.screen.endPaging()
+	stopPager()
+	if sig != nil {
+		// A signal stopped the pager; the pager has exited, so exit as the
+		// signal would have.
+		b.screen.exitForSignal(sig)
+		return browseQuit, nil
+	}
 	if err != nil {
 		return browseQuit, err
 	}
-	if paged {
+	if paged && waited {
+		b.screen.reenter()
 		return browseRedraw, nil
 	}
-	// Printed without a pager: wait, so the transcript stays on screen
-	// until the user asks for the details again.
+	// Printed without a pager, or by a pager that may have returned at
+	// once: wait, so the transcript stays on screen until the user asks
+	// for the details again.
+	action, err := b.transcriptPrompt()
+	if paged {
+		b.screen.reenter()
+	}
+	return action, err
+}
+
+func (b *sessionBrowser) transcriptPrompt() (browseAction, error) {
 	for {
 		terminal.Println(b.stdout)
 		answer, err := b.prompt.line(b.prompt.promptText("[Enter/b] back to details  [q] quit", false, nil, -1, ": "))
@@ -183,12 +203,12 @@ func (b *sessionBrowser) renderTranscript(ctx context.Context, row listRow) ([]b
 		return nil, fmt.Errorf("normalized view unavailable: %w", err)
 	}
 	var buf bytes.Buffer
-	renderTranscript(&buf, view, t, transcriptOptions{summaryOptions: b.summaryOptions(row.ShortID, false)})
+	renderTranscript(&buf, view, t, transcriptOptions{summaryOptions: b.summaryOptions(false)})
 	return buf.Bytes(), nil
 }
 
-func (b *sessionBrowser) summaryOptions(short string, hints bool) summaryOptions {
-	return summaryOptions{Now: b.format.Now, Style: b.format.Style, Projects: b.format.Projects, ShortID: short, Hints: hints}
+func (b *sessionBrowser) summaryOptions(hints bool) summaryOptions {
+	return summaryOptions{Now: b.format.Now, Style: b.format.Style, Projects: b.format.Projects, Hints: hints}
 }
 
 // endOfInput turns the end of input (Ctrl-D, or a script's last line) into

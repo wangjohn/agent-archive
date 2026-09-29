@@ -347,39 +347,49 @@ func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOpti
 			continue
 		}
 		call := event.call
-		raw := call.raw
-		name := call.Name
-		if name == "" {
-			name = firstString(raw, "type")
-		}
-		if name == "" {
-			name = "tool"
-		}
-		tool := &HandoffToolCall{Name: name, Summary: toolSummary(name, call.Input, raw, root)}
-		if call.Name == "" && tool.Summary == "" {
-			// A completion event with neither a tool name nor arguments (a
-			// Codex Extension item) says only that something finished.
+		tool := handoffToolCall(call, root, opts)
+		if tool == nil {
 			continue
 		}
-		if call.IsError != nil {
-			tool.IsError = *call.IsError
-		}
-		if call.ResultRecordIndex != nil {
-			text := call.resultText
-			tool.ResultBytes = len(text)
-			tool.ResultLines = lineCount(text)
-			tool.Result = trimResult(text, opts.resultLines(), opts.resultBytes())
-		}
-		for _, file := range touchedFiles(name, call.Input, raw) {
+		for _, file := range touchedFiles(tool.Name, call.Input, call.raw) {
 			files.add(relativeTo(file, root))
 		}
-		if updated := planItems(name, call.Input, plan); updated != nil {
+		if updated := planItems(tool.Name, call.Input, plan); updated != nil {
 			plan = updated
 		}
 		current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: tool})
 	}
 	flush()
 	return exchanges, leftOff, plan, files.list
+}
+
+// handoffToolCall describes one tool call: its name, a one-line summary of
+// its input, whether it failed, and its trimmed result. It returns nil for a
+// completion event with neither a tool name nor arguments (a Codex
+// Extension item), which says only that something finished.
+func handoffToolCall(call *NormalizedToolCall, root string, opts HandoffOptions) *HandoffToolCall {
+	raw := call.raw
+	name := call.Name
+	if name == "" {
+		name = firstString(raw, "type")
+	}
+	if name == "" {
+		name = "tool"
+	}
+	tool := &HandoffToolCall{Name: name, Summary: toolSummary(name, call.Input, raw, root)}
+	if call.Name == "" && tool.Summary == "" {
+		return nil
+	}
+	if call.IsError != nil {
+		tool.IsError = *call.IsError
+	}
+	if call.ResultRecordIndex != nil {
+		text := call.resultText
+		tool.ResultBytes = len(text)
+		tool.ResultLines = lineCount(text)
+		tool.Result = trimResult(text, opts.resultLines(), opts.resultBytes())
+	}
+	return tool
 }
 
 // textTranscriptExchanges reads the role sections of a filtered text

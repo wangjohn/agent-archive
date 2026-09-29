@@ -398,6 +398,9 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if *full && !*transcript {
 		return fs.usageError("--full needs --transcript")
 	}
+	if *full && *jsonOut {
+		return fs.usageError("--full is for the readable transcript; --json always includes every retained tool result")
+	}
 
 	if sessionID == "" && !browseInteractive(env, stdin, stdout) {
 		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
@@ -449,6 +452,11 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	if lookup.Cancelled {
 		return 0
+	}
+	// The hints name the full ID, and the harness when it was given, which
+	// the same ID under two harnesses needs.
+	if *harness != "" {
+		summary.HintHarness = lookup.Harness
 	}
 	sessionID, *harness = lookup.SessionID, lookup.Harness
 
@@ -504,7 +512,6 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
 		return 1
 	}
-	summary.ShortID = shortSessionID(sessionID)
 	if err := withPager(stdout, stderr, env, *noPager, func(w io.Writer) error {
 		renderTranscript(w, view, t, transcriptOptions{summaryOptions: summary, Full: *full})
 		return nil
