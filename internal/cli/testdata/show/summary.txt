@@ -20,5 +20,5 @@ claude · agent-archive · 2h ago                                      ✓ compl
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
      origin imported · parser 0.13.0 (partial) · filter 12
 
-  Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --transcript
-  JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --json
+  Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
+  JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json

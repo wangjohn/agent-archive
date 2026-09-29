@@ -21,6 +21,7 @@ const (
 type altScreenDependencies interface {
 	isTerminal(any) bool
 	interrupts() (<-chan os.Signal, func())
+	exit(int)
 }
 
 // altScreen is the browser's full-screen view: the list and a session's
@@ -47,7 +48,7 @@ type altScreen struct {
 }
 
 func enterAltScreen(out io.Writer, env altScreenDependencies) *altScreen {
-	s := &altScreen{out: out, exit: os.Exit}
+	s := &altScreen{out: out, exit: env.exit}
 	if !env.isTerminal(out) {
 		return s
 	}
@@ -132,6 +133,14 @@ func (s *altScreen) reenter() {
 func (s *altScreen) exitForSignal(sig os.Signal) {
 	s.leave()
 	s.exit(signalExitCode(sig))
+}
+
+func (e Env) exit(code int) {
+	if e.exitProcess != nil {
+		e.exitProcess(code)
+		return
+	}
+	os.Exit(code)
 }
 
 func signalExitCode(sig os.Signal) int {

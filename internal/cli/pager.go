@@ -6,6 +6,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -65,13 +66,14 @@ func pageText(ctx context.Context, stdout, stderr io.Writer, env pagerDependenci
 }
 
 // isLess reports whether command runs less by itself, so options can be
-// appended to it.
+// appended to it: no shell syntax (pipes, redirection, substitution,
+// quoting, comments, line breaks) and no "--" ending its options.
 func isLess(command string) bool {
-	if strings.ContainsAny(command, "|;&<>`$()") {
+	if strings.ContainsAny(command, "|;&<>`$()#\\\n'\"") {
 		return false
 	}
 	fields := strings.Fields(command)
-	return len(fields) > 0 && filepath.Base(fields[0]) == "less"
+	return len(fields) > 0 && filepath.Base(fields[0]) == "less" && !slices.Contains(fields, "--")
 }
 
 // resolvePagerCommand chooses the pager command. An empty
@@ -106,7 +108,7 @@ const pagerStopDelay = 3 * time.Second
 // left behind on the terminal.
 func (e Env) runPager(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if e.RunPager != nil {
-		return e.RunPager(command, stdin, stdout, stderr)
+		return e.RunPager(ctx, command, stdin, stdout, stderr)
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }

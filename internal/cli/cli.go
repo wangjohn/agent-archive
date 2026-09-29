@@ -95,6 +95,9 @@ type Env struct {
 	// observeFlags, set only by tests, sees every command flag set as it is
 	// made, so a test can check each flag against the help text.
 	observeFlags func(*commandFlags)
+	// exitProcess, set only by tests, replaces os.Exit where the session
+	// browser exits on a signal.
+	exitProcess func(int)
 	// backfillCheckpoint, set only by tests, is called inside the
 	// configuration commit between writing the batch file and saving the
 	// configuration ("batch saved"), after the commit ("committed"), after
@@ -177,10 +180,10 @@ type Env struct {
 	// progress line only on one. Defaults to checking the file descriptor.
 	IsTerminal func(any) bool
 	// RunPager runs a pager command with stdin as its input and stdout/
-	// stderr as its output. list uses it for interactive text listings.
-	// Defaults to `sh -c command`. Tests set it so a listing never
-	// spawns less.
-	RunPager func(command string, stdin io.Reader, stdout, stderr io.Writer) error
+	// stderr as its output, until it exits or ctx is cancelled. list and
+	// show use it for text listings and transcripts. Defaults to `sh -c
+	// command`. Tests set it so a listing never spawns less.
+	RunPager func(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error
 	// Interrupts delivers the signals that stop backfill while it plans,
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.

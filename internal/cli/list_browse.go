@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
+
+	"golang.org/x/term"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -143,6 +146,7 @@ func (b *sessionBrowser) transcript(view sessionView, row listRow) (browseAction
 		return browseStay, nil
 	}
 	b.screen.clear()
+	restoreTerminal := saveTerminalState(b.prompt.source)
 	pagerCtx, stopPager := context.WithCancel(ctx)
 	b.screen.startPaging(stopPager)
 	paged, waited, err := pageText(pagerCtx, b.stdout, b.stderr, b.env, b.noPager, true, text)
@@ -150,7 +154,10 @@ func (b *sessionBrowser) transcript(view sessionView, row listRow) (browseAction
 	stopPager()
 	if sig != nil {
 		// A signal stopped the pager; the pager has exited, so exit as the
-		// signal would have.
+		// signal would have. A pager killed before it could restore the
+		// terminal's modes (one behind a pipe) leaves them raw, so they
+		// are restored first.
+		restoreTerminal()
 		b.screen.exitForSignal(sig)
 		return browseQuit, nil
 	}
@@ -363,4 +370,18 @@ func selectArchivedSession(env sessionSelectionDependencies, store storage.Objec
 		return listRow{}, false, 1
 	}
 	return row, selected, 0
+}
+
+// saveTerminalState records the terminal modes of in, when it is a
+// terminal, and returns a function that restores them.
+func saveTerminalState(in io.Reader) (restore func()) {
+	file, ok := in.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return func() {}
+	}
+	state, err := term.GetState(int(file.Fd()))
+	if err != nil {
+		return func() {}
+	}
+	return func() { _ = term.Restore(int(file.Fd()), state) }
 }
