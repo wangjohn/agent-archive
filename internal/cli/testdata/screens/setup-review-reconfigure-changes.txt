@@ -46,6 +46,7 @@ Step 3 of 3 · Review your changes
 * Projects   ~/src/web-app
              ~/src/api
              was ~/src/web-app
+  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
   Keep for   90 days
 
@@ -69,12 +70,13 @@ What would you like to change?
   1) Apps to include
   2) Projects to include
   3) All sessions or only sessions using skills
-  4) How long sessions are kept
-  5) Bucket or credentials
-  6) Folder inside the bucket
-  7) AWS bucket region
-  8) Nothing, go back to the review
-Enter 1-8 [8]: 4
+  4) Skill evidence: none, metadata, or body
+  5) How long sessions are kept
+  6) Bucket or credentials
+  7) Folder inside the bucket
+  8) AWS bucket region
+  9) Nothing, go back to the review
+Enter 1-9 [9]: 5
 Keep sessions for how many days? [90]: 30
 
 Step 3 of 3 · Review your changes
@@ -84,6 +86,7 @@ Step 3 of 3 · Review your changes
 * Projects   ~/src/web-app
              ~/src/api
              was ~/src/web-app
+  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
 * Keep for   30 days
              was 90 days

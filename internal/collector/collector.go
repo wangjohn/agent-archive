@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -49,6 +50,9 @@ type Options struct {
 	// anyway (to preserve comparison evidence), so the zero value (false)
 	// matches that default rather than requiring every caller to opt in.
 	RequireSkillUse bool
+	// SkillEvidence limits filesystem skill evidence in new publications.
+	// Empty means body for older programmatic callers.
+	SkillEvidence config.SkillEvidence
 	// SupplementalEvidence observes non-transcript evidence such as the
 	// installed skill inventory. The collector merges stable observations
 	// without letting a new polling timestamp manufacture a new snapshot.

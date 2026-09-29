@@ -127,6 +127,7 @@ type statusView struct {
 	Privacy                  string                 `json:"privacy"`
 	Background               string                 `json:"background"`
 	Paused                   bool                   `json:"paused"`
+	SkillEvidence            string                 `json:"skill_evidence,omitempty"`
 	Projects                 []string               `json:"projects"`
 	Apps                     []appStatus            `json:"applications"`
 	Collector                state.Status           `json:"collector"`
@@ -306,6 +307,7 @@ func readSetupProgress(view *statusView, home string) {
 // diagnostics, and the included projects.
 func readConfiguredStatus(view *statusView, cfg config.Config, home string, env Env) {
 	view.configured = true
+	view.SkillEvidence = string(cfg.EffectiveSkillEvidence())
 	view.Background = "unknown"
 	view.Storage = storageLabel(cfg.Storage)
 	view.StorageVerifiedAt = cfg.StorageVerifiedAt
@@ -1157,6 +1159,7 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 		projects = strings.Join(shown, ", ")
 	}
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Projects: " + projects}})
+	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Skill evidence: " + view.SkillEvidence}})
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("Imported: %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
@@ -1658,6 +1661,7 @@ func printStatusDetails(out io.Writer, view statusView) {
 		terminal.Println(out, "  Collection:    paused")
 	}
 	terminal.Printf(out, "  Projects:      %d included\n  Pending:       %d session(s)\n  Last scan:     %s\n  Last publish:  %s\n", len(view.Projects), view.Collector.PendingCount, formatTimeOrNever(view.Collector.LastScanAt), formatTimeOrNever(view.Collector.LastPublishedAt))
+	terminal.Printf(out, "  Skill evidence: %s\n", view.SkillEvidence)
 	if view.ImportedSessions > 0 {
 		imported := fmt.Sprintf("%d session(s), %d waiting to upload", view.ImportedSessions, view.ImportedPending)
 		if view.ImportedWithIssues > 0 {

@@ -32,6 +32,7 @@ Step 3 of 3 · Ready to start
 
   Apps       Claude Code 2.1.90
   Projects   ~/src/web-app
+  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    r2://team-archive/agent-archive/  account 0123456789abcdef0123456789abcdef
   Keep for   90 days
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
@@ -41,11 +42,13 @@ type SkillOptions struct {
 	ProjectRoot string
 	UserHome    string
 	ObservedAt  time.Time
+	Mode        config.SkillEvidence
 }
 
 type skillRoot struct {
 	path  string
 	scope string
+	user  string
 	// project is the project root a project-level skill root belongs to, and
 	// empty for a user-level root. It bounds where a project skill's SKILL.md
 	// may resolve to (see skillBounds).
@@ -65,11 +68,20 @@ func ObserveSkills(options SkillOptions) ([]archive.SupplementalEvidence, error)
 	if options.ObservedAt.IsZero() {
 		return nil, errors.New("skill observation time is required")
 	}
+	if options.Mode == config.SkillEvidenceNone {
+		return nil, nil
+	}
+	if options.Mode == "" {
+		options.Mode = config.SkillEvidenceBody
+	}
+	if !config.ValidSkillEvidence(options.Mode) {
+		return nil, fmt.Errorf("unsupported skill evidence mode %q", options.Mode)
+	}
 	roots := skillRoots(options)
 	remainingSnapshotBytes := int64(maxSnapshotBytes)
 	var observations []archive.SupplementalEvidence
 	for _, root := range roots {
-		evidence, err := observeRoot(options.Harness, root, options.ObservedAt, &remainingSnapshotBytes)
+		evidence, err := observeRoot(options.Harness, root, options.ObservedAt, &remainingSnapshotBytes, options.Mode)
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +105,7 @@ func skillRoots(options SkillOptions) []skillRoot {
 	var roots []skillRoot
 	addUser := func(suffix, scope string) {
 		if user != "" {
-			roots = append(roots, skillRoot{path: filepath.Join(user, suffix), scope: scope})
+			roots = append(roots, skillRoot{path: filepath.Join(user, suffix), scope: scope, user: user})
 		}
 	}
 	// A project root that is a user-level root (the session ran from the
@@ -125,7 +137,13 @@ func skillRoots(options SkillOptions) []skillRoot {
 	return roots
 }
 
-func observeRoot(harness string, root skillRoot, observedAt time.Time, remainingSnapshotBytes *int64) ([]archive.SupplementalEvidence, error) {
+func observeRoot(harness string, root skillRoot, observedAt time.Time, remainingSnapshotBytes *int64, mode config.SkillEvidence) ([]archive.SupplementalEvidence, error) {
+	bounds := newSkillBounds(root)
+	if root.user != "" && bounds.root == "" {
+		if _, err := os.Lstat(root.path); err == nil {
+			return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, "unreadable", nil, false, observedAt)}, nil
+		}
+	}
 	entries, err := os.ReadDir(root.path)
 	if err != nil {
 		// Not a directory, permission denied, or any other read failure: the
@@ -152,7 +170,6 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 	var snapshots []archive.SupplementalEvidence
 	omittedSnapshots := 0
 	uninspectedEntries := 0
-	bounds := newSkillBounds(root)
 	for _, entry := range entries {
 		// Symlinks are resolved first, and the SKILL.md actually read is the
 		// resolved file, which must be a regular file inside the root's bounds.
@@ -191,7 +208,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 			omittedSnapshots++
 			continue
 		}
-		original, err := readBounded(path, maxSkillBytes)
+		original, err := readBounded(path, maxSkillBytes, info)
 		if err != nil {
 			uninspectedEntries++
 			continue
@@ -209,6 +226,10 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		digest := sha256.Sum256([]byte(archive.RedactText(string(original))))
 		hash := hex.EncodeToString(digest[:])
 		payload["sha256"] = hash
+		inventory = append(inventory, map[string]any{"name": name, "sha256": hash})
+		if mode == config.SkillEvidenceMetadata {
+			continue
+		}
 		body := string(original)
 		if len(body) > maxSnapshotBodyBytes {
 			body = archive.TruncateUTF8(body, maxSnapshotBodyBytes)
@@ -227,7 +248,6 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 			continue
 		}
 		archive.AnnotateSupplementalGaps(filtered[0].Payload, gaps)
-		inventory = append(inventory, map[string]any{"name": name, "sha256": hash})
 		snapshots = append(snapshots, filtered[0])
 	}
 	totalOmittedEntries := omittedEntries + uninspectedEntries
@@ -264,11 +284,9 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 //
 // Symlinks are resolved on both sides.
 //
-//   - A user-level root is the person's own configuration. Its resolved file
-//     must lie inside the resolved skill root, or be itself named SKILL.md:
-//     a linked skill, not an arbitrary file under a skill's name. Linking a
-//     skill directory into a skills checkout elsewhere (~/.claude/skills/x
-//     -> ~/src/skills/x) keeps working.
+//   - A user-level root may resolve only inside the user's home; its resolved
+//     SKILL.md must stay inside the resolved skill root. Links to a skills
+//     checkout outside that root are uninspected.
 //   - A project-level root belongs to a repository, which controls its skill
 //     root as much as its links (.claude/skills -> .. makes the root the
 //     project itself), so "inside the skill root" proves nothing for it.
@@ -282,7 +300,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 //
 // An entry that resolves outside its bounds counts as uninspected. The
 // bounds are checked on the resolved path, and the resolved path is what is
-// read; a symlink swapped in between the two is a race this does not close.
+// read. The opened file must still be the inspected inode.
 type skillBounds struct {
 	// root and project are the resolved skill root and project root, or ""
 	// when the directory could not be resolved.
@@ -297,6 +315,13 @@ func newSkillBounds(root skillRoot) skillBounds {
 	resolvedRoot, resolvedProject := "", ""
 	if resolved, err := filepath.EvalSymlinks(root.path); err == nil {
 		resolvedRoot = resolved
+	}
+	if root.user != "" {
+		resolvedUser, err := filepath.EvalSymlinks(root.user)
+		rel, relErr := filepath.Rel(root.user, root.path)
+		if err != nil || relErr != nil || resolvedRoot != filepath.Join(resolvedUser, rel) {
+			resolvedRoot = ""
+		}
 	}
 	if projectScoped {
 		if resolved, err := filepath.EvalSymlinks(root.project); err == nil {
@@ -320,7 +345,7 @@ func (b skillBounds) allow(resolved string) bool {
 		// named SKILL.md, inside the project.
 		return named && local.PathWithin(resolved, b.project)
 	}
-	return named || local.PathWithin(resolved, b.root)
+	return named && local.PathWithin(resolved, b.root)
 }
 
 // sameDirectory reports whether a and b are the same directory, compared
@@ -352,12 +377,19 @@ func inventoryObservation(harness, scope, rootStatus string, skills []any, compl
 	}
 }
 
-func readBounded(path string, limit int64) ([]byte, error) {
+func readBounded(path string, limit int64, inspected os.FileInfo) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(inspected, opened) {
+		return nil, errors.New("skill changed between inspection and read")
+	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return nil, err

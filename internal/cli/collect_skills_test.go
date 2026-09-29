@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 )
 
 // Today's skills attached to a session that ran before them would be false
@@ -24,7 +25,7 @@ func TestSkillObserverSkipsImports(t *testing.T) {
 	}
 	env := testEnv(t, t.TempDir(), time.Now())
 	env.UserHomeDir = func() (string, error) { return userHome, nil }
-	observe := skillObserver(env)
+	observe := skillObserver(env, config.SkillEvidenceBody)
 	reg := archive.SessionRegistration{Harness: archive.Harness{Name: "claude"}, ProjectRoot: project}
 	hook, err := observe(reg, time.Now())
 	if err != nil || len(hook) == 0 {
@@ -56,7 +57,7 @@ func TestSkillObserverReadsUserScopeOncePerHarnessAndProjectScopePerProject(t *t
 	write(filepath.Join(projectB, ".claude", "skills"), "beta", "b")
 	env := testEnv(t, home, time.Now())
 	env.UserHomeDir = func() (string, error) { return userHome, nil }
-	observe := skillObserver(env)
+	observe := skillObserver(env, config.SkillEvidenceBody)
 	harness := archive.Harness{Name: "claude"}
 	first, err := observe(archive.SessionRegistration{ProjectRoot: projectA, Harness: harness}, time.Now())
 	if err != nil {

@@ -104,6 +104,21 @@ func TestSetupReviewMarksOnlyChangedValues(t *testing.T) {
 	}
 }
 
+func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
+	var out bytes.Buffer
+	p := newPrompter(strings.NewReader("skills\nnone\n"), &out)
+	draft := setupDraft{Config: config.Config{SkillEvidence: config.SkillEvidenceMetadata}}
+	if err := editSetupReview(p, &draft, t.TempDir(), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if draft.Config.SkillEvidence != config.SkillEvidenceNone {
+		t.Fatalf("policy = %q\n%s", draft.Config.SkillEvidence, &out)
+	}
+	if !strings.Contains(out.String(), "outside selected projects") {
+		t.Fatalf("scope missing: %s", &out)
+	}
+}
+
 func TestMenuAcceptsNumbersKeysAndPrefixes(t *testing.T) {
 	t.Parallel()
 	options := []option{{"capture", "Apps and projects"}, {"storage", "Storage"}, {"retention", "Retention"}, {"all", "All settings"}}

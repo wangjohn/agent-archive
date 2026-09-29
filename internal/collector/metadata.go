@@ -35,6 +35,9 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if !ok {
 		return outcomeSkipped, false, nil
 	}
+	if !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+		return outcomeSkipped, false, nil
+	}
 	prior := last.metadata
 	sameParser := prior.Parser.Version == s.opts.parserVersion()
 	if sameParser && !last.legacy {

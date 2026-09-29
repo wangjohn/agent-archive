@@ -258,6 +258,9 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
 	}
 	draft := setupDraft{Version: draftFormat, Config: existing}
+	if !found {
+		draft.Config.SkillEvidence = config.SkillEvidenceMetadata
+	}
 	savedPath := draftPath(home)
 	saved, haveDraft, err := offerUnusableDraft(p, home)
 	if err != nil {

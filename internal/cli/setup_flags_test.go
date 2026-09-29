@@ -86,6 +86,9 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 	env.DetectHarnesses = func(string) []string { return []string{"cursor"} }
 	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--project", project)
 	cfg, _, _ := config.Load(home)
+	if cfg.SkillEvidence != config.SkillEvidenceMetadata {
+		t.Fatalf("fresh policy = %q", cfg.SkillEvidence)
+	}
 	if cfg.Storage.Region != "eu-west-1" || cfg.Storage.AWSProfile != "archive" || !reflect.DeepEqual(cfg.Harnesses, []string{"cursor"}) {
 		t.Fatalf("config %+v", cfg)
 	}
@@ -95,6 +98,9 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 	other := t.TempDir()
 	setupYes(t, env, "", 0, "--yes", "--project", other)
 	next, _, _ := config.Load(home)
+	if next.SkillEvidence != config.SkillEvidenceMetadata {
+		t.Fatalf("reconfigured policy = %q", next.SkillEvidence)
+	}
 	if includedProjects(next.Archive.Projects) != 2 || next.Storage != cfg.Storage || next.MachineID != cfg.MachineID {
 		t.Fatalf("rerun config %+v", next)
 	}
@@ -106,6 +112,28 @@ func TestSetupYesConfiguresS3WithTheProfileRegion(t *testing.T) {
 	after, _, _ := config.Load(home)
 	if !strings.Contains(output, "leaves out Cursor") || !reflect.DeepEqual(after.Harnesses, []string{"codex", "cursor"}) || len(after.DeclinedHarnesses) != 0 {
 		t.Fatalf("apps %v declined %v\n%s", after.Harnesses, after.DeclinedHarnesses, output)
+	}
+}
+
+func TestSetupYesSkillEvidenceReconfiguration(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	env.AWSProfiles = func() ([]AWSProfile, error) { return []AWSProfile{{Name: "archive", Region: "us-east-1"}}, nil }
+	env.DetectHarnesses = func(string) []string { return []string{"codex"} }
+	setupYes(t, env, "", 0, "--yes", "--provider", "s3", "--bucket", "b", "--aws-profile", "archive", "--project", project, "--skill-evidence", "none")
+	cfg, _, err := config.Load(home)
+	if err != nil || cfg.SkillEvidence != config.SkillEvidenceNone {
+		t.Fatalf("none config: %+v %v", cfg, err)
+	}
+	out := setupYes(t, env, "", 0, "--yes", "--skill-evidence", "body")
+	cfg, _, err = config.Load(home)
+	if err != nil || cfg.SkillEvidence != config.SkillEvidenceBody || !strings.Contains(out, "Skill evidence: body") {
+		t.Fatalf("body config: %+v %v\n%s", cfg, err, out)
+	}
+	setupYes(t, env, "", 1, "--yes", "--skill-evidence", "other")
+	cfg, _, _ = config.Load(home)
+	if cfg.SkillEvidence != config.SkillEvidenceBody {
+		t.Fatal("invalid mode changed config")
 	}
 }
 

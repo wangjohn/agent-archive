@@ -34,6 +34,7 @@ Checking your storage connection…
 
   \e[2mApps      \e[0m Claude Code 2.1.90
   \e[2mProjects  \e[0m ~/src/web-app
+  \e[2mSkills    \e[0m metadata  \e[2mUser skill roots outside selected projects may be scanned; change with Edit a setting\e[0m
   \e[2mStorage   \e[0m s3://team-archive/agent-archive/  \e[2mus-east-1 · profile work\e[0m
   \e[2mKeep for  \e[0m 90 days
 

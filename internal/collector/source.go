@@ -268,6 +268,7 @@ func rememberFailedRead(local *state.Store, reg archive.SessionRegistration, ada
 		message = failure.Error()
 	}
 	return local.SaveScanSignature(reg.ArchiveSessionID, state.ScanSignature{
+		SkillEvidence: string(opts.skillEvidence()),
 		ParserVersion: opts.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapter.Version(),
 		SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,
 		CursorHeaderCount: observed.cursor.HeaderCount, CursorLastBubbleID: observed.cursor.LastBubbleID,

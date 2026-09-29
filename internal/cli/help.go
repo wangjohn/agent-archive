@@ -14,6 +14,7 @@ import (
 var commandHelp = map[string]string{
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--skill-evidence none|metadata|body]
 
 Choose apps and projects, connect storage, then review and enable capture.
 Run again to continue saved setup or edit capture, storage, or retention.
@@ -41,6 +42,10 @@ An interrupted setup is recovered on the next run.
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this Mac). It must
                         name every app set up now: --yes never removes one
+  --skill-evidence MODE none: no filesystem skill evidence; metadata: names
+                        and filtered hashes; body: filtered SKILL.md text.
+                        Fresh setup defaults to metadata; earlier configs
+                        without this field keep body until changed.
 With --yes, the R2 secret access key is read from
 AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY, or else from standard input.
 Example: agent-archive setup
