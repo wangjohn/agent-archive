@@ -33,6 +33,11 @@ follow [Semantic Versioning](https://semver.org/).
   prompt) and `project_name` (project basename at publish). Parser version
   is now `0.12.0` so existing sessions get titles on the next metadata
   refresh.
+- Metadata may include optional `ended_at` (latest record timestamp),
+  `tools_used` (the 10 most-called tools with counts), and
+  `counts.files_touched` (distinct files edited; a count only, never
+  paths). Parser version is now `0.13.0`, so existing sessions gain them on
+  the next metadata refresh.
 
 ### Changed
 

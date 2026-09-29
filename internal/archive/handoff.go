@@ -224,7 +224,9 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 		exchanges, leftOff = textTranscriptExchanges(bundle.NativeText, opts)
 		toolResultsUnavailable = false
 	} else {
-		exchanges, leftOff, plan, files = selectHandoffExchanges(handoffEvents(view), workspaceRoot(bundle), opts)
+		root := workspaceRoot(bundle)
+		exchanges, leftOff, plan = selectHandoffExchanges(handoffEvents(view), root, opts)
+		files = sessionFilesTouched(view.ToolCalls, root)
 	}
 	h := Handoff{
 		Version:                HandoffVersion,
@@ -306,11 +308,10 @@ func handoffSession(bundle SourceBundle, view NormalizedView, metadata *Metadata
 
 // selectHandoffExchanges groups selected turns and tool calls in record order.
 // It only reads the normalized events and returns new handoff values.
-func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOptions) ([]HandoffExchange, string, []HandoffPlanItem, []string) {
+func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOptions) ([]HandoffExchange, string, []HandoffPlanItem) {
 	exchanges := []HandoffExchange{}
 	leftOff := ""
 	var plan []HandoffPlanItem
-	files := fileSet{}
 	var current *HandoffExchange
 	flush := func() {
 		if current != nil && (current.Prompt != "" || len(current.Steps) > 0) {
@@ -348,10 +349,7 @@ func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOpti
 		}
 		call := event.call
 		raw := call.raw
-		name := call.Name
-		if name == "" {
-			name = firstString(raw, "type")
-		}
+		name := callToolName(*call)
 		if name == "" {
 			name = "tool"
 		}
@@ -370,16 +368,13 @@ func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOpti
 			tool.ResultLines = lineCount(text)
 			tool.Result = trimResult(text, opts.resultLines(), opts.resultBytes())
 		}
-		for _, file := range touchedFiles(name, call.Input, raw) {
-			files.add(relativeTo(file, root))
-		}
 		if updated := planItems(name, call.Input, plan); updated != nil {
 			plan = updated
 		}
 		current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: tool})
 	}
 	flush()
-	return exchanges, leftOff, plan, files.list
+	return exchanges, leftOff, plan
 }
 
 // textTranscriptExchanges reads the role sections of a filtered text
@@ -762,6 +757,43 @@ func relativeTo(file, root string) string {
 		return relative
 	}
 	return clean
+}
+
+// touchedFileKey is how a touched file is listed and deduplicated: a path
+// under root relative to it (relativeTo), and any relative path cleaned, so
+// "/repo/a.go", "a.go", and "./a.go" in a session rooted at /repo are one
+// file.
+func touchedFileKey(file, root string) string {
+	if file == "" {
+		return ""
+	}
+	if !path.IsAbs(file) {
+		return path.Clean(file)
+	}
+	return relativeTo(file, root)
+}
+
+// callToolName is the name a call is listed under: the tool's own name, or
+// for a call with none (Codex's local_shell_call) the type of its record.
+func callToolName(call NormalizedToolCall) string {
+	if call.Name != "" {
+		return call.Name
+	}
+	return firstString(call.raw, "type")
+}
+
+// sessionFilesTouched lists, in first-touched order, the distinct files the
+// editing calls among calls named (touchedFiles), keyed by touchedFileKey.
+// handoff lists these files and metadata publishes how many there are
+// (counts.files_touched), so the two always agree.
+func sessionFilesTouched(calls []NormalizedToolCall, root string) []string {
+	files := fileSet{}
+	for _, call := range calls {
+		for _, file := range touchedFiles(callToolName(call), call.Input, call.raw) {
+			files.add(touchedFileKey(file, root))
+		}
+	}
+	return files.list
 }
 
 type fileSet struct {

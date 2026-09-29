@@ -206,7 +206,9 @@ func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata M
 	// Native text has unproven structure, so structured counts remain unknown.
 	if len(bundle.NativeText) == 0 {
 		metadata.Counts = structuredCounts(bundle, view, prompts, messages, shellCommands)
+		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls)
 	}
+	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
 	metadata.Models = models
 	deriveHookModels(bundle, &metadata)
 	deriveSkills(bundle, view.NativeSkillUses, &metadata)
@@ -298,6 +300,7 @@ func addTurnModel(models map[string]*ModelSummary, turn NormalizedTurn) {
 
 func structuredCounts(bundle SourceBundle, view NormalizedView, prompts, messages, shellCommands int) Counts {
 	toolCalls, toolResults := len(view.ToolCalls), len(view.ToolResults)
+	filesTouched := len(sessionFilesTouched(view.ToolCalls, workspaceRoot(bundle)))
 	var compactions *int
 	if compactionsObservable(bundle) {
 		// Count boundaries; use summaries only when no boundary was retained.
@@ -309,10 +312,87 @@ func structuredCounts(bundle SourceBundle, view NormalizedView, prompts, message
 	}
 	return Counts{
 		Turns: &prompts, Messages: &messages, ToolCalls: &toolCalls, ToolResults: &toolResults,
-		UserShellCommands: &shellCommands, Compactions: compactions,
+		UserShellCommands: &shellCommands, Compactions: compactions, FilesTouched: &filesTouched,
 		InputTokens: view.Tokens.Input, OutputTokens: view.Tokens.Output,
 		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
 	}
+}
+
+// MaxToolsUsed is the most entries Metadata.ToolsUsed holds: the session's
+// most-called tools. The schema's tools_used maxItems matches it.
+const MaxToolsUsed = 10
+
+// toolNameLimit is the maximum rune length of a ToolUsage name, ellipsis
+// included. The schema's maxLength matches it.
+const toolNameLimit = 128
+
+// deriveToolsUsed counts calls by tool name (callToolName, as handoff lists
+// them) and keeps the MaxToolsUsed most-called, by count descending and then
+// name ascending. A call with neither a name nor arguments (a Codex Extension
+// completion) names no tool and is left out, as handoff leaves it out; it is
+// still one of counts.tool_calls.
+func deriveToolsUsed(calls []NormalizedToolCall) []ToolUsage {
+	counts := map[string]int{}
+	for _, call := range calls {
+		if call.Name == "" && len(call.Input) == 0 {
+			continue
+		}
+		if name := metadataToolName(callToolName(call)); name != "" {
+			counts[name]++
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	out := make([]ToolUsage, 0, len(counts))
+	for name, count := range counts {
+		out = append(out, ToolUsage{Name: name, Count: count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > MaxToolsUsed {
+		out = out[:MaxToolsUsed]
+	}
+	return out
+}
+
+// metadataToolName makes a harness-reported tool name safe to publish in
+// metadata. The name was read from filtered source, so its credentials are
+// already redacted; it is redacted again anyway (a no-op on filtered text),
+// stripped of control characters, collapsed onto one line, and capped at
+// toolNameLimit runes, since the filter bounds a string only at 64 KB. An
+// MCP name such as mcp__server__tool is kept whole when it fits.
+func metadataToolName(name string) string {
+	fields := strings.Fields(displayText(RedactText(name)))
+	if len(fields) == 0 {
+		return ""
+	}
+	line := strings.Join(fields, " ")
+	runes := []rune(line)
+	if len(runes) <= toolNameLimit {
+		return line
+	}
+	return string(runes[:toolNameLimit-1]) + "…"
+}
+
+// deriveEndedAt is the latest record timestamp, raised to startedAt when the
+// records' clock ran behind the one that set it (a hook's registration
+// time), so ended_at is never before started_at. Nil when no record carried a
+// timestamp: an end time is never invented.
+func deriveEndedAt(view NormalizedView, startedAt time.Time) *time.Time {
+	if view.LatestRecordAt.IsZero() {
+		return nil
+	}
+	ended := view.LatestRecordAt
+	if ended.Before(startedAt) {
+		ended = startedAt
+	}
+	ended = ended.UTC()
+	return &ended
 }
 
 // sessionTitleLimit is the maximum rune length of Metadata.Title.

@@ -59,6 +59,13 @@ configured project basename. The ID column is a short prefix you can pass to
 `list --verbose` or add `--harness`. Projects with the same basename stay in
 separate groups, labeled with their project ID prefixes.
 
+Metadata also says what a session did without downloading its transcript:
+when it ended (`ended_at`), its most-called tools (`tools_used`), and how
+many distinct files it edited (`counts.files_touched`). Only names and
+counts are stored, never file paths. Sessions published by an older version
+gain them when the collector next refreshes their metadata. See
+[JSON output](../reference/json-output.md#show).
+
 `show` prints conversation content only when asked: `--normalized` downloads
 the session's source bundle, verifies its checksum and identity against the
 metadata, and prints the normalized view (turns, tool calls, and

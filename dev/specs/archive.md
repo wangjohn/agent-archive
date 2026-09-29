@@ -242,6 +242,7 @@ The following is illustrative. IDs, versions, and hashes are shortened examples.
   "native_session_id": "native-456",
   "machine_id": "mac-a",
   "started_at": "2026-09-17T18:00:00Z",
+  "ended_at": "2026-09-17T18:24:41Z",
   "captured_at": "2026-09-17T18:25:00Z",
   "metadata_derived_at": "2026-09-17T18:25:01Z",
   "state": "idle",
@@ -288,8 +289,14 @@ The following is illustrative. IDs, versions, and hashes are shortened examples.
   "counts": {
     "turns": 4,
     "tool_calls": 18,
+    "files_touched": 3,
     "explicit_feedback": 1
   },
+  "tools_used": [
+    {"name": "exec_command", "count": 11},
+    {"name": "apply_patch", "count": 5},
+    {"name": "update_plan", "count": 2}
+  ],
   "capture_gaps": ["actual_response_model_not_exposed"],
   "source_bundle": {
     "key": "sessions/codex/archive-123/source.abc123.jsonl.gz",
@@ -299,7 +306,7 @@ The following is illustrative. IDs, versions, and hashes are shortened examples.
 }
 ```
 
-Metadata contains summaries computed by code. Prompts, tool contents, and answers belong in the compressed source bundle. The sidecar remains private: even skill names, project identifiers, and usage patterns can be sensitive. Record the parser version and status used to derive the summary. Missing or failed parsing yields unknown counts and unavailable attribution, not zeros or a claim that no skill was used.
+Metadata contains summaries computed by code. Prompts, tool contents, and answers belong in the compressed source bundle. Tool names and call counts (`tools_used`, capped at the ten most-called) and the number of distinct files edited (`counts.files_touched`) are summaries; the file paths themselves are not. The sidecar remains private: even skill names, project identifiers, and usage patterns can be sensitive. Record the parser version and status used to derive the summary. Missing or failed parsing yields unknown counts and unavailable attribution, not zeros or a claim that no skill was used.
 
 ### Durable source, derived views
 

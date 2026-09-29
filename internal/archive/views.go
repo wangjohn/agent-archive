@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ParseError means a parser could not derive a complete summary. The filtered
@@ -30,6 +31,11 @@ type NormalizedView struct {
 	// compact_boundary records and isCompactSummary records.
 	CompactBoundaries int
 	CompactSummaries  int
+	// LatestRecordAt is the latest top-level timestamp (or created_at) of
+	// any record the view read, whatever its kind: records carry no ordering
+	// promise, so this is the maximum, not the last record's. Zero when no
+	// record carried one.
+	LatestRecordAt time.Time
 }
 
 // TokenUsage sums the token accounting a harness exposed. Each field is nil
@@ -217,6 +223,9 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 			// a second time.
 			continue
 		}
+		if at := latestRecordTime(bundle, record); at.After(view.LatestRecordAt) {
+			view.LatestRecordAt = at
+		}
 		if bundle.harness() == "codex" && firstString(record, "type") == "turn_context" {
 			codexModel, codexReasoning = firstStringDeep(record, "model", "model_id"), firstStringDeep(record, "reasoning_effort")
 			continue
@@ -277,6 +286,19 @@ func ParseNormalized(bundle SourceBundle) (NormalizedView, error) {
 	view.Tokens = tokens.usage()
 	view.HookFinals = reconcileHookFinals(bundle, view.Turns)
 	return view, nil
+}
+
+// latestRecordTime is the latest time one record carries: its timestamp (or
+// created_at), or for a Cursor database chat's message the completion time
+// FilterComposer retains beside its creation time, when that is later.
+func latestRecordTime(bundle SourceBundle, record map[string]any) time.Time {
+	at := parseNativeTimestamp(record)
+	if bundle.Capture.SourceFormat == cursorComposerFormat {
+		if completed, ok := cursorTime(record["completed_at_ms"]); ok && completed.After(at) {
+			at = completed
+		}
+	}
+	return at
 }
 
 // compactionsObservable reports whether a bundle can show how many times its
