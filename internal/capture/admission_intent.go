@@ -38,6 +38,13 @@ const (
 	admissionQueueWait    = 200 * time.Millisecond
 )
 
+type cursorFollowupEvent string
+
+const (
+	cursorResponseEvent cursorFollowupEvent = "afterAgentResponse"
+	cursorStopEvent     cursorFollowupEvent = "stop"
+)
+
 func admissionIntentDir(home string) string { return filepath.Join(home, "admission-intents") }
 
 // ClearAdmissionIntents discards starts observed before a pause. Callers hold
@@ -144,7 +151,7 @@ func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[s
 	cursorPath := cursorTranscriptPath(payload, nativeID)
 	start := startsCapture(kind, harness) && provesFreshSessionStart(harness, payload)
 	followup := archive.CanonicalHarness(harness) == "cursor" &&
-		(kind == hookEventResponse || firstNonEmptyString(payload, "hook_event_name") == "stop") && cursorPath != ""
+		(kind == hookEventResponse || cursorFollowupEvent(firstNonEmptyString(payload, "hook_event_name")) == cursorStopEvent) && cursorPath != ""
 	if !start && !followup {
 		return admissionIntent{}, false, nil
 	}
@@ -318,9 +325,8 @@ func intentPayload(intent admissionIntent) map[string]any {
 
 func replayIntentKinds(intent admissionIntent, payload map[string]any) (start, followup bool) {
 	start = startsCapture(classifyHookEvent(intent.Harness, intent.Event), intent.Harness)
-	//lint:ignore LV1001 intent.Event is the hook_event_name Cursor sends; only its response and stop events carry a transcript path follow-up
 	followup = intent.Harness == "cursor" &&
-		(intent.Event == "afterAgentResponse" || intent.Event == "stop") &&
+		(cursorFollowupEvent(intent.Event) == cursorResponseEvent || cursorFollowupEvent(intent.Event) == cursorStopEvent) &&
 		cursorTranscriptPath(payload, intent.NativeSessionID) != ""
 	return start, followup
 }
