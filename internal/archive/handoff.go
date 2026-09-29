@@ -224,7 +224,9 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 		exchanges, leftOff = textTranscriptExchanges(bundle.NativeText, opts)
 		toolResultsUnavailable = false
 	} else {
-		exchanges, leftOff, plan, files = selectHandoffExchanges(handoffEvents(view), workspaceRoot(bundle), opts)
+		root := workspaceRoot(bundle)
+		exchanges, leftOff, plan = selectHandoffExchanges(handoffEvents(view), root, opts)
+		files = sessionFilesTouched(view.ToolCalls, root)
 	}
 	h := Handoff{
 		Version:                HandoffVersion,
@@ -306,11 +308,10 @@ func handoffSession(bundle SourceBundle, view NormalizedView, metadata *Metadata
 
 // selectHandoffExchanges groups selected turns and tool calls in record order.
 // It only reads the normalized events and returns new handoff values.
-func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOptions) ([]HandoffExchange, string, []HandoffPlanItem, []string) {
+func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOptions) ([]HandoffExchange, string, []HandoffPlanItem) {
 	exchanges := []HandoffExchange{}
 	leftOff := ""
 	var plan []HandoffPlanItem
-	files := fileSet{}
 	var current *HandoffExchange
 	flush := func() {
 		if current != nil && (current.Prompt != "" || len(current.Steps) > 0) {
@@ -351,45 +352,33 @@ func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOpti
 		if tool == nil {
 			continue
 		}
-		for _, file := range touchedFiles(tool.Name, call.Input, call.raw) {
-			files.add(relativeTo(file, root))
-		}
 		if updated := planItems(tool.Name, call.Input, plan); updated != nil {
 			plan = updated
 		}
 		current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: tool})
 	}
 	flush()
-	return exchanges, leftOff, plan, files.list
+	return exchanges, leftOff, plan
 }
 
 // handoffToolCall describes one tool call: its name, a one-line summary of
 // its input, whether it failed, and its trimmed result. It returns nil for a
-// completion event with neither a tool name nor arguments (a Codex
-// Extension item), which says only that something finished.
+// call listedCall leaves out.
 func handoffToolCall(call *NormalizedToolCall, root string, opts HandoffOptions) *HandoffToolCall {
-	raw := call.raw
-	name := call.Name
-	if name == "" {
-		name = firstString(raw, "type")
-	}
-	if name == "" {
-		name = "tool"
-	}
-	tool := &HandoffToolCall{Name: name, Summary: toolSummary(name, call.Input, raw, root)}
-	if call.Name == "" && tool.Summary == "" {
+	name, summary, listed := listedCall(*call, root)
+	if !listed {
 		return nil
 	}
-	if call.IsError != nil {
-		tool.IsError = *call.IsError
-	}
+	var result string
+	var resultLines, resultBytes int
 	if call.ResultRecordIndex != nil {
 		text := call.resultText
-		tool.ResultBytes = len(text)
-		tool.ResultLines = lineCount(text)
-		tool.Result = trimResult(text, opts.resultLines(), opts.resultBytes())
+		result, resultLines, resultBytes = trimResult(text, opts.resultLines(), opts.resultBytes()), lineCount(text), len(text)
 	}
-	return tool
+	return &HandoffToolCall{
+		Name: name, Summary: summary, IsError: call.IsError != nil && *call.IsError,
+		Result: result, ResultLines: resultLines, ResultBytes: resultBytes,
+	}
 }
 
 // textTranscriptExchanges reads the role sections of a filtered text
@@ -618,9 +607,9 @@ func firstLine(s string, limit int) string {
 
 var (
 	shellToolNames  = map[string]bool{"bash": true, "shell": true, "exec_command": true, "local_shell_call": true, "commandexecution": true, "run_terminal_cmd": true}
-	readToolNames   = map[string]bool{"read": true, "read_file": true, "view": true}
-	editToolNames   = map[string]bool{"edit": true, "multiedit": true, "write": true, "notebookedit": true, "apply_patch": true, "str_replace": true, "strreplace": true, "search_replace": true, "edit_file": true, "create_file": true, "write_file": true, "delete_file": true}
-	searchToolNames = map[string]bool{"grep": true, "glob": true, "search": true, "codebase_search": true, "grep_search": true, "file_search": true}
+	readToolNames   = map[string]bool{"read": true, "read_file": true, "read_file_v2": true, "view": true}
+	editToolNames   = map[string]bool{"edit": true, "multiedit": true, "write": true, "notebookedit": true, "apply_patch": true, "str_replace": true, "strreplace": true, "search_replace": true, "edit_file": true, "edit_file_v2": true, "create_file": true, "write_file": true, "delete_file": true}
+	searchToolNames = map[string]bool{"grep": true, "glob": true, "search": true, "codebase_search": true, "grep_search": true, "file_search": true, "ripgrep_raw_search": true, "glob_file_search": true}
 	agentToolNames  = map[string]bool{"agent": true, "task": true}
 	planToolNames   = map[string]bool{"todowrite": true, "todo_write": true, "update_plan": true}
 )
@@ -639,7 +628,7 @@ func toolSummary(name string, input map[string]any, raw map[string]any, root str
 			return firstLine(command, handoffSummaryCap)
 		}
 	case readToolNames[lower]:
-		file := relativeTo(firstString(input, "file_path", "path", "target_file"), root)
+		file := shownFile(firstString(input, touchedPathKeys...), root)
 		if file == "" {
 			break
 		}
@@ -653,14 +642,16 @@ func toolSummary(name string, input map[string]any, raw map[string]any, root str
 	case editToolNames[lower]:
 		if files := touchedFiles(name, input, raw); len(files) > 0 {
 			for i := range files {
-				files[i] = relativeTo(files[i], root)
+				files[i] = shownFile(files[i], root)
 			}
 			return strings.Join(files, ", ")
 		}
 		return ""
 	case searchToolNames[lower]:
-		pattern := firstString(input, "pattern", "query", "glob_pattern", "glob")
-		where := relativeTo(firstString(input, "path", "target_directory"), root)
+		pattern := firstString(input, "pattern", "query", "glob_pattern", "glob", "globPattern")
+		// Searching the workspace root is the default, so "in <root>" is
+		// left out.
+		where := workspaceFile(firstString(input, "path", "target_directory", "targetDirectory"), root)
 		if pattern != "" && where != "" {
 			return firstLine(pattern+" in "+where, handoffSummaryCap)
 		}
@@ -736,6 +727,13 @@ func argumentText(args map[string]any, keys ...string) string {
 	return ""
 }
 
+// touchedPathKeys are the argument names an editing or reading call puts its
+// file under: Claude's file_path and notebook_path, Cursor's path and
+// target_file, and relativeWorkspacePath, where Cursor's database chats keep
+// the file of edit_file_v2 and read_file_v2 (their params; they have no
+// rawArgs).
+var touchedPathKeys = []string{"file_path", "path", "target_file", "notebook_path", "relativeWorkspacePath"}
+
 // touchedFiles lists the files an editing call names: its path argument, or
 // for apply_patch the files named in the patch headers.
 func touchedFiles(name string, input map[string]any, raw map[string]any) []string {
@@ -743,7 +741,7 @@ func touchedFiles(name string, input map[string]any, raw map[string]any) []strin
 	if !editToolNames[lower] {
 		return nil
 	}
-	if file := firstString(input, "file_path", "path", "target_file", "notebook_path"); file != "" {
+	if file := firstString(input, touchedPathKeys...); file != "" {
 		return []string{file}
 	}
 	patch := firstString(input, "input", "patch")
@@ -761,17 +759,130 @@ func touchedFiles(name string, input map[string]any, raw map[string]any) []strin
 	return out
 }
 
-// relativeTo shows a file under root relative to it, so the list reads the
-// same on a machine where the repository lives elsewhere.
-func relativeTo(file, root string) string {
-	if root == "" || !path.IsAbs(file) {
-		return file
+// workspaceFile is how a file a call names is shown and deduplicated, so the
+// list reads the same on a machine where the repository lives elsewhere: a
+// path under root is shown relative to it, a relative path that stays under
+// root once resolved against it is shown that way, and anything else is
+// cleaned. In a session rooted at /repo, "/repo/a.go", "a.go", "./a.go", and
+// "../repo/a.go" are all "a.go". A relative path that leaves root
+// ("../other/b.go") keeps its cleaned relative spelling: resolving it would
+// print the absolute path above the workspace (a home directory), and a
+// call run from a subdirectory meant it relative to that directory anyway.
+// A Windows drive path (C:\repo\a.go) is read with forward slashes and an
+// upper-case drive letter. root itself, ".", and "" name no file and are "".
+func workspaceFile(file, root string) string {
+	if file == "" {
+		return ""
 	}
-	clean := path.Clean(file)
-	if relative, ok := strings.CutPrefix(clean, root+"/"); ok {
-		return relative
+	windows := isDrivePath(file) || isDrivePath(root)
+	file, root = slashPath(file, windows), slashPath(root, windows)
+	if root != "" {
+		root = path.Clean(root)
 	}
-	return clean
+	if !path.IsAbs(file) && !isDrivePath(file) {
+		clean := path.Clean(file)
+		if clean == "." {
+			return ""
+		}
+		if root != "" {
+			if relative, under := underRoot(path.Join(root, clean), root); under {
+				return relative
+			}
+		}
+		return clean
+	}
+	file = path.Clean(file)
+	if root != "" {
+		if relative, under := underRoot(file, root); under {
+			return relative
+		}
+	}
+	return file
+}
+
+// underRoot returns clean path file relative to clean root when it is root
+// ("") or inside it.
+func underRoot(file, root string) (string, bool) {
+	if file == root {
+		return "", true
+	}
+	return strings.CutPrefix(file, strings.TrimSuffix(root, "/")+"/")
+}
+
+// shownFile is workspaceFile for display: a non-empty argument that names
+// the workspace root itself is shown as ".".
+func shownFile(file, root string) string {
+	if shown := workspaceFile(file, root); shown != "" || file == "" {
+		return shown
+	}
+	return "."
+}
+
+// isDrivePath reports whether p starts with a Windows drive (C:\ or C:/).
+func isDrivePath(p string) bool {
+	if len(p) < 3 || p[1] != ':' || (p[2] != '\\' && p[2] != '/') {
+		return false
+	}
+	c := p[0] | 0x20
+	return c >= 'a' && c <= 'z'
+}
+
+// slashPath reads a path from a Windows session (windows) with forward
+// slashes and an upper-case drive letter; any other path is unchanged, since
+// a backslash is a legal file-name character there.
+func slashPath(p string, windows bool) string {
+	if !windows {
+		return p
+	}
+	p = strings.ReplaceAll(p, `\`, "/")
+	if isDrivePath(p) {
+		p = strings.ToUpper(p[:1]) + p[1:]
+	}
+	return p
+}
+
+// callToolName is the name a call is listed under: the tool's own name, or
+// for a call with none the type of its record. The filter drops Codex's
+// local_shell_call action, so such a call is listed as "local_shell_call".
+func callToolName(call NormalizedToolCall) string {
+	if call.Name != "" {
+		return call.Name
+	}
+	return firstString(call.raw, "type")
+}
+
+// listedCall is how handoff lists a call and whether tools_used counts it:
+// its name (callToolName, else "tool"), its one-line summary, and whether it
+// is listed at all. A named call always is, and so is a nameless invocation
+// (a Codex local_shell_call, whose action the filter drops). A nameless
+// completion echo that no invocation reported (dedupeToolCalls already
+// dropped the ones that were) is listed only when its summary says what ran,
+// such as a CommandExecution's command; an Extension item with nothing to
+// show says only that something finished.
+func listedCall(call NormalizedToolCall, root string) (name, summary string, listed bool) {
+	name = callToolName(call)
+	if name == "" {
+		name = "tool"
+	}
+	summary = toolSummary(name, call.Input, call.raw, root)
+	if call.Name != "" || toolInvocationTypes[strings.ToLower(strings.TrimSpace(firstString(call.raw, "type")))] {
+		return name, summary, true
+	}
+	return name, summary, summary != ""
+}
+
+// sessionFilesTouched lists, in first-touched order, the distinct files the
+// editing calls among calls named (touchedFiles), keyed by workspaceFile.
+// handoff lists these files and metadata publishes how many there are
+// (counts.files_touched), so the two always agree.
+func sessionFilesTouched(calls []NormalizedToolCall, root string) []string {
+	files := fileSet{}
+	for _, call := range calls {
+		for _, file := range touchedFiles(callToolName(call), call.Input, call.raw) {
+			files.add(workspaceFile(file, root))
+		}
+	}
+	return files.list
 }
 
 type fileSet struct {

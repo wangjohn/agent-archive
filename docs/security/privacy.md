@@ -90,8 +90,10 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   [bucket layout](../reference/bucket-layout.md) describes their lifetime.
 - **Metadata**: the machine ID of the Mac that captured it (random, made at
   setup), a project ID (a hash of the project's path, not the path itself),
-  the app and its version, the app's own session ID, capture times, counts,
-  models, skills used, and the capture gaps the filter recorded (the names
+  the app and its version, the app's own session ID, capture times and the
+  session's last record time, counts (including how many distinct files were
+  edited, never which), models, skills used, the names of the ten most-called
+  tools (MCP tool names included) with their call counts, and the capture gaps the filter recorded (the names
   of omitted fields, never their values).
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
