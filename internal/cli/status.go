@@ -483,7 +483,7 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 		pair.HookObserved = true
 	}
 	if issue := issues[reg.ArchiveSessionID]; issue != "" {
-		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: "Last scan could not update this session; retained evidence was kept. Run agent-archive sync for the failure."})
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue)})
 	}
 	if reg.Harness.Version != "" && !containsString(app.HarnessVersions, reg.Harness.Version) {
 		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
@@ -774,7 +774,18 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		view.problem = "Collection is stuck"
 		view.Next = fmt.Sprintf("Collection is stuck: %s (process %d) has held the collector lock since %s, %s, well past a pass's time limit. If that command is no longer doing anything, quit process %d (in Activity Monitor or with kill %d); the next pass then resumes.", record.Holder, record.PID, record.Since.UTC().Format("2006-01-02 15:04 UTC"), durationAgo(env.now().Sub(record.Since)), record.PID, record.PID)
 	}
-	if view.Collector.LastError != "" {
+	// Failed sessions of kinds that are not about storage lead with their
+	// own problem and next step, or with none when there is nothing to do.
+	problem, next, byIssue := issueHeadline(view.Collector)
+	switch {
+	case view.Collector.LastError == "":
+	case byIssue:
+		if problem != "" {
+			view.State = "Needs attention"
+			view.problem = problem
+			view.Next = next
+		}
+	default:
 		view.State = "Needs attention"
 		view.problem = "The last sync failed"
 		view.Next = "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
@@ -1295,8 +1306,17 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, sc.destinationRow(view), sc.privacyRow(view.PrivacyEvidence))
 	}
 	rows = append(rows, sc.backgroundRow(view))
+	// Problems with nothing to do (see issueHeadline) are information, not
+	// failures.
+	mark, quiet := sc.style.failMark(), false
+	if problem, _, ok := issueHeadline(view.Collector); ok && problem == "" {
+		mark, quiet = sc.info(), true
+	}
 	for _, text := range lastErrorRows(view.Collector) {
-		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{text}})
+		if quiet {
+			text = "Last pass: " + strings.TrimPrefix(text, "Last error: ")
+		}
+		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
 	}
 	uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})

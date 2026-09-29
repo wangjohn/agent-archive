@@ -26,6 +26,31 @@ follow [Semantic Versioning](https://semver.org/).
   once. A subagent that is lost for another reason (its transcript exists but
   can't be read, or doesn't match its parent) is dropped too, and reported as
   a failed session by that pass only.
+- `status` names what kind of failure kept sessions from syncing, and what to
+  do about it, instead of an opaque count ("N session(s) need capture or
+  publication", or "failed to scan, publish, or clean up" when cleanup also
+  failed). The last error now reads, for example, "2 sessions failed to
+  reach storage (network or service unavailable) — check the network and
+  the storage service, then run agent-archive sync (the next pass also
+  retries)", counts subagents apart from sessions, and covers collection
+  and retention failures of the same pass in one message. `sync` prints
+  each of a session's errors on its own line. Each session's capture gap in
+  `status --json` carries its own next step. When no failed session is
+  about storage, status no longer leads with "The last sync failed / Check
+  storage access": it names the kind ("Some sessions could not be
+  captured") and its next step, or leads with no failure, and shows the
+  problems as information rather than ✗ rows, when there is nothing to do
+  (a subagent that could not be captured, sessions over the transcript
+  size limit).
+
+### Changed
+
+- `status --json` adds `collector.issue_counts`, the number of sessions per
+  failure code. The fallback code in `collector.session_issues` is now
+  `capture_failed` (was `capture_or_publication_failed`, which older status
+  files still carry and status still reads), and new codes name storage
+  credential, storage availability, retention failures, and subagents that
+  could not be captured (`subagent_not_captured`).
 
 ## [0.2.0] - 2026-09-29
 

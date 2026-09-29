@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -250,6 +251,9 @@ func TestUnreadableSubagentTranscriptIsRejectedAsAFailure(t *testing.T) {
 	result := runPassAt(t, local, storagetest.NewMemoryStore(), stopAt.Add(time.Minute))
 	if result.Errors["child"] == nil || len(result.WaitingSubagents) != 0 || result.RejectedSubagents["child"] != "subagent_transcript_unreadable" {
 		t.Fatalf("errors=%v waiting=%v rejected=%v", result.Errors, result.WaitingSubagents, result.RejectedSubagents)
+	}
+	if !errors.Is(result.Errors["child"], ErrSubagentNotCaptured) || !errors.Is(result.Errors["child"], ErrSubagentCandidate) {
+		t.Fatalf("error %v does not match ErrSubagentNotCaptured", result.Errors["child"])
 	}
 	if n := pendingCandidates(t, local); n != 0 {
 		t.Fatalf("candidates=%d, want the rejected one acknowledged", n)

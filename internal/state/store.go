@@ -592,10 +592,19 @@ func (s *Store) RemovePending(id string) error {
 // Status summarizes the collector's local state for a future `status`
 // command. It never includes transcript content.
 type Status struct {
-	SessionIssues   map[string]string `json:"session_issues,omitempty"`
-	LastScanAt      time.Time         `json:"last_scan_at,omitzero"`
-	LastPublishedAt time.Time         `json:"last_published_at,omitzero"`
-	PendingCount    int               `json:"pending_count"`
+	// SessionIssues gives, per archive session ID, the kind of failure that
+	// kept the session from being scanned, published, or cleaned up in the
+	// last pass, as a code (see internal/cli's issueCodes), never the error
+	// itself.
+	SessionIssues map[string]string `json:"session_issues,omitempty"`
+	// IssueCounts counts SessionIssues by code, subagents included: the
+	// numbers the last error's summary of failed sessions is built from. It
+	// is cleared when a later failure replaces that summary, so status can
+	// trust it to describe the last error.
+	IssueCounts     map[string]int `json:"issue_counts,omitempty"`
+	LastScanAt      time.Time      `json:"last_scan_at,omitzero"`
+	LastPublishedAt time.Time      `json:"last_published_at,omitzero"`
+	PendingCount    int            `json:"pending_count"`
 	// LastError is every problem the last pass recorded, joined with "; ".
 	// It is kept, with the same contents, for older readers; LastErrors
 	// holds the same problems one per entry. Set both with SetLastErrors

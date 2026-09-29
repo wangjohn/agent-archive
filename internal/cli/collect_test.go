@@ -265,6 +265,12 @@ func TestCollectPassSweepsWhenVerificationFails(t *testing.T) {
 	if statusErr != nil || !strings.Contains(status.LastError, "read-back verification") {
 		t.Fatalf("status = %#v %v", status, statusErr)
 	}
+	// The failure is added beside the pass's summary of failed sessions,
+	// which stays with the counts it was built from.
+	if len(status.LastErrors) != 2 || !strings.HasPrefix(status.LastErrors[0], "1 session couldn't be removed after the retention period") ||
+		!strings.HasPrefix(status.LastErrors[1], "read-back verification") || status.IssueCounts[issueRetentionFailed] != 1 {
+		t.Fatalf("last errors %q counts %v", status.LastErrors, status.IssueCounts)
+	}
 }
 
 // Read-back verification works within the pass's deadline: with no time
