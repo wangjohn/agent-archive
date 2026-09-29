@@ -1087,6 +1087,42 @@ func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
 	}
 }
 
+// A rerun completes the undo after a crash between marking the batch,
+// changing the configuration, and removing the imported sessions.
+func TestBackfillUndoResumesAfterCommitCheckpoint(t *testing.T) {
+	for _, checkpoint := range []string{"undo marked", "undo configured", "undo recorded"} {
+		t.Run(checkpoint, func(t *testing.T) {
+			t.Parallel()
+			f, bucket := newUndoFixture(t)
+			f.env.backfillCheckpoint = func(step string) error {
+				if step == checkpoint {
+					return errors.New("simulated crash")
+				}
+				return nil
+			}
+			if _, errOut, code := f.undoRun(t, nil, false, "--yes"); code != 1 || !strings.Contains(errOut, "simulated crash") {
+				t.Fatalf("checkpoint %q: code %d, %s", checkpoint, code, errOut)
+			}
+			if deleted := bucket.sessionDeletes(); len(deleted) != 0 {
+				t.Fatalf("sessions removed before checkpoint: %v", deleted)
+			}
+			if b, _ := loadBatch(t, f.data); b.UndoneAt == nil {
+				t.Fatal("batch not marked undone")
+			}
+			f.env.backfillCheckpoint = nil
+			if _, errOut, code := f.undoRun(t, nil, false, "--yes"); code != 0 {
+				t.Fatalf("resume: code %d, %s", code, errOut)
+			}
+			if parents, children := importRegistrations(t, f.data, firstImport); len(parents)+len(children) != 0 {
+				t.Fatalf("%d sessions still registered", len(parents)+len(children))
+			}
+			if b, _ := loadBatch(t, f.data); b.UndoneAt == nil || len(b.ProjectsExcluded) != 4 {
+				t.Fatalf("incomplete batch after resume: %+v", b)
+			}
+		})
+	}
+}
+
 // An undone import is never continued: a later backfill with the same
 // options starts a new one.
 func TestBackfillUndoneImportNotContinued(t *testing.T) {
