@@ -104,8 +104,9 @@ now and paths under your home folder start with `~`.
   section with what is behind each row: the state codes, exact times (UTC),
   full paths, each app's installed version and support, each project's
   verification state, read-back evidence and retries, the bucket privacy
-  check's reason code and guidance, and the last error as the collector
-  recorded it. Include it when you report a problem.
+  check's reason code and guidance, and each problem of the last pass as
+  the collector recorded it, one per line. Include it when you report a
+  problem.
 - **`status --json`** is the same evidence as a versioned document for
   scripts ([JSON output](../reference/json-output.md#status---json)); it
   separates configured, hook-observed, captured, published, and
@@ -122,12 +123,17 @@ now and paths under your home folder start with `~`.
   words. The provider's raw error is in `status --verbose`.
 - **Sessions that failed in the last pass** are summarized on one
   **Last error:** row by kind, each with its count (sessions and subagents
-  apart) and what to do: for example "2 sessions failed to upload (storage
-  unavailable) — check the network and the storage service, then run
-  agent-archive sync (the next pass also retries)". A session over the
+  apart) and what to do: for example "2 sessions failed to reach storage
+  (network or service unavailable) — check the network and the storage
+  service, then run agent-archive sync (the next pass also retries)". A session over the
   transcript size limit needs nothing from you: its last snapshot is kept.
   `agent-archive sync` prints each session's own error, and `status --json`
-  has each session's kind as a code (`collector.session_issues`).
+  has each session's kind as a code (`collector.session_issues`). When no
+  kind is about storage, status leads with the most pressing one ("Some
+  sessions could not be captured") and its next step instead of **The last
+  sync failed**; when every kind needs nothing from you (a subagent that
+  could not be captured, a transcript over the size limit), status doesn't
+  lead with a failure at all.
 - **Background collector on** (`--json`: background `loaded`, or `running`
   while a pass is executing) means launchd knows the scheduled job. When it
   **belongs to another installation** (`another_installation`), launchd runs

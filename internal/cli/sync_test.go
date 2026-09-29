@@ -209,7 +209,7 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "1 session failed to clean up — the next pass retries, or run agent-archive sync for details"; status.LastError != want {
+	if want := "1 session couldn't be removed after the retention period — the next pass retries, or run agent-archive sync for details"; status.LastError != want {
 		t.Fatalf("expected status.LastError to reflect the retention failure, got %q want %q", status.LastError, want)
 	}
 	if len(status.SessionIssues) != 1 || status.IssueCounts[issueRetentionFailed] != 1 || len(status.IssueCounts) != 1 {
@@ -223,6 +223,34 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 	}
 	if len(regs) != 1 {
 		t.Fatalf("expected the session to remain registered after a failed retention delete: %#v", regs)
+	}
+}
+
+// sync reports each error a session's errors.Join holds on a line of its
+// own, and keeps an error fmt.Errorf wrapped around several on one.
+func TestJoinedErrorsSplitsOnlyJoins(t *testing.T) {
+	t.Parallel()
+	a, b, c := errors.New("a"), errors.New("b"), errors.New("c")
+	texts := func(errs []error) string {
+		var out []string
+		for _, err := range errs {
+			out = append(out, err.Error())
+		}
+		return strings.Join(out, "|")
+	}
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{a, "a"},
+		{errors.Join(a, b), "a|b"},
+		{errors.Join(errors.Join(a, b), c), "a|b|c"},
+		{errors.Join(a, fmt.Errorf("retention: %w", b)), "a|retention: b"},
+		{fmt.Errorf("%w: %w", a, b), "a: b"},
+	} {
+		if got := texts(joinedErrors(tc.err)); got != tc.want {
+			t.Errorf("%q: got %q want %q", tc.err, got, tc.want)
+		}
 	}
 }
 

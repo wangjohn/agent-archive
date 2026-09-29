@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `handoff --to claude|codex|cursor` launches a local coding agent with the
+  filtered session record in a private temporary file. The receiving agent is
+  told how to inspect the archived or current local record with Agent Archive.
+
 ### Fixed
 
 - A Claude Code subagent whose transcript is never written (Claude Code
@@ -24,11 +30,16 @@ follow [Semantic Versioning](https://semver.org/).
   do about it, instead of an opaque count ("N session(s) need capture or
   publication", or "failed to scan, publish, or clean up" when cleanup also
   failed). The last error now reads, for example, "2 sessions failed to
-  upload (storage unavailable) — check the network and the storage service,
-  then run agent-archive sync (the next pass also retries)", counts
-  subagents apart from sessions, and covers collection and retention
-  failures of the same pass in one message. Each session's capture gap in
-  `status --json` carries its own next step.
+  reach storage (network or service unavailable) — check the network and
+  the storage service, then run agent-archive sync (the next pass also
+  retries)", counts subagents apart from sessions, and covers collection
+  and retention failures of the same pass in one message. `sync` prints
+  each of a session's errors on its own line. Each session's capture gap in
+  `status --json` carries its own next step. When no failed session is
+  about storage, status no longer leads with "The last sync failed / Check
+  storage access": it names the kind ("Some sessions could not be
+  captured") and its next step, or leads with no failure when there is
+  nothing to do.
 
 ### Added
 
@@ -63,7 +74,6 @@ The archive browser now has bounded, readable listings and terminal pickers for
 to schema version 4, which reports whether the total match count is known.
 
 ### Added
-
 - `list --limit N` caps how many sessions are shown (default 50, newest
   first; `0` for all). A truncated text listing reports
   `Showing N or more session(s)` when the count is unknown, or
@@ -108,6 +118,12 @@ to schema version 4, which reports whether the total match count is known.
 - `status` shows each problem the last pass recorded on its own ✗ row, and
   a storage provider's error message containing `; ` is no longer split in
   two or shown as the wrong cause.
+- A sync's problems no longer hide each other in `status`: a read-back or
+  retention failure after collection is shown beside the problems the pass
+  already recorded (such as a session over the size limit, or retention
+  held by the clock) instead of replacing them.
+- `status --verbose` prints each of the last pass's problems on its own
+  `Last error:` line.
 
 ## [0.1.1] - 2026-09-28
 

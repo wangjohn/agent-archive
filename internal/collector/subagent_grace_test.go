@@ -163,6 +163,64 @@ func TestEmptySubagentTranscriptWaitsUntilFilled(t *testing.T) {
 	}
 }
 
+// A transcript with lines but no recognized record yet waits like an empty
+// one: it registers once a recognized record appears, and is rejected as
+// never written if none does within the grace.
+func TestUnrecognizedSubagentTranscriptWaits(t *testing.T) {
+	t.Parallel()
+	for _, filled := range []bool{true, false} {
+		t.Run(map[bool]string{true: "filled", false: "never"}[filled], func(t *testing.T) {
+			t.Parallel()
+			local, stopAt, childPath := subagentGraceFixture(t, archive.SessionOriginHook)
+			remote := storagetest.NewMemoryStore()
+			if err := os.WriteFile(childPath, []byte(`{"type":"unrecognized_record"}`+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if result := runPassAt(t, local, remote, stopAt.Add(time.Minute)); len(result.Errors) != 0 || len(result.WaitingSubagents) != 1 {
+				t.Fatalf("errors=%v waiting=%v rejected=%v", result.Errors, result.WaitingSubagents, result.RejectedSubagents)
+			}
+			if filled {
+				writeChildTranscript(t, childPath)
+				result := runPassAt(t, local, remote, stopAt.Add(5*time.Minute))
+				if len(result.Errors) != 0 || !slices.Contains(result.Published, "child") {
+					t.Fatalf("result=%+v", result)
+				}
+				return
+			}
+			result := runPassAt(t, local, remote, stopAt.Add(subagentTranscriptGrace))
+			if len(result.Errors) != 0 || result.RejectedSubagents["child"] != "subagent_transcript_never_written" {
+				t.Fatalf("errors=%v rejected=%v", result.Errors, result.RejectedSubagents)
+			}
+		})
+	}
+}
+
+// Each rejection code is either a decision that loses nothing, counted
+// quietly, or a lost subagent, reported as a failure.
+func TestSubagentRejectionCodesAreClassified(t *testing.T) {
+	t.Parallel()
+	codes := map[string]bool{
+		"subagent_transcript_never_written":     true,
+		"subagent_transcript_unavailable":       true,
+		"subagent_parent_ownership_unavailable": true,
+		"subagent_start_ineligible":             true,
+		"subagent_format_unavailable":           false,
+		"subagent_transcript_unreadable":        false,
+		"subagent_provenance_unavailable":       false,
+		"subagent_registration_conflict":        false,
+	}
+	for code, expected := range codes {
+		if expectedSubagentRejections[code] != expected {
+			t.Errorf("%s expected=%t, want %t", code, expectedSubagentRejections[code], expected)
+		}
+	}
+	for code := range expectedSubagentRejections {
+		if _, known := codes[code]; !known {
+			t.Errorf("%s is expected but not classified here", code)
+		}
+	}
+}
+
 // A stop observed further in the future than the grace (the clock has
 // jumped back since) is rejected rather than kept waiting that much longer.
 func TestFutureSubagentStopIsRejected(t *testing.T) {
@@ -194,7 +252,7 @@ func TestUnreadableSubagentTranscriptIsRejectedAsAFailure(t *testing.T) {
 	if result.Errors["child"] == nil || len(result.WaitingSubagents) != 0 || result.RejectedSubagents["child"] != "subagent_transcript_unreadable" {
 		t.Fatalf("errors=%v waiting=%v rejected=%v", result.Errors, result.WaitingSubagents, result.RejectedSubagents)
 	}
-	if !errors.Is(result.Errors["child"], ErrSubagentNotCaptured) {
+	if !errors.Is(result.Errors["child"], ErrSubagentNotCaptured) || !errors.Is(result.Errors["child"], ErrSubagentCandidate) {
 		t.Fatalf("error %v does not match ErrSubagentNotCaptured", result.Errors["child"])
 	}
 	if n := pendingCandidates(t, local); n != 0 {

@@ -598,7 +598,9 @@ type Status struct {
 	// itself.
 	SessionIssues map[string]string `json:"session_issues,omitempty"`
 	// IssueCounts counts SessionIssues by code, subagents included: the
-	// numbers the last error's summary of failed sessions is built from.
+	// numbers the last error's summary of failed sessions is built from. It
+	// is cleared when a later failure replaces that summary, so status can
+	// trust it to describe the last error.
 	IssueCounts     map[string]int `json:"issue_counts,omitempty"`
 	LastScanAt      time.Time      `json:"last_scan_at,omitzero"`
 	LastPublishedAt time.Time      `json:"last_published_at,omitzero"`
@@ -713,6 +715,19 @@ func (s *Status) AddLastError(problem string) {
 		problems = strings.Split(s.LastError, "; ")
 	}
 	s.SetLastErrors(append(problems[:len(problems):len(problems)], problem)...)
+}
+
+// ReplaceLastError puts problem in place of the first recorded problem equal
+// to old, keeping the others and their order, or adds problem after them
+// when none is.
+func (s *Status) ReplaceLastError(old, problem string) {
+	if i := slices.Index(s.LastErrors, old); i >= 0 {
+		problems := slices.Clone(s.LastErrors)
+		problems[i] = problem
+		s.SetLastErrors(problems...)
+		return
+	}
+	s.AddLastError(problem)
 }
 
 func (s *Store) statusPath() string { return filepath.Join(s.home, "status.json") }

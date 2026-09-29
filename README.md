@@ -60,7 +60,7 @@ Setup edits each included app's hook settings and adds one LaunchAgent; for Curs
 | `list` | Find archived sessions. | `agent-archive list --since 7d` |
 | `show` | View a session's metadata. | `agent-archive show SESSION_ID` |
 | `backfill` | Preview sessions already on this Mac for import. | `agent-archive backfill --dry-run` |
-| `handoff` | Turn your latest session into a prompt for another agent. | `agent-archive handoff --latest` |
+| `handoff` | Turn your latest session into a prompt for another agent, or launch a local agent with it. | `agent-archive handoff --latest --to codex` |
 
 Use a session ID from `list` with `show`. For every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
 
@@ -74,4 +74,3 @@ Use a session ID from `list` with `show`. For every command and option, see the 
 ## Contributing and security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md); test without touching your real Mac ([sandbox recipe](dev/contributing/testing.md)). Report vulnerabilities privately as [SECURITY.md](SECURITY.md) describes. Changes are in [CHANGELOG.md](CHANGELOG.md). Released under the [MIT License](LICENSE).
-

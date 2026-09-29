@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/collector"
@@ -80,10 +81,39 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed%s.\n",
 		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), subagentsSummary(result))
 	for id, sessionErr := range result.Errors {
-		terminal.Printf(stderr, "agent-archive: sync: %s: %v\n", id, sessionErr)
+		for _, part := range joinedErrors(sessionErr) {
+			terminal.Printf(stderr, "agent-archive: sync: %s: %v\n", id, part)
+		}
 	}
 	if len(result.Errors) > 0 {
 		return 1
 	}
 	return 0
+}
+
+// joinedErrors lists the errors err joins (errors.Join), each join inside it
+// flattened too, so each is reported on a line of its own; any other error,
+// including one fmt.Errorf wrapped around several, is the one entry. A join
+// is told by its text, its parts' on lines of their own: errors.Join's type
+// is not exported.
+func joinedErrors(err error) []error {
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return []error{err}
+	}
+	var parts, flat []error
+	var texts []string
+	for _, part := range joined.Unwrap() {
+		if part != nil {
+			parts = append(parts, part)
+			texts = append(texts, part.Error())
+		}
+	}
+	if len(parts) == 0 || err.Error() != strings.Join(texts, "\n") {
+		return []error{err}
+	}
+	for _, part := range parts {
+		flat = append(flat, joinedErrors(part)...)
+	}
+	return flat
 }

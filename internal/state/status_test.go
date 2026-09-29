@@ -112,3 +112,19 @@ func TestCarryExpiredSubagentsPrunesDedupesAndCaps(t *testing.T) {
 		t.Fatalf("capped to %d, first %+v, last %+v; want the newest %d", len(capped), capped[0], capped[len(capped)-1], MaxExpiredSubagents)
 	}
 }
+
+// ReplaceLastError swaps one recorded problem in place, or adds the new one
+// when the old is not recorded.
+func TestStatusReplacesOneProblem(t *testing.T) {
+	t.Parallel()
+	var status Status
+	status.SetLastErrors("a", "b", "c")
+	status.ReplaceLastError("b", "B")
+	if want := []string{"a", "B", "c"}; !slices.Equal(status.LastErrors, want) || status.LastError != "a; B; c" {
+		t.Fatalf("LastErrors = %q, LastError = %q", status.LastErrors, status.LastError)
+	}
+	status.ReplaceLastError("missing", "d")
+	if want := []string{"a", "B", "c", "d"}; !slices.Equal(status.LastErrors, want) {
+		t.Fatalf("LastErrors = %q want %q", status.LastErrors, want)
+	}
+}

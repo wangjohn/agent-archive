@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials/processcreds"
 	"github.com/aws/smithy-go"
 
-	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/retention"
@@ -47,8 +46,7 @@ func TestSessionIssueCodeClassifiesWrappedErrors(t *testing.T) {
 		{"outage", fmt.Errorf("publish source: %w", outage), issueStorageUnavailable},
 		{"object missing", fmt.Errorf("read back: %w", storage.ErrNotFound), issueStorageUnavailable},
 		{"checksum mismatch", fmt.Errorf("read back: %w", storage.ErrChecksumMismatch), issueStorageUnavailable},
-		{"collector size limit", fmt.Errorf("cache blocked session: %w", collector.ErrSizeLimit), issueTranscriptSizeLimit},
-		{"filter record size limit", fmt.Errorf("filter transcript: %w", archive.ErrRecordTooLarge), issueTranscriptSizeLimit},
+		{"quarantine beside refused credentials", errors.Join(fmt.Errorf("publish: %w", denied), fmt.Errorf("x: %w", state.ErrQuarantined)), issueLocalStateUnreadable},
 		{"subagent not captured", fmt.Errorf("candidate: %w", collector.ErrSubagentNotCaptured), issueSubagentNotCaptured},
 		{"retention", retentionOf(errors.New("simulated delete failure")), issueRetentionFailed},
 		{"retention during an outage", retentionOf(outage), issueRetentionFailed},
@@ -77,6 +75,13 @@ func TestEveryIssueCodeHasALabel(t *testing.T) {
 		if !strings.HasPrefix(label.next, "nothing to do") && !strings.Contains(label.next, "agent-archive ") {
 			t.Errorf("issue code %q: next step %q names no command and does not say there is nothing to do", code, label.next)
 		}
+		// A kind that is not about storage and needs something done leads
+		// status with a headline of its own; the others never do.
+		storageKind := storageIssues[code]
+		wantHeadline := !storageKind && !strings.HasPrefix(label.next, "nothing to do")
+		if (label.headline != "") != wantHeadline {
+			t.Errorf("issue code %q: headline %q, want one: %v", code, label.headline, wantHeadline)
+		}
 	}
 	for code := range issueLabels {
 		if !slices.Contains(issueCodes, code) {
@@ -99,15 +104,15 @@ func TestIssueSummaryWordsEachKind(t *testing.T) {
 	}{
 		{"nothing", nil, ""},
 		{"one session", map[string]issueTally{issueCaptureFailed: {sessions: 1}}, "1 session failed to capture or upload — run agent-archive sync for details"},
-		{"subagent not captured", map[string]issueTally{issueSubagentNotCaptured: {subagents: 1}}, "1 subagent could not be captured (transcript unreadable or not matching its parent) — nothing to do, its parent session records the link as unavailable"},
-		{"subagents only", map[string]issueTally{issueTranscriptSizeLimit: {subagents: 2}}, "2 subagents went over the transcript size limit — nothing to do, the last snapshot is kept"},
-		{"sessions and a subagent", map[string]issueTally{issueStorageUnavailable: {sessions: 2, subagents: 1}}, "2 sessions and 1 subagent failed to upload (storage unavailable) — check the network and the storage service, then run agent-archive sync (the next pass also retries)"},
+		{"subagent not captured", map[string]issueTally{issueSubagentNotCaptured: {subagents: 1}}, "1 subagent could not be captured (transcript unreadable, too large, or not matching its parent) — nothing to do, its parent session records the link as unavailable"},
+		{"subagents only", map[string]issueTally{issueTranscriptSizeLimit: {subagents: 2}}, "2 subagents stopped being captured at the transcript size limit — nothing to do, the last snapshot is kept"},
+		{"sessions and a subagent", map[string]issueTally{issueStorageUnavailable: {sessions: 2, subagents: 1}}, "2 sessions and 1 subagent failed to reach storage (network or service unavailable) — check the network and the storage service, then run agent-archive sync (the next pass also retries)"},
 		{"mixed", map[string]issueTally{
 			issueRetentionFailed: {sessions: 1},
 			issueStorageAuth:     {sessions: 3},
 			issueCaptureFailed:   {},
-		}, "3 sessions failed to upload (storage credentials were refused or unavailable) — check the credentials with agent-archive setup (choose storage), then run agent-archive sync" +
-			" · 1 session failed to clean up — the next pass retries, or run agent-archive sync for details"},
+		}, "3 sessions failed to reach storage (credentials were refused or unavailable) — check the credentials with agent-archive setup (choose storage), then run agent-archive sync" +
+			" · 1 session couldn't be removed after the retention period — the next pass retries, or run agent-archive sync for details"},
 	} {
 		if got := issueSummary(tc.tallies); got != tc.want {
 			t.Errorf("%s:\n got %q\nwant %q", tc.name, got, tc.want)
@@ -156,7 +161,7 @@ func TestRetentionAndCaptureFailuresShareOneLastError(t *testing.T) {
 		"child": errors.New("filter transcript: unsafe"),
 		"b":     fmt.Errorf("x: %w", state.ErrQuarantined),
 	}}
-	if err := recordSessionIssues(store, result.Errors, subagentLookup(store)); err != nil {
+	if err := recordSessionIssues(store, result.Errors, subagentLookup(store), ""); err != nil {
 		t.Fatal(err)
 	}
 	recordRetentionErrors(store, &result, retention.Result{Errors: map[string]error{
@@ -169,7 +174,7 @@ func TestRetentionAndCaptureFailuresShareOneLastError(t *testing.T) {
 	}
 	want := "1 session had local state that could not be read and was moved aside — see quarantined_files in agent-archive status --json, then delete those files" +
 		" · 1 subagent failed to capture or upload — run agent-archive sync for details" +
-		" · 2 sessions failed to clean up — the next pass retries, or run agent-archive sync for details"
+		" · 2 sessions couldn't be removed after the retention period — the next pass retries, or run agent-archive sync for details"
 	if len(status.LastErrors) != 1 || status.LastError != want {
 		t.Fatalf("last errors %q\nwant %q", status.LastErrors, want)
 	}
@@ -181,6 +186,41 @@ func TestRetentionAndCaptureFailuresShareOneLastError(t *testing.T) {
 	// Both of a's failures stay in what sync reports.
 	if text := result.Errors["a"].Error(); !strings.Contains(text, "unsafe") || !strings.Contains(text, "retention: simulated") {
 		t.Fatalf("a's errors: %q", text)
+	}
+}
+
+// Each pass's session issues and counts replace the last pass's, not merge
+// with them.
+func TestRecordSessionIssuesReplacesThePreviousPass(t *testing.T) {
+	t.Parallel()
+	store, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	notSubagent := func(string) bool { return false }
+	if err := recordSessionIssues(store, map[string]error{"earlier": fmt.Errorf("x: %w", state.ErrQuarantined)}, notSubagent, ""); err != nil {
+		t.Fatal(err)
+	}
+	// The next pass: collector.Run saves its own count, as it would.
+	status, err := store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status.SetLastErrors(collector.FailedSessionsProblem(1))
+	if err := store.SaveStatus(status); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordSessionIssues(store, map[string]error{"now": errors.New("x")}, notSubagent, collector.FailedSessionsProblem(1)); err != nil {
+		t.Fatal(err)
+	}
+	if status, err = store.LoadStatus(); err != nil {
+		t.Fatal(err)
+	}
+	if !mapsEqual(status.SessionIssues, map[string]string{"now": issueCaptureFailed}) || !mapsEqual(status.IssueCounts, map[string]int{issueCaptureFailed: 1}) {
+		t.Fatalf("issues %v counts %v", status.SessionIssues, status.IssueCounts)
+	}
+	if want := "1 session failed to capture or upload — run agent-archive sync for details"; len(status.LastErrors) != 1 || status.LastError != want {
+		t.Fatalf("last errors %q", status.LastErrors)
 	}
 }
 
@@ -222,7 +262,7 @@ func TestStatusShowsMixedSessionIssues(t *testing.T) {
 		{"storage auth", issueStorageAuth, "Last scan could not update this session; retained evidence was kept. Check the credentials with agent-archive setup (choose storage), then run agent-archive sync."},
 	} {
 		sessionErrs := map[string]error{id: errors.New("other"), "gone": fmt.Errorf("%w: x", errRetentionFailed)}
-		if err := recordSessionIssues(store, sessionErrs, func(string) bool { return false }); err != nil {
+		if err := recordSessionIssues(store, sessionErrs, func(string) bool { return false }, ""); err != nil {
 			t.Fatal(err)
 		}
 		status, err := store.LoadStatus()
@@ -245,7 +285,7 @@ func TestStatusShowsMixedSessionIssues(t *testing.T) {
 			t.Errorf("%s: state %q", tc.name, view.State)
 		}
 	}
-	summary := "1 session failed to capture or upload — run agent-archive sync for details · 1 session failed to clean up — the next pass retries, or run agent-archive sync for details"
+	summary := "1 session failed to capture or upload — run agent-archive sync for details · 1 session couldn't be removed after the retention period — the next pass retries, or run agent-archive sync for details"
 	if plain := statusOutput(t, env); !strings.Contains(plain, "Last error: "+summary+"\n") {
 		t.Errorf("status:\n%s", plain)
 	}
@@ -257,5 +297,124 @@ func TestStatusShowsMixedSessionIssues(t *testing.T) {
 		if !strings.Contains(asJSON, want) {
 			t.Errorf("status --json lacks %s:\n%s", want, asJSON)
 		}
+	}
+}
+
+// Status leads with the most pressing kind of failed session when none is
+// about storage, and with no failure at all when every kind has nothing to
+// do. Storage kinds, counts beside another problem, codes this version does
+// not know, and a status file with no counts keep the general headline.
+func TestStatusHeadlineFollowsIssueKind(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
+	env, home, _, _ := publishedThroughSync(t, now)
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	healthy, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if healthy.Collector.LastError != "" {
+		t.Fatalf("test precondition: a clean pass, got %q", healthy.Collector.LastError)
+	}
+	const general = "The last sync failed"
+	for _, tc := range []struct {
+		name        string
+		counts      map[string]int
+		lastErrors  []string
+		legacy      bool
+		wantProblem string
+		wantNext    string
+	}{
+		{name: "capture", counts: map[string]int{issueCaptureFailed: 2},
+			wantProblem: "Some sessions could not be captured", wantNext: "Run agent-archive sync for details."},
+		{name: "retention", counts: map[string]int{issueRetentionFailed: 1},
+			wantProblem: "Some sessions couldn't be removed after the retention period", wantNext: "The next pass retries, or run agent-archive sync for details."},
+		{name: "local state before capture", counts: map[string]int{issueCaptureFailed: 3, issueLocalStateUnreadable: 1},
+			wantProblem: "Some local state could not be read", wantNext: "See quarantined_files in agent-archive status --json, then delete those files."},
+		{name: "a subagent not captured beside retention", counts: map[string]int{issueSubagentNotCaptured: 1, issueRetentionFailed: 1},
+			wantProblem: "Some sessions couldn't be removed after the retention period", wantNext: "The next pass retries, or run agent-archive sync for details."},
+		{name: "only subagents not captured", counts: map[string]int{issueSubagentNotCaptured: 2},
+			wantProblem: healthy.problem, wantNext: healthy.Next},
+		{name: "only nothing to do", counts: map[string]int{issueSubagentNotCaptured: 1, issueTranscriptSizeLimit: 1},
+			wantProblem: healthy.problem, wantNext: healthy.Next},
+		{name: "storage and capture", counts: map[string]int{issueStorageUnavailable: 1, issueCaptureFailed: 1},
+			wantProblem: general},
+		{name: "storage auth", counts: map[string]int{issueStorageAuth: 1},
+			wantProblem: general},
+		{name: "unknown code", counts: map[string]int{"from_a_newer_version": 1},
+			wantProblem: general},
+		{name: "another problem beside the summary", counts: map[string]int{issueCaptureFailed: 1},
+			lastErrors: []string{"summary", "retention: clock disagrees"}, wantProblem: general},
+		{name: "legacy status without counts", lastErrors: []string{"1 session(s) need capture or publication"},
+			legacy: true, wantProblem: general},
+	} {
+		status, err := store.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		status.IssueCounts = tc.counts
+		if tc.lastErrors != nil {
+			status.SetLastErrors(tc.lastErrors...)
+		} else {
+			tallies := map[string]issueTally{}
+			for code, n := range tc.counts {
+				tallies[code] = issueTally{sessions: n}
+			}
+			status.SetLastErrors(issueSummary(tallies))
+			if status.LastError == "" {
+				status.SetLastErrors("from a newer version")
+			}
+		}
+		if tc.legacy {
+			// Written before LastErrors existed.
+			status.LastErrors = nil
+		}
+		if err := store.SaveStatus(status); err != nil {
+			t.Fatal(err)
+		}
+		view, err := readStatus(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if view.problem != tc.wantProblem || (tc.wantProblem != general && view.Next != tc.wantNext) {
+			t.Errorf("%s: problem %q next %q, want %q %q", tc.name, view.problem, view.Next, tc.wantProblem, tc.wantNext)
+		}
+		if tc.wantProblem == general && !strings.HasPrefix(view.Next, "Check storage access") {
+			t.Errorf("%s: next %q", tc.name, view.Next)
+		}
+		if tc.wantProblem == healthy.problem && view.State != healthy.State {
+			t.Errorf("%s: state %q, want %q as with no failure", tc.name, view.State, healthy.State)
+		}
+	}
+}
+
+// A failure recorded after the pass's summary (a Keychain that is locked,
+// say) replaces the counts with it, so status gives that failure's own fix
+// rather than a headline for sessions that failed before it.
+func TestPreflightFailureReplacesIssueHeadline(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
+	env, home, _, _ := publishedThroughSync(t, now)
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recordSessionIssues(store, map[string]error{"a": errors.New("filter")}, func(string) bool { return false }, ""); err != nil {
+		t.Fatal(err)
+	}
+	recordPreflightError(store, fmt.Errorf("open storage: load R2 credentials: %w", credentials.ErrKeychainLocked))
+	status, err := store.LoadStatus()
+	if err != nil || len(status.IssueCounts) != 0 || status.SessionIssues["a"] != issueCaptureFailed {
+		t.Fatalf("status %+v err %v", status, err)
+	}
+	view, err := readStatus(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.problem != "The last sync failed" || !strings.Contains(view.Next, "Unlock the login Keychain") {
+		t.Fatalf("problem %q next %q", view.problem, view.Next)
 	}
 }

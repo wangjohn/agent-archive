@@ -777,7 +777,18 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		view.problem = "Collection is stuck"
 		view.Next = fmt.Sprintf("Collection is stuck: %s (process %d) has held the collector lock since %s, %s, well past a pass's time limit. If that command is no longer doing anything, quit process %d (in Activity Monitor or with kill %d); the next pass then resumes.", record.Holder, record.PID, record.Since.UTC().Format("2006-01-02 15:04 UTC"), durationAgo(env.now().Sub(record.Since)), record.PID, record.PID)
 	}
-	if view.Collector.LastError != "" {
+	// Failed sessions of kinds that are not about storage lead with their
+	// own problem and next step, or with none when there is nothing to do.
+	problem, next, byIssue := issueHeadline(view.Collector)
+	switch {
+	case view.Collector.LastError == "":
+	case byIssue:
+		if problem != "" {
+			view.State = "Needs attention"
+			view.problem = problem
+			view.Next = next
+		}
+	default:
 		view.State = "Needs attention"
 		view.problem = "The last sync failed"
 		view.Next = "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
@@ -1706,8 +1717,14 @@ func printStatusDetails(out io.Writer, view statusView) {
 	for _, diagnostic := range view.CaptureDiagnostics {
 		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
-	if view.Collector.LastError != "" {
-		terminal.Printf(out, "  Last error:    %s\n", view.Collector.LastError)
+	// Each problem as the collector recorded it, one per line; a status
+	// file from before LastErrors has only the joined text, shown as is.
+	lastErrors := view.Collector.LastErrors
+	if len(lastErrors) == 0 && view.Collector.LastError != "" {
+		lastErrors = []string{view.Collector.LastError}
+	}
+	for _, problem := range lastErrors {
+		terminal.Printf(out, "  Last error:    %s\n", problem)
 	}
 	if n := len(view.Collector.QuarantinedFiles); n > 0 {
 		terminal.Printf(out, "  Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)

@@ -83,4 +83,7 @@ type handoffCommandDependencies interface {
 	handoffOptionsDependencies
 	handoffTargetDependencies
 	sessionBrowseDependencies
+	executable() (string, error)
+	tempDir() string
+	launchHandoff(string, string, string, io.Reader, io.Writer, io.Writer) error
 }
