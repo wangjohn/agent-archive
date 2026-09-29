@@ -1,0 +1,27 @@
+Agent Archive  ● Needs attention
+
+  ! The last sync failed: storage refused access
+    Check storage access and run agent-archive sync.
+    To change credentials, run agent-archive setup and choose storage.
+
+Capture
+  ✓ Claude Code 2.1.283   hooks on   212 sessions (+40 subagents) · 48 imported · 3 uploading
+      ~/agent-archive   started 11:12   waiting for its first upload
+      ~/agent-archive   started 11:04
+      ~/styleprofile    started 09:24
+    · 17 sessions have capture gaps
+
+Projects
+  Project              Sessions   Imported   Uploading   Read-back
+  ~/agent-archive      150        40         2           verified
+  ~/styleprofile       62         8          1           uploaded, read-back pending
+  ~/personal_website   0          0          0           waiting for first session
+  ~/notes              0          0          0           waiting for first session
+  ~/infra              0          0          0           waiting for first session
+  ~/blog               0          0          0           waiting for first session
+  ~/dotfiles           0          0          0           waiting for first session
+  ~/api                0          0          0           waiting for first session
+  ~/web-app            0          0          0           waiting for first session
+  ~/scratch            0          0          0           waiting for first session
+
+More: status · status claude --verbose

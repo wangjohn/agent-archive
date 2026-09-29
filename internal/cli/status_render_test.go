@@ -76,9 +76,9 @@ func renderStatus(view statusView, color bool) string {
 	return out.String()
 }
 
-func renderVerboseStatus(view statusView, color bool) string {
+func renderVerboseStatus(view statusView) string {
 	var out strings.Builder
-	printStatus(&out, view, statusScreen{style: textStyle{color: color}, now: renderNow, home: "/Users/alex", verbose: true})
+	printStatus(&out, view, statusScreen{style: textStyle{}, now: renderNow, home: "/Users/alex", verbose: true})
 	return out.String()
 }
 
@@ -102,22 +102,20 @@ func TestStatusTextShowsNoCodesOrExactTimes(t *testing.T) {
 		"Agent Archive  ● Needs attention\n",
 		"  ! The last sync failed\n",
 		"    Check storage access and run agent-archive sync.\n    To change credentials, run agent-archive setup and choose storage.\n",
-		"2 sessions archived, verified 26 hours ago",
-		"uploaded, read-back pending (1 of 2 projects verified)",
+		"  ✓ Codex 0.121.0        hooks on        2 sessions\n",
+		"    · 1 session has capture gaps\n",
+		"  ! Claude Code 2.1.90   hooks on        1 session\n",
+		"  ! Cursor               hooks missing   no sessions yet\n",
 		"Read-back failed: not found (retrying in 5 minutes, 2 attempts so far)",
 		"Claude Code skipped a session in ~/src/api 40 minutes ago: setup was still in progress",
-		"· Projects: ~/src/web-app, ~/src/api\n",
-		"· Imported: 4 sessions, 1 waiting to upload; last import import-7\n",
-		"reachable, checked 2 minutes ago",
-		"the last check is over a day old, checked 3 hours ago",
-		"    Check public access: https://example.com/guide\n",
+		"  ✓ s3://team-archive/agent-archive/   reachable · uploaded 50 minutes ago\n",
+		"  ! Bucket privacy not verified        see https://example.com/guide\n",
 		"last scan 1 minute ago",
 		"✗ Storage refused access\n",
-		"· Last upload: 50 minutes ago · 3 pending\n",
 		"! 2 local state files couldn't be read and were moved aside",
 		"· 1 session summary can't be refreshed",
 		"! Installed versions could not be read from ~/.agent-archive/application-versions.json",
-		"Details: agent-archive status --verbose\n",
+		"\nMore: status --verbose · status codex\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("status is missing %q:\n%s", want, text)
@@ -220,7 +218,7 @@ func TestStatusWrapsToTheTerminal(t *testing.T) {
 	}
 	for _, want := range []string{
 		"\n    Check storage access and run agent-archive sync.\n    To change credentials, run agent-archive setup and\n    choose storage.\n",
-		"\n  ✓ Codex 0.121.0        hooks installed\n    2 sessions archived, verified 26 hours ago\n",
+		"\n  ✓ s3://team-archive/agent-archive/\n    reachable · uploaded 50 minutes ago\n",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("status does not wrap as %q:\n%s", want, out.String())
@@ -318,8 +316,10 @@ func TestStatusWaitingProjectOfCapturedApp(t *testing.T) {
 }
 
 // status --verbose keeps everything the text status printed before it was
-// redesigned: codes, exact times, full paths, raw errors and evidence, in a
-// Details section after the usual screen.
+// made compact: each app's progress and projects, the included projects,
+// skill evidence, imports, when access was checked, why privacy couldn't be
+// verified, and the pending count; then codes, exact times, full paths, raw
+// errors and evidence, in a Details section.
 func TestStatusVerboseKeepsTodaysDetail(t *testing.T) {
 	t.Parallel()
 	view := busyStatusView()
@@ -327,12 +327,19 @@ func TestStatusVerboseKeepsTodaysDetail(t *testing.T) {
 	for i := range view.Apps {
 		view.Apps[i].Code = statusCode(view.Apps[i].State)
 	}
-	text := renderVerboseStatus(view, false)
-	screen, _, found := strings.Cut(renderStatus(view, false), "\nDetails:")
-	if !found || !strings.HasPrefix(text, screen) {
-		t.Errorf("status --verbose does not start with the usual screen:\n%s", text)
-	}
+	text := renderVerboseStatus(view)
 	for _, want := range []string{
+		"    · 2 sessions archived, verified 26 hours ago\n",
+		"    · uploaded, read-back pending (1 of 2 projects verified)\n",
+		"    ✓ ~/src/web-app: verified\n    · ~/src/api: uploaded, read-back pending\n",
+		"    · 1 session with a capture gap (2 gaps recorded; details in status --json)\n",
+		"  · Projects: ~/src/web-app, ~/src/api\n",
+		"  · Skill evidence:\n",
+		"  · Imported: 4 sessions, 1 waiting to upload; last import import-7\n",
+		"reachable, checked 2 minutes ago · uploaded 50 minutes ago\n",
+		"the last check is over a day old, checked 3 hours ago\n",
+		"    Check public access: https://example.com/guide\n",
+		"  · Last upload: 50 minutes ago · 3 pending\n",
 		"\nDetails\n",
 		"  State:         Needs attention (needs_attention)\n",
 		"  Storage:       s3 / team-archive / agent-archive/\n",
@@ -505,7 +512,7 @@ func TestStatusVerbosePrintsEachLastErrorOnItsOwnLine(t *testing.T) {
 	t.Parallel()
 	view := busyStatusView()
 	view.Collector.SetLastErrors("2 session(s) failed to scan or publish", "list registrations: api error SlowDown: slow down; then retry")
-	text := renderVerboseStatus(view, false)
+	text := renderVerboseStatus(view)
 	for _, want := range []string{
 		"\n  Last error:    2 session(s) failed to scan or publish\n",
 		"\n  Last error:    list registrations: api error SlowDown: slow down; then retry\n",
@@ -523,7 +530,7 @@ func TestStatusVerbosePrintsAnOlderLastErrorAsRecorded(t *testing.T) {
 	view := busyStatusView()
 	view.Collector.LastErrors = nil
 	view.Collector.LastError = "a; b"
-	if text := renderVerboseStatus(view, false); strings.Count(text, "  Last error:    ") != 1 || !strings.Contains(text, "\n  Last error:    a; b\n") {
+	if text := renderVerboseStatus(view); strings.Count(text, "  Last error:    ") != 1 || !strings.Contains(text, "\n  Last error:    a; b\n") {
 		t.Fatalf("status --verbose:\n%s", text)
 	}
 }

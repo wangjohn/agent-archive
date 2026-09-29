@@ -55,7 +55,7 @@ Setup edits each included app's hook settings and adds one LaunchAgent; for Curs
 | Command | What it does | Example |
 | --- | --- | --- |
 | `setup` | Configure apps, projects, and storage. | `agent-archive setup` |
-| `status` | Check capture health and see what to do next. | `agent-archive status` |
+| `status` | Check capture health and see what to do next; `status claude` shows one app in full. | `agent-archive status` |
 | `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
 | `list` | Find archived sessions. | `agent-archive list --since 7d` |
 | `show` | View a session's metadata. | `agent-archive show SESSION_ID` |

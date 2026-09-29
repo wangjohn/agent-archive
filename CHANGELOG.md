@@ -56,6 +56,28 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `status` is shorter, and stays the same length however many projects you
+  include. Each app has one line with its sessions (subagents counted
+  apart), imports and uploads ("212 sessions (+40 subagents) · 48 imported ·
+  3 uploading"), and under it each session still uploading, at most five,
+  with its project and start time; only an unusual one says more ("waiting
+  for its first upload", or a ! row naming the failure). The storage line
+  shows the last upload, and a failure the headline already states is no
+  longer repeated in the Storage section: a lone storage failure is named
+  in the headline ("The last sync failed: storage refused access"). The
+  per-project rows, the included projects, skill evidence, the Imported
+  line, why bucket privacy couldn't be verified, and the pending count
+  moved to `status --verbose`. Hooks read "hooks on", versions drop the
+  app's own name, and the footer points at `status --verbose` and
+  `status APP`.
+- `status APP` (`claude`, `codex` or `cursor`) shows one app in full: every
+  uploading session and a table of its projects with the sessions each
+  captured, imported and is uploading, and how far read-back has got.
+- `status --json` adds, per application, `subagent_sessions`,
+  `imported_sessions`, `uploading_sessions`, and `uploading`, the sessions
+  not yet uploaded with their project, start time and state
+  (`uploading`, `first_upload`, or `failing` with its `issue`). Nothing
+  else in it changed.
 - `status --json` adds `collector.issue_counts`, the number of sessions per
   failure code. The fallback code in `collector.session_issues` is now
   `capture_failed` (was `capture_or_publication_failed`, which older status

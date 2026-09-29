@@ -81,8 +81,12 @@ func TestStatusDoesNotPromoteAnAppOnImports(t *testing.T) {
 	}
 
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· Imported: 2 sessions, 1 waiting to upload\n") {
+	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "hooks on   no sessions yet · 2 imported · 1 uploading\n") || strings.Contains(out.String(), "Imported:") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
+	}
+	out.Reset()
+	if code := runStatusCommand([]string{"--verbose"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· Imported: 2 sessions, 1 waiting to upload\n") {
+		t.Fatalf("status --verbose (exit %d):\n%s", code, out.String())
 	}
 	out.Reset()
 	if code := runStatusCommand([]string{"--json"}, &out, &out, env); code != 0 {
@@ -143,7 +147,11 @@ func TestStatusReportsImportsWithGapsOrFailedScans(t *testing.T) {
 		t.Fatalf("imported=%d with issues=%d app gaps=%#v", view.ImportedSessions, view.ImportedWithIssues, view.Apps[0].CaptureGaps)
 	}
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· Imported: 3 sessions, 0 waiting to upload, 2 with a capture gap or failed scan\n") {
+	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· 2 imported sessions have a capture gap or failed scan\n") {
+		t.Fatalf("status text (exit %d):\n%s", code, out.String())
+	}
+	out.Reset()
+	if code := runStatusCommand([]string{"--verbose"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "· Imported: 3 sessions, 0 waiting to upload, 2 with a capture gap or failed scan\n") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
 	}
 	out.Reset()
@@ -165,7 +173,7 @@ func TestStatusWithoutImportsHasNoImportedLine(t *testing.T) {
 	store, _ := state.Open(home)
 	publishPairSession(t, home, store, storagetest.NewMemoryStore(), cfg, now, "hook", project, true)
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, pairStatusEnv(t, home, userHome, now, "codex")); code != 0 || strings.Contains(out.String(), "Imported:") {
+	if code := runStatusCommand([]string{"--verbose"}, &out, &out, pairStatusEnv(t, home, userHome, now, "codex")); code != 0 || strings.Contains(out.String(), "Imported:") || strings.Contains(out.String(), " imported") {
 		t.Fatalf("status text (exit %d):\n%s", code, out.String())
 	}
 }
