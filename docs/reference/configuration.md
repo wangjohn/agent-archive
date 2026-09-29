@@ -44,7 +44,8 @@ consistent with each other.
 | `AWS_CA_BUNDLE`, `AWS_ENDPOINT_URL`, `AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL_SSO`, `AWS_ENDPOINT_URL_SSO_OIDC` | A CA bundle (for a network that inspects TLS) and endpoint overrides, as for the AWS CLI. For S3, setup copies the ones set in its shell into the collector's LaunchAgent, like the files above (an endpoint URL with a user name or password in it is not copied). |
 | `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` (either case) | The proxy for S3 and credential requests, as for any Go program. For S3, setup copies the ones set in its shell into the collector's LaunchAgent. A proxy URL with a user name or password in it is not copied, and setup warns that the collector runs without it. |
 | `AWS_VAULT_BACKEND`, `AWS_VAULT_KEYCHAIN_NAME`, `AWS_VAULT_PROMPT`, `AWS_VAULT_PASS_PREFIX`, `AWS_VAULT_FILE_DIR`; `OP_ACCOUNT`, `OP_CONFIG_DIR` | Where aws-vault and 1Password's `op` find credentials, when a profile's `credential_process` runs one of them. For S3, setup copies the ones set in its shell into the collector's LaunchAgent (the directories as absolute paths, or as written when they start with `~/`). The same helpers keep secrets in variables too (`AWS_VAULT_FILE_PASSPHRASE`, `OP_SERVICE_ACCOUNT_TOKEN`, `OP_SESSION_*`); those are never copied. |
-| `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` | Set by the app for commands it runs; `handoff --latest` skips that session. |
+| `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` | Set by the app for commands it runs; `handoff --latest` skips that session, and `handoff --to` with no session named hands it off. |
+| `CURSOR_AGENT` | Set by Cursor's agent for commands it runs; `handoff --to` with no session named hands off the newest Cursor session for the directory. |
 | `NO_COLOR` | Disables colored output. |
 | `AGENT_ARCHIVE_VERSION`, `AGENT_ARCHIVE_INSTALL_DIR` | `install.sh` only: the release and directory to install. |
 
