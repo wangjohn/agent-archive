@@ -37,7 +37,7 @@ to read it; the file is removed when the agent exits. The command reads only a
 local transcript; it never downloads a session from the archive or starts a
 remote agent. The receiving agent is told that Agent Archive exists, where to
 find its executable, and how to ask for more context.
-`agent-archive show SESSION_ID --normalized` reads the published archive copy,
+`agent-archive show SESSION_ID --transcript` reads the published archive copy,
 which may lag the local transcript or not exist yet.
 `agent-archive handoff SESSION_ID --source local --max-bytes 0` reads the
 current, complete **filtered** local record. Neither command exposes

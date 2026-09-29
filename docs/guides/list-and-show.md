@@ -159,8 +159,12 @@ messages. `agent-archive show PARENT` counts them on its Subagents row, and
 unavailable, or unavailable-or-expired per child) beside the sidecar's own
 fields, so `show --json` output is not itself an instance of
 `metadata.schema.json`; validate stored metadata objects, not command output.
+A child whose transcript is still missing or empty 30 minutes after its
+`SubagentStop` (Claude Code reports some background agents with a path it
+never writes) is dropped, and its parent's link becomes unavailable.
 A child's summary names its parent. Select a child with
-`agent-archive show CHILD --transcript` for its verified content. Links do not extend retention, and children are never downloaded
+`agent-archive show CHILD --transcript` for its verified content. Links do
+not extend retention, and children are never downloaded
 recursively. Codex and Cursor subagents are not captured yet.
 
 ## Skill evidence

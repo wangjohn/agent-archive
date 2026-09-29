@@ -32,6 +32,21 @@ follow [Semantic Versioning](https://semver.org/).
 - `show --normalized` is deprecated in favor of `show --transcript --json`.
   It still works, with unchanged output, and prints a note on stderr.
 
+### Fixed
+
+- A Claude Code subagent whose transcript is never written (Claude Code
+  reports some background agents that way) no longer fails every pass:
+  `sync` exited 1 and `status` reported "N session(s) need capture or
+  publication" for good. Such a subagent now waits up to 30 minutes for its
+  transcript, then is dropped and its parent session records the link as
+  unavailable. `sync` counts waiting subagents, and ones it decided not to
+  capture, without failing ("; N subagent(s) waiting for transcripts",
+  "; N subagent(s) not captured"), and `status --verbose` shows how many are
+  waiting. A subagent `backfill` found without a transcript is dropped at
+  once. A subagent that is lost for another reason (its transcript exists but
+  can't be read, or doesn't match its parent) is dropped too, and reported as
+  a failed session by that pass only.
+
 ## [0.2.0] - 2026-09-29
 
 The archive browser now has bounded, readable listings and terminal pickers for

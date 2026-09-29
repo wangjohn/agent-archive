@@ -396,7 +396,8 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 2 {
-				materializeSubagentCandidates(local, Options{})
+				// Inside the grace a hook candidate is given to write.
+				materializeSubagentCandidates(local, Options{}, importedAt.Add(time.Minute))
 			}
 			candidates, err := local.LoadSubagentCandidates()
 			if err != nil {
