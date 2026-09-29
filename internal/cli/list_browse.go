@@ -15,7 +15,7 @@ import (
 // browseInteractive reports whether list/show should offer a session picker:
 // both stdin and stdout are terminals, and the caller is not forcing JSON.
 // Interactive list skips the pager so the prompt stays with the table.
-func browseInteractive(env Env, stdin io.Reader, stdout io.Writer) bool {
+func browseInteractive(env sessionBrowseDependencies, stdin io.Reader, stdout io.Writer) bool {
 	return env.isTerminal(stdin) && env.isTerminal(stdout)
 }
 
@@ -133,7 +133,7 @@ func showSessionMetadata(stdout, stderr io.Writer, store storage.ObjectStore, se
 
 // loadSessionsForBrowse lists metadata with the same filters list uses, for
 // bare interactive show.
-func loadSessionsForBrowse(env Env, store storage.ObjectStore, opts listOptions, stderr io.Writer) ([]archive.Metadata, int, bool, error) {
+func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer) ([]archive.Metadata, int, bool, error) {
 	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "show")})
 	if err != nil {
 		return nil, 0, false, err

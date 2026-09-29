@@ -50,6 +50,24 @@ local build has the release's build flags. Plain `go build
 Git checkout reports `dev-<commit>` from `--version` (with `-dirty` when you
 had uncommitted changes); put that in bug reports.
 
+To build and install the current checkout in one command, including any
+uncommitted changes, run:
+
+```sh
+./scripts/install-from-source.sh
+```
+
+This installs a persistent development binary at
+`~/.local/share/agent-archive-dev/bin/agent-archive` and prints its absolute
+path. Use that path to run it; a release binary on `PATH` is left alone. To
+replace the `agent-archive` currently on `PATH` at the same path, run
+`./scripts/install-from-source.sh --replace-current`. You can also pass
+`--destination /absolute/path/to/agent-archive`. The command does not run
+setup or change hooks, data, credentials, or the background collector. Run
+setup from the development binary only when you intend to point hooks and the
+collector at it. Source builds are unsigned and do not test the release
+download, signature, or notarization.
+
 Put the binary on your `PATH` as plain `agent-archive`, for example:
 
 ```sh
@@ -74,33 +92,55 @@ location (`status` reports hooks and background as `broken` until you do).
    [latest release](https://github.com/wangjohn/agent-archive/releases/latest)
    (`agent-archive-darwin-arm64` for Apple Silicon, `agent-archive-darwin-amd64`
    for Intel), and `SHA256SUMS` from the same release.
-2. Verify the checksum:
+2. Select the binary for this Mac and verify its checksum. Run these commands
+   in the directory containing the downloads, in the same shell as the steps
+   below:
 
    ```sh
-   shasum -a 256 -c SHA256SUMS --ignore-missing
+   case "$(uname -m)" in
+     arm64) asset=agent-archive-darwin-arm64 ;;
+     x86_64) asset=agent-archive-darwin-amd64 ;;
+     *) echo "Unsupported Mac architecture" >&2; exit 1 ;;
+   esac
+   test -f "$asset" || { echo "Missing $asset" >&2; exit 1; }
+   expected=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' SHA256SUMS)
+   test -n "$expected" || { echo "No checksum for $asset" >&2; exit 1; }
+   actual=$(shasum -a 256 "$asset" | awk '{ print $1 }')
+   test "$actual" = "$expected" || { echo "Checksum mismatch for $asset" >&2; exit 1; }
    ```
 
-3. Make it executable and put it on your `PATH` as `agent-archive`:
+3. Check the selected binary's signature:
 
    ```sh
-   chmod +x agent-archive-darwin-*
-   sudo mv agent-archive-darwin-* /usr/local/bin/agent-archive
+   codesign --verify --strict --verbose=2 "$asset"
+   codesign -dv "$asset" 2>&1 | grep TeamIdentifier
    ```
 
-   On an Apple Silicon Mac with Homebrew, `/usr/local/bin` may not exist;
-   create it (`sudo mkdir -p /usr/local/bin`) or use `/opt/homebrew/bin`,
-   which needs no `sudo`.
+   Compare the reported `TeamIdentifier` with `team_id` in
+   [`install.sh`](../../install.sh). If you have the GitHub CLI, also run
+   `gh attestation verify "$asset" --repo wangjohn/agent-archive` to check
+   that this release asset was built by the repository's release workflow.
 
-4. Confirm it runs: `agent-archive --version`.
+4. Make the selected binary executable and install it in a directory you own:
+
+   ```sh
+   chmod +x "$asset"
+   mkdir -p "$HOME/.local/bin"
+   mv "$asset" "$HOME/.local/bin/agent-archive"
+   ```
+
+   Add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` (zsh) or
+   `~/.bash_profile` (Bash) if that directory is not already on your `PATH`,
+   then open a new terminal. If you already installed `agent-archive`
+   elsewhere, move or remove that older copy so your shell uses this one. If
+   its path changed, rerun `agent-archive setup` to update the hooks and
+   background collector.
+
+5. Confirm it runs: `agent-archive --version`.
 
 Release binaries are signed with a Developer ID and notarized by Apple.
 Gatekeeper may need network access to check the notarization ticket on first
-launch. To check a download yourself, `codesign --verify --strict
---verbose=2 agent-archive-darwin-arm64` checks the signature, `codesign -dv
-agent-archive-darwin-arm64` shows the `TeamIdentifier` (compare it with
-`team_id` in `install.sh`), and, with the GitHub CLI, `gh attestation verify
-agent-archive-darwin-arm64 --repo wangjohn/agent-archive` checks that the
-file was built by this repository's release workflow.
+launch.
 
 ## Next
 

@@ -178,60 +178,9 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		return Plan{}, err
 	}
 	now := env.now()
-	found, unread := discover(env)
-	workers := env.Workers
-	if workers <= 0 {
-		workers = defaultWorkers()
-	}
-
-	items := make([]*work, len(found))
-	for i, t := range found {
-		items[i] = &work{t: t, c: Candidate{Harness: string(t.harness), TranscriptPath: t.path, Bytes: t.size}}
-	}
-	// Identity and working directory come from each transcript's leading
-	// records.
-	if err := forEach(ctx, workers, items, func(w *work) {
-		if err := readHead(env, w.t); err != nil {
-			if isNotExist(err) {
-				w.vanished = true
-			} else {
-				w.unsafe = true
-			}
-		}
-		w.c.NativeSessionID = w.t.nativeID
-	}); err != nil {
+	items, r, unread, workers, err := preparePlanWork(ctx, env, cfg, filters)
+	if err != nil {
 		return Plan{}, err
-	}
-
-	// Projects. Cursor's come last: its slugs are matched against the roots
-	// the other apps' sessions resolved to.
-	r := newResolver(env, cfg, filters)
-	var cursorCandidates []string
-	for _, p := range cfg.Archive.Projects {
-		cursorCandidates = append(cursorCandidates, p.Root)
-	}
-	for _, w := range items {
-		if w.t.harness == harnessCursor || w.vanished {
-			continue
-		}
-		w.res = r.resolve(w.t.cwd)
-		if w.t.cwd != "" {
-			cursorCandidates = append(cursorCandidates, w.t.cwd)
-		}
-		if w.res.root != "" {
-			cursorCandidates = append(cursorCandidates, w.res.root)
-		}
-	}
-	matcher := newCursorMatcher(env, cursorCandidates)
-	for _, w := range items {
-		if w.t.harness != harnessCursor {
-			continue
-		}
-		if folder, ok := matcher.match(w.t.cursorSlug); ok {
-			w.res = r.resolve(folder)
-		} else {
-			w.res = resolution{skip: SkipProjectUnknown}
-		}
 	}
 
 	projectFilter := make([]string, 0, len(filters.Projects))
@@ -243,116 +192,14 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 	}
 	since, until := dateRange(filters, now.Location())
 
-	sessions := map[string][]*work{}
-	for _, w := range items {
-		if w.vanished {
-			continue
-		}
-		if strings.TrimSpace(w.c.NativeSessionID) != "" {
-			reason, err := state.Classify(string(w.t.harness), w.c.NativeSessionID)
-			if err != nil {
-				return Plan{}, fmt.Errorf("check the archive: %w", err)
-			}
-			if filters.IncludeRemoved && (reason == SkipRemovedByUndo || reason == SkipRemovedByRetention) {
-				reason = ""
-			}
-			w.state = reason
-			key := string(w.t.harness) + "\x00" + w.c.NativeSessionID
-			sessions[key] = append(sessions[key], w)
-		}
-		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)
-		w.tooLarge = w.t.size > collector.DefaultMaxRawTranscriptBytes
-	}
-	for _, group := range sessions {
-		if len(group) > 1 {
-			for _, w := range group {
-				w.duplicated = true
-			}
-		}
-	}
-
-	// The adapter runs over every transcript that may be imported, as the
-	// collector will, so the plan's counts are what gets imported. A session
-	// already decided by an earlier reason is not read, unless a date filter
-	// needs its start or a duplicate needs its identity checked.
-	dated := !since.IsZero() || !until.IsZero()
-	var toFilter []*work
-	for _, w := range items {
-		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe {
-			continue
-		}
-		if w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
-			toFilter = append(toFilter, w)
-		}
-	}
-	budget := newByteBudget(maxBytesInFlight)
-	if err := forEach(ctx, workers, toFilter, func(w *work) {
-		n := budget.acquire(w.t.size)
-		defer budget.release(n)
-		runAdapter(env, w)
-	}); err != nil {
+	if err := classifyPlanWork(ctx, env, state, filters, items, projectFilter, since, until, workers); err != nil {
 		return Plan{}, err
 	}
-	for _, group := range sessions {
-		markDuplicates(env, group)
-	}
 
-	var parents []*work
-	for _, w := range items {
-		if w.vanished {
-			continue
-		}
-		// A session without a start is not judged by the date filters: it is
-		// skipped for the reason that left it without one.
-		if dated && w.state == "" && !w.c.StartedAt.IsZero() && !inRange(w.c.StartedAt, since, until) {
-			w.filtered = true
-		}
-		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
-		if w.res.root != "" {
-			w.c.ProjectExists = env.exists(w.res.root)
-		}
-		w.c.Skip = w.reason(now)
-		if w.c.Skip == "" && w.t.harness == harnessClaude {
-			parents = append(parents, w)
-		}
-	}
-
-	// Subagent transcripts of imported parents pass the same checks as their
-	// parents; one that fails is left out and counted.
-	var subagents []*subagentWork
-	for _, w := range parents {
-		for _, sub := range claudeSubagents(env, w.t, &unread) {
-			subagents = append(subagents, &subagentWork{parent: w, sub: sub})
-		}
-	}
-	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
-		if s.sub.Bytes > collector.DefaultMaxRawTranscriptBytes {
-			s.skipped = true
-			return
-		}
-		n := budget.acquire(s.sub.Bytes)
-		defer budget.release(n)
-		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{})
-		if err != nil {
-			s.vanished = isNotExist(err)
-			s.skipped = !s.vanished
-			return
-		}
-		// The collector registers the subagent only if it passes these
-		// checks; observed now, it is observed no later at the import.
-		s.skipped = collector.CheckImportedSubagent(filtered, s.parent.c.NativeSessionID, s.sub.AgentID, s.parent.c.StartedAt, now) != nil
-	}); err != nil {
+	if err := finalizePlanWork(ctx, env, items, &unread, since, until, now, workers); err != nil {
 		return Plan{}, err
 	}
-	for _, s := range subagents {
-		switch {
-		case s.vanished:
-		case s.skipped:
-			s.parent.c.SubagentsSkipped++
-		default:
-			s.parent.c.Subagents = append(s.parent.c.Subagents, s.sub)
-		}
-	}
+
 	var candidates []Candidate
 	for _, w := range items {
 		if !w.vanished {
@@ -399,6 +246,209 @@ func BuildPlan(ctx context.Context, env Environment, state ArchiveState, cfg con
 		return a.SourceKey < b.SourceKey
 	})
 	return plan, nil
+}
+
+// preparePlanWork performs local discovery, reads transcript heads, and maps
+// working directories to projects before any archive-state classification.
+func preparePlanWork(ctx context.Context, env Environment, cfg config.Config, filters Filters) ([]*work, *resolver, unreadable, int, error) {
+	found, unread := discover(env)
+	workers := env.Workers
+	if workers <= 0 {
+		workers = defaultWorkers()
+	}
+
+	items := make([]*work, len(found))
+	for i, t := range found {
+		items[i] = &work{t: t, c: Candidate{Harness: string(t.harness), TranscriptPath: t.path, Bytes: t.size}}
+	}
+	// Identity and working directory come from each transcript's leading
+	// records.
+	if err := forEach(ctx, workers, items, func(w *work) {
+		if err := readHead(env, w.t); err != nil {
+			if isNotExist(err) {
+				w.vanished = true
+			} else {
+				w.unsafe = true
+			}
+		}
+		w.c.NativeSessionID = w.t.nativeID
+	}); err != nil {
+		return nil, nil, unread, workers, err
+	}
+
+	// Projects. Cursor's come last: its slugs are matched against the roots
+	// the other apps' sessions resolved to.
+	r := newResolver(env, cfg, filters)
+	var cursorCandidates []string
+	for _, p := range cfg.Archive.Projects {
+		cursorCandidates = append(cursorCandidates, p.Root)
+	}
+	for _, w := range items {
+		if w.t.harness == harnessCursor || w.vanished {
+			continue
+		}
+		w.res = r.resolve(w.t.cwd)
+		if w.t.cwd != "" {
+			cursorCandidates = append(cursorCandidates, w.t.cwd)
+		}
+		if w.res.root != "" {
+			cursorCandidates = append(cursorCandidates, w.res.root)
+		}
+	}
+	matcher := newCursorMatcher(env, cursorCandidates)
+	for _, w := range items {
+		if w.t.harness != harnessCursor {
+			continue
+		}
+		if folder, ok := matcher.match(w.t.cursorSlug); ok {
+			w.res = r.resolve(folder)
+		} else {
+			w.res = resolution{skip: SkipProjectUnknown}
+		}
+	}
+
+	return items, r, unread, workers, nil
+}
+
+// classifyPlanWork asks the archive about native IDs, then reads full
+// transcripts only where the decision requires their contents or start time.
+func classifyPlanWork(ctx context.Context, env Environment, state ArchiveState, filters Filters, items []*work, projectFilter []string, since, until time.Time, workers int) error {
+	sessions := map[string][]*work{}
+	for _, w := range items {
+		if w.vanished {
+			continue
+		}
+		if strings.TrimSpace(w.c.NativeSessionID) != "" {
+			reason, err := state.Classify(string(w.t.harness), w.c.NativeSessionID)
+			if err != nil {
+				return fmt.Errorf("check the archive: %w", err)
+			}
+			if filters.IncludeRemoved && (reason == SkipRemovedByUndo || reason == SkipRemovedByRetention) {
+				reason = ""
+			}
+			w.state = reason
+			key := string(w.t.harness) + "\x00" + w.c.NativeSessionID
+			sessions[key] = append(sessions[key], w)
+		}
+		w.filtered = !harnessMatches(filters.Harnesses, string(w.t.harness)) || !projectMatches(env, projectFilter, w.res.root)
+		w.tooLarge = w.t.size > collector.DefaultMaxRawTranscriptBytes
+	}
+	for _, group := range sessions {
+		if len(group) > 1 {
+			for _, w := range group {
+				w.duplicated = true
+			}
+		}
+	}
+
+	// The adapter runs over every transcript that may be imported, as the
+	// collector will, so the plan's counts are what gets imported. A session
+	// already decided by an earlier reason is not read, unless a date filter
+	// needs its start or a duplicate needs its identity checked.
+	toFilter := selectAdapterWork(items, since, until)
+	budget := newByteBudget(maxBytesInFlight)
+	if err := forEach(ctx, workers, toFilter, func(w *work) {
+		n := budget.acquire(w.t.size)
+		defer budget.release(n)
+		runAdapter(env, w)
+	}); err != nil {
+		return err
+	}
+	for _, group := range sessions {
+		markDuplicates(env, group)
+	}
+
+	return nil
+}
+
+// selectAdapterWork decides which whole transcripts need filtering. It does
+// not open files, which keeps the expensive adapter pass bounded to work
+// whose start, identity, or importability still needs evidence.
+func selectAdapterWork(items []*work, since, until time.Time) []*work {
+	dated := !since.IsZero() || !until.IsZero()
+	var selected []*work
+	for _, w := range items {
+		if w.vanished || w.state == SkipAlreadyArchived || w.tooLarge || w.unsafe {
+			continue
+		}
+		if w.duplicated || (w.state == "" && !w.filtered && (dated || (w.res.skip == "" && !w.t.identityMismatch))) {
+			selected = append(selected, w)
+		}
+	}
+	return selected
+}
+
+// finalizePlanWork decides skip reasons and checks subagents of imported
+// Claude sessions. Its I/O is confined to project existence and subagents.
+func finalizePlanWork(ctx context.Context, env Environment, items []*work, unread *unreadable, since, until, now time.Time, workers int) error {
+	budget := newByteBudget(maxBytesInFlight)
+	for _, w := range items {
+		if !w.vanished && w.res.root != "" {
+			w.c.ProjectExists = env.exists(w.res.root)
+		}
+	}
+	parents := decidePlanCandidates(items, since, until, now)
+
+	// Subagent transcripts of imported parents pass the same checks as their
+	// parents; one that fails is left out and counted.
+	var subagents []*subagentWork
+	for _, w := range parents {
+		for _, sub := range claudeSubagents(env, w.t, unread) {
+			subagents = append(subagents, &subagentWork{parent: w, sub: sub})
+		}
+	}
+	if err := forEach(ctx, workers, subagents, func(s *subagentWork) {
+		if s.sub.Bytes > collector.DefaultMaxRawTranscriptBytes {
+			s.skipped = true
+			return
+		}
+		n := budget.acquire(s.sub.Bytes)
+		defer budget.release(n)
+		filtered, _, err := collector.FilterTranscriptFile("claude", s.sub.Path, time.Time{})
+		if err != nil {
+			s.vanished = isNotExist(err)
+			s.skipped = !s.vanished
+			return
+		}
+		// The collector registers the subagent only if it passes these
+		// checks; observed now, it is observed no later at the import.
+		s.skipped = collector.CheckImportedSubagent(filtered, s.parent.c.NativeSessionID, s.sub.AgentID, s.parent.c.StartedAt, now) != nil
+	}); err != nil {
+		return err
+	}
+	for _, s := range subagents {
+		switch {
+		case s.vanished:
+		case s.skipped:
+			s.parent.c.SubagentsSkipped++
+		default:
+			s.parent.c.Subagents = append(s.parent.c.Subagents, s.sub)
+		}
+	}
+	return nil
+}
+
+// decidePlanCandidates applies final date and skip decisions after the
+// transcript and project existence evidence has been gathered.
+func decidePlanCandidates(items []*work, since, until, now time.Time) []*work {
+	dated := !since.IsZero() || !until.IsZero()
+	var parents []*work
+	for _, w := range items {
+		if w.vanished {
+			continue
+		}
+		// A session without a start is not judged by the date filters: it
+		// keeps the reason that left it without one.
+		if dated && w.state == "" && !w.c.StartedAt.IsZero() && !inRange(w.c.StartedAt, since, until) {
+			w.filtered = true
+		}
+		w.c.ProjectRoot, w.c.ProjectKind, w.c.ProjectIncluded = w.res.root, w.res.kind, w.res.included
+		w.c.Skip = w.reason(now)
+		if w.c.Skip == "" && w.t.harness == harnessClaude {
+			parents = append(parents, w)
+		}
+	}
+	return parents
 }
 
 // reason picks the first applicable skip reason in the spec's order.
