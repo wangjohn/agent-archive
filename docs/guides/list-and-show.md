@@ -141,7 +141,10 @@ when the call failed), the `!` shell commands (`$ make test`) and local
 slash commands (`» /model`, with the app's reply) you ran, compaction
 summaries, notices the app posted (such as a background task finishing,
 with the agent's reply under it), and any final response a hook reported
-that the transcript lacks. Edit bodies are never shown. `--full` adds each
+that the transcript lacks. Your prompts are quoted with a `┃` gutter, and
+each stretch of the agent's replies and tool calls starts with the app's
+name (`Claude Code ›`), so you can tell who is speaking without color. Edit
+bodies are never shown. `--full` adds each
 tool result and shell command's output, trimmed to its first and last
 lines; it does not combine with `--json`, which has every retained result. On a terminal the transcript is
 paged like `list`; `--no-pager` prints it directly. `--transcript --json`

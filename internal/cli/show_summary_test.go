@@ -375,6 +375,65 @@ func TestTranscriptRendersCommandsAndNotices(t *testing.T) {
 	}
 }
 
+// The prompt is quoted with a gutter that survives wrapping and blank
+// lines, and each run of the agent's steps starts with its name: after the
+// prompt and after the person's own command, never before that command.
+func TestTranscriptMarksWhoIsSpeaking(t *testing.T) {
+	t.Parallel()
+	transcript := archive.Transcript{Exchanges: []archive.TranscriptExchange{
+		{Kind: archive.TranscriptExchangePrompt, Text: "please review the levenshtein repo for gaps\n\nthen write a packet", Steps: []archive.TranscriptStep{
+			{Kind: archive.TranscriptStepText, Text: "I'll start."},
+			{Kind: archive.TranscriptStepCommand, Text: "/model", Output: "Set model to claude-opus-5"},
+			{Kind: archive.TranscriptStepTool, Tool: &archive.HandoffToolCall{Name: "Bash", Summary: "go test ./..."}},
+		}},
+	}}
+	var b bytes.Buffer
+	renderTranscript(&b, summaryFixture(), transcript, transcriptOptions{summaryOptions: summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: 24}}})
+	_, got, _ := strings.Cut(b.String(), "─\n")
+	want := `┃ please review the
+┃ levenshtein repo for
+┃ gaps
+┃
+┃ then write a packet
+
+Claude Code ›
+I'll start.
+
+  » /model
+      │ Set model to claude-opus-5
+
+Claude Code ›
+  ▸ Bash go test ./...
+`
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A prompt word wider than the line, such as a link or text with no spaces,
+// is split so every row keeps the gutter, and a wide character is never cut.
+func TestTranscriptPromptSplitsLongWords(t *testing.T) {
+	t.Parallel()
+	transcript := archive.Transcript{Exchanges: []archive.TranscriptExchange{
+		{Kind: archive.TranscriptExchangePrompt, Text: "see https://example.com/a/very/long/path ok\n日本語のテキストです"},
+	}}
+	var b bytes.Buffer
+	renderTranscript(&b, summaryFixture(), transcript, transcriptOptions{summaryOptions: summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: 13}}})
+	_, got, _ := strings.Cut(b.String(), "─\n")
+	want := `┃ see
+┃ https://exa
+┃ mple.com/a/
+┃ very/long/p
+┃ ath
+┃ ok
+┃ 日本語のテ
+┃ キストです
+`
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // A session ID from the bucket is display text too, even as a fallback
 // title or in a hint.
 func TestSessionSummaryNeutralizesSessionID(t *testing.T) {
