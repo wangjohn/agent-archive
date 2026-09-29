@@ -84,7 +84,7 @@ func TestBrowserTranscriptOpensPager(t *testing.T) {
 	}
 	// The default pager waits for q even for a short transcript, since the
 	// details are redrawn when it exits.
-	if pages[0].command != "less -RX -+F" || !strings.Contains(pages[0].text, "visible") {
+	if !strings.HasPrefix(pages[0].command, "less -RX --mouse ") || !strings.HasSuffix(pages[0].command, "q back' -+F") || !strings.Contains(pages[0].text, "visible") {
 		t.Fatalf("pager = %q:\n%s", pages[0].command, pages[0].text)
 	}
 	// After the pager, the details are drawn again.
@@ -243,7 +243,7 @@ func TestPagerStopsOnCancel(t *testing.T) {
 func TestBrowserPagerCommand(t *testing.T) {
 	t.Parallel()
 	for pager, want := range map[string]string{
-		"":                     "less -RX -+F",
+		"":                     "less -RX --mouse --wheel-lines=3 " + shellQuote("-Ps"+lessPrompt(1, true)) + " -+F",
 		"less -FR":             "less -FR -+F",
 		"/usr/bin/less":        "/usr/bin/less -+F",
 		"most":                 "most",

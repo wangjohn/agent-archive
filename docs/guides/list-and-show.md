@@ -9,8 +9,8 @@ a session.
 # title (first filtered prompt preview), relative time, harness, project,
 # and short ID. Metadata only, never full transcript text. On an interactive
 # terminal, pick a numbered row to see that session's summary (see below).
-# Otherwise the table is paged through $PAGER (or less); use --no-pager to
-# print directly.
+# Otherwise the table is paged through $PAGER (or less; see Scrolling below);
+# use --no-pager to print directly.
 agent-archive list
 agent-archive list --limit 0          # every match, not just the newest 50
 agent-archive list --limit 200
@@ -123,8 +123,9 @@ summaries, notices the app posted (such as a background task finishing,
 with the agent's reply under it), and any final response a hook reported
 that the transcript lacks. Edit bodies are never shown. `--full` adds each
 tool result and shell command's output, trimmed to its first and last
-lines; it does not combine with `--json`, which has every retained result. On a terminal the transcript is
-paged like `list`; `--no-pager` prints it directly. `--transcript --json`
+lines; it does not combine with `--json`, which has every retained result. On a terminal the summary and
+the transcript are paged like `list` (see [Scrolling](#scrolling));
+`--no-pager` prints them directly. `--transcript --json`
 prints the sidecar and then the normalized view (turns, tool calls, tool
 results, and hook-reported final messages) as JSON. `--normalized`, its
 former name, still works and prints a deprecation note on stderr. If the
@@ -133,6 +134,35 @@ to pick one. The object layout is in
 [bucket layout](../reference/bucket-layout.md).
 
 Before setup has run, both commands print `Not set up.` to stderr and exit 1.
+
+## Scrolling
+
+On a terminal, anything longer than a screen goes through a pager: the
+`list` table outside the browser, `show SESSION_ID`'s summary, a transcript,
+`status`, and `purge plan`. Piped or redirected output, and `--json`, are
+never paged; `--no-pager` prints directly on a terminal too.
+
+With no pager set, Agent Archive runs `less`, which quits at once when the
+text fits on one screen and otherwise shows the keys on its last line:
+
+```text
+lines 1-48 of 1210 - arrows/space scroll, / search, q quit
+```
+
+- The mouse wheel, arrow keys, space and `b` (page down and up), and `g` and
+  `G` (top and bottom) scroll; `/` searches, `n` finds the next match; `q`
+  quits. From the session browser, `q` goes back to the summary.
+- With `less` 551 or later (macOS ships a newer one), the wheel scrolls the
+  text, three lines at a time, and the text stays on the screen after `q`.
+  Because `less` then reads the mouse, hold Option while dragging to select
+  text in iTerm2 (Shift in most other terminals; in Terminal, turn off View
+  > Allow Mouse Reporting).
+- An older `less` shows the text on the terminal's alternate screen, where
+  the terminal turns the wheel into arrow keys.
+
+To use another pager, set `AGENT_ARCHIVE_PAGER` (or `PAGER`), for example
+`AGENT_ARCHIVE_PAGER='less -R'`; it runs exactly as given, without the key
+hints or mouse options. Set either to `cat`, or to nothing, to never page.
 
 ## Model and setting keys
 

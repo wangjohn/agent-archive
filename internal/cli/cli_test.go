@@ -60,8 +60,14 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		DetectHarnesses:      func(string) []string { return nil },
 		DiscoverApplications: func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} },
 		Interrupts:           noInterrupts,
+		// A less new enough for --mouse, as macOS ships; the tests of the
+		// other defaults set their own.
+		LessVersion: func() (int, bool) { return testLessVersion, true },
 	}
 }
+
+// testLessVersion is the less version testEnv reports.
+const testLessVersion = 668
 
 // noInterrupts is Env.Interrupts for tests that do not send signals. The
 // default installs real handlers for Ctrl-C, SIGTERM, and SIGHUP, and while

@@ -184,6 +184,10 @@ type Env struct {
 	// show use it for text listings and transcripts. Defaults to `sh -c
 	// command`. Tests set it so a listing never spawns less.
 	RunPager func(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error
+	// LessVersion reports the version of the less on PATH, which chooses
+	// the default pager's options; known is false when it cannot be told.
+	// Defaults to running `less --version` once per process.
+	LessVersion func() (version int, known bool)
 	// LaunchHandoff runs a local coding-agent CLI with a short prompt naming
 	// the private handoff file. Tests replace it to avoid starting an agent.
 	LaunchHandoff func(name, cwd, prompt string, stdin io.Reader, stdout, stderr io.Writer) error

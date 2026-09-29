@@ -56,6 +56,8 @@ func (*pagerStub) isTerminal(any) bool { return true }
 
 func (*pagerStub) lookupEnv(string) (string, bool) { return "more", true }
 
+func (*pagerStub) lessVersion() (int, bool) { return 0, false }
+
 func (s *pagerStub) runPager(_ context.Context, _ string, _ io.Reader, _, _ io.Writer) error {
 	s.run++
 	return errors.New("pager unavailable")

@@ -132,12 +132,13 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 Guide: [Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md).
 
 ```text
-Usage: agent-archive status [--verbose] [--json]
+Usage: agent-archive status [--verbose] [--json] [--no-pager]
 
 Show local capture evidence, background health, and a next step.
 No conversations are printed and no cloud request is made.
 --verbose adds a Details section with the codes, exact times, full
 paths and raw errors behind each line.
+On a terminal, status is paged through $PAGER unless --no-pager.
 --json prints the same status as a versioned JSON document. In it,
 storage_verified_at is when setup's storage check last passed, and
 storage_access_confirmed_at is the latest confirmation of access (by
@@ -149,6 +150,7 @@ Example: agent-archive status --json
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--json` | no value | — |
+| `--no-pager` | no value | — |
 | `--verbose` | no value | — |
 
 ## agent-archive sync
@@ -275,7 +277,9 @@ activity counts, skills, subagents, and capture gaps. --json prints the
 metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
 several matches on a terminal open a picker. With no SESSION_ID on a
 terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit.
+its transcript, Enter or b to go back, or q to quit. On a terminal, the
+summary and transcript are paged: scroll with the mouse wheel, arrows, or
+space, search with /, and quit with q.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -286,8 +290,8 @@ its transcript, Enter or b to go back, or q to quit.
                         session extends with origin, imported_at, and
                         started_at_source; with --transcript, then the
                         normalized conversation
-  --no-pager            Print a transcript directly; do not page through
-                        $PAGER
+  --no-pager            Print the summary or transcript directly; do not
+                        page through $PAGER
   --normalized          Deprecated: the same as --transcript --json
 Example: agent-archive show SESSION_ID --transcript
 ```
@@ -495,7 +499,7 @@ Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
 
 ```text
 Usage: agent-archive purge plan [--mode unreferenced|old-filter]
-       [--before-filter VERSION]
+       [--before-filter VERSION] [--no-pager]
        agent-archive purge apply PLAN [--yes]
 
 Create a private five-minute deletion plan, then review its exact keys.
@@ -528,17 +532,19 @@ Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
 
 ```text
 Usage: agent-archive purge plan [--mode unreferenced|old-filter]
-       [--before-filter VERSION]
+       [--before-filter VERSION] [--no-pager]
 
 Read metadata and list source objects without deleting anything. Old-filter
 mode selects only unreferenced sources whose filter version is below VERSION;
-both modes report still-current older-filter sessions separately.
+both modes report still-current older-filter sessions separately. On a
+terminal, the plan is paged through $PAGER unless --no-pager.
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--before-filter` | a value | — |
 | `--mode` | a value | `unreferenced` |
+| `--no-pager` | no value | — |
 
 ## agent-archive version
 

@@ -63,6 +63,7 @@ type pagerDependencies interface {
 	isTerminal(any) bool
 	lookupEnv(string) (string, bool)
 	runPager(context.Context, string, io.Reader, io.Writer, io.Writer) error
+	lessVersion() (int, bool)
 }
 
 type handoffResolverDependencies interface {

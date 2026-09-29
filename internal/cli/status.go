@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,6 +160,7 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	fs := env.newCommandFlags("status", stderr)
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document")
 	verbose := fs.Bool("verbose", false, "also print the codes, exact times and evidence behind each line")
+	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
@@ -179,7 +181,15 @@ func runStatusCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Print(stdout, string(archive.DisplayJSON(encoded.Bytes())))
 		return 0
 	}
-	printStatus(stdout, view, statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose})
+	// The style is the terminal's, not the pager buffer's.
+	screen := statusScreen{style: styleFor(stdout), now: env.now(), home: view.userHome, verbose: *verbose}
+	if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
+		printStatus(w, view, screen)
+		return nil
+	}); err != nil {
+		terminal.Printf(stderr, "Cannot show archive status: %v\n", err)
+		return 1
+	}
 	return 0
 }
 

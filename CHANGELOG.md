@@ -34,8 +34,20 @@ follow [Semantic Versioning](https://semver.org/).
   kept on this Mac only and never uploaded. Default `status` still says
   nothing about them.
 
+- `show SESSION_ID`'s summary, `status`, and `purge plan` are paged on a
+  terminal, like `list`; `status` and `purge plan` take `--no-pager`, and
+  `show`'s `--no-pager` now covers the summary too. Piped output is
+  unchanged.
+
 ### Changed
 
+- The default pager scrolls on the mouse wheel and names its keys. With no
+  `AGENT_ARCHIVE_PAGER` or `PAGER` set, `less` 551 or later runs with
+  `--mouse` (hold Option while dragging to select text in iTerm2); an older
+  `less` runs on the alternate screen, where the wheel scrolls it too. The
+  prompt reads, for example, "lines 1-48 of 1210 - arrows/space scroll, /
+  search, q quit" ("q back" from the session browser). A pager you set runs
+  unchanged.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
   instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what

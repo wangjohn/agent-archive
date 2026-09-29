@@ -13,7 +13,7 @@ import (
 
 var commandHelp = map[string]string{
 	"purge": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
-       [--before-filter VERSION]
+       [--before-filter VERSION] [--no-pager]
        agent-archive purge apply PLAN [--yes]
 
 Create a private five-minute deletion plan, then review its exact keys.
@@ -22,11 +22,12 @@ their current sources for deletion. Pause every Mac uploading to this prefix
 before apply. A versioned bucket keeps noncurrent versions and delete markers.
 `,
 	"purge plan": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
-       [--before-filter VERSION]
+       [--before-filter VERSION] [--no-pager]
 
 Read metadata and list source objects without deleting anything. Old-filter
 mode selects only unreferenced sources whose filter version is below VERSION;
-both modes report still-current older-filter sessions separately.
+both modes report still-current older-filter sessions separately. On a
+terminal, the plan is paged through $PAGER unless --no-pager.
 `,
 	"purge apply": `Usage: agent-archive purge apply PLAN [--yes]
 
@@ -75,12 +76,13 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
   --r2-account ACCOUNT_ID --bucket BUCKET --r2-access-key-id KEY_ID \
   --project ~/src/app --apps codex,claude
 `,
-	"status": `Usage: agent-archive status [--verbose] [--json]
+	"status": `Usage: agent-archive status [--verbose] [--json] [--no-pager]
 
 Show local capture evidence, background health, and a next step.
 No conversations are printed and no cloud request is made.
 --verbose adds a Details section with the codes, exact times, full
 paths and raw errors behind each line.
+On a terminal, status is paged through $PAGER unless --no-pager.
 --json prints the same status as a versioned JSON document. In it,
 storage_verified_at is when setup's storage check last passed, and
 storage_access_confirmed_at is the latest confirmation of access (by
@@ -169,7 +171,9 @@ activity counts, skills, subagents, and capture gaps. --json prints the
 metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
 several matches on a terminal open a picker. With no SESSION_ID on a
 terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit.
+its transcript, Enter or b to go back, or q to quit. On a terminal, the
+summary and transcript are paged: scroll with the mouse wheel, arrows, or
+space, search with /, and quit with q.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -180,8 +184,8 @@ its transcript, Enter or b to go back, or q to quit.
                         session extends with origin, imported_at, and
                         started_at_source; with --transcript, then the
                         normalized conversation
-  --no-pager            Print a transcript directly; do not page through
-                        $PAGER
+  --no-pager            Print the summary or transcript directly; do not
+                        page through $PAGER
   --normalized          Deprecated: the same as --transcript --json
 Example: agent-archive show SESSION_ID --transcript
 `,
