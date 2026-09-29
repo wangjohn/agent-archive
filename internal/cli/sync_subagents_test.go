@@ -12,8 +12,14 @@ import (
 
 // stagePhantomSubagent leaves a subagent candidate for the one session
 // registered in home, as a SubagentStop hook would, observed at observedAt
-// with a transcript path nothing ever writes.
-func stagePhantomSubagent(t *testing.T, home string, observedAt time.Time) {
+// with a transcript path nothing writes, and returns that path.
+//
+// The parent is the Codex session publishedThroughSync archives, though
+// only Claude Code reports subagents: staging a Claude parent would mean
+// setting up Claude Code's hooks too. It makes no difference here. The
+// collector looks up the adapter by name, which Codex has, and a missing
+// transcript fails with ENOENT before any adapter reads a record.
+func stagePhantomSubagent(t *testing.T, home string, observedAt time.Time) string {
 	t.Helper()
 	local, err := state.Open(home)
 	if err != nil {
@@ -24,14 +30,16 @@ func stagePhantomSubagent(t *testing.T, home string, observedAt time.Time) {
 		t.Fatalf("registrations=%+v err=%v", regs, err)
 	}
 	parent := regs[0]
+	path := filepath.Join(t.TempDir(), "never-written.jsonl")
 	if err := local.SaveSubagentCandidate(state.SubagentCandidate{
 		ArchiveSessionID: "phantom-child", NativeSessionID: parent.NativeSessionID + ":subagent:agent-1",
 		ParentArchiveSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness, AgentID: "agent-1",
-		TranscriptPath: filepath.Join(t.TempDir(), "never-written.jsonl"), ObservedAt: observedAt,
+		TranscriptPath: path, ObservedAt: observedAt,
 	}); err != nil {
 		t.Fatal(err)
 	}
+	return path
 }
 
 func syncAt(t *testing.T, env Env, at time.Time) (int, string, string) {
@@ -64,10 +72,10 @@ func TestSyncPassesWithOnlyWaitingSubagents(t *testing.T) {
 		t.Fatalf("sync exit=%d stdout=%q stderr=%q", code, out, errOut)
 	}
 	env.Now = func() time.Time { return now.Add(time.Minute) }
-	if plain := statusOutput(t, env); strings.Contains(plain, "Last error") || strings.Contains(plain, "waiting for transcripts") {
+	if plain := statusOutput(t, env); strings.Contains(plain, "Last error") || strings.Contains(plain, "waiting for their transcripts") {
 		t.Fatalf("default status mentions the waiting subagent:\n%s", plain)
 	}
-	if verbose := statusOutput(t, env, "--verbose"); !strings.Contains(verbose, "Subagents waiting for transcripts: 1\n") || strings.Contains(verbose, "Last error") {
+	if verbose := statusOutput(t, env, "--verbose"); !strings.Contains(verbose, "  Subagents:     1 waiting for their transcripts\n") || strings.Contains(verbose, "Last error") {
 		t.Fatalf("verbose status:\n%s", verbose)
 	}
 	if asJSON := statusOutput(t, env, "--json"); !strings.Contains(asJSON, `"waiting_subagents": 1`) {
@@ -75,11 +83,11 @@ func TestSyncPassesWithOnlyWaitingSubagents(t *testing.T) {
 	}
 
 	code, out, errOut = syncAt(t, env, now.Add(31*time.Minute))
-	if code != 0 || strings.Contains(out, "subagent") || errOut != "" {
+	if code != 0 || !strings.Contains(out, "0 failed; 1 subagent(s) not captured.") || strings.Contains(out, "waiting") || errOut != "" {
 		t.Fatalf("sync after the grace exit=%d stdout=%q stderr=%q", code, out, errOut)
 	}
 	env.Now = func() time.Time { return now.Add(31 * time.Minute) }
-	if verbose := statusOutput(t, env, "--verbose"); strings.Contains(verbose, "waiting for transcripts") || strings.Contains(verbose, "Last error") {
+	if verbose := statusOutput(t, env, "--verbose"); strings.Contains(verbose, "Subagents:") || strings.Contains(verbose, "Last error") {
 		t.Fatalf("verbose status after the grace:\n%s", verbose)
 	}
 }
@@ -97,6 +105,32 @@ func TestSyncFailsOnARealErrorBesideAWaitingSubagent(t *testing.T) {
 	code, out, errOut := syncAt(t, env, now.Add(5*time.Minute))
 	if code != 1 || !strings.Contains(out, "1 failed; 1 subagent(s) waiting for transcripts.") || strings.Contains(errOut, "phantom-child") {
 		t.Fatalf("sync exit=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+}
+
+// A subagent whose transcript exists but cannot be read is lost, not
+// waiting: sync reports it and exits 1, status records it once, and the
+// next pass has nothing left to retry.
+func TestSyncFailsOnceOnAnUnreadableSubagentTranscript(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
+	env, home, _, _ := publishedThroughSync(t, now)
+	if err := os.Mkdir(stagePhantomSubagent(t, home, now), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := syncAt(t, env, now.Add(time.Minute))
+	if code != 1 || !strings.Contains(out, "1 failed.") || !strings.Contains(errOut, "phantom-child: subagent_transcript_unreadable") {
+		t.Fatalf("sync exit=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	local, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, err := local.LoadStatus(); err != nil || status.SessionIssues["phantom-child"] == "" || status.LastError == "" {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+	if code, out, errOut := syncAt(t, env, now.Add(2*time.Minute)); code != 0 || strings.Contains(out, "subagent") {
+		t.Fatalf("second sync exit=%d stdout=%q stderr=%q", code, out, errOut)
 	}
 }
 

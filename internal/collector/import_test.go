@@ -397,7 +397,7 @@ func TestEmptyImportedSubagentIsRejectedAndHookOneWaits(t *testing.T) {
 			}
 			for range 2 {
 				// Inside the grace a hook candidate is given to write.
-				materializeSubagentCandidates(local, Options{Now: func() time.Time { return importedAt.Add(time.Minute) }})
+				materializeSubagentCandidates(local, Options{}, importedAt.Add(time.Minute))
 			}
 			candidates, err := local.LoadSubagentCandidates()
 			if err != nil {

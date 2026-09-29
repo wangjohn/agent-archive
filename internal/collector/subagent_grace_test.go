@@ -87,8 +87,8 @@ func TestPhantomSubagentWaitsThenIsRejected(t *testing.T) {
 	}
 
 	result = runPassAt(t, local, remote, stopAt.Add(subagentTranscriptGrace))
-	if len(result.Errors) != 0 || len(result.WaitingSubagents) != 0 {
-		t.Fatalf("errors=%v waiting=%v", result.Errors, result.WaitingSubagents)
+	if len(result.Errors) != 0 || len(result.WaitingSubagents) != 0 || result.RejectedSubagents["child"] != "subagent_transcript_never_written" {
+		t.Fatalf("errors=%v waiting=%v rejected=%v", result.Errors, result.WaitingSubagents, result.RejectedSubagents)
 	}
 	if n := pendingCandidates(t, local); n != 0 {
 		t.Fatalf("candidates=%d, want the phantom acknowledged", n)
@@ -105,17 +105,17 @@ func TestPhantomSubagentWaitsThenIsRejected(t *testing.T) {
 	}
 }
 
-// The rejection tells the parent why, and a parent retention has forgotten
-// does not keep the candidate.
+// The grace ends exactly subagentTranscriptGrace after the stop, and the
+// rejection tells the parent why.
 func TestPhantomSubagentRejectionIsRecordedOnTheParent(t *testing.T) {
 	t.Parallel()
 	local, stopAt, _ := subagentGraceFixture(t, archive.SessionOriginHook)
-	outcome := materializeSubagentCandidates(local, Options{Now: func() time.Time { return stopAt.Add(subagentTranscriptGrace - time.Second) }})
+	outcome := materializeSubagentCandidates(local, Options{}, stopAt.Add(subagentTranscriptGrace-time.Second))
 	if len(outcome.errors) != 0 || len(outcome.rejected) != 0 || !slices.Equal(outcome.waiting, []string{"child"}) {
 		t.Fatalf("just inside the grace: %+v", outcome)
 	}
-	outcome = materializeSubagentCandidates(local, Options{Now: func() time.Time { return stopAt.Add(subagentTranscriptGrace) }})
-	if len(outcome.errors) != 0 || len(outcome.waiting) != 0 || !slices.Equal(outcome.rejected, []string{"child"}) {
+	outcome = materializeSubagentCandidates(local, Options{}, stopAt.Add(subagentTranscriptGrace))
+	if len(outcome.errors) != 0 || len(outcome.waiting) != 0 || len(outcome.rejected) != 1 || outcome.rejected["child"] != "subagent_transcript_never_written" {
 		t.Fatalf("at the end of the grace: %+v", outcome)
 	}
 	request, found, err := local.LoadRequest("parent")
@@ -162,13 +162,52 @@ func TestEmptySubagentTranscriptWaitsUntilFilled(t *testing.T) {
 	}
 }
 
+// A stop observed further in the future than the grace (the clock has
+// jumped back since) is rejected rather than kept waiting that much longer.
+func TestFutureSubagentStopIsRejected(t *testing.T) {
+	t.Parallel()
+	local, stopAt, _ := subagentGraceFixture(t, archive.SessionOriginHook)
+	outcome := materializeSubagentCandidates(local, Options{}, stopAt.Add(-subagentTranscriptGrace))
+	if len(outcome.errors) != 0 || len(outcome.rejected) != 0 || len(outcome.waiting) != 1 {
+		t.Fatalf("a grace ahead: %+v", outcome)
+	}
+	outcome = materializeSubagentCandidates(local, Options{}, stopAt.Add(-subagentTranscriptGrace-time.Second))
+	if len(outcome.errors) != 0 || len(outcome.waiting) != 0 || outcome.rejected["child"] != "subagent_transcript_never_written" {
+		t.Fatalf("more than a grace ahead: %+v", outcome)
+	}
+	if n := pendingCandidates(t, local); n != 0 {
+		t.Fatalf("candidates=%d", n)
+	}
+}
+
+// A transcript that exists but cannot be read (here a directory stands at
+// its path) is a subagent lost, not one still to be written: it is rejected
+// at once, and the pass reports it as a failure.
+func TestUnreadableSubagentTranscriptIsRejectedAsAFailure(t *testing.T) {
+	t.Parallel()
+	local, stopAt, childPath := subagentGraceFixture(t, archive.SessionOriginHook)
+	if err := os.Mkdir(childPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result := runPassAt(t, local, storagetest.NewMemoryStore(), stopAt.Add(time.Minute))
+	if result.Errors["child"] == nil || len(result.WaitingSubagents) != 0 || result.RejectedSubagents["child"] != "subagent_transcript_unreadable" {
+		t.Fatalf("errors=%v waiting=%v rejected=%v", result.Errors, result.WaitingSubagents, result.RejectedSubagents)
+	}
+	if n := pendingCandidates(t, local); n != 0 {
+		t.Fatalf("candidates=%d, want the rejected one acknowledged", n)
+	}
+	if status, err := local.LoadStatus(); err != nil || status.LastError == "" {
+		t.Fatalf("status=%+v err=%v, want the loss recorded", status, err)
+	}
+}
+
 // A subagent backfill found without a transcript is history that will not be
 // written, so it is rejected on the first pass rather than waited for.
 func TestImportedSubagentWithoutTranscriptIsRejectedAtOnce(t *testing.T) {
 	t.Parallel()
 	local, stopAt, _ := subagentGraceFixture(t, archive.SessionOriginImport)
-	outcome := materializeSubagentCandidates(local, Options{Now: func() time.Time { return stopAt }})
-	if len(outcome.errors) != 0 || len(outcome.waiting) != 0 || !slices.Equal(outcome.rejected, []string{"child"}) {
+	outcome := materializeSubagentCandidates(local, Options{}, stopAt)
+	if len(outcome.errors) != 0 || len(outcome.waiting) != 0 || len(outcome.rejected) != 1 || outcome.rejected["child"] != "subagent_transcript_unavailable" {
 		t.Fatalf("outcome=%+v", outcome)
 	}
 	request, found, err := local.LoadRequest("parent")

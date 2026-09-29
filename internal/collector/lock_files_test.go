@@ -53,8 +53,8 @@ func TestRejectedCandidatesLeaveNoLockFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if outcome := materializeSubagentCandidates(local, Options{}); len(outcome.rejected) != 3 || len(outcome.errors) != 0 {
-		t.Fatalf("outcome = %+v, want three rejections", outcome)
+	if outcome := materializeSubagentCandidates(local, Options{}, start); len(outcome.rejected) != 3 || len(outcome.errors) != 2 {
+		t.Fatalf("outcome = %+v, want three rejections, the two with a mismatched transcript reported as failures", outcome)
 	}
 	// Only the registered parent's request lock remains: it now has a
 	// request (the rejection notice) and a registration.

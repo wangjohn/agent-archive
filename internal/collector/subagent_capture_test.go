@@ -83,7 +83,7 @@ func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 	if err := local.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(local, candidate, Options{}); err == nil {
+	if err := materializeSubagentCandidate(local, candidate, Options{}, candidate.ObservedAt); err == nil {
 		t.Fatal("mismatched transcript was accepted")
 	}
 	if _, found, _ := local.LoadRegistration("child"); found {
@@ -135,7 +135,7 @@ func TestMaterializeResumesAfterRegistrationWrite(t *testing.T) {
 				if err := local.SaveSubagentCandidate(candidate); err != nil {
 					t.Fatal(err)
 				}
-				if err := materializeSubagentCandidate(local, candidate, Options{}); err != nil {
+				if err := materializeSubagentCandidate(local, candidate, Options{}, candidate.ObservedAt); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -396,7 +396,7 @@ func TestMissingChildTranscriptRemainsRetryable(t *testing.T) {
 	if err := store.SaveSubagentCandidate(candidate); err != nil {
 		t.Fatal(err)
 	}
-	if err := materializeSubagentCandidate(store, candidate, Options{}); err == nil {
+	if err := materializeSubagentCandidate(store, candidate, Options{}, candidate.ObservedAt); err == nil {
 		t.Fatal("expected pending transcript error")
 	}
 	candidates, err := store.LoadSubagentCandidates()

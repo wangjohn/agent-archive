@@ -24,41 +24,60 @@ const subagentTranscriptGrace = 30 * time.Minute
 var errSubagentWaiting = errors.New("subagent transcript is not written yet")
 
 // subagentRejectedError is a candidate the collector decided not to register:
-// it is acknowledged, and its parent told the link is unavailable. The
-// decision is final, so it is not reported as a failed session.
+// it is acknowledged, and its parent told the link is unavailable, so it is
+// never retried.
 type subagentRejectedError struct{ code string }
 
 func (e subagentRejectedError) Error() string { return e.code }
 
+// expectedSubagentRejections are the rejection codes that lose nothing: a
+// transcript that was never written, or that backfill found empty or gone; a
+// parent that is not, or no longer, archived here; a subagent that started
+// outside what the archive admits. They are decisions, counted but not
+// reported as failures. Every other code (unknown format, provenance that
+// does not check out, a conflicting registration, a transcript that exists
+// but cannot be read) means a real subagent was lost, which the pass reports
+// as a failed session once.
+var expectedSubagentRejections = map[string]bool{
+	"subagent_transcript_never_written":     true,
+	"subagent_transcript_unavailable":       true,
+	"subagent_parent_ownership_unavailable": true,
+	"subagent_start_ineligible":             true,
+}
+
 // subagentOutcome is what materializing the pending candidates did.
 type subagentOutcome struct {
-	// errors holds the candidates that failed, keyed by archive session ID.
+	// errors holds the candidates that failed, keyed by archive session ID,
+	// including those rejected for an unexpected reason.
 	errors map[string]error
 	// waiting lists the candidates kept for their transcripts (see
 	// errSubagentWaiting).
 	waiting []string
-	// rejected lists the candidates rejected this pass.
-	rejected []string
+	// rejected maps each candidate rejected this pass to its code.
+	rejected map[string]string
 }
 
 // materializeSubagentCandidates registers each candidate a hook left, rejects
-// it, or keeps it waiting for its transcript. One unreadable candidate fails
-// only itself.
-func materializeSubagentCandidates(local *state.Store, opts Options) subagentOutcome {
+// it, or keeps it waiting for its transcript, judged at now, the pass's
+// clock. One unreadable candidate fails only itself.
+func materializeSubagentCandidates(local *state.Store, opts Options, now time.Time) subagentOutcome {
 	candidates, issues, err := local.ScanSubagentCandidates()
 	if err != nil {
 		return subagentOutcome{errors: map[string]error{"subagent-candidates": err}}
 	}
-	outcome := subagentOutcome{errors: issues}
+	outcome := subagentOutcome{errors: issues, rejected: map[string]string{}}
 	for _, candidate := range candidates {
-		err := materializeSubagentCandidate(local, candidate, opts)
+		err := materializeSubagentCandidate(local, candidate, opts, now)
 		var rejected subagentRejectedError
 		switch {
 		case err == nil:
 		case errors.Is(err, errSubagentWaiting):
 			outcome.waiting = append(outcome.waiting, candidate.ArchiveSessionID)
 		case errors.As(err, &rejected):
-			outcome.rejected = append(outcome.rejected, candidate.ArchiveSessionID)
+			outcome.rejected[candidate.ArchiveSessionID] = rejected.code
+			if !expectedSubagentRejections[rejected.code] {
+				outcome.errors[candidate.ArchiveSessionID] = err
+			}
 		default:
 			outcome.errors[candidate.ArchiveSessionID] = err
 		}
@@ -66,13 +85,13 @@ func materializeSubagentCandidates(local *state.Store, opts Options) subagentOut
 	return outcome
 }
 
-func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, opts Options) error {
+func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, opts Options, now time.Time) error {
 	parent, err := admittedSubagentParent(local, candidate, opts)
 	if err != nil {
 		return err
 	}
 	reg := assembleSubagentRegistration(parent, candidate)
-	reg, err = validateCandidateTranscript(local, candidate, parent, reg, opts)
+	reg, err = validateCandidateTranscript(local, candidate, parent, reg, opts, now)
 	if err != nil {
 		return err
 	}
@@ -113,17 +132,19 @@ func assembleSubagentRegistration(parent archive.SessionRegistration, candidate 
 	}
 }
 
-func validateCandidateTranscript(local *state.Store, candidate state.SubagentCandidate, parent, reg archive.SessionRegistration, opts Options) (archive.SessionRegistration, error) {
+func validateCandidateTranscript(local *state.Store, candidate state.SubagentCandidate, parent, reg archive.SessionRegistration, opts Options, now time.Time) (archive.SessionRegistration, error) {
 	adapter, err := archive.NewAdapter(reg.Harness.Name)
 	if err != nil {
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")
 	}
 	filtered, _, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return reg, rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
+		// It exists but cannot be read or filtered: too large, not a regular
+		// file, unreadable, or in a format the adapter refuses.
+		return reg, rejectSubagentCandidate(local, candidate, "subagent_transcript_unreadable")
 	}
 	if err != nil || subagentTranscriptEmpty(filtered) {
-		return reg, awaitSubagentTranscript(local, candidate, opts)
+		return reg, awaitSubagentTranscript(local, candidate, now)
 	}
 	reg.SessionStartedAt = filtered.NativeStartAt
 	if code := checkNewSubagent(filtered, reg.ParentNativeSessionID, reg.SubagentID, parent.SessionStartedAt, candidate.ObservedAt); code != "" {
@@ -136,14 +157,17 @@ func validateCandidateTranscript(local *state.Store, candidate state.SubagentCan
 }
 
 // awaitSubagentTranscript decides for a candidate whose transcript is missing
-// or holds no native record yet. A hook's waits out subagentTranscriptGrace
-// from its SubagentStop, then is rejected as never written. A transcript
-// backfill found is history and will not grow, so it is rejected at once.
-func awaitSubagentTranscript(local *state.Store, candidate state.SubagentCandidate, opts Options) error {
+// or holds no native record yet. A candidate from a hook waits out
+// subagentTranscriptGrace from its SubagentStop, then is rejected as never
+// written. So is one observed more than the grace in the future: a clock
+// that has jumped back would otherwise keep it waiting that much longer. A
+// transcript backfill found is history and will not grow, so it is
+// rejected at once.
+func awaitSubagentTranscript(local *state.Store, candidate state.SubagentCandidate, now time.Time) error {
 	if candidate.Origin == archive.SessionOriginImport {
 		return rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
 	}
-	if opts.now().Sub(candidate.ObservedAt) < subagentTranscriptGrace {
+	if age := now.Sub(candidate.ObservedAt); age < subagentTranscriptGrace && age >= -subagentTranscriptGrace {
 		return errSubagentWaiting
 	}
 	return rejectSubagentCandidate(local, candidate, "subagent_transcript_never_written")

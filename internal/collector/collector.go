@@ -156,7 +156,11 @@ type Result struct {
 	// transcripts are not written yet. Each is retried on the next pass, and
 	// rejected once subagentTranscriptGrace has passed; neither is an error.
 	WaitingSubagents []string
-	Errors           map[string]error
+	// RejectedSubagents maps each subagent candidate rejected this pass to
+	// its code. A rejection that lost nothing (the transcript was never
+	// written, say) is only counted here; any other is in Errors too.
+	RejectedSubagents map[string]string
+	Errors            map[string]error
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -184,14 +188,14 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// A copy of Cursor's database a killed collector or backfill left
 	// behind goes on every pass, whether or not this one reads Cursor.
 	cursorstore.RemoveStaleSnapshots()
-	subagents := materializeSubagentCandidates(local, opts)
+	subagents := materializeSubagentCandidates(local, opts, now)
 	p := &pass{
 		ctx:    ctx,
 		local:  local,
 		remote: store,
 		opts:   opts,
 		now:    now,
-		result: Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting},
+		result: Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 	}
 	if replayErr != nil {
 		p.result.Errors["admission-intents"] = replayErr

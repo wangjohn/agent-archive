@@ -620,7 +620,7 @@ type Status struct {
 	// WaitingSubagents counts the subagents a SubagentStop hook reported whose
 	// transcripts were not written yet at the last pass. It is not a problem:
 	// each is registered once its transcript appears, or rejected when it
-	// never does, so only status --verbose shows it.
+	// never does, so only status --verbose and --json show it.
 	WaitingSubagents int `json:"waiting_subagents,omitempty"`
 }
 
