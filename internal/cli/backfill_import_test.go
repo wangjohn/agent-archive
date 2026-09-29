@@ -297,7 +297,7 @@ func TestBackfillListAndShow(t *testing.T) {
 	if _, _, code := f.command(t, "list", "--imported", "--hook-captured"); code != 2 {
 		t.Fatalf("both filters: code %d", code)
 	}
-	out, errOut, code = f.command(t, "show", parents[0].ArchiveSessionID)
+	out, errOut, code = f.command(t, "show", parents[0].ArchiveSessionID, "--json")
 	if code != 0 {
 		t.Fatalf("show: %s", errOut)
 	}

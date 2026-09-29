@@ -370,7 +370,7 @@ Manage capture
 
 Inspect history
   agent-archive list        Find archived sessions
-  agent-archive show        Read a session's metadata
+  agent-archive show        Read a session's summary or transcript
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history

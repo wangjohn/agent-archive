@@ -24,7 +24,7 @@ type showLookup struct {
 // lookups win. Otherwise it matches short ids and case-insensitive title
 // substrings among archived metadata (capped like list). Multiple matches on
 // a TTY open a one-shot picker that returns the chosen session (so the caller
-// can still honor --normalized); off a TTY they error with the candidates.
+// can still honor --transcript and --json); off a TTY they error with the candidates.
 func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string) (showLookup, int) {
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
@@ -78,9 +78,10 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		return showLookup{}, 1
 	}
 	format := listFormatOptions{Now: env.now(), Projects: cfgProjects, Style: styleFor(stdout), GroupByProject: true}
-	row, ok, code := pickBrowseSession(stdin, stdout, stderr, matches, len(matches), false, format, "show", "show")
-	if code != 0 {
-		return showLookup{}, code
+	row, ok, err := pickBrowseSession(newPrompter(stdin, stdout), stdout, matches, len(matches), false, format, "show")
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+		return showLookup{}, 1
 	}
 	if !ok {
 		return showLookup{Cancelled: true}, 0

@@ -37,7 +37,7 @@ Manage capture
 
 Inspect history
   agent-archive list        Find archived sessions
-  agent-archive show        Read a session's metadata
+  agent-archive show        Read a session's summary or transcript
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
@@ -207,9 +207,10 @@ Find sessions using metadata; does not download conversation content.
 Default text columns: TITLE (first filtered prompt preview, or a short
 SESSION_ID prefix when none), relative capture time, harness, project,
 and a short SESSION_ID. On a terminal with an interactive stdin, list a
-numbered table and pick a session to show its metadata; q quits. Piped
-or --json output is never interactive. On a terminal without interactive
-stdin, text is paged through $PAGER unless --no-pager.
+numbered table and pick a session to show its summary, then t for its
+transcript, Enter or b to go back, or q to quit. Piped or --json output is
+never interactive. On a terminal without interactive stdin, text is paged
+through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -269,24 +270,35 @@ Guide: [Inspect the archive](../guides/list-and-show.md).
 ```text
 Usage: agent-archive show [SESSION_ID|TITLE] [options]
 
-Print session metadata as JSON (--json is accepted, as for list and status).
-An imported session also shows origin, imported_at, and started_at_source.
-With no SESSION_ID on a terminal, show the same interactive session picker
-as list and print the chosen session's metadata. A TITLE substring also
-matches; several matches on a terminal open the picker.
+Print a readable summary of a session's metadata: title, when, app, models,
+activity counts, skills, subagents, and capture gaps. --json prints the
+metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
+several matches on a terminal open a picker. With no SESSION_ID on a
+terminal, browse sessions as list does: pick one for its summary, then t for
+its transcript, Enter or b to go back, or q to quit.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
-  --normalized          Also download and verify the source bundle, and print
-                        conversation content as well
-  --json                JSON, the default and only format
-Example: agent-archive show SESSION_ID --normalized
+  --transcript          Download and verify the source bundle, and print the
+                        conversation: prompts, replies, one line per tool call
+  --full                With --transcript, also print tool results (trimmed)
+  --json                Print JSON: the metadata sidecar, which an imported
+                        session extends with origin, imported_at, and
+                        started_at_source; with --transcript, then the
+                        normalized conversation
+  --no-pager            Print a transcript directly; do not page through
+                        $PAGER
+  --normalized          Deprecated: the same as --transcript --json
+Example: agent-archive show SESSION_ID --transcript
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--full` | no value | — |
 | `--harness` | a value | — |
 | `--json` | no value | — |
+| `--no-pager` | no value | — |
 | `--normalized` | no value | — |
+| `--transcript` | no value | — |
 
 ## agent-archive feedback
 

@@ -33,9 +33,24 @@ follow [Semantic Versioning](https://semver.org/).
   prompt) and `project_name` (project basename at publish). Parser version
   is now `0.12.0` so existing sessions get titles on the next metadata
   refresh.
+- `show --transcript` prints a session's conversation to read: each prompt,
+  the agent's replies, and one line per tool call (✗ when it failed), paged
+  on a terminal (`--no-pager` to print directly). `--full` adds each tool
+  result, trimmed. `--transcript --json` prints what `--normalized` printed.
+- Browsing on a terminal (`list`, bare `show`) opens a session's summary in
+  place of the list, on the terminal's alternate screen: `t` shows its
+  transcript, Enter or `b` goes back to the list, and `q` quits. The last
+  summary viewed stays in scrollback. Bare `show` now keeps browsing like
+  `list` instead of exiting after one pick.
 
 ### Changed
 
+- **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
+  (title, when, app, models, activity, skills, subagents, capture gaps)
+  instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what
+  `show` printed before.
+- `show --normalized` is deprecated in favor of `show --transcript --json`.
+  It still works, with unchanged output, and prints a note on stderr.
 - Long-running CLI steps show a short TTY spinner (registering sessions,
   finishing upload, waiting for the collector, scanning, listing, loading a
   session, looking for past sessions, checking storage). Piped and CI output

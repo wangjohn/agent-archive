@@ -34,5 +34,5 @@ validate against a fixed version.
 - that both schemas list exactly `archive.CaptureGapCodes`, and every gap
   code the package writes is in it.
 
-`show` output is not an instance of `metadata.schema.json`: it adds
+`show --json` output is not an instance of `metadata.schema.json`: it adds
 `linked_session_availability` (see [JSON output](json-output.md#show)).

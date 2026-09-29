@@ -19,17 +19,34 @@ func withPager(stdout, stderr io.Writer, env pagerDependencies, noPager bool, wr
 	if err := write(&buf); err != nil {
 		return err
 	}
+	_, err := pageText(stdout, stderr, env, noPager, false, buf.Bytes())
+	return err
+}
+
+// defaultPager is the pager when neither AGENT_ARCHIVE_PAGER nor PAGER is
+// set. -F quits at once when the text fits on one screen.
+const defaultPager = "less -FRX"
+
+// pageText writes text through the pager withPager would choose, and
+// reports whether a pager showed it. stayOpen is for the session browser,
+// which redraws the screen when the pager exits: the default pager then
+// waits for q even when the text fits on one screen, rather than returning
+// at once to a redraw that would hide it.
+func pageText(stdout, stderr io.Writer, env pagerDependencies, noPager, stayOpen bool, text []byte) (paged bool, err error) {
 	command, page := resolvePagerCommand(env, noPager, stdout)
 	if !page {
-		_, err := io.Copy(stdout, &buf)
-		return err
+		_, err := stdout.Write(text)
+		return false, err
 	}
-	if err := env.runPager(command, &buf, stdout, stderr); err != nil {
+	if stayOpen && command == defaultPager {
+		command = "less -RX"
+	}
+	if err := env.runPager(command, bytes.NewReader(text), stdout, stderr); err != nil {
 		terminal.Printf(stderr, "agent-archive: warning: pager %q failed (%v); printing directly\n", command, err)
-		_, copyErr := io.Copy(stdout, bytes.NewReader(buf.Bytes()))
-		return copyErr
+		_, copyErr := stdout.Write(text)
+		return false, copyErr
 	}
-	return nil
+	return true, nil
 }
 
 // resolvePagerCommand chooses the pager command. An empty
@@ -51,7 +68,7 @@ func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) 
 		}
 		return value, true
 	}
-	return "less -FRX", true
+	return defaultPager, true
 }
 
 func (e Env) runPager(command string, stdin io.Reader, stdout, stderr io.Writer) error {

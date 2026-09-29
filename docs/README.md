@@ -48,6 +48,6 @@ If your app still has no captured session, use its specific steps: [Claude Code]
 | [Local state](reference/local-state.md) | Every file in the data directory. |
 | [Capture capabilities](reference/capture-capabilities.md) | What each app's hooks provide, and the versions observed. |
 | [Session eligibility](reference/session-eligibility.md) | Which sessions are captured, and why. |
-| [JSON output](reference/json-output.md) | `list --json`, `show`, and `status --json`: the contract for scripts. |
+| [JSON output](reference/json-output.md) | `list --json`, `show --json`, and `status --json`: the contract for scripts. |
 | [Glossary](reference/glossary.md) | The terms agent-archive uses: harness, capture gap, sidecar, admission, parser status, read-back, and more. |
 | [JSON schemas](reference/schemas.md) | `metadata.schema.json` and `source-bundle.schema.json`, their $ids, and the tests that validate them. |

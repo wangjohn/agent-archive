@@ -8,7 +8,7 @@ a session.
 # Newest archived sessions matching the filters (at most 50 by default):
 # title (first filtered prompt preview), relative time, harness, project,
 # and short ID. Metadata only, never full transcript text. On an interactive
-# terminal, pick a numbered row to show that session's metadata (q to quit).
+# terminal, pick a numbered row to see that session's summary (see below).
 # Otherwise the table is paged through $PAGER (or less); use --no-pager to
 # print directly.
 agent-archive list
@@ -32,14 +32,65 @@ agent-archive list --json
 agent-archive list --json --limit 0
 agent-archive list --rebuild-index  # one-time full scan for older archives
 
-# One session's metadata sidecar, as JSON. With no SESSION_ID on a terminal,
-# the same interactive picker as list. A title substring also works.
+# One session's summary: title, when, app, models, activity, skills,
+# subagents, and capture gaps. With no SESSION_ID on a terminal, the same
+# session browser as list. A title substring or short ID also works.
 agent-archive show
 agent-archive show SESSION_ID
 agent-archive show "OAuth callback"
 agent-archive show "OAuth callback" --harness codex  # search one app
-agent-archive show SESSION_ID --normalized   # also the verified conversation
+agent-archive show SESSION_ID --json         # the metadata sidecar, for scripts
+
+# The conversation itself, only when you ask for it.
+agent-archive show SESSION_ID --transcript          # prompts, replies, tool calls
+agent-archive show SESSION_ID --transcript --full   # also trimmed tool results
+agent-archive show SESSION_ID --transcript --json   # the normalized view as JSON
 ```
+
+A summary looks like this:
+
+```text
+Fix flaky OAuth callback tests
+claude · agent-archive · 2h ago                                      ✓ completed
+
+  When      Sep 29, 10:14 → 11:02 (48m span)
+  Agent     Claude Code 2.4.1
+  Model     claude-opus-5-5 (high reasoning) · 31 turns
+            claude-haiku-4-5 · 4 turns
+  Activity  35 turns · 212 messages · 148 tool calls · 3 shell commands ·
+            1 compaction
+  Skills    code-review, simplify
+  Subagents 2 linked (1 available, 1 expired)
+
+  ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
+     origin hook · parser 0.12.0 (partial) · filter 12
+
+  Transcript: agent-archive show 03e60c25 --transcript
+  JSON:       agent-archive show 03e60c25 --json
+```
+
+Rows the metadata has no data for are left out; a count that is unknown is
+not shown as zero. Times are in your local time zone. The metadata records
+when a session started and when it was last captured, not when it ended, so
+the time between them is labelled a span. A session with capture gaps lists
+each gap's code once, with how often it occurs.
+
+## Browsing on a terminal
+
+When stdin and stdout are both terminals, `list` and bare `show` open a
+session browser on the terminal's alternate screen, so the list and a
+session's summary replace each other instead of piling up:
+
+- Enter a row number or short SESSION_ID to see that session's summary.
+- In the summary, `t` opens its transcript through the pager (quit the pager
+  to come back), Enter or `b` returns to the list, and `q` quits.
+- `q` (or an empty answer at the list, or Ctrl-D) quits from anywhere. The
+  last summary you viewed is printed to the normal screen as the browser
+  closes, so its ID stays in your scrollback.
+
+Bare `show --transcript` is a usage error: pick a session with `show` and
+press `t`, or give a SESSION_ID. Bare `show --json` keeps a one-shot picker
+and prints the chosen sidecar.
 
 On an interactive terminal, bare `agent-archive` (no command) opens the
 same session browser as `list` when capture is already set up.
@@ -59,12 +110,19 @@ configured project basename. The ID column is a short prefix you can pass to
 `list --verbose` or add `--harness`. Projects with the same basename stay in
 separate groups, labeled with their project ID prefixes.
 
-`show` prints conversation content only when asked: `--normalized` downloads
-the session's source bundle, verifies its checksum and identity against the
-metadata, and prints the normalized view (turns, tool calls, and
-hook-reported final messages) after the sidecar. If the same session ID was
-published under more than one harness, pass `--harness` to pick one. The
-object layout is in
+`show` prints conversation content only when asked, with `--transcript` or
+the browser's `t`: it downloads the session's source bundle, verifies its
+checksum and identity against the metadata, and prints each prompt, the
+agent's replies, one line per tool call (`▸ Bash go test ./...`, marked ✗
+when the call failed), and any final response a hook reported that the
+transcript lacks. Edit bodies are never shown. `--full` adds each tool
+result, trimmed to its first and last lines. On a terminal the transcript is
+paged like `list`; `--no-pager` prints it directly. `--transcript --json`
+prints the sidecar and then the normalized view (turns, tool calls, tool
+results, and hook-reported final messages) as JSON. `--normalized`, its
+former name, still works and prints a deprecation note on stderr. If the
+same session ID was published under more than one harness, pass `--harness`
+to pick one. The object layout is in
 [bucket layout](../reference/bucket-layout.md).
 
 Before setup has run, both commands print `Not set up.` to stderr and exit 1.
@@ -89,12 +147,13 @@ A Claude Code subagent (`SubagentStop`) becomes its own archived session with
 accepted parent: matching parent and agent IDs, and a start after the
 parent's start and the project's activation. The parent gets
 `linked_sessions`; it does not embed the child's transcript or count its
-messages. `agent-archive show PARENT` adds `linked_session_availability`
-(pending, unavailable, or unavailable-or-expired per child) beside the
-sidecar's own fields, so `show` output is not itself an instance of
+messages. `agent-archive show PARENT` counts them on its Subagents row, and
+`show PARENT --json` adds `linked_session_availability` (pending,
+unavailable, or unavailable-or-expired per child) beside the sidecar's own
+fields, so `show --json` output is not itself an instance of
 `metadata.schema.json`; validate stored metadata objects, not command output.
-Select a child with `agent-archive show CHILD --normalized` for its verified
-content. Links do not extend retention, and children are never downloaded
+A child's summary names its parent. Select a child with
+`agent-archive show CHILD --transcript` for its verified content. Links do not extend retention, and children are never downloaded
 recursively. Codex and Cursor subagents are not captured yet.
 
 ## Skill evidence
