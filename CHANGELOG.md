@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `handoff --to claude|codex|cursor` launches a local coding agent with the
+  filtered session record in a private temporary file. The receiving agent is
+  told how to inspect the archived or current local record with Agent Archive.
+
 ## [0.2.0] - 2026-09-29
 
 The archive browser now has bounded, readable listings and terminal pickers for
@@ -13,7 +19,6 @@ The archive browser now has bounded, readable listings and terminal pickers for
 to schema version 4, which reports whether the total match count is known.
 
 ### Added
-
 - `list --limit N` caps how many sessions are shown (default 50, newest
   first; `0` for all). A truncated text listing reports
   `Showing N or more session(s)` when the count is unknown, or
