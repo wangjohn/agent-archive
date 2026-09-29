@@ -520,7 +520,7 @@ func (s *replaceMetadataOnSecondRead) Get(ctx context.Context, key string) ([]by
 	if key == s.key {
 		s.reads++
 		if s.reads == 2 {
-			if err := s.ObjectStore.Put(ctx, key, s.replacement); err != nil {
+			if err := s.Put(ctx, key, s.replacement); err != nil {
 				return nil, err
 			}
 		}
