@@ -136,6 +136,7 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 	add("Agent", strings.TrimSpace(agent))
 	add("Model", summaryModels(m.Models)...)
 	add("Activity", wrapList(summaryActivity(m.Counts), " · ", width)...)
+	add("Tools", wrapList(summaryTools(m.ToolsUsed), " · ", width)...)
 	add("Skills", wrapList(displayAll(skillNames(m)), ", ", width)...)
 	add("Subagents", summarySubagents(m, view.LinkedAvailability))
 	if m.ParentSessionID != "" {
@@ -205,10 +206,14 @@ func summaryStatus(m archive.Metadata, s textStyle) string {
 }
 
 // sessionEnd is when the session's recorded activity ends, and whether
-// that is the recorded end of the session. Metadata does not record an end
-// yet, so it is the capture time: the latest activity the capture can
-// include, shown as a span rather than a duration.
+// that is the recorded end of the session: ended_at, the latest record
+// timestamp, when the parser found one. Otherwise it is the capture time,
+// the latest activity the capture can include, shown as a span rather than
+// a duration.
 func sessionEnd(m archive.Metadata) (end time.Time, exact bool) {
+	if m.EndedAt != nil {
+		return *m.EndedAt, true
+	}
 	return m.CapturedAt, false
 }
 
@@ -331,8 +336,9 @@ func summaryModels(models []archive.ModelSummary) []string {
 
 // summaryActivity lists the counts the metadata knows, skipping unknown
 // (nil) ones rather than showing them as zero. Shell commands and
-// compactions are occasional, so a known zero of either is left out too;
-// turns, messages, and tool calls are shown even when zero.
+// compactions are occasional, and many sessions edit no files, so a known
+// zero of those is left out too; turns, messages, and tool calls are shown
+// even when zero.
 func summaryActivity(c archive.Counts) []string {
 	var parts []string
 	add := func(n *int, unit string, showZero bool) {
@@ -345,7 +351,22 @@ func summaryActivity(c archive.Counts) []string {
 	add(c.ToolCalls, "tool call", true)
 	add(c.UserShellCommands, "shell command", false)
 	add(c.Compactions, "compaction", false)
+	if c.FilesTouched != nil && *c.FilesTouched != 0 {
+		parts = append(parts, plural(*c.FilesTouched, "file")+" edited")
+	}
 	return parts
+}
+
+// summaryTools lists the most-called tools with their counts, most-called
+// first, as metadata orders them: "Bash 42 · Edit 18".
+func summaryTools(tools []archive.ToolUsage) []string {
+	items := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		if name := archive.DisplayLine(tool.Name); name != "" {
+			items = append(items, fmt.Sprintf("%s %d", name, tool.Count))
+		}
+	}
+	return items
 }
 
 // wrapList joins items with sep into lines at most width columns wide,
