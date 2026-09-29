@@ -23,6 +23,16 @@ func waitingSummary(waiting []string, next time.Time) string {
 	return fmt.Sprintf("%d waiting for the upload interval (next at %s), ", len(waiting), next.Local().Format("15:04"))
 }
 
+// waitingSubagentsSummary is sync's count of subagents whose transcripts
+// are not written yet, or "" when none wait. They are not failures: the
+// collector registers each once its transcript appears, or gives up on it.
+func waitingSubagentsSummary(waiting []string) string {
+	if len(waiting) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %d subagent(s) waiting for transcripts", len(waiting))
+}
+
 // runSyncCommand implements `agent-archive sync`: one explicit collection
 // pass, preserving queued work on failure. It respects paused state and
 // does not implicitly resume, per the spec.
@@ -54,8 +64,8 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 		return 1
 	}
-	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed.\n",
-		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors))
+	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed%s.\n",
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), waitingSubagentsSummary(result.WaitingSubagents))
 	for id, sessionErr := range result.Errors {
 		terminal.Printf(stderr, "agent-archive: sync: %s: %v\n", id, sessionErr)
 	}

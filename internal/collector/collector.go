@@ -152,7 +152,11 @@ type Result struct {
 	// earliest of them becomes due.
 	Waiting     []string
 	NextReadyAt time.Time
-	Errors      map[string]error
+	// WaitingSubagents lists the subagents a SubagentStop hook reported whose
+	// transcripts are not written yet. Each is retried on the next pass, and
+	// rejected once subagentTranscriptGrace has passed; neither is an error.
+	WaitingSubagents []string
+	Errors           map[string]error
 }
 
 // Run performs one collector pass over every registered session: for each,
@@ -180,13 +184,14 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	// A copy of Cursor's database a killed collector or backfill left
 	// behind goes on every pass, whether or not this one reads Cursor.
 	cursorstore.RemoveStaleSnapshots()
+	subagents := materializeSubagentCandidates(local, opts)
 	p := &pass{
 		ctx:    ctx,
 		local:  local,
 		remote: store,
 		opts:   opts,
 		now:    now,
-		result: Result{Errors: materializeSubagentCandidates(local, opts)},
+		result: Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting},
 	}
 	if replayErr != nil {
 		p.result.Errors["admission-intents"] = replayErr
@@ -436,6 +441,7 @@ func (p *pass) saveStatus() error {
 		LastPublishedAt:        lastPublishedAt,
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
+		WaitingSubagents:       len(p.result.WaitingSubagents),
 	}
 	status.SetLastErrors(problems...)
 	if err := p.local.SaveStatus(status); err != nil {

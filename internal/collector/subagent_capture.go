@@ -2,7 +2,6 @@ package collector
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -11,21 +10,60 @@ import (
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
-// materializeSubagentCandidates registers each candidate a hook left, or
-// rejects it, and returns the per-candidate failures keyed by the
-// candidate's archive session ID. One unreadable candidate fails only
-// itself.
-func materializeSubagentCandidates(local *state.Store, opts Options) map[string]error {
+// subagentTranscriptGrace is how long a candidate a SubagentStop hook left
+// may wait for its transcript to appear, or to hold a native record. Claude
+// Code fires SubagentStop for some background agents with a transcript path
+// it never writes; without a limit the candidate would be retried, and
+// reported, on every pass for good, and its parent's link would stay pending.
+// A real subagent's transcript is written well within this.
+const subagentTranscriptGrace = 30 * time.Minute
+
+// errSubagentWaiting marks a candidate whose transcript is missing or empty
+// but still inside subagentTranscriptGrace. It is kept for the next pass and
+// is not a failure.
+var errSubagentWaiting = errors.New("subagent transcript is not written yet")
+
+// subagentRejectedError is a candidate the collector decided not to register:
+// it is acknowledged, and its parent told the link is unavailable. The
+// decision is final, so it is not reported as a failed session.
+type subagentRejectedError struct{ code string }
+
+func (e subagentRejectedError) Error() string { return e.code }
+
+// subagentOutcome is what materializing the pending candidates did.
+type subagentOutcome struct {
+	// errors holds the candidates that failed, keyed by archive session ID.
+	errors map[string]error
+	// waiting lists the candidates kept for their transcripts (see
+	// errSubagentWaiting).
+	waiting []string
+	// rejected lists the candidates rejected this pass.
+	rejected []string
+}
+
+// materializeSubagentCandidates registers each candidate a hook left, rejects
+// it, or keeps it waiting for its transcript. One unreadable candidate fails
+// only itself.
+func materializeSubagentCandidates(local *state.Store, opts Options) subagentOutcome {
 	candidates, issues, err := local.ScanSubagentCandidates()
 	if err != nil {
-		return map[string]error{"subagent-candidates": err}
+		return subagentOutcome{errors: map[string]error{"subagent-candidates": err}}
 	}
+	outcome := subagentOutcome{errors: issues}
 	for _, candidate := range candidates {
-		if err := materializeSubagentCandidate(local, candidate, opts); err != nil {
-			issues[candidate.ArchiveSessionID] = err
+		err := materializeSubagentCandidate(local, candidate, opts)
+		var rejected subagentRejectedError
+		switch {
+		case err == nil:
+		case errors.Is(err, errSubagentWaiting):
+			outcome.waiting = append(outcome.waiting, candidate.ArchiveSessionID)
+		case errors.As(err, &rejected):
+			outcome.rejected = append(outcome.rejected, candidate.ArchiveSessionID)
+		default:
+			outcome.errors[candidate.ArchiveSessionID] = err
 		}
 	}
-	return issues
+	return outcome
 }
 
 func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, opts Options) error {
@@ -81,18 +119,11 @@ func validateCandidateTranscript(local *state.Store, candidate state.SubagentCan
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")
 	}
 	filtered, _, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return reg, fmt.Errorf("subagent transcript is not available yet: %w", err)
-		}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
 	}
-	if subagentTranscriptEmpty(filtered) {
-		if candidate.Origin == archive.SessionOriginImport {
-			// A transcript backfill found is history: it will not grow.
-			return reg, rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
-		}
-		return reg, errors.New("subagent transcript is empty; waiting for native records")
+	if err != nil || subagentTranscriptEmpty(filtered) {
+		return reg, awaitSubagentTranscript(local, candidate, opts)
 	}
 	reg.SessionStartedAt = filtered.NativeStartAt
 	if code := checkNewSubagent(filtered, reg.ParentNativeSessionID, reg.SubagentID, parent.SessionStartedAt, candidate.ObservedAt); code != "" {
@@ -102,6 +133,20 @@ func validateCandidateTranscript(local *state.Store, candidate state.SubagentCan
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_start_ineligible")
 	}
 	return reg, nil
+}
+
+// awaitSubagentTranscript decides for a candidate whose transcript is missing
+// or holds no native record yet. A hook's waits out subagentTranscriptGrace
+// from its SubagentStop, then is rejected as never written. A transcript
+// backfill found is history and will not grow, so it is rejected at once.
+func awaitSubagentTranscript(local *state.Store, candidate state.SubagentCandidate, opts Options) error {
+	if candidate.Origin == archive.SessionOriginImport {
+		return rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
+	}
+	if opts.now().Sub(candidate.ObservedAt) < subagentTranscriptGrace {
+		return errSubagentWaiting
+	}
+	return rejectSubagentCandidate(local, candidate, "subagent_transcript_never_written")
 }
 
 func checkSubagentRegistrationConflict(local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
@@ -213,6 +258,9 @@ func checkSubagentProvenance(filtered archive.FilteredTranscript, parentNativeSe
 	return nil
 }
 
+// rejectSubagentCandidate acknowledges candidate and tells its parent the
+// link is unavailable, then returns a subagentRejectedError with code. Any
+// other error means one of those writes failed and the candidate stays.
 func rejectSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, code string) error {
 	evidence, err := archive.NewLinkedSessionEvidence(candidate.ArchiveSessionID, archive.LinkedSessionUnavailable, candidate.ObservedAt)
 	if err != nil {
@@ -227,7 +275,7 @@ func rejectSubagentCandidate(local *state.Store, candidate state.SubagentCandida
 	if err := local.AcknowledgeSubagentCandidate(candidate); err != nil {
 		return err
 	}
-	return fmt.Errorf("%s", code)
+	return subagentRejectedError{code: code}
 }
 
 // announceSubagent tells a published subagent's parent that it is published,

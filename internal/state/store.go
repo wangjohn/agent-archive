@@ -617,6 +617,11 @@ type Status struct {
 	// cannot be rebuilt. Their metadata stays as published until the
 	// session changes. It names no session and no content.
 	UnrefreshableSummaries int `json:"unrefreshable_summaries,omitempty"`
+	// WaitingSubagents counts the subagents a SubagentStop hook reported whose
+	// transcripts were not written yet at the last pass. It is not a problem:
+	// each is registered once its transcript appears, or rejected when it
+	// never does, so only status --verbose shows it.
+	WaitingSubagents int `json:"waiting_subagents,omitempty"`
 }
 
 // SetLastErrors replaces the problems the status records with problems,

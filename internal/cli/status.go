@@ -1712,6 +1712,9 @@ func printStatusDetails(out io.Writer, view statusView) {
 	if n := view.Collector.UnrefreshableSummaries; n > 0 {
 		terminal.Printf(out, "  Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
 	}
+	if n := view.Collector.WaitingSubagents; n > 0 {
+		terminal.Printf(out, "  Subagents waiting for transcripts: %d\n", n)
+	}
 	for _, warning := range view.Warnings {
 		terminal.Printf(out, "  Warning:       %s\n", warning)
 	}
