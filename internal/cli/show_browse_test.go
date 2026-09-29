@@ -391,7 +391,7 @@ func TestBrowserDetailsCutToFitTheWindow(t *testing.T) {
 			t.Fatalf("cut details take %d rows of 9:\n%s", n, screen)
 		}
 	}
-	if len(pages) != 1 || pages[0].command != "less -RX -+F" || !strings.Contains(pages[0].text, "ID "+id) || strings.Contains(pages[0].text, "visible") {
+	if len(pages) != 1 || !strings.HasPrefix(pages[0].command, "less -RX --mouse") || !strings.HasSuffix(pages[0].command, "q back' -+F") || !strings.Contains(pages[0].text, "ID "+id) || strings.Contains(pages[0].text, "visible") {
 		t.Fatalf("m paged %+v", pages)
 	}
 }
@@ -450,4 +450,24 @@ func TestBrowserCutDetailsGolden(t *testing.T) {
 		t.Fatalf("cut details take %d rows of 14:\n%s", n, out.String())
 	}
 	golden.Check(t, filepath.Join("testdata", "browse", "details-cut.txt"), out.Bytes())
+}
+
+// Only the default less is set up to scroll on the wheel, so the hint for a
+// less the user chose names the keys instead.
+func TestBrowserTranscriptHintFollowsThePager(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ pager, want string }{
+		{"", "t opens the transcript: scroll with the wheel or arrows, q returns here."},
+		{"less -R", "t opens the transcript: scroll with the arrows or space, q returns here."},
+		{"most", "t opens the transcript in your pager; quit it to return here."},
+	} {
+		env := testEnv(t, t.TempDir(), summaryNow)
+		var out bytes.Buffer
+		env.IsTerminal = func(stream any) bool { return stream == any(&out) }
+		env.LookupEnv = func(key string) (string, bool) { return tc.pager, tc.pager != "" && key == "PAGER" }
+		b := &sessionBrowser{env: env, stdout: &out}
+		if got := b.transcriptHint(); got != tc.want {
+			t.Errorf("PAGER=%q: hint %q, want %q", tc.pager, got, tc.want)
+		}
+	}
 }

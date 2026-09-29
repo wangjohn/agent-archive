@@ -22,6 +22,11 @@ follow [Semantic Versioning](https://semver.org/).
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
   summary viewed stays in scrollback. Bare `show` now keeps browsing like
   `list` instead of exiting after one pick.
+- The session browser and the session pickers (`list`, bare `show`,
+  `handoff`, `show --json` without an ID, an ambiguous `show QUERY`) fit the
+  window: a list taller than the terminal is shown a page at a time (`n` and
+  `p` move; any row number or short ID still works), and a summary taller
+  than the terminal is cut with "… N more lines" and `m` to read it whole.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
   `subagent_transcript_never_written` capture gap, "Claude Code reported a

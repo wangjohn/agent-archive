@@ -173,12 +173,16 @@ func (b *sessionBrowser) drawDetails(summary, hint string) (cut bool) {
 // transcriptHint says how to use and leave the pager t opens, or is empty
 // when the transcript is printed without one.
 func (b *sessionBrowser) transcriptHint() string {
-	command, page := resolvePagerCommand(b.env, b.noPager, b.stdout)
-	if !page {
+	command, chosen, page := resolvePagerCommand(b.env, b.noPager, b.stdout)
+	switch {
+	case !page:
 		return ""
-	}
-	if isLess(command) {
+	case !chosen:
+		// The default less scrolls on the wheel (defaultPagerCommand).
 		return "t opens the transcript: scroll with the wheel or arrows, q returns here."
+	case isLess(command):
+		// A less the user set may not take the wheel.
+		return "t opens the transcript: scroll with the arrows or space, q returns here."
 	}
 	return "t opens the transcript in your pager; quit it to return here."
 }
