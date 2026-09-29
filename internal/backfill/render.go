@@ -259,9 +259,11 @@ func renderPlanTotals(w io.Writer, p Plan, projects []ProjectSummary) {
 
 // planTotals is derived solely from the project rows shown above it.
 type planTotals struct {
-	sessions, subagents int
-	bytes               int64
-	first, last         time.Time
+	sessions  int
+	subagents int
+	bytes     int64
+	first     time.Time
+	last      time.Time
 }
 
 func summarizeProjects(projects []ProjectSummary) planTotals {
