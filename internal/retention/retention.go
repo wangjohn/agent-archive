@@ -283,15 +283,18 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 	if locallyExpired && currentDestination {
 		hasRemoteEvidence = summary.Published || owed.Upload || s.local.LostPublication(id)
 	}
-	switch chooseSessionAction(locallyExpired, currentDestination, hasRemoteEvidence) {
+	action := chooseSessionAction(locallyExpired, currentDestination, hasRemoteEvidence)
+	switch action {
 	case forgetPreviousDestination:
 		return s.forget(reg, deferForWork, &s.result.PrunedSessions, "forget session from a previous destination")
 	case forgetNeverPublished:
 		return s.forget(reg, deferForWork, &s.result.PrunedSessions, "forget never-published session")
 	case leaveSession:
 		return nil
-	default:
+	case sweepRemote:
 		return s.remote(reg, summary, ageFrom, locallyExpired, deferForWork)
+	default:
+		return fmt.Errorf("unknown retention action %d", action)
 	}
 }
 
