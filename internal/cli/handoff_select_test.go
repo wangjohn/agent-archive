@@ -398,7 +398,8 @@ func TestHandoffPickerFooterCountsOfferableSessions(t *testing.T) {
 	}
 	f.addSession(t, "codex", "native-old", "", f.env.now().Add(-3*time.Hour))
 	out, errOut, code = runPicker(t, f.env, "q\n")
-	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d or more session(s).", defaultListLimit)) {
+	// handoff takes neither --limit nor --since, so the footer doesn't offer them.
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d or more session(s). Narrow with --harness", defaultListLimit)) || strings.Contains(out, "--limit") {
 		t.Fatalf("one not uploaded: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")

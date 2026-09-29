@@ -240,7 +240,7 @@ func pickBrowseRow(p *prompter, stdout io.Writer, rows []listRow, totalMatched i
 	if err := printSessionTable(stdout, rows, format); err != nil {
 		return listRow{}, false, err
 	}
-	printListFooter(stdout, len(rows), totalMatched, truncated)
+	printListFooter(stdout, len(rows), totalMatched, truncated, format.NarrowHint)
 	if len(rows) == 0 {
 		return listRow{}, false, nil
 	}

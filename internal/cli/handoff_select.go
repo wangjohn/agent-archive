@@ -142,7 +142,8 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		terminal.Println(stdout, "No sessions match.")
 		return "", "", false, 0
 	}
-	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true}
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true,
+		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
 	row, selected, err := pickBrowseRow(newPrompter(stdin, stdout), stdout, formatHandoffRows(rows, format), total, truncated, format, "hand off")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
