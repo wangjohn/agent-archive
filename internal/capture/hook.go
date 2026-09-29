@@ -113,9 +113,18 @@ func classifyHookEvent(harness, eventName string) hookEventKind {
 // a paused archive are no-ops. While setup's transaction is open a start is
 // only explained by a diagnostic. Otherwise the event is handled under
 // hooks.lock, which it waits at most a second for.
-func HandleEvent(home, harness string, payload map[string]any, now time.Time) error {
-	return handleEvent(home, harness, payload, now, nil, nil)
+func HandleEvent(home, harness string, payload map[string]any, now time.Time, options ...Option) error {
+	var o eventOptions
+	for _, option := range options {
+		option(&o)
+	}
+	return handleEvent(home, harness, payload, now, nil, o.repoKey)
 }
+
+// Option adjusts HandleEvent.
+type Option func(*eventOptions)
+
+type eventOptions struct{ repoKey RepoKeyFunc }
 
 // RepoKeyFunc returns archive.RepoKey of the git repository at a project
 // root, or "" when it has none or cannot tell. The hook runs no program
@@ -123,12 +132,12 @@ func HandleEvent(home, harness string, payload map[string]any, now time.Time) er
 // return within a few hundred milliseconds and never panic.
 type RepoKeyFunc func(root string) string
 
-// HandleEventWithRepoKey is HandleEvent that also records repoKey's answer on
-// a session it registers, so the session carries its repository even if the
-// checkout is later moved or deleted. A nil repoKey records none, and the
-// collector derives one when it publishes.
-func HandleEventWithRepoKey(home, harness string, payload map[string]any, now time.Time, repoKey RepoKeyFunc) error {
-	return handleEvent(home, harness, payload, now, nil, repoKey)
+// WithRepoKey records repoKey's answer on a session HandleEvent registers, so
+// the session carries its repository even if the checkout is later moved or
+// deleted. Without it a registration has no key, and the collector derives
+// one when it publishes.
+func WithRepoKey(repoKey RepoKeyFunc) Option {
+	return func(o *eventOptions) { o.repoKey = repoKey }
 }
 
 // registrationRepoKey is repoKey(root), or "" when it is nil, panics, or does

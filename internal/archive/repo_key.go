@@ -30,6 +30,10 @@ func RepoKey(remote string) string {
 	return "repo-" + hex.EncodeToString(sum[:])[:16]
 }
 
+// remoteSchemes are the URL schemes a shared git remote uses. Anything else
+// (file, ftp, rsync) is not a repository another machine can reach.
+var remoteSchemes = map[string]bool{"http": true, "https": true, "ssh": true, "git": true, "git+ssh": true, "ssh+git": true}
+
 // IsRepoKey reports whether s has the shape RepoKey returns for a repository.
 func IsRepoKey(s string) bool { return repoKeyShape.MatchString(s) }
 
@@ -75,9 +79,7 @@ func splitURLRemote(raw string) (host, repoPath string) {
 	if err != nil {
 		return "", ""
 	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https", "ssh", "git", "git+ssh", "ssh+git":
-	default:
+	if !remoteSchemes[strings.ToLower(u.Scheme)] {
 		return "", ""
 	}
 	return u.Hostname(), u.Path

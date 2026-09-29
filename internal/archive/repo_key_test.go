@@ -14,7 +14,11 @@ import (
 func TestNormalizeRemoteURL(t *testing.T) {
 	t.Parallel()
 	const want = "github.com/acme/widget"
-	for _, tc := range []struct{ name, in, want string }{
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
 		{"https", "https://github.com/acme/widget", want},
 		{"https with .git", "https://github.com/acme/widget.git", want},
 		{"https with credentials", "https://user:token@github.com/acme/widget.git", want},
@@ -106,7 +110,11 @@ func TestRepoKeyIsEmptyWithoutAPortableRemote(t *testing.T) {
 func TestApplyRepoKeyKeepsOnlyAKey(t *testing.T) {
 	t.Parallel()
 	key := RepoKey("https://github.com/acme/widget")
-	for _, tc := range []struct{ name, in, want string }{
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
 		{"a key", key, key},
 		{"empty", "", ""},
 		{"a url", "https://user:token@github.com/acme/widget.git", ""},
