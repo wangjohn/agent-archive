@@ -133,7 +133,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		archived, _, _, err = loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: opts.harness}}, stderr, "handoff")
 	}
 	picker := handoffPicker{ctx: context.Background(), env: env, home: home, harness: opts.harness, source: opts.source, archiveRead: err == nil}
-	rows, total := picker.rows(regs, archived, defaultListLimit)
+	rows, total, truncated := picker.rows(regs, archived, defaultListLimit)
 	stop()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: note: the archive could not be read, so only this machine's sessions are listed: %v\n", err)
@@ -143,7 +143,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 		return "", "", false, 0
 	}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true}
-	row, selected, err := pickBrowseRow(newPrompter(stdin, stdout), stdout, formatHandoffRows(rows, format), total, total > len(rows), format, "hand off")
+	row, selected, err := pickBrowseRow(newPrompter(stdin, stdout), stdout, formatHandoffRows(rows, format), total, truncated, format, "hand off")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return "", "", false, 1
@@ -176,23 +176,27 @@ type handoffPicker struct {
 }
 
 // rows merges registrations with archived sessions, joined on the archive
-// session ID, and returns the first limit by most recent activity, with how
-// many there are in all. A registered session's activity is its source's,
-// newer than the archive's copy. Only a registration the archive lacks has its
+// session ID, and returns the first limit by most recent activity. A
+// registered session's activity is its source's, newer than the archive's
+// copy, read for all registrations at once (collector.LastActivities opens
+// the Cursor database once). Only a registration the archive lacks has its
 // transcript read, and only while rows are still needed, to title it and pass
-// over one with no prompt yet.
-func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archive.Metadata, limit int) ([]handoffPickerRow, int) {
+// over one with no prompt yet. total counts the sessions that can be offered,
+// or is -1 when some past the limit were not read to tell; truncated is set
+// when any are left out.
+func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archive.Metadata, limit int) (rows []handoffPickerRow, total int, truncated bool) {
 	all := make([]handoffPickerRow, 0, len(archived)+len(regs))
 	index := map[string]int{}
 	for _, m := range archived {
 		index[m.SessionID] = len(all)
 		all = append(all, handoffPickerRow{metadata: m, active: m.CapturedAt})
 	}
+	regs = slices.DeleteFunc(slices.Clone(regs), func(reg archive.SessionRegistration) bool {
+		return !topLevelRegistration(reg) || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness)
+	})
+	activity := collector.LastActivities(p.ctx, regs, p.env.cursorDatabase())
 	for _, reg := range regs {
-		if !topLevelRegistration(reg) || (p.harness != "" && archive.CanonicalHarness(reg.Harness.Name) != p.harness) {
-			continue
-		}
-		active, ok := collector.LastActivity(p.ctx, reg, p.env.cursorDatabase())
+		active, ok := activity[reg.ArchiveSessionID]
 		if !ok {
 			// No transcript (yet, or any more): nothing to hand off.
 			continue
@@ -209,23 +213,27 @@ func (p handoffPicker) rows(regs []archive.SessionRegistration, archived []archi
 		all = slices.DeleteFunc(all, func(row handoffPickerRow) bool { return !row.registered })
 	}
 	sort.SliceStable(all, func(i, j int) bool { return all[i].active.After(all[j].active) })
-	rows := make([]handoffPickerRow, 0, min(limit, len(all)))
-	total := len(all)
-	for _, row := range all {
+	rows = make([]handoffPickerRow, 0, min(limit, len(all)))
+	for i, row := range all {
 		if len(rows) == limit {
-			break
+			// Every archived session left over can be offered; one not
+			// yet uploaded may have no prompt, and was not read to see.
+			rest := all[i:]
+			if slices.ContainsFunc(rest, func(row handoffPickerRow) bool { return row.unbuilt != nil }) {
+				return rows, -1, true
+			}
+			return rows, len(rows) + len(rest), true
 		}
 		if row.unbuilt != nil {
 			metadata, ok := p.localMetadata(*row.unbuilt, row.active)
 			if !ok {
-				total--
 				continue
 			}
 			row.metadata, row.unbuilt = metadata, nil
 		}
 		rows = append(rows, row)
 	}
-	return rows, total
+	return rows, len(rows), false
 }
 
 // localMetadata is the part of a session's metadata the picker shows, built

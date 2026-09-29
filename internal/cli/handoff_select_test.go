@@ -381,3 +381,28 @@ func TestHandoffPickerTitleIsFiltered(t *testing.T) {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
+
+// Past the limit, the footer counts only sessions that can be offered: an
+// exact count when every one left is archived, "or more" when some not yet
+// uploaded were not read to see whether they have a prompt.
+func TestHandoffPickerFooterCountsOfferableSessions(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for i := range defaultListLimit {
+		f.addSession(t, "codex", fmt.Sprintf("native-many-%d", i), fmt.Sprintf("Task %d", i), f.env.now().Add(3*time.Hour+time.Duration(i)*time.Minute))
+	}
+	f.sync(t)
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+		t.Fatalf("all archived: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	f.addSession(t, "codex", "native-old", "", f.env.now().Add(-3*time.Hour))
+	out, errOut, code = runPicker(t, f.env, "q\n")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d or more session(s).", defaultListLimit)) {
+		t.Fatalf("one not uploaded: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	out, errOut, code = runPicker(t, f.env, "q\n", "--source", "archive")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s).", defaultListLimit, defaultListLimit+4)) {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
