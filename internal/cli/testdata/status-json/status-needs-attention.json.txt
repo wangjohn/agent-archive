@@ -103,7 +103,10 @@ $ agent-archive status --json
     "last_scan_at": "2026-09-25T12:00:00Z",
     "last_published_at": "2026-09-25T12:00:00Z",
     "pending_count": 0,
-    "last_error": "list registrations: AccessDenied: Access Denied"
+    "last_error": "list registrations: AccessDenied: Access Denied",
+    "last_errors": [
+      "list registrations: AccessDenied: Access Denied"
+    ]
   },
   "imported_sessions": 0,
   "imported_pending": 0,

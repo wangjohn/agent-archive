@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -409,6 +408,13 @@ func (p *pass) finishScan(reg archive.SessionRegistration) {
 	}
 }
 
+// FailedSessionsProblem is the problem a pass records in its Status when n
+// sessions failed to scan or publish. A caller that reports those sessions
+// again, with a fuller count, replaces this entry rather than adding one.
+func FailedSessionsProblem(n int) string {
+	return fmt.Sprintf("%d session(s) failed to scan or publish", n)
+}
+
 // saveStatus records the pass's summary for `status`.
 func (p *pass) saveStatus() error {
 	// A status file that no longer decodes is replaced below; it only ever
@@ -423,7 +429,7 @@ func (p *pass) saveStatus() error {
 	}
 	var problems []string
 	if len(p.result.Errors) > 0 {
-		problems = append(problems, fmt.Sprintf("%d session(s) failed to scan or publish", len(p.result.Errors)))
+		problems = append(problems, FailedSessionsProblem(len(p.result.Errors)))
 	}
 	// A size-limit gap is not a failure, but capture of the session has
 	// stopped at its last snapshot, which status must say rather than look
@@ -431,15 +437,14 @@ func (p *pass) saveStatus() error {
 	if len(p.sizeLimited) > 0 {
 		problems = append(problems, fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", len(p.sizeLimited)))
 	}
-	lastError := strings.Join(problems, "; ")
 	status := state.Status{
 		LastScanAt:             p.now.UTC(),
 		PendingCount:           p.pending,
 		LastPublishedAt:        lastPublishedAt,
-		LastError:              lastError,
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
 	}
+	status.SetLastErrors(problems...)
 	if err := p.local.SaveStatus(status); err != nil {
 		return fmt.Errorf("save status: %w", err)
 	}

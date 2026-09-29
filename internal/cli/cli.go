@@ -184,6 +184,9 @@ type Env struct {
 	// show use it for text listings and transcripts. Defaults to `sh -c
 	// command`. Tests set it so a listing never spawns less.
 	RunPager func(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error
+	// LaunchHandoff runs a local coding-agent CLI with a short prompt naming
+	// the private handoff file. Tests replace it to avoid starting an agent.
+	LaunchHandoff func(name, cwd, prompt string, stdin io.Reader, stdout, stderr io.Writer) error
 	// Interrupts delivers the signals that stop backfill while it plans,
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.

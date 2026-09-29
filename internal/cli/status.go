@@ -1295,8 +1295,8 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, sc.destinationRow(view), sc.privacyRow(view.PrivacyEvidence))
 	}
 	rows = append(rows, sc.backgroundRow(view))
-	if view.Collector.LastError != "" {
-		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{lastErrorText(view.Collector.LastError)}})
+	for _, text := range lastErrorRows(view.Collector) {
+		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{text}})
 	}
 	uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
@@ -1577,12 +1577,37 @@ func clauses(sentence string) []string {
 // sentence.
 var proseCommand = regexp.MustCompile(`agent-archive (?:` + strings.Join(slices.Sorted(maps.Keys(commandHelp)), "|") + `)\b(?: --[a-z][a-z-]*)*`)
 
-// lastErrorText is the Storage section's line for the collector's last
-// error. A storage refusal the collector recorded is shown by its plain
-// cause (see storage.Diagnose); the raw error text is in status --verbose.
-// Anything else, like the collector's own counts of failed sessions, is
-// shown as recorded.
-func lastErrorText(lastError string) string {
+// lastErrorRows are the Storage section's lines for the collector's last
+// errors, one per problem the pass recorded. A storage refusal is shown by
+// its plain cause (see storage.Diagnose); the raw error text is in status
+// --verbose. Anything else, like the collector's own counts of failed
+// sessions, is shown as recorded.
+//
+// A status file written before Status.LastErrors existed has only the joined
+// LastError. It is split where the collector joined problems, on "; ", and
+// shown on one line as before (see legacyLastErrorText).
+func lastErrorRows(status state.Status) []string {
+	if len(status.LastErrors) == 0 {
+		if status.LastError == "" {
+			return nil
+		}
+		return []string{legacyLastErrorText(status.LastError)}
+	}
+	rows := make([]string, 0, len(status.LastErrors))
+	for _, problem := range status.LastErrors {
+		if cause := storageErrorCause(problem); cause != "" {
+			rows = append(rows, cause)
+			continue
+		}
+		rows = append(rows, "Last error: "+problem)
+	}
+	return rows
+}
+
+// legacyLastErrorText is the one line an older status file's joined
+// lastError is shown as: a lone storage refusal's plain cause, or "Last
+// error: " and its problems, each storage refusal among them by its cause.
+func legacyLastErrorText(lastError string) string {
 	parts := strings.Split(lastError, "; ")
 	plain := false
 	for i, part := range parts {
@@ -1678,8 +1703,14 @@ func printStatusDetails(out io.Writer, view statusView) {
 	for _, diagnostic := range view.CaptureDiagnostics {
 		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
-	if view.Collector.LastError != "" {
-		terminal.Printf(out, "  Last error:    %s\n", view.Collector.LastError)
+	// Each problem as the collector recorded it, one per line; a status
+	// file from before LastErrors has only the joined text, shown as is.
+	lastErrors := view.Collector.LastErrors
+	if len(lastErrors) == 0 && view.Collector.LastError != "" {
+		lastErrors = []string{view.Collector.LastError}
+	}
+	for _, problem := range lastErrors {
+		terminal.Printf(out, "  Last error:    %s\n", problem)
 	}
 	if n := len(view.Collector.QuarantinedFiles); n > 0 {
 		terminal.Printf(out, "  Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)
