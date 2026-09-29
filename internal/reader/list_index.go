@@ -52,6 +52,11 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 				result.TotalMatched = len(result.Sessions)
 				return result, nil
 			}
+			if _, ok := seen[entry.MetadataKey]; ok {
+				// Older revisions remain as immutable hints. The current
+				// revision was already verified at a newer position.
+				continue
+			}
 			data, err := store.Get(ctx, entry.MetadataKey)
 			if errors.Is(err, storage.ErrNotFound) {
 				continue
@@ -60,7 +65,10 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 				return RecentResult{}, fmt.Errorf("read indexed metadata %q: %w", entry.MetadataKey, err)
 			}
 			if storage.SHA256Hex(data) != entry.Hash {
-				continue
+				// A sidecar changed without a matching hint (for example, by
+				// an older writer). Skipping it could return a false empty
+				// result or the wrong newest sessions.
+				return listRecentFull(ctx, store, prefix, filter, limit, opts)
 			}
 			metadata, err := decodeMetadata(entry.MetadataKey, data)
 			if errors.Is(err, ErrInvalidMetadata) {
@@ -73,9 +81,6 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 				return RecentResult{}, err
 			}
 			if !metadata.CapturedAt.Equal(entry.CapturedAt) {
-				continue
-			}
-			if _, ok := seen[entry.MetadataKey]; ok {
 				continue
 			}
 			seen[entry.MetadataKey] = struct{}{}

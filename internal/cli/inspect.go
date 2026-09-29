@@ -270,15 +270,15 @@ func newListDocument(sessions []archive.Metadata, limit, totalMatched int, trunc
 	if sessions == nil {
 		sessions = []archive.Metadata{}
 	}
-	doc := listDocument{
+	var count *int
+	if totalMatched >= 0 {
+		count = &totalMatched
+	}
+	return listDocument{
 		Version: listSchemaVersion, Sessions: sessions,
 		Limit: limit, Returned: len(sessions), TotalMatchedKnown: totalMatched >= 0,
-		Truncated: truncated,
+		TotalMatched: count, Truncated: truncated,
 	}
-	if totalMatched >= 0 {
-		doc.TotalMatched = &totalMatched
-	}
-	return doc
 }
 
 // harnessFlag checks a --harness value and returns its canonical name, as

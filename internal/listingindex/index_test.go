@@ -2,6 +2,7 @@ package listingindex_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 func TestSeedIfEmptyAndLegacyRebuildMarker(t *testing.T) {
@@ -36,7 +38,7 @@ func TestConcurrentHintsAndSessionCleanup(t *testing.T) {
 	ctx := context.Background()
 	store := storagetest.NewMemoryStore()
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -59,7 +61,7 @@ func TestConcurrentHintsAndSessionCleanup(t *testing.T) {
 	if err != nil || len(after) != 0 {
 		t.Fatalf("remaining hints=%d,%v", len(after), err)
 	}
-	if _, err := store.Get(ctx, listingindex.ReadyKey); err != storage.ErrNotFound {
+	if _, err := store.Get(ctx, listingindex.ReadyKey); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("unexpected ready object: %v", err)
 	}
 }
@@ -83,7 +85,7 @@ func TestDeleteSessionDoesNotFollowCorruptPointerToAnotherSession(t *testing.T) 
 	if _, err := store.Get(ctx, otherKey); err != nil {
 		t.Fatalf("another session's hint was deleted: %v", err)
 	}
-	if _, err := store.Get(ctx, corruptPointer); err != storage.ErrNotFound {
+	if _, err := store.Get(ctx, corruptPointer); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("corrupt pointer was not removed: %v", err)
 	}
 }

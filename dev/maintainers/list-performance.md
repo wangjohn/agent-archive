@@ -23,6 +23,6 @@ On an Intel macOS development machine, a one-iteration run on 2026-09-28
 measured 97.7 ms and 98.6 MB allocated for the cold full scan; indexed cold
 and warm runs measured 6.5 ms / 214 KB and 6.7 ms / 214 KB respectively.
 These are local measurements, not a network latency guarantee. The indexed
-test asserts one listing page and 52 reads (one marker, 51 live sidecars)
+test asserts one listing page and 51 live sidecar reads
 for 300 sessions; the same early-stop rule applies to the 10,000-session
 benchmark fixture.

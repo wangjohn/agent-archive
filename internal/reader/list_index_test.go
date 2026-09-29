@@ -24,7 +24,7 @@ func (s *indexedCountingStore) ListPage(ctx context.Context, prefix, continuatio
 func TestListRecentStopsAfterVerifiedLimitAndKeepsHonestCount(t *testing.T) {
 	ctx := context.Background()
 	store := &indexedCountingStore{countingStore: newCountingStore()}
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		putSession(t, store, "codex", fmt.Sprintf("%032x", i+1), baseTime.Add(time.Duration(i)*time.Minute))
 	}
 	if got, err := RebuildIndex(ctx, store, "sessions"); err != nil || got != 300 {
@@ -39,7 +39,7 @@ func TestListRecentStopsAfterVerifiedLimitAndKeepsHonestCount(t *testing.T) {
 		t.Fatalf("recent=%+v", got)
 	}
 	_, gets := store.counts()
-	if store.pages != 1 || len(gets) != 52 {
+	if store.pages != 1 || len(gets) != 51 {
 		t.Fatalf("remote work: pages=%d gets=%d", store.pages, len(gets))
 	}
 	all, err := ListRecent(ctx, store, "sessions", Filter{}, 0, ListOptions{})
@@ -57,11 +57,11 @@ func TestListRecentIgnoresStaleIndexAndDeletedMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A replacement sidecar invalidates its old hash. Until the matching hint
-	// is published, the old revision must never appear.
+	// is published, the reader falls back to the authoritative full scan.
 	putSession(t, store, "codex", fmt.Sprintf("%032x", 1), baseTime.Add(2*time.Hour))
 	got, err := ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{})
-	if err != nil || len(got.Sessions) != 1 {
-		t.Fatalf("stale result=%d,%v", len(got.Sessions), err)
+	if err != nil || len(got.Sessions) != 2 || got.Sessions[0].SessionID != fmt.Sprintf("%032x", 1) {
+		t.Fatalf("stale result=%+v,%v", got, err)
 	}
 	if _, err := RebuildIndex(ctx, store, "sessions"); err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestListRecentFallsBackForDamagedIndexKey(t *testing.T) {
 func TestListRecentSinceStopsAtBoundary(t *testing.T) {
 	ctx := context.Background()
 	store := &indexedCountingStore{countingStore: newCountingStore()}
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		putSession(t, store, "codex", fmt.Sprintf("%032x", i+1), baseTime.Add(time.Duration(i)*time.Minute))
 	}
 	if _, err := RebuildIndex(ctx, store, "sessions"); err != nil {
@@ -125,7 +125,7 @@ func TestListRecentSinceStopsAtBoundary(t *testing.T) {
 		t.Fatalf("since=%+v,%v", got, err)
 	}
 	_, gets := store.counts()
-	if len(gets) != 51 {
-		t.Fatalf("since read %d objects; want marker and 50 sidecars", len(gets))
+	if len(gets) != 50 {
+		t.Fatalf("since read %d objects; want 50 sidecars", len(gets))
 	}
 }

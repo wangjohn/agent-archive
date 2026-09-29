@@ -279,9 +279,13 @@ func (s *S3Store) ListPage(ctx context.Context, relativePrefix, continuation str
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
-	input := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), MaxKeys: aws.Int32(limit)}
+	var token *string
 	if continuation != "" {
-		input.ContinuationToken = aws.String(continuation)
+		token = aws.String(continuation)
+	}
+	input := &s3.ListObjectsV2Input{
+		Bucket: aws.String(s.bucket), Prefix: aws.String(prefix),
+		MaxKeys: aws.Int32(limit), ContinuationToken: token,
 	}
 	output, err := s.client.ListObjectsV2(ctx, input)
 	if err != nil {

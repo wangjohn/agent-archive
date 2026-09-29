@@ -14,7 +14,7 @@ import (
 func BenchmarkListLargeArchive(b *testing.B) {
 	ctx := context.Background()
 	store := storagetest.NewMemoryStore()
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		id := fmt.Sprintf("%032x", i+1)
 		metadataKey, _ := archive.MetadataObjectKey("codex", id)
 		sourceKey := fmt.Sprintf("sessions/codex/%s/source.%s.jsonl.gz", id, fakeSourceSHA)
@@ -23,7 +23,7 @@ func BenchmarkListLargeArchive(b *testing.B) {
 		if err := store.Put(ctx, metadataKey, data); err != nil {
 			b.Fatal(err)
 		}
-		for j := 0; j < 3; j++ {
+		for j := range 3 {
 			key := fmt.Sprintf("sessions/codex/%s/source.%064x.jsonl.gz", id, i*3+j+1)
 			if err := store.Put(ctx, key, []byte("snapshot")); err != nil {
 				b.Fatal(err)
@@ -32,7 +32,7 @@ func BenchmarkListLargeArchive(b *testing.B) {
 	}
 	b.Run("baseline-cold", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			if _, err := ListMetadataWithOptions(ctx, store, "sessions", Filter{}, ListOptions{}); err != nil {
 				b.Fatal(err)
 			}
@@ -43,7 +43,7 @@ func BenchmarkListLargeArchive(b *testing.B) {
 	}
 	b.Run("indexed-cold", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			if _, err := ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{}); err != nil {
 				b.Fatal(err)
 			}
@@ -51,7 +51,7 @@ func BenchmarkListLargeArchive(b *testing.B) {
 	})
 	b.Run("indexed-warm", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			if _, err := ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{}); err != nil {
 				b.Fatal(err)
 			}

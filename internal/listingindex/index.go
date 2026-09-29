@@ -17,9 +17,13 @@ import (
 )
 
 const Prefix = "listing/v1/"
+
 const ReadyKey = "listing/v1-ready"
+
 const unreadyKey = "listing/v1-needs-rebuild"
+
 const bySessionPrefix = "listing/by-session/"
+
 const maxTime = uint64(9999999999999999999)
 
 // Entry identifies the exact sidecar revision for one index hint. Hash is
@@ -75,7 +79,7 @@ func Parse(key string) (Entry, error) {
 	if len(hash) != 64 || strings.Trim(hash, "0123456789abcdef") != "" {
 		return Entry{}, errors.New("invalid listing hash")
 	}
-	return Entry{Key: key, MetadataKey: metadataKey, Hash: hash, CapturedAt: time.Unix(0, int64(maxTime-reverse)).UTC()}, nil
+	return Entry{Key: key, MetadataKey: metadataKey, Hash: hash, CapturedAt: time.Unix(0, int64(maxTime-reverse)).UTC()}, nil //nolint:gosec // subtraction is checked against MaxInt64 above
 }
 
 func SessionPrefix(harness, id string) (string, error) {
@@ -98,7 +102,12 @@ func Put(ctx context.Context, store storage.ObjectStore, entry Entry) error {
 }
 
 func Ready(ctx context.Context, store storage.ObjectStore) (bool, error) {
-	_, err := store.Get(ctx, ReadyKey)
+	var err error
+	if statter, ok := store.(storage.ObjectStatter); ok {
+		_, err = statter.Stat(ctx, ReadyKey)
+	} else {
+		_, err = store.Get(ctx, ReadyKey)
+	}
 	if errors.Is(err, storage.ErrNotFound) {
 		return false, nil
 	}
