@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -328,5 +329,55 @@ func TestHandoffToLaunchesAnArchiveOnlySession(t *testing.T) {
 	}
 	if strings.Contains(*document, "--source local") {
 		t.Errorf("archive handoff points to a local transcript:\n%s", *document)
+	}
+}
+
+// addSubagent registers a subagent of parent under native, sharing parent's
+// transcript, as newer than everything else.
+func (f handoffFixture) addSubagent(t *testing.T, parent, native string) string {
+	t.Helper()
+	reg, found, err := state.OpenReadOnly(f.home).LoadRegistration(parent)
+	if err != nil || !found {
+		t.Fatalf("load %s: found=%v err=%v", parent, found, err)
+	}
+	id := "ffffffff" + parent[8:]
+	reg.ArchiveSessionID, reg.NativeSessionID = id, native
+	reg.ParentSessionID, reg.ParentNativeSessionID, reg.SubagentID = parent, "native-new", "agent-1"
+	data, err := json.Marshal(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, os.WriteFile(filepath.Join(f.home, "registrations", id+".json"), data, 0o600))
+	return id
+}
+
+// A subagent is never offered on its own, nor taken as the calling session.
+func TestHandoffPickerAndToSkipSubagents(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := f.addSubagent(t, f.notUploaded, "native-sub")
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
+		t.Fatalf("code=%d stderr=%s; subagent listed:\n%s", code, errOut, out)
+	}
+	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+		t.Error("launched a subagent")
+		return nil
+	}
+	f.env.LookupEnv = agentEnv(map[string]string{"CODEX_THREAD_ID": "native-sub"})
+	if _, errOut, code := runHandoff(t, f.env, "--to", "claude"); code != 2 {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+}
+
+// Picker titles come from the filtered record, never the raw transcript.
+func TestHandoffPickerTitleIsFiltered(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	id := f.addSession(t, "codex", "native-secret", "Use key sk-abcdefghijklmnopqrstuv please", f.env.now().Add(3*time.Hour))
+	out, errOut, code := runPicker(t, f.env, "q\n")
+	line := pickerLine(t, out, id)
+	if code != 0 || strings.Contains(out, "sk-abcdefghijklmnopqrstuv") || !strings.Contains(line, "[REDACTED]") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
