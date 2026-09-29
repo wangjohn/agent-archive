@@ -13,7 +13,9 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/handoff/SKILL.md`) that runs
   `agent-archive handoff --to <agent>` from inside the agent. Setup leaves a
   file it did not write, uninstall removes only its own, and
-  `status --json` lists them in `agent_commands`.
+  `status --json` lists them in `agent_skills`. After an upgrade, `status`
+  warns about a skill file an earlier release wrote and lists it in
+  `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.

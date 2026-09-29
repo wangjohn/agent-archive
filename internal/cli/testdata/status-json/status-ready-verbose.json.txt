@@ -99,7 +99,7 @@ $ agent-archive status --verbose --json
       "last_published_at": "2026-09-25T12:00:00Z"
     }
   ],
-  "agent_commands": [
+  "agent_skills": [
     "/Users/alex/.agents/skills/handoff/SKILL.md"
   ],
   "collector": {

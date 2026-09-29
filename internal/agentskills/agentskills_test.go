@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -338,5 +340,240 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// testSkill is a skill that exists only in tests, the second entry of a
+// registry: its text names the destination and the command it runs.
+func testSkill(name string) Skill {
+	return Skill{Name: name, Render: func(dest Destination, executable, dataHome string) []byte {
+		return []byte("---\nname: " + name + "\n---\n" + marker + "\n" + commandLine(executable, dataHome) + " " + name + " " + strconv.Itoa(int(dest)) + "\n")
+	}}
+}
+
+func twoSkills() []Skill { return []Skill{handoffSkill, testSkill("second")} }
+
+func TestFilesListEachSkillInRegistryOrder(t *testing.T) {
+	t.Parallel()
+	home := "/Users/me"
+	want := func(claude bool, agents bool) []string {
+		var out []string
+		for _, name := range []string{"handoff", "second"} {
+			if claude {
+				out = append(out, filepath.Join(home, ".claude", "skills", name, "SKILL.md"))
+			}
+			if agents {
+				out = append(out, filepath.Join(home, ".agents", "skills", name, "SKILL.md"))
+			}
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		harnesses []string
+		want      []string
+	}{
+		{nil, nil},
+		{[]string{"claude"}, want(true, false)},
+		{[]string{"cursor"}, want(false, true)},
+		{[]string{"codex", "claude", "cursor"}, want(true, true)},
+	} {
+		got := skillFiles(twoSkills(), home, claudeDir(home), tc.harnesses, exe, "")
+		if !reflect.DeepEqual(paths(got), tc.want) {
+			t.Errorf("skillFiles(%v) = %v, want %v", tc.harnesses, paths(got), tc.want)
+		}
+	}
+	files := skillFiles(twoSkills(), home, claudeDir(home), []string{"claude", "codex"}, exe, "/tmp/data")
+	if len(files) != 4 || files[0].Skill != "handoff" || files[2].Skill != "second" {
+		t.Fatalf("files = %+v", files)
+	}
+	if !strings.Contains(string(files[2].Content), "AGENT_ARCHIVE_HOME=/tmp/data "+exe+" second 0\n") || !strings.Contains(string(files[3].Content), " second 1\n") {
+		t.Errorf("second skill rendered %q and %q", files[2].Content, files[3].Content)
+	}
+}
+
+// Each skill's files are the setup's own or a foreign one independently: a
+// file of the person's own for one skill leaves the others installed, and
+// uninstalling keeps just that one.
+func TestSkillsInstallAndRemoveIndependently(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	foreign := filepath.Join(home, ".agents", "skills", "second", "SKILL.md")
+	write(t, foreign, "my own second skill\n")
+	changes, foreignPaths, err := planInstall(twoSkills(), home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
+	must(t, err)
+	if len(changes) != 3 || !reflect.DeepEqual(foreignPaths, []string{foreign}) {
+		t.Fatalf("changes=%+v foreign=%v", changes, foreignPaths)
+	}
+	must(t, hooks.Apply(changes))
+	installed := installedOf(twoSkills(), home, claudeDir(home), "")
+	if len(installed) != 3 {
+		t.Fatalf("installed = %v", installed)
+	}
+	// Reinstalling changes nothing more.
+	changes, _, err = planInstall(twoSkills(), home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
+	must(t, err)
+	if len(changes) != 0 {
+		t.Fatalf("reinstall changes = %+v", changes)
+	}
+	removals, kept, err := planRemovalOf(twoSkills(), home, claudeDir(home), "")
+	must(t, err)
+	if len(removals) != 3 || !reflect.DeepEqual(kept, []string{foreign}) {
+		t.Fatalf("removals=%+v kept=%v", removals, kept)
+	}
+	must(t, hooks.Apply(removals))
+	removeEmptyDirs(twoSkills(), home, claudeDir(home))
+	if readFile(t, foreign) != "my own second skill\n" {
+		t.Fatal("the person's skill changed")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills")); !os.IsNotExist(err) {
+		t.Fatal("empty skill directories kept")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".agents", "skills", "handoff")); !os.IsNotExist(err) {
+		t.Fatal("handoff's empty directory kept")
+	}
+	if _, err := os.Stat(filepath.Dir(foreign)); err != nil {
+		t.Fatal("a directory holding the person's file removed")
+	}
+}
+
+// A file no longer wanted for a harness goes for every skill in the
+// registry, not only the first.
+func TestPlanInstallRemovesEverySkillOfAnAppNoLongerChosen(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	changes, _, err := planInstall(twoSkills(), home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	changes, _, err = planInstall(twoSkills(), home, claudeDir(home), []string{"claude"}, exe, "", claudeDir(home))
+	must(t, err)
+	if len(changes) != 2 || !changes[0].Delete || !changes[1].Delete {
+		t.Fatalf("changes = %+v", changes)
+	}
+}
+
+// Stale is the skill files setup owns whose content this release would
+// render differently: a moved executable, or wording from an earlier release.
+func TestStaleReportsOnlyOwnedFilesThatDifferFromThisRender(t *testing.T) {
+	t.Parallel()
+	render := func(executable string) string {
+		return string(skillFiles(twoSkills(), "/h", claudeDir("/h"), []string{"claude"}, executable, "")[0].Content)
+	}
+	for _, tc := range []struct {
+		name    string
+		content string
+		stale   bool
+	}{
+		{"current", render(exe), false},
+		{"moved executable", render("/old/agent-archive"), true},
+		{"earlier release", "older wording\n" + marker + "\n", true},
+		{"the person's own", "my own handoff\n", false},
+		{"marker line deleted", strings.Replace(render("/old/agent-archive"), marker+"\n", "", 1), false},
+		{"another installation's", strings.Replace(render("/old/agent-archive"), "\n"+marker, "\n"+marker+"\nAGENT_ARCHIVE_HOME=/other x", 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			path := filepath.Join(home, ".claude", "skills", "handoff", "SKILL.md")
+			write(t, path, tc.content)
+			var want []string
+			if tc.stale {
+				want = []string{path}
+			}
+			if got := staleOf(twoSkills(), home, claudeDir(home), exe, ""); !reflect.DeepEqual(got, want) {
+				t.Errorf("Stale = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// Each skill is judged on its own file, and a stale file is always one
+// Installed lists.
+func TestStaleNamesTheOutdatedSkillOnly(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	changes, _, err := planInstall(twoSkills(), home, claudeDir(home), []string{"claude", "codex"}, "/old/agent-archive", "", claudeDir(home))
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	if got := staleOf(twoSkills(), home, claudeDir(home), exe, ""); len(got) != 4 {
+		t.Fatalf("every file written for the old executable is stale, got %v", got)
+	}
+	// Setup with the new executable refreshes only the handoff skill's files.
+	changes, _, err = planInstall([]Skill{handoffSkill}, home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	want := []string{filepath.Join(home, ".claude", "skills", "second", "SKILL.md"), filepath.Join(home, ".agents", "skills", "second", "SKILL.md")}
+	got := staleOf(twoSkills(), home, claudeDir(home), exe, "")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Stale = %v, want %v", got, want)
+	}
+	installed := installedOf(twoSkills(), home, claudeDir(home), "")
+	for _, path := range got {
+		if !slices.Contains(installed, path) {
+			t.Errorf("stale %s is not installed", path)
+		}
+	}
+	if len(installed) != 4 {
+		t.Errorf("installed = %v", installed)
+	}
+}
+
+// Nothing is stale without a recorded executable to compare with, or where
+// there are no files.
+func TestStaleWithNothingToCompare(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	if got := staleOf(twoSkills(), home, claudeDir(home), exe, ""); got != nil {
+		t.Errorf("no files: Stale = %v", got)
+	}
+	changes, _, err := planInstall(twoSkills(), home, claudeDir(home), []string{"claude"}, "/old/agent-archive", "", claudeDir(home))
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	if got := staleOf(twoSkills(), home, claudeDir(home), "", ""); got != nil {
+		t.Errorf("no executable: Stale = %v", got)
+	}
+}
+
+// Stale follows the installation's data directory as Installed does: a
+// relocated installation's skill is judged against a render naming its
+// directory, and another installation's file is never reported.
+func TestStaleFollowsTheDataDirectory(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	changes, _, err := planInstall(twoSkills(), home, claudeDir(home), []string{"claude"}, exe, "/data/a", claudeDir(home))
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	if got := staleOf(twoSkills(), home, claudeDir(home), exe, "/data/a"); got != nil {
+		t.Errorf("current relocated skills stale: %v", got)
+	}
+	if got := staleOf(twoSkills(), home, claudeDir(home), "/moved/agent-archive", "/data/a"); len(got) != 2 {
+		t.Errorf("moved executable, relocated: Stale = %v", got)
+	}
+	if got := staleOf(twoSkills(), home, claudeDir(home), "/moved/agent-archive", "/data/b"); got != nil {
+		t.Errorf("another installation's files reported: %v", got)
+	}
+	if got := staleOf(twoSkills(), home, claudeDir(home), "/moved/agent-archive", ""); got != nil {
+		t.Errorf("the default installation reported a relocated one's files: %v", got)
+	}
+}
+
+// The exported entry points read the Registry, so what setup installs and
+// what status reports agree with the skills registered.
+func TestExportedFunctionsUseTheRegistry(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
+	must(t, err)
+	if len(changes) != 2*len(Registry) || len(foreign) != 0 {
+		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
+	}
+	must(t, hooks.Apply(changes))
+	if got := Installed(home, claudeDir(home), ""); len(got) != 2*len(Registry) {
+		t.Errorf("Installed = %v", got)
+	}
+	if got := Stale(home, claudeDir(home), exe, ""); got != nil {
+		t.Errorf("Stale = %v", got)
+	}
+	if got := Stale(home, claudeDir(home), "/moved/agent-archive", ""); len(got) != 2*len(Registry) {
+		t.Errorf("Stale after a move = %v", got)
 	}
 }

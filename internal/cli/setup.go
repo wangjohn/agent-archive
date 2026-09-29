@@ -646,19 +646,30 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	return nil
 }
 
-// printAgentSkills says in one line where setup installed the /handoff
-// command, and names each path it left alone because it is not setup's.
+// printAgentSkills says in one line per skill (/handoff, and any other in
+// agentskills.Registry) where setup installed it, and names each path it
+// left alone because it is not setup's.
 func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
-	var installed []string
-	for _, f := range agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome) {
-		if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
-			installed = append(installed, displayPath(f.Path, userHome))
-			continue
+	files := agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome)
+	for _, skill := range agentskills.Registry {
+		var installed []string
+		for _, f := range files {
+			if f.Skill != skill.Name {
+				continue
+			}
+			if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
+				installed = append(installed, displayPath(f.Path, userHome))
+				continue
+			}
+			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /%s is not installed there.\n", displayPath(f.Path, userHome), skill.Name)
 		}
-		terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /handoff is not installed there.\n", displayPath(f.Path, userHome))
-	}
-	if len(installed) > 0 {
-		terminal.Printf(p.out, "Installed /handoff, which continues a session in another agent: %s\n", strings.Join(installed, ", "))
+		if len(installed) > 0 {
+			what := "/" + skill.Name
+			if skill.Summary != "" {
+				what += ", which " + skill.Summary
+			}
+			terminal.Printf(p.out, "Installed %s: %s\n", what, strings.Join(installed, ", "))
+		}
 	}
 }
 

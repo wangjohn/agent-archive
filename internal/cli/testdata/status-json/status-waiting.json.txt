@@ -92,7 +92,7 @@ $ agent-archive status --json
       "sessions": 0
     }
   ],
-  "agent_commands": [
+  "agent_skills": [
     "/Users/alex/.agents/skills/handoff/SKILL.md"
   ],
   "collector": {
