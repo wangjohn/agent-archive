@@ -1703,8 +1703,14 @@ func printStatusDetails(out io.Writer, view statusView) {
 	for _, diagnostic := range view.CaptureDiagnostics {
 		terminal.Printf(out, "  Capture skipped in %s (%s): %s at %s.\n", diagnostic.ProjectRoot, appName(diagnostic.Harness), capture.DiagnosticMessage(diagnostic.Code), formatTimeOrNever(diagnostic.ObservedAt))
 	}
-	if view.Collector.LastError != "" {
-		terminal.Printf(out, "  Last error:    %s\n", view.Collector.LastError)
+	// Each problem as the collector recorded it, one per line; a status
+	// file from before LastErrors has only the joined text, shown as is.
+	lastErrors := view.Collector.LastErrors
+	if len(lastErrors) == 0 && view.Collector.LastError != "" {
+		lastErrors = []string{view.Collector.LastError}
+	}
+	for _, problem := range lastErrors {
+		terminal.Printf(out, "  Last error:    %s\n", problem)
 	}
 	if n := len(view.Collector.QuarantinedFiles); n > 0 {
 		terminal.Printf(out, "  Quarantined:   %d local state file(s) could not be read and were moved aside; their sessions keep their other evidence. See status --json for the files, then delete them.\n", n)

@@ -205,9 +205,13 @@ can also find a local session that has not uploaded yet.
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
+  --to NAME             Launch local claude, codex, or cursor with the handoff
+                        in a private temporary file. Reads only a local session;
+                        requires the target CLI installed on this Mac
 Example: agent-archive handoff
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
+Example: agent-archive handoff --latest --harness claude --to codex
 `,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history

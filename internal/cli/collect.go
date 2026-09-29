@@ -196,7 +196,9 @@ func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, en
 		}
 	}
 	if len(result.Errors) > 0 {
-		if err := recordSessionIssues(localStore, result.Errors, subagentLookup(localStore)); err != nil {
+		// In place of collector.Run's own count of the same sessions; the
+		// pass's other problems stay.
+		if err := recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors))); err != nil {
 			return verifyErr, err
 		}
 	}
@@ -234,9 +236,12 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 	}
 	sweepResult, sweepErr := retention.Sweep(sweepCtx, localStore, objectStore, sweepOptions)
 	if sweepErr != nil {
-		passErr := errors.Join(verifyErr, fmt.Errorf("collection succeeded but retention cleanup failed: %w", sweepErr))
-		recordPreflightError(localStore, passErr)
-		return result, passErr
+		sweepErr = fmt.Errorf("collection succeeded but retention cleanup failed: %w", sweepErr)
+		if verifyErr != nil {
+			addStatusProblem(localStore, verifyErr.Error())
+		}
+		addStatusProblem(localStore, sweepErr.Error())
+		return result, errors.Join(verifyErr, sweepErr)
 	}
 	if len(sweepResult.Errors) > 0 {
 		recordRetentionErrors(localStore, &result, sweepResult)
@@ -248,7 +253,7 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 		addStatusProblem(localStore, fmt.Sprintf("retention: %v", held))
 	}
 	if verifyErr != nil {
-		recordPreflightError(localStore, verifyErr)
+		addStatusProblem(localStore, verifyErr.Error())
 		return result, verifyErr
 	}
 	return result, nil
@@ -366,16 +371,25 @@ func passStorageHealth(result collector.Result) string {
 // (see recordSessionIssues): otherwise a retention failure would never
 // reach `status` at all, since, unlike collector.Run, Sweep does not
 // persist a Status of its own.
+//
+// The summary it records covers the pass's own failed sessions too, so it
+// takes the place of the summary verifyAndRecordPass recorded for them; the
+// pass's other problems stay.
 func recordRetentionErrors(localStore *state.Store, result *collector.Result, sweep retention.Result) {
 	if result.Errors == nil {
 		result.Errors = map[string]error{}
+	}
+	lookup := subagentLookup(localStore)
+	previous := ""
+	if len(result.Errors) > 0 {
+		previous = classifySessions(result.Errors, lookup).summary()
 	}
 	for id, sweepErr := range sweep.Errors {
 		// A session that also failed collection keeps that error beside
 		// this one.
 		addSessionError(result.Errors, id, fmt.Errorf("%w: %w", errRetentionFailed, sweepErr))
 	}
-	_ = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore))
+	_ = recordSessionIssues(localStore, result.Errors, lookup, previous)
 }
 
 // addSessionError records err against a session, after any error the pass
@@ -388,8 +402,9 @@ func addSessionError(errs map[string]error, id string, err error) {
 }
 
 // addStatusProblem adds problem to the Status's last errors, after whatever
-// the pass already recorded there, rather than replacing them. Best effort, like
-// recordPreflightError.
+// the pass already recorded there, rather than replacing them: once
+// collector.Run has saved this pass's Status, a later step's failure is one
+// more problem of the same pass. Best effort, like recordPreflightError.
 func addStatusProblem(localStore *state.Store, problem string) {
 	status, err := localStore.LoadStatus()
 	if err != nil {
@@ -405,7 +420,9 @@ func addStatusProblem(localStore *state.Store, problem string) {
 const backgroundCredentialProcessFailure = "background storage access failed: the AWS profile's credential_process could not supply credentials"
 
 // recordPreflightError persists a failure that happened before collector.Run
-// could record its own Status, so `status` reflects it. Best-effort: if the
+// could record its own Status, so `status` reflects it. It replaces the
+// problems recorded there, which are the previous pass's; a failure after
+// collector.Run is added with addStatusProblem instead. Best-effort: if the
 // status write itself fails, the original error is still what the caller
 // returns and reports.
 func recordPreflightError(localStore *state.Store, preflightErr error) {

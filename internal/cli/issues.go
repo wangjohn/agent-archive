@@ -166,24 +166,21 @@ func issueSummary(tallies map[string]issueTally) string {
 	return strings.Join(parts, " · ")
 }
 
-// recordSessionIssues records a pass's per-session failures in status.json:
-// each session's issue code, the count of each code, and one last error
-// summarizing them, which replaces the problems recorded before it. Both
-// collection and retention record through here, so a pass with both kinds
-// of failure reports one message covering all of them. isSubagent reports
-// whether a failed session is a subagent. Best effort, like
-// recordPreflightError: the pass's own error is what the caller reports.
-func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, isSubagent func(string) bool) error {
-	current, err := localStore.LoadStatus()
-	if err != nil {
-		return err
-	}
-	current.SessionIssues = make(map[string]string, len(sessionErrs))
-	tallies := map[string]issueTally{}
+// sessionIssues is what a pass's failed sessions come to: each one's issue
+// code, and the count of each code, sessions and subagents apart.
+type sessionIssues struct {
+	codes   map[string]string
+	tallies map[string]issueTally
+}
+
+// classifySessions classifies each failed session and counts the codes.
+// isSubagent reports whether a session is a subagent.
+func classifySessions(sessionErrs map[string]error, isSubagent func(string) bool) sessionIssues {
+	issues := sessionIssues{codes: make(map[string]string, len(sessionErrs)), tallies: map[string]issueTally{}}
 	for id, sessionErr := range sessionErrs {
 		code := sessionIssueCode(sessionErr)
-		current.SessionIssues[id] = code
-		tally := tallies[code]
+		issues.codes[id] = code
+		tally := issues.tallies[code]
 		// A rejected subagent candidate never became a registration, so
 		// only its code says it is a subagent.
 		if code == issueSubagentNotCaptured || isSubagent(id) {
@@ -191,13 +188,35 @@ func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, 
 		} else {
 			tally.sessions++
 		}
-		tallies[code] = tally
+		issues.tallies[code] = tally
 	}
-	current.IssueCounts = make(map[string]int, len(tallies))
-	for code, tally := range tallies {
+	return issues
+}
+
+// summary is the problem the last error records for these sessions.
+func (i sessionIssues) summary() string { return issueSummary(i.tallies) }
+
+// recordSessionIssues records a pass's per-session failures in status.json:
+// each session's issue code, replacing the previous pass's, the count of
+// each code, and one problem summarizing them, in place of old, the problem
+// the same sessions were recorded as before (collector.Run's own count, or
+// an earlier summary), or after the pass's other problems when old is not
+// recorded. Both collection and retention record through here, so a pass
+// with both kinds of failure reports one message covering all of them. Best
+// effort, like recordPreflightError: the pass's own error is what the
+// caller reports.
+func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, isSubagent func(string) bool, old string) error {
+	current, err := localStore.LoadStatus()
+	if err != nil {
+		return err
+	}
+	issues := classifySessions(sessionErrs, isSubagent)
+	current.SessionIssues = issues.codes
+	current.IssueCounts = make(map[string]int, len(issues.tallies))
+	for code, tally := range issues.tallies {
 		current.IssueCounts[code] = tally.total()
 	}
-	current.SetLastErrors(issueSummary(tallies))
+	current.ReplaceLastError(old, issues.summary())
 	return localStore.SaveStatus(current)
 }
 

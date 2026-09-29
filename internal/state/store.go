@@ -655,6 +655,19 @@ func (s *Status) AddLastError(problem string) {
 	s.SetLastErrors(append(problems[:len(problems):len(problems)], problem)...)
 }
 
+// ReplaceLastError puts problem in place of the first recorded problem equal
+// to old, keeping the others and their order, or adds problem after them
+// when none is.
+func (s *Status) ReplaceLastError(old, problem string) {
+	if i := slices.Index(s.LastErrors, old); i >= 0 {
+		problems := slices.Clone(s.LastErrors)
+		problems[i] = problem
+		s.SetLastErrors(problems...)
+		return
+	}
+	s.AddLastError(problem)
+}
+
 func (s *Store) statusPath() string { return filepath.Join(s.home, "status.json") }
 
 // SaveStatus durably records the latest Status.

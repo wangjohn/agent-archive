@@ -498,3 +498,32 @@ func TestStatusNextStepOneCommandPerLine(t *testing.T) {
 		}
 	}
 }
+
+// status --verbose prints each problem the last pass recorded on its own
+// line, as recorded, so one containing "; " reads as one.
+func TestStatusVerbosePrintsEachLastErrorOnItsOwnLine(t *testing.T) {
+	t.Parallel()
+	view := busyStatusView()
+	view.Collector.SetLastErrors("2 session(s) failed to scan or publish", "list registrations: api error SlowDown: slow down; then retry")
+	text := renderVerboseStatus(view, false)
+	for _, want := range []string{
+		"\n  Last error:    2 session(s) failed to scan or publish\n",
+		"\n  Last error:    list registrations: api error SlowDown: slow down; then retry\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("status --verbose is missing %q:\n%s", want, text)
+		}
+	}
+}
+
+// status --verbose prints an older status file's joined last error once, as
+// recorded, since where its problems end is not known.
+func TestStatusVerbosePrintsAnOlderLastErrorAsRecorded(t *testing.T) {
+	t.Parallel()
+	view := busyStatusView()
+	view.Collector.LastErrors = nil
+	view.Collector.LastError = "a; b"
+	if text := renderVerboseStatus(view, false); strings.Count(text, "  Last error:    ") != 1 || !strings.Contains(text, "\n  Last error:    a; b\n") {
+		t.Fatalf("status --verbose:\n%s", text)
+	}
+}

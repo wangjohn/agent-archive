@@ -133,6 +133,9 @@ func TestSyncFailsOnceOnAnUnreadableSubagentTranscript(t *testing.T) {
 	if code, out, errOut := syncAt(t, env, now.Add(2*time.Minute)); code != 0 || strings.Contains(out, "subagent") {
 		t.Fatalf("second sync exit=%d stdout=%q stderr=%q", code, out, errOut)
 	}
+	if status, err := local.LoadStatus(); err != nil || status.LastError != "" || len(status.LastErrors) != 0 || len(status.SessionIssues) != 0 {
+		t.Fatalf("status after the second sync=%+v err=%v", status, err)
+	}
 }
 
 // A status file an earlier version wrote while a waiting subagent failed

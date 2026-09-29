@@ -156,7 +156,7 @@ func TestRetentionAndCaptureFailuresShareOneLastError(t *testing.T) {
 		"child": errors.New("filter transcript: unsafe"),
 		"b":     fmt.Errorf("x: %w", state.ErrQuarantined),
 	}}
-	if err := recordSessionIssues(store, result.Errors, subagentLookup(store)); err != nil {
+	if err := recordSessionIssues(store, result.Errors, subagentLookup(store), ""); err != nil {
 		t.Fatal(err)
 	}
 	recordRetentionErrors(store, &result, retention.Result{Errors: map[string]error{
@@ -222,7 +222,7 @@ func TestStatusShowsMixedSessionIssues(t *testing.T) {
 		{"storage auth", issueStorageAuth, "Last scan could not update this session; retained evidence was kept. Check the credentials with agent-archive setup (choose storage), then run agent-archive sync."},
 	} {
 		sessionErrs := map[string]error{id: errors.New("other"), "gone": fmt.Errorf("%w: x", errRetentionFailed)}
-		if err := recordSessionIssues(store, sessionErrs, func(string) bool { return false }); err != nil {
+		if err := recordSessionIssues(store, sessionErrs, func(string) bool { return false }, ""); err != nil {
 			t.Fatal(err)
 		}
 		status, err := store.LoadStatus()
