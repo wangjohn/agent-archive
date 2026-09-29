@@ -265,7 +265,8 @@ func TestSecondInstallationKeepsTheFirstsHandoffSkill(t *testing.T) {
 	}
 }
 
-// A failed setup puts back the skill it replaced, not only one it created.
+// A failed setup puts back the skill it replaced, not only one it created,
+// with its permissions.
 func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
@@ -273,7 +274,8 @@ func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", false, true, false, project), 0)
 	path := claudeSkillPath(userHome)
 	older := strings.Replace(readText(t, path), "Run exactly this command", "Run this command", 1)
-	must(t, os.WriteFile(path, []byte(older), 0600))
+	must(t, os.WriteFile(path, []byte(older), 0644))
+	must(t, os.Chmod(path, 0644))
 	var written string
 	originalLoad := env.LoadLaunchAgent
 	env.LoadLaunchAgent = func(p string) error {
@@ -289,6 +291,9 @@ func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 	}
 	if readText(t, path) != older {
 		t.Fatal("failed setup did not restore the skill it replaced")
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0644 {
+		t.Fatalf("failed setup did not restore the skill's permissions: %v %v", info.Mode(), err)
 	}
 }
 

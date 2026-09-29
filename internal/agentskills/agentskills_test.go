@@ -188,6 +188,43 @@ func TestPlanInstallLeavesLinksAndDirectories(t *testing.T) {
 	}
 }
 
+// A linked handoff directory is a skill of the person's own: setup
+// neither writes into it nor removes or lists what is in it. A linked
+// skills directory above it is written through, as hook files are.
+func TestLinkedSkillDirectories(t *testing.T) {
+	t.Parallel()
+	home, mine := t.TempDir(), t.TempDir()
+	path := filepath.Join(home, ".claude", "skills", "handoff", "SKILL.md")
+	must(t, os.MkdirAll(filepath.Join(home, ".claude", "skills"), 0700))
+	must(t, os.Symlink(mine, filepath.Dir(path)))
+	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, "", claudeDir(home))
+	must(t, err)
+	if len(changes) != 0 || !reflect.DeepEqual(foreign, []string{path}) {
+		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
+	}
+	write(t, filepath.Join(mine, "SKILL.md"), string(Files(home, claudeDir(home), []string{"claude"}, exe, "")[0].Content))
+	changes, kept, err := PlanRemoval(home, claudeDir(home), "")
+	must(t, err)
+	if len(changes) != 0 || !reflect.DeepEqual(kept, []string{path}) {
+		t.Fatalf("removal: changes=%+v kept=%v", changes, kept)
+	}
+	if got := Installed(home, claudeDir(home), ""); len(got) != 0 {
+		t.Fatalf("Installed = %v", got)
+	}
+
+	dotfiles := t.TempDir()
+	home = t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(home, ".agents"), 0700))
+	must(t, os.Symlink(dotfiles, filepath.Join(home, ".agents", "skills")))
+	changes, foreign, err = PlanInstall(home, claudeDir(home), []string{"codex"}, exe, "", claudeDir(home))
+	must(t, err)
+	if len(changes) != 1 || len(foreign) != 0 {
+		t.Fatalf("linked skills: changes=%+v foreign=%v", changes, foreign)
+	}
+	must(t, hooks.Apply(changes))
+	readFile(t, filepath.Join(dotfiles, "handoff", "SKILL.md"))
+}
+
 func TestPlanInstallRemovesAFileNoLongerWanted(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -333,6 +370,25 @@ func TestRemoveEmptyDirsKeepsLinks(t *testing.T) {
 		if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
 			t.Errorf("%s unlinked: %v", link, err)
 		}
+	}
+}
+
+// A relocated installation's skill stays its own after the executable
+// moves (an upgrade), even with a data directory that needs quoting.
+func TestRelocatedSkillSurvivesAMovedExecutable(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	const data = "/data/it's here"
+	changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude"}, "/old/agent-archive", data, claudeDir(home))
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, data, claudeDir(home))
+	must(t, err)
+	if len(changes) != 1 || len(foreign) != 0 || !strings.Contains(string(changes[0].After), exe) {
+		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
+	}
+	if got := Installed(home, claudeDir(home), data); len(got) != 1 {
+		t.Fatalf("Installed = %v", got)
 	}
 }
 
