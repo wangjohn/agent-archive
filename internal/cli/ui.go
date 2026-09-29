@@ -68,6 +68,48 @@ func styleFor(out io.Writer) textStyle {
 	return terminalStyle(os.Getenv, width)
 }
 
+// terminalSize is the size of the terminal out writes to: ok is false when
+// out (unwrapped from a lockedWriter) is not a terminal or its size cannot
+// be read.
+func (e Env) terminalSize(out io.Writer) (width, height int, ok bool) {
+	if e.TerminalSize != nil {
+		return e.TerminalSize(out)
+	}
+	file, isFile := underlyingWriter(out).(*os.File)
+	if !isFile || !term.IsTerminal(int(file.Fd())) {
+		return 0, 0, false
+	}
+	width, height, err := term.GetSize(int(file.Fd()))
+	if err != nil || width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
+// displayLines is how many terminal rows text takes when printed on a
+// terminal width columns wide: each line takes at least one row, and a
+// line wider than the terminal wraps onto more. Color codes take no room.
+// A width of 0 or less means lines never wrap.
+func displayLines(text string, width int) int {
+	if text == "" {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
+		n += lineRows(line, width)
+	}
+	return n
+}
+
+// lineRows is how many terminal rows one line takes, as displayLines.
+func lineRows(line string, width int) int {
+	w := visibleWidth(line)
+	if width <= 0 || w <= width {
+		return 1
+	}
+	return (w + width - 1) / width
+}
+
 // terminalStyle is the style for a terminal width columns wide, given the
 // process environment. A dumb terminal gets neither color nor redrawing.
 func terminalStyle(getenv func(string) string, width int) textStyle {

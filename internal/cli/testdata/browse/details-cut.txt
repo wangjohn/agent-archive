@@ -1,0 +1,14 @@
+Fix flaky OAuth callback tests
+claude · agent-archive · 2h ago                                      ✓ completed
+
+  When      Sep 29, 10:14 → 11:02 (48m span)
+  Agent     Claude Code 2.4.1
+  Model     claude-opus-5-5 (high reasoning) · 31 responses
+            claude-haiku-4-5 · 4 responses
+  Activity  35 turns · 212 messages · 148 tool calls · 3 shell commands ·
+            1 compaction
+  Skills    code-review, simplify
+… 9 more lines
+
+t opens the transcript: scroll with the wheel or arrows, q returns here.
+[t] transcript  [m] more  [Enter/b] back to list  [q] quit: 

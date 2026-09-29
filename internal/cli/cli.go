@@ -179,6 +179,11 @@ type Env struct {
 	// terminal. backfill asks for confirmation only on one, and redraws its
 	// progress line only on one. Defaults to checking the file descriptor.
 	IsTerminal func(any) bool
+	// TerminalSize reports the columns and rows of the terminal out writes
+	// to, and ok=false when out is not a terminal or its size is unknown.
+	// The session browser and pickers read it before each redraw to fit
+	// the window. Defaults to asking the terminal.
+	TerminalSize func(out io.Writer) (width, height int, ok bool)
 	// RunPager runs a pager command with environment ("NAME=value") added
 	// to the process's own, stdin as its input and stdout/stderr as its
 	// output, until it exits or ctx is cancelled. list, show, status, and
