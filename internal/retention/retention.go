@@ -5,9 +5,9 @@
 //
 // Before deleting anything it fetches the session's remote metadata.json
 // and treats that, not the local cache, as the current pointer: the current
-// source is never deleted regardless of age, and neither is its immediate
-// predecessor (the most recently superseded snapshot), so a reader that
-// just fetched metadata always has a snapshot to fall back to. Whole-session
+// source is never deleted regardless of age. Its immediate predecessor is
+// normally retained; a privacy-sensitive predecessor can be deleted after
+// a verified read-back and the reader grace interval. Whole-session
 // expiry deletes metadata before sources, so an interruption leaves at
 // worst unreferenced objects, never a live pointer to missing data; a
 // failed expiry keeps the local registration (ownership) so the next sweep
@@ -39,6 +39,10 @@ import (
 
 // Options configures one Sweep call.
 type Options struct {
+	// PrivacyVerified reports whether the current publication for this
+	// session has passed a full metadata-and-source read-back under the
+	// current destination. Nil preserves privacy-sensitive predecessors.
+	PrivacyVerified func(archive.SessionRegistration, archive.Metadata) bool
 	// CurrentDestination reports whether a registration's published evidence
 	// lives in the bucket this sweep is connected to. It deliberately is not
 	// the collector's AcceptSession: that decides what may still be published,
@@ -72,10 +76,9 @@ type Options struct {
 	// way age-driven deletion waits one pass. Zero skips the check.
 	PreviousScanAt time.Time
 	// GracePeriod bounds how long a superseded (no longer current) source
-	// snapshot stays downloadable before deletion. It applies only to
-	// snapshots older than the immediate predecessor of the current source,
-	// which is retained regardless of age. Defaults to 24h, matching the
-	// spec's proposed grace period.
+	// snapshot stays downloadable before deletion. The ordinary immediate
+	// predecessor remains; a privacy-sensitive predecessor becomes eligible
+	// after verification and this interval. Defaults to 24h.
 	GracePeriod time.Duration
 	// SessionMaxAge is whole-session retention: once a session's most
 	// recently captured evidence is older than this, its metadata and every
@@ -377,8 +380,8 @@ func (s *sweeper) remote(reg archive.SessionRegistration, summary state.Publishe
 		return err
 	}
 	// Skip the remote round trip when this pass could not delete anything:
-	// the predecessor stays in the ledger forever, so without this every
-	// session ever republished would cost one GET per sync indefinitely.
+	// ordinary predecessors stay in the ledger forever, so without this
+	// every session ever republished would cost one GET per sync indefinitely.
 	if !locallyExpired && !anySupersededExpirable(superseded, s.now, s.opts.gracePeriod()) {
 		return nil
 	}
@@ -454,7 +457,7 @@ func (s *sweeper) currentMetadata(reg archive.SessionRegistration) (archive.Meta
 }
 
 // deleteSuperseded deletes the ledger's snapshots past their grace period,
-// keeping the current source and its immediate predecessor.
+// keeping the current source and the ordinary immediate predecessor.
 func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded []state.SupersededSource, currentKey string) error {
 	id := reg.ArchiveSessionID
 	// Append order records supersession order even if the clock moves backward.
@@ -476,8 +479,23 @@ func (s *sweeper) deleteSuperseded(reg archive.SessionRegistration, superseded [
 			}
 			continue
 		}
-		if entry.Key == predecessorKey || s.now.Sub(entry.SupersededAt) < s.opts.gracePeriod() {
+		if (entry.Key == predecessorKey && !entry.PrivacySensitive) || s.now.Sub(entry.SupersededAt) < s.opts.gracePeriod() {
 			continue
+		}
+		if entry.PrivacySensitive {
+			if s.opts.PrivacyVerified == nil {
+				continue
+			}
+			fresh, err := s.currentMetadata(reg)
+			if err != nil {
+				return err
+			}
+			if fresh.SourceBundle.Key != currentKey {
+				return fmt.Errorf("current metadata changed during privacy cleanup")
+			}
+			if !s.opts.PrivacyVerified(reg, fresh) {
+				continue
+			}
 		}
 		if !s.clockAllowsDeletion() {
 			return nil
@@ -529,15 +547,14 @@ func forgetExpired(local *state.Store, reg archive.SessionRegistration, deferFor
 }
 
 // anySupersededExpirable reports whether a sweep could delete at least one
-// ledger entry now. The last entry is either the current source or its
-// immediate predecessor, and neither is ever deleted, so only an earlier
-// entry past its grace period can be. This is a conservative necessary
+// ledger entry now. The last entry is normally the immediate predecessor,
+// which is retained unless marked privacy-sensitive. This is a necessary
 // condition: it may say yes for an entry the full check then retains, but
 // never no when a deletion is possible, so skipping on false is safe.
 func anySupersededExpirable(superseded []state.SupersededSource, now time.Time, grace time.Duration) bool {
 	for i, s := range superseded {
-		if i == len(superseded)-1 {
-			return false
+		if i == len(superseded)-1 && !s.PrivacySensitive {
+			continue
 		}
 		if now.Sub(s.SupersededAt) >= grace {
 			return true

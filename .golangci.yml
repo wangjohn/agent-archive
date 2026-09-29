@@ -191,9 +191,6 @@ linters:
       - path: internal/retention/retention\.go
         text: sweepSession
         linters: [funlen, gocyclo]
-      - path: internal/cli/setup_transaction\.go
-        text: applySetup
-        linters: [funlen, gocyclo]
       - path: internal/cli/handoff\.go
         text: runHandoffCommand
         linters: [funlen, gocyclo]
