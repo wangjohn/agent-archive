@@ -6,12 +6,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-29
+
+The archive browser now has bounded, readable listings and terminal pickers for
+`list`, `show`, and `handoff`. Scripts should update consumers of `list --json`
+to schema version 4, which reports whether the total match count is known.
+
 ### Added
 
 - `list --limit N` caps how many sessions are shown (default 50, newest
   first; `0` for all). A truncated text listing ends with
-  `Showing N of M session(s)…`; `list --json` is now `schema_version` 2
-  and includes `limit`, `returned`, `total_matched`, and `truncated`.
+  `Showing N of M session(s)…`; `list --json` is now `schema_version` 4
+  and includes `limit`, `returned`, and `total_matched_known`; it includes
+  `total_matched` only when the count is exact and `truncated` when the
+  result was cut short.
 - On a terminal, `list` (text only) pages through `$AGENT_ARCHIVE_PAGER`,
   else `$PAGER`, else `less -FRX`. Use `--no-pager`, or set either env var
   to empty or `cat`, to print directly. `--json` is never paged.
@@ -177,6 +185,7 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0
