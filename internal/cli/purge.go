@@ -55,16 +55,17 @@ func runPurgePlan(args []string, stdout, stderr io.Writer, env Env) int {
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
-	if *mode != "unreferenced" && *mode != "old-filter" {
+	selectedMode := purge.Mode(*mode)
+	if selectedMode != purge.ModeUnreferenced && selectedMode != purge.ModeOldFilter {
 		return fs.usageError("--mode must be unreferenced or old-filter")
 	}
-	if *mode == "old-filter" && *before == "" {
+	if selectedMode == purge.ModeOldFilter && *before == "" {
 		return fs.usageError("--before-filter is required for old-filter")
 	}
-	if *mode == "unreferenced" && *before != "" {
+	if selectedMode == purge.ModeUnreferenced && *before != "" {
 		return fs.usageError("--before-filter requires --mode old-filter")
 	}
-	plan, err := purge.Inventory(context.Background(), store, cfg.DestinationID(), cfg.Storage.Bucket, cfg.Storage.Prefix, *mode, *before, env.now())
+	plan, err := purge.Inventory(context.Background(), store, cfg.DestinationID(), cfg.Storage.Bucket, cfg.Storage.Prefix, selectedMode, *before, env.now())
 	if err != nil {
 		return purgeError(stderr, err)
 	}
@@ -136,7 +137,8 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 		return purgeError(stderr, err)
 	}
 	if !found {
-		return purgeError(stderr, errors.New(notSetUpMessage))
+		terminal.Println(stderr, notSetUpMessage)
+		return 1
 	}
 	if err := plan.Validate(cfg.DestinationID(), env.now()); err != nil {
 		return purgeError(stderr, err)
@@ -184,7 +186,7 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 	if err := purge.Apply(context.Background(), store, plan, &report, save); err != nil {
 		report.Error = err.Error()
 		if saveErr := save(report); saveErr != nil {
-			return purgeError(stderr, fmt.Errorf("%w; report write: %v", err, saveErr))
+			return purgeError(stderr, errors.Join(err, fmt.Errorf("report write: %w", saveErr)))
 		}
 		return purgeError(stderr, fmt.Errorf("%w; deleted %d, remaining %d; resume before expiry with the same plan", err, len(report.Deleted), len(report.Remaining)))
 	}

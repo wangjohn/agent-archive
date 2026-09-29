@@ -26,7 +26,16 @@ import (
 )
 
 const Lifetime = 5 * time.Minute
+
 const maxSourceRead = 32 << 20
+
+// Mode selects which unreferenced source objects an inventory includes.
+type Mode string
+
+const (
+	ModeUnreferenced Mode = "unreferenced"
+	ModeOldFilter    Mode = "old-filter"
+)
 
 var sourceName = regexp.MustCompile(`^source\.[0-9a-f]{64}\.jsonl\.gz$`)
 
@@ -48,7 +57,7 @@ type Plan struct {
 	DestinationID      string              `json:"destination_id"`
 	Bucket             string              `json:"bucket"`
 	Prefix             string              `json:"prefix"`
-	Mode               string              `json:"mode"`
+	Mode               Mode                `json:"mode"`
 	BeforeFilter       string              `json:"before_filter,omitempty"`
 	CreatedAt          time.Time           `json:"created_at"`
 	ExpiresAt          time.Time           `json:"expires_at"`
@@ -59,14 +68,14 @@ type Plan struct {
 
 // Inventory reads every current metadata sidecar before it proposes a source.
 // An ambiguous or unreadable sidecar makes the entire plan fail closed.
-func Inventory(ctx context.Context, store storage.ObjectStore, destinationID, bucket, prefix, mode, before string, now time.Time) (Plan, error) {
-	if mode != "unreferenced" && mode != "old-filter" {
+func Inventory(ctx context.Context, store storage.ObjectStore, destinationID, bucket, prefix string, mode Mode, before string, now time.Time) (Plan, error) {
+	if mode != ModeUnreferenced && mode != ModeOldFilter {
 		return Plan{}, fmt.Errorf("unsupported purge mode %q", mode)
 	}
-	if mode == "old-filter" && !numericBefore(before) {
+	if mode == ModeOldFilter && !numericBefore(before) {
 		return Plan{}, fmt.Errorf("old-filter mode requires a numeric --before-filter version")
 	}
-	if mode == "unreferenced" {
+	if mode == ModeUnreferenced {
 		before = archive.FilterVersion
 	}
 	objects, err := store.List(ctx, "sessions")
@@ -100,7 +109,7 @@ func Inventory(ctx context.Context, store storage.ObjectStore, destinationID, bu
 			return Plan{}, fmt.Errorf("metadata %q references a missing source", object.Key)
 		}
 		if numericOlder(meta.FilterVersion, before) {
-			old = append(old, CurrentOldSession{object.Key, meta.SourceBundle.Key, meta.FilterVersion})
+			old = append(old, CurrentOldSession{MetadataKey: object.Key, SourceKey: meta.SourceBundle.Key, FilterVersion: meta.FilterVersion})
 		}
 	}
 	var candidates []Candidate
@@ -108,18 +117,17 @@ func Inventory(ctx context.Context, store storage.ObjectStore, destinationID, bu
 		if !validSourceKey(object.Key) || current[object.Key] {
 			continue
 		}
-		candidate := Candidate{Key: object.Key, Size: object.Size, ETag: object.ETag}
-		if mode == "old-filter" {
-			version, err := sourceFilterVersion(ctx, store, object)
+		var version string
+		if mode == ModeOldFilter {
+			version, err = sourceFilterVersion(ctx, store, object)
 			if err != nil {
 				return Plan{}, fmt.Errorf("inspect %q: %w", object.Key, err)
 			}
-			candidate.FilterVersion = version
 			if !numericOlder(version, before) {
 				continue
 			}
 		}
-		candidates = append(candidates, candidate)
+		candidates = append(candidates, Candidate{Key: object.Key, Size: object.Size, ETag: object.ETag, FilterVersion: version})
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Key < candidates[j].Key })
 	sort.Slice(old, func(i, j int) bool { return old[i].MetadataKey < old[j].MetadataKey })
@@ -139,8 +147,10 @@ func validSourceKey(key string) bool {
 }
 
 func validHarness(value string) bool {
-	return value == "claude" || value == "codex" || value == "cursor"
+	canonical, known := archive.KnownHarness(value)
+	return known && canonical == value
 }
+
 func validSession(value string) bool {
 	if len(value) != 32 {
 		return false
@@ -156,6 +166,7 @@ func validSession(value string) bool {
 }
 
 func numericBefore(version string) bool { n, err := strconv.Atoi(version); return err == nil && n > 0 }
+
 func numericOlder(version, before string) bool {
 	if !numericBefore(before) {
 		return false
@@ -180,10 +191,12 @@ func sourceFilterVersion(ctx context.Context, store storage.ObjectStore, object 
 	if err != nil {
 		return "", err
 	}
-	defer reader.Close()
-	line, err := io.ReadAll(io.LimitReader(reader, 1<<20))
-	if err != nil {
-		return "", err
+	line, readErr := io.ReadAll(io.LimitReader(reader, 1<<20))
+	if closeErr := reader.Close(); closeErr != nil {
+		return "", closeErr
+	}
+	if readErr != nil {
+		return "", readErr
 	}
 	first, _, ok := bytes.Cut(line, []byte{'\n'})
 	if !ok {
@@ -238,6 +251,18 @@ type Report struct {
 // writing to this prefix must be paused; S3 offers no atomic conditional
 // delete against another writer's metadata update.
 func Apply(ctx context.Context, store storage.ObjectStore, plan Plan, report *Report, save func(Report) error) error {
+	if err := validateReport(plan, report); err != nil {
+		return err
+	}
+	for len(report.Remaining) > 0 {
+		if err := applyNext(ctx, store, plan, report, save); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateReport(plan Plan, report *Report) error {
 	if report.PlanDigest != plan.Digest {
 		return errors.New("report does not match plan")
 	}
@@ -260,61 +285,63 @@ func Apply(ctx context.Context, store storage.ObjectStore, plan Plan, report *Re
 	if len(remaining) != 0 {
 		return errors.New("report omits planned keys")
 	}
-	for len(report.Remaining) > 0 {
-		key := report.Remaining[0]
-		candidate, ok := findCandidate(plan.Candidates, key)
-		if !ok || !validSourceKey(key) {
-			return fmt.Errorf("invalid planned key %q", key)
+	return nil
+}
+
+func applyNext(ctx context.Context, store storage.ObjectStore, plan Plan, report *Report, save func(Report) error) error {
+	key := report.Remaining[0]
+	candidate, ok := findCandidate(plan.Candidates, key)
+	if !ok || !validSourceKey(key) {
+		return fmt.Errorf("invalid planned key %q", key)
+	}
+	objects, err := store.List(ctx, "sessions")
+	if err != nil {
+		return fmt.Errorf("relist before %q: %w", key, err)
+	}
+	var listed *storage.Object
+	listedSources := make(map[string]bool)
+	for _, object := range objects {
+		if validSourceKey(object.Key) {
+			listedSources[object.Key] = true
 		}
-		objects, err := store.List(ctx, "sessions")
+	}
+	for i := range objects {
+		if objects[i].Key == key {
+			listed = &objects[i]
+		}
+		if strings.HasPrefix(objects[i].Key, "sessions/") && strings.HasSuffix(objects[i].Key, "/metadata.json") && !validMetadataKey(objects[i].Key) {
+			return fmt.Errorf("unexpected metadata key %q", objects[i].Key)
+		}
+		if !validMetadataKey(objects[i].Key) {
+			continue
+		}
+		meta, err := reader.ReadMetadata(ctx, store, objects[i].Key)
 		if err != nil {
-			return fmt.Errorf("relist before %q: %w", key, err)
+			return fmt.Errorf("recheck %q: %w", objects[i].Key, err)
 		}
-		var listed *storage.Object
-		listedSources := make(map[string]bool)
-		for _, object := range objects {
-			if validSourceKey(object.Key) {
-				listedSources[object.Key] = true
-			}
+		if path.Dir(meta.SourceBundle.Key) != path.Dir(objects[i].Key) || !validSourceKey(meta.SourceBundle.Key) {
+			return fmt.Errorf("metadata %q has an invalid source reference", objects[i].Key)
 		}
-		for i := range objects {
-			if objects[i].Key == key {
-				listed = &objects[i]
-			}
-			if strings.HasPrefix(objects[i].Key, "sessions/") && strings.HasSuffix(objects[i].Key, "/metadata.json") && !validMetadataKey(objects[i].Key) {
-				return fmt.Errorf("unexpected metadata key %q", objects[i].Key)
-			}
-			if !validMetadataKey(objects[i].Key) {
-				continue
-			}
-			meta, err := reader.ReadMetadata(ctx, store, objects[i].Key)
-			if err != nil {
-				return fmt.Errorf("recheck %q: %w", objects[i].Key, err)
-			}
-			if path.Dir(meta.SourceBundle.Key) != path.Dir(objects[i].Key) || !validSourceKey(meta.SourceBundle.Key) {
-				return fmt.Errorf("metadata %q has an invalid source reference", objects[i].Key)
-			}
-			if !listedSources[meta.SourceBundle.Key] {
-				return fmt.Errorf("metadata %q references a missing source", objects[i].Key)
-			}
-			if meta.SourceBundle.Key == key {
-				return fmt.Errorf("%q is now a current source", key)
-			}
+		if !listedSources[meta.SourceBundle.Key] {
+			return fmt.Errorf("metadata %q references a missing source", objects[i].Key)
 		}
-		if listed != nil && (listed.Size != candidate.Size || listed.ETag != candidate.ETag) {
-			return fmt.Errorf("%q changed since plan", key)
+		if meta.SourceBundle.Key == key {
+			return fmt.Errorf("%q is now a current source", key)
 		}
-		if listed != nil {
-			if err := store.Delete(ctx, key); err != nil {
-				return fmt.Errorf("delete %q: %w", key, err)
-			}
+	}
+	if listed != nil && (listed.Size != candidate.Size || listed.ETag != candidate.ETag) {
+		return fmt.Errorf("%q changed since plan", key)
+	}
+	if listed != nil {
+		if err := store.Delete(ctx, key); err != nil {
+			return fmt.Errorf("delete %q: %w", key, err)
 		}
-		report.Deleted = append(report.Deleted, key)
-		report.Remaining = report.Remaining[1:]
-		report.Error = ""
-		if err := save(*report); err != nil {
-			return fmt.Errorf("save deletion report: %w", err)
-		}
+	}
+	report.Deleted = append(report.Deleted, key)
+	report.Remaining = report.Remaining[1:]
+	report.Error = ""
+	if err := save(*report); err != nil {
+		return fmt.Errorf("save deletion report: %w", err)
 	}
 	return nil
 }

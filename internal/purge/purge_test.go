@@ -13,11 +13,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	_ "github.com/wangjohn/agent-archive/internal/testutil/golden" // registers -update for go test ./... -update
 )
 
 const session = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 const sourceA = "sessions/claude/" + session + "/source." + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" + ".jsonl.gz"
+
 const sourceB = "sessions/claude/" + session + "/source." + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" + ".jsonl.gz"
+
 const sidecar = "sessions/claude/" + session + "/metadata.json"
 
 func putMetadata(t *testing.T, store storage.ObjectStore, source, filter string) {

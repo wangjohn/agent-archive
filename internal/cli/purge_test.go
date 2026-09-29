@@ -46,9 +46,9 @@ func TestPurgePlanAndApplyRequirePauseAndKeepCurrentSource(t *testing.T) {
 		t.Fatalf("plan output: %s", &out)
 	}
 	var planFile string
-	for _, line := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(line, "Plan: ") {
-			planFile = strings.TrimPrefix(line, "Plan: ")
+	for line := range strings.SplitSeq(out.String(), "\n") {
+		if value, ok := strings.CutPrefix(line, "Plan: "); ok {
+			planFile = value
 		}
 	}
 	if planFile == "" {
