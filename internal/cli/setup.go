@@ -280,6 +280,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 		}
 		if choice != "restart" {
 			draft = saved
+			// A draft from before skill policy existed is still a fresh setup
+			// when no configuration was ever committed. Use the fresh default
+			// rather than silently treating the unfinished draft as legacy.
+			if !found && draft.Config.SkillEvidence == "" {
+				draft.Config.SkillEvidence = config.SkillEvidenceMetadata
+			}
 			// Projects an import added after this draft was saved are kept:
 			// the draft never saw them, so it cannot have meant to drop them.
 			draft.Config.Archive.Projects = withBackfilledProjects(draft.Config.Archive.Projects, existing.Archive.Projects, backfilledProjects(env))

@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
+	"github.com/wangjohn/agent-archive/internal/local"
 )
 
 func TestAppSelectionSuggestionsAndManualFallback(t *testing.T) {
@@ -116,6 +117,29 @@ func TestInteractiveReviewCanChangeSkillEvidence(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "outside selected projects") {
 		t.Fatalf("scope missing: %s", &out)
+	}
+}
+
+func TestResumePrePolicyFreshDraftDefaultsToMetadata(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	input := strings.TrimSuffix(s3SetupInput("bucket", "us-east-1", "profile", true, false, false, project), "y\n") + "3\n"
+	setupRun(t, env, input, 0)
+	draft, found, problem, err := readDraft(home)
+	if err != nil || !found || problem != "" {
+		t.Fatalf("draft: found=%v problem=%q err=%v", found, problem, err)
+	}
+	draft.Config.SkillEvidence = "" // A draft saved before the policy existed.
+	if err := local.Write(draftPath(home), draft); err != nil {
+		t.Fatal(err)
+	}
+	output := setupRun(t, env, "continue\n3\n", 0)
+	if !strings.Contains(output, "Skills") || !strings.Contains(output, "metadata") || strings.Contains(output, "kept from previous setup") {
+		t.Fatalf("fresh draft did not use metadata:\n%s", output)
+	}
+	resumed, _, _, err := readDraft(home)
+	if err != nil || resumed.Config.SkillEvidence != config.SkillEvidenceMetadata {
+		t.Fatalf("resumed policy = %q, err = %v", resumed.Config.SkillEvidence, err)
 	}
 }
 
