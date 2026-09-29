@@ -8,11 +8,16 @@ Step 1 of 3 · Choose what to capture
 No apps found automatically.
 Choose which apps to include:
 Include Codex? [y/N] y
+
 Include Claude Code? [y/N] n
+
 Include Cursor? [y/N] n
+
 Add project directories, one per line. Enter a blank line when finished.
 Project path: ~/src/web-app
+
 Project path: 
+
 
 Step 2 of 3 · Connect storage
 

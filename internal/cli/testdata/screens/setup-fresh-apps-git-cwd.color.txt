@@ -9,11 +9,13 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
 \e[1mInclude Codex, Claude Code, and Cursor?\e[0m [\e[1mY\e[0m/n] › 
+
 Projects to archive (✓ included):
   1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
-Enter 1 to include or leave it out, or a path to add a project.
+a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
 Enter a blank line when finished.
 \e[1mProjects\e[0m › 
+
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 
@@ -22,11 +24,14 @@ Enter a blank line when finished.
   2) Amazon S3
   3) Show setup instructions
 Enter 1-3 [\e[1m1\e[0m] › 2
+
 \e[1mAWS profile\e[0m › work
+
 \e[1mWhich bucket should sessions be stored in?\e[0m
   1) photos
   2) team-archive
 Enter 1-2, or another bucket name › 2
+
 Bucket team-archive is in us-east-1; using that region.
 
 Checking your storage connection…
@@ -54,6 +59,7 @@ Checking your storage connection…
   2) Edit a setting
   3) Cancel (your setup draft is kept)
 Enter 1-3 [\e[1m1\e[0m] › 
+
 
 Configuration saved.
 
