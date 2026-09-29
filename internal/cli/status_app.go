@@ -9,8 +9,8 @@ import (
 )
 
 // printAppStatus writes status APP: the overall state, then one app in
-// full: its line, every session it is uploading, its gaps, and a table of
-// its projects. It returns the command's exit code: 1 when the app is not
+// full: its line, every session it is uploading, its gaps, a table of its
+// projects, and the Storage section. It returns the command's exit code: 1 when the app is not
 // one this installation captures or imported.
 func printAppStatus(out, errOut io.Writer, view statusView, name string, sc statusScreen) int {
 	s := sc.style
@@ -48,6 +48,11 @@ func printAppStatus(out, errOut io.Writer, view statusView, name string, sc stat
 			terminal.Println(out, line)
 		}
 	}
+	// Storage as the default status shows it: the headline above leaves
+	// the last pass's errors, and whether storage failed on it, to this
+	// section.
+	terminal.Printf(out, "\n%s\n", s.bold("Storage"))
+	sc.printRows(out, sc.storageRows(view))
 	sc.printNotes(out, view)
 	if sc.verbose {
 		terminal.Printf(out, "\n%s\n", s.bold("Details"))

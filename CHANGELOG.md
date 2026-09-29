@@ -132,7 +132,8 @@ follow [Semantic Versioning](https://semver.org/).
   uploading.
 - `status APP` (`claude`, `codex` or `cursor`) shows one app in full: every
   uploading session and a table of its projects with the sessions each
-  captured, imported and is uploading, and how far read-back has got.
+  captured, imported and is uploading, and how far read-back has got, then
+  the Storage section.
 - `status --json` adds, per application, `subagent_sessions`,
   `imported_sessions`, `uploading_sessions`,
   `waiting_for_transcript_sessions`, and `uploading`, the sessions

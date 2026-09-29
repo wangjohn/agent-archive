@@ -1618,7 +1618,7 @@ func (sc statusScreen) uploadingNotes(app appStatus, limit int) []statusNote {
 		notes = append(notes, statusNote{mark, text})
 	}
 	if rest := len(app.Uploading) - len(shown); rest > 0 {
-		notes = append(notes, statusNote{" ", fmt.Sprintf("… and %d more (status %s)", rest, app.Name)})
+		notes = append(notes, statusNote{" ", fmt.Sprintf("… and %d more (agent-archive status %s)", rest, app.Name)})
 	}
 	return notes
 }

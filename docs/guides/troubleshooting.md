@@ -123,7 +123,7 @@ stays the same length however many projects you include.
 - **`status APP`** (`claude`, `codex` or `cursor`) shows one app in full:
   its row, every uploading session, and a table of its projects with the
   sessions each captured, imported and is uploading, and how far read-back
-  has got.
+  has got, then the same Storage section as `status`.
 - **`status --verbose`** adds what the short screen leaves out: each app's
   upload and read-back progress, a row per project, the included projects,
   skill evidence, the imports line, why bucket privacy couldn't be

@@ -214,3 +214,23 @@ func TestStatusRunningSubagentsAreVerboseOnly(t *testing.T) {
 		t.Fatalf("status --verbose:\n%s", text)
 	}
 }
+
+// status APP leads with the same headline as the default status, so it
+// shows the Storage section too: the errors the headline leaves to it, and
+// the destination the last pass failed on.
+func TestStatusAppShowsTheLastPassErrors(t *testing.T) {
+	t.Parallel()
+	view := mixedStatusView()
+	view.problem, view.lastErrorProblem = generalSyncProblem, generalSyncProblem
+	view.Collector.SetLastErrors(
+		"list registrations: operation error S3: ListObjectsV2, https response error StatusCode: 403, api error AccessDenied: Access Denied",
+		"collection succeeded but retention cleanup failed: open sessions: permission denied",
+	)
+	text := renderAppStatus(t, view, "claude", false)
+	if !strings.Contains(text, "\nStorage\n") || !strings.Contains(text, "retention cleanup failed") || !strings.Contains(text, "Storage refused access") {
+		t.Fatalf("status claude hides the last pass's errors:\n%s", text)
+	}
+	if !strings.Contains(text, "! r2://agent-archive/agent-archive/") {
+		t.Fatalf("status claude shows storage as fine after it refused access:\n%s", text)
+	}
+}

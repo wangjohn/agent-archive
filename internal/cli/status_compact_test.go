@@ -197,15 +197,15 @@ func TestStatusCapsUploadingRows(t *testing.T) {
 	if got := strings.Count(text, "      ~/agent-archive   started "); got != 5 {
 		t.Errorf("%d rows shown, want 5:\n%s", got, text)
 	}
-	if !strings.Contains(text, "\n      … and 3 more (status claude)\n") {
+	if !strings.Contains(text, "\n      … and 3 more (agent-archive status claude)\n") {
 		t.Errorf("no count of the rest:\n%s", text)
 	}
 	full := renderAppStatus(t, view, "claude", false)
-	if got := strings.Count(full, "      ~/agent-archive   started "); got != 8 || strings.Contains(full, "more (status") {
+	if got := strings.Count(full, "      ~/agent-archive   started "); got != 8 || strings.Contains(full, "more (agent-archive status") {
 		t.Errorf("status claude shows %d rows, want all 8:\n%s", got, full)
 	}
 	view.Apps[0].Uploading, view.Apps[0].UploadingSessions = view.Apps[0].Uploading[:5], 5
-	if text := renderStatus(view, false); strings.Contains(text, "more (status") {
+	if text := renderStatus(view, false); strings.Contains(text, "more (agent-archive status") {
 		t.Errorf("five rows counted a rest:\n%s", text)
 	}
 }
