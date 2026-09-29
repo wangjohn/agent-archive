@@ -32,7 +32,8 @@ var ErrNoTerminal = errors.New("no terminal to open a new window in")
 type Spec struct {
 	// Dir is the absolute directory the command runs in.
 	Dir string
-	// Argv is the command and its arguments, passed to it byte for byte.
+	// Argv is the command, an absolute path, and its arguments, passed to
+	// it byte for byte.
 	Argv []string
 	// Unset names environment variables the command must not inherit from
 	// the terminal's shell.
@@ -163,6 +164,10 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 func validate(spec Spec) error {
 	if len(spec.Argv) == 0 {
 		return errors.New("termlaunch: no command to run")
+	}
+	if !filepath.IsAbs(spec.Argv[0]) {
+		// The new window's PATH is the terminal's, not this process's.
+		return fmt.Errorf("termlaunch: command %q is not an absolute path", spec.Argv[0])
 	}
 	if !filepath.IsAbs(spec.Dir) {
 		return fmt.Errorf("termlaunch: directory %q is not absolute", spec.Dir)

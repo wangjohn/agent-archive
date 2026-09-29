@@ -64,7 +64,7 @@ func testSpec(t *testing.T) Spec {
 	t.Helper()
 	return Spec{
 		Dir:       "/work/app #1",
-		Argv:      []string{"codex", "--cd", "/work/app #1", "read it's $(here)"},
+		Argv:      []string{"/opt/bin/codex", "--cd", "/work/app #1", "read it's $(here)"},
 		Unset:     []string{"CODEX_THREAD_ID"},
 		ScriptDir: t.TempDir(),
 	}
@@ -193,7 +193,7 @@ func TestOpenWithoutATerminal(t *testing.T) {
 	if !errors.Is(err, ErrNoTerminal) {
 		t.Fatalf("err = %v, want ErrNoTerminal", err)
 	}
-	want := `cd '/work/app #1' && env -u CODEX_THREAD_ID 'codex' '--cd' '/work/app #1' 'read it'\''s $(here)'`
+	want := `cd '/work/app #1' && env -u CODEX_THREAD_ID '/opt/bin/codex' '--cd' '/work/app #1' 'read it'\''s $(here)'`
 	if !strings.HasSuffix(err.Error(), "\n  "+want) {
 		t.Errorf("err = %q, want it to end with the command %q", err, want)
 	}
@@ -209,13 +209,14 @@ func TestOpenRejectsUnsafeSpecs(t *testing.T) {
 	dir := t.TempDir()
 	tests := map[string]Spec{
 		"no command":            {Dir: "/work", ScriptDir: dir},
-		"relative directory":    {Dir: "work", Argv: []string{"codex"}, ScriptDir: dir},
-		"relative script dir":   {Dir: "/work", Argv: []string{"codex"}, ScriptDir: "scripts"},
-		"NUL in an argument":    {Dir: "/work", Argv: []string{"codex", "a\x00b"}, ScriptDir: dir},
-		"NUL in the directory":  {Dir: "/work\x00", Argv: []string{"codex"}, ScriptDir: dir},
-		"bad variable name":     {Dir: "/work", Argv: []string{"codex"}, Unset: []string{"A; rm -rf ~"}, ScriptDir: dir},
-		"variable with a digit": {Dir: "/work", Argv: []string{"codex"}, Unset: []string{"1A"}, ScriptDir: dir},
-		"empty variable name":   {Dir: "/work", Argv: []string{"codex"}, Unset: []string{""}, ScriptDir: dir},
+		"command found on PATH": {Dir: "/work", Argv: []string{"codex"}, ScriptDir: dir},
+		"relative directory":    {Dir: "work", Argv: []string{"/opt/bin/codex"}, ScriptDir: dir},
+		"relative script dir":   {Dir: "/work", Argv: []string{"/opt/bin/codex"}, ScriptDir: "scripts"},
+		"NUL in an argument":    {Dir: "/work", Argv: []string{"/opt/bin/codex", "a\x00b"}, ScriptDir: dir},
+		"NUL in the directory":  {Dir: "/work\x00", Argv: []string{"/opt/bin/codex"}, ScriptDir: dir},
+		"bad variable name":     {Dir: "/work", Argv: []string{"/opt/bin/codex"}, Unset: []string{"A; rm -rf ~"}, ScriptDir: dir},
+		"variable with a digit": {Dir: "/work", Argv: []string{"/opt/bin/codex"}, Unset: []string{"1A"}, ScriptDir: dir},
+		"empty variable name":   {Dir: "/work", Argv: []string{"/opt/bin/codex"}, Unset: []string{""}, ScriptDir: dir},
 	}
 	for name, spec := range tests {
 		t.Run(name, func(t *testing.T) {
