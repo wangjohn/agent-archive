@@ -142,6 +142,10 @@ func DeleteSession(ctx context.Context, store storage.ObjectStore, harness, id s
 	if err != nil {
 		return err
 	}
+	metadataKey, err := archive.MetadataObjectKey(harness, id)
+	if err != nil {
+		return err
+	}
 	pointers, err := store.List(ctx, prefix)
 	if err != nil {
 		return err
@@ -154,8 +158,9 @@ func DeleteSession(ctx context.Context, store storage.ObjectStore, harness, id s
 		if err != nil {
 			return err
 		}
-		if strings.HasPrefix(string(key), Prefix) {
-			if err := store.Delete(ctx, string(key)); err != nil {
+		entry, parseErr := Parse(string(key))
+		if parseErr == nil && entry.MetadataKey == metadataKey && entry.Hash == path.Base(pointer.Key) {
+			if err := store.Delete(ctx, entry.Key); err != nil {
 				return err
 			}
 		}

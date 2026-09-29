@@ -2,6 +2,7 @@ package reader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -94,6 +95,18 @@ func TestListRecentFallsBackForDamagedIndexKey(t *testing.T) {
 	got, err := ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{})
 	if err != nil || !got.Complete || got.TotalMatched != 1 {
 		t.Fatalf("fallback=%+v,%v", got, err)
+	}
+	if _, err := RebuildIndex(ctx, store, "sessions"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Get(ctx, listingindex.Prefix+"bad-key"); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("malformed hint survived rebuild: %v", err)
+	}
+	store.reset()
+	store.pages = 0
+	got, err = ListRecent(ctx, store, "sessions", Filter{}, 50, ListOptions{})
+	if err != nil || !got.Complete || got.TotalMatched != 1 || store.pages != 1 {
+		t.Fatalf("repaired index=%+v pages=%d err=%v", got, store.pages, err)
 	}
 }
 

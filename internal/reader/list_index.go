@@ -113,6 +113,21 @@ func listRecentFull(ctx context.Context, store storage.ObjectStore, prefix strin
 // writes hints before replacing metadata, so writers racing this full scan
 // cannot create an unindexed live sidecar. MarkReady is written last.
 func RebuildIndex(ctx context.Context, store storage.ObjectStore, prefix string) (int, error) {
+	// A malformed hint forces every limited listing back to a full scan.
+	// Remove only malformed keys here: valid hints may belong to writers
+	// publishing concurrently and must remain available before their
+	// sidecars replace the previous revisions.
+	hints, err := store.List(ctx, listingindex.Prefix)
+	if err != nil {
+		return 0, err
+	}
+	for _, hint := range hints {
+		if _, err := listingindex.Parse(hint.Key); err != nil {
+			if err := store.Delete(ctx, hint.Key); err != nil {
+				return 0, fmt.Errorf("remove malformed listing hint %q: %w", hint.Key, err)
+			}
+		}
+	}
 	objects, err := store.List(ctx, prefix)
 	if err != nil {
 		return 0, err
