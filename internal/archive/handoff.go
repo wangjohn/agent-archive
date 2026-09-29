@@ -215,24 +215,38 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 		return Handoff{}, err
 	}
 	h := Handoff{
-		Version: HandoffVersion,
-		Session: HandoffSession{
-			ArchiveSessionID: bundle.ArchiveSessionID,
-			NativeSessionID:  bundle.NativeSessionID,
-			Harness:          bundle.Capture.Harness.Name,
-			HarnessVersion:   bundle.Capture.Harness.Version,
-			Source:           opts.Source,
-		},
+		Version:                HandoffVersion,
+		Session:                handoffSession(bundle, view, metadata, opts),
 		Workspace:              recordedWorkspace(bundle),
 		ToolResultsUnavailable: bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0,
 		Exchanges:              []HandoffExchange{},
+		Gaps:                   countGaps(bundle.Capture.Gaps),
 	}
+	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
+		// A Cursor text transcript: role sections, no records to walk.
+		h.Exchanges, h.LeftOff = textTranscriptExchanges(bundle.NativeText, opts)
+		h.ToolResultsUnavailable = false
+		return displayHandoff(h), nil
+	}
+	h.Exchanges, h.LeftOff, h.Plan, h.FilesTouched = selectHandoffExchanges(handoffEvents(view), workspaceRoot(bundle), opts)
+	return displayHandoff(h), nil
+}
 
+// handoffSession selects recorded identity, model, and time metadata without
+// consulting the clock or changing the parsed view.
+func handoffSession(bundle SourceBundle, view NormalizedView, metadata *Metadata, opts HandoffOptions) HandoffSession {
+	session := HandoffSession{
+		ArchiveSessionID: bundle.ArchiveSessionID,
+		NativeSessionID:  bundle.NativeSessionID,
+		Harness:          bundle.Capture.Harness.Name,
+		HarnessVersion:   bundle.Capture.Harness.Version,
+		Source:           opts.Source,
+	}
 	seenModel := map[string]bool{}
 	addModel := func(model string) {
 		if model != "" && !isPlaceholderModel(model) && !seenModel[model] {
 			seenModel[model] = true
-			h.Session.Models = append(h.Session.Models, model)
+			session.Models = append(session.Models, model)
 		}
 	}
 	var first, last time.Time
@@ -253,7 +267,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 			addModel(model.Attributes["gen_ai.response.model"])
 			addModel(model.Attributes["gen_ai.request.model"])
 		}
-		h.Session.State, h.Session.TurnOutcome = metadata.State, metadata.TurnOutcome
+		session.State, session.TurnOutcome = metadata.State, metadata.TurnOutcome
 		if first.IsZero() {
 			first = metadata.StartedAt
 		}
@@ -273,27 +287,26 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 	}
 	if !first.IsZero() {
 		t := first.UTC()
-		h.Session.StartedAt = &t
+		session.StartedAt = &t
 	}
 	if !last.IsZero() {
 		t := last.UTC()
-		h.Session.LastActivityAt = &t
+		session.LastActivityAt = &t
 	}
+	return session
+}
 
-	h.Gaps = countGaps(bundle.Capture.Gaps)
-	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
-		// A Cursor text transcript: role sections, no records to walk.
-		h.Exchanges, h.LeftOff = textTranscriptExchanges(bundle.NativeText, opts)
-		h.ToolResultsUnavailable = false
-		return displayHandoff(h), nil
-	}
-	events := handoffEvents(view)
+// selectHandoffExchanges groups selected turns and tool calls in record order.
+// It only reads the normalized events and returns new handoff values.
+func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOptions) ([]HandoffExchange, string, []HandoffPlanItem, []string) {
+	exchanges := []HandoffExchange{}
+	leftOff := ""
+	var plan []HandoffPlanItem
 	files := fileSet{}
-	root := workspaceRoot(bundle)
 	var current *HandoffExchange
 	flush := func() {
 		if current != nil && (current.Prompt != "" || len(current.Steps) > 0) {
-			h.Exchanges = append(h.Exchanges, *current)
+			exchanges = append(exchanges, *current)
 		}
 	}
 	current = &HandoffExchange{}
@@ -307,7 +320,7 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 			case TurnKindAssistant:
 				if text := strings.TrimSpace(turn.Text); text != "" {
 					current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepText, Text: text})
-					h.LeftOff = text
+					leftOff = text
 				}
 			case TurnKindShellCommand:
 				if command := strings.TrimSpace(stripHarnessTag(turn.Text, "bash-input")); command != "" {
@@ -352,14 +365,13 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 		for _, file := range touchedFiles(name, call.Input, raw) {
 			files.add(relativeTo(file, root))
 		}
-		if plan := planItems(name, call.Input, h.Plan); plan != nil {
-			h.Plan = plan
+		if updated := planItems(name, call.Input, plan); updated != nil {
+			plan = updated
 		}
 		current.Steps = append(current.Steps, HandoffStep{Kind: HandoffStepTool, Tool: tool})
 	}
 	flush()
-	h.FilesTouched = files.list
-	return displayHandoff(h), nil
+	return exchanges, leftOff, plan, files.list
 }
 
 // textTranscriptExchanges reads the role sections of a filtered text
