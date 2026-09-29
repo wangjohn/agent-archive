@@ -46,7 +46,7 @@ func withPager(ctx context.Context, stdout, stderr io.Writer, env pagerDependenc
 	pagerCtx, stopPager := context.WithCancel(ctx)
 	defer stopPager()
 	watch := watchPagerSignals(env, stopPager)
-	_, err := run.page(pagerCtx, stdout, stderr, env, buf.Bytes(), watch.interrupted)
+	_, _, err := run.page(pagerCtx, stdout, stderr, env, buf.Bytes(), watch.interrupted)
 	if sig := watch.stop(); sig != nil {
 		env.exit(signalExitCode(sig))
 	}
@@ -196,8 +196,11 @@ func pageText(ctx context.Context, stdout, stderr io.Writer, env pagerDependenci
 		_, err := stdout.Write(text)
 		return false, false, err
 	}
-	paged, err = run.page(ctx, stdout, stderr, env, text, nil)
-	return paged, paged && run.waited, err
+	paged, clean, err := run.page(ctx, stdout, stderr, env, text, nil)
+	// A pager that failed (less given an option it does not know) may have
+	// exited without waiting, its error on the screen: the browser then
+	// waits itself, so the error stays readable.
+	return paged, paged && clean && run.waited, err
 }
 
 // pagerRun is a pager to run, as choosePager chose it.
@@ -236,21 +239,23 @@ func choosePager(env pagerDependencies, noPager, stayOpen bool, stdout io.Writer
 	return pagerRun{command: command, environment: userPagerEnvironment(env), program: program, waited: waited}, true
 }
 
-// page runs the pager on text, and reports whether it showed it. Only a
+// page runs the pager on text, and reports whether it showed it, and
+// whether it exited cleanly (status 0). Only a
 // pager that could not be started (sh could not find or run it) falls
 // back to writing text to stdout, as git does: one that exited with an
 // error, or was killed, showed the text already, and less exits 2 when
 // Ctrl-C quits it (LESS=-K). interrupted, when not nil, reports whether
 // Ctrl-C came while the pager ran; then it never falls back. A pager
 // stopped because ctx was cancelled (a signal) did run too.
-func (run pagerRun) page(ctx context.Context, stdout, stderr io.Writer, env pagerDependencies, text []byte, interrupted func() bool) (bool, error) {
-	failure := startFailure(env.runPager(ctx, run.command, run.environment, bytes.NewReader(text), stdout, stderr))
+func (run pagerRun) page(ctx context.Context, stdout, stderr io.Writer, env pagerDependencies, text []byte, interrupted func() bool) (paged, clean bool, err error) {
+	runErr := env.runPager(ctx, run.command, run.environment, bytes.NewReader(text), stdout, stderr)
+	failure := startFailure(runErr)
 	if failure == "" || cancelled(ctx) || (interrupted != nil && interrupted()) {
-		return true, nil
+		return true, runErr == nil, nil
 	}
 	terminal.Printf(stderr, "agent-archive: warning: pager %q failed (%s); printing directly\n", run.program, failure)
 	_, copyErr := stdout.Write(text)
-	return false, copyErr
+	return false, false, copyErr
 }
 
 // cancelled reports whether ctx is done.
@@ -266,9 +271,10 @@ func cancelled(ctx context.Context) bool {
 // startFailure describes err from runPager when it means the pager never
 // ran: sh itself could not start, or sh exited 127 (command not found) or
 // 126 (not executable). It is "" when the pager ran: no error, another
-// exit status, or death by a signal, which are the pager's own.
+// exit status, or death by a signal, which are the pager's own, or a
+// process the pager left behind holding its input past the wait delay.
 func startFailure(err error) string {
-	if err == nil {
+	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
 		return ""
 	}
 	exit, ok := errors.AsType[*exec.ExitError](err)

@@ -430,6 +430,7 @@ func TestPagerFallsBackOnlyWhenItCannotStart(t *testing.T) {
 		{"exit 2, as less -K on Ctrl-C", exitError(t, "exit 2"), false},
 		{"killed by Ctrl-C", exitError(t, "kill -INT $$"), false},
 		{"exit 1", exitError(t, "exit 1"), false},
+		{"left a process holding its input", exec.ErrWaitDelay, false},
 		{"command not found", exitError(t, "exit 127"), true},
 		{"not executable", exitError(t, "exit 126"), true},
 		{"sh could not start", errors.New("fork/exec /bin/sh: no such file or directory"), true},
@@ -439,7 +440,12 @@ func TestPagerFallsBackOnlyWhenItCannotStart(t *testing.T) {
 			env.IsTerminal = func(any) bool { return true }
 			env.RunPager = func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error { return tc.err }
 			var out, errOut bytes.Buffer
-			paged, _, err := pageText(context.Background(), &out, &errOut, env, false, stayOpen, []byte("text\n"))
+			paged, waited, err := pageText(context.Background(), &out, &errOut, env, false, stayOpen, []byte("text\n"))
+			// A pager that did not exit cleanly may not have waited, so
+			// the browser waits itself.
+			if waited {
+				t.Errorf("%s (stayOpen %v): waited after a failed pager", tc.name, stayOpen)
+			}
 			if err != nil || paged == tc.fallback || (out.String() == "text\n") != tc.fallback || (errOut.Len() > 0) != tc.fallback {
 				t.Errorf("%s (stayOpen %v): paged=%v err=%v stdout=%q stderr=%q", tc.name, stayOpen, paged, err, out.String(), errOut.String())
 			}
