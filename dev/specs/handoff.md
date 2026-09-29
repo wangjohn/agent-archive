@@ -604,7 +604,11 @@ which hands off *that* session and opens Codex in a new terminal tab.
    (`Usage: claude [options] [command] [prompt]`, commander) and Codex's
    source (clap, `prompt: Option<String>` positional) end options at `--`;
    Cursor's `agent` is closed source and was not verified, so its prompt
-   is last without a `--`. Per agent:
+   is last without a `--`. A `--` among the extra arguments is refused;
+   an option left without its value at the end of them would take the
+   `--` (or Cursor's prompt) as its value, which cannot be detected
+   without knowing each agent's options, so the guide tells users to give
+   every option its value. Per agent:
    - Claude Code: `claude --add-dir <launch dir> [extra] -- <prompt>`, run
      in the directory. Without `--add-dir` the read is refused (verified).
    - Codex: `codex --cd <dir> [extra] -- <prompt>`; every sandbox mode can
