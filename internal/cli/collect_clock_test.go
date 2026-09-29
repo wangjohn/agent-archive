@@ -47,4 +47,7 @@ func TestPassWithAClockAheadOfStorageDeletesNothingAndSaysWhy(t *testing.T) {
 	if err != nil || !strings.Contains(status.LastError, "clock is ahead") {
 		t.Fatalf("status.LastError = %q (%v)", status.LastError, err)
 	}
+	if n := len(status.LastErrors); n == 0 || !strings.Contains(status.LastErrors[n-1], "clock is ahead") {
+		t.Fatalf("status.LastErrors = %q, want the clock problem as its own entry", status.LastErrors)
+	}
 }

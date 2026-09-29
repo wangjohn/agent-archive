@@ -8,10 +8,44 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `handoff --to claude|codex|cursor` launches a local coding agent with the
+  filtered session record in a private temporary file. The receiving agent is
+  told how to inspect the archived or current local record with Agent Archive.
+- `show --transcript` prints a session's conversation to read: each prompt,
+  the agent's replies, one line per tool call (✗ when it failed), your `!`
+  shell and local slash commands, compactions, and app notices such as a
+  background task finishing, paged on a terminal (`--no-pager` to print
+  directly). `--full` adds tool results and shell output, trimmed.
+  `--transcript --json` prints what `--normalized` printed.
+- Browsing on a terminal (`list`, bare `show`) opens a session's summary in
+  place of the list, on the terminal's alternate screen: `t` shows its
+  transcript, Enter or `b` goes back to the list, and `q` quits. The last
+  summary viewed stays in scrollback. Bare `show` now keeps browsing like
+  `list` instead of exiting after one pick.
+
+### Changed
+
+- **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
+  (title, when, app, models, activity, skills, subagents, capture gaps)
+  instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what
+  `show` printed before.
+- `show --normalized` is deprecated in favor of `show --transcript --json`.
+  It still works, with unchanged output, and prints a note on stderr.
+
+## [0.2.0] - 2026-09-29
+
+The archive browser now has bounded, readable listings and terminal pickers for
+`list`, `show`, and `handoff`. Scripts should update consumers of `list --json`
+to schema version 4, which reports whether the total match count is known.
+
+### Added
 - `list --limit N` caps how many sessions are shown (default 50, newest
-  first; `0` for all). A truncated text listing ends with
-  `Showing N of M session(s)…`; `list --json` is now `schema_version` 2
-  and includes `limit`, `returned`, `total_matched`, and `truncated`.
+  first; `0` for all). A truncated text listing reports
+  `Showing N or more session(s)` when the count is unknown, or
+  `Showing N of M session(s)` when exact; `list --json` is now `schema_version` 4
+  and includes `limit`, `returned`, and `total_matched_known`; it includes
+  `total_matched` only when the count is exact and `truncated` when the
+  result was cut short.
 - On a terminal, `list` (text only) pages through `$AGENT_ARCHIVE_PAGER`,
   else `$PAGER`, else `less -FRX`. Use `--no-pager`, or set either env var
   to empty or `cat`, to print directly. `--json` is never paged.
@@ -33,29 +67,28 @@ follow [Semantic Versioning](https://semver.org/).
   prompt) and `project_name` (project basename at publish). Parser version
   is now `0.12.0` so existing sessions get titles on the next metadata
   refresh.
-- `show --transcript` prints a session's conversation to read: each prompt,
-  the agent's replies, one line per tool call (✗ when it failed), your `!`
-  shell and local slash commands, compactions, and app notices such as a
-  background task finishing, paged on a terminal (`--no-pager` to print
-  directly). `--full` adds tool results and shell output, trimmed. `--transcript --json` prints what `--normalized` printed.
-- Browsing on a terminal (`list`, bare `show`) opens a session's summary in
-  place of the list, on the terminal's alternate screen: `t` shows its
-  transcript, Enter or `b` goes back to the list, and `q` quits. The last
-  summary viewed stays in scrollback. Bare `show` now keeps browsing like
-  `list` instead of exiting after one pick.
+- `status --json` has `collector.last_errors`: each problem the last pass
+  recorded, one per entry. `collector.last_error` is unchanged (the same
+  problems joined with `; `).
 
 ### Changed
 
-- **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
-  (title, when, app, models, activity, skills, subagents, capture gaps)
-  instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what
-  `show` printed before.
-- `show --normalized` is deprecated in favor of `show --transcript --json`.
-  It still works, with unchanged output, and prints a note on stderr.
 - Long-running CLI steps show a short TTY spinner (registering sessions,
   finishing upload, waiting for the collector, scanning, listing, loading a
   session, looking for past sessions, checking storage). Piped and CI output
   stay plain.
+
+### Fixed
+
+- `status` shows each problem the last pass recorded on its own ✗ row, and
+  a storage provider's error message containing `; ` is no longer split in
+  two or shown as the wrong cause.
+- A sync's problems no longer hide each other in `status`: a read-back or
+  retention failure after collection is shown beside the problems the pass
+  already recorded (such as a session over the size limit, or retention
+  held by the clock) instead of replacing them.
+- `status --verbose` prints each of the last pass's problems on its own
+  `Last error:` line.
 
 ## [0.1.1] - 2026-09-28
 
@@ -193,6 +226,7 @@ The first release.
   `credential_process` fails there. See
   [configuration](docs/reference/configuration.md#environment-variables).
 
-[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/wangjohn/agent-archive/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/wangjohn/agent-archive/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/wangjohn/agent-archive/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/wangjohn/agent-archive/releases/tag/v0.1.0
