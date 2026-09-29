@@ -57,7 +57,7 @@ func pickBrowseSession(stdin io.Reader, stdout, stderr io.Writer, sessions []arc
 	p := newPrompter(stdin, stdout)
 	for {
 		terminal.Println(stdout)
-		answer, err := p.line(p.promptText("Enter number (or short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": "))
+		answer, err := p.line(p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": "))
 		if err != nil {
 			if strings.Contains(err.Error(), "no more input") {
 				return listRow{}, false, 0
@@ -71,16 +71,16 @@ func pickBrowseSession(stdin io.Reader, stdout, stderr io.Writer, sessions []arc
 		}
 		row, matched := matchBrowseRow(answer, rows)
 		if !matched {
-			terminal.Println(stdout, "Enter a listed number or short SESSION_ID, or q to quit.")
+			terminal.Println(stdout, "Enter a listed number or unique short SESSION_ID, or q to quit.")
 			continue
 		}
 		return row, true, 0
 	}
 }
 
-// matchBrowseRow resolves a typed answer to one listed row. Exact short or
-// full SESSION_ID matches win first so an all-decimal short id is never
-// mistaken for a row number. A small integer (shorter than a short id) then
+// matchBrowseRow resolves a typed answer to one listed row. A unique exact
+// short or full SESSION_ID wins first so an all-decimal short ID is not
+// mistaken for a row number. A small integer (shorter than a short ID) then
 // selects a 1-based index. Otherwise a unique SESSION_ID prefix matches.
 func matchBrowseRow(answer string, rows []listRow) (listRow, bool) {
 	answer = strings.TrimSpace(answer)
@@ -88,10 +88,16 @@ func matchBrowseRow(answer string, rows []listRow) (listRow, bool) {
 		return listRow{}, false
 	}
 	lower := strings.ToLower(answer)
+	var exact listRow
+	exactMatches := 0
 	for _, r := range rows {
 		if lower == strings.ToLower(r.SessionID) || lower == strings.ToLower(r.ShortID) {
-			return r, true
+			exact = r
+			exactMatches++
 		}
+	}
+	if exactMatches > 0 {
+		return exact, exactMatches == 1
 	}
 	if n, err := strconv.Atoi(answer); err == nil && len(answer) < minShortSessionID {
 		if n >= 1 && n <= len(rows) {
