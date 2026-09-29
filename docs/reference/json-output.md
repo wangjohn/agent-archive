@@ -12,11 +12,11 @@ explicitly.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "sessions": [ { "...": "one metadata sidecar per matching session" } ],
   "limit": 50,
   "returned": 50,
-  "total_matched": 847,
+  "total_matched_known": false,
   "truncated": true
 }
 ```
@@ -28,12 +28,15 @@ explicitly.
   [`metadata.schema.json`](schemas.md). An empty result is `[]`, never
   `null`.
 - `limit` is the `--limit` value (`50` by default; `0` means no cap).
-  `returned` is `sessions.length`. `total_matched` is how many sessions
-  passed the filters before `--limit`. `truncated` is present and `true`
-  only when `--limit` cut the list short.
-- `unavailable` is present only when the query can't return sessions yet
-  (today: `--skill-usage eligible_no_use`); it holds the explanation the text
-  listing prints, and `sessions` is empty.
+  `returned` is `sessions.length`. `total_matched_known` says whether the
+  count is exact. When false, `total_matched` is omitted and `truncated` is
+  true: the indexed read stopped once it found one more match than the limit.
+  When true, `total_matched` is the exact match count and `truncated` is
+  present only if the limit cut it short. Use `--limit 0` for an exact count.
+- Unsupported filter values return exit code `2` with an explanation on
+  stderr and no JSON on stdout. This includes `--skill-usage eligible_no_use`:
+  current parsers cannot prove non-use. Schema version `3` removed the
+  version `2` `unavailable` field; version `4` adds explicit count knowledge.
 - A sidecar that can't be read (deleted mid-listing, or written by a newer
   version) is left out; a warning naming it goes to stderr, never stdout.
 - `--json` is never auto-paged, even on a terminal.

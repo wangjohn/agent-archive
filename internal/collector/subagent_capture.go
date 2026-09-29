@@ -29,19 +29,39 @@ func materializeSubagentCandidates(local *state.Store, opts Options) map[string]
 }
 
 func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, opts Options) error {
-	parent, found, err := local.LoadRegistration(candidate.ParentArchiveSessionID)
+	parent, err := admittedSubagentParent(local, candidate, opts)
 	if err != nil {
 		return err
 	}
-	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || !strings.EqualFold(parent.Harness.Name, candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
-		return rejectSubagentCandidate(local, candidate, "subagent_parent_ownership_unavailable")
+	reg := assembleSubagentRegistration(parent, candidate)
+	reg, err = validateCandidateTranscript(local, candidate, parent, reg, opts)
+	if err != nil {
+		return err
 	}
+	if err := checkSubagentRegistrationConflict(local, candidate, reg); err != nil {
+		return err
+	}
+	return persistSubagentCandidate(local, candidate, reg)
+}
+
+func admittedSubagentParent(local *state.Store, candidate state.SubagentCandidate, opts Options) (archive.SessionRegistration, error) {
+	parent, found, err := local.LoadRegistration(candidate.ParentArchiveSessionID)
+	if err != nil {
+		return archive.SessionRegistration{}, err
+	}
+	if !found || parent.NativeSessionID != candidate.ParentNativeSessionID || parent.ProjectID != candidate.ProjectID || parent.ProjectRoot != candidate.ProjectRoot || !strings.EqualFold(parent.Harness.Name, candidate.Harness.Name) || (opts.AcceptSession != nil && !opts.AcceptSession(parent)) {
+		return archive.SessionRegistration{}, rejectSubagentCandidate(local, candidate, "subagent_parent_ownership_unavailable")
+	}
+	return parent, nil
+}
+
+func assembleSubagentRegistration(parent archive.SessionRegistration, candidate state.SubagentCandidate) archive.SessionRegistration {
 	var startedAtSource archive.StartedAtSource
 	if parent.Imported() {
 		// Its start is set below from the earliest native record.
 		startedAtSource = archive.StartedAtSourceTranscript
 	}
-	reg := archive.SessionRegistration{
+	return archive.SessionRegistration{
 		ArchiveSessionID: candidate.ArchiveSessionID, NativeSessionID: candidate.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness,
 		TranscriptPath: candidate.TranscriptPath, RegisteredAt: candidate.ObservedAt,
@@ -53,36 +73,49 @@ func materializeSubagentCandidate(local *state.Store, candidate state.SubagentCa
 		DestinationID:   parent.DestinationID,
 		StartedAtSource: startedAtSource,
 	}
+}
+
+func validateCandidateTranscript(local *state.Store, candidate state.SubagentCandidate, parent, reg archive.SessionRegistration, opts Options) (archive.SessionRegistration, error) {
 	adapter, err := archive.NewAdapter(reg.Harness.Name)
 	if err != nil {
-		return rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")
+		return reg, rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")
 	}
 	filtered, _, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("subagent transcript is not available yet: %w", err)
+			return reg, fmt.Errorf("subagent transcript is not available yet: %w", err)
 		}
-		return rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
+		return reg, rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
 	}
 	if subagentTranscriptEmpty(filtered) {
 		if candidate.Origin == archive.SessionOriginImport {
 			// A transcript backfill found is history: it will not grow.
-			return rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
+			return reg, rejectSubagentCandidate(local, candidate, "subagent_transcript_unavailable")
 		}
-		return errors.New("subagent transcript is empty; waiting for native records")
+		return reg, errors.New("subagent transcript is empty; waiting for native records")
 	}
 	reg.SessionStartedAt = filtered.NativeStartAt
 	if code := checkNewSubagent(filtered, reg.ParentNativeSessionID, reg.SubagentID, parent.SessionStartedAt, candidate.ObservedAt); code != "" {
-		return rejectSubagentCandidate(local, candidate, code)
+		return reg, rejectSubagentCandidate(local, candidate, code)
 	}
 	if opts.AcceptSession != nil && !opts.AcceptSession(reg) {
-		return rejectSubagentCandidate(local, candidate, "subagent_start_ineligible")
+		return reg, rejectSubagentCandidate(local, candidate, "subagent_start_ineligible")
 	}
+	return reg, nil
+}
+
+func checkSubagentRegistrationConflict(local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
 	if existing, found, err := local.LoadRegistration(reg.ArchiveSessionID); err != nil {
 		return err
 	} else if found && (existing.ParentSessionID != reg.ParentSessionID || existing.ParentNativeSessionID != reg.ParentNativeSessionID || existing.ProjectID != reg.ProjectID || existing.ProjectRoot != reg.ProjectRoot || !strings.EqualFold(existing.Harness.Name, reg.Harness.Name) || existing.SubagentID != reg.SubagentID || existing.TranscriptPath != reg.TranscriptPath || !existing.SessionStartedAt.Equal(reg.SessionStartedAt)) {
 		return rejectSubagentCandidate(local, candidate, "subagent_registration_conflict")
 	}
+	return nil
+}
+
+// Registration is durable before hook evidence, and the candidate remains
+// retryable until both writes complete. Replaying either write is safe.
+func persistSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
 	if err := local.SaveRegistration(reg); err != nil {
 		return err
 	}

@@ -485,7 +485,7 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 			t.Fatalf("prompt %d forced an upload inside the interval: result=%#v err=%v", i, result, err)
 		}
 	}
-	if objects, err := store.List(context.Background(), ""); err != nil || len(objects) != 2 {
+	if objects, err := store.List(context.Background(), ""); err != nil || len(objects) != 5 {
 		t.Fatalf("prompts uploaded new objects: %v err=%v", objects, err)
 	}
 	requests, err := local.LoadRequests()

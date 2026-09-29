@@ -56,8 +56,8 @@ const (
 	// archive.SkillDetectionUnavailable) is treated as unknown, not "no use".
 	//
 	// No parser version emits archive.SkillDetectionObservedNone today, so
-	// this value cannot match any sidecar yet. It stays accepted, and the
-	// comparison stays implemented, for the parser version that will.
+	// this value cannot match any sidecar yet. The CLI rejects it until a
+	// parser can prove non-use; the comparison remains for that future parser.
 	SkillUsageEligibleNoUse SkillUsage = "eligible_no_use"
 )
 
@@ -379,6 +379,10 @@ func parserVersionAtLeast(version string, minimum [3]int) bool {
 }
 
 func matches(m archive.Metadata, f Filter) bool {
+	return matchesCapture(m, f) && matchesCoverage(m, f) && matchesModel(m, f.Model) && matchesSkill(m, f)
+}
+
+func matchesCapture(m archive.Metadata, f Filter) bool {
 	if f.Harness != "" && m.Harness.Name != f.Harness {
 		return false
 	}
@@ -388,59 +392,69 @@ func matches(m archive.Metadata, f Filter) bool {
 	if !f.To.IsZero() && m.CapturedAt.After(f.To) {
 		return false
 	}
+	return true
+}
+
+func matchesCoverage(m archive.Metadata, f Filter) bool {
 	if f.RequireCompleteCoverage && (m.Parser.Status != archive.ParserStatusComplete || len(m.CaptureGaps) != 0) {
 		return false
 	}
-	if f.Model != "" {
-		found := false
-		for _, x := range m.Models {
-			if x.Attributes["gen_ai.request.model"] == f.Model || x.Attributes["gen_ai.response.model"] == f.Model {
-				found = true
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	if f.Skill != "" || f.SkillSHA256 != "" {
-		used, available := false, false
-		for _, x := range m.SkillsUsed {
-			if (f.Skill == "" || x.Name == f.Skill) && (f.SkillSHA256 == "" || x.SHA256 == f.SkillSHA256) {
-				used = true
-			}
-		}
-		for _, x := range m.SkillsAvailable {
-			if (f.Skill == "" || x.Name == f.Skill) && (f.SkillSHA256 == "" || x.SHA256 == f.SkillSHA256) {
-				if x.Coverage == archive.SkillCoverageEligible || x.Coverage == archive.SkillCoverageDiscovered {
-					available = true
-				}
-			}
-		}
-		// Older parsers inferred non-use from availability alone. Those
-		// sidecars remain readable, but cannot support a no-use comparison.
-		// This is a whitelist, not a blacklist of known-legacy strings:
-		// collector.Options.ParserVersion is a real override, so a pre-0.4.0
-		// build could have written observed_none under any version string.
-		trustedDetection := parserVersionAtLeast(m.Parser.Version, eligibilityParserVersion)
-		eligibleNoUse := available && !used && trustedDetection && m.SkillDetection == archive.SkillDetectionObservedNone
-		switch f.SkillUsage {
-		case SkillUsageAvailable:
-			if !available {
-				return false
-			}
-		case SkillUsageEligibleNoUse:
-			if !eligibleNoUse {
-				return false
-			}
-		case SkillUsageUsed:
-			fallthrough
-		default: // the zero value
-			if !used {
-				return false
-			}
-		}
-	}
 	return true
+}
+
+func matchesModel(m archive.Metadata, model string) bool {
+	if model == "" {
+		return true
+	}
+	for _, x := range m.Models {
+		if x.Attributes["gen_ai.request.model"] == model || x.Attributes["gen_ai.response.model"] == model {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesSkill(m archive.Metadata, f Filter) bool {
+	if f.Skill == "" && f.SkillSHA256 == "" {
+		return true
+	}
+	used := matchesUsedSkill(m, f)
+	available := matchesAvailableSkill(m, f)
+	switch f.SkillUsage {
+	case SkillUsageAvailable:
+		return available
+	case SkillUsageEligibleNoUse:
+		// Older parsers inferred non-use from availability alone. This is a
+		// whitelist, not a blacklist of known-legacy strings: a pre-0.4.0
+		// build could have written observed_none with a custom version.
+		return available && !used && parserVersionAtLeast(m.Parser.Version, eligibilityParserVersion) && m.SkillDetection == archive.SkillDetectionObservedNone
+	case SkillUsageUsed:
+		fallthrough
+	default: // the zero value
+		return used
+	}
+}
+
+func matchesUsedSkill(m archive.Metadata, f Filter) bool {
+	for _, x := range m.SkillsUsed {
+		if matchesSkillIdentity(x.Name, x.SHA256, f) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesAvailableSkill(m archive.Metadata, f Filter) bool {
+	for _, x := range m.SkillsAvailable {
+		if matchesSkillIdentity(x.Name, x.SHA256, f) && (x.Coverage == archive.SkillCoverageEligible || x.Coverage == archive.SkillCoverageDiscovered) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesSkillIdentity(name, hash string, f Filter) bool {
+	return (f.Skill == "" || name == f.Skill) && (f.SkillSHA256 == "" || hash == f.SkillSHA256)
 }
 
 // LoadSource verifies the compressed SHA-256 before bounded, streaming
