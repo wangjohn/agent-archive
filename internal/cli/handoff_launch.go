@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +16,7 @@ import (
 
 // launchPreparedHandoff keeps the filtered record out of process arguments.
 // The file exists for the lifetime of the interactive destination session.
-func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, opts handoffOptions, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) error {
+func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, opts handoffOptions, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) (resultErr error) {
 	cwd := opts.project
 	var err error
 	if cwd == "" {
@@ -35,7 +37,11 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 	if err != nil {
 		return fmt.Errorf("create private handoff: %w", err)
 	}
-	defer os.RemoveAll(privateDir)
+	defer func() {
+		if err := os.RemoveAll(privateDir); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove private handoff: %w", err))
+		}
+	}()
 	filePath := filepath.Join(privateDir, "handoff.md")
 	if err := os.WriteFile(filePath, []byte(launchHandoffPrompt(string(record), h, target, executable)), 0o600); err != nil {
 		return fmt.Errorf("write private handoff: %w", err)
@@ -77,7 +83,7 @@ func (e Env) launchHandoff(name, cwd, prompt string, stdin io.Reader, stdout, st
 	if err != nil {
 		return fmt.Errorf("find %s: %w", binary, err)
 	}
-	cmd := exec.Command(path, prompt)
+	cmd := exec.CommandContext(context.Background(), path, prompt)
 	cmd.Dir, cmd.Stdin, cmd.Stdout, cmd.Stderr = cwd, stdin, stdout, stderr
 	return cmd.Run()
 }

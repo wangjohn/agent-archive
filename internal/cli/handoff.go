@@ -67,6 +67,14 @@ type handoffOptions struct {
 	maxBytes   int
 }
 
+type handoffDestination string
+
+const (
+	handoffDestinationClaude handoffDestination = "claude"
+	handoffDestinationCodex  handoffDestination = "codex"
+	handoffDestinationCursor handoffDestination = "cursor"
+)
+
 // currentSessionEnv names environment variables an agent sets for the commands
 // it runs, holding its own native session ID. `--latest` skips that session:
 // run from inside an agent, the newest session is always the one asking.
@@ -218,7 +226,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 
 func validateHandoffLaunchOptions(to, output, format, source string, noPreamble bool) string {
 	switch {
-	case to != "" && to != "claude" && to != "codex" && to != "cursor":
+	case to != "" && handoffDestination(to) != handoffDestinationClaude && handoffDestination(to) != handoffDestinationCodex && handoffDestination(to) != handoffDestinationCursor:
 		return "--to must be claude, codex, or cursor"
 	case to != "" && output != "":
 		return "--to and --output cannot be used together"
