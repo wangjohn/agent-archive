@@ -348,25 +348,19 @@ func selectHandoffExchanges(events []handoffEvent, root string, opts HandoffOpti
 			continue
 		}
 		call := event.call
-		raw := call.raw
-		name := callToolName(*call)
-		if name == "" {
-			name = "tool"
-		}
-		tool := &HandoffToolCall{Name: name, Summary: toolSummary(name, call.Input, raw, root)}
-		if call.Name == "" && tool.Summary == "" {
-			// A completion event with neither a tool name nor arguments (a
-			// Codex Extension item) says only that something finished.
+		name, summary, listed := listedCall(*call, root)
+		if !listed {
 			continue
 		}
-		if call.IsError != nil {
-			tool.IsError = *call.IsError
-		}
+		var result string
+		var resultLines, resultBytes int
 		if call.ResultRecordIndex != nil {
 			text := call.resultText
-			tool.ResultBytes = len(text)
-			tool.ResultLines = lineCount(text)
-			tool.Result = trimResult(text, opts.resultLines(), opts.resultBytes())
+			result, resultLines, resultBytes = trimResult(text, opts.resultLines(), opts.resultBytes()), lineCount(text), len(text)
+		}
+		tool := &HandoffToolCall{
+			Name: name, Summary: summary, IsError: call.IsError != nil && *call.IsError,
+			Result: result, ResultLines: resultLines, ResultBytes: resultBytes,
 		}
 		if updated := planItems(name, call.Input, plan); updated != nil {
 			plan = updated
@@ -624,7 +618,7 @@ func toolSummary(name string, input map[string]any, raw map[string]any, root str
 			return firstLine(command, handoffSummaryCap)
 		}
 	case readToolNames[lower]:
-		file := workspaceFile(firstString(input, touchedPathKeys...), root)
+		file := shownFile(firstString(input, touchedPathKeys...), root)
 		if file == "" {
 			break
 		}
@@ -638,13 +632,15 @@ func toolSummary(name string, input map[string]any, raw map[string]any, root str
 	case editToolNames[lower]:
 		if files := touchedFiles(name, input, raw); len(files) > 0 {
 			for i := range files {
-				files[i] = workspaceFile(files[i], root)
+				files[i] = shownFile(files[i], root)
 			}
 			return strings.Join(files, ", ")
 		}
 		return ""
 	case searchToolNames[lower]:
 		pattern := firstString(input, "pattern", "query", "glob_pattern", "glob", "globPattern")
+		// Searching the workspace root is the default, so "in <root>" is
+		// left out.
 		where := workspaceFile(firstString(input, "path", "target_directory", "targetDirectory"), root)
 		if pattern != "" && where != "" {
 			return firstLine(pattern+" in "+where, handoffSummaryCap)
@@ -755,9 +751,13 @@ func touchedFiles(name string, input map[string]any, raw map[string]any) []strin
 
 // workspaceFile is how a file a call names is shown and deduplicated, so the
 // list reads the same on a machine where the repository lives elsewhere: a
-// relative path is resolved against root, a path under root is shown
-// relative to it, and anything else is cleaned. In a session rooted at
-// /repo, "/repo/a.go", "a.go", "./a.go", and "../repo/a.go" are all "a.go".
+// path under root is shown relative to it, a relative path that stays under
+// root once resolved against it is shown that way, and anything else is
+// cleaned. In a session rooted at /repo, "/repo/a.go", "a.go", "./a.go", and
+// "../repo/a.go" are all "a.go". A relative path that leaves root
+// ("../other/b.go") keeps its cleaned relative spelling: resolving it would
+// print the absolute path above the workspace (a home directory), and a
+// call run from a subdirectory meant it relative to that directory anyway.
 // A Windows drive path (C:\repo\a.go) is read with forward slashes and an
 // upper-case drive letter. root itself, ".", and "" name no file and are "".
 func workspaceFile(file, root string) string {
@@ -766,27 +766,46 @@ func workspaceFile(file, root string) string {
 	}
 	windows := isDrivePath(file) || isDrivePath(root)
 	file, root = slashPath(file, windows), slashPath(root, windows)
+	if root != "" {
+		root = path.Clean(root)
+	}
 	if !path.IsAbs(file) && !isDrivePath(file) {
-		if root == "" {
-			if file = path.Clean(file); file == "." {
-				return ""
-			}
-			return file
+		clean := path.Clean(file)
+		if clean == "." {
+			return ""
 		}
-		file = path.Join(root, file)
+		if root != "" {
+			if relative, under := underRoot(path.Join(root, clean), root); under {
+				return relative
+			}
+		}
+		return clean
 	}
 	file = path.Clean(file)
-	if root == "" {
-		return file
-	}
-	root = path.Clean(root)
-	if file == root {
-		return ""
-	}
-	if relative, ok := strings.CutPrefix(file, strings.TrimSuffix(root, "/")+"/"); ok {
-		return relative
+	if root != "" {
+		if relative, under := underRoot(file, root); under {
+			return relative
+		}
 	}
 	return file
+}
+
+// underRoot returns clean path file relative to clean root when it is root
+// ("") or inside it.
+func underRoot(file, root string) (string, bool) {
+	if file == root {
+		return "", true
+	}
+	return strings.CutPrefix(file, strings.TrimSuffix(root, "/")+"/")
+}
+
+// shownFile is workspaceFile for display: a non-empty argument that names
+// the workspace root itself is shown as ".".
+func shownFile(file, root string) string {
+	if shown := workspaceFile(file, root); shown != "" || file == "" {
+		return shown
+	}
+	return "."
 }
 
 // isDrivePath reports whether p starts with a Windows drive (C:\ or C:/).
@@ -820,6 +839,26 @@ func callToolName(call NormalizedToolCall) string {
 		return call.Name
 	}
 	return firstString(call.raw, "type")
+}
+
+// listedCall is how handoff lists a call and whether tools_used counts it:
+// its name (callToolName, else "tool"), its one-line summary, and whether it
+// is listed at all. A named call always is, and so is a nameless invocation
+// (a Codex local_shell_call, whose action the filter drops). A nameless
+// completion echo that no invocation reported (dedupeToolCalls already
+// dropped the ones that were) is listed only when its summary says what ran,
+// such as a CommandExecution's command; an Extension item with nothing to
+// show says only that something finished.
+func listedCall(call NormalizedToolCall, root string) (name, summary string, listed bool) {
+	name = callToolName(call)
+	if name == "" {
+		name = "tool"
+	}
+	summary = toolSummary(name, call.Input, call.raw, root)
+	if call.Name != "" || toolInvocationTypes[strings.ToLower(strings.TrimSpace(firstString(call.raw, "type")))] {
+		return name, summary, true
+	}
+	return name, summary, summary != ""
 }
 
 // sessionFilesTouched lists, in first-touched order, the distinct files the

@@ -206,7 +206,7 @@ func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata M
 	// Native text has unproven structure, so structured counts remain unknown.
 	if len(bundle.NativeText) == 0 {
 		metadata.Counts = structuredCounts(bundle, view, prompts, messages, shellCommands)
-		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls)
+		metadata.ToolsUsed = deriveToolsUsed(view.ToolCalls, workspaceRoot(bundle))
 	}
 	metadata.EndedAt = deriveEndedAt(view, metadata.StartedAt)
 	metadata.Models = models
@@ -326,20 +326,21 @@ const MaxToolsUsed = 10
 // included. The schema's maxLength matches it.
 const toolNameLimit = 128
 
-// deriveToolsUsed counts calls by tool name (callToolName, as handoff lists
-// them) and keeps the MaxToolsUsed most-called, by count descending and then
-// name ascending. A call with no name of its own is counted under its
-// invocation record's type (a Codex local_shell_call, whose action the filter
-// drops); a nameless completion echo (a Codex item_completed that no
-// invocation reported) names no tool and is left out. Either is still one of
-// counts.tool_calls.
-func deriveToolsUsed(calls []NormalizedToolCall) []ToolUsage {
+// deriveToolsUsed counts the calls handoff lists (listedCall), under the
+// names it lists them by, and keeps the MaxToolsUsed most-called, by count
+// descending and then name ascending. A nameless call is counted under its
+// record type (a Codex local_shell_call, or a CommandExecution completion no
+// invocation reported); a nameless completion with nothing to show is left
+// out, as handoff leaves it out, though it is still one of counts.tool_calls.
+// An invocation and its completion echo are one call (dedupeToolCalls).
+func deriveToolsUsed(calls []NormalizedToolCall, root string) []ToolUsage {
 	counts := map[string]int{}
 	for _, call := range calls {
-		if call.Name == "" && !toolInvocationTypes[strings.ToLower(strings.TrimSpace(firstString(call.raw, "type")))] {
+		listedName, _, listed := listedCall(call, root)
+		if !listed {
 			continue
 		}
-		if name := metadataToolName(callToolName(call)); name != "" {
+		if name := metadataToolName(listedName); name != "" {
 			counts[name]++
 		}
 	}

@@ -28,7 +28,7 @@ func TestDeriveToolsUsedSortsBreaksTiesAndCaps(t *testing.T) {
 	for i := range 8 {
 		counts[fmt.Sprintf("tool_%02d", i)] = 1
 	}
-	got := deriveToolsUsed(namedCalls(counts))
+	got := deriveToolsUsed(namedCalls(counts), "")
 	want := []ToolUsage{
 		{"Bash", 5}, {"Read", 5}, {"Edit", 3}, {"mcp__github__get_issue", 3},
 		{"tool_00", 1}, {"tool_01", 1}, {"tool_02", 1}, {"tool_03", 1}, {"tool_04", 1}, {"tool_05", 1},
@@ -39,7 +39,7 @@ func TestDeriveToolsUsedSortsBreaksTiesAndCaps(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("tools used = %v\nwant %v", got, want)
 	}
-	if got := deriveToolsUsed(nil); got != nil {
+	if got := deriveToolsUsed(nil, ""); got != nil {
 		t.Fatalf("no calls = %v, want nil", got)
 	}
 }
@@ -58,16 +58,60 @@ func TestDeriveToolsUsedNamelessCalls(t *testing.T) {
 	if !reflect.DeepEqual(m.ToolsUsed, want) {
 		t.Fatalf("tools used = %v, want %v", m.ToolsUsed, want)
 	}
-	// A completion echo with no name, which no invocation reported, names
-	// no tool; neither does a blank name.
-	calls := []NormalizedToolCall{
-		{raw: map[string]any{"type": "commandExecution"}, Input: map[string]any{"command": "ls"}},
-		{raw: map[string]any{"type": "Extension"}},
-		{Name: "   ", raw: map[string]any{"type": "tool_use"}},
-		{raw: map[string]any{"type": "local_shell_call"}},
+	// Handoff lists this session's calls under the same names.
+	handoff, err := BuildHandoff(parserTestBundle(t, "codex", CodexAdapter{}, filtered), &m, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, want := deriveToolsUsed(calls), []ToolUsage{{"local_shell_call", 1}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("tools used = %v, want %v", got, want)
+	if got := handoffToolNames(handoff); !reflect.DeepEqual(got, []string{"local_shell_call", "search_docs", "widget-extension"}) {
+		t.Fatalf("handoff tools = %v", got)
+	}
+}
+
+func handoffToolNames(h Handoff) []string {
+	var names []string
+	for _, exchange := range h.Exchanges {
+		for _, step := range exchange.Steps {
+			if step.Tool != nil {
+				names = append(names, step.Tool.Name)
+			}
+		}
+	}
+	return names
+}
+
+// tools_used counts exactly the calls handoff lists: a nameless completion
+// that no invocation reported counts when it shows what ran (a
+// CommandExecution's command), not when it shows nothing (an Extension
+// item); a nameless invocation counts even with no arguments; a blank name
+// is not published.
+func TestToolsUsedAndHandoffListTheSameCalls(t *testing.T) {
+	t.Parallel()
+	lines := []string{
+		`{"type":"response_item","timestamp":"2026-09-20T12:00:00Z","payload":{"type":"local_shell_call","call_id":"call_1","status":"completed","action":{"type":"exec","command":["ls"]}}}`,
+		`{"type":"event_msg","timestamp":"2026-09-20T12:00:01Z","payload":{"type":"item_completed","item":{"id":"call_1","type":"CommandExecution","command":"ls","status":"completed"}}}`,
+		`{"type":"event_msg","timestamp":"2026-09-20T12:00:02Z","payload":{"type":"item_completed","item":{"id":"item_2","type":"CommandExecution","command":"go test ./...","status":"completed"}}}`,
+		`{"type":"event_msg","timestamp":"2026-09-20T12:00:03Z","payload":{"type":"item_completed","item":{"id":"item_3","type":"Extension","status":"completed"}}}`,
+	}
+	filtered, err := CodexAdapter{}.FilterJSONL(strings.NewReader(strings.Join(lines, "\n") + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := parserTestBundle(t, "codex", CodexAdapter{}, filtered)
+	m := parserTestMetadata(t, bundle)
+	want := []ToolUsage{{"CommandExecution", 1}, {"local_shell_call", 1}}
+	if !reflect.DeepEqual(m.ToolsUsed, want) {
+		t.Fatalf("tools used = %v, want %v (tool_calls %v)", m.ToolsUsed, want, *m.Counts.ToolCalls)
+	}
+	handoff, err := BuildHandoff(bundle, &m, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := handoffToolNames(handoff); !reflect.DeepEqual(got, []string{"local_shell_call", "CommandExecution"}) {
+		t.Fatalf("handoff tools = %v", got)
+	}
+	if got := deriveToolsUsed([]NormalizedToolCall{{Name: "   ", raw: map[string]any{"type": "tool_use"}}}, ""); got != nil {
+		t.Fatalf("blank name = %v", got)
 	}
 }
 
@@ -86,7 +130,11 @@ func TestWorkspaceFileNormalizesSpellings(t *testing.T) {
 		{"../widget/d.go", "/work/widget", "d.go"},
 		{"sub/../b.go", "/work/widget", "b.go"},
 		{"/work/other/e.go", "/work/widget", "/work/other/e.go"},
-		{"../other/e.go", "/work/widget", "/work/other/e.go"},
+		{"../other/e.go", "/work/widget", "../other/e.go"},
+		{"sub/../../other/e.go", "/work/widget", "../other/e.go"},
+		{"../widget", "/work/widget", ""},
+		{"/a.go", "/", "a.go"},
+		{"a.go", "/", "a.go"},
 		{"/work/widgetry/f.go", "/work/widget", "/work/widgetry/f.go"},
 		{".", "/work/widget", ""},
 		{"/work/widget", "/work/widget", ""},
@@ -313,7 +361,7 @@ func TestCursorComposerEditFileV2TouchesFiles(t *testing.T) {
 	if m.Counts.FilesTouched == nil || *m.Counts.FilesTouched != 1 {
 		t.Fatalf("files touched = %v, want 1", m.Counts.FilesTouched)
 	}
-	if want := []ToolUsage{{"edit_file_v2", 2}, {"read_file_v2", 1}, {"ripgrep_raw_search", 1}}; !reflect.DeepEqual(m.ToolsUsed, want) {
+	if want := []ToolUsage{{"edit_file_v2", 2}, {"glob_file_search", 1}, {"read_file_v2", 1}, {"ripgrep_raw_search", 1}}; !reflect.DeepEqual(m.ToolsUsed, want) {
 		t.Fatalf("tools used = %v, want %v", m.ToolsUsed, want)
 	}
 	handoff, err := BuildHandoff(bundle, &m, HandoffOptions{})
@@ -336,9 +384,36 @@ func TestCursorComposerEditFileV2TouchesFiles(t *testing.T) {
 		"read_file_v2: internal/widget/widget.go",
 		"edit_file_v2: internal/widget/widget.go",
 		"edit_file_v2: internal/widget/widget.go",
+		"glob_file_search: *_test.go in internal/widget",
 	}
 	if !reflect.DeepEqual(summaries, want) {
 		t.Fatalf("summaries = %q, want %q", summaries, want)
+	}
+}
+
+// A call naming the workspace root itself shows it as "."; a search of the
+// root leaves out "in <root>"; a relative path above the root keeps its
+// relative spelling rather than printing the directories above the
+// workspace.
+func TestToolSummaryPathsAtAndAboveTheRoot(t *testing.T) {
+	t.Parallel()
+	root := "/Users/someone/work/widget"
+	for _, tc := range []struct {
+		name  string
+		input map[string]any
+		want  string
+	}{
+		{"Read", map[string]any{"file_path": "."}, "."},
+		{"read_file", map[string]any{"target_file": root}, "."},
+		{"Write", map[string]any{"file_path": root + "/"}, "."},
+		{"Edit", map[string]any{"file_path": "../other/a.go"}, "../other/a.go"},
+		{"Grep", map[string]any{"pattern": "TODO", "path": "."}, "TODO"},
+		{"Grep", map[string]any{"pattern": "TODO", "path": root}, "TODO"},
+		{"Grep", map[string]any{"pattern": "TODO", "path": "../other"}, "TODO in ../other"},
+	} {
+		if got := toolSummary(tc.name, tc.input, nil, root); got != tc.want {
+			t.Errorf("toolSummary(%s, %v) = %q, want %q", tc.name, tc.input, got, tc.want)
+		}
 	}
 }
 
@@ -355,7 +430,7 @@ func TestMetadataSchemaBoundsToolsUsed(t *testing.T) {
 	for i := range MaxToolsUsed + 5 {
 		calls = append(calls, NormalizedToolCall{Name: fmt.Sprintf("mcp__server__tool_%02d", i)})
 	}
-	base.ToolsUsed = deriveToolsUsed(calls)
+	base.ToolsUsed = deriveToolsUsed(calls, "")
 	validate := func(m Metadata) error {
 		t.Helper()
 		data, err := json.Marshal(m)

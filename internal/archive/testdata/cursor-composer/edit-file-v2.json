@@ -8,7 +8,8 @@
       {"bubbleId": "b2", "type": 2, "createdAt": 1790000002000},
       {"bubbleId": "b3", "type": 2, "createdAt": 1790000003000},
       {"bubbleId": "b4", "type": 2, "createdAt": 1790000004000},
-      {"bubbleId": "b5", "type": 2, "createdAt": 1790000005000}
+      {"bubbleId": "b5", "type": 2, "createdAt": 1790000005000},
+      {"bubbleId": "b6", "type": 2, "createdAt": 1790000006000}
     ]
   },
   "bubbles": [
@@ -52,6 +53,15 @@
         "toolCallId": "call-4", "name": "edit_file_v2", "status": "completed",
         "params": "{\"relativeWorkspacePath\":\"./internal/widget/widget.go\"}",
         "result": "{\"diff\":\"applied\"}"
+      }
+    }},
+    {"id": "b6", "value": {
+      "_v": 3, "bubbleId": "b6", "type": 2,
+      "createdAt": "2026-09-21T14:13:26Z",
+      "toolFormerData": {
+        "toolCallId": "call-5", "name": "glob_file_search", "status": "completed",
+        "params": "{\"globPattern\":\"*_test.go\",\"targetDirectory\":\"internal/widget\"}",
+        "result": "{\"files\":1}"
       }
     }}
   ]
