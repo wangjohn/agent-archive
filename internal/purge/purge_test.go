@@ -66,7 +66,7 @@ func fixture(t *testing.T) (*storagetest.MemoryStore, time.Time) {
 
 func TestInventorySeparatesCurrentOldSource(t *testing.T) {
 	store, now := fixture(t)
-	plan, err := Inventory(context.Background(), store, "destination", "bucket", "archive/", "old-filter", "11", now)
+	plan, err := Inventory(context.Background(), store, "destination", "bucket", "archive/", ModeOldFilter, "11", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestInventorySeparatesCurrentOldSource(t *testing.T) {
 func TestApplyRefusesNewReferenceAndUnreadableMetadata(t *testing.T) {
 	for _, invalid := range []bool{false, true} {
 		store, now := fixture(t)
-		plan, err := Inventory(context.Background(), store, "destination", "bucket", "", "unreferenced", "", now)
+		plan, err := Inventory(context.Background(), store, "destination", "bucket", "", ModeUnreferenced, "", now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -131,7 +131,7 @@ func (f *failDelete) Delete(ctx context.Context, key string) error {
 
 func TestApplyRetriesPartialFailureAndChecksIdentity(t *testing.T) {
 	store, now := fixture(t)
-	plan, err := Inventory(context.Background(), store, "destination", "bucket", "", "unreferenced", "", now)
+	plan, err := Inventory(context.Background(), store, "destination", "bucket", "", ModeUnreferenced, "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestInventoryStopsOnUnreadableSidecar(t *testing.T) {
 	if err := store.Put(context.Background(), sidecar, []byte("bad")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Inventory(context.Background(), store, "destination", "bucket", "", "unreferenced", "", now); err == nil {
+	if _, err := Inventory(context.Background(), store, "destination", "bucket", "", ModeUnreferenced, "", now); err == nil {
 		t.Fatal("planned from unreadable metadata")
 	}
 }
@@ -171,14 +171,14 @@ func TestInventoryStopsWhenCurrentSourceIsMissing(t *testing.T) {
 	if err := store.Delete(context.Background(), sourceA); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Inventory(context.Background(), store, "destination", "bucket", "", "unreferenced", "", now); err == nil {
+	if _, err := Inventory(context.Background(), store, "destination", "bucket", "", ModeUnreferenced, "", now); err == nil {
 		t.Fatal("planned while current source was missing")
 	}
 }
 
 func TestApplyRefusesChangedCandidate(t *testing.T) {
 	store, now := fixture(t)
-	plan, err := Inventory(context.Background(), store, "destination", "bucket", "", "unreferenced", "", now)
+	plan, err := Inventory(context.Background(), store, "destination", "bucket", "", ModeUnreferenced, "", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestApplyFailsClosedOnNewAmbiguousMetadata(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store, now := fixture(t)
-			plan, err := Inventory(context.Background(), store, "destination", "bucket", "", "unreferenced", "", now)
+			plan, err := Inventory(context.Background(), store, "destination", "bucket", "", ModeUnreferenced, "", now)
 			if err != nil {
 				t.Fatal(err)
 			}
