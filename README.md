@@ -51,7 +51,17 @@ Setup edits each included app's hook settings and adds one LaunchAgent; for Curs
 
 ## Commands and docs
 
-`setup` configures capture; `status` reports health and evidence; `sync` collects now; `pause` and `resume` control capture; `backfill` imports existing sessions; `feedback` attaches your assessment to one; and `uninstall` removes hooks and the collector but never deletes the bucket. Run `agent-archive help COMMAND` for options or use the [CLI reference](docs/reference/cli.md).
+| Command | What it does | Example |
+| --- | --- | --- |
+| `setup` | Configure apps, projects, and storage. | `agent-archive setup` |
+| `status` | Check capture health and see what to do next. | `agent-archive status` |
+| `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
+| `list` | Find archived sessions. | `agent-archive list --since 7d` |
+| `show` | View a session's metadata. | `agent-archive show SESSION_ID` |
+| `backfill` | Preview sessions already on this Mac for import. | `agent-archive backfill --dry-run` |
+| `handoff` | Turn your latest session into a prompt for another agent. | `agent-archive handoff --latest` |
+
+Use a session ID from `list` with `show`. For every command and option, see the **[full CLI reference](docs/reference/cli.md)** or run `agent-archive help COMMAND`.
 
 [Install](docs/getting-started/install.md) ·
 [Setup](docs/getting-started/setup.md) ·
