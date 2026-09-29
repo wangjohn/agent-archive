@@ -206,6 +206,3 @@ linters:
       - path: internal/backfill/render\.go
         text: RenderText
         linters: [gocyclo]
-      - path: internal/archive/metadata\.go
-        text: BuildMetadata
-        linters: [funlen, gocyclo]
