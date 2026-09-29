@@ -122,15 +122,17 @@ now and paths under your home folder start with `~`.
   **Last error:** row by kind, each with its count (sessions and subagents
   apart) and what to do: for example "2 sessions failed to reach storage
   (network or service unavailable) — check the network and the storage
-  service, then run agent-archive sync (the next pass also retries)". A session over the
-  transcript size limit needs nothing from you: its last snapshot is kept.
-  `agent-archive sync` prints each session's own error, and `status --json`
-  has each session's kind as a code (`collector.session_issues`). When no
-  kind is about storage, status leads with the most pressing one ("Some
-  sessions could not be captured") and its next step instead of **The last
-  sync failed**; when every kind needs nothing from you (a subagent that
-  could not be captured, a transcript over the size limit), status doesn't
-  lead with a failure at all.
+  service, then run agent-archive sync (the next pass also retries)". A
+  session over the transcript size limit needs nothing from you: its last
+  snapshot is kept. `agent-archive sync` prints each session's own error,
+  and `status --json` has each session's kind as a code
+  (`collector.session_issues`). When no kind is about storage, status
+  leads with the most pressing one ("Some sessions could not be captured")
+  and its next step instead of **The last sync failed**. When everything
+  the last pass recorded needs nothing from you (a subagent that could not
+  be captured, a transcript over the size limit), status doesn't lead with
+  a failure at all, and shows those problems on · **Last pass:** rows
+  instead of ✗ **Last error:** rows.
 - **Background collector on** (`--json`: background `loaded`, or `running`
   while a pass is executing) means launchd knows the scheduled job. When it
   **belongs to another installation** (`another_installation`), launchd runs

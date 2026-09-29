@@ -2,6 +2,8 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -15,7 +17,7 @@ import (
 
 // sizeLimitProblem stands for a problem collector.Run recorded that is not a
 // count of failed sessions.
-const sizeLimitProblem = "1 session(s) stopped being captured: over the transcript size limit, kept at their last snapshot"
+var sizeLimitProblem = collector.SizeLimitProblem(1)
 
 // savedProblems saves a Status holding problems, as collector.Run leaves it,
 // and returns the store.
@@ -56,12 +58,40 @@ func TestPassProblemsAfterCollectionAreAdded(t *testing.T) {
 	// A clock three months ahead of storage's holds retention's deletions.
 	env.Now = func() time.Time { return now.Add(91 * 24 * time.Hour) }
 	verifyErr := errors.New("read-back verification: not found")
-	if _, err := finishPassWithRetention(home, env, cfg, store, bucket, time.Time{}, collector.Result{}, verifyErr); !errors.Is(err, verifyErr) {
+	if _, err := finishPassWithRetention(home, env, cfg, store, bucket, time.Time{}, collector.Result{}, "", verifyErr); !errors.Is(err, verifyErr) {
 		t.Fatalf("pass error = %v, want the verification failure", err)
 	}
 	got := lastErrors(t, store)
 	if len(got) != 3 || got[0] != sizeLimitProblem || !strings.Contains(got[1], "clock is ahead") || got[2] != verifyErr.Error() {
 		t.Fatalf("LastErrors = %q, want the size-limit gap, the retention hold and the verification failure", got)
+	}
+}
+
+// A whole retention sweep that fails after collector.Run is one more
+// problem of the pass: the problems collector.Run recorded stay.
+func TestWholeSweepFailureIsAdded(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	env, home, _, bucket := publishedThroughSync(t, now)
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := savedProblems(t, home, sizeLimitProblem)
+	// Registrations that cannot be listed fail the whole sweep.
+	registrations := filepath.Join(home, "registrations")
+	if err := os.RemoveAll(registrations); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registrations, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := finishPassWithRetention(home, env, cfg, store, bucket, time.Time{}, collector.Result{}, "", nil); err == nil {
+		t.Fatal("the sweep did not fail")
+	}
+	got := lastErrors(t, store)
+	if len(got) != 2 || got[0] != sizeLimitProblem || !strings.HasPrefix(got[1], "collection succeeded but retention cleanup failed") {
+		t.Fatalf("LastErrors = %q, want the size-limit gap and the sweep failure", got)
 	}
 }
 
@@ -71,7 +101,7 @@ func TestSessionsNeedingCaptureReplaceOnlyTheFailedCount(t *testing.T) {
 	t.Parallel()
 	store := savedProblems(t, t.TempDir(), collector.FailedSessionsProblem(2), sizeLimitProblem)
 	failed := map[string]error{"a": errors.New("publish failed"), "b": errors.New("publish failed")}
-	if err := recordSessionIssues(store, failed, func(string) bool { return false }, collector.FailedSessionsProblem(2)); err != nil {
+	if _, err := recordSessionIssues(store, failed, func(string) bool { return false }, collector.FailedSessionsProblem(2)); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{issueSummary(map[string]issueTally{issueCaptureFailed: {sessions: 2}}), sizeLimitProblem}
@@ -88,11 +118,13 @@ func TestRetentionFailuresUpdateTheFailedCount(t *testing.T) {
 	for name, tc := range map[string]struct {
 		collectorFailures int
 		recorded          []string
+		previous          string
 		want              []string
 	}{
 		"after failed sessions": {
 			collectorFailures: 2,
 			recorded:          []string{collected, sizeLimitProblem},
+			previous:          collected,
 			want:              []string{issueSummary(map[string]issueTally{issueCaptureFailed: {sessions: 2}, issueRetentionFailed: {sessions: 1}}), sizeLimitProblem},
 		},
 		"with none failed before": {
@@ -107,7 +139,7 @@ func TestRetentionFailuresUpdateTheFailedCount(t *testing.T) {
 			for i := range tc.collectorFailures {
 				result.Errors["collected-"+string(rune('a'+i))] = errors.New("publish failed")
 			}
-			recordRetentionErrors(store, &result, retention.Result{Errors: map[string]error{"expired": errors.New("delete failed")}})
+			recordRetentionErrors(store, &result, retention.Result{Errors: map[string]error{"expired": errors.New("delete failed")}}, tc.previous)
 			if got := lastErrors(t, store); !slices.Equal(got, tc.want) {
 				t.Fatalf("LastErrors = %q want %q", got, tc.want)
 			}

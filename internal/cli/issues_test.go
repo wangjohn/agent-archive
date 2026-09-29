@@ -161,13 +161,14 @@ func TestRetentionAndCaptureFailuresShareOneLastError(t *testing.T) {
 		"child": errors.New("filter transcript: unsafe"),
 		"b":     fmt.Errorf("x: %w", state.ErrQuarantined),
 	}}
-	if err := recordSessionIssues(store, result.Errors, subagentLookup(store), ""); err != nil {
+	summary, err := recordSessionIssues(store, result.Errors, subagentLookup(store), "")
+	if err != nil {
 		t.Fatal(err)
 	}
 	recordRetentionErrors(store, &result, retention.Result{Errors: map[string]error{
 		"old": errors.New("simulated delete failure"),
 		"a":   errors.New("simulated delete failure"),
-	}})
+	}}, summary)
 	status, err := store.LoadStatus()
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +199,7 @@ func TestRecordSessionIssuesReplacesThePreviousPass(t *testing.T) {
 		t.Fatal(err)
 	}
 	notSubagent := func(string) bool { return false }
-	if err := recordSessionIssues(store, map[string]error{"earlier": fmt.Errorf("x: %w", state.ErrQuarantined)}, notSubagent, ""); err != nil {
+	if _, err := recordSessionIssues(store, map[string]error{"earlier": fmt.Errorf("x: %w", state.ErrQuarantined)}, notSubagent, ""); err != nil {
 		t.Fatal(err)
 	}
 	// The next pass: collector.Run saves its own count, as it would.
@@ -210,7 +211,7 @@ func TestRecordSessionIssuesReplacesThePreviousPass(t *testing.T) {
 	if err := store.SaveStatus(status); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordSessionIssues(store, map[string]error{"now": errors.New("x")}, notSubagent, collector.FailedSessionsProblem(1)); err != nil {
+	if _, err := recordSessionIssues(store, map[string]error{"now": errors.New("x")}, notSubagent, collector.FailedSessionsProblem(1)); err != nil {
 		t.Fatal(err)
 	}
 	if status, err = store.LoadStatus(); err != nil {
@@ -221,6 +222,87 @@ func TestRecordSessionIssuesReplacesThePreviousPass(t *testing.T) {
 	}
 	if want := "1 session failed to capture or upload — run agent-archive sync for details"; len(status.LastErrors) != 1 || status.LastError != want {
 		t.Fatalf("last errors %q", status.LastErrors)
+	}
+}
+
+// The summary retention replaces is the one collection recorded, even when
+// recomputing it now would read differently: here the subagent's
+// registration went during the sweep, so it would count as a session.
+func TestRetentionReplacesTheRecordedSummary(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registration := filepath.Join(home, "registrations", "child.json")
+	if err := os.MkdirAll(filepath.Dir(registration), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registration, []byte(`{"archive_session_id":"child","parent_session_id":"parent"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := collector.Result{Errors: map[string]error{"child": errors.New("filter transcript: unsafe")}}
+	summary, err := recordSessionIssues(store, result.Errors, subagentLookup(store), "")
+	if err != nil || !strings.HasPrefix(summary, "1 subagent ") {
+		t.Fatalf("summary %q err %v", summary, err)
+	}
+	if err := os.Remove(registration); err != nil {
+		t.Fatal(err)
+	}
+	recordRetentionErrors(store, &result, retention.Result{Errors: map[string]error{"old": errors.New("delete failed")}}, summary)
+	if got := lastErrors(t, store); len(got) != 1 {
+		t.Fatalf("LastErrors = %q, want one summary", got)
+	}
+}
+
+// Problems with nothing to do are shown as information, not as failures:
+// no ✗ and no "Last error".
+func TestNothingToDoProblemsAreNotShownAsFailures(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 24, 21, 24, 0, 0, time.UTC)
+	env, home, _, _ := publishedThroughSync(t, now)
+	store, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subagent := issueSummary(map[string]issueTally{issueSubagentNotCaptured: {subagents: 1}})
+	for _, tc := range []struct {
+		name     string
+		counts   map[string]int
+		problems []string
+		wantRow  string
+	}{
+		{"subagent not captured", map[string]int{issueSubagentNotCaptured: 1}, []string{subagent}, "· Last pass: " + subagent + "\n"},
+		{"size limit", nil, []string{collector.SizeLimitProblem(1)}, "· Last pass: " + collector.SizeLimitProblem(1) + "\n"},
+		{"both", map[string]int{issueSubagentNotCaptured: 1}, []string{subagent, collector.SizeLimitProblem(1)}, "· Last pass: " + collector.SizeLimitProblem(1) + "\n"},
+	} {
+		status, err := store.LoadStatus()
+		if err != nil {
+			t.Fatal(err)
+		}
+		status.IssueCounts = tc.counts
+		status.SetLastErrors(tc.problems...)
+		if err := store.SaveStatus(status); err != nil {
+			t.Fatal(err)
+		}
+		plain := statusOutput(t, env)
+		if !strings.Contains(plain, tc.wantRow) || strings.Contains(plain, "✗") || strings.Contains(plain, "Last error") {
+			t.Errorf("%s: status:\n%s", tc.name, plain)
+		}
+	}
+	// A failure beside them is still one.
+	status, err := store.LoadStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	status.IssueCounts = map[string]int{issueCaptureFailed: 1}
+	status.SetLastErrors(issueSummary(map[string]issueTally{issueCaptureFailed: {sessions: 1}}), collector.SizeLimitProblem(1))
+	if err := store.SaveStatus(status); err != nil {
+		t.Fatal(err)
+	}
+	if plain := statusOutput(t, env); !strings.Contains(plain, "✗ Last error: 1 session failed to capture") {
+		t.Errorf("status with a failure:\n%s", plain)
 	}
 }
 
@@ -262,7 +344,7 @@ func TestStatusShowsMixedSessionIssues(t *testing.T) {
 		{"storage auth", issueStorageAuth, "Last scan could not update this session; retained evidence was kept. Check the credentials with agent-archive setup (choose storage), then run agent-archive sync."},
 	} {
 		sessionErrs := map[string]error{id: errors.New("other"), "gone": fmt.Errorf("%w: x", errRetentionFailed)}
-		if err := recordSessionIssues(store, sessionErrs, func(string) bool { return false }, ""); err != nil {
+		if _, err := recordSessionIssues(store, sessionErrs, func(string) bool { return false }, ""); err != nil {
 			t.Fatal(err)
 		}
 		status, err := store.LoadStatus()
@@ -350,6 +432,16 @@ func TestStatusHeadlineFollowsIssueKind(t *testing.T) {
 			lastErrors: []string{"summary", "retention: clock disagrees"}, wantProblem: general},
 		{name: "legacy status without counts", lastErrors: []string{"1 session(s) need capture or publication"},
 			legacy: true, wantProblem: general},
+		{name: "size limit only", lastErrors: []string{collector.SizeLimitProblem(2)},
+			wantProblem: healthy.problem, wantNext: healthy.Next},
+		{name: "size limit and capture", counts: map[string]int{issueCaptureFailed: 1},
+			lastErrors:  []string{issueSummary(map[string]issueTally{issueCaptureFailed: {sessions: 1}}), collector.SizeLimitProblem(1)},
+			wantProblem: "Some sessions could not be captured", wantNext: "Run agent-archive sync for details."},
+		{name: "size limit and storage", counts: map[string]int{issueStorageUnavailable: 1},
+			lastErrors:  []string{issueSummary(map[string]issueTally{issueStorageUnavailable: {sessions: 1}}), collector.SizeLimitProblem(1)},
+			wantProblem: general},
+		{name: "size limit and another problem", lastErrors: []string{collector.SizeLimitProblem(1), "retention: clock disagrees"},
+			wantProblem: general},
 	} {
 		status, err := store.LoadStatus()
 		if err != nil {
@@ -402,7 +494,7 @@ func TestPreflightFailureReplacesIssueHeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recordSessionIssues(store, map[string]error{"a": errors.New("filter")}, func(string) bool { return false }, ""); err != nil {
+	if _, err := recordSessionIssues(store, map[string]error{"a": errors.New("filter")}, func(string) bool { return false }, ""); err != nil {
 		t.Fatal(err)
 	}
 	recordPreflightError(store, fmt.Errorf("open storage: load R2 credentials: %w", credentials.ErrKeychainLocked))

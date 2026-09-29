@@ -38,8 +38,10 @@ follow [Semantic Versioning](https://semver.org/).
   `status --json` carries its own next step. When no failed session is
   about storage, status no longer leads with "The last sync failed / Check
   storage access": it names the kind ("Some sessions could not be
-  captured") and its next step, or leads with no failure when there is
-  nothing to do.
+  captured") and its next step, or leads with no failure, and shows the
+  problems as information rather than ✗ rows, when there is nothing to do
+  (a subagent that could not be captured, sessions over the transcript
+  size limit).
 
 ### Changed
 

@@ -71,3 +71,19 @@ func TestFilteredTranscriptOverTheLimitIsAGap(t *testing.T) {
 		t.Fatalf("reason=%q blocked=%t", reason, blocked)
 	}
 }
+
+// IsSizeLimitProblem recognizes the size-limit notice for any count, and
+// nothing else.
+func TestIsSizeLimitProblem(t *testing.T) {
+	t.Parallel()
+	for _, n := range []int{1, 2, 120} {
+		if !IsSizeLimitProblem(SizeLimitProblem(n)) {
+			t.Errorf("notice for %d not recognized", n)
+		}
+	}
+	for _, problem := range []string{"", SizeLimitProblem(0), FailedSessionsProblem(1), "x " + SizeLimitProblem(1), SizeLimitProblem(1) + " and more"} {
+		if IsSizeLimitProblem(problem) {
+			t.Errorf("%q recognized", problem)
+		}
+	}
+}
