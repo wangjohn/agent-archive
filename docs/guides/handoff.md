@@ -44,6 +44,16 @@ The launched agent does not inherit the calling agent's session variables
 (such as `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`); your settings, such as
 `CLAUDE_CODE_USE_BEDROCK`, pass through.
 
+On a terminal, the agent runs there and `handoff` returns when it exits.
+Anywhere else, such as when an agent runs `handoff --to` for you, it opens
+without asking in a new tmux window when `$TMUX` is set, else a new iTerm2,
+Ghostty, or Terminal tab (by `$TERM_PROGRAM`), else a new Terminal window,
+prints `handoff: opened codex in a new iTerm2 tab` (for example), and returns
+at once. `--here` forces this terminal (and fails without one);
+`--new-window` opens a new window even from a terminal. When no window can be
+opened (not macOS and not inside tmux), `handoff` exits 1 and prints the
+command to paste into a terminal; it never runs the agent without one.
+
 Arguments after `--` go to the agent (a second `--` is refused, since the
 prompt follows one), after any set for it in `config.json`
 (see [configuration](../reference/configuration.md)):
@@ -62,6 +72,36 @@ which may lag the local transcript or not exist yet.
 current, complete **filtered** local record. Neither command exposes
 unfiltered raw transcript data. The handoff uses the usual 120,000-byte
 default budget; `--max-bytes 0` includes all filtered content.
+
+## Where it goes
+
+On a terminal, with no `--to`, `--output`, or `--format json`, `handoff` asks
+where to continue once the session is chosen:
+
+```text
+Continue in:
+  1) Codex (default)
+  2) Claude Code
+  p) print
+  c) copy to the clipboard
+  w) write to a file
+  q) quit
+Enter 1-2, p, c, w, or q [1]:
+```
+
+Only agents whose CLI is on `PATH` are numbered. Enter takes the default:
+`handoff.default_to` for the session's harness in `config.json` when that
+agent is installed, else Codex for a Claude Code session and Claude Code for
+a Codex or Cursor one, else the first listed. A number (or an agent's name)
+launches it as `--to` would, in this terminal unless `--new-window` is given.
+`p` prints the handoff, through the pager when it is longer than the screen;
+`c` copies it with `pbcopy`; `w` asks for a file name (default
+`./handoff-<short id>.md`), writes it with mode 0600, and asks before
+replacing a file. With no agent installed, Enter prints.
+
+Piped or redirected output never asks, so
+`codex "$(agent-archive handoff --latest)"` and `--output` work byte for byte
+as before.
 
 ## Where the session comes from
 

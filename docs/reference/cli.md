@@ -425,6 +425,11 @@ waiting for a sync; otherwise it is downloaded from the archive.
 With no selector on a terminal, pick a session from a numbered list of this
 Mac's sessions (including ones not yet uploaded) and archived ones, newest
 first. Without a terminal, give a SESSION_ID, --latest, or --file PATH.
+On a terminal without --to, --output, or --format json, it then asks where
+to continue: an installed agent (default: handoff.default_to in
+config.json, else Codex for a Claude Code session and Claude Code for the
+others), or print, copy to the clipboard, or write to a file. Piped, it
+prints the handoff as it always has.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -450,7 +455,12 @@ first. Without a terminal, give a SESSION_ID, --latest, or --file PATH.
                         needs the agent's CLI (claude, codex, or agent) on
                         PATH. With no selector, hands off the Claude Code,
                         Codex, or Cursor session it runs in, or picks one on
-                        a terminal
+                        a terminal. On a terminal the agent runs there;
+                        otherwise it opens in a new tmux window, or a new
+                        iTerm2, Ghostty, or Terminal tab, and the command
+                        returns
+  --here                Run the launched agent in this terminal
+  --new-window          Open the launched agent in a new window or tab
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
 Example: agent-archive handoff
@@ -466,8 +476,10 @@ Example: agent-archive handoff SESSION_ID --to claude -- --model opus
 | `--force` | no value | — |
 | `--format` | a value | `markdown` |
 | `--harness` | a value | — |
+| `--here` | no value | — |
 | `--latest` | no value | — |
 | `--max-bytes` | a value | `120000` |
+| `--new-window` | no value | — |
 | `--no-preamble` | no value | — |
 | `--output` | a value | — |
 | `--project` | a value | — |

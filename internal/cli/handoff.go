@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -81,8 +82,12 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		terminal.Printf(stderr, "agent-archive: handoff: resolve home: %v\n", err)
 		return 1
 	}
+	// Every prompt reads through one buffer, so an answer typed (or
+	// scripted) ahead for a later prompt is not lost to an earlier one's.
+	// A launched agent gets stdin itself: it must see the terminal.
+	answers := bufio.NewReader(stdin)
 	if opts.sessionID == "" && !opts.latest && opts.file == "" {
-		if code, done := chooseHandoffSession(&opts, home, interactive, stdin, stdout, stderr, env); done {
+		if code, done := chooseHandoffSession(&opts, home, interactive, answers, stdout, stderr, env); done {
 			return code
 		}
 	}
@@ -104,8 +109,27 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		return 1
 	}
 	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
-	if opts.to != "" {
-		if err := launchPreparedHandoff(rendered, h, target, opts, home, stdin, stdout, stderr, env); err != nil {
+	dest := handoffDestination(opts.to)
+	if offersDestinations(opts, interactive) {
+		p := newPrompter(answers, stdout)
+		choice, err := askHandoffDestination(p, h, home, env)
+		if err == nil && choice.action != handoffLaunch {
+			err = deliverHandoff(choice, p, rendered, target, stdout, stderr, env)
+		}
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			return 1
+		}
+		if choice.action != handoffLaunch {
+			return 0
+		}
+		dest = choice.dest
+	}
+	if dest != "" {
+		// Run from inside an agent, or asked to, the new agent gets a
+		// terminal of its own.
+		here := interactive && !opts.newWindow
+		if err := launchPreparedHandoff(rendered, h, target, dest, here, opts, home, stdin, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 			return 1
 		}

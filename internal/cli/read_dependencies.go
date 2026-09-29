@@ -8,6 +8,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // Run passes Env at the command boundary. The read commands and their
@@ -95,6 +96,7 @@ type handoffCommandDependencies interface {
 	handoffTargetDependencies
 	sessionBrowseDependencies
 	handoffLaunchDependencies
+	handoffDestinationDependencies
 }
 
 type launchSpecDependencies interface {
@@ -109,4 +111,13 @@ type handoffLaunchDependencies interface {
 	workingDir() (string, error)
 	now() time.Time
 	launchHandoff(launchSpec, io.Reader, io.Writer, io.Writer) error
+	openTerminal(termlaunch.Spec) (string, error)
+}
+
+// handoffDestinationDependencies is what the destination prompt uses: which
+// agents are installed, the pager for printing, and the clipboard.
+type handoffDestinationDependencies interface {
+	launchSpecDependencies
+	pagerDependencies
+	clipboard([]byte) error
 }

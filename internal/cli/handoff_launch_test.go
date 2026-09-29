@@ -42,7 +42,7 @@ func TestHandoffLaunchesLocalAgentWithRetrievalInstructions(t *testing.T) {
 		got = spec
 		return nil
 	}
-	out, errOut, code := runHandoff(t, f.env, f.id, "--to", "claude")
+	out, errOut, code := runPicker(t, f.env, "", f.id, "--to", "claude")
 	if code != 0 || got.Binary == "" || out != "" || !strings.Contains(errOut, "launching local claude") {
 		t.Fatalf("code=%d spec=%+v stdout=%q stderr=%q", code, got, out, errOut)
 	}
@@ -111,7 +111,7 @@ func TestHandoffLaunchLatestIncludesCallingSession(t *testing.T) {
 		called = true
 		return nil
 	}
-	_, errOut, code := runHandoff(t, f.env, "--latest", "--harness", "codex", "--to", "claude")
+	_, errOut, code := runPicker(t, f.env, "", "--latest", "--harness", "codex", "--to", "claude")
 	if code != 0 || !called || !strings.Contains(errOut, f.id) {
 		t.Fatalf("code=%d called=%v stderr=%q", code, called, errOut)
 	}
@@ -128,7 +128,7 @@ func TestHandoffLaunchFailureKeepsHandoffFile(t *testing.T) {
 		path = handoffPathFromPrompt(t, spec)
 		return errors.New("agent failed")
 	}
-	_, _, code := runHandoff(t, f.env, f.id, "--to", "codex")
+	_, _, code := runPicker(t, f.env, "", f.id, "--to", "codex")
 	if code != 1 || path == "" {
 		t.Fatalf("code=%d path=%q", code, path)
 	}
@@ -153,7 +153,7 @@ func TestHandoffLaunchDoesNotFallBackToArchive(t *testing.T) {
 		t.Error("launched with no local source")
 		return nil
 	}
-	_, _, code := runHandoff(t, f.env, f.id, "--to", "codex")
+	_, _, code := runPicker(t, f.env, "", f.id, "--to", "codex")
 	if code == 0 {
 		t.Fatal("launched from archive after local source disappeared")
 	}
@@ -181,7 +181,7 @@ func TestHandoffLaunchPassesConfiguredAndCommandLineArguments(t *testing.T) {
 		got = spec
 		return nil
 	}
-	_, errOut, code := runHandoff(t, f.env, f.id, "--to", "codex", "--", "--search", "-c", "x=1")
+	_, errOut, code := runPicker(t, f.env, "", f.id, "--to", "codex", "--", "--search", "-c", "x=1")
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
@@ -203,7 +203,7 @@ func TestHandoffLaunchMissingAgentLeavesNoFile(t *testing.T) {
 		t.Error("launched without an executable")
 		return nil
 	}
-	_, errOut, code := runHandoff(t, f.env, f.id, "--to", "cursor")
+	_, errOut, code := runPicker(t, f.env, "", f.id, "--to", "cursor")
 	if code != 1 || !strings.Contains(errOut, "could not find agent or cursor-agent: install Cursor's CLI or put it on PATH") {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
@@ -245,7 +245,7 @@ func TestHandoffLaunchWithoutSetupUsesPrivateTemporaryFile(t *testing.T) {
 		}
 		return nil
 	}
-	_, errOut, code := runHandoff(t, env, "--file", transcript, "--harness", "claude", "--to", "claude")
+	_, errOut, code := runPicker(t, env, "", "--file", transcript, "--harness", "claude", "--to", "claude")
 	if code != 0 || path == "" {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
