@@ -58,7 +58,10 @@ type handoffTarget struct {
 // is always the one asking. `--to` with no selector hands it off instead.
 // CLAUDE_CODE_SESSION_ID is observed in Claude Code; CODEX_THREAD_ID is read
 // if present but has not been observed.
-var currentSessionEnv = []struct{ key, harness string }{
+var currentSessionEnv = []struct {
+	key     string
+	harness string
+}{
 	{"CLAUDE_CODE_SESSION_ID", archive.HarnessClaude},
 	{"CODEX_THREAD_ID", archive.HarnessCodex},
 }

@@ -81,14 +81,14 @@ func TestLastActivitiesReadsTheCursorDatabaseOnce(t *testing.T) {
 func TestLastActivitiesManyChats(t *testing.T) {
 	db := newCursorDB(t, false)
 	conn := db.open()
-	tx, err := conn.Begin()
+	tx, err := conn.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var regs []archive.SessionRegistration
 	for i := range 1200 {
 		chat := fmt.Sprintf("chat-%d", i)
-		if _, err := tx.Exec(`INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, "composerData:"+chat, fmt.Sprintf(`{"lastUpdatedAt":%d}`, 1767225600000+i)); err != nil {
+		if _, err := tx.ExecContext(t.Context(), `INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)`, "composerData:"+chat, fmt.Sprintf(`{"lastUpdatedAt":%d}`, 1767225600000+i)); err != nil {
 			t.Fatal(err)
 		}
 		regs = append(regs, cursorRegistration(fmt.Sprintf("s-%d", i), chat))
