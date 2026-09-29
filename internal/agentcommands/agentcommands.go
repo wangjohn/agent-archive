@@ -251,8 +251,14 @@ const (
 	other
 )
 
-// read is the regular file at path, never followed through a link.
+// read is the regular file at path, never followed through a link: not
+// the file's own, nor the skill's directory's (a skill of the person's own
+// linked in, which a write would land in). A linked skills directory above
+// it is followed, as hook files are through a dotfile manager's links.
 func read(path string) ([]byte, fileState, error) {
+	if info, err := os.Lstat(filepath.Dir(path)); err == nil && !info.IsDir() {
+		return nil, other, nil
+	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, missing, nil
