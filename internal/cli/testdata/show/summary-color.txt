@@ -1,0 +1,22 @@
+[1mFix flaky OAuth callback tests[0m
+[2mclaude · agent-archive · 2h ago[0m                                      [32m✓[0m completed
+
+  [2mWhen     [0m Sep 29, 10:14 → 11:02 (48m span)
+  [2mAgent    [0m Claude Code 2.4.1
+  [2mModel    [0m claude-opus-5-5 (high reasoning) · 31 responses
+            claude-haiku-4-5 · 4 responses
+  [2mActivity [0m 35 turns · 212 messages · 148 tool calls · 3 shell commands ·
+            1 compaction
+  [2mSkills   [0m code-review, simplify
+  [2mSubagents[0m 2 linked (1 available, 1 expired)
+  [2mImported [0m Sep 29, 12:30 by backfill
+
+  [33m![0m [1mCapture gaps[0m
+    imported_without_hook_evidence — No hook observed this session before it wa…
+    tool_result_truncated ×2
+
+  [2mID[0m 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
+     [2morigin imported · parser 0.12.0 (partial) · filter 12[0m
+
+  [2mTranscript:[0m [36magent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript[0m
+  [2mJSON:      [0m [36magent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json[0m

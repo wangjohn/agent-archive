@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"io"
+	"os"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
@@ -28,16 +30,25 @@ type sessionSelectionDependencies interface {
 	now() time.Time
 }
 
+// sessionBrowserDependencies is what the interactive session browser uses:
+// the pager for transcripts, and interrupts so it can restore the screen
+// before it exits.
+type sessionBrowserDependencies interface {
+	pagerDependencies
+	interrupts() (<-chan os.Signal, func())
+	exit(int)
+}
+
 type listCommandDependencies interface {
 	readOnlyStoreDependencies
-	pagerDependencies
+	sessionBrowserDependencies
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
 
 type showCommandDependencies interface {
 	readOnlyStoreDependencies
-	sessionBrowseDependencies
+	sessionBrowserDependencies
 	now() time.Time
 	newCommandFlags(string, io.Writer) *commandFlags
 }
@@ -51,7 +62,7 @@ type showQueryDependencies interface {
 type pagerDependencies interface {
 	isTerminal(any) bool
 	lookupEnv(string) (string, bool)
-	runPager(string, io.Reader, io.Writer, io.Writer) error
+	runPager(context.Context, string, io.Reader, io.Writer, io.Writer) error
 }
 
 type handoffResolverDependencies interface {

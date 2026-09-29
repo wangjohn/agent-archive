@@ -56,7 +56,7 @@ func (*pagerStub) isTerminal(any) bool { return true }
 
 func (*pagerStub) lookupEnv(string) (string, bool) { return "more", true }
 
-func (s *pagerStub) runPager(_ string, _ io.Reader, _, _ io.Writer) error {
+func (s *pagerStub) runPager(_ context.Context, _ string, _ io.Reader, _, _ io.Writer) error {
 	s.run++
 	return errors.New("pager unavailable")
 }
@@ -64,7 +64,7 @@ func (s *pagerStub) runPager(_ string, _ io.Reader, _, _ io.Writer) error {
 func TestPagerBoundaryFallsBackToDirectOutput(t *testing.T) {
 	deps := &pagerStub{}
 	var out, errOut bytes.Buffer
-	err := withPager(&out, &errOut, deps, false, func(w io.Writer) error {
+	err := withPager(context.Background(), &out, &errOut, deps, false, func(w io.Writer) error {
 		_, err := io.WriteString(w, "metadata only\n")
 		return err
 	})

@@ -5,7 +5,7 @@ Three commands print JSON for scripts. Each document carries a
 keeps its meaning, and an incompatible change bumps `schema_version`, from
 `v0.1.0` on. Check `schema_version`, and read the
 [changelog](../../CHANGELOG.md) when you upgrade. None of them ever contains
-conversation content, except `show --normalized`, which you ask for
+conversation content, except `show --transcript --json`, which you ask for
 explicitly.
 
 ## `list --json`
@@ -43,16 +43,19 @@ explicitly.
 
 ## `show`
 
-`show SESSION_ID` always prints JSON (`--json` is accepted for consistency).
-It is the session's metadata sidecar with one extra field,
+`show SESSION_ID --json` prints JSON; without `--json`, `show` prints a
+readable summary. (Before this release `show` always printed JSON: a script
+that parses `show` output must now pass `--json`.) It is the session's
+metadata sidecar with one extra field,
 `linked_session_availability`, resolved live for each linked subagent
 session. Because of that field, `show` output is a view of a metadata object,
 not an instance of `metadata.schema.json`; validate stored sidecars (or
 `list --json` items), not `show` output.
 
-`show --normalized` prints a second JSON document after the sidecar: the
-verified conversation as `turns`, `tool_calls`, `tool_results`, and
-`hook_finals`.
+`show --transcript --json` prints a second JSON document after the sidecar:
+the verified conversation as `turns`, `tool_calls`, `tool_results`, and
+`hook_finals`. `show --normalized` is a deprecated name for it; its output
+is unchanged, and it prints a deprecation note on stderr.
 
 ## `status --json`
 

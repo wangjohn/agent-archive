@@ -5,6 +5,11 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -13,23 +18,62 @@ import (
 // not disabled, the written bytes go to $AGENT_ARCHIVE_PAGER, else $PAGER,
 // else `less -FRX`, so a long listing can be scrolled and quit with q.
 // Piped or redirected stdout is never paged; a spawn failure falls back to
-// writing stdout directly after a stderr warning.
-func withPager(stdout, stderr io.Writer, env pagerDependencies, noPager bool, write func(io.Writer) error) error {
+// writing stdout directly after a stderr warning. Cancelling ctx stops the
+// pager.
+func withPager(ctx context.Context, stdout, stderr io.Writer, env pagerDependencies, noPager bool, write func(io.Writer) error) error {
 	var buf bytes.Buffer
 	if err := write(&buf); err != nil {
 		return err
 	}
+	_, _, err := pageText(ctx, stdout, stderr, env, noPager, false, buf.Bytes())
+	return err
+}
+
+// defaultPager is the pager when neither AGENT_ARCHIVE_PAGER nor PAGER is
+// set. -F quits at once when the text fits on one screen; -X leaves the
+// text on the screen after quitting.
+const defaultPager = "less -FRX"
+
+// pageText writes text through the pager withPager would choose, and
+// reports whether a pager showed it. Cancelling ctx stops the pager.
+//
+// stayOpen is for the session browser, which redraws the screen when the
+// pager exits. less is then told not to quit at once when the text fits on
+// one screen (-+F overrides an -F from the command or $LESS), and waited
+// reports that the pager is known to wait for the user; another pager may
+// have returned at once, so the browser waits itself.
+func pageText(ctx context.Context, stdout, stderr io.Writer, env pagerDependencies, noPager, stayOpen bool, text []byte) (paged, waited bool, err error) {
 	command, page := resolvePagerCommand(env, noPager, stdout)
 	if !page {
-		_, err := io.Copy(stdout, &buf)
-		return err
+		_, err := stdout.Write(text)
+		return false, false, err
 	}
-	if err := env.runPager(command, &buf, stdout, stderr); err != nil {
+	if stayOpen && isLess(command) {
+		if command == defaultPager {
+			command = "less -RX"
+		}
+		command += " -+F"
+		waited = true
+	}
+	// A pager stopped because ctx was cancelled (a signal) did run; that is
+	// not a failure to fall back from.
+	if err := env.runPager(ctx, command, bytes.NewReader(text), stdout, stderr); err != nil && ctx.Err() == nil {
 		terminal.Printf(stderr, "agent-archive: warning: pager %q failed (%v); printing directly\n", command, err)
-		_, copyErr := io.Copy(stdout, bytes.NewReader(buf.Bytes()))
-		return copyErr
+		_, copyErr := stdout.Write(text)
+		return false, false, copyErr
 	}
-	return nil
+	return true, waited, nil
+}
+
+// isLess reports whether command runs less by itself, so options can be
+// appended to it: no shell syntax (pipes, redirection, substitution,
+// quoting, comments, line breaks) and no "--" ending its options.
+func isLess(command string) bool {
+	if strings.ContainsAny(command, "|;&<>`$()#\\\n'\"") {
+		return false
+	}
+	fields := strings.Fields(command)
+	return len(fields) > 0 && filepath.Base(fields[0]) == "less" && !slices.Contains(fields, "--")
 }
 
 // resolvePagerCommand chooses the pager command. An empty
@@ -51,14 +95,24 @@ func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) 
 		}
 		return value, true
 	}
-	return "less -FRX", true
+	return defaultPager, true
 }
 
-func (e Env) runPager(command string, stdin io.Reader, stdout, stderr io.Writer) error {
+// pagerStopDelay is how long a pager asked to stop may take before it is
+// killed.
+const pagerStopDelay = 3 * time.Second
+
+// runPager runs command through sh. Cancelling ctx sends the pager SIGTERM
+// (sh execs a lone command, so the signal reaches the pager itself) and
+// waits for it to exit, killing it after pagerStopDelay, so no pager is
+// left behind on the terminal.
+func (e Env) runPager(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if e.RunPager != nil {
-		return e.RunPager(command, stdin, stdout, stderr)
+		return e.RunPager(ctx, command, stdin, stdout, stderr)
 	}
-	cmd := exec.CommandContext(context.Background(), "sh", "-c", command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = pagerStopDelay
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
