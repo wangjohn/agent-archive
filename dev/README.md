@@ -26,6 +26,7 @@ differ, the code and the user documentation describe current behavior.
 | [Backfill](specs/backfill.md) | Implemented. |
 | [Handoff](specs/handoff.md) | Implemented. |
 | [Cloud capture](proposals/cloud-capture.md) | Proposed; not implemented. |
+| [Portable handoff, guided setup, and Linux](proposals/portable-handoff-and-onboarding.md) | Proposed. Parts 1 and 2 in progress; Part 3 (Linux) planned. |
 | [List and browse UX](proposals/list-browse-ux.md) | Design record; implementation tracked in PRs #99–#101. |
 
 ## Maintainers
