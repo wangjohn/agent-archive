@@ -134,15 +134,35 @@ func nativeTurnEnd(bundle SourceBundle) (MetadataState, TurnOutcome, bool) {
 // returns failed minimal metadata together with a ParseError; callers should
 // still publish the verified filtered source and retry a parser upgrade later.
 func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt time.Time, reference SourceReference, parser ParserInfo) (Metadata, error) {
-	if err := validateBundle(bundle); err != nil {
+	if err := validateMetadataInputs(bundle, machineID, startedAt, derivedAt, reference); err != nil {
 		return Metadata{}, err
 	}
+	parser = defaultMetadataParser(bundle, parser)
+	view, parseErr := ParseNormalized(bundle)
+	if parseErr != nil {
+		parser.Status = ParserStatusFailed
+	}
+	metadata := baseMetadata(bundle, machineID, startedAt, derivedAt, reference, parser)
+	if parseErr != nil {
+		return metadata, parseErr
+	}
+	return assembleParsedMetadata(bundle, view, metadata), nil
+}
+
+func validateMetadataInputs(bundle SourceBundle, machineID string, startedAt, derivedAt time.Time, reference SourceReference) error {
+	if err := validateBundle(bundle); err != nil {
+		return err
+	}
 	if strings.TrimSpace(machineID) == "" || startedAt.IsZero() || derivedAt.IsZero() {
-		return Metadata{}, errors.New("machine ID, start time, and derivation time are required")
+		return errors.New("machine ID, start time, and derivation time are required")
 	}
 	if strings.TrimSpace(reference.Key) == "" || len(reference.SHA256) != 64 || reference.CompressedBytes < 0 {
-		return Metadata{}, errors.New("verified source reference is required")
+		return errors.New("verified source reference is required")
 	}
+	return nil
+}
+
+func defaultMetadataParser(bundle SourceBundle, parser ParserInfo) ParserInfo {
 	if parser.Name == "" {
 		parser.Name = bundle.Capture.AdapterName
 	}
@@ -152,12 +172,12 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 	if parser.Status == "" {
 		parser.Status = ParserStatusPartial
 	}
-	view, parseErr := ParseNormalized(bundle)
-	if parseErr != nil {
-		parser.Status = ParserStatusFailed
-	}
+	return parser
+}
+
+func baseMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt time.Time, reference SourceReference, parser ParserInfo) Metadata {
 	state, outcome := deriveLifecycle(bundle.SupplementalEvidence)
-	metadata := Metadata{
+	return Metadata{
 		SchemaVersion: MetadataSchemaVersion, SessionID: bundle.ArchiveSessionID, NativeSessionID: bundle.NativeSessionID,
 		MachineID: machineID, ProjectID: bundle.ProjectID, StartedAt: startedAt.UTC(), CapturedAt: bundle.Capture.CapturedAt.UTC(),
 		MetadataDerivedAt: derivedAt.UTC(), Harness: bundle.Capture.Harness,
@@ -169,9 +189,9 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 		ParentSessionID: bundle.ParentSessionID,
 		LinkedSessions:  append([]LinkedSessionReference(nil), bundle.LinkedSessions...),
 	}
-	if parseErr != nil {
-		return metadata, parseErr
-	}
+}
+
+func assembleParsedMetadata(bundle SourceBundle, view NormalizedView, metadata Metadata) Metadata {
 	// A native end-of-turn record fills in only what the hook evidence could
 	// not establish: an observed hook stop, interrupt, or closure still wins.
 	if state, outcome, found := nativeTurnEnd(bundle); found {
@@ -182,10 +202,29 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 			metadata.TurnOutcome = outcome
 		}
 	}
-	prompts, messages, shellCommands := 0, 0, 0
+	prompts, messages, shellCommands, models := summarizeTurns(view.Turns)
+	// Native text has unproven structure, so structured counts remain unknown.
+	if len(bundle.NativeText) == 0 {
+		metadata.Counts = structuredCounts(bundle, view, prompts, messages, shellCommands)
+	}
+	metadata.Models = models
+	deriveHookModels(bundle, &metadata)
+	deriveSkills(bundle, view.NativeSkillUses, &metadata)
+	metadata.Title = deriveSessionTitle(view, bundle.NativeText)
+	feedback := 0
+	for _, e := range bundle.SupplementalEvidence {
+		if e.Kind == EvidenceKindExplicitFeedback {
+			feedback++
+		}
+	}
+	metadata.Counts.ExplicitFeedback = &feedback
+	return metadata
+}
+
+func summarizeTurns(turns []NormalizedTurn) (prompts, messages, shellCommands int, summaries []ModelSummary) {
 	assistantMessages := map[string]bool{}
 	models := map[string]*ModelSummary{}
-	for _, turn := range view.Turns {
+	for _, turn := range turns {
 		switch turn.Kind {
 		case TurnKindHumanPrompt:
 			prompts++
@@ -212,58 +251,7 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 			// A kind added later is not counted either.
 			continue
 		}
-		//lint:ignore LV1001 roles are copied from native records, an external and open vocabulary
-		if turn.Role != "user" && turn.Role != "assistant" {
-			continue
-		}
-		modelName, attribute, responseStatus := turn.Model, "gen_ai.request.model", ResponseModelStatusNotExposed
-		if modelName == "" && turn.ResponseModel != "" {
-			modelName, attribute, responseStatus = turn.ResponseModel, "gen_ai.response.model", ResponseModelStatusObserved
-		}
-		if modelName == "" {
-			continue
-		}
-		key := attribute + "\x00" + turn.Provider + "\x00" + modelName + "\x00" + turn.Reasoning
-		model := models[key]
-		if model == nil {
-			attributes := map[string]string{attribute: modelName}
-			if turn.Provider != "" {
-				attributes["gen_ai.provider.name"] = turn.Provider
-			}
-			if turn.Reasoning != "" {
-				attributes["agent_archive.request.reasoning_level"] = turn.Reasoning
-			}
-			model = &ModelSummary{Attributes: attributes, Source: ModelSummarySourceNativeTranscript, ResponseModelStatus: responseStatus}
-			models[key] = model
-		}
-		if model.TurnCount == nil {
-			zero := 0
-			model.TurnCount = &zero
-		}
-		*model.TurnCount++
-	}
-	// Native text is retained precisely because its structure is not proven.
-	// Counts derived only from the structured subset would look complete, so
-	// leave all structure-dependent totals unknown whenever text is present.
-	if len(bundle.NativeText) == 0 {
-		toolCalls, toolResults := len(view.ToolCalls), len(view.ToolResults)
-		metadata.Counts.Turns = &prompts
-		metadata.Counts.Messages = &messages
-		metadata.Counts.ToolCalls = &toolCalls
-		metadata.Counts.ToolResults = &toolResults
-		metadata.Counts.UserShellCommands = &shellCommands
-		metadata.Counts.InputTokens, metadata.Counts.OutputTokens = view.Tokens.Input, view.Tokens.Output
-		metadata.Counts.CacheReadTokens, metadata.Counts.CacheWriteTokens = view.Tokens.CacheRead, view.Tokens.CacheWrite
-		if compactionsObservable(bundle) {
-			// Each compaction writes one boundary and one summary. Count
-			// boundaries; fall back to summaries only when no boundary was
-			// retained at all, so the same compaction is never counted twice.
-			compactions := view.CompactBoundaries
-			if compactions == 0 {
-				compactions = view.CompactSummaries
-			}
-			metadata.Counts.Compactions = &compactions
-		}
+		addTurnModel(models, turn)
 	}
 	modelKeys := make([]string, 0, len(models))
 	for key := range models {
@@ -271,19 +259,59 @@ func BuildMetadata(bundle SourceBundle, machineID string, startedAt, derivedAt t
 	}
 	sort.Strings(modelKeys)
 	for _, key := range modelKeys {
-		metadata.Models = append(metadata.Models, *models[key])
+		summaries = append(summaries, *models[key])
 	}
-	deriveHookModels(bundle, &metadata)
-	deriveSkills(bundle, view.NativeSkillUses, &metadata)
-	metadata.Title = deriveSessionTitle(view, bundle.NativeText)
-	feedback := 0
-	for _, e := range bundle.SupplementalEvidence {
-		if e.Kind == EvidenceKindExplicitFeedback {
-			feedback++
+	return prompts, messages, shellCommands, summaries
+}
+
+func addTurnModel(models map[string]*ModelSummary, turn NormalizedTurn) {
+	//lint:ignore LV1001 roles are copied from native records, an external and open vocabulary
+	if turn.Role != "user" && turn.Role != "assistant" {
+		return
+	}
+	modelName, attribute, responseStatus := turn.Model, "gen_ai.request.model", ResponseModelStatusNotExposed
+	if modelName == "" && turn.ResponseModel != "" {
+		modelName, attribute, responseStatus = turn.ResponseModel, "gen_ai.response.model", ResponseModelStatusObserved
+	}
+	if modelName == "" {
+		return
+	}
+	key := attribute + "\x00" + turn.Provider + "\x00" + modelName + "\x00" + turn.Reasoning
+	model := models[key]
+	if model == nil {
+		attributes := map[string]string{attribute: modelName}
+		if turn.Provider != "" {
+			attributes["gen_ai.provider.name"] = turn.Provider
 		}
+		if turn.Reasoning != "" {
+			attributes["agent_archive.request.reasoning_level"] = turn.Reasoning
+		}
+		model = &ModelSummary{Attributes: attributes, Source: ModelSummarySourceNativeTranscript, ResponseModelStatus: responseStatus}
+		models[key] = model
 	}
-	metadata.Counts.ExplicitFeedback = &feedback
-	return metadata, nil
+	if model.TurnCount == nil {
+		zero := 0
+		model.TurnCount = &zero
+	}
+	*model.TurnCount++
+}
+
+func structuredCounts(bundle SourceBundle, view NormalizedView, prompts, messages, shellCommands int) Counts {
+	toolCalls, toolResults := len(view.ToolCalls), len(view.ToolResults)
+	counts := Counts{
+		Turns: &prompts, Messages: &messages, ToolCalls: &toolCalls, ToolResults: &toolResults,
+		UserShellCommands: &shellCommands, InputTokens: view.Tokens.Input, OutputTokens: view.Tokens.Output,
+		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
+	}
+	if compactionsObservable(bundle) {
+		// Count boundaries; use summaries only when no boundary was retained.
+		compactions := view.CompactBoundaries
+		if compactions == 0 {
+			compactions = view.CompactSummaries
+		}
+		counts.Compactions = &compactions
+	}
+	return counts
 }
 
 // sessionTitleLimit is the maximum rune length of Metadata.Title.

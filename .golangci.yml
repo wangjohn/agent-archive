@@ -230,9 +230,6 @@ linters:
       - path: internal/archive/source_jsonl\.go
         text: DecodeSource
         linters: [funlen, gocyclo]
-      - path: internal/archive/metadata\.go
-        text: BuildMetadata
-        linters: [funlen, gocyclo]
       - path: internal/reader/reader\.go
         text: "`matches`"
         linters: [gocyclo]
