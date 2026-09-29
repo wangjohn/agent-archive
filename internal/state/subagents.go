@@ -30,6 +30,12 @@ type SubagentCandidate struct {
 	// SessionOriginHook) or backfill (SessionOriginImport). Only a hook
 	// candidate carries a SubagentStop lifecycle event.
 	Origin archive.SessionOrigin `json:"origin,omitempty"`
+	// AgentType is the subagent's type as the SubagentStop hook reported it
+	// ("Explore", "general-purpose", "my-plugin:reviewer"), already passed
+	// through archive.SanitizeSubagentType, or empty when unknown. It is
+	// informational: it only describes a subagent status and capture gaps
+	// report, and never decides anything.
+	AgentType string `json:"agent_type,omitempty"`
 }
 
 var (
@@ -48,6 +54,7 @@ func (s *Store) subagentCandidatePath(id string) string {
 
 // SaveSubagentCandidate coalesces duplicate stop deliveries without allowing
 // a later event to replace the path or ownership established by the first.
+// AgentType is not part of ownership: the first non-empty one is kept.
 func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 	if !safeFileComponent(candidate.ArchiveSessionID) || candidate.NativeSessionID == "" || candidate.ParentArchiveSessionID == "" || candidate.ParentNativeSessionID == "" || candidate.ProjectID == "" || candidate.ProjectRoot == "" || candidate.Harness.Name == "" || candidate.AgentID == "" || candidate.TranscriptPath == "" || candidate.ObservedAt.IsZero() {
 		return ErrSubagentCandidateIncomplete
@@ -65,6 +72,11 @@ func (s *Store) SaveSubagentCandidate(candidate SubagentCandidate) error {
 		}
 		if prior.ObservedAt.After(candidate.ObservedAt) {
 			candidate.ObservedAt = prior.ObservedAt
+		}
+		// The first stop that named a type keeps it: like the path and
+		// owner, a later delivery never replaces it.
+		if prior.AgentType != "" {
+			candidate.AgentType = prior.AgentType
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read subagent candidate: %w", err)

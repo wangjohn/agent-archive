@@ -32,8 +32,11 @@ find none say so without creating the data directory.
   Neither is a failure, and neither changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
   subagent waits up to 30 minutes, then is not captured and its parent
-  session records the link as unavailable. `status --verbose` shows how many
-  are waiting. A subagent lost for another reason (its transcript exists but
+  session records the link as unavailable, with a
+  `subagent_transcript_never_written` capture gap naming the subagent's type
+  when Claude Code reported one. `status --verbose` shows how many are
+  waiting, and how many of each type were dropped this way in the last 7
+  days. A subagent lost for another reason (its transcript exists but
   can't be read, or doesn't match its parent session) is a failed session:
   `sync` names it and exits 1, once.
 - `pause` persists until `resume`. If work is still running, the command

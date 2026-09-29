@@ -48,7 +48,7 @@ var ErrSubagentNotCaptured = errors.New("subagent was not captured")
 // but cannot be read) means a real subagent was lost, which the pass reports
 // as a failed session once.
 var expectedSubagentRejections = map[string]bool{
-	"subagent_transcript_never_written":     true,
+	subagentNeverWritten:                    true,
 	"subagent_transcript_unavailable":       true,
 	"subagent_parent_ownership_unavailable": true,
 	"subagent_start_ineligible":             true,
@@ -64,6 +64,9 @@ type subagentOutcome struct {
 	waiting []string
 	// rejected maps each candidate rejected this pass to its code.
 	rejected map[string]string
+	// expired lists the candidates rejected this pass because their
+	// transcripts were never written, for status to carry forward.
+	expired []state.ExpiredSubagent
 }
 
 // materializeSubagentCandidates registers each candidate a hook left, rejects
@@ -84,6 +87,9 @@ func materializeSubagentCandidates(local *state.Store, opts Options, now time.Ti
 			outcome.waiting = append(outcome.waiting, candidate.ArchiveSessionID)
 		case errors.As(err, &rejected):
 			outcome.rejected[candidate.ArchiveSessionID] = rejected.code
+			if rejected.code == subagentNeverWritten {
+				outcome.expired = append(outcome.expired, state.ExpiredSubagent{ArchiveSessionID: candidate.ArchiveSessionID, AgentType: archive.SanitizeSubagentType(candidate.AgentType), ExpiredAt: now.UTC()})
+			}
 			if !expectedSubagentRejections[rejected.code] {
 				outcome.errors[candidate.ArchiveSessionID] = err
 			}
@@ -179,7 +185,7 @@ func awaitSubagentTranscript(local *state.Store, candidate state.SubagentCandida
 	if age := now.Sub(candidate.ObservedAt); age < subagentTranscriptGrace && age >= -subagentTranscriptGrace {
 		return errSubagentWaiting
 	}
-	return rejectSubagentCandidate(local, candidate, "subagent_transcript_never_written")
+	return rejectSubagentCandidate(local, candidate, subagentNeverWritten)
 }
 
 func checkSubagentRegistrationConflict(local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
@@ -291,18 +297,48 @@ func checkSubagentProvenance(filtered archive.FilteredTranscript, parentNativeSe
 	return nil
 }
 
+// subagentNeverWritten is the rejection code, and the parent's capture gap
+// code, of a candidate whose transcript Claude Code never wrote.
+const subagentNeverWritten = "subagent_transcript_never_written"
+
+// subagentExpiryProvenance marks the capture gap the collector records on a
+// parent whose subagent's transcript was never written.
+const subagentExpiryProvenance = "collector:subagent-expiry"
+
+// subagentNeverWrittenDetail is the capture gap detail for a subagent whose
+// transcript was never written, naming its type when the hook reported a
+// valid one.
+func subagentNeverWrittenDetail(agentType string) string {
+	if agentType = archive.SanitizeSubagentType(agentType); agentType != "" {
+		return "Claude Code reported a subagent (type " + agentType + ") but never wrote its transcript"
+	}
+	return "Claude Code reported a subagent but never wrote its transcript"
+}
+
 // rejectSubagentCandidate acknowledges candidate and tells its parent the
-// link is unavailable, then returns a subagentRejectedError with code. Any
-// other error means one of those writes failed and the candidate stays.
+// link is unavailable, then returns a subagentRejectedError with code. A
+// transcript that was never written also leaves the parent a capture gap
+// saying why the subagent is missing. Any other error means one of those
+// writes failed and the candidate stays.
 func rejectSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, code string) error {
-	evidence, err := archive.NewLinkedSessionEvidence(candidate.ArchiveSessionID, archive.LinkedSessionUnavailable, candidate.ObservedAt)
+	link, err := archive.NewLinkedSessionEvidence(candidate.ArchiveSessionID, archive.LinkedSessionUnavailable, candidate.ObservedAt)
 	if err != nil {
 		return err
+	}
+	evidence := []archive.SupplementalEvidence{link}
+	if code == subagentNeverWritten {
+		// Observed at the stop, like the link, so a retry after a failed
+		// write saves the same item, which the request keeps once.
+		gap, err := archive.NewCaptureGapEvidence(code, subagentNeverWrittenDetail(candidate.AgentType), subagentExpiryProvenance, candidate.ObservedAt)
+		if err != nil {
+			return err
+		}
+		evidence = append(evidence, gap)
 	}
 	// A parent retention has forgotten has nobody left to notify. The
 	// candidate is still acknowledged: retrying it would report the same
 	// permanent condition on every pass.
-	if err := local.SaveRequest(candidate.ParentArchiveSessionID, code, candidate.ObservedAt, evidence); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
+	if err := local.SaveRequest(candidate.ParentArchiveSessionID, code, candidate.ObservedAt, evidence...); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
 		return err
 	}
 	if err := local.AcknowledgeSubagentCandidate(candidate); err != nil {

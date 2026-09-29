@@ -35,9 +35,11 @@ var CaptureGapCodes = []string{
 	"subagent_final_not_reconciled",
 	"supplemental_evidence_omitted",
 	// Capture-gap evidence recorded outside the filter: the collector's
-	// rewritten Cursor database chat and the hook's unidentifiable subagent.
+	// rewritten Cursor database chat, the hook's unidentifiable subagent, and
+	// the collector's subagent whose transcript Claude Code never wrote.
 	"cursor_chat_rewritten",
 	"subagent_identity_unavailable",
+	"subagent_transcript_never_written",
 	// Added to metadata for a session backfill imported.
 	CaptureGapImportedWithoutHookEvidence,
 }

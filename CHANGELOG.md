@@ -30,6 +30,23 @@ follow [Semantic Versioning](https://semver.org/).
   failures of the same pass in one message. Each session's capture gap in
   `status --json` carries its own next step.
 
+### Added
+
+- A Claude Code parent session whose subagent's transcript was never written
+  now says why the subagent is missing: its metadata carries a
+  `subagent_transcript_never_written` capture gap, naming the subagent's
+  type when Claude Code reported one ("Claude Code reported a subagent (type
+  Explore) but never wrote its transcript"). The type is uploaded only when
+  it is a short name of letters, digits, `_`, `.`, `:`, and `-`. Filter
+  version 13 and adapter version 0.13.0, so existing sessions are filtered
+  again on the next pass; transcripts filter as before.
+- `status --verbose` lists the subagents dropped in the last 7 days because
+  Claude Code never wrote their transcripts, by type ("7 not archived in the
+  last 7 days (Claude Code never wrote their transcripts; nothing to do)",
+  then "5 unknown type, 2 Explore"), and `status --json` lists them as
+  `collector.expired_subagents`. Default `status` still says nothing about
+  them.
+
 ### Changed
 
 - `status --json` adds `collector.issue_counts`, the number of sessions per

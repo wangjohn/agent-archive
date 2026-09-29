@@ -40,8 +40,11 @@ const (
 	// starts a section, hides the rest of the transcript, or un-hides a
 	// hidden one; and a quoted credential value takes along whatever a shell
 	// would glue onto it after the closing quote (`PASSWORD="abc"secret`).
+	// Filter 13 filters transcripts as 12 does; a Claude Code parent also
+	// records a subagent_transcript_never_written capture gap, naming the
+	// subagent's sanitized type, when the subagent's transcript never appears.
 	// See dev/specs/privacy-filter.md.
-	FilterVersion = "12"
+	FilterVersion = "13"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.
