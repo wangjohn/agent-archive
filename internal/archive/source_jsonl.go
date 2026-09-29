@@ -307,17 +307,22 @@ func (s *sourceDecodeState) decodeBody(raw []byte, kind SourceLineKind) (SourceL
 	}
 	s.stage = position
 	switch kind {
+	case SourceLineHeader:
+		return SourceLine{}, fmt.Errorf("source line %d is a second header", s.lineNo)
 	case SourceLineNativeRecord:
 		return s.decodeNativeRecord(raw)
 	case SourceLineNativeText:
 		return s.decodeNativeText(raw)
-	default:
+	case SourceLineSupplementalEvidence:
 		return s.decodeEvidence(raw)
 	}
+	return SourceLine{}, fmt.Errorf("source line %d has unknown kind %q", s.lineNo, kind)
 }
 
 func sourceKindPosition(kind SourceLineKind) int {
 	switch kind {
+	case SourceLineHeader:
+		return 0
 	case SourceLineNativeRecord:
 		return 1
 	case SourceLineNativeText:

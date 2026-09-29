@@ -322,6 +322,7 @@ func TestDecodeSourceRejectsMalformedPayloadBeforeCallback(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			callbacks := 0
 			err := DecodeSource(bytes.NewReader(gzipLines(t, c.lines...)), DecodeOptions{}, func(SourceLine) error {
 				callbacks++
