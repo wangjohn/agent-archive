@@ -327,7 +327,10 @@ func TestBrowserSignalDuringTranscript(t *testing.T) {
 }
 
 func testBrowserSignalWhilePaging(t *testing.T, key string) {
+	t.Helper()
 	env, _, _ := publishedFixture(t)
+	// Short enough that the details are cut, so m is offered.
+	env.TerminalSize = fixedTerminal{100, 9}.terminalSize
 	stdin := strings.NewReader("1\n" + key + "\nq\n")
 	var stdout, stderr syncBuffer
 	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
@@ -368,7 +371,7 @@ const cutDetailsPrompt = "[t] transcript  [m] more  [Enter/b] back to list  [q] 
 func detailsScreens(out string) []string {
 	const end = "back to list  [q] quit: "
 	var screens []string
-	for _, screen := range strings.Split(out, clearScreenSequence) {
+	for screen := range strings.SplitSeq(out, clearScreenSequence) {
 		screen, _, _ = strings.Cut(screen, leaveAltScreenSequence)
 		if at := strings.Index(screen, end); at >= 0 {
 			screens = append(screens, screen[:at+len(end)])
@@ -439,12 +442,12 @@ func TestBrowserCutDetailsGolden(t *testing.T) {
 	var out bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(&out) }
 	env.TerminalSize = fixedTerminal{80, 14}.terminalSize
-	b := &sessionBrowser{env: env, prompt: newPrompter(strings.NewReader("q\n"), &out), stdout: &out}
+	b := &sessionBrowser{env: env, prompt: newPrompter(strings.NewReader("q\n"), &out), stdout: &out, screen: &altScreen{}}
 	summary := renderSummaryText(summaryFixture(), summaryOptions{Now: summaryNow, Location: time.UTC})
 	hint := b.transcriptHint()
-	cut := b.drawDetails(summary, hint)
-	if action, err := b.detailsPrompt(listRow{}, []byte(summary), hint, cut); err != nil || action != browseQuit || !cut {
-		t.Fatalf("action %v, err %v, cut %v", action, err, cut)
+	rest, redraw := b.drawDetails(summary, hint, browseNotice{})
+	if action, _, err := b.detailsPrompt(listRow{}, []byte(summary), rest, hint, browseNotice{}, redraw); err != nil || action != browseQuit || rest == "" {
+		t.Fatalf("action %v, err %v, rest %q", action, err, rest)
 	}
 	if n := displayLines(out.String(), 80); n != 14 {
 		t.Fatalf("cut details take %d rows of 14:\n%s", n, out.String())
@@ -452,11 +455,67 @@ func TestBrowserCutDetailsGolden(t *testing.T) {
 	golden.Check(t, filepath.Join("testdata", "browse", "details-cut.txt"), out.Bytes())
 }
 
+// Without a pager, m prints only the lines the details left out, below
+// them, and asks again.
+func TestBrowserMoreWithoutPagerPrintsTheRest(t *testing.T) {
+	t.Parallel()
+	out, _, pages, id := browseSized(t, fixedTerminal{100, 9}, "1\nm\nq\n", "list", "--no-pager")
+	if len(pages) != 0 {
+		t.Fatalf("paged %+v", pages)
+	}
+	screens := strings.Split(out, clearScreenSequence)
+	details, _, _ := strings.Cut(screens[len(screens)-1], leaveAltScreenSequence)
+	shown, after, ok := strings.Cut(details, cutDetailsPrompt+": ")
+	if !ok || strings.Count(details, "\n"+detailsPrompt+": ") != 1 {
+		t.Fatalf("no prompt after the rest:\n%s", details)
+	}
+	cutAt := strings.Index(shown, "\n… ")
+	if cutAt < 0 {
+		t.Fatalf("details not cut:\n%s", shown)
+	}
+	lastShown := shown[strings.LastIndex(shown[:cutAt], "\n")+1 : cutAt]
+	if !strings.Contains(after, "ID "+id) || strings.Contains(after, lastShown) || strings.Contains(after, " more lines") {
+		t.Fatalf("m printed more than the rest:\n%s", after)
+	}
+}
+
+// On a screen that can be cleared, a message about an answer replaces the
+// blank line above the redrawn details instead of scrolling them.
+func TestBrowserDetailsRedrawWithAMessage(t *testing.T) {
+	t.Parallel()
+	out, _, _, _ := browseSized(t, fixedTerminal{100, 9}, "1\nzz\nq\n")
+	screens := detailsScreens(out)
+	if len(screens) != 2 {
+		t.Fatalf("details drawn %d times, want 2:\n%s", len(screens), out)
+	}
+	const message = "Enter t for the transcript, m for the whole summary, b (or just Enter) for the list, or q to quit.\nt opens"
+	if n := displayLines(screens[1], 100); n != 9 || !strings.Contains(screens[1], " more lines\n"+message) {
+		t.Fatalf("redrawn details take %d rows of 9:\n%s", n, screens[1])
+	}
+}
+
+// However short the terminal, the details show a few lines of the summary.
+func TestBrowserDetailsShowAFewLinesOnATinyTerminal(t *testing.T) {
+	t.Parallel()
+	out, _, _, _ := browseSized(t, fixedTerminal{100, 3}, "1\nq\n")
+	screens := detailsScreens(out)
+	if len(screens) != 1 {
+		t.Fatalf("details:\n%s", out)
+	}
+	shown, _, ok := strings.Cut(screens[0], "… ")
+	if !ok || strings.Count(shown, "\n") != minDetailLines {
+		t.Fatalf("want %d summary lines:\n%s", minDetailLines, screens[0])
+	}
+}
+
 // Only the default less is set up to scroll on the wheel, so the hint for a
 // less the user chose names the keys instead.
 func TestBrowserTranscriptHintFollowsThePager(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ pager, want string }{
+	for _, tc := range []struct {
+		pager string
+		want  string
+	}{
 		{"", "t opens the transcript: scroll with the wheel or arrows, q returns here."},
 		{"less -R", "t opens the transcript: scroll with the arrows or space, q returns here."},
 		{"most", "t opens the transcript in your pager; quit it to return here."},

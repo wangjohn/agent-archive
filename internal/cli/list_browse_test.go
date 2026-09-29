@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -189,7 +190,10 @@ func extractJSONObject(text string) string {
 }
 
 // fixedTerminal is a terminal of a fixed size; a zero size is unknown.
-type fixedTerminal struct{ width, height int }
+type fixedTerminal struct {
+	width  int
+	height int
+}
 
 func (f fixedTerminal) terminalSize(io.Writer) (int, int, bool) {
 	return f.width, f.height, f.width > 0 && f.height > 0
@@ -261,6 +265,31 @@ func checkScreensFit(t *testing.T, screens []string, width, height int) {
 	}
 }
 
+// rowNumbers is the row numbers a screen of the picker lists, top to
+// bottom.
+func rowNumbers(screen string) []int {
+	var numbers []int
+	for line := range strings.SplitSeq(screen, "\n") {
+		if !strings.Contains(line, "Session number") {
+			continue
+		}
+		field, _, _ := strings.Cut(line, " ")
+		if n, err := strconv.Atoi(field); err == nil {
+			numbers = append(numbers, n)
+		}
+	}
+	return numbers
+}
+
+// rowSpan is the first and last row number a screen lists, as "first-last".
+func rowSpan(screen string) string {
+	numbers := rowNumbers(screen)
+	if len(numbers) == 0 {
+		return "none"
+	}
+	return fmt.Sprintf("%d-%d", numbers[0], numbers[len(numbers)-1])
+}
+
 func TestPickerPagesATableTallerThanTheTerminal(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(50, oneProject)
@@ -274,14 +303,32 @@ func TestPickerPagesATableTallerThanTheTerminal(t *testing.T) {
 	checkScreensFit(t, screens, 120, 20)
 	// The footer, page line, blank line, and prompt leave 16 rows: the
 	// column header and 15 sessions.
-	if !strings.Contains(screens[0], "50 session(s).\nSessions 1-15 of 50 · [n] next\n") || strings.Contains(screens[0], "[p]") {
+	if rowSpan(screens[0]) != "1-15" || !strings.Contains(screens[0], "50 session(s).\nPage 1 of 4 · 50 sessions · [n] next\n") || strings.Contains(screens[0], "[p]") {
 		t.Fatalf("first page:\n%s", screens[0])
 	}
-	if !strings.Contains(screens[1], "Sessions 16-30 of 50 · [n] next  [p] previous\n") || !strings.Contains(screens[1], "\n16  Session number 16 ") {
+	if rowSpan(screens[1]) != "16-30" || !strings.Contains(screens[1], "Page 2 of 4 · 50 sessions · [n] next  [p] previous\n") {
 		t.Fatalf("second page:\n%s", screens[1])
 	}
-	if !strings.Contains(screens[2], "Sessions 31-45 of 50") || screens[3] != screens[1] {
+	if rowSpan(screens[2]) != "31-45" || screens[3] != screens[1] {
 		t.Fatalf("n then p did not return to the second page:\n%s\n----\n%s", screens[2], screens[3])
+	}
+}
+
+// In the grouped table a page's rows are not a numeric range, so the page
+// line counts pages instead of naming row numbers.
+func TestPickerPageLineNamesNoRowRangeWhenProjectsInterleave(t *testing.T) {
+	t.Parallel()
+	sessions := pickerSessions(30, func(i int) string { return []string{"alpha", "beta"}[i%2] })
+	_, _, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{GroupByProject: true}, "n\nq\n")
+	checkScreensFit(t, screens, 120, 20)
+	first := rowNumbers(screens[0])
+	if len(first) < 2 || first[1] != 3 {
+		t.Fatalf("first page does not list alpha's rows 1, 3, …:\n%s", screens[0])
+	}
+	for i, screen := range screens {
+		if strings.Contains(screen, "Sessions ") || !strings.Contains(screen, fmt.Sprintf("Page %d of 3 · 30 sessions ·", i+1)) {
+			t.Fatalf("page %d:\n%s", i+1, screen)
+		}
 	}
 }
 
@@ -297,16 +344,48 @@ func TestPickerAcceptsAnyRowFromAnyPage(t *testing.T) {
 	}
 }
 
+// On a screen that can be cleared, a message about an answer replaces the
+// blank line above the prompt of the page drawn again, so the page still
+// fits instead of scrolling its top away.
 func TestPickerStopsAtTheFirstAndLastPage(t *testing.T) {
 	t.Parallel()
 	sessions := pickerSessions(12, oneProject)
-	_, ok, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 10}}, sessions, listFormatOptions{}, "p\nn\nn\nn\nq\n")
-	if ok || !strings.Contains(screens[0], "This is the first page; n goes on.") || !strings.Contains(screens[len(screens)-1], "This is the last page; p goes back.") {
-		t.Fatalf("ok=%v:\n%s", ok, strings.Join(screens, "\n----\n"))
+	_, ok, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 10}}, sessions, listFormatOptions{}, "p\nn\nn\nn\nzz\nq\n")
+	if ok || len(screens) != 6 {
+		t.Fatalf("ok=%v, %d screens:\n%s", ok, len(screens), strings.Join(screens, "\n----\n"))
 	}
+	checkScreensFit(t, screens, 120, 10)
 	// 12 rows, 5 to a page: n works twice.
-	if len(screens) != 3 || !strings.Contains(screens[2], "Sessions 11-12 of 12 · [p] previous\n") {
-		t.Fatalf("%d screens:\n%s", len(screens), strings.Join(screens, "\n----\n"))
+	for i, want := range []struct {
+		span string
+		line string
+	}{
+		{"1-5", "Page 1 of 3 · 12 sessions · [n] next\n\nEnter number"},
+		{"1-5", "[n] next\nThis is the first page; n goes on.\nEnter number"},
+		{"6-10", "Page 2 of 3 · 12 sessions · [n] next  [p] previous\n\nEnter number"},
+		{"11-12", "Page 3 of 3 · 12 sessions · [p] previous\n\nEnter number"},
+		{"11-12", "[p] previous\nThis is the last page; p goes back.\nEnter number"},
+		{"11-12", "[p] previous\nEnter a listed number or short ID, n or p for another page, or q to quit.\nEnter number"},
+	} {
+		if rowSpan(screens[i]) != want.span || !strings.Contains(screens[i], want.line) {
+			t.Fatalf("screen %d, want rows %s and %q:\n%s", i, want.span, want.line, screens[i])
+		}
+	}
+}
+
+// On the normal screen (a picker that cannot clear), messages are printed
+// below the prompt as before.
+func TestPickerOnTheNormalScreenPrintsMessagesBelow(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	format := listFormatOptions{Now: pickerNow}
+	_, _, err := pickBrowseSession(fixedTerminal{120, 10}, newPrompter(strings.NewReader("p\nzz\nq\n"), &out), &out, pickerSessions(12, oneProject), 12, false, format, "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if strings.Count(text, "Page 1 of 3") != 1 || !strings.Contains(text, "to quit: This is the first page; n goes on.\n\nEnter number") || !strings.Contains(text, "to quit: Enter a listed number or short ID") {
+		t.Fatalf("output:\n%s", text)
 	}
 }
 
@@ -354,7 +433,7 @@ func TestPickerPrintsTheWholeTableWhenItFits(t *testing.T) {
 func TestPickerShowsAFewRowsOnATinyTerminal(t *testing.T) {
 	t.Parallel()
 	_, _, screens := runPicker(t, &sessionPicker{env: fixedTerminal{120, 3}}, pickerSessions(10, oneProject), listFormatOptions{}, "q\n")
-	if !strings.Contains(screens[0], "Sessions 1-3 of 10 · [n] next\n") {
+	if rowSpan(screens[0]) != "1-3" || !strings.Contains(screens[0], "Page 1 of 4 · 10 sessions · [n] next\n") {
 		t.Fatalf("tiny terminal:\n%s", screens[0])
 	}
 }
@@ -372,10 +451,10 @@ func TestPickerCountsWrappedAndColoredLines(t *testing.T) {
 	_, _, narrow := runPicker(t, &sessionPicker{env: fixedTerminal{40, 20}}, sessions, color, "q\n")
 	checkScreensFit(t, wide, 120, 20)
 	checkScreensFit(t, narrow, 40, 20)
-	if !strings.Contains(wide[0], "\x1b[2m") || !strings.Contains(wide[0], "Sessions 1-15 of 40") {
+	if !strings.Contains(wide[0], "\x1b[2m") || rowSpan(wide[0]) != "1-15" {
 		t.Fatalf("wide page:\n%s", wide[0])
 	}
-	if !strings.Contains(narrow[0], "Sessions 1-6 of 40") {
+	if rowSpan(narrow[0]) != "1-6" {
 		t.Fatalf("narrow page:\n%s", narrow[0])
 	}
 }
@@ -387,7 +466,7 @@ func TestPickerReadsTheSizeOnEveryRedraw(t *testing.T) {
 	size := &resizingTerminal{sizes: []fixedTerminal{{120, 30}, {120, 12}}}
 	_, _, screens := runPicker(t, &sessionPicker{env: size}, pickerSessions(50, oneProject), listFormatOptions{}, "n\nq\n")
 	// Row 26 starts the second page of 25 rows; 7 rows fit after the resize.
-	if !strings.Contains(screens[0], "Sessions 1-25 of 50") || !strings.Contains(screens[1], "Sessions 22-28 of 50") {
+	if rowSpan(screens[0]) != "1-25" || rowSpan(screens[1]) != "22-28" {
 		t.Fatalf("pages:\n%s", strings.Join(screens, "\n----\n"))
 	}
 }
@@ -402,8 +481,29 @@ func TestPickerKeepsItsPageBetweenVisits(t *testing.T) {
 		t.Fatalf("picked %+v", row)
 	}
 	_, _, screens := runPicker(t, picker, sessions, listFormatOptions{}, "q\n")
-	if !strings.Contains(screens[0], "Sessions 16-30 of 50") {
+	if rowSpan(screens[0]) != "16-30" {
 		t.Fatalf("list reopened on another page:\n%s", screens[0])
+	}
+}
+
+// Splitting a long list into pages draws only about a page of rows per
+// page, and is done once per terminal size: moving between pages and
+// coming back to the list reuse it.
+func TestPickerSplitsALongListCheaplyAndOnce(t *testing.T) {
+	t.Parallel()
+	const n = 5000
+	sessions := pickerSessions(n, oneProject)
+	once := &sessionPicker{env: fixedTerminal{120, 20}}
+	runPicker(t, once, sessions, listFormatOptions{}, "q\n")
+	// A page holds 15 rows; its binary search draws a few pages' worth.
+	if once.rendered > 5*n {
+		t.Fatalf("drew %d rows to split %d", once.rendered, n)
+	}
+	moving := &sessionPicker{env: fixedTerminal{120, 20}}
+	runPicker(t, moving, sessions, listFormatOptions{}, "n\nn\np\nq\n")
+	runPicker(t, moving, sessions, listFormatOptions{}, "q\n")
+	if moving.rendered != once.rendered {
+		t.Fatalf("drew %d rows over five draws, %d for one", moving.rendered, once.rendered)
 	}
 }
 

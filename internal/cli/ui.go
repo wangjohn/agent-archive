@@ -95,7 +95,7 @@ func displayLines(text string, width int) int {
 		return 0
 	}
 	n := 0
-	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSuffix(text, "\n"), "\n") {
 		n += lineRows(line, width)
 	}
 	return n

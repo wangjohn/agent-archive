@@ -15,6 +15,6 @@ beta (12)
 24  Session number 24  23 hours ago  codex    beta     1a2dc779
 25  Session number 25  24 hours ago  codex    beta     1a2de668
 30 session(s).
-Sessions 15-25 of 30 · [n] next  [p] previous
+Page 2 of 3 · 30 sessions · [n] next  [p] previous
 
 Enter number (or unique short SESSION_ID) to show, or q to quit: 

@@ -64,8 +64,14 @@ type sessionBrowser struct {
 // runSessionBrowser browses sessions until the user quits (q, an empty
 // answer at the list, or end of input), then prints the last session viewed.
 func runSessionBrowser(env sessionBrowserDependencies, p *prompter, stdout, stderr io.Writer, store storage.ObjectStore, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, noPager bool, command string) int {
-	b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: store, format: format, noPager: noPager, screen: enterAltScreen(stdout, env)}
-	b.list = &sessionPicker{env: env, clear: b.screen.clear}
+	screen := enterAltScreen(stdout, env)
+	// Only a screen that clears can draw a page again in place.
+	var redraw func()
+	if screen.clears() {
+		redraw = screen.clear
+	}
+	list := &sessionPicker{env: env, clear: redraw}
+	b := &sessionBrowser{env: env, prompt: p, stdout: stdout, stderr: stderr, store: store, format: format, noPager: noPager, screen: screen, list: list}
 	// Deferred as well, so not even a panic leaves the terminal on the
 	// alternate screen; leave does nothing the second time.
 	defer b.screen.leave()
@@ -104,17 +110,36 @@ func (b *sessionBrowser) run(sessions []archive.Metadata, totalMatched int, trun
 
 // details shows one session's summary and reads what to do next.
 func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, error) {
+	var notice browseNotice
 	for {
 		b.screen.clear()
 		var summary bytes.Buffer
 		renderSessionSummary(&summary, view, b.summaryOptions(false))
 		hint := b.transcriptHint()
-		cut := b.drawDetails(summary.String(), hint)
-		action, err := b.detailsPrompt(row, summary.Bytes(), hint, cut)
+		rest, redraw := b.drawDetails(summary.String(), hint, notice)
+		action, next, err := b.detailsPrompt(row, summary.Bytes(), rest, hint, notice, redraw)
 		if err != nil || action != browseRedraw {
 			return action, err
 		}
+		notice = next
 	}
+}
+
+// browseNotice is a message for the user about their last answer, and
+// whether it is an error (printed to stderr).
+type browseNotice struct {
+	text  string
+	error bool
+}
+
+// print writes the notice as one line to stdout, or to stderr for an
+// error.
+func (n browseNotice) print(stdout, stderr io.Writer) {
+	if n.error {
+		terminal.Println(stderr, n.text)
+		return
+	}
+	terminal.Println(stdout, n.text)
 }
 
 // minDetailLines is the fewest summary lines the details show, however
@@ -131,19 +156,24 @@ func detailsQuestion(cut bool) string {
 }
 
 // drawDetails prints the summary. When it does not fit the terminal above
-// the hint and the prompt, only the lines that fit are printed, then how
-// many more there are; cut reports that.
-func (b *sessionBrowser) drawDetails(summary, hint string) (cut bool) {
+// the notice (or a blank line), the hint, and the prompt, only the lines
+// that fit are printed, then how many more there are; rest is the lines
+// left out. redraw reports that the terminal's size is known and the
+// screen can be cleared, so the details can be drawn again in place with a
+// notice rather than have one printed below them.
+func (b *sessionBrowser) drawDetails(summary, hint string, notice browseNotice) (rest string, redraw bool) {
 	width, height, ok := b.env.terminalSize(b.stdout)
 	if !ok {
 		terminal.Print(b.stdout, summary)
-		return false
+		return "", false
 	}
-	// Below the summary: a blank line, the hint, and the prompt.
-	chrome := 1 + displayLines(hint, width) + displayLines(b.prompt.promptText(detailsQuestion(true), false, nil, -1, ": "), width)
+	redraw = b.screen.clears()
+	// Below the summary: the notice or a blank line, the hint, and the
+	// prompt.
+	chrome := max(displayLines(notice.text, width), 1) + displayLines(hint, width) + displayLines(b.prompt.promptText(detailsQuestion(true), false, nil, -1, ": "), width)
 	if displayLines(summary, width)+chrome <= height {
 		terminal.Print(b.stdout, summary)
-		return false
+		return "", redraw
 	}
 	lines := strings.Split(strings.TrimSuffix(summary, "\n"), "\n")
 	// One row is kept for the line saying how many more there are.
@@ -155,7 +185,7 @@ func (b *sessionBrowser) drawDetails(summary, hint string) (cut bool) {
 	}
 	if shown == len(lines) {
 		terminal.Print(b.stdout, summary)
-		return false
+		return "", redraw
 	}
 	shown = max(shown, 1)
 	for _, line := range lines[:shown] {
@@ -167,7 +197,7 @@ func (b *sessionBrowser) drawDetails(summary, hint string) (cut bool) {
 		noun = "line"
 	}
 	terminal.Println(b.stdout, b.format.Style.dim(fmt.Sprintf("… %d more %s", more, noun)))
-	return true
+	return strings.Join(lines[shown:], "\n") + "\n", redraw
 }
 
 // transcriptHint says how to use and leave the pager t opens, or is empty
@@ -187,52 +217,77 @@ func (b *sessionBrowser) transcriptHint() string {
 	return "t opens the transcript in your pager; quit it to return here."
 }
 
-func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, hint string, cut bool) (browseAction, error) {
+// detailsPrompt reads what to do with the details drawn above it. A
+// message about an answer is printed below the prompt, or, when redraw is
+// set, returned with browseRedraw to be shown on the details drawn again.
+func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint string, notice browseNotice, redraw bool) (browseAction, browseNotice, error) {
 	for first := true; ; first = false {
-		terminal.Println(b.stdout)
+		if first && notice.text != "" {
+			notice.print(b.stdout, b.stderr)
+		} else {
+			terminal.Println(b.stdout)
+		}
 		if first && hint != "" {
 			terminal.Println(b.stdout, b.format.Style.dim(hint))
 		}
-		answer, err := b.prompt.line(b.prompt.promptText(detailsQuestion(cut), false, nil, -1, ": "))
+		answer, err := b.prompt.line(b.prompt.promptText(detailsQuestion(rest != ""), false, nil, -1, ": "))
 		if err != nil {
-			return endOfInput(err)
+			action, err := endOfInput(err)
+			return action, browseNotice{}, err
 		}
+		var message browseNotice
 		switch strings.ToLower(answer) {
 		case "", "b", "back":
-			return browseBack, nil
+			return browseBack, browseNotice{}, nil
 		case "q", "quit":
-			return browseQuit, nil
+			return browseQuit, browseNotice{}, nil
 		case "t", "transcript":
-			action, err := b.transcript(row)
+			action, failure, err := b.transcript(row)
 			if err != nil || action != browseStay {
-				return action, err
+				return action, browseNotice{}, err
 			}
+			message = browseNotice{text: failure, error: true}
 		case "m", "more":
+			if rest == "" {
+				message.text = "Enter t for the transcript, b (or just Enter) for the list, or q to quit."
+				break
+			}
+			if _, _, page := resolvePagerCommand(b.env, b.noPager, b.stdout); !page {
+				// Without a pager, the lines left out follow the ones shown.
+				terminal.Print(b.stdout, rest)
+				rest = ""
+				continue
+			}
 			// The whole summary, through the pager as the transcript is.
-			return b.page(summary)
+			action, err := b.page(summary)
+			return action, browseNotice{}, err
 		default:
-			if cut {
-				terminal.Println(b.stdout, "Enter t for the transcript, m for the whole summary, b (or just Enter) for the list, or q to quit.")
+			if rest != "" {
+				message.text = "Enter t for the transcript, m for the whole summary, b (or just Enter) for the list, or q to quit."
 			} else {
-				terminal.Println(b.stdout, "Enter t for the transcript, b (or just Enter) for the list, or q to quit.")
+				message.text = "Enter t for the transcript, b (or just Enter) for the list, or q to quit."
 			}
 		}
+		if redraw {
+			return browseRedraw, message, nil
+		}
+		message.print(b.stdout, b.stderr)
 	}
 }
 
 // transcript downloads and verifies the session's bundle and shows its
 // transcript through the pager. A bundle that cannot be read is reported
-// under the details, which stay open.
-func (b *sessionBrowser) transcript(row listRow) (browseAction, error) {
+// in failure, with browseStay: the details stay open.
+func (b *sessionBrowser) transcript(row listRow) (action browseAction, failure string, err error) {
 	ctx := context.Background()
 	stop := startActivity(b.stdout, "Loading transcript…")
 	text, err := b.renderTranscript(ctx, row)
 	stop()
 	if err != nil {
-		terminal.Printf(b.stderr, "agent-archive: show: %s\n", describeBundleError(err, row.SessionID, "--transcript"))
-		return browseStay, nil
+		return browseStay, "agent-archive: show: " + describeBundleError(err, row.SessionID, "--transcript"), nil
 	}
-	return b.page(text)
+	action, err = b.page(text)
+	return action, "", err
 }
 
 // page shows text through the pager on a cleared screen and returns to the
@@ -340,16 +395,36 @@ const minPickerPageRows = 3
 // ID can be typed from any page.
 type sessionPicker struct {
 	env terminalSizeDependencies
-	// clear, when set, blanks the screen before another page is drawn.
+	// clear, when set, blanks the screen before another page is drawn. A
+	// message then replaces the blank line above the prompt of a redrawn
+	// page, instead of being printed below the prompt.
 	clear func()
 	// start is the position, in the table's top-to-bottom order, of the
 	// first row of the page shown. It survives returning to the list.
 	start int
+	// cache is the last split into pages, reused while the terminal's size
+	// and the table stay the same.
+	cache *pickerPages
+	// rendered counts the rows drawn to measure pages, which tests bound.
+	rendered int
 }
 
 // pickerPage is the rows [start, end) of the table, in its top-to-bottom
 // order.
-type pickerPage struct{ start, end int }
+type pickerPage struct {
+	start int
+	end   int
+}
+
+// pickerPages is a table split into pages for one terminal size.
+type pickerPages struct {
+	width    int
+	height   int
+	rows     int
+	footer   string
+	question string
+	pages    []pickerPage
+}
 
 func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, action string) (listRow, bool, error) {
 	format.Numbered = true
@@ -358,8 +433,11 @@ func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.M
 	question := p.promptText("Enter number (or unique short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": ")
 	var footer bytes.Buffer
 	printListFooter(&footer, len(sessions), totalMatched, truncated)
+	notice := ""
 	for {
-		pages := l.pages(stdout, groups, format, len(rows), footer.String(), question)
+		pages, width, sized := l.pages(stdout, groups, format, len(rows), footer.String(), question)
+		// A message is shown in place on a redrawn screen of known size.
+		redraw := sized && l.clear != nil
 		page := 0
 		for i, pg := range pages {
 			if l.start >= pg.start && l.start < pg.end {
@@ -380,14 +458,19 @@ func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.M
 		}
 		terminal.Print(stdout, footer.String())
 		if paged {
-			terminal.Println(stdout, pageLine(pages, page, len(rows)))
+			terminal.Println(stdout, pageLine(page, len(pages), len(rows)))
 		}
 		if len(rows) == 0 {
 			return listRow{}, false, nil
 		}
-		moved := false
-		for !moved {
-			terminal.Println(stdout)
+		for {
+			if notice != "" {
+				// Cut to one row, so the page still fits.
+				terminal.Println(stdout, truncateVisible(notice, width))
+				notice = ""
+			} else {
+				terminal.Println(stdout)
+			}
 			answer, err := p.line(question)
 			if err != nil {
 				if errors.Is(err, io.EOF) {
@@ -399,34 +482,43 @@ func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.M
 			if answer == "" || strings.EqualFold(answer, "q") || strings.EqualFold(answer, "quit") {
 				return listRow{}, false, nil
 			}
+			message, turned := "", false
 			if paged {
 				switch strings.ToLower(answer) {
 				case "n", "next":
+					turned = true
 					if page == len(pages)-1 {
-						terminal.Println(stdout, "This is the last page; p goes back.")
-						continue
+						message = "This is the last page; p goes back."
+					} else {
+						l.start = pages[page+1].start
 					}
-					l.start, moved = pages[page+1].start, true
-					continue
 				case "p", "prev", "previous":
+					turned = true
 					if page == 0 {
-						terminal.Println(stdout, "This is the first page; n goes on.")
-						continue
+						message = "This is the first page; n goes on."
+					} else {
+						l.start = pages[page-1].start
 					}
-					l.start, moved = pages[page-1].start, true
-					continue
 				}
 			}
-			row, matched := matchBrowseRow(answer, rows)
-			if !matched {
-				if paged {
-					terminal.Println(stdout, "Enter a listed number or unique short SESSION_ID, n or p for another page, or q to quit.")
-				} else {
-					terminal.Println(stdout, "Enter a listed number or unique short SESSION_ID, or q to quit.")
+			if !turned {
+				row, matched := matchBrowseRow(answer, rows)
+				if matched {
+					return row, true, nil
 				}
+				if paged {
+					message = "Enter a listed number or short ID, n or p for another page, or q to quit."
+				} else {
+					message = "Enter a listed number or unique short SESSION_ID, or q to quit."
+				}
+			}
+			if message != "" && !redraw {
+				terminal.Println(stdout, message)
 				continue
 			}
-			return row, true, nil
+			// Another page, or this one again with the message.
+			notice = message
+			break
 		}
 		if l.clear != nil {
 			l.clear()
@@ -436,31 +528,50 @@ func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.M
 
 // pages splits the table's n rows into pages that fit the terminal above
 // the footer, the page line, and the prompt. It returns one page holding
-// every row when they all fit or the terminal's size is unknown. The pages
-// are counted from the top each time, so a resized terminal gets pages of
-// the new size.
-func (l *sessionPicker) pages(stdout io.Writer, groups []sessionTableGroup, format listFormatOptions, n int, footer, question string) []pickerPage {
+// every row when they all fit or the terminal's size is unknown (sized is
+// then false). The size is read each time, so a resized terminal gets
+// pages of the new size; the pages for a size are kept until it changes.
+func (l *sessionPicker) pages(stdout io.Writer, groups []sessionTableGroup, format listFormatOptions, n int, footer, question string) (pages []pickerPage, width int, sized bool) {
 	all := []pickerPage{{0, n}}
 	width, height, ok := l.env.terminalSize(stdout)
-	if !ok || n == 0 {
+	if !ok {
+		return all, 0, false
+	}
+	if c := l.cache; c != nil && c.width == width && c.height == height && c.rows == n && c.footer == footer && c.question == question {
+		return c.pages, width, true
+	}
+	pages = l.split(groups, format, n, width, height, footer, question)
+	l.cache = &pickerPages{width: width, height: height, rows: n, footer: footer, question: question, pages: pages}
+	return pages, width, true
+}
+
+// split measures pages from the top, each as full as fits in the lines
+// left for the table.
+func (l *sessionPicker) split(groups []sessionTableGroup, format listFormatOptions, n, width, height int, footer, question string) []pickerPage {
+	all := []pickerPage{{0, n}}
+	if n == 0 {
 		return all
 	}
 	tableLines := func(pg pickerPage) int {
+		l.rendered += pg.end - pg.start
 		var buf bytes.Buffer
 		_ = printSessionGroups(&buf, pageSessionGroups(groups, pg), format)
 		return displayLines(buf.String(), width)
 	}
 	// Below the table: the footer, a blank line, and the prompt.
 	chrome := displayLines(footer, width) + 1 + displayLines(question, width)
-	if tableLines(all[0])+chrome <= height {
+	// Every row, and the column header, takes a line at least, so a table
+	// with more rows than the terminal has lines is not drawn to find out.
+	if n+1+chrome <= height && tableLines(all[0])+chrome <= height {
 		return all
 	}
 	// The widest the page line gets.
-	budget := height - chrome - lineRows(pageLine([]pickerPage{{n, n}, {n, n}, {n, n}}, 1, n), width)
+	budget := height - chrome - lineRows(pageLine(1, n, n), width)
 	var pages []pickerPage
 	for start := 0; start < n; {
-		// The most rows that fit: a page's height only grows with its rows.
-		lo, hi := 1, n-start
+		// The most rows that fit: a page's height only grows with its
+		// rows, and no more rows than budget lines can fit.
+		lo, hi := 1, min(n-start, max(budget, minPickerPageRows))
 		for lo < hi {
 			mid := (lo + hi + 1) / 2
 			if tableLines(pickerPage{start, start + mid}) <= budget {
@@ -476,10 +587,16 @@ func (l *sessionPicker) pages(stdout io.Writer, groups []sessionTableGroup, form
 	return pages
 }
 
-// pageLine says which rows the page shows and how to reach the others.
-func pageLine(pages []pickerPage, page, n int) string {
-	line := fmt.Sprintf("Sessions %d-%d of %d ·", pages[page].start+1, pages[page].end, n)
-	if page < len(pages)-1 {
+// pageLine says which page of how many is shown, and how to reach the
+// others. It names no row numbers: in the grouped table a page's rows are
+// not a numeric range.
+func pageLine(page, pages, n int) string {
+	noun := "sessions"
+	if n == 1 {
+		noun = "session"
+	}
+	line := fmt.Sprintf("Page %d of %d · %d %s ·", page+1, pages, n, noun)
+	if page < pages-1 {
 		line += " [n] next "
 	}
 	if page > 0 {

@@ -150,6 +150,14 @@ func signalExitCode(sig os.Signal) int {
 	return 130
 }
 
+// clears reports whether clear blanks the screen, so a view can be drawn
+// again in place instead of below itself.
+func (s *altScreen) clears() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active
+}
+
 // clear blanks the screen before the next view is drawn.
 func (s *altScreen) clear() {
 	s.mu.Lock()

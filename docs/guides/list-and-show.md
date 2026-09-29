@@ -84,17 +84,19 @@ session's summary replace each other instead of piling up:
 
 - Enter a row number or short SESSION_ID to see that session's summary.
 - A list taller than the window is shown a page at a time, with a line
-  such as `Sessions 21-40 of 50 · [n] next  [p] previous`: `n` and `p`
-  move between pages. Row numbers are those of the whole list, so any
-  listed number or short ID works from any page. A project whose sessions
-  started on the previous page is headed again, marked `(continued)`.
+  such as `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and
+  `p` move between pages. Row numbers are those of the whole list, so any
+  listed number or short ID works from any page (in the list grouped by
+  project, a page's numbers need not be consecutive). A project whose
+  sessions started on the previous page is headed again, marked
+  `(continued)`.
 - In the summary, `t` opens its transcript through the pager (quit the pager
   to come back), Enter or `b` returns to the list, and `q` quits. `less`
   keeps even a one-screen transcript open until you press `q`; after another
   pager, press Enter to return to the summary.
 - A summary taller than the window is cut to fit, ending with `… N more
   lines`; `m` opens the whole summary through the pager, as `t` does the
-  transcript.
+  transcript. Without a pager, `m` prints the lines that were left out.
 - The same paging applies wherever a session is picked from a list: the
   handoff picker, bare `show --json`, and a `show` query that matches more
   than one session.
