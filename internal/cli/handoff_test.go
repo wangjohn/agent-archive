@@ -552,7 +552,7 @@ func TestHandoffLaunchesLocalAgentWithRetrievalInstructions(t *testing.T) {
 		document := string(data)
 		for _, want := range []string{
 			"Agent Archive is available. Its executable is at /opt/agent-archive",
-			"show " + f.id + " --harness codex --normalized",
+			"show " + f.id + " --harness codex --transcript",
 			"handoff " + f.id + " --source local --max-bytes 0",
 			"Fix the flaky widget test.",
 		} {

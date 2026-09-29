@@ -1,0 +1,125 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+
+	"github.com/wangjohn/agent-archive/internal/archive"
+)
+
+type handoffOptions struct {
+	sessionID  string
+	project    string
+	harness    string
+	file       string
+	source     string
+	format     string
+	output     string
+	to         string
+	latest     bool
+	force      bool
+	noPreamble bool
+	maxBytes   int
+}
+
+type handoffDestination string
+
+const (
+	handoffDestinationClaude handoffDestination = "claude"
+	handoffDestinationCodex  handoffDestination = "codex"
+	handoffDestinationCursor handoffDestination = "cursor"
+)
+
+func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
+	fs := env.newCommandFlags("handoff", stderr)
+	latest := fs.Bool("latest", false, "the most recent session for the project")
+	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
+	harness := fs.String("harness", "", "only sessions from this harness (claude, codex, cursor)")
+	file := fs.String("file", "", "render this native transcript file directly (requires --harness)")
+	source := fs.String("source", "auto", "where session content comes from: auto, local, or archive")
+	maxBytes := fs.Int("max-bytes", archive.DefaultHandoffMaxBytes, "output budget in bytes; 0 means no limit")
+	format := fs.String("format", "markdown", "markdown or json")
+	output := fs.String("output", "", "write to this file (mode 0600) instead of stdout")
+	force := fs.Bool("force", false, "with --output, replace an existing file")
+	noPreamble := fs.Bool("no-preamble", false, "omit the note addressed to the receiving agent")
+	to := fs.String("to", "", "launch a local claude, codex, or cursor session with this handoff")
+	sessionID, ok := fs.parseWithArgument(args)
+	if !ok {
+		return handoffOptions{}, false
+	}
+	usageError := func(message string) (handoffOptions, bool) {
+		fs.usageError("%s", message)
+		return handoffOptions{}, false
+	}
+	selectors := 0
+	for _, set := range []bool{sessionID != "", *latest, *file != ""} {
+		if set {
+			selectors++
+		}
+	}
+	switch {
+	case selectors == 0 && (!interactive || *to != ""):
+		return usageError("name a session ID, --latest, or --file PATH; run on a terminal to pick a session")
+	case selectors > 1:
+		return usageError("a session ID, --latest, and --file are mutually exclusive")
+	case *file != "" && *harness == "":
+		return usageError("--file requires --harness (claude, codex, or cursor)")
+	case *project != "" && !*latest:
+		return usageError("--project applies only to --latest")
+	case *force && *output == "":
+		return usageError("--force applies only to --output")
+	case *maxBytes < 0:
+		return usageError("--max-bytes must be 0 or more")
+	}
+	if message := validateHandoffLaunchOptions(*to, *output, *format, *source, *noPreamble); message != "" {
+		return usageError(message)
+	}
+	canonical, ok := harnessFlag(*harness)
+	if !ok {
+		return usageError(harnessFlagError(*harness))
+	}
+	*harness = canonical
+	switch *source {
+	case "auto", "local", "archive":
+	default:
+		return usageError(fmt.Sprintf("--source must be auto, local, or archive, not %q", *source))
+	}
+	switch *format {
+	case "markdown", "json":
+	default:
+		return usageError(fmt.Sprintf("--format must be markdown or json, not %q", *format))
+	}
+	if *file != "" && *source == "archive" {
+		return usageError("--file reads a local transcript; --source archive does not apply")
+	}
+	if *to != "" {
+		*source = "local"
+	}
+	// The ID names local files and bucket keys; only the characters archive
+	// session IDs are made of are accepted, so it cannot reach outside them.
+	if sessionID != "" {
+		if _, err := archive.MetadataObjectKey("claude", sessionID); err != nil {
+			return usageError(fmt.Sprintf("%q is not an archive session ID (see `agent-archive list`)", sessionID))
+		}
+	}
+	return handoffOptions{sessionID: sessionID, project: *project, harness: canonical,
+		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
+		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble}, true
+}
+
+func validateHandoffLaunchOptions(to, output, format, source string, noPreamble bool) string {
+	switch {
+	case to != "" && handoffDestination(to) != handoffDestinationClaude && handoffDestination(to) != handoffDestinationCodex && handoffDestination(to) != handoffDestinationCursor:
+		return "--to must be claude, codex, or cursor"
+	case to != "" && output != "":
+		return "--to and --output cannot be used together"
+	case to != "" && format != "markdown":
+		return "--to requires markdown format"
+	case to != "" && noPreamble:
+		return "--to includes the receiving-agent preamble"
+	case to != "" && source == "archive":
+		return "--to works only with local sessions; --source archive is unavailable"
+	default:
+		return ""
+	}
+}

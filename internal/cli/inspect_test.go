@@ -297,7 +297,7 @@ func TestShowPrintsMetadataAndOnlyPrintsContentWithNormalizedFlag(t *testing.T) 
 	env, _, id := publishedFixture(t)
 
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"show", id}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"show", id, "--json"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	var metadata archive.Metadata
@@ -408,7 +408,7 @@ func TestShowRefusesAmbiguousSessionWithoutHarness(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := Run([]string{"show", "--harness", "cursor", id}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"show", "--harness", "cursor", id, "--json"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), `"name": "cursor"`) {
@@ -539,7 +539,7 @@ func TestJSONOutputEscapesEveryControl(t *testing.T) {
 	if err := mem.Put(context.Background(), key, encoded); err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"show", id}, {"list", "--json"}} {
+	for _, args := range [][]string{{"show", id, "--json"}, {"list", "--json"}} {
 		var out, errOut bytes.Buffer
 		if code := Run(args, nil, &out, &errOut, env); code != 0 {
 			t.Fatalf("%v: code=%d stderr=%s", args, code, errOut.String())
@@ -604,7 +604,7 @@ func TestShowKeepsParentReadableWhenChildIsGone(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"show", id}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"show", id, "--json"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d err=%s", code, errOut.String())
 	}
 	// `"hook_finals"` appears only in the normalized view, which this

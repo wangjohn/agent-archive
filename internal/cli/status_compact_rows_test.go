@@ -199,3 +199,18 @@ func TestStatusFooterApp(t *testing.T) {
 		t.Fatalf("status:\n%s", text)
 	}
 }
+
+// A resumed subagent still running is neither uploading nor failing: the
+// short status says nothing about it, and --verbose counts it with the
+// other subagents that are not a problem.
+func TestStatusRunningSubagentsAreVerboseOnly(t *testing.T) {
+	t.Parallel()
+	view := mixedStatusView()
+	view.Collector.RunningSubagents = 2
+	if text, want := renderStatus(view, false), renderStatus(mixedStatusView(), false); text != want {
+		t.Fatalf("running subagents changed the short status:\n%s", text)
+	}
+	if text := renderVerboseStatus(view); !strings.Contains(text, "  Subagents:     2 still running (archived up to their last stop)\n") {
+		t.Fatalf("status --verbose:\n%s", text)
+	}
+}

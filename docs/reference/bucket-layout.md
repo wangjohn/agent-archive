@@ -43,7 +43,7 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   a header line, one line per retained native record, then text transcripts
   and supplemental evidence (hook observations, skill snapshots, links to
   subagent sessions). Only what the [privacy filter](../security/privacy.md)
-  kept is in it. `show --normalized` and `handoff` read it and check its
+  kept is in it. `show --transcript` and `handoff` read it and check its
   SHA-256 and identity against the metadata.
 
 The configured `skill_evidence` mode affects newly built source bundles.

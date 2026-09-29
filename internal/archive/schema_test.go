@@ -106,6 +106,9 @@ func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
 			exercised["skills_used"] = exercised["skills_used"] || len(metadata.SkillsUsed) > 0
 			exercised["capture_gaps"] = exercised["capture_gaps"] || len(metadata.CaptureGaps) > 0
 			exercised["started_at_source"] = exercised["started_at_source"] || metadata.StartedAtSource != ""
+			exercised["ended_at"] = exercised["ended_at"] || metadata.EndedAt != nil
+			exercised["tools_used"] = exercised["tools_used"] || len(metadata.ToolsUsed) > 0
+			exercised["files_touched"] = exercised["files_touched"] || (metadata.Counts.FilesTouched != nil && *metadata.Counts.FilesTouched > 0)
 			for _, gap := range metadata.CaptureGaps {
 				if !slices.Contains(CaptureGapCodes, gap.Code) {
 					t.Errorf("%s: gap code %q is not in CaptureGapCodes", name, gap.Code)
@@ -120,7 +123,7 @@ func TestFixtureOutputMatchesPublishedSchemas(t *testing.T) {
 // arrays, which would leave that part of the schema untested.
 func checkExercised(t *testing.T, exercised map[string]bool) {
 	t.Helper()
-	for _, field := range []string{"models", "skills_used", "capture_gaps", "started_at_source"} {
+	for _, field := range []string{"models", "skills_used", "capture_gaps", "started_at_source", "ended_at", "tools_used", "files_touched"} {
 		if !exercised[field] {
 			t.Errorf("no fixture metadata has %s, so its schema is untested", field)
 		}
