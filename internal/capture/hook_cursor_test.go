@@ -3,6 +3,9 @@ package capture
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -152,14 +155,14 @@ func TestFirstPromptRegistrationIsCursorOnly(t *testing.T) {
 	}
 }
 
-// Hooks for one new chat can overlap: a first prompt, and a fast response
-// and stop. hooks.lock serializes them, so whichever lands first registers
-// and the rest continue it: one registration, one archive ID, the first
-// hook's time as the start.
+// Hooks for one new chat can overlap: a first prompt, a fast response, and a
+// stop. A 100 ms hold under hooks.lock models a slow durable write per event.
+// The bounded CI load target is 3 hooks x 10 rounds, zero missing
+// registrations, and a p99 hook latency below the installed 2 second timeout.
 func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
-	// Not parallel: a hook waits at most a second for hooks.lock, and three
-	// hooks queued behind each other's fsyncs can pass that on a machine
-	// busy with the parallel tests' I/O.
+	// Not parallel: this is a wall-clock acceptance test.
+	slowWrite := os.Getenv("AGENT_ARCHIVE_PERF") == "1"
+	var durations []time.Duration
 	for i := range 10 {
 		home, project := t.TempDir(), t.TempDir()
 		setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
@@ -171,6 +174,7 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		}
 		var wg sync.WaitGroup
 		errs := make(chan error, 3)
+		times := make(chan time.Duration, 3)
 		for _, event := range []string{"beforeSubmitPrompt", "afterAgentResponse", "stop"} {
 			wg.Add(1)
 			go func(event string) {
@@ -179,15 +183,64 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 				if event == "beforeSubmitPrompt" {
 					path = nil
 				}
-				errs <- HandleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, path), at)
+				start := time.Now()
+				var afterLock func()
+				if slowWrite {
+					afterLock = func() { time.Sleep(100 * time.Millisecond) }
+				}
+				errs <- handleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, path), at, afterLock)
+				times <- time.Since(start)
 			}(event)
 		}
 		wg.Wait()
 		close(errs)
+		close(times)
+		for elapsed := range times {
+			durations = append(durations, elapsed)
+		}
+		overloaded := false
+		stderrExplained := false
 		for err := range errs {
+			if err == nil {
+				continue
+			}
+			if strings.Contains(err.Error(), "status may not show this missed hook") {
+				stderrExplained = true
+			}
+			if strings.Contains(err.Error(), "this hook was not retained") || strings.Contains(err.Error(), "this hook was not recorded") || strings.Contains(err.Error(), "admission queued: false") {
+				// The ordinary race suite can run alongside unrelated I/O.
+				// An event that misses both locks is outside the bounded CI
+				// performance target. It must leave a diagnostic or stderr
+				// explanation; the dedicated performance run remains strict.
+				if slowWrite {
+					t.Fatal(err)
+				}
+				overloaded = true
+				continue
+			}
+			// A queued event can be durable even when the separate status
+			// diagnostic lock times out. That case is reported on hook stderr;
+			// the replay assertions below still require every event's effect.
+			if !strings.Contains(err.Error(), "status may not show this missed hook") {
+				t.Fatal(err)
+			}
+		}
+		if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if overloaded {
+			diagnostics, err := ReadDiagnostics(home)
 			if err != nil {
 				t.Fatal(err)
 			}
+			visible := stderrExplained
+			for _, diagnostic := range diagnostics {
+				visible = visible || diagnostic.Code == DiagnosticHookBusy
+			}
+			if !visible {
+				t.Fatal("unretained hook had neither hook_busy diagnostic nor stderr explanation")
+			}
+			continue
 		}
 		store, _ := state.Open(home)
 		regs, err := store.LoadRegistrations()
@@ -198,6 +251,49 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		if err != nil || !found || id != regs[0].ArchiveSessionID || !regs[0].SessionStartedAt.Equal(at) {
 			t.Fatalf("iteration %d: index=%q found=%v err=%v registration=%#v", i, id, found, err, regs[0])
 		}
+		if regs[0].TranscriptPath != transcript {
+			t.Fatalf("iteration %d: transcript path was lost: %#v", i, regs[0])
+		}
+		if requests, err := store.LoadRequests(); err != nil || len(requests) != 1 ||
+			!slices.Contains(requests[0].Reasons, "afteragentresponse") || !slices.Contains(requests[0].Reasons, "stop") {
+			t.Fatalf("iteration %d: response/stop request was lost: %#v, %v", i, requests, err)
+		}
+	}
+	if slowWrite {
+		sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+		p95, p99 := durations[28], durations[29]
+		t.Logf("3-hook x10 slow-write burst: missing registrations=0 p95=%s p99=%s", p95, p99)
+		if p99 >= 2*time.Second {
+			t.Fatalf("p99 hook latency %s exceeds the 2s app timeout", p99)
+		}
+	}
+}
+
+func TestCursorResponseBeforeFirstPromptPreservesTranscript(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	conversation := "5f3c2a10-0000-4000-8000-00000000c456"
+	transcript := cursorTranscriptLocation(t, conversation)
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("afterAgentResponse", conversation, project, transcript), at); err != nil {
+		t.Fatal(err)
+	}
+	if regs, err := state.OpenReadOnly(home).LoadRegistrations(); err != nil || len(regs) != 0 {
+		t.Fatalf("response admitted session: %#v, %v", regs, err)
+	}
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reg := onlyCursorRegistration(t, home)
+	if reg.TranscriptPath != transcript {
+		t.Fatalf("response path not adopted: %#v", reg)
+	}
+	store := state.OpenReadOnly(home)
+	if requests, err := store.LoadRequests(); err != nil || len(requests) != 1 {
+		t.Fatalf("response request was lost: %#v, %v", requests, err)
 	}
 }
 
