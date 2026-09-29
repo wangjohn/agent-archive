@@ -72,7 +72,7 @@ func TestAdmissionIntentDropsParentWhenNestedProjectIsConfigured(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := PruneAdmissionIntents(home, cfg.Archive.Projects); err != nil {
+	if err := PruneAdmissionIntents(home, cfg); err != nil {
 		t.Fatal(err)
 	}
 	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
@@ -85,6 +85,34 @@ func TestAdmissionIntentDropsParentWhenNestedProjectIsConfigured(t *testing.T) {
 	regs, err := state.OpenReadOnly(home).LoadRegistrations()
 	if err != nil || len(regs) != 0 {
 		t.Fatalf("nested session admitted: %#v, %v", regs, err)
+	}
+}
+
+func TestAdmissionIntentDoesNotMoveToNewDestination(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(project, "native-old-destination", "startup", ""), at)
+	if err != nil || !queued {
+		t.Fatalf("queue = %t, %v", queued, err)
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Storage.Bucket = "new-destination"
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := PruneAdmissionIntents(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil || len(regs) != 0 {
+		t.Fatalf("old destination session admitted: %#v, %v", regs, err)
 	}
 }
 
@@ -105,7 +133,7 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := PruneAdmissionIntents(home, cfg.Archive.Projects); err != nil {
+	if err := PruneAdmissionIntents(home, cfg); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))

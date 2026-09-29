@@ -25,6 +25,7 @@ type admissionIntent struct {
 	Event           string    `json:"event"`
 	NativeSessionID string    `json:"native_session_id"`
 	ProjectRoot     string    `json:"project_root"`
+	DestinationID   string    `json:"destination_id"`
 	TranscriptPath  string    `json:"transcript_path,omitempty"`
 	CursorVersion   string    `json:"cursor_version,omitempty"`
 	ComposerMode    string    `json:"composer_mode,omitempty"`
@@ -67,9 +68,9 @@ func ClearAdmissionIntents(home string) error {
 	return errors.Join(failures...)
 }
 
-// PruneAdmissionIntents removes retry records for projects that setup has
-// excluded. The queue lock also serializes this with hook-side writes.
-func PruneAdmissionIntents(home string, projects []archive.ProjectActivation) error {
+// PruneAdmissionIntents removes retry records whose project or destination
+// setup changed. The queue lock also serializes this with hook-side writes.
+func PruneAdmissionIntents(home string, cfg config.Config) error {
 	unlock, err := local.NamedLockWait(home, "admission-intents.lock", 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("lock admission intent queue: %w", err)
@@ -90,7 +91,7 @@ func PruneAdmissionIntents(home string, projects []archive.ProjectActivation) er
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
 		var intent admissionIntent
 		readErr := local.Read(path, &intent)
-		if readErr == nil && intentProjectStillOwned(intent.ProjectRoot, projects) {
+		if readErr == nil && intent.DestinationID == cfg.DestinationID() && intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) {
 			continue
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -139,7 +140,7 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 	}
 	intent := admissionIntent{
 		Harness: archive.CanonicalHarness(harness), Event: firstNonEmptyString(payload, "hook_event_name"),
-		NativeSessionID: nativeID, ProjectRoot: project.Root, ObservedAt: now.UTC(),
+		NativeSessionID: nativeID, ProjectRoot: project.Root, DestinationID: cfg.DestinationID(), ObservedAt: now.UTC(),
 		CursorVersion: firstNonEmptyString(payload, "cursor_version"), ComposerMode: firstNonEmptyString(payload, "composer_mode"),
 	}
 	if intent.Harness == "cursor" {
@@ -160,7 +161,7 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 		return false, err
 	}
 	current, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
-	if !owned || !current.Included || current.Root != project.Root || !cfg.Archive.Eligible(current.Root, now) {
+	if !owned || !current.Included || current.Root != project.Root || cfg.DestinationID() != intent.DestinationID || !cfg.Archive.Eligible(current.Root, now) {
 		return false, nil
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
@@ -226,7 +227,7 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 		}
 		remove := now.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(now.Add(time.Minute))
 		project, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
-		if !owned || !project.Included || project.Root != intent.ProjectRoot || !intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) || !cfg.Archive.Eligible(project.Root, intent.ObservedAt) {
+		if !owned || !project.Included || project.Root != intent.ProjectRoot || intent.DestinationID != cfg.DestinationID() || !intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) || !cfg.Archive.Eligible(project.Root, intent.ObservedAt) {
 			remove = true
 		}
 		if !remove {

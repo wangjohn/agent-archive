@@ -87,7 +87,7 @@ and left in place.
 | `imports/<id>.json` | backfill | One per import. See [backfill](../guides/backfill.md#import-files). |
 | `storage-health.json` | cli | The last storage access check. |
 | `capture-diagnostics.json`, `diagnostics.lock` | cli | Content-free records of sessions a hook declined, for `status`. |
-| `admission-intents/`, `admission-intents.lock` | cli | Private, bounded first-start retry records written when a hook times out waiting for `hooks.lock`; the collector revalidates and replays them. They include a native session ID and transcript path, but no conversation text or raw hook payload. |
+| `admission-intents/`, `admission-intents.lock` | cli | Private, bounded first-start retry records written when a hook times out waiting for `hooks.lock`; the collector revalidates and replays them. They include a native session ID, destination ID, and transcript path, but no conversation text or raw hook payload. |
 | `collector.log`, `collector-error.log` | cli | The background collector's output. The error log is trimmed in place to its most recent part once it grows past a limit. |
 | `collector-lock.json` | cli | Which command holds `collector.lock`, its process ID, and since when; `status` uses it to report stuck collection. |
 | `cache/` | reader | A disposable cache of metadata sidecars for `list`. Safe to delete. |

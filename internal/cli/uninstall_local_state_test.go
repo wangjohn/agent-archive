@@ -48,7 +48,7 @@ func TestDeleteLocalDataRemovesEveryLocalStoreEntry(t *testing.T) {
 var handListedLocalState = []string{
 	"config.json", "setup-draft.json", "setup-transaction.json",
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
-	"status.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
+	"status.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "admission-intents", "admission-intents.lock", "application-versions.json",
 	"collector.lock", "collector-lock.json", "collector.log", "collector-error.log",
 	"cache", "handoffs",
 }
@@ -93,7 +93,7 @@ func TestDeleteLocalDataRemovesOnlyItsOwnEntries(t *testing.T) {
 		}
 	}
 	write(".pending-123")
-	locks := []string{"setup.lock", "hooks.lock"}
+	locks := []string{"setup.lock", "hooks.lock", "admission-intents.lock"}
 	for _, name := range locks {
 		write(name)
 	}
