@@ -179,16 +179,9 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		return usageError("--force applies only to --output")
 	case *maxBytes < 0:
 		return usageError("--max-bytes must be 0 or more")
-	case *to != "" && *to != "claude" && *to != "codex" && *to != "cursor":
-		return usageError("--to must be claude, codex, or cursor")
-	case *to != "" && *output != "":
-		return usageError("--to and --output cannot be used together")
-	case *to != "" && *format != "markdown":
-		return usageError("--to requires markdown format")
-	case *to != "" && *noPreamble:
-		return usageError("--to includes the receiving-agent preamble")
-	case *to != "" && *source == "archive":
-		return usageError("--to works only with local sessions; --source archive is unavailable")
+	}
+	if message := validateHandoffLaunchOptions(*to, *output, *format, *source, *noPreamble); message != "" {
+		return usageError(message)
 	}
 	canonical, ok := harnessFlag(*harness)
 	if !ok {
@@ -221,6 +214,23 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	return handoffOptions{sessionID: sessionID, project: *project, harness: canonical,
 		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble}, true
+}
+
+func validateHandoffLaunchOptions(to, output, format, source string, noPreamble bool) string {
+	switch {
+	case to != "" && to != "claude" && to != "codex" && to != "cursor":
+		return "--to must be claude, codex, or cursor"
+	case to != "" && output != "":
+		return "--to and --output cannot be used together"
+	case to != "" && format != "markdown":
+		return "--to requires markdown format"
+	case to != "" && noPreamble:
+		return "--to includes the receiving-agent preamble"
+	case to != "" && source == "archive":
+		return "--to works only with local sessions; --source archive is unavailable"
+	default:
+		return ""
+	}
 }
 
 func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, env handoffTargetDependencies) (handoffTarget, error) {
