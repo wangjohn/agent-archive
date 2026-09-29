@@ -9,8 +9,18 @@ follow [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
-  filtered session record in a private temporary file. The receiving agent is
-  told how to inspect the archived or current local record with Agent Archive.
+  filtered session record. The receiving agent is told how to inspect the
+  archived or current local record with Agent Archive. The record is kept in
+  the data directory's `handoffs/` for 7 days, so a resumed session can read
+  it again (before setup, in a private temporary folder removed when the
+  agent exits). Each launch's copy has a folder of its own, which is all
+  Claude Code gets with `--add-dir`; Codex and Cursor get the checkout with
+  `--cd` and `--workspace`. Cursor's `agent` CLI is tried before
+  `cursor-agent`. The
+  launched agent does not inherit the calling agent's session variables.
+- Arguments after `--` go to the agent `handoff --to` launches, and
+  `config.json` may set per-agent arguments (`handoff.args`) and a default
+  destination per source harness (`handoff.default_to`).
 - `show --transcript` prints a session's conversation to read: each prompt,
   the agent's replies, one line per tool call (✗ when it failed), your `!`
   shell and local slash commands, compactions, and app notices such as a

@@ -8,50 +8,153 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
-// launchPreparedHandoff keeps the filtered record out of process arguments.
-// The file exists for the lifetime of the interactive destination session.
-func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, opts handoffOptions, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) (resultErr error) {
-	cwd := opts.project
-	var err error
-	if cwd == "" {
-		cwd, err = env.workingDir()
-	}
+// launchPreparedHandoff starts opts.to in this terminal with the filtered
+// record, and returns when the agent exits.
+func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, opts handoffOptions, home string, stdin io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) (resultErr error) {
+	dir, err := launchDir(opts, env)
 	if err != nil {
-		return fmt.Errorf("working directory: %w", err)
+		return err
 	}
-	cwd, err = filepath.Abs(cwd)
+	spec, err := prepareLaunch(record, h, target, handoffDestination(opts.to), dir, opts.agentArgs, home, env)
 	if err != nil {
-		return fmt.Errorf("working directory: %w", err)
+		return err
 	}
-	executable, err := env.executable()
-	if err != nil {
-		return fmt.Errorf("executable: %w", err)
+	if private, ok := privateHandoffDir(spec, home); ok {
+		// Nothing resumes a session from a copy outside the data
+		// directory, so once the agent exits here, nothing reads it.
+		defer func() {
+			if err := os.RemoveAll(private); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("remove private handoff: %w", err))
+			}
+		}()
 	}
-	privateDir, err := os.MkdirTemp(env.tempDir(), "agent-archive-handoff-")
-	if err != nil {
-		return fmt.Errorf("create private handoff: %w", err)
-	}
-	defer func() {
-		if err := os.RemoveAll(privateDir); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("remove private handoff: %w", err))
-		}
-	}()
-	filePath := filepath.Join(privateDir, "handoff.md")
-	if err := os.WriteFile(filePath, []byte(launchHandoffPrompt(string(record), h, target, executable)), 0o600); err != nil {
-		return fmt.Errorf("write private handoff: %w", err)
-	}
-	prompt := fmt.Sprintf("Read the complete handoff document at %q, then continue the work in this checkout. Agent Archive is available if you need more context; its commands are explained in that document.", filePath)
-	terminal.Printf(stderr, "handoff: launching local %s in %s\n", opts.to, cwd)
-	if err := env.launchHandoff(opts.to, cwd, prompt, stdin, stdout, stderr); err != nil {
+	terminal.Printf(stderr, "handoff: launching local %s in %s\n", opts.to, dir)
+	if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("launch %s: %w", opts.to, err)
 	}
 	return nil
+}
+
+// privateHandoffDir is the temporary directory writeLaunchHandoff made for
+// spec's launch copy, when it is not in the data directory.
+func privateHandoffDir(spec launchSpec, home string) (string, bool) {
+	if spec.HandoffFile == "" || local.PathWithin(spec.HandoffFile, home) {
+		return "", false
+	}
+	return filepath.Dir(spec.HandoffFile), true
+}
+
+// launchDir is the absolute directory the agent starts in: --project, else
+// the working directory.
+func launchDir(opts handoffOptions, env handoffLaunchDependencies) (string, error) {
+	dir := opts.project
+	var err error
+	if dir == "" {
+		dir, err = env.workingDir()
+	}
+	if err != nil {
+		return "", fmt.Errorf("working directory: %w", err)
+	}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("working directory: %w", err)
+	}
+	return dir, nil
+}
+
+// prepareLaunch writes the launch copy of the handoff and builds the command
+// that starts dest in dir. The record stays out of process arguments: the
+// agent's prompt only names the file. extra (arguments after `--`) follows
+// the configured arguments for dest.
+func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, dir string, extra []string, home string, env handoffLaunchDependencies) (launchSpec, error) {
+	executable, err := env.executable()
+	if err != nil {
+		return launchSpec{}, fmt.Errorf("executable: %w", err)
+	}
+	// `--file` works before setup, when there is no configuration.
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		return launchSpec{}, fmt.Errorf("load config: %w", err)
+	}
+	content := launchHandoffPrompt(string(record), h, target, executable)
+	path, err := writeLaunchHandoff(home, env.tempDir(), target, []byte(content), env.now())
+	if err != nil {
+		return launchSpec{}, err
+	}
+	prompt := fmt.Sprintf("Read the complete handoff document at %q, then continue the work in this checkout. Agent Archive is available if you need more context; its commands are explained in that document.", path)
+	spec, err := buildLaunchSpec(dest, prompt, path, dir, slices.Concat(cfg.Handoff.Args[string(dest)], extra), env)
+	if err != nil {
+		// Nothing will read it. Its directory holds only this copy.
+		_ = os.RemoveAll(filepath.Dir(path))
+		return launchSpec{}, err
+	}
+	return spec, nil
+}
+
+// launchHandoffName is the file a launch copy is saved as, alone in a
+// directory of its own so Claude Code's --add-dir exposes nothing else.
+const launchHandoffName = "handoff.md"
+
+// writeLaunchHandoff saves the document a launched agent reads, in a new
+// 0700 directory: <home>/handoffs/launch-<name>-<unix>/. It is kept after the
+// agent exits, so a resumed session can read it again, until pruneHandoffs
+// removes it after handoffMaxAge. Without a data directory (`--file` before
+// setup) the directory is a new private one under tempDir instead: an
+// in-terminal launch removes it when the agent exits, and a new-window
+// launch, which returns before the agent reads it, leaves it for the system
+// to clear.
+func writeLaunchHandoff(home, tempDir string, target handoffTarget, content []byte, now time.Time) (string, error) {
+	if _, err := os.Stat(home); err != nil {
+		dir, err := os.MkdirTemp(tempDir, "agent-archive-handoff-")
+		if err != nil {
+			return "", fmt.Errorf("create private handoff: %w", err)
+		}
+		path := filepath.Join(dir, launchHandoffName)
+		if err := writeNewFile(path, content); err != nil {
+			return "", fmt.Errorf("write private handoff: %w", err)
+		}
+		return path, nil
+	}
+	parent := filepath.Join(home, handoffDir)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", fmt.Errorf("write handoff: %w", err)
+	}
+	dir := filepath.Join(parent, fmt.Sprintf("%s%s-%d", launchHandoffPrefix, handoffFileName(target.bundle), now.Unix()))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return "", fmt.Errorf("this session was handed off less than a second ago (%s exists); try again", dir)
+		}
+		return "", fmt.Errorf("write handoff: %w", err)
+	}
+	path := filepath.Join(dir, launchHandoffName)
+	if err := writeNewFile(path, content); err != nil {
+		return "", fmt.Errorf("write handoff: %w", err)
+	}
+	return path, nil
+}
+
+// writeNewFile creates path with mode 0600, failing if anything is already
+// there, so a launched agent never reads a file someone else placed.
+func writeNewFile(path string, content []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(content); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // launchHandoffPrompt adds local retrieval instructions outside the quoted
@@ -71,19 +174,26 @@ func launchHandoffPrompt(record string, h archive.Handoff, target handoffTarget,
 	return b.String()
 }
 
-func (e Env) launchHandoff(name, cwd, prompt string, stdin io.Reader, stdout, stderr io.Writer) error {
+func (e Env) launchHandoff(spec launchSpec, stdin io.Reader, stdout, stderr io.Writer) error {
 	if e.LaunchHandoff != nil {
-		return e.LaunchHandoff(name, cwd, prompt, stdin, stdout, stderr)
+		return e.LaunchHandoff(spec, stdin, stdout, stderr)
 	}
-	binary := name
-	if name == "cursor" {
-		binary = "cursor-agent"
-	}
-	path, err := exec.LookPath(binary)
-	if err != nil {
-		return fmt.Errorf("find %s: %w", binary, err)
-	}
-	cmd := exec.CommandContext(context.Background(), path, prompt)
-	cmd.Dir, cmd.Stdin, cmd.Stdout, cmd.Stderr = cwd, stdin, stdout, stderr
+	cmd := exec.CommandContext(context.Background(), spec.Binary, spec.Args...)
+	cmd.Dir, cmd.Env = spec.Dir, spec.Env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	return cmd.Run()
+}
+
+func (e Env) lookPath(name string) (string, error) {
+	if e.LookPath != nil {
+		return e.LookPath(name)
+	}
+	return exec.LookPath(name)
+}
+
+func (e Env) environ() []string {
+	if e.Environ != nil {
+		return e.Environ()
+	}
+	return os.Environ()
 }

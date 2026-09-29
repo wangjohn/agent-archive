@@ -30,10 +30,28 @@ agent-archive handoff SESSION_ID --output /tmp/handoff.md
 agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness codex
 ```
 
-`--to` launches the installed local `claude`, `codex`, or `cursor-agent` CLI
-in the current directory (or `--project DIR` with `--latest`). It writes the
-filtered handoff to a private temporary file and sends the agent a short prompt
-to read it; the file is removed when the agent exits. The command reads only a
+`--to` launches the installed local `claude`, `codex`, or Cursor `agent`
+(else `cursor-agent`) CLI in the current directory (or `--project DIR` with
+`--latest`). It writes the filtered handoff to
+`handoffs/launch-<session>-<time>/handoff.md` in the data directory (a
+private folder of its own, file mode 0600) and sends the agent a short
+prompt to read it. The file is kept so a resumed session can read it again,
+and removed after 7 days like other saved handoffs. With `--file` before setup there is no data directory, so the file
+goes to a private folder in the system's temporary directory, removed when
+the agent exits. Claude Code is given only that folder with `--add-dir`,
+since it reads outside the project only from an added directory.
+The launched agent does not inherit the calling agent's session variables
+(such as `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`); your settings, such as
+`CLAUDE_CODE_USE_BEDROCK`, pass through.
+
+Arguments after `--` go to the agent, after any set for it in `config.json`
+(see [configuration](../reference/configuration.md)):
+
+```sh
+agent-archive handoff SESSION_ID --to codex -- --model o3
+```
+
+The command reads only a
 local transcript; it never downloads a session from the archive or starts a
 remote agent. The receiving agent is told that Agent Archive exists, where to
 find its executable, and how to ask for more context.

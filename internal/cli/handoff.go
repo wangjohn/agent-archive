@@ -26,7 +26,8 @@ import (
 )
 
 // handoffDir is the data-directory entry holding untrimmed handoffs saved when
-// the budget trimmed the printed one. uninstall's localStateEntries lists it.
+// the budget trimmed the printed one, and the directories holding the copies
+// launched agents read (launch-*/). uninstall's localStateEntries lists it.
 const handoffDir = "handoffs"
 
 // handoffMaxAge is how long a saved full handoff is kept.
@@ -111,7 +112,7 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 	}
 	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
 	if opts.to != "" {
-		if err := launchPreparedHandoff(rendered, h, target, opts, stdin, stdout, stderr, env); err != nil {
+		if err := launchPreparedHandoff(rendered, h, target, opts, home, stdin, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 			return 1
 		}
@@ -599,23 +600,33 @@ func plural(n int, unit string) string {
 }
 
 // handoffFullPath names where the untrimmed rendering of a bundle is saved.
-// The archive session ID is already a safe file component; anything else is
-// hashed.
 func handoffFullPath(home string, bundle archive.SourceBundle, format string) string {
+	ext := ".md"
+	if format == "json" {
+		ext = ".json"
+	}
+	return filepath.Join(home, handoffDir, handoffFileName(bundle)+ext)
+}
+
+// handoffFileName is the file name stem for a bundle's saved handoffs. The
+// archive session ID is already a safe file component; anything else is
+// hashed.
+func handoffFileName(bundle archive.SourceBundle) string {
 	name := bundle.ArchiveSessionID
 	if name == "" || strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, ".") {
 		sum := sha256.Sum256([]byte(bundle.ArchiveSessionID + "\x00" + bundle.NativeSessionID))
 		name = hex.EncodeToString(sum[:])[:16]
 	}
-	ext := ".md"
-	if format == "json" {
-		ext = ".json"
-	}
-	return filepath.Join(home, handoffDir, name+ext)
+	return name
 }
 
-// pruneHandoffs deletes saved handoffs older than handoffMaxAge. It is best
-// effort: a failure leaves files for the next run.
+// launchHandoffPrefix begins the name of each launch copy's directory under
+// handoffDir.
+const launchHandoffPrefix = "launch-"
+
+// pruneHandoffs deletes saved handoffs, and launch copies' directories,
+// older than handoffMaxAge. It is best effort: a failure leaves them for the
+// next run.
 func pruneHandoffs(home string, now time.Time) {
 	dir := filepath.Join(home, handoffDir)
 	entries, err := os.ReadDir(dir)
@@ -623,14 +634,14 @@ func pruneHandoffs(home string, now time.Time) {
 		return
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), launchHandoffPrefix) {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil || now.Sub(info.ModTime()) <= handoffMaxAge {
 			continue
 		}
-		_ = os.Remove(filepath.Join(dir, entry.Name()))
+		_ = os.RemoveAll(filepath.Join(dir, entry.Name()))
 	}
 }
 

@@ -581,11 +581,14 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `--source archive`: an archived bundle is filtered like a local one,
    and the preamble still applies.
 2. **Launch (B).** The launch copy of the handoff is written to
-   `<data dir>/handoffs/launch-<name>-<unix>.md`, where `<name>` is the file
-   component `handoffFullPath` uses (0600, created with `O_EXCL`; the
-   7-day prune and `uninstall --delete-local-data` already cover the
-   directory, and it is never removed early) so a resumed session can
-   still read it. Without a data directory (`--file` before setup) it goes
+   `<data dir>/handoffs/launch-<name>-<unix>/handoff.md`, where `<name>` is
+   the file component `handoffFullPath` uses (directory 0700 created with
+   `os.Mkdir`, so a second launch in the same second fails; file 0600
+   created with `O_EXCL`). Each launch has its own directory so Claude's
+   `--add-dir` exposes no other saved handoff. `pruneHandoffs` removes
+   `launch-*` directories older than 7 days by the directory's mtime, and
+   `uninstall --delete-local-data` already covers `handoffs/`; it is never
+   removed early, so a resumed session can still read it. Without a data directory (`--file` before setup) it goes
    to a private `os.MkdirTemp` directory as today: removed when an
    in-terminal launch exits, left for the OS to clean after a new-window
    launch (which returns before the agent reads it). The child's
@@ -597,13 +600,16 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `CLAUDE_CODE_ENTRYPOINT`. Arguments after `--` go to the agent. The
    binary is resolved to an absolute path with `Env.LookPath`. The prompt
    is always the last argument, after a `--` (Claude's `--add-dir` takes a
-   variadic list that would otherwise swallow it). B confirms by hand that
-   each CLI accepts `--` there and records it in the PR. Per agent:
-   - Claude Code: `claude --add-dir <handoff dir> [extra] -- <prompt>`, run
+   variadic list that would otherwise swallow it). Claude Code's help
+   (`Usage: claude [options] [command] [prompt]`, commander) and Codex's
+   source (clap, `prompt: Option<String>` positional) end options at `--`;
+   Cursor's `agent` is closed source and was not verified, so its prompt
+   is last without a `--`. Per agent:
+   - Claude Code: `claude --add-dir <launch dir> [extra] -- <prompt>`, run
      in the directory. Without `--add-dir` the read is refused (verified).
    - Codex: `codex --cd <dir> [extra] -- <prompt>`; every sandbox mode can
      read the whole disk.
-   - Cursor: `agent` (else `cursor-agent`) `--workspace <dir> [extra] -- <prompt>`.
+   - Cursor: `agent` (else `cursor-agent`) `--workspace <dir> [extra] <prompt>`.
 
    `config.Handoff` may set per-agent default arguments and a default
    destination per source harness; there are no built-in extra flags.
@@ -663,9 +669,9 @@ Packages rely on these; change them only in this section first.
 | Owner | Name |
 |---|---|
 | A `handoff_select.go` | `selectHandoffSession(env handoffSelectDependencies, home string, opts handoffOptions, stdin io.Reader, stdout, stderr io.Writer) (sessionID, harness string, selected bool, code int)`; `currentHandoffSession(env, home, opts) (sessionID string, ok bool, err error)` |
-| B `handoff_agents.go` | `type launchSpec struct { Destination handoffDestination; Binary string; Args []string; Dir string; Env []string }` (`Args` excludes the binary; `Env` is the child's full environment); `buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, extra []string, env launchSpecDependencies) (launchSpec, error)`; `handoffSessionEnv []string` |
+| B `handoff_agents.go` | `type launchSpec struct { Destination handoffDestination; Binary string; Args []string; Dir string; Env []string; HandoffFile string }` (`Args` excludes the binary; `Env` is the child's full environment; `HandoffFile` is the launch copy, for D's `ScriptDir` and no-terminal message); `buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, extra []string, env launchSpecDependencies) (launchSpec, error)`; `handoffSessionEnv []string` |
 | B `handoff_launch.go` | `writeLaunchHandoff(home, tempDir string, target handoffTarget, content []byte, now time.Time) (path string, err error)`; `prepareLaunch(...) (launchSpec, error)`; `Env.LaunchHandoff func(spec launchSpec, stdin io.Reader, stdout, stderr io.Writer) error` (replaces today's `func(name, cwd, prompt string, ...)` field and the matching `launchHandoff` method in `handoffCommandDependencies`); `Env.LookPath func(string) (string, error)` |
-| B `internal/config` | `Config.Handoff HandoffConfig` (`json:"handoff,omitempty"`): `Args map[string][]string`, `DefaultTo map[string]string` |
+| B `internal/config` | `Config.Handoff HandoffConfig` (`json:"handoff,omitzero"`: `omitempty` never omits a struct): `Args map[string][]string`, `DefaultTo map[string]string` |
 | C `internal/termlaunch` | `type Spec struct { Dir string; Argv []string; Unset []string; ScriptDir string }`; `type Environment struct { GOOS string; LookupEnv func(string) (string, bool); Run func(ctx context.Context, name string, args ...string) error }`; `Open(ctx, spec, env) (where string, err error)`; `ErrNoTerminal` |
 | D `handoff_destination.go` | `chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error)`; `Env.OpenTerminal func(termlaunch.Spec) (string, error)`; `Env.Clipboard func([]byte) error` |
 | E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |

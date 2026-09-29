@@ -29,6 +29,8 @@ consistent with each other.
 | `require_skill_use` | When `true`, only sessions that used a skill are captured. Default `false`: all sessions. |
 | `skill_evidence` | `none` omits filesystem skill inventory and snapshots; `metadata` uploads skill names and hashes of filtered skill text but no body; `body` uploads filtered SKILL.md snapshots. Fresh setup saves `metadata`. A schema 1 config without this field retains `body` and setup labels it “kept from previous setup”. Skill use detected in a native transcript can still satisfy `require_skill_use` with `none`. |
 | `paused` | Set by `pause`, cleared by `resume`. |
+| `handoff.args` | Optional, edited by hand; setup keeps it. Per destination (`claude`, `codex`, `cursor`), arguments `handoff --to` passes before any given after `--`, for example `{"codex": ["--model", "o3"]}`. |
+| `handoff.default_to` | Optional, edited by hand. Per source harness, the destination `handoff` offers first, for example `{"claude": "codex"}`. Unknown agent names are refused when the file is read. |
 | `destination_since`, `previous_destinations` | When the current storage destination was configured, and the ones it replaced. Sessions stay with the destination they were published to. |
 | `storage_verified_at`, `bucket_privacy` | The last storage access check and bucket privacy inspection. Evidence, not settings. |
 | `retired_credential_refs` | Keychain references of R2 credentials a reconfiguration replaced, kept so `uninstall --delete-local-data` can remove them too. |
