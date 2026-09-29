@@ -797,6 +797,25 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	}
 	simulateFilterUpgrade(t, store)
 	t1 := t0.Add(20 * 24 * time.Hour)
+	// A failed local ledger write must leave this publication pending so the
+	// old-filter source remains eligible for cleanup after the fault clears.
+	ledgerPath := filepath.Join(store.Home(), "superseded", "session-1.json")
+	if err := os.MkdirAll(filepath.Dir(ledgerPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(ledgerPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	if err != nil || failed.Errors["session-1"] == nil {
+		t.Fatalf("ledger fault must report a session error: %#v %v", failed, err)
+	}
+	if pending, err := store.HasPending("session-1"); err != nil || !pending {
+		t.Fatalf("ledger fault lost the pending publication: pending=%v err=%v", pending, err)
+	}
+	if err := os.Remove(ledgerPath); err != nil {
+		t.Fatal(err)
+	}
 	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("filter upgrade should republish: result=%#v err=%v", result, err)
@@ -1371,7 +1390,9 @@ func TestRunRecordsSupersededSourceOnRepublish(t *testing.T) {
 	if len(superseded) != 1 || superseded[0].Key != firstMetadata.SourceBundle.Key || !superseded[0].SupersededAt.Equal(t1) {
 		t.Fatalf("superseded=%#v firstKey=%q", superseded, firstMetadata.SourceBundle.Key)
 	}
-	if superseded[0].PrivacySensitive { t.Fatal("ordinary republish marked as privacy-sensitive") }
+	if superseded[0].PrivacySensitive {
+		t.Fatal("ordinary republish marked as privacy-sensitive")
+	}
 	// The superseded object must still exist in storage (grace period).
 	if _, err := store.Get(context.Background(), firstMetadata.SourceBundle.Key); err != nil {
 		t.Fatalf("superseded source must remain until retention deletes it: %v", err)

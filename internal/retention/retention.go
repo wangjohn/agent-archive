@@ -76,10 +76,9 @@ type Options struct {
 	// way age-driven deletion waits one pass. Zero skips the check.
 	PreviousScanAt time.Time
 	// GracePeriod bounds how long a superseded (no longer current) source
-	// snapshot stays downloadable before deletion. It applies only to
-	// snapshots older than the immediate predecessor of the current source,
-	// which is retained regardless of age. Defaults to 24h, matching the
-	// spec's proposed grace period.
+	// snapshot stays downloadable before deletion. The ordinary immediate
+	// predecessor remains; a privacy-sensitive predecessor becomes eligible
+	// after verification and this interval. Defaults to 24h.
 	GracePeriod time.Duration
 	// SessionMaxAge is whole-session retention: once a session's most
 	// recently captured evidence is older than this, its metadata and every

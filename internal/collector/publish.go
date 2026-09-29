@@ -99,6 +99,12 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 		priorBundle, _, havePrior := s.published.LastPublished()
 		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
 		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
+			if privacySensitive {
+				// Keep the pending publication for another attempt. Saving the
+				// new published state here would lose the only retry path for
+				// this old-filter source, leaving it until session expiry.
+				return outcomeSkipped, fmt.Errorf("record privacy-sensitive predecessor: %w", err)
+			}
 			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
 		}
 	}

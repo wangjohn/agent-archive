@@ -103,9 +103,45 @@ func TestPrivacyCleanupRequiresExactVerifiedPublication(t *testing.T) {
 	if privacyPublicationVerified(home, cfg, localStore, reg, changed) {
 		t.Fatal("changed remote source accepted")
 	}
+	changed = current
+	changed.SourceBundle.CompressedBytes++
+	if privacyPublicationVerified(home, cfg, localStore, reg, changed) {
+		t.Fatal("changed remote source size accepted")
+	}
+	changed = current
+	changed.SourceBundle.Key = strings.Replace(current.SourceBundle.Key, "source.", "source.other-", 1)
+	if privacyPublicationVerified(home, cfg, localStore, reg, changed) {
+		t.Fatal("changed remote source key accepted")
+	}
 	cfg.Storage.Bucket = "another-bucket"
 	if privacyPublicationVerified(home, cfg, localStore, reg, current) {
 		t.Fatal("changed destination accepted")
+	}
+}
+
+func TestExcludedCurrentDestinationPublicationCanBeVerifiedForPrivacyCleanup(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	remote := storagetest.NewMemoryStore()
+	cfg, localStore := publishSyntheticSessions(t, home, project, remote, at, 1)
+	regs, err := localStore.LoadRegistrations()
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("registrations: %#v %v", regs, err)
+	}
+	reg := regs[0]
+	cfg.Archive.Projects[0].Included = false
+	if cfg.AcceptSession(reg) || !cfg.InCurrentDestination(reg) {
+		t.Fatal("test needs an excluded session in the current destination")
+	}
+	env := testEnv(t, home, at.Add(time.Minute))
+	summary, err := verifyPublicationsWithin(context.Background(), home, cfg, env, localStore, remote)
+	if err != nil || summary.Verified != 1 {
+		t.Fatalf("excluded publication was not verified: %#v %v", summary, err)
+	}
+	key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
+	current, err := reader.ReadMetadata(context.Background(), remote, key)
+	if err != nil || !privacyPublicationVerified(home, cfg, localStore, reg, current) {
+		t.Fatalf("verified publication cannot authorize privacy cleanup: %v", err)
 	}
 }
 

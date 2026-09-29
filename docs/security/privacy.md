@@ -170,8 +170,8 @@ in the bucket:
   source, with the same verified cleanup rule. If the app later restores the
   full transcript and the new filter writes some of its records differently
   from the old one (a new redaction label, say), the collector cannot tell
-  the restored file from a rewritten one: the archived copy is kept, and records added to
-  that transcript afterwards are not archived.
+  the restored file from a rewritten one: the archived copy is kept, and
+  records added to that transcript afterwards are not archived.
 - **Sessions whose transcript is gone** (deleted, or on a Mac that no longer
   runs agent-archive) are never refiltered: their current copy stays as the
   old filter made it until the session expires.
