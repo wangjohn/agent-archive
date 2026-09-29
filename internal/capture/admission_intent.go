@@ -201,16 +201,16 @@ func writeAdmissionIntent(home string, intent admissionIntent, payload map[strin
 	return true, nil
 }
 
-// ReplayAdmissionIntents runs before the collector reads registrations. The
-// current configuration and project activation are checked again; an intent
-// never revives an excluded project. Successfully handled and expired intents
-// are removed, while transient failures remain for the next pass. Hook
-// registration is idempotent by native session ID.
 type deferredFollowup struct {
 	path   string
 	intent admissionIntent
 }
 
+// ReplayAdmissionIntents runs before the collector reads registrations. The
+// current configuration and project activation are checked again; an intent
+// never revives an excluded project. Successfully handled and expired intents
+// are removed, while transient failures remain for the next pass. Hook
+// registration is idempotent by native session ID.
 func ReplayAdmissionIntents(home string, now time.Time) error {
 	if setupjournal.TransactionPending(home) {
 		return nil
