@@ -17,8 +17,7 @@ source build names the commit), how to reproduce it (a synthetic transcript
 or payload is ideal — never send real session content or credentials), and
 what an attacker gains.
 
-If that link says private reporting isn't enabled (it is being turned on
-for this repository), don't describe the problem anywhere public. Open an
+If that link is unavailable, don't describe the problem anywhere public. Open an
 issue with the
 **[Security contact request](https://github.com/wangjohn/agent-archive/issues/new?template=security-contact.yml)**
 template instead. It asks nothing about the problem, only confirms that you
