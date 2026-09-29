@@ -24,17 +24,23 @@ func TestListJSONPrintsVersionedMetadataDocument(t *testing.T) {
 				Name string `json:"name"`
 			} `json:"harness"`
 		} `json:"sessions"`
-		Limit        int    `json:"limit"`
-		Returned     int    `json:"returned"`
-		TotalMatched int    `json:"total_matched"`
-		Truncated    bool   `json:"truncated"`
-		Unavailable  string `json:"unavailable"`
+		Limit        int  `json:"limit"`
+		Returned     int  `json:"returned"`
+		TotalMatched int  `json:"total_matched"`
+		Truncated    bool `json:"truncated"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
 	}
-	if doc.Version != listSchemaVersion || len(doc.Sessions) != 1 || doc.Sessions[0].SessionID != id || doc.Sessions[0].Harness.Name == "" || doc.Unavailable != "" {
+	if doc.Version != 3 || len(doc.Sessions) != 1 || doc.Sessions[0].SessionID != id || doc.Sessions[0].Harness.Name == "" {
 		t.Fatalf("doc = %+v", doc)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(out.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := fields["unavailable"]; present {
+		t.Fatalf("version 3 document contains removed unavailable field: %s", out.String())
 	}
 	if doc.Limit != defaultListLimit || doc.Returned != 1 || doc.TotalMatched != 1 || doc.Truncated {
 		t.Fatalf("limit fields = limit=%d returned=%d total=%d truncated=%v", doc.Limit, doc.Returned, doc.TotalMatched, doc.Truncated)
@@ -46,15 +52,6 @@ func TestListJSONPrintsVersionedMetadataDocument(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"sessions": []`) {
 		t.Fatalf("empty result is not an empty array:\n%s", out.String())
-	}
-
-	out.Reset()
-	if code := Run([]string{"list", "--json", "--skill", "x", "--skill-usage", "eligible_no_use"}, nil, &out, &errOut, env); code != 0 {
-		t.Fatalf("code=%d stderr=%s", code, errOut.String())
-	}
-	doc.Unavailable = ""
-	if err := json.Unmarshal(out.Bytes(), &doc); err != nil || doc.Unavailable == "" || len(doc.Sessions) != 0 {
-		t.Fatalf("eligible_no_use JSON: %v\n%s", err, out.String())
 	}
 }
 
