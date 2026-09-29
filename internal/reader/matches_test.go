@@ -49,6 +49,7 @@ func TestMatchesCaptureCoverageAndModelEdges(t *testing.T) {
 }
 
 func TestMatchesSkillIdentityAndUsageEdges(t *testing.T) {
+	const unknownSkillUsage SkillUsage = "unknown"
 	m := archive.Metadata{
 		Parser:         archive.ParserInfo{Version: "0.4.0"},
 		SkillDetection: archive.SkillDetectionObservedNone,
@@ -67,7 +68,7 @@ func TestMatchesSkillIdentityAndUsageEdges(t *testing.T) {
 	}{
 		{name: "usage ignored without identity", filter: Filter{SkillUsage: SkillUsageEligibleNoUse}, want: true},
 		{name: "default means used", filter: Filter{Skill: "review"}, want: true},
-		{name: "unknown usage means used", filter: Filter{Skill: "review", SkillUsage: "unknown"}, want: true},
+		{name: "unknown usage means used", filter: Filter{Skill: "review", SkillUsage: unknownSkillUsage}, want: true},
 		{name: "used exact pair", filter: Filter{Skill: "review", SkillSHA256: "used", SkillUsage: SkillUsageUsed}, want: true},
 		{name: "used hash-only", filter: Filter{SkillSHA256: "used"}, want: true},
 		{name: "no cross-entry name/hash join", filter: Filter{Skill: "other", SkillSHA256: "used"}},
