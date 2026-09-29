@@ -172,7 +172,7 @@ func TestStatusAppPrefersTheConfiguredApp(t *testing.T) {
 	t.Parallel()
 	view := mixedStatusView()
 	view.importedApps = []appStatus{{Name: "claude", ImportedSessions: 9, Uploading: []uploadingSession{}}}
-	if text := renderAppStatus(t, view, "claude", false); !strings.Contains(text, "  ✓ Claude Code 2.1.283   hooks on   212 sessions") || strings.Contains(text, "imported only") {
+	if text := renderClaudeStatus(t, view); !strings.Contains(text, "  ✓ Claude Code 2.1.283   hooks on   212 sessions") || strings.Contains(text, "imported only") {
 		t.Fatalf("status claude:\n%s", text)
 	}
 }
@@ -226,7 +226,7 @@ func TestStatusAppShowsTheLastPassErrors(t *testing.T) {
 		"list registrations: operation error S3: ListObjectsV2, https response error StatusCode: 403, api error AccessDenied: Access Denied",
 		"collection succeeded but retention cleanup failed: open sessions: permission denied",
 	)
-	text := renderAppStatus(t, view, "claude", false)
+	text := renderClaudeStatus(t, view)
 	if !strings.Contains(text, "\nStorage\n") || !strings.Contains(text, "retention cleanup failed") || !strings.Contains(text, "Storage refused access") {
 		t.Fatalf("status claude hides the last pass's errors:\n%s", text)
 	}

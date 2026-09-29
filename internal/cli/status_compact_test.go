@@ -111,11 +111,12 @@ func healthyStatusView(projects int) statusView {
 	return view
 }
 
-func renderAppStatus(t *testing.T, view statusView, app string, verbose bool) string {
+// renderClaudeStatus is status claude, as the text status draws it.
+func renderClaudeStatus(t *testing.T, view statusView) string {
 	t.Helper()
 	var out, errOut strings.Builder
-	if code := printAppStatus(&out, &errOut, view, app, statusScreen{style: textStyle{}, now: renderNow, home: "/Users/alex", verbose: verbose}); code != 0 {
-		t.Fatalf("status %s exit %d: %s", app, code, errOut.String())
+	if code := printAppStatus(&out, &errOut, view, "claude", statusScreen{style: textStyle{}, now: renderNow, home: "/Users/alex"}); code != 0 {
+		t.Fatalf("status claude exit %d: %s", code, errOut.String())
 	}
 	return out.String()
 }
@@ -128,7 +129,7 @@ func TestStatusCompactScreens(t *testing.T) {
 	for name, text := range map[string]string{
 		"mixed.txt":         renderStatus(mixedStatusView(), false),
 		"mixed-verbose.txt": renderVerboseStatus(mixedStatusView()),
-		"app-claude.txt":    renderAppStatus(t, mixedStatusView(), "claude", false),
+		"app-claude.txt":    renderClaudeStatus(t, mixedStatusView()),
 		"healthy.txt":       renderStatus(healthyStatusView(10), false),
 	} {
 		golden.Check(t, filepath.Join("testdata", "status-compact", name), []byte(text))
@@ -200,7 +201,7 @@ func TestStatusCapsUploadingRows(t *testing.T) {
 	if !strings.Contains(text, "\n      … and 3 more (agent-archive status claude)\n") {
 		t.Errorf("no count of the rest:\n%s", text)
 	}
-	full := renderAppStatus(t, view, "claude", false)
+	full := renderClaudeStatus(t, view)
 	if got := strings.Count(full, "      ~/agent-archive   started "); got != 8 || strings.Contains(full, "more (agent-archive status") {
 		t.Errorf("status claude shows %d rows, want all 8:\n%s", got, full)
 	}
