@@ -35,11 +35,21 @@ func TestStatusKeepsEachProblemAsAnEntry(t *testing.T) {
 	if loaded.LastError != "" || loaded.LastErrors != nil {
 		t.Fatalf("no problems left %q, %q", loaded.LastError, loaded.LastErrors)
 	}
+	// An empty problem is no problem, so the two fields never disagree on
+	// whether there is one.
+	loaded.SetLastErrors("", "a", "")
+	if loaded.LastError != "a" || !slices.Equal(loaded.LastErrors, []string{"a"}) {
+		t.Fatalf("empty problems kept: %q, %q", loaded.LastError, loaded.LastErrors)
+	}
+	loaded.SetLastErrors("")
+	if loaded.LastError != "" || loaded.LastErrors != nil {
+		t.Fatalf("an empty problem recorded: %q, %q", loaded.LastError, loaded.LastErrors)
+	}
 }
 
-// A problem added to a status file written before LastErrors existed keeps
-// the old joined text as one entry, since where its own problems end is not
-// known.
+// A problem added to a status file written before LastErrors existed splits
+// the old joined text where status reads it split, on "; ", so adding one
+// does not change how the problems already there are shown.
 func TestStatusAddsToAnOlderStatusFile(t *testing.T) {
 	t.Parallel()
 	store, err := Open(t.TempDir())
@@ -54,7 +64,7 @@ func TestStatusAddsToAnOlderStatusFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	status.AddLastError("c")
-	if want := []string{"a; b", "c"}; !slices.Equal(status.LastErrors, want) || status.LastError != "a; b; c" {
+	if want := []string{"a", "b", "c"}; !slices.Equal(status.LastErrors, want) || status.LastError != "a; b; c" {
 		t.Fatalf("LastErrors = %q, LastError = %q", status.LastErrors, status.LastError)
 	}
 }

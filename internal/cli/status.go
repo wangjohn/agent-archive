@@ -1585,26 +1585,30 @@ var proseCommand = regexp.MustCompile(`agent-archive (?:` + strings.Join(slices.
 //
 // A status file written before Status.LastErrors existed has only the joined
 // LastError. It is split where the collector joined problems, on "; ", and
-// shown on one line as before.
+// shown on one line as before (see legacyLastErrorText).
 func lastErrorRows(status state.Status) []string {
 	if len(status.LastErrors) == 0 {
 		if status.LastError == "" {
 			return nil
 		}
-		return []string{lastErrorText(strings.Split(status.LastError, "; "))}
+		return []string{legacyLastErrorText(status.LastError)}
 	}
 	rows := make([]string, 0, len(status.LastErrors))
 	for _, problem := range status.LastErrors {
-		rows = append(rows, lastErrorText([]string{problem}))
+		if cause := storageErrorCause(problem); cause != "" {
+			rows = append(rows, cause)
+			continue
+		}
+		rows = append(rows, "Last error: "+problem)
 	}
 	return rows
 }
 
-// lastErrorText is one line for problems: a storage refusal's plain cause
-// alone, or "Last error: " and the problems, each storage refusal among them
-// by its cause.
-func lastErrorText(problems []string) string {
-	parts := slices.Clone(problems)
+// legacyLastErrorText is the one line an older status file's joined
+// lastError is shown as: a lone storage refusal's plain cause, or "Last
+// error: " and its problems, each storage refusal among them by its cause.
+func legacyLastErrorText(lastError string) string {
+	parts := strings.Split(lastError, "; ")
 	plain := false
 	for i, part := range parts {
 		if cause := storageErrorCause(part); cause != "" {

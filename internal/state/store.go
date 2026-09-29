@@ -620,25 +620,27 @@ type Status struct {
 }
 
 // SetLastErrors replaces the problems the status records with problems,
-// keeping LastError and LastErrors in step. No problems clears both.
+// keeping LastError and LastErrors in step. An empty problem is left out, and
+// no problems clears both.
 func (s *Status) SetLastErrors(problems ...string) {
+	problems = slices.DeleteFunc(slices.Clone(problems), func(problem string) bool { return problem == "" })
 	if len(problems) == 0 {
 		s.LastError, s.LastErrors = "", nil
 		return
 	}
-	s.LastErrors = slices.Clone(problems)
+	s.LastErrors = problems
 	s.LastError = strings.Join(problems, "; ")
 }
 
 // AddLastError adds problem after the problems the status already records.
-// A status file from before LastErrors existed keeps its LastError as one
-// entry, since where its own "; " separators fall is unknown.
+// A status file from before LastErrors existed has its LastError split where
+// the collector joined problems, on "; ", as status reads it.
 func (s *Status) AddLastError(problem string) {
 	problems := s.LastErrors
 	if len(problems) == 0 && s.LastError != "" {
-		problems = []string{s.LastError}
+		problems = strings.Split(s.LastError, "; ")
 	}
-	s.SetLastErrors(append(slices.Clone(problems), problem)...)
+	s.SetLastErrors(append(problems[:len(problems):len(problems)], problem)...)
 }
 
 func (s *Store) statusPath() string { return filepath.Join(s.home, "status.json") }
