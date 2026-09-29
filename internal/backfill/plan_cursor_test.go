@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -41,6 +42,61 @@ func TestCursorDatabaseDecisionReadGate(t *testing.T) {
 				t.Fatalf("decision %+v, want read %v and state %q", got, tc.wantRead, tc.wantState)
 			}
 		})
+	}
+}
+
+// Planning reads only rows that can still be imported, then counts every
+// listed row and the subagents of imported chats in the final output.
+func TestCursorDatabaseReadGateAndOutputAccounting(t *testing.T) {
+	t.Parallel()
+	tr := newTree(t)
+	site := tr.repo("home/site")
+	at := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	chats := []CursorDatabaseChat{
+		{ID: "eligible", Folder: site, CreatedAt: at},
+		{ID: "archived", Folder: site, CreatedAt: at},
+		{ID: "removed", Folder: site, CreatedAt: at},
+		{ID: "old", Folder: site, CreatedAt: at.AddDate(0, 0, -2)},
+		{ID: "malformed", Folder: site, CreatedAt: at, Malformed: true},
+		{ID: "mismatch", KeyID: "stray", Folder: site, CreatedAt: at},
+		{ID: "duplicate", KeyID: "other", Folder: site, CreatedAt: at},
+		{ID: "duplicate", KeyID: "duplicate", Folder: site, CreatedAt: at},
+	}
+	composers := map[string]cursorstore.Composer{
+		"eligible":  syntheticChat("eligible", nil, "hi"),
+		"duplicate": syntheticChat("duplicate", nil, "hi"),
+	}
+	subagents := map[string][]string{
+		"eligible": {"s1"}, "duplicate": {"s2", "s3"}, "archived": {"s4"},
+	}
+	var readIDs []string
+	env := tr.env()
+	env.CursorDatabase = func(ctx context.Context) (CursorDatabaseResult, error) {
+		res, err := fakeCursorDatabase(chats, composers, subagents, nil)(ctx)
+		if err != nil {
+			return res, err
+		}
+		read := res.ReadChat
+		res.ReadChat = func(ctx context.Context, id string) (cursorstore.Composer, error) {
+			readIDs = append(readIDs, id) // The plan serializes calls to ReadChat.
+			return read(ctx, id)
+		}
+		res.NewerFormat = 2
+		return res, nil
+	}
+	p := plan(t, env, states{"archived": SkipAlreadyArchived, "removed": SkipRemovedByUndo}, config.Config{}, Filters{Since: "2026-09-20"})
+	sort.Strings(readIDs)
+	if !reflect.DeepEqual(readIDs, []string{"duplicate", "eligible"}) {
+		t.Fatalf("read chats %v", readIDs)
+	}
+	want := map[SkipReason]int{
+		"": 2, SkipAlreadyArchived: 1, SkipRemovedByUndo: 1, SkipFilteredOut: 1,
+		SkipUnsafeFormat: 1, SkipIdentityMismatch: 1, SkipDuplicateSession: 1,
+	}
+	if !p.CursorDatabaseChecked || p.CursorDatabaseNewerFormat != 2 || p.CursorSubagentsNotImported != 3 ||
+		!reflect.DeepEqual(databaseOutcomes(p), want) {
+		t.Fatalf("checked %v, newer %d, subagents %d, outcomes %v", p.CursorDatabaseChecked,
+			p.CursorDatabaseNewerFormat, p.CursorSubagentsNotImported, databaseOutcomes(p))
 	}
 }
 
