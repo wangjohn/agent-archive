@@ -18,13 +18,14 @@ import (
 // not disabled, the written bytes go to $AGENT_ARCHIVE_PAGER, else $PAGER,
 // else `less -FRX`, so a long listing can be scrolled and quit with q.
 // Piped or redirected stdout is never paged; a spawn failure falls back to
-// writing stdout directly after a stderr warning.
-func withPager(stdout, stderr io.Writer, env pagerDependencies, noPager bool, write func(io.Writer) error) error {
+// writing stdout directly after a stderr warning. Cancelling ctx stops the
+// pager.
+func withPager(ctx context.Context, stdout, stderr io.Writer, env pagerDependencies, noPager bool, write func(io.Writer) error) error {
 	var buf bytes.Buffer
 	if err := write(&buf); err != nil {
 		return err
 	}
-	_, _, err := pageText(context.Background(), stdout, stderr, env, noPager, false, buf.Bytes())
+	_, _, err := pageText(ctx, stdout, stderr, env, noPager, false, buf.Bytes())
 	return err
 }
 
@@ -54,10 +55,9 @@ func pageText(ctx context.Context, stdout, stderr io.Writer, env pagerDependenci
 		command += " -+F"
 		waited = true
 	}
-	if err := env.runPager(ctx, command, bytes.NewReader(text), stdout, stderr); err != nil {
-		if ctx.Err() != nil {
-			return true, waited, nil
-		}
+	// A pager stopped because ctx was cancelled (a signal) did run; that is
+	// not a failure to fall back from.
+	if err := env.runPager(ctx, command, bytes.NewReader(text), stdout, stderr); err != nil && ctx.Err() == nil {
 		terminal.Printf(stderr, "agent-archive: warning: pager %q failed (%v); printing directly\n", command, err)
 		_, copyErr := stdout.Write(text)
 		return false, false, copyErr

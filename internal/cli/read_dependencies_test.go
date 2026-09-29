@@ -64,7 +64,7 @@ func (s *pagerStub) runPager(_ context.Context, _ string, _ io.Reader, _, _ io.W
 func TestPagerBoundaryFallsBackToDirectOutput(t *testing.T) {
 	deps := &pagerStub{}
 	var out, errOut bytes.Buffer
-	err := withPager(&out, &errOut, deps, false, func(w io.Writer) error {
+	err := withPager(context.Background(), &out, &errOut, deps, false, func(w io.Writer) error {
 		_, err := io.WriteString(w, "metadata only\n")
 		return err
 	})
