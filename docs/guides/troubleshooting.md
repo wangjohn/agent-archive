@@ -21,6 +21,21 @@ find none say so without creating the data directory.
 
   Waiting work is saved locally and uploaded by the next pass after that
   time; `status` counts it under Pending.
+
+  `sync` also counts Claude Code subagents it is still waiting on, and
+  subagents it decided not to capture:
+
+  ```text
+  Scanned 2 session(s): 0 published, 2 unchanged, 0 failed; 1 subagent(s) waiting for transcripts; 1 subagent(s) not captured.
+  ```
+
+  Neither is a failure, and neither changes the exit code. Claude Code
+  reports some background agents with a transcript it never writes; such a
+  subagent waits up to 30 minutes, then is not captured and its parent
+  session records the link as unavailable. `status --verbose` shows how many
+  are waiting. A subagent lost for another reason (its transcript exists but
+  can't be read, or doesn't match its parent session) is a failed session:
+  `sync` names it and exits 1, once.
 - `pause` persists until `resume`. If work is still running, the command
   reports that no settings changed, names the command holding the collector
   lock (and its process ID), and asks you to retry after it finishes. `sync`,
