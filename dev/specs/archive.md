@@ -290,12 +290,22 @@ The following is illustrative. IDs, versions, and hashes are shortened examples.
     "turns": 4,
     "tool_calls": 18,
     "files_touched": 3,
+    "tool_errors": 1,
+    "input_tokens": 1400,
+    "output_tokens": 210,
+    "reasoning_tokens": 90,
     "explicit_feedback": 1
   },
+  "model_tokens": [
+    {"model": "gpt-6-astra", "input_tokens": 1400, "output_tokens": 210, "reasoning_tokens": 90}
+  ],
   "tools_used": [
     {"name": "exec_command", "count": 11},
     {"name": "apply_patch", "count": 5},
     {"name": "update_plan", "count": 2}
+  ],
+  "mcp_calls": [
+    {"name": "github", "count": 3}
   ],
   "capture_gaps": ["actual_response_model_not_exposed"],
   "source_bundle": {
@@ -306,7 +316,7 @@ The following is illustrative. IDs, versions, and hashes are shortened examples.
 }
 ```
 
-Metadata contains summaries computed by code. Prompts, tool contents, and answers belong in the compressed source bundle. Tool names and call counts (`tools_used`, capped at the ten most-called) and the number of distinct files edited (`counts.files_touched`) are summaries; the file paths themselves are not. The sidecar remains private: even skill names, project identifiers, and usage patterns can be sensitive. Record the parser version and status used to derive the summary. Missing or failed parsing yields unknown counts and unavailable attribution, not zeros or a claim that no skill was used.
+Metadata contains summaries computed by code. Prompts, tool contents, and answers belong in the compressed source bundle. Tool names and call counts (`tools_used`, capped at the ten most-called) the number of distinct files edited (`counts.files_touched`), MCP calls counted by server name (`mcp_calls`), and token counts, in total and per model (`counts`, `model_tokens`), are summaries; the file paths themselves are not. The sidecar remains private: even skill names, project identifiers, and usage patterns can be sensitive. Record the parser version and status used to derive the summary. Missing or failed parsing yields unknown counts and unavailable attribution, not zeros or a claim that no skill was used.
 
 ### Durable source, derived views
 

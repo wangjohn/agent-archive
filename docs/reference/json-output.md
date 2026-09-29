@@ -68,6 +68,32 @@ any transcript text or file path:
 Sidecars written by an older parser gain these fields on the next metadata
 refresh.
 
+From parser `0.14.0` a sidecar also carries, all optional (absent means
+unknown, never zero):
+
+- `counts.reasoning_tokens`: tokens spent reasoning (Claude Code's
+  `thinking_tokens`, Codex's `reasoning_output_tokens`). They are part of
+  `output_tokens`, not in addition to it.
+- `counts.tool_errors`: how many of `counts.tool_results` the app flagged as
+  errors. Known for Claude Code and Cursor; absent for Codex, which does not
+  flag them.
+- `model_tokens`: the token counts split by model, as `{"model",
+  "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
+  "reasoning_tokens"}`, sorted by model. Each token field of `counts` is the
+  sum of that field over `model_tokens`. Tokens on a record that names no
+  model are under `unknown`. For Codex the model is the one its latest turn
+  set, so a model switched mid-session splits there.
+- `mcp_calls`: the (up to) 50 MCP servers the session called, as `{"name",
+  "count"}`, by count, then name; the server is the part of an
+  `mcp__<server>__<tool>` tool name. Codex's MCP calls do not name their
+  server in what is retained, so they are not counted.
+
+Token counts keep each app's own meaning: Claude Code's `input_tokens` leaves
+out what was read from or written to the prompt cache, while Codex's
+`input_tokens` includes its cached input, which `cache_read_tokens` repeats.
+`cache_write_tokens` is Claude Code's cache creation, or Codex's
+`cache_write_input_tokens`.
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
