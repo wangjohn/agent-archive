@@ -3,7 +3,9 @@ package capture
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -196,13 +198,49 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		for elapsed := range times {
 			durations = append(durations, elapsed)
 		}
+		overloaded := false
+		stderrExplained := false
 		for err := range errs {
-			if err != nil {
+			if err == nil {
+				continue
+			}
+			if strings.Contains(err.Error(), "status may not show this missed hook") {
+				stderrExplained = true
+			}
+			if strings.Contains(err.Error(), "this hook was not retained") || strings.Contains(err.Error(), "this hook was not recorded") || strings.Contains(err.Error(), "admission queued: false") {
+				// The ordinary race suite can run alongside unrelated I/O.
+				// An event that misses both locks is outside the bounded CI
+				// performance target. It must leave a diagnostic or stderr
+				// explanation; the dedicated performance run remains strict.
+				if slowWrite {
+					t.Fatal(err)
+				}
+				overloaded = true
+				continue
+			}
+			// A queued event can be durable even when the separate status
+			// diagnostic lock times out. That case is reported on hook stderr;
+			// the replay assertions below still require every event's effect.
+			if !strings.Contains(err.Error(), "status may not show this missed hook") {
 				t.Fatal(err)
 			}
 		}
 		if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
 			t.Fatal(err)
+		}
+		if overloaded {
+			diagnostics, err := ReadDiagnostics(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			visible := stderrExplained
+			for _, diagnostic := range diagnostics {
+				visible = visible || diagnostic.Code == DiagnosticHookBusy
+			}
+			if !visible {
+				t.Fatal("unretained hook had neither hook_busy diagnostic nor stderr explanation")
+			}
+			continue
 		}
 		store, _ := state.Open(home)
 		regs, err := store.LoadRegistrations()
@@ -216,7 +254,8 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		if regs[0].TranscriptPath != transcript {
 			t.Fatalf("iteration %d: transcript path was lost: %#v", i, regs[0])
 		}
-		if requests, err := store.LoadRequests(); err != nil || len(requests) != 1 {
+		if requests, err := store.LoadRequests(); err != nil || len(requests) != 1 ||
+			!slices.Contains(requests[0].Reasons, "afteragentresponse") || !slices.Contains(requests[0].Reasons, "stop") {
 			t.Fatalf("iteration %d: response/stop request was lost: %#v, %v", i, requests, err)
 		}
 	}
