@@ -1755,8 +1755,8 @@ func printStatusDetails(out io.Writer, view statusView) {
 
 // subagentDetailLines are the Details lines about subagents that are not a
 // problem: those waiting for their transcripts, those resumed and still
-// running, and those dropped in the
-// last week because Claude Code never wrote them, counted by type.
+// running, and those dropped in the last week because Claude Code never
+// wrote them, counted by type.
 func subagentDetailLines(collector state.Status) []string {
 	var lines []string
 	if n := collector.WaitingSubagents; n > 0 {

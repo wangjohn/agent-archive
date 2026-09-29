@@ -32,6 +32,19 @@ var errSubagentWaiting = errors.New("subagent transcript is not written yet")
 // snapshot. It is not a failure.
 var errSubagentRunning = errors.New("subagent is running again since its last stop")
 
+// errSubagentFutureRecord marks a subagent transcript whose last record is
+// dated more than subagentTranscriptGrace after the pass's clock. No wait
+// ends that: the record is never quiet (see subagentEndBound), so it would
+// look like a subagent still running for as long as the gap lasts.
+var errSubagentFutureRecord = errors.New("subagent transcript has records dated in the future")
+
+// subagentFutureDated reports whether filtered's last record is dated more
+// than subagentTranscriptGrace after now, the same allowance
+// awaitSubagentTranscript gives a stop observed in the future.
+func subagentFutureDated(filtered archive.FilteredTranscript, now time.Time) bool {
+	return filtered.NativeEndAt.Sub(now) > subagentTranscriptGrace
+}
+
 // subagentEndBound is the latest native time a subagent transcript's records
 // may carry: the SubagentStop observed at observedAt, or, once the transcript
 // has written nothing for subagentTranscriptGrace, its last record. A
@@ -114,9 +127,6 @@ type subagentOutcome struct {
 	// waiting lists the candidates kept for their transcripts (see
 	// errSubagentWaiting).
 	waiting []string
-	// running lists the candidates kept because they were resumed after the
-	// stop that left them and are still at work (see errSubagentRunning).
-	running []string
 	// rejected maps each candidate rejected this pass to its code.
 	rejected map[string]string
 	// expired lists the candidates rejected this pass because their
@@ -143,8 +153,6 @@ func materializeSubagentCandidates(local *state.Store, opts Options, now time.Ti
 		case err == nil:
 		case errors.Is(err, errSubagentWaiting):
 			outcome.waiting = append(outcome.waiting, candidate.ArchiveSessionID)
-		case errors.Is(err, errSubagentRunning):
-			outcome.running = append(outcome.running, candidate.ArchiveSessionID)
 		case errors.As(err, &rejected):
 			outcome.rejected[candidate.ArchiveSessionID] = rejected.code
 			if rejected.code == subagentNeverWritten {
@@ -225,11 +233,14 @@ func validateCandidateTranscript(local *state.Store, candidate state.SubagentCan
 	}
 	reg.SessionStartedAt = filtered.NativeStartAt
 	bound := subagentEndBound(filtered, candidate.ObservedAt, now)
-	if err := checkSubagentProvenance(filtered, reg.ParentNativeSessionID, reg.SubagentID, filtered.NativeStartAt, bound); errors.Is(err, errSubagentRunning) {
-		// Resumed before this pass registered it. Rejecting it would report
-		// a failure and tell the parent the link is unavailable, only for the
+	if filtered.NativeEndAt.After(bound) && !subagentFutureDated(filtered, now) {
+		// Resumed after this stop and still at work. It is registered all
+		// the same, with this stop as its bound, which is what a later stop
+		// of a registered subagent must record; the scan holds its records
+		// to that bound (see errSubagentRunning). Rejecting it would report a
+		// failure and tell the parent the link is unavailable, only for the
 		// next stop to register it after all.
-		return reg, errSubagentRunning
+		bound = filtered.NativeEndAt
 	}
 	if code := checkNewSubagent(filtered, reg.ParentNativeSessionID, reg.SubagentID, parent.SessionStartedAt, candidate.ObservedAt, bound); code != "" {
 		return reg, rejectSubagentCandidate(local, candidate, code)
@@ -333,7 +344,11 @@ func validateSubagentTranscript(reg archive.SessionRegistration, filtered archiv
 	if reg.ParentSessionID == "" {
 		return nil
 	}
-	return checkSubagentProvenance(filtered, reg.ParentNativeSessionID, reg.SubagentID, reg.SessionStartedAt, subagentEndBound(filtered, reg.SubagentObservedAt, now))
+	err := checkSubagentProvenance(filtered, reg.ParentNativeSessionID, reg.SubagentID, reg.SessionStartedAt, subagentEndBound(filtered, reg.SubagentObservedAt, now))
+	if errors.Is(err, errSubagentRunning) && subagentFutureDated(filtered, now) {
+		return errSubagentFutureRecord
+	}
+	return err
 }
 
 // checkSubagentProvenance checks that a subagent transcript's native

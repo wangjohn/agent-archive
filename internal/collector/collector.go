@@ -156,8 +156,8 @@ type Result struct {
 	// transcripts are not written yet. Each is retried on the next pass, and
 	// rejected once subagentTranscriptGrace has passed; neither is an error.
 	WaitingSubagents []string
-	// RunningSubagents lists the subagents, registered or not yet, that were
-	// resumed after their last SubagentStop and are still writing. Each is
+	// RunningSubagents lists the registered subagents that were resumed
+	// after their last SubagentStop and are still writing. Each is
 	// captured, or its published snapshot extended, when it stops again or
 	// its transcript goes quiet; it is not an error.
 	RunningSubagents []string
@@ -200,7 +200,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		remote:           store,
 		opts:             opts,
 		now:              now,
-		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RunningSubagents: subagents.running, RejectedSubagents: subagents.rejected},
+		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
 		expiredSubagents: subagents.expired,
 	}
 	if replayErr != nil {

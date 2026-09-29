@@ -632,9 +632,9 @@ type Status struct {
 	// never does, so only status --verbose and --json show it.
 	WaitingSubagents int `json:"waiting_subagents,omitempty"`
 	// RunningSubagents counts the subagents that were resumed after their
-	// last SubagentStop and had not stopped again at the last pass. It is
-	// not a problem: each publishes after its next stop, so only status
-	// --verbose and --json show it.
+	// last SubagentStop and were still writing at the last pass. It is not
+	// a problem: each publishes after its next stop, or once its transcript
+	// is quiet for 30 minutes, so only status --verbose and --json show it.
 	RunningSubagents int `json:"running_subagents,omitempty"`
 	// ExpiredSubagents lists the subagents dropped in the last
 	// ExpiredSubagentWindow because Claude Code never wrote their

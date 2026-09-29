@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -623,8 +624,9 @@ func TestResumedSubagentWaitsForItsNextStop(t *testing.T) {
 	}
 }
 
-// A subagent resumed before the pass after its stop registers it is kept, not
-// rejected: it registers at its next stop, or once its transcript is quiet.
+// A subagent resumed before the pass after its stop is registered, not
+// rejected, and held to that stop: it publishes at its next stop, or once its
+// transcript is quiet.
 func TestSubagentResumedBeforeRegistrationWaits(t *testing.T) {
 	for _, next := range []string{"stop", "quiet"} {
 		t.Run(next, func(t *testing.T) {
@@ -636,8 +638,8 @@ func TestSubagentResumedBeforeRegistrationWaits(t *testing.T) {
 			if !isRunning(result) || len(result.RejectedSubagents) != 0 {
 				t.Fatalf("resumed candidate result=%#v", result)
 			}
-			if _, found, err := f.local.LoadRegistration("child"); err != nil || found {
-				t.Fatalf("registered while running: found=%v err=%v", found, err)
+			if reg, found, err := f.local.LoadRegistration("child"); err != nil || !found || !reg.SubagentObservedAt.Equal(f.start.Add(3*time.Minute)) {
+				t.Fatalf("registration=%+v found=%v err=%v", reg, found, err)
 			}
 			if request, _, err := f.local.LoadRequest("parent"); err != nil || strings.Contains(fmt.Sprint(request.HookEvidence), string(archive.LinkedSessionUnavailable)) {
 				t.Fatalf("parent told the link is unavailable: %+v err=%v", request.HookEvidence, err)
@@ -652,4 +654,63 @@ func TestSubagentResumedBeforeRegistrationWaits(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A registered subagent that stops again and is resumed before the next pass
+// is one running subagent, and that pass records its later stop.
+func TestRestoppedRunningSubagentCountsOnceAndKeepsItsStop(t *testing.T) {
+	f := newResumedSubagentFixture(t)
+	f.write(2)
+	f.stop(3)
+	f.run(4)
+	f.write(5)
+	f.stop(6)
+	f.write(7)
+	result := f.run(8)
+	if !isRunning(result) {
+		t.Fatalf("result=%#v", result)
+	}
+	if reg, _, err := f.local.LoadRegistration("child"); err != nil || !reg.SubagentObservedAt.Equal(f.start.Add(6*time.Minute)) {
+		t.Fatalf("later stop not recorded: observed=%v err=%v", reg.SubagentObservedAt, err)
+	}
+	status, err := f.local.LoadStatus()
+	if err != nil || status.RunningSubagents != 1 {
+		t.Fatalf("status running=%d err=%v", status.RunningSubagents, err)
+	}
+}
+
+// A record dated beyond the grace ahead of the clock never goes quiet, so it
+// is a provenance failure, not a subagent still running: a registered child
+// fails the pass, and a candidate is rejected rather than kept for good.
+func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
+	t.Run("registered", func(t *testing.T) {
+		f := newResumedSubagentFixture(t)
+		f.write(2)
+		f.stop(3)
+		f.run(4)
+		f.write(60)
+		result, err := Run(context.Background(), f.local, f.remote, Options{MachineID: "machine", Now: func() time.Time { return f.start.Add(10 * time.Minute) }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.RunningSubagents) != 0 || !errors.Is(result.Errors["child"], errSubagentFutureRecord) {
+			t.Fatalf("result=%#v", result)
+		}
+	})
+	t.Run("candidate", func(t *testing.T) {
+		f := newResumedSubagentFixture(t)
+		f.write(2)
+		f.stop(3)
+		f.write(60)
+		result, err := Run(context.Background(), f.local, f.remote, Options{MachineID: "machine", Now: func() time.Time { return f.start.Add(10 * time.Minute) }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.RunningSubagents) != 0 || result.RejectedSubagents["child"] != "subagent_provenance_unavailable" {
+			t.Fatalf("result=%#v", result)
+		}
+		if candidates, err := f.local.LoadSubagentCandidates(); err != nil || len(candidates) != 0 {
+			t.Fatalf("candidate kept: %+v err=%v", candidates, err)
+		}
+	})
 }
