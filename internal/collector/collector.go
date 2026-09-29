@@ -417,6 +417,13 @@ func (p *pass) finishScan(reg archive.SessionRegistration) {
 	}
 }
 
+// FailedSessionsProblem is the problem a pass records in its Status when n
+// sessions failed to scan or publish. A caller that reports those sessions
+// again, with a fuller count, replaces this entry rather than adding one.
+func FailedSessionsProblem(n int) string {
+	return fmt.Sprintf("%d session(s) failed to scan or publish", n)
+}
+
 // saveStatus records the pass's summary for `status`.
 func (p *pass) saveStatus() error {
 	// A status file that no longer decodes is replaced below; it only ever
@@ -431,7 +438,7 @@ func (p *pass) saveStatus() error {
 	}
 	var problems []string
 	if len(p.result.Errors) > 0 {
-		problems = append(problems, fmt.Sprintf("%d session(s) failed to scan or publish", len(p.result.Errors)))
+		problems = append(problems, FailedSessionsProblem(len(p.result.Errors)))
 	}
 	// A size-limit gap is not a failure, but capture of the session has
 	// stopped at its last snapshot, which status must say rather than look
