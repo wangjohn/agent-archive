@@ -124,6 +124,13 @@ func runPurgeApply(args []string, stdin io.Reader, stdout, stderr io.Writer, env
 	if err := local.Read(file, &plan); err != nil {
 		return purgeError(stderr, err)
 	}
+	// Hold the same local lock as collection and resume through the entire
+	// remote deletion pass. The pause check below must be made under it.
+	unlock, err := lockCollector(home, "purge apply", env.now())
+	if err != nil {
+		return purgeError(stderr, fmt.Errorf("collector or settings change is running: %w", err))
+	}
+	defer unlock()
 	cfg, found, err := config.Load(home)
 	if err != nil {
 		return purgeError(stderr, err)

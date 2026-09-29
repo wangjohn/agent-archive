@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/purge"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -68,6 +69,19 @@ func TestPurgePlanAndApplyRequirePauseAndKeepCurrentSource(t *testing.T) {
 	}
 	if _, err := config.SetPaused(home, true); err != nil {
 		t.Fatal(err)
+	}
+	unlock, err := local.Lock(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Run([]string{"purge", "apply", planFile, "--yes"}, nil, &out, &errOut, env); code == 0 || !strings.Contains(errOut.String(), "collector") {
+		t.Fatalf("apply while collector holds lock: code %d, stderr %s", code, &errOut)
+	}
+	unlock()
+	if _, err := bucket.Get(context.Background(), orphan); err != nil {
+		t.Fatalf("orphan removed while collector held lock: %v", err)
 	}
 	out.Reset()
 	errOut.Reset()
