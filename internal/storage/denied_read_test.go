@@ -170,7 +170,7 @@ func TestS3FirstPublicationWorksWhenMissingKeysReadAsDenied(t *testing.T) {
 	fake := &deniedReadS3{objects: map[string][]byte{}, unreadable: map[string]bool{}, listAllowed: true}
 	store := newDeniedReadStore(t, fake, "agent-archive")
 	source, metadata := []byte("source bytes"), []byte(`{"metadata":true}`)
-	if err := PutSourceThenMetadata(context.Background(), store, "sessions/claude/abc/source.1.jsonl.gz", "sessions/claude/abc/metadata.json", source, metadata, RetryPolicy{MaxAttempts: 1}); err != nil {
+	if err := PutSourceThenMetadataIndexed(context.Background(), store, "sessions/claude/abc/source.1.jsonl.gz", "sessions/claude/abc/metadata.json", source, metadata, RetryPolicy{MaxAttempts: 1}, nil); err != nil {
 		t.Fatalf("first publication under a 403-for-missing policy: %v", err)
 	}
 	if got := string(fake.objects["agent-archive/sessions/claude/abc/metadata.json"]); got != string(metadata) {

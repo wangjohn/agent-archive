@@ -366,8 +366,52 @@ func TestRecentProjectsShowCountsAndATakesAll(t *testing.T) {
 	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
 		t.Fatalf("projects=%+v err=%v", projects, err)
 	}
-	if !strings.Contains(out.String(), "12 sessions") || !strings.Contains(out.String(), "1 session") || !strings.Contains(out.String(), "a for all") {
+	if !strings.Contains(out.String(), "12 sessions") || !strings.Contains(out.String(), "1 session") || !strings.Contains(out.String(), "a includes all listed projects (the default)") {
 		t.Fatalf("output:\n%s", &out)
+	}
+}
+
+func TestRecentProjectsEnterTakesDefaultAll(t *testing.T) {
+	t.Parallel()
+	one, two := gitRepo(t), gitRepo(t)
+	known := []backfill.KnownProject{{Root: one}, {Root: two}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("\n"), &out), nil, nil, known, "")
+	if err != nil || includedProjects(projects) != 2 || projects[0].Root != one || projects[1].Root != two {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
+	}
+	if !strings.Contains(out.String(), "Projects [A]: ") || !strings.Contains(out.String(), "Included: ") {
+		t.Fatalf("output:\n%s", &out)
+	}
+}
+
+func TestRecentProjectsDefaultRemainsAfterInvalidAnswer(t *testing.T) {
+	t.Parallel()
+	for _, first := range []string{"99", "/does/not/exist"} {
+		t.Run(first, func(t *testing.T) {
+			t.Parallel()
+			one, two := gitRepo(t), gitRepo(t)
+			known := []backfill.KnownProject{{Root: one}, {Root: two}}
+			var out bytes.Buffer
+			projects, err := addProjects(newPrompter(strings.NewReader(first+"\n\n"), &out), nil, nil, known, "")
+			if err != nil || includedProjects(projects) != 2 || strings.Count(out.String(), "Projects [A]: ") != 2 {
+				t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
+			}
+		})
+	}
+}
+
+func TestRecentProjectsDefaultCannotFinishWithNoProject(t *testing.T) {
+	t.Parallel()
+	gone, fallback := gitRepo(t), gitRepo(t)
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+	known := []backfill.KnownProject{{Root: gone}}
+	var out bytes.Buffer
+	projects, err := addProjects(newPrompter(strings.NewReader("\n"+fallback+"\n\n"), &out), nil, nil, known, "")
+	if err != nil || includedProjects(projects) != 1 || projects[0].Root != fallback || !strings.Contains(out.String(), "Choose at least one project") {
+		t.Fatalf("projects=%+v err=%v\n%s", projects, err, &out)
 	}
 }
 

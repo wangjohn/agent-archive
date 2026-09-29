@@ -51,6 +51,20 @@ type handoffTarget struct {
 	lastActivityAt time.Time
 }
 
+type handoffOptions struct {
+	sessionID  string
+	project    string
+	harness    string
+	file       string
+	source     string
+	format     string
+	output     string
+	latest     bool
+	force      bool
+	noPreamble bool
+	maxBytes   int
+}
+
 // currentSessionEnv names environment variables an agent sets for the commands
 // it runs, holding its own native session ID. `--latest` skips that session:
 // run from inside an agent, the newest session is always the one asking.
@@ -58,11 +72,48 @@ type handoffTarget struct {
 // if present but has not been observed.
 var currentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
 
+var errHandoffNotSetUp = errors.New("handoff not set up")
+
 // runHandoffCommand implements `agent-archive handoff`. It prints transcript
 // content, which the command itself is the explicit request for; every
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
 func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
+	opts, ok := parseHandoffOptions(args, stderr, env)
+	if !ok {
+		return 2
+	}
+	home, err := env.readHome()
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: resolve home: %v\n", err)
+		return 1
+	}
+	target, err := resolveHandoffTarget(opts, home, stderr, env)
+	if err != nil {
+		if errors.Is(err, errHandoffNotSetUp) {
+			terminal.Println(stderr, notSetUpMessage)
+		} else {
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+		}
+		return 1
+	}
+	if target.describe != "" {
+		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
+	}
+	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt})
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+		return 1
+	}
+	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
+	if err := writeHandoffResult(rendered, opts, stdout, stderr); err != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func parseHandoffOptions(args []string, stderr io.Writer, env Env) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
 	latest := fs.Bool("latest", false, "the most recent session for the project")
 	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
@@ -76,9 +127,12 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	noPreamble := fs.Bool("no-preamble", false, "omit the note addressed to the receiving agent")
 	sessionID, ok := fs.parseWithArgument(args)
 	if !ok {
-		return 2
+		return handoffOptions{}, false
 	}
-	usageError := func(message string) int { return fs.usageError("%s", message) }
+	usageError := func(message string) (handoffOptions, bool) {
+		fs.usageError("%s", message)
+		return handoffOptions{}, false
+	}
 	selectors := 0
 	for _, set := range []bool{sessionID != "", *latest, *file != ""} {
 		if set {
@@ -124,65 +178,66 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 			return usageError(fmt.Sprintf("%q is not an archive session ID (see `agent-archive list`)", sessionID))
 		}
 	}
+	return handoffOptions{sessionID: sessionID, project: *project, harness: canonical,
+		file: *file, source: *source, maxBytes: *maxBytes, format: *format,
+		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble}, true
+}
 
-	home, err := env.readHome()
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: handoff: resolve home: %v\n", err)
-		return 1
+func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, env Env) (handoffTarget, error) {
+	if opts.file != "" {
+		return handoffFromFile(opts.file, opts.harness, env)
 	}
-	ctx := context.Background()
-	var target handoffTarget
-	if *file != "" {
-		target, err = handoffFromFile(*file, *harness, env)
-	} else {
-		cfg, found, loadErr := config.Load(home)
-		if loadErr != nil {
-			terminal.Printf(stderr, "agent-archive: handoff: load config: %v\n", loadErr)
-			return 1
-		}
-		if !found {
-			terminal.Println(stderr, notSetUpMessage)
-			return 1
-		}
-		resolver := handoffResolver{ctx: ctx, env: env, home: home, cfg: cfg, harness: *harness, source: *source, skip: currentSessions(env), stderr: stderr}
-		if *latest {
-			dir := *project
-			if dir == "" {
-				dir, err = workingDir(env)
-			}
-			if err == nil {
-				target, err = resolver.latest(dir)
-			}
-		} else {
-			target, err = resolver.byID(sessionID)
-		}
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return handoffTarget{}, fmt.Errorf("load config: %w", err)
+	}
+	if !found {
+		return handoffTarget{}, errHandoffNotSetUp
+	}
+	resolver := handoffResolver{ctx: context.Background(), env: env, home: home, cfg: cfg,
+		harness: opts.harness, source: opts.source, skip: currentSessions(env), stderr: stderr}
+	if !opts.latest {
+		return resolver.byID(opts.sessionID)
+	}
+	dir := opts.project
+	if dir == "" {
+		dir, err = workingDir(env)
 	}
 	if err != nil {
-		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
-		return 1
+		return handoffTarget{}, err
 	}
-	if target.describe != "" {
-		terminal.Printf(stderr, "handoff: using %s\n", target.describe)
-	}
+	return resolver.latest(dir)
+}
 
-	h, err := archive.BuildHandoff(target.bundle, target.metadata, archive.HandoffOptions{Source: target.source, StartedAt: target.startedAt, LastActivityAt: target.lastActivityAt})
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
-		return 1
+func renderHandoff(h archive.Handoff, opts handoffOptions) []byte {
+	if opts.format == "json" {
+		data, _ := json.MarshalIndent(h, "", "  ")
+		return append(archive.DisplayJSON(data), '\n')
 	}
-	render := func(h archive.Handoff) []byte {
-		if *format == "json" {
-			data, _ := json.MarshalIndent(h, "", "  ")
-			return append(archive.DisplayJSON(data), '\n')
-		}
-		return archive.RenderHandoffMarkdown(h, archive.HandoffRenderOptions{Preamble: !*noPreamble})
-	}
+	return archive.RenderHandoffMarkdown(h, archive.HandoffRenderOptions{Preamble: !opts.noPreamble})
+}
 
-	pruneHandoffs(home, env.now())
-	fullPath := handoffFullPath(home, target.bundle, *format)
-	full := render(h)
+type handoffRenderPlan struct {
+	fullPath string
+	full     []byte
+	fitted   archive.Handoff
+	fits     bool
+}
+
+// planHandoffRendering decides what to trim and where an untrimmed copy
+// would live. It leaves saving that copy to prepareHandoff.
+func planHandoffRendering(h archive.Handoff, bundle archive.SourceBundle, opts handoffOptions, home string) handoffRenderPlan {
+	fullPath := handoffFullPath(home, bundle, opts.format)
+	full := renderHandoff(h, opts)
 	h.FullRecordPath = fullPath
-	fitted, fits := archive.FitHandoff(h, *maxBytes, func(h archive.Handoff) int { return len(render(h)) })
+	fitted, fits := archive.FitHandoff(h, opts.maxBytes, func(h archive.Handoff) int { return len(renderHandoff(h, opts)) })
+	return handoffRenderPlan{fullPath: fullPath, full: full, fitted: fitted, fits: fits}
+}
+
+func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoffOptions, home string, stderr io.Writer, env Env) []byte {
+	pruneHandoffs(home, env.now())
+	plan := planHandoffRendering(h, bundle, opts, home)
+	fitted := plan.fitted
 	if len(fitted.Elisions) > 0 {
 		// The data directory exists once setup has run. `--file` works
 		// without setup, and must not create it just to hold a copy of a
@@ -190,30 +245,32 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		if _, statErr := os.Stat(home); statErr != nil {
 			terminal.Println(stderr, "agent-archive: handoff: note: output was trimmed and, without setup, the untrimmed version is not saved; use --max-bytes 0 for all of it")
 			fitted.FullRecordPath = ""
-		} else if err := local.WriteBytes(fullPath, full); err != nil {
+		} else if err := local.WriteBytes(plan.fullPath, plan.full); err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: warning: could not save the untrimmed handoff: %v\n", err)
 			fitted.FullRecordPath = ""
 		}
 	} else {
 		fitted.FullRecordPath = ""
 	}
-	rendered := render(fitted)
-	if !fits {
-		terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), *maxBytes)
+	rendered := renderHandoff(fitted, opts)
+	if !plan.fits {
+		terminal.Printf(stderr, "agent-archive: handoff: warning: still %d bytes after trimming, over the %d-byte limit\n", len(rendered), opts.maxBytes)
 	}
-	if *output == "" {
+	return rendered
+}
+
+func writeHandoffResult(rendered []byte, opts handoffOptions, stdout, stderr io.Writer) error {
+	if opts.output == "" {
 		if _, err := stdout.Write(rendered); err != nil {
-			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
-			return 1
+			return err
 		}
-		return 0
+		return nil
 	}
-	if err := writeHandoffOutput(*output, rendered, *force); err != nil {
-		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
-		return 1
+	if err := writeHandoffOutput(opts.output, rendered, opts.force); err != nil {
+		return err
 	}
-	terminal.Printf(stderr, "handoff: wrote %s (%d bytes)\n", *output, len(rendered))
-	return 0
+	terminal.Printf(stderr, "handoff: wrote %s (%d bytes)\n", opts.output, len(rendered))
+	return nil
 }
 
 func workingDir(env Env) (string, error) {
@@ -380,57 +437,75 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	dir = filepath.Clean(dir)
 	now := r.env.now()
 	if r.source != "archive" {
-		regs, err := state.OpenReadOnly(r.home).LoadRegistrations()
+		target, found, err := r.latestLocal(dir, now)
 		if err != nil {
 			return handoffTarget{}, err
 		}
-		type candidate struct {
-			reg    archive.SessionRegistration
-			active time.Time
-		}
-		var candidates []candidate
-		for _, reg := range regs {
-			if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[reg.NativeSessionID] || !sameProject(reg.ProjectRoot, dir) {
-				continue
-			}
-			if r.harness != "" && reg.Harness.Name != r.harness {
-				continue
-			}
-			active := reg.RegisteredAt
-			if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase()); ok {
-				active = at
-			}
-			candidates = append(candidates, candidate{reg, active})
-		}
-		sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].active.After(candidates[j].active) })
-		// A candidate that cannot be used — no transcript yet, an empty or
-		// oversized one, or one with no prompt because it has only just
-		// started — is passed over for the next, never allowed to stop the
-		// search.
-		var skipped []string
-		for _, c := range candidates {
-			target, err := r.localTarget(c.reg)
-			if err == nil && !hasPrompt(target.bundle) {
-				err = errors.New("no prompt yet")
-			}
-			if err != nil {
-				if !errors.Is(err, collector.ErrNoTranscript) {
-					skipped = append(skipped, fmt.Sprintf("%s (%v)", c.reg.ArchiveSessionID, err))
-				}
-				continue
-			}
-			target.describe = fmt.Sprintf("%s session %s, active %s (this machine)", c.reg.Harness.Name, c.reg.ArchiveSessionID, relativeAge(now, c.active))
+		if found {
 			return target, nil
 		}
-		if r.source == "local" {
-			message := fmt.Sprintf("no session for %s is registered on this machine with a readable transcript", dir)
-			if len(skipped) > 0 {
-				message += "; passed over: " + strings.Join(skipped, ", ")
-			}
-			return handoffTarget{}, errors.New(message)
-		}
 	}
+	return r.latestArchive(dir, now)
+}
 
+type localHandoffCandidate struct {
+	reg    archive.SessionRegistration
+	active time.Time
+}
+
+// localCandidates reads activity only for registrations that match the
+// requested project and harness. Sorting is stable for equal activity times.
+func (r handoffResolver) localCandidates(regs []archive.SessionRegistration, dir string) []localHandoffCandidate {
+	var candidates []localHandoffCandidate
+	for _, reg := range regs {
+		if reg.ParentSessionID != "" || reg.SubagentID != "" || r.skip[reg.NativeSessionID] || !sameProject(reg.ProjectRoot, dir) {
+			continue
+		}
+		if r.harness != "" && reg.Harness.Name != r.harness {
+			continue
+		}
+		active := reg.RegisteredAt
+		if at, ok := collector.LastActivity(r.ctx, reg, r.env.cursorDatabase()); ok {
+			active = at
+		}
+		candidates = append(candidates, localHandoffCandidate{reg, active})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].active.After(candidates[j].active) })
+	return candidates
+}
+
+func (r handoffResolver) latestLocal(dir string, now time.Time) (handoffTarget, bool, error) {
+	regs, err := state.OpenReadOnly(r.home).LoadRegistrations()
+	if err != nil {
+		return handoffTarget{}, false, err
+	}
+	// A candidate without a readable transcript and a prompt is passed over.
+	var skipped []string
+	for _, c := range r.localCandidates(regs, dir) {
+		target, err := r.localTarget(c.reg)
+		if err == nil && !hasPrompt(target.bundle) {
+			err = errors.New("no prompt yet")
+		}
+		if err != nil {
+			if !errors.Is(err, collector.ErrNoTranscript) {
+				skipped = append(skipped, fmt.Sprintf("%s (%v)", c.reg.ArchiveSessionID, err))
+			}
+			continue
+		}
+		target.describe = fmt.Sprintf("%s session %s, active %s (this machine)", c.reg.Harness.Name, c.reg.ArchiveSessionID, relativeAge(now, c.active))
+		return target, true, nil
+	}
+	if r.source == "local" {
+		message := fmt.Sprintf("no session for %s is registered on this machine with a readable transcript", dir)
+		if len(skipped) > 0 {
+			message += "; passed over: " + strings.Join(skipped, ", ")
+		}
+		return handoffTarget{}, false, errors.New(message)
+	}
+	return handoffTarget{}, false, nil
+}
+
+func (r handoffResolver) latestArchive(dir string, now time.Time) (handoffTarget, error) {
 	store, err := r.env.openStore(r.cfg)
 	if err != nil {
 		return handoffTarget{}, fmt.Errorf("no local session for %s, and the archive could not be opened: %w", dir, err)
@@ -442,10 +517,7 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 	sessions = topLevelSessions(sessions)
 	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].CapturedAt.After(sessions[j].CapturedAt) })
 	projectIDs := r.projectIDs(dir)
-	for _, m := range sessions {
-		if !projectIDs[m.ProjectID] || r.skip[m.NativeSessionID] || (m.Counts.Turns != nil && *m.Counts.Turns == 0) {
-			continue
-		}
+	for _, m := range archiveHandoffCandidates(sessions, projectIDs, r.skip) {
 		key, err := archive.MetadataObjectKey(m.Harness.Name, m.SessionID)
 		if err != nil {
 			continue
@@ -454,6 +526,18 @@ func (r handoffResolver) latest(dir string) (handoffTarget, error) {
 		return r.fromArchive(store, key, describe)
 	}
 	return handoffTarget{}, r.noMatch(dir, sessions, now)
+}
+
+// archiveHandoffCandidates is the selection policy; its inputs are already
+// loaded and sorted, so it can be checked without storage or a transcript.
+func archiveHandoffCandidates(sessions []archive.Metadata, projectIDs, skip map[string]bool) []archive.Metadata {
+	var candidates []archive.Metadata
+	for _, m := range sessions {
+		if projectIDs[m.ProjectID] && !skip[m.NativeSessionID] && (m.Counts.Turns == nil || *m.Counts.Turns != 0) {
+			candidates = append(candidates, m)
+		}
+	}
+	return candidates
 }
 
 // sameProject reports whether dir belongs to the project at root: it is the

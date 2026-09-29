@@ -56,8 +56,8 @@ const (
 	// archive.SkillDetectionUnavailable) is treated as unknown, not "no use".
 	//
 	// No parser version emits archive.SkillDetectionObservedNone today, so
-	// this value cannot match any sidecar yet. It stays accepted, and the
-	// comparison stays implemented, for the parser version that will.
+	// this value cannot match any sidecar yet. The CLI rejects it until a
+	// parser can prove non-use; the comparison remains for that future parser.
 	SkillUsageEligibleNoUse SkillUsage = "eligible_no_use"
 )
 

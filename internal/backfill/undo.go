@@ -178,45 +178,20 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 	for _, req := range requests {
 		requested[req.ArchiveSessionID] = req
 	}
-	// Whether a session's objects are in the bucket configured now. A
-	// registration that records its destination ID (always the batch's) is
-	// judged by it alone, which stays right after a switch away and back.
-	// One without needs both the batch's ID and the time boundary to match.
-	sameDestination := b.DestinationID == cfg.DestinationID()
-	selected := map[string]bool{}
-	var parents, children []UndoSession
-	for _, reg := range regs {
-		if !reg.InBatch(b.ID) || reg.ParentSessionID != "" || !inProject(reg.ProjectRoot) {
-			continue
-		}
-		selected[reg.ArchiveSessionID] = true
-	}
+	matchedRoots := map[string]bool{}
 	for _, reg := range regs {
 		if !reg.InBatch(b.ID) {
 			continue
 		}
-		// A subagent goes with its parent. One whose parent is no longer
-		// registered (an earlier undo removed the parent but failed on the
-		// subagent) is selected by its own project, which it shares with the
-		// parent.
-		if reg.ParentSessionID != "" && !selected[reg.ParentSessionID] && !inProject(reg.ProjectRoot) {
-			continue
-		}
-		if reg.ParentSessionID == "" && !selected[reg.ArchiveSessionID] {
-			continue
-		}
-		resumed, unknown, err := resumedSinceImport(env, store, reg, requested[reg.ArchiveSessionID])
-		if err != nil {
-			return UndoPlan{}, err
-		}
-		s := UndoSession{Registration: reg, InCurrentDestination: (reg.DestinationID != "" || sameDestination) && cfg.InCurrentDestination(reg), Resumed: resumed, ResumeUnknown: unknown}
-		if reg.ParentSessionID != "" {
-			children = append(children, s)
-		} else {
-			parents = append(parents, s)
+		if _, seen := matchedRoots[reg.ProjectRoot]; !seen {
+			matchedRoots[reg.ProjectRoot] = inProject(reg.ProjectRoot)
 		}
 	}
-	p.Sessions = slices.Concat(children, parents)
+	selected := selectUndoRegistrations(regs, b.ID, matchedRoots)
+	p.Sessions, err = loadUndoSessions(env, store, cfg, b, selected, requested)
+	if err != nil {
+		return UndoPlan{}, err
+	}
 
 	p.ExcludeProjects, p.KeepProjects, p.TakenOver, p.Settled.Excluded = undoProjects(cfg, regs, batches, b, inProject)
 	p.RemoveKeptOut = keptOutToRemove(env, cfg, regs, batches, b, p.Sessions, p.ExcludeProjects)
@@ -250,10 +225,67 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 
 	// An app the import added stays while any imported session of it is
 	// left: another import's, or this one's outside --project.
+	p.RemoveApps = undoAppsToRemove(cfg, b, regs, p.Sessions)
+	return p, nil
+}
+
+// selectUndoRegistrations decides which registrations an undo may remove.
+// A subagent follows its selected parent; an orphan is selected by its own
+// project so an interrupted earlier undo can finish removing it.
+func selectUndoRegistrations(regs []archive.SessionRegistration, batchID string, matchedRoots map[string]bool) []archive.SessionRegistration {
+	parents := map[string]bool{}
+	for _, reg := range regs {
+		if reg.InBatch(batchID) && reg.ParentSessionID == "" && matchedRoots[reg.ProjectRoot] {
+			parents[reg.ArchiveSessionID] = true
+		}
+	}
+	var selected []archive.SessionRegistration
+	for _, reg := range regs {
+		if !reg.InBatch(batchID) {
+			continue
+		}
+		if reg.ParentSessionID != "" {
+			if !parents[reg.ParentSessionID] && !matchedRoots[reg.ProjectRoot] {
+				continue
+			}
+		} else if !parents[reg.ArchiveSessionID] {
+			continue
+		}
+		selected = append(selected, reg)
+	}
+	return selected
+}
+
+// loadUndoSessions reads live resume evidence after selection. Removal order
+// remains subagents first, then parents, each in registration order.
+func loadUndoSessions(env Environment, store *state.Store, cfg config.Config, b Batch, regs []archive.SessionRegistration, requested map[string]state.Request) ([]UndoSession, error) {
+	// A registration with a destination ID is judged by that ID alone;
+	// legacy ones also need the batch destination to match.
+	sameDestination := b.DestinationID == cfg.DestinationID()
+	var parents, children []UndoSession
+	for _, reg := range regs {
+		resumed, unknown, err := resumedSinceImport(env, store, reg, requested[reg.ArchiveSessionID])
+		if err != nil {
+			return nil, err
+		}
+		s := UndoSession{Registration: reg, InCurrentDestination: (reg.DestinationID != "" || sameDestination) && cfg.InCurrentDestination(reg), Resumed: resumed, ResumeUnknown: unknown}
+		if reg.ParentSessionID != "" {
+			children = append(children, s)
+		} else {
+			parents = append(parents, s)
+		}
+	}
+	return slices.Concat(children, parents), nil
+}
+
+// undoAppsToRemove is the configuration decision after session selection.
+// An app stays while any imported session outside this undo still needs it.
+func undoAppsToRemove(cfg config.Config, b Batch, regs []archive.SessionRegistration, sessions []UndoSession) []string {
 	undone := map[string]bool{}
-	for _, s := range p.Sessions {
+	for _, s := range sessions {
 		undone[s.Registration.ArchiveSessionID] = true
 	}
+	var remove []string
 	for _, app := range b.AppsAdded {
 		if !slices.Contains(cfg.ImportedHarnesses, app) {
 			continue
@@ -262,10 +294,10 @@ func PlanUndo(env Environment, store *state.Store, cfg config.Config, batches []
 			return reg.Imported() && !undone[reg.ArchiveSessionID] && archive.CanonicalHarness(reg.Harness.Name) == app
 		})
 		if !needed {
-			p.RemoveApps = append(p.RemoveApps, app)
+			remove = append(remove, app)
 		}
 	}
-	return p, nil
+	return remove
 }
 
 // keptOutToRemove returns the excluded projects b, or an import undone
