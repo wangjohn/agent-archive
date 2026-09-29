@@ -191,9 +191,6 @@ linters:
       - path: internal/collector/subagent_capture\.go
         text: materializeSubagentCandidate
         linters: [gocyclo]
-      - path: internal/retention/retention\.go
-        text: sweepSession
-        linters: [funlen, gocyclo]
       - path: internal/cli/setup\.go
         text: "`setup`|'setup'"
         linters: [funlen, gocyclo]

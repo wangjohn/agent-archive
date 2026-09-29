@@ -267,7 +267,36 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 	if err != nil {
 		return fmt.Errorf("load published cache: %w", err)
 	}
+	ageFrom, err := s.sessionAge(reg, summary, found)
+	if err != nil {
+		return err
+	}
+	locallyExpired, deferForWork, owed, err := s.sessionExpiry(reg, found, ageFrom)
+	if err != nil {
+		return err
+	}
 
+	currentDestination := s.opts.CurrentDestination == nil || s.opts.CurrentDestination(reg)
+	// A lost publication record may be the only evidence of remote objects.
+	// Read it only when an expired session belongs to this destination.
+	hasRemoteEvidence := false
+	if locallyExpired && currentDestination {
+		hasRemoteEvidence = summary.Published || owed.Upload || s.local.LostPublication(id)
+	}
+	switch chooseSessionAction(locallyExpired, currentDestination, hasRemoteEvidence) {
+	case forgetPreviousDestination:
+		return s.forget(reg, deferForWork, &s.result.PrunedSessions, "forget session from a previous destination")
+	case forgetNeverPublished:
+		return s.forget(reg, deferForWork, &s.result.PrunedSessions, "forget never-published session")
+	case leaveSession:
+		return nil
+	default:
+		return s.remote(reg, summary, ageFrom, locallyExpired, deferForWork)
+	}
+}
+
+// sessionAge keeps the admission fallback for a session with no capture.
+func (s *sweeper) sessionAge(reg archive.SessionRegistration, summary state.PublishedSummary, found bool) (time.Time, error) {
 	// A session ages from its cached capture when it has one. A registration
 	// that never produced a capture (the transcript vanished before the first
 	// scan, or was never readable) ages from its admission instead; otherwise
@@ -276,10 +305,17 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 	// failed first upload must not expire it at once.
 	ageFrom := reg.Admitted()
 	if found && !summary.RetentionAge().IsZero() {
-		if ageFrom, err = s.captureAge(id, summary); err != nil {
-			return err
+		var err error
+		if ageFrom, err = s.captureAge(reg.ArchiveSessionID, summary); err != nil {
+			return time.Time{}, err
 		}
 	}
+	return ageFrom, nil
+}
+
+// sessionExpiry reads outstanding work only when it can affect expiry.
+func (s *sweeper) sessionExpiry(reg archive.SessionRegistration, found bool, ageFrom time.Time) (bool, bool, state.Outstanding, error) {
+	id := reg.ArchiveSessionID
 	locallyExpired := s.expired(ageFrom)
 	// deferForWork says whether a queued request or pending publication
 	// postpones expiry: only when the collector will actually do that work.
@@ -302,7 +338,7 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 		if !neverCapturable && !found && transcriptEmpty(reg.TranscriptPath) {
 			owed, err := s.local.Outstanding(reg, s.requested[id])
 			if err != nil {
-				return fmt.Errorf("check outstanding work: %w", err)
+				return false, false, state.Outstanding{}, fmt.Errorf("check outstanding work: %w", err)
 			}
 			neverCapturable = !owed.Upload
 		}
@@ -314,8 +350,9 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 	// session old enough to expire: the steady state stays a summary read.
 	var owed state.Outstanding
 	if locallyExpired {
+		var err error
 		if owed, err = s.local.Outstanding(reg, s.requested[id]); err != nil {
-			return fmt.Errorf("check outstanding work: %w", err)
+			return false, false, state.Outstanding{}, fmt.Errorf("check outstanding work: %w", err)
 		}
 	}
 	if locallyExpired && deferForWork {
@@ -332,32 +369,32 @@ func (s *sweeper) session(reg archive.SessionRegistration) error {
 		// either (see state.Outstanding.DefersExpiry).
 		locallyExpired = !owed.DefersExpiry()
 	}
+	return locallyExpired, deferForWork, owed, nil
+}
 
-	// A session admitted into another destination has no objects in this
-	// bucket. Its local state still ages out; nothing is deleted remotely,
-	// here or in the bucket it came from.
-	if s.opts.CurrentDestination != nil && !s.opts.CurrentDestination(reg) {
-		if !locallyExpired {
-			return nil
-		}
-		return s.forget(reg, deferForWork, &s.result.PrunedSessions, "forget session from a previous destination")
-	}
+type sessionAction uint8
 
-	if locallyExpired {
-		// Nothing of this session can be in the bucket unless a publication
-		// was recorded, or one is still pending: a pending upload may have
-		// reached storage before its local acknowledgement did. Anything
-		// else is local state only, so it is forgotten without a call for
-		// its objects.
-		// A published state or pending publication moved aside because it
-		// no longer decoded may have been the record of objects that are in
-		// the bucket, so such a session is deleted from it like a published
-		// one.
-		if !summary.Published && !owed.Upload && !s.local.LostPublication(id) {
-			return s.forget(reg, deferForWork, &s.result.PrunedSessions, "forget never-published session")
+const (
+	sweepRemote sessionAction = iota
+	leaveSession
+	forgetPreviousDestination
+	forgetNeverPublished
+)
+
+// chooseSessionAction decides which side effect is allowed for this session.
+// A previous destination can only lose local state. A never-published session
+// can be forgotten without a remote call only when no remote evidence exists.
+func chooseSessionAction(expired, currentDestination, hasRemoteEvidence bool) sessionAction {
+	if !currentDestination {
+		if expired {
+			return forgetPreviousDestination
 		}
+		return leaveSession
 	}
-	return s.remote(reg, summary, ageFrom, locallyExpired, deferForWork)
+	if expired && !hasRemoteEvidence {
+		return forgetNeverPublished
+	}
+	return sweepRemote
 }
 
 // transcriptEmpty reports a transcript file that exists and holds nothing:
