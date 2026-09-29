@@ -65,7 +65,7 @@ func launchHandoffPrompt(record string, h archive.Handoff, target handoffTarget,
 	if target.filePath != "" {
 		fmt.Fprintf(&b, "For the complete filtered local record, run agent-archive handoff --file %q --harness %s --max-bytes 0.\n\n", target.filePath, h.Session.Harness)
 	} else {
-		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --normalized for the archived conversation if it has been published. It may lag this local session. For the complete filtered local record as it stands now, run agent-archive handoff %s --source local --max-bytes 0.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID)
+		fmt.Fprintf(&b, "If you need more context, run agent-archive show %s --harness %s --transcript for the archived conversation if it has been published. It may lag this local session. For the complete filtered local record as it stands now, run agent-archive handoff %s --source local --max-bytes 0.\n\n", h.Session.ArchiveSessionID, h.Session.Harness, h.Session.ArchiveSessionID)
 	}
 	b.WriteString(record)
 	return b.String()

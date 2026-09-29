@@ -10,7 +10,7 @@ import (
 
 // LinkedAvailability is a read-time observation, separate from the historical
 // link in a source bundle. Metadata availability does not verify child source
-// bytes; show CHILD --normalized performs that check on explicit selection.
+// bytes; show CHILD --transcript performs that check on explicit selection.
 type LinkedAvailability struct {
 	SessionID string      `json:"session_id"`
 	State     LinkedState `json:"state"`

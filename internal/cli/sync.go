@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/collector"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -21,6 +22,28 @@ func waitingSummary(waiting []string, next time.Time) string {
 		return fmt.Sprintf("%d waiting for the upload interval, ", len(waiting))
 	}
 	return fmt.Sprintf("%d waiting for the upload interval (next at %s), ", len(waiting), next.Local().Format("15:04"))
+}
+
+// subagentsSummary is sync's count of subagents whose transcripts are not
+// written yet, and of those the collector decided not to capture, or ""
+// when there are none. Neither is a failure: a waiting subagent is
+// registered once its transcript appears, and a rejection that lost
+// something is also among the failed sessions, so it is not counted again.
+func subagentsSummary(result collector.Result) string {
+	summary := ""
+	if n := len(result.WaitingSubagents); n > 0 {
+		summary += fmt.Sprintf("; %d subagent(s) waiting for transcripts", n)
+	}
+	notCaptured := 0
+	for id := range result.RejectedSubagents {
+		if _, failed := result.Errors[id]; !failed {
+			notCaptured++
+		}
+	}
+	if notCaptured > 0 {
+		summary += fmt.Sprintf("; %d subagent(s) not captured", notCaptured)
+	}
+	return summary
 }
 
 // runSyncCommand implements `agent-archive sync`: one explicit collection
@@ -54,8 +77,8 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 		}
 		return 1
 	}
-	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed.\n",
-		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors))
+	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed%s.\n",
+		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), subagentsSummary(result))
 	for id, sessionErr := range result.Errors {
 		terminal.Printf(stderr, "agent-archive: sync: %s: %v\n", id, sessionErr)
 	}
