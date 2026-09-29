@@ -474,7 +474,8 @@ Example: agent-archive uninstall
 Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
 
 ```text
-Usage: agent-archive purge plan [--mode unreferenced|old-filter] [--before-filter VERSION]
+Usage: agent-archive purge plan [--mode unreferenced|old-filter]
+       [--before-filter VERSION]
        agent-archive purge apply PLAN [--yes]
 
 Create a private five-minute deletion plan, then review its exact keys.
@@ -497,21 +498,27 @@ Apply rechecks remote metadata before each deletion and writes a resumable
 report next to the plan. A plan expires five minutes after creation.
 ```
 
-No flags.
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--yes` | no value | — |
 
 ## agent-archive purge plan
 
 Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
 
 ```text
-Usage: agent-archive purge plan [--mode unreferenced|old-filter] [--before-filter VERSION]
+Usage: agent-archive purge plan [--mode unreferenced|old-filter]
+       [--before-filter VERSION]
 
 Read metadata and list source objects without deleting anything. Old-filter
 mode selects only unreferenced sources whose filter version is below VERSION;
 both modes report still-current older-filter sessions separately.
 ```
 
-No flags.
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--before-filter` | a value | — |
+| `--mode` | a value | `unreferenced` |
 
 ## agent-archive version
 

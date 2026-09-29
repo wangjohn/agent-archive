@@ -19,8 +19,8 @@ import (
 )
 
 func runPurgeCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
-	fs := env.newCommandFlags("purge", stderr)
 	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		fs := env.newCommandFlags("purge", stderr)
 		if !fs.parseFlagsOnly(args) {
 			return 2
 		}

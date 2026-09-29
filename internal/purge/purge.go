@@ -271,9 +271,18 @@ func Apply(ctx context.Context, store storage.ObjectStore, plan Plan, report *Re
 			return fmt.Errorf("relist before %q: %w", key, err)
 		}
 		var listed *storage.Object
+		listedSources := make(map[string]bool)
+		for _, object := range objects {
+			if validSourceKey(object.Key) {
+				listedSources[object.Key] = true
+			}
+		}
 		for i := range objects {
 			if objects[i].Key == key {
 				listed = &objects[i]
+			}
+			if strings.HasPrefix(objects[i].Key, "sessions/") && strings.HasSuffix(objects[i].Key, "/metadata.json") && !validMetadataKey(objects[i].Key) {
+				return fmt.Errorf("unexpected metadata key %q", objects[i].Key)
 			}
 			if !validMetadataKey(objects[i].Key) {
 				continue
@@ -281,6 +290,12 @@ func Apply(ctx context.Context, store storage.ObjectStore, plan Plan, report *Re
 			meta, err := reader.ReadMetadata(ctx, store, objects[i].Key)
 			if err != nil {
 				return fmt.Errorf("recheck %q: %w", objects[i].Key, err)
+			}
+			if path.Dir(meta.SourceBundle.Key) != path.Dir(objects[i].Key) || !validSourceKey(meta.SourceBundle.Key) {
+				return fmt.Errorf("metadata %q has an invalid source reference", objects[i].Key)
+			}
+			if !listedSources[meta.SourceBundle.Key] {
+				return fmt.Errorf("metadata %q references a missing source", objects[i].Key)
 			}
 			if meta.SourceBundle.Key == key {
 				return fmt.Errorf("%q is now a current source", key)

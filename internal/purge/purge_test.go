@@ -186,3 +186,52 @@ func TestApplyRefusesChangedCandidate(t *testing.T) {
 		t.Fatal("deleted changed source")
 	}
 }
+
+func TestApplyFailsClosedOnNewAmbiguousMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		put  func(*testing.T, storage.ObjectStore)
+	}{
+		{
+			name: "unexpected sidecar path",
+			put: func(t *testing.T, store storage.ObjectStore) {
+				t.Helper()
+				if err := store.Put(context.Background(), "sessions/claude/other/metadata.json", []byte("{}")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "missing current source",
+			put: func(t *testing.T, store storage.ObjectStore) {
+				t.Helper()
+				if err := store.Delete(context.Background(), sourceA); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "invalid source reference",
+			put: func(t *testing.T, store storage.ObjectStore) {
+				t.Helper()
+				putMetadata(t, store, "sessions/claude/other/source."+strings.Repeat("a", 64)+".jsonl.gz", "10")
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, now := fixture(t)
+			plan, err := Inventory(context.Background(), store, "destination", "bucket", "", "unreferenced", "", now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.put(t, store)
+			report := Report{PlanDigest: plan.Digest, Remaining: []string{sourceB}}
+			if err := Apply(context.Background(), store, plan, &report, func(Report) error { return nil }); err == nil {
+				t.Fatal("applied plan despite ambiguous current metadata")
+			}
+			if _, err := store.Get(context.Background(), sourceB); err != nil {
+				t.Fatalf("candidate removed: %v", err)
+			}
+		})
+	}
+}
