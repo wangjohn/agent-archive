@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -214,13 +213,8 @@ func recordLaunch(t *testing.T, env *Env) *string {
 	t.Helper()
 	document := new(string)
 	env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	env.LaunchHandoff = func(_, _, prompt string, _ io.Reader, _, _ io.Writer) error {
-		const prefix = "Read the complete handoff document at "
-		path, err := strconv.Unquote(strings.SplitN(strings.TrimPrefix(prompt, prefix), ", then continue", 2)[0])
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(path)
+	env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
+		data, err := os.ReadFile(spec.HandoffFile)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -264,7 +258,7 @@ func TestHandoffToUsesTheCallingSession(t *testing.T) {
 func TestHandoffToIgnoresASessionVariableOfAnotherHarness(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched")
 		return nil
 	}
@@ -283,7 +277,7 @@ func TestHandoffToInCursorUsesLatestCursorSession(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
 	f.env.LookupEnv = agentEnv(map[string]string{"CURSOR_AGENT": "1"})
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched without a Cursor session")
 		return nil
 	}
@@ -360,7 +354,7 @@ func TestHandoffPickerAndToSkipSubagents(t *testing.T) {
 	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
 		t.Fatalf("code=%d stderr=%s; subagent listed:\n%s", code, errOut, out)
 	}
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched a subagent")
 		return nil
 	}
