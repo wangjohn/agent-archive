@@ -185,7 +185,7 @@ its transcript, Enter or b to go back, or q to quit.
   --normalized          Deprecated: the same as --transcript --json
 Example: agent-archive show SESSION_ID --transcript
 `,
-	"handoff": `Usage: agent-archive handoff [SESSION_ID|--latest|--file PATH] [options]
+	"handoff": `Usage: agent-archive handoff [SESSION_ID|TITLE|--latest|--file PATH] [options]
 
 Print a session as a prompt another coding agent can continue from. This
 prints conversation content, filtered as it is for the archive: injected
@@ -194,7 +194,12 @@ out. A session on this machine is read from its transcript now, without
 waiting for a sync; otherwise it is downloaded from the archive.
 With no selector on a terminal, pick a session from a numbered list of this
 Mac's sessions (including ones not yet uploaded) and archived ones, newest
-first. Without a terminal, give a SESSION_ID, --latest, or --file PATH.
+first. Without a terminal, give a SESSION_ID or TITLE, --latest, or
+--file PATH.
+A TITLE substring or short SESSION_ID matches as it does for show, in this
+Mac's sessions first (no network), then the archive's; an exact SESSION_ID
+wins. Several matches on a terminal open the picker on them; without one they
+are listed on stderr and the command exits 1, never guessing.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -219,6 +224,7 @@ first. Without a terminal, give a SESSION_ID, --latest, or --file PATH.
                         installed on this Mac. With no selector, hands off
                         the Claude Code, Codex, or Cursor session it runs in,
                         or picks one on a terminal
+Example: agent-archive handoff "fix the auth bug" --harness codex
 Example: agent-archive handoff
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"

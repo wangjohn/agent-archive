@@ -47,6 +47,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `handoff` takes a title as well as a session ID: `handoff "fix the auth
+  bug" --harness codex`. It matches as `show` does (a title substring or a
+  short session ID; an exact ID wins), in this Mac's sessions first, with no
+  network, then in the archive, reading titles only, never transcript
+  content. Several matches open the picker on them on a terminal; without
+  one they are listed on stderr with exit code 1 instead of guessing.
+  `handoff` no longer rejects an argument that is not shaped like a session
+  ID up front; one that matches nothing says so and points to `list`.
 - The `handoff` picker also lists this Mac's sessions, including ones not
   yet uploaded (marked so), newest activity first, and still works when the
   archive cannot be read. Sessions with no prompt yet are left out.

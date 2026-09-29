@@ -451,12 +451,15 @@ func TestHandoffLatestPassesOverSessionsWithoutPrompts(t *testing.T) {
 	}
 }
 
-func TestHandoffRejectsUnsafeSessionIDs(t *testing.T) {
+// The argument is a title as much as an ID, so an unsafe-looking one is only
+// text to match: it matches no title and never names a file or bucket key.
+func TestHandoffUnsafeSessionIDsMatchNothing(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, false)
+	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return nil, errors.New("offline") }
 	for _, id := range []string{"../registrations/x", "a/b", "..", "."} {
-		if _, errOut, code := runHandoff(t, f.env, id); code != 2 || !strings.Contains(errOut, "not an archive session ID") {
-			t.Errorf("%q: code=%d stderr=%s", id, code, errOut)
+		if out, errOut, code := runHandoff(t, f.env, id); code != 1 || out != "" || !strings.Contains(errOut, "no session matches") {
+			t.Errorf("%q: code=%d stdout=%q stderr=%s", id, code, out, errOut)
 		}
 	}
 }

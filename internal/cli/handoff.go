@@ -85,6 +85,11 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 			return code
 		}
 	}
+	if opts.sessionID != "" {
+		if code, done := resolveHandoffQuery(&opts, home, interactive, stdin, stdout, stderr, env); done {
+			return code
+		}
+	}
 	target, err := resolveHandoffTarget(opts, home, stderr, env)
 	if err != nil {
 		if errors.Is(err, errHandoffNotSetUp) {

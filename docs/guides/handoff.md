@@ -23,6 +23,9 @@ claude "$(agent-archive handoff --latest --harness codex)"
 # Continue in Codex what you started in Claude Code
 codex "$(agent-archive handoff --latest --harness claude)"
 
+# A session by words from its title, as `show` matches them
+agent-archive handoff "fix the auth bug" --harness codex
+
 # A specific session, from `list`, written to a file
 agent-archive handoff SESSION_ID --output /tmp/handoff.md
 
@@ -44,6 +47,29 @@ current, complete **filtered** local record. Neither command exposes
 unfiltered raw transcript data. The handoff uses the usual 120,000-byte
 default budget; `--max-bytes 0` includes all filtered content.
 
+## Naming a session by its title
+
+The argument is a session ID or a title. It matches the way `show` does: a
+substring of the title (the session's first prompt), case-insensitively, a
+short session ID, or an ID prefix; a session ID that matches exactly wins
+over a title that also contains it. `--harness` narrows the search.
+
+The search looks at this Mac's sessions first, which needs no network and no
+upload (it reads each recently active session's title, the first prompt, and
+nothing deeper in the conversation), and goes on to the archive's sessions
+only when none of this Mac's match, so an archive that cannot be reached
+does not fail a title this Mac can answer. `--source local` or `--source
+archive` limits it to one. Only the 50 most recently active sessions on this
+Mac are searched by title; an older one that was uploaded is found in the
+archive.
+
+One match is handed off. Several are never guessed between: on a terminal the
+picker opens with just those sessions; without a terminal (a script, or an
+agent running the command) they are printed to standard error, each with its
+short ID, app, project, age, and title, and the command exits with code 1, so
+the caller can ask which and run it again with an ID. With none, the message
+points to `agent-archive list`.
+
 ## Where the session comes from
 
 With no session selector, `handoff` opens a numbered session picker when
@@ -53,7 +79,7 @@ first; a session that is both appears once. Sessions with no prompt yet are
 left out, and `--harness` narrows the list. When the archive cannot be read
 (offline, say), the picker lists this Mac's sessions and says why archived
 ones are missing. Quit with `q` without producing a handoff. In a script or
-pipeline, pass a session ID, `--latest`, or `--file`.
+pipeline, pass a session ID or title, `--latest`, or `--file`.
 
 With `--to` and no selector, run from inside an agent, `handoff` hands off
 the session it is running in without asking: the one Claude Code names in
