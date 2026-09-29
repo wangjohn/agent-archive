@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/agentcommands"
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/config"
 )
 
@@ -39,7 +39,7 @@ func TestSetupInstallsTheHandoffSkillUnderTheSandboxedHome(t *testing.T) {
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 	cfg, _, err := config.Load(home)
 	must(t, err)
-	files := agentcommands.Files(userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable, env.installation(home, userHome).commandDataHome())
+	files := agentskills.Files(userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable, env.installation(home, userHome).commandDataHome())
 	if len(files) != 2 {
 		t.Fatalf("files = %+v", files)
 	}
@@ -165,10 +165,10 @@ func TestFailedSetupTakesBackTheHandoffSkill(t *testing.T) {
 	}
 }
 
-// TestAgentCommandsSpelling pins the status --json key.
-func TestAgentCommandsSpelling(t *testing.T) {
+// TestAgentSkillsSpelling pins the status --json key.
+func TestAgentSkillsSpelling(t *testing.T) {
 	t.Parallel()
-	data, err := json.Marshal(statusView{AgentCommands: []string{"/p"}})
+	data, err := json.Marshal(statusView{AgentSkills: []string{"/p"}})
 	must(t, err)
 	if !strings.Contains(string(data), `"agent_commands":["/p"]`) {
 		t.Errorf("status = %s", data)

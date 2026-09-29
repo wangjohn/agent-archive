@@ -1,4 +1,4 @@
-// Package agentcommands is the in-agent commands setup installs: a
+// Package agentskills is the in-agent commands setup installs: a
 // `handoff` skill that runs `agent-archive handoff --to <agent>` from inside
 // Claude Code, Codex, or Cursor. It says what each file holds (Files) and
 // plans writing and removing them as setup-journal changes (PlanInstall,
@@ -6,7 +6,7 @@
 // setup's by its content alone (a marker line), and an installation's by
 // the data directory its command names; anything else at the path is left
 // alone.
-package agentcommands
+package agentskills
 
 import (
 	"errors"

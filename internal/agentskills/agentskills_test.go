@@ -1,4 +1,4 @@
-package agentcommands
+package agentskills
 
 import (
 	"os"

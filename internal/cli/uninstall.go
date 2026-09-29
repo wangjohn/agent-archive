@@ -13,7 +13,7 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/wangjohn/agent-archive/internal/agentcommands"
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -142,7 +142,7 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		}
 		return err
 	}
-	agentcommands.RemoveEmptyDirs(userHome, claudeConfigDir(hookFiles))
+	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(hookFiles))
 	for _, plist := range plists {
 		if kept[plist] {
 			continue
@@ -401,7 +401,7 @@ func planUninstallFiles(userHome string, files hooks.Files, in installation, ins
 	if changes, skipped, err = planUninstallHooks(files, legacyHookFiles(userHome), in.owner(), installed); err != nil {
 		return nil, nil, err
 	}
-	removals, kept, err := agentcommands.PlanRemoval(userHome, claudeConfigDir(files), in.commandDataHome())
+	removals, kept, err := agentskills.PlanRemoval(userHome, claudeConfigDir(files), in.commandDataHome())
 	if err != nil {
 		return nil, nil, err
 	}

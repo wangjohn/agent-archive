@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/agentcommands"
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -637,7 +637,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
-	printAgentCommands(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome())
+	printAgentSkills(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome())
 	// A paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
@@ -646,11 +646,11 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	return nil
 }
 
-// printAgentCommands says in one line where setup installed the /handoff
+// printAgentSkills says in one line where setup installed the /handoff
 // command, and names each path it left alone because it is not setup's.
-func printAgentCommands(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
+func printAgentSkills(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
 	var installed []string
-	for _, f := range agentcommands.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome) {
+	for _, f := range agentskills.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome) {
 		if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
 			installed = append(installed, displayPath(f.Path, userHome))
 			continue
