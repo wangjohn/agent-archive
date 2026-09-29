@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
@@ -111,8 +112,12 @@ func TestClockThatAgreesWithStorageExpiresAsBefore(t *testing.T) {
 	if err != nil || len(result.Errors) != 0 || result.Held != nil || len(result.DeletedSessions) != 1 {
 		t.Fatalf("%#v %v", result, err)
 	}
-	if n := objectCount(t, store); n != 0 {
-		t.Fatalf("%d object(s) left, the clock probe's included", n)
+	objects, err := store.List(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 1 || objects[0].Key != listingindex.ReadyKey {
+		t.Fatalf("unexpected objects after expiry: %+v", objects)
 	}
 }
 

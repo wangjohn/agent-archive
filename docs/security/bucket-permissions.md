@@ -4,7 +4,8 @@ agent-archive needs to write, read, list, and delete objects under one prefix
 of one bucket. Give it credentials that can do that and nothing else. Every
 key it touches is under the prefix you enter in setup (the "folder inside the
 bucket"): session objects under `<prefix>/sessions/`, and a short-lived
-connection-test object under `<prefix>/.setup-test/`. See
+connection-test object under `<prefix>/.setup-test/`, and listing hints under
+`<prefix>/listing/`. See
 [bucket layout](../reference/bucket-layout.md).
 
 Keep the bucket private. agent-archive never makes objects public, never

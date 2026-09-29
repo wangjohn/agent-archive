@@ -39,6 +39,20 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// PageLister lists one lexicographically ordered page. Continuation is an
+// opaque token supplied by the preceding page; an empty Next means done.
+// Keeping this as an extension lets older ObjectStore implementations retain
+// their existing all-results contract.
+type PageLister interface {
+	ListPage(ctx context.Context, prefix, continuation string, limit int32) (ObjectPage, error)
+}
+
+// ObjectPage contains one page of object keys and an optional continuation token.
+type ObjectPage struct {
+	Objects []Object
+	Next    string
+}
+
 // ObjectKeyer is implemented by stores that compose a full object key from a
 // relative archive key, such as S3Store applying its configured bucket
 // prefix. VerifyAccess uses it to report the exact object key in errors so a
@@ -174,8 +188,8 @@ func hasDotComponent(value string) bool {
 	return false
 }
 
-// PutSourceThenMetadata implements source-first publication. The source is
-// uploaded and verified in storage before metadata is published. Retry
+// PutSourceThenMetadataIndexed implements source-first publication. The
+// source is uploaded and verified in storage before metadata is published. Retry
 // attempts reuse the exact input bytes, so a retry cannot produce another
 // source hash or timestamp.
 //
@@ -188,7 +202,10 @@ func hasDotComponent(value string) bool {
 // matching checksum and size therefore prove that key holds exactly these
 // bytes, as a download would, and a HEAD needs the same read permission as a
 // GET. A store that reports no checksum is read back and hashed instead.
-func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, metadataKey string, source, metadata []byte, retry RetryPolicy) error {
+// beforeMetadata runs after source verification and before the authoritative
+// sidecar. A failed index write leaves no new sidecar; a failed sidecar write
+// leaves only a harmless stale index entry.
+func PutSourceThenMetadataIndexed(ctx context.Context, store ObjectStore, sourceKey, metadataKey string, source, metadata []byte, retry RetryPolicy, beforeMetadata func() error) error {
 	if sourceKey == "" || metadataKey == "" {
 		return errors.New("source and metadata keys are required")
 	}
@@ -212,13 +229,18 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 	}); err != nil {
 		return fmt.Errorf("publish source %q: %w", sourceKey, err)
 	}
+	if beforeMetadata != nil {
+		if err := beforeMetadata(); err != nil {
+			return fmt.Errorf("publish listing index: %w", err)
+		}
+	}
 	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
 		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)
 	}
 	return nil
 }
 
-// PutMetadataForSource publishes metadata that points at a source object
+// PutMetadataForSourceIndexed publishes metadata that points at a source object
 // already in storage, for a caller that no longer has the source's bytes. The
 // source is read back and checked against sourceSHA256 first, so metadata
 // never points at a missing or different object: a missing source is
@@ -227,7 +249,9 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 // A store that can describe an object (ObjectStatter) and reports its SHA-256
 // is checked that way, without a download; otherwise the source is read back.
 // sourceSize, when positive, must match too.
-func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256 string, sourceSize int, metadataKey string, metadata []byte, retry RetryPolicy) error {
+// beforeMetadata can write an immutable index entry immediately before the
+// sidecar replacement.
+func PutMetadataForSourceIndexed(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256 string, sourceSize int, metadataKey string, metadata []byte, retry RetryPolicy, beforeMetadata func() error) error {
 	if sourceKey == "" || metadataKey == "" || sourceSHA256 == "" {
 		return errors.New("source key, source checksum, and metadata key are required")
 	}
@@ -238,6 +262,11 @@ func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sou
 		return verifyStoredObject(ctx, store, sourceKey, sourceSHA256, sourceSize)
 	}); err != nil {
 		return fmt.Errorf("verify source %q: %w", sourceKey, err)
+	}
+	if beforeMetadata != nil {
+		if err := beforeMetadata(); err != nil {
+			return fmt.Errorf("publish listing index: %w", err)
+		}
 	}
 	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
 		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)

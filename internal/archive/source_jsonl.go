@@ -168,18 +168,44 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 	if options.MaxUncompressedBytes > 0 {
 		plain = counter
 	}
+	scanner, unterminated := sourceScanner(plain, maxLine)
+	state := sourceDecodeState{}
+	for scanner.Scan() {
+		line, err := state.decodeLine(scanner.Bytes(), *unterminated, scanner.Err())
+		if err != nil {
+			return err
+		}
+		if err := fn(line); err != nil {
+			return err
+		}
+	}
+	if err := sourceScanError(scanner.Err(), state.lineNo+1, maxLine); err != nil {
+		return err
+	}
+	if state.header == nil {
+		return errors.New("source is empty: no header line")
+	}
+	if state.seen != state.header.Counts {
+		return fmt.Errorf("source line counts %+v do not match its header's %+v", state.seen, state.header.Counts)
+	}
+	return nil
+}
+
+// sourceScanner keeps the wire format's required newline visible to the
+// decoder while limiting the buffered line to the configured size.
+func sourceScanner(plain io.Reader, maxLine int) (*bufio.Scanner, *bool) {
 	scanner := bufio.NewScanner(plain)
 	// Every line the encoder writes ends with a newline. A final line
 	// without one is still handed over, flagged, so that a schema-1 bundle
 	// (one JSON document, no trailing newline) is reported as the
 	// unsupported version it is, and anything else as a truncated stream.
-	unterminated := false
+	unterminated := new(bool)
 	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
 		if i := bytes.IndexByte(data, '\n'); i >= 0 {
 			return i + 1, data[:i], nil
 		}
 		if atEOF && len(data) > 0 {
-			unterminated = true
+			*unterminated = true
 			return len(data), data, nil
 		}
 		return 0, nil, nil
@@ -189,120 +215,168 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 	// exactly maxLine bytes (the largest the encoder writes) needs one byte
 	// more than the cap; one of maxLine+1 bytes still fails.
 	scanner.Buffer(make([]byte, 0, initial), maxLine+1)
+	return scanner, unterminated
+}
 
-	var header *SourceHeader
-	var seen SourceCounts
-	stage := 0 // index into the kind order below
-	order := map[SourceLineKind]int{SourceLineNativeRecord: 1, SourceLineNativeText: 2, SourceLineSupplementalEvidence: 3}
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		raw := scanner.Bytes()
-		var probe struct {
-			Kind          SourceLineKind `json:"kind"`
-			SchemaVersion *int           `json:"schema_version"`
-		}
-		if unterminated {
-			if lineNo == 1 && json.Unmarshal(raw, &probe) == nil && probe.Kind == "" && probe.SchemaVersion != nil {
-				return fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
-			}
-			switch err := scanner.Err(); {
-			case errors.Is(err, ErrSourceTooLarge):
-				return err
-			case err != nil:
-				return fmt.Errorf("source is truncated: %w", err)
-			}
-			return fmt.Errorf("source is truncated: %w", errUnterminatedLine)
-		}
-		if trimmed := bytes.TrimLeft(raw, " \t\r"); len(trimmed) == 0 || trimmed[0] != '{' {
-			return fmt.Errorf("source line %d is not a JSON object", lineNo)
-		}
-		if err := json.Unmarshal(raw, &probe); err != nil {
-			if lineNo == 1 {
-				return fmt.Errorf("source line 1 is not a JSONL header (a schema 1 bundle is a single JSON document and is not supported): %w", err)
-			}
-			return fmt.Errorf("source line %d is not valid JSON: %w", lineNo, err)
-		}
-		if lineNo == 1 {
-			if probe.Kind != SourceLineHeader {
-				if probe.Kind == "" && probe.SchemaVersion != nil {
-					return fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
-				}
-				return fmt.Errorf("source line 1 is %q, but the header must come first", probe.Kind)
-			}
-			var decoded SourceHeader
-			if err := json.Unmarshal(raw, &decoded); err != nil {
-				return fmt.Errorf("decode source header: %w", err)
-			}
-			if decoded.SchemaVersion != SourceSchemaVersion {
-				return fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", decoded.SchemaVersion, SourceSchemaVersion)
-			}
-			if decoded.Counts.NativeRecords < 0 || decoded.Counts.NativeText < 0 || decoded.Counts.SupplementalEvidence < 0 {
-				return errors.New("source header has negative counts")
-			}
-			header = &decoded
-			if err := fn(SourceLine{Kind: SourceLineHeader, Header: header}); err != nil {
-				return err
-			}
-			continue
-		}
-		if probe.Kind == SourceLineHeader {
-			return fmt.Errorf("source line %d is a second header", lineNo)
-		}
-		position, known := order[probe.Kind]
-		if !known {
-			return fmt.Errorf("source line %d has unknown kind %q", lineNo, probe.Kind)
-		}
-		if position < stage {
-			return fmt.Errorf("source line %d (%s) is out of order", lineNo, probe.Kind)
-		}
-		stage = position
-		line := SourceLine{Kind: probe.Kind}
-		switch probe.Kind {
-		case SourceLineHeader:
-			// A header after the first line was rejected above.
-		case SourceLineNativeRecord:
-			var decoded nativeRecordLine
-			if err := json.Unmarshal(raw, &decoded); err != nil {
-				return fmt.Errorf("decode source line %d: %w", lineNo, err)
-			}
-			if len(decoded.Record) == 0 {
-				return fmt.Errorf("source line %d has an empty native record", lineNo)
-			}
-			seen.NativeRecords++
-			if seen.NativeRecords > header.Counts.NativeRecords {
-				return fmt.Errorf("source has more native records than its header's %d", header.Counts.NativeRecords)
-			}
-			line.NativeRecord = decoded.Record
-		case SourceLineNativeText:
-			var decoded nativeTextLine
-			if err := json.Unmarshal(raw, &decoded); err != nil {
-				return fmt.Errorf("decode source line %d: %w", lineNo, err)
-			}
-			seen.NativeText++
-			if seen.NativeText > header.Counts.NativeText {
-				return fmt.Errorf("source has more native text lines than its header's %d", header.Counts.NativeText)
-			}
-			line.NativeText = &TextTranscript{Format: decoded.Format, Content: decoded.Content}
-		case SourceLineSupplementalEvidence:
-			var decoded evidenceLine
-			if err := json.Unmarshal(raw, &decoded); err != nil {
-				return fmt.Errorf("decode source line %d: %w", lineNo, err)
-			}
-			seen.SupplementalEvidence++
-			if seen.SupplementalEvidence > header.Counts.SupplementalEvidence {
-				return fmt.Errorf("source has more supplemental evidence than its header's %d", header.Counts.SupplementalEvidence)
-			}
-			line.Evidence = &decoded.Evidence
-		}
-		if err := fn(line); err != nil {
-			return err
-		}
+type sourceProbe struct {
+	Kind          SourceLineKind `json:"kind"`
+	SchemaVersion *int           `json:"schema_version"`
+}
+
+type sourceDecodeState struct {
+	header *SourceHeader
+	seen   SourceCounts
+	stage  int
+	lineNo int
+}
+
+func (s *sourceDecodeState) decodeLine(raw []byte, unterminated bool, scanErr error) (SourceLine, error) {
+	s.lineNo++
+	if unterminated {
+		return SourceLine{}, sourceUnterminatedError(raw, s.lineNo, scanErr)
 	}
-	if err := scanner.Err(); err != nil {
+	probe, err := sourceLineProbe(raw, s.lineNo)
+	if err != nil {
+		return SourceLine{}, err
+	}
+	if s.lineNo == 1 {
+		return s.decodeHeader(raw, probe)
+	}
+	return s.decodeBody(raw, probe.Kind)
+}
+
+func sourceUnterminatedError(raw []byte, lineNo int, scanErr error) error {
+	var probe sourceProbe
+	if lineNo == 1 && json.Unmarshal(raw, &probe) == nil && probe.Kind == "" && probe.SchemaVersion != nil {
+		return fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
+	}
+	switch {
+	case errors.Is(scanErr, ErrSourceTooLarge):
+		return scanErr
+	case scanErr != nil:
+		return fmt.Errorf("source is truncated: %w", scanErr)
+	}
+	return fmt.Errorf("source is truncated: %w", errUnterminatedLine)
+}
+
+func sourceLineProbe(raw []byte, lineNo int) (sourceProbe, error) {
+	var probe sourceProbe
+	if trimmed := bytes.TrimLeft(raw, " \t\r"); len(trimmed) == 0 || trimmed[0] != '{' {
+		return probe, fmt.Errorf("source line %d is not a JSON object", lineNo)
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		if lineNo == 1 {
+			return probe, fmt.Errorf("source line 1 is not a JSONL header (a schema 1 bundle is a single JSON document and is not supported): %w", err)
+		}
+		return probe, fmt.Errorf("source line %d is not valid JSON: %w", lineNo, err)
+	}
+	return probe, nil
+}
+
+func (s *sourceDecodeState) decodeHeader(raw []byte, probe sourceProbe) (SourceLine, error) {
+	if probe.Kind != SourceLineHeader {
+		if probe.Kind == "" && probe.SchemaVersion != nil {
+			return SourceLine{}, fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", *probe.SchemaVersion, SourceSchemaVersion)
+		}
+		return SourceLine{}, fmt.Errorf("source line 1 is %q, but the header must come first", probe.Kind)
+	}
+	var decoded SourceHeader
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return SourceLine{}, fmt.Errorf("decode source header: %w", err)
+	}
+	if decoded.SchemaVersion != SourceSchemaVersion {
+		return SourceLine{}, fmt.Errorf("unsupported source schema version %d; this build reads schema %d only", decoded.SchemaVersion, SourceSchemaVersion)
+	}
+	if decoded.Counts.NativeRecords < 0 || decoded.Counts.NativeText < 0 || decoded.Counts.SupplementalEvidence < 0 {
+		return SourceLine{}, errors.New("source header has negative counts")
+	}
+	s.header = &decoded
+	return SourceLine{Kind: SourceLineHeader, Header: s.header}, nil
+}
+
+func (s *sourceDecodeState) decodeBody(raw []byte, kind SourceLineKind) (SourceLine, error) {
+	if kind == SourceLineHeader {
+		return SourceLine{}, fmt.Errorf("source line %d is a second header", s.lineNo)
+	}
+	position := sourceKindPosition(kind)
+	if position == 0 {
+		return SourceLine{}, fmt.Errorf("source line %d has unknown kind %q", s.lineNo, kind)
+	}
+	if position < s.stage {
+		return SourceLine{}, fmt.Errorf("source line %d (%s) is out of order", s.lineNo, kind)
+	}
+	s.stage = position
+	switch kind {
+	case SourceLineHeader:
+		return SourceLine{}, fmt.Errorf("source line %d is a second header", s.lineNo)
+	case SourceLineNativeRecord:
+		return s.decodeNativeRecord(raw)
+	case SourceLineNativeText:
+		return s.decodeNativeText(raw)
+	case SourceLineSupplementalEvidence:
+		return s.decodeEvidence(raw)
+	}
+	return SourceLine{}, fmt.Errorf("source line %d has unknown kind %q", s.lineNo, kind)
+}
+
+func sourceKindPosition(kind SourceLineKind) int {
+	switch kind {
+	case SourceLineHeader:
+		return 0
+	case SourceLineNativeRecord:
+		return 1
+	case SourceLineNativeText:
+		return 2
+	case SourceLineSupplementalEvidence:
+		return 3
+	}
+	return 0
+}
+
+func (s *sourceDecodeState) decodeNativeRecord(raw []byte) (SourceLine, error) {
+	var decoded nativeRecordLine
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return SourceLine{}, fmt.Errorf("decode source line %d: %w", s.lineNo, err)
+	}
+	if len(decoded.Record) == 0 {
+		return SourceLine{}, fmt.Errorf("source line %d has an empty native record", s.lineNo)
+	}
+	s.seen.NativeRecords++
+	if s.seen.NativeRecords > s.header.Counts.NativeRecords {
+		return SourceLine{}, fmt.Errorf("source has more native records than its header's %d", s.header.Counts.NativeRecords)
+	}
+	return SourceLine{Kind: SourceLineNativeRecord, NativeRecord: decoded.Record}, nil
+}
+
+func (s *sourceDecodeState) decodeNativeText(raw []byte) (SourceLine, error) {
+	var decoded nativeTextLine
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return SourceLine{}, fmt.Errorf("decode source line %d: %w", s.lineNo, err)
+	}
+	s.seen.NativeText++
+	if s.seen.NativeText > s.header.Counts.NativeText {
+		return SourceLine{}, fmt.Errorf("source has more native text lines than its header's %d", s.header.Counts.NativeText)
+	}
+	return SourceLine{Kind: SourceLineNativeText, NativeText: &TextTranscript{Format: decoded.Format, Content: decoded.Content}}, nil
+}
+
+func (s *sourceDecodeState) decodeEvidence(raw []byte) (SourceLine, error) {
+	var decoded evidenceLine
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return SourceLine{}, fmt.Errorf("decode source line %d: %w", s.lineNo, err)
+	}
+	s.seen.SupplementalEvidence++
+	if s.seen.SupplementalEvidence > s.header.Counts.SupplementalEvidence {
+		return SourceLine{}, fmt.Errorf("source has more supplemental evidence than its header's %d", s.header.Counts.SupplementalEvidence)
+	}
+	return SourceLine{Kind: SourceLineSupplementalEvidence, Evidence: &decoded.Evidence}, nil
+}
+
+func sourceScanError(err error, lineNo, maxLine int) error {
+	if err != nil {
 		switch {
 		case errors.Is(err, bufio.ErrTooLong):
-			return fmt.Errorf("source line %d exceeds the %d byte line limit", lineNo+1, maxLine)
+			return fmt.Errorf("source line %d exceeds the %d byte line limit", lineNo, maxLine)
 		case errors.Is(err, ErrSourceTooLarge):
 			return err
 		case errors.Is(err, io.ErrUnexpectedEOF):
@@ -313,12 +387,6 @@ func DecodeSource(compressed io.Reader, options DecodeOptions, fn func(SourceLin
 			return fmt.Errorf("source has trailing bytes after its gzip stream: %w", err)
 		}
 		return fmt.Errorf("read source: %w", err)
-	}
-	if header == nil {
-		return errors.New("source is empty: no header line")
-	}
-	if seen != header.Counts {
-		return fmt.Errorf("source line counts %+v do not match its header's %+v", seen, header.Counts)
 	}
 	return nil
 }

@@ -93,7 +93,7 @@ func TestPutMetadataForSourceChecksTheRecordedSource(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				err := storage.PutMetadataForSource(context.Background(), store, "source", test.sha, test.size, "metadata.json", []byte(`{}`), storage.RetryPolicy{MaxAttempts: 1})
+				err := storage.PutMetadataForSourceIndexed(context.Background(), store, "source", test.sha, test.size, "metadata.json", []byte(`{}`), storage.RetryPolicy{MaxAttempts: 1}, nil)
 				if !errors.Is(err, test.wantErr) || (test.wantErr == nil) != (err == nil) {
 					t.Fatalf("err = %v, want %v", err, test.wantErr)
 				}
@@ -106,6 +106,41 @@ func TestPutMetadataForSourceChecksTheRecordedSource(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestIndexedPublicationAbortsBeforeMetadataWhenIndexWriteFails(t *testing.T) {
+	ctx := context.Background()
+	store := storagetest.NewMemoryStore()
+	source := []byte("source bytes")
+	metadata := []byte("metadata bytes")
+	sum := storage.SHA256Hex(source)
+	indexErr := errors.New("index unavailable")
+	callback := func() error {
+		if got, err := store.Get(ctx, "source"); err != nil || string(got) != string(source) {
+			t.Fatalf("source not verified before index callback: %q, %v", got, err)
+		}
+		return indexErr
+	}
+	for _, publish := range []struct {
+		name string
+		run  func() error
+	}{
+		{"source and metadata", func() error {
+			return storage.PutSourceThenMetadataIndexed(ctx, store, "source", "metadata", source, metadata, storage.RetryPolicy{MaxAttempts: 1}, callback)
+		}},
+		{"metadata only", func() error {
+			return storage.PutMetadataForSourceIndexed(ctx, store, "source", sum, len(source), "metadata", metadata, storage.RetryPolicy{MaxAttempts: 1}, callback)
+		}},
+	} {
+		t.Run(publish.name, func(t *testing.T) {
+			if err := publish.run(); !errors.Is(err, indexErr) {
+				t.Fatalf("error = %v, want index failure", err)
+			}
+			if _, err := store.Get(ctx, "metadata"); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatalf("metadata published after index failure: %v", err)
+			}
+		})
 	}
 }
 
@@ -145,13 +180,13 @@ func TestSourceFirstPublicationReusesVerifiedSource(t *testing.T) {
 	source := []byte(`{"schema_version":1}`)
 	metadata := []byte(`{"source":"source.abc"}`)
 	key := "sessions/codex/id/source." + storage.SHA256Hex(source) + ".jsonl.gz"
-	if err := storage.PutSourceThenMetadata(context.Background(), store, key, "sessions/codex/id/metadata.json", source, metadata, storage.RetryPolicy{MaxAttempts: 1}); err != nil {
+	if err := storage.PutSourceThenMetadataIndexed(context.Background(), store, key, "sessions/codex/id/metadata.json", source, metadata, storage.RetryPolicy{MaxAttempts: 1}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Put(context.Background(), "sessions/codex/id/metadata.json", []byte("old")); err != nil {
 		t.Fatal(err)
 	}
-	if err := storage.PutSourceThenMetadata(context.Background(), store, key, "sessions/codex/id/metadata.json", source, metadata, storage.RetryPolicy{MaxAttempts: 1}); err != nil {
+	if err := storage.PutSourceThenMetadataIndexed(context.Background(), store, key, "sessions/codex/id/metadata.json", source, metadata, storage.RetryPolicy{MaxAttempts: 1}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get(context.Background(), "sessions/codex/id/metadata.json")
@@ -178,7 +213,7 @@ func (s *flakyStore) Put(ctx context.Context, key string, data []byte) error {
 
 func TestSourcePublicationRetriesAndPublishesMetadataLast(t *testing.T) {
 	store := &flakyStore{MemoryStore: storagetest.NewMemoryStore(), failPuts: 2}
-	err := storage.PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 3, InitialWait: time.Nanosecond, MaxWait: time.Nanosecond})
+	err := storage.PutSourceThenMetadataIndexed(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 3, InitialWait: time.Nanosecond, MaxWait: time.Nanosecond}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +290,7 @@ func TestSourcePublicationDoesNotRetryChecksumMismatch(t *testing.T) {
 	if err := store.Put(context.Background(), "source.hash", []byte("other bytes")); err != nil {
 		t.Fatal(err)
 	}
-	err := storage.PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 3, InitialWait: time.Nanosecond, MaxWait: time.Nanosecond})
+	err := storage.PutSourceThenMetadataIndexed(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 3, InitialWait: time.Nanosecond, MaxWait: time.Nanosecond}, nil)
 	if !errors.Is(err, storage.ErrChecksumMismatch) || store.gets+store.stats != 1 {
 		t.Fatalf("gets = %d, stats = %d, err = %v", store.gets, store.stats, err)
 	}
@@ -270,7 +305,7 @@ func TestSourcePublicationVerifiesWithoutDownloading(t *testing.T) {
 	source := []byte("source bytes")
 	key := "sessions/codex/id/source." + storage.SHA256Hex(source) + ".jsonl.gz"
 	for range 2 {
-		if err := storage.PutSourceThenMetadata(context.Background(), store, key, "sessions/codex/id/metadata.json", source, []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1}); err != nil {
+		if err := storage.PutSourceThenMetadataIndexed(context.Background(), store, key, "sessions/codex/id/metadata.json", source, []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -321,7 +356,7 @@ func (s corruptingStore) Stat(ctx context.Context, key string) (storage.ObjectIn
 // fails the publication, and no metadata points at it.
 func TestSourcePublicationReadsBackWhenStoreReportsNoChecksum(t *testing.T) {
 	store := noChecksumStore{&countingGetStore{MemoryStore: storagetest.NewMemoryStore()}}
-	if err := storage.PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1}); err != nil {
+	if err := storage.PutSourceThenMetadataIndexed(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if store.gets != 1 {
@@ -329,7 +364,7 @@ func TestSourcePublicationReadsBackWhenStoreReportsNoChecksum(t *testing.T) {
 	}
 	for _, hide := range []bool{false, true} {
 		store := corruptingStore{MemoryStore: storagetest.NewMemoryStore(), hideChecksum: hide}
-		err := storage.PutSourceThenMetadata(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1})
+		err := storage.PutSourceThenMetadataIndexed(context.Background(), store, "source.hash", "metadata.json", []byte("source"), []byte("metadata"), storage.RetryPolicy{MaxAttempts: 1}, nil)
 		if !errors.Is(err, storage.ErrChecksumMismatch) {
 			t.Errorf("hide checksum %t: err = %v, want a checksum mismatch", hide, err)
 		}

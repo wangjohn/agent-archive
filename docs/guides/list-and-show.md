@@ -24,11 +24,13 @@ agent-archive list --skill review --skill-usage available
 agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 agent-archive list --complete          # complete parser coverage, no capture gaps
 
-# For scripts: {"schema_version": 2, "sessions": [...], "limit", "returned",
-# "total_matched"} (and "truncated" when --limit cut the list). Never paged
+# For scripts: {"schema_version": 4, "sessions": [...], "limit", "returned",
+# "total_matched_known"}. "total_matched" is omitted when the indexed
+# listing stops after the limit. Never paged
 # or interactive.
 agent-archive list --json
 agent-archive list --json --limit 0
+agent-archive list --rebuild-index  # one-time full scan for older archives
 
 # One session's metadata sidecar, as JSON. With no SESSION_ID on a terminal,
 # the same interactive picker as list. A title substring also works.
@@ -110,9 +112,10 @@ filesystem.
 `--skill-sha256` filters metadata only and distinguishes sessions using
 different bytes under the same skill name. No parser version records both a
 complete eligible-skill set and complete use observation, so non-use is never
-proven: `--skill-usage eligible_no_use` is accepted, prints that explanation,
-and exits 0 without listing anything. Sidecars from parsers before 0.4.0 (or
-with a custom parser version) are never counted as observed non-use.
+proven. `--skill-usage eligible_no_use` is unsupported and exits with a usage
+error on stderr (code `2`) and no result on stdout. Use `used` or `available`
+for supported skill queries. Sidecars from parsers before 0.4.0 (or with a
+custom parser version) are never counted as observed non-use.
 
 ## Feedback
 
