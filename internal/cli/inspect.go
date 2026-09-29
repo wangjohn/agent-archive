@@ -409,22 +409,11 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		if *normalized {
 			return fs.usageError("--normalized needs a SESSION_ID; pick a session with show, then run show SESSION_ID --normalized")
 		}
-		stopBrowse := startActivity(stdout, "Finding sessions…")
-		shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: *harness}, limit: defaultListLimit}, stderr)
-		stopBrowse()
-		if err != nil {
-			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
-			return 1
+		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, *harness, "show", "show")
+		if code != 0 || !selected {
+			return code
 		}
-		if totalMatched == 0 {
-			terminal.Println(stdout, "No archived sessions match.")
-			return 0
-		}
-		format := listFormatOptions{
-			Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout),
-			GroupByProject: true,
-		}
-		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, false)
+		return showSessionMetadata(stdout, stderr, store, row.SessionID, row.HarnessKey)
 	}
 
 	ctx := context.Background()

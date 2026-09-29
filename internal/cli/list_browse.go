@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/reader"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -24,7 +25,7 @@ func browseInteractive(env sessionBrowseDependencies, stdin io.Reader, stdout io
 // when false (bare show), it shows one selection and returns.
 func runSessionBrowser(stdin io.Reader, stdout, stderr io.Writer, store storage.ObjectStore, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, loop bool) int {
 	for {
-		row, ok, code := pickBrowseSession(stdin, stdout, stderr, sessions, totalMatched, truncated, format)
+		row, ok, code := pickBrowseSession(stdin, stdout, stderr, sessions, totalMatched, truncated, format, "list", "show")
 		if code != 0 {
 			return code
 		}
@@ -42,11 +43,11 @@ func runSessionBrowser(stdin io.Reader, stdout, stderr io.Writer, store storage.
 
 // pickBrowseSession prints the numbered table once and prompts until the user
 // selects a row (ok=true), quits (ok=false, code=0), or an error occurs.
-func pickBrowseSession(stdin io.Reader, stdout, stderr io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions) (row listRow, ok bool, code int) {
+func pickBrowseSession(stdin io.Reader, stdout, stderr io.Writer, sessions []archive.Metadata, totalMatched int, truncated bool, format listFormatOptions, command, action string) (row listRow, ok bool, code int) {
 	format.Numbered = true
 	rows := formatSessionRows(sessions, format)
 	if err := printSessionTable(stdout, rows, format); err != nil {
-		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
+		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
 		return listRow{}, false, 1
 	}
 	printListFooter(stdout, len(sessions), totalMatched, truncated)
@@ -56,7 +57,7 @@ func pickBrowseSession(stdin io.Reader, stdout, stderr io.Writer, sessions []arc
 	p := newPrompter(stdin, stdout)
 	for {
 		terminal.Println(stdout)
-		answer, err := p.line(p.promptText("Enter number (or short SESSION_ID) to show, or q to quit", true, nil, -1, ": "))
+		answer, err := p.line(p.promptText("Enter number (or short SESSION_ID) to "+action+", or q to quit", true, nil, -1, ": "))
 		if err != nil {
 			if strings.Contains(err.Error(), "no more input") {
 				return listRow{}, false, 0
@@ -132,13 +133,31 @@ func showSessionMetadata(stdout, stderr io.Writer, store storage.ObjectStore, se
 }
 
 // loadSessionsForBrowse lists metadata with the same filters list uses, for
-// bare interactive show.
-func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer) ([]archive.Metadata, int, bool, error) {
-	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "show")})
+// interactive show and handoff.
+func loadSessionsForBrowse(env metadataCacheDependencies, store storage.ObjectStore, opts listOptions, stderr io.Writer, command string) ([]archive.Metadata, int, bool, error) {
+	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, command)})
 	if err != nil {
 		return nil, 0, false, err
 	}
 	sessions = filterListOrigin(sessions, opts.imported, opts.hookCaptured)
 	shown, totalMatched, truncated := applyListLimit(sessions, opts.limit)
 	return shown, totalMatched, truncated, nil
+}
+
+// selectArchivedSession uses the same one-shot picker for show and handoff.
+// It returns selected=false when the archive is empty or the user quits.
+func selectArchivedSession(env sessionSelectionDependencies, store storage.ObjectStore, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer, harness, command, action string) (row listRow, selected bool, code int) {
+	stopBrowse := startActivity(stdout, "Finding sessions…")
+	shown, totalMatched, truncated, err := loadSessionsForBrowse(env, store, listOptions{filter: reader.Filter{Harness: harness}, limit: defaultListLimit}, stderr, command)
+	stopBrowse()
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: %s: %v\n", command, err)
+		return listRow{}, false, 1
+	}
+	if totalMatched == 0 {
+		terminal.Println(stdout, "No archived sessions match.")
+		return listRow{}, false, 0
+	}
+	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true}
+	return pickBrowseSession(stdin, stdout, stderr, shown, totalMatched, truncated, format, command, action)
 }

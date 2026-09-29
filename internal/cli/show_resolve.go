@@ -78,7 +78,7 @@ func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQu
 		return showLookup{}, 1
 	}
 	format := listFormatOptions{Now: env.now(), Projects: cfgProjects, Style: styleFor(stdout), GroupByProject: true}
-	row, ok, code := pickBrowseSession(stdin, stdout, stderr, matches, len(matches), false, format)
+	row, ok, code := pickBrowseSession(stdin, stdout, stderr, matches, len(matches), false, format, "show", "show")
 	if code != 0 {
 		return showLookup{}, code
 	}

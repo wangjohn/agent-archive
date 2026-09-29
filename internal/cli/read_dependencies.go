@@ -23,6 +23,11 @@ type sessionBrowseDependencies interface {
 	isTerminal(any) bool
 }
 
+type sessionSelectionDependencies interface {
+	metadataCacheDependencies
+	now() time.Time
+}
+
 type listCommandDependencies interface {
 	readOnlyStoreDependencies
 	pagerDependencies
@@ -77,4 +82,5 @@ type handoffTargetDependencies interface {
 type handoffCommandDependencies interface {
 	handoffOptionsDependencies
 	handoffTargetDependencies
+	sessionBrowseDependencies
 }

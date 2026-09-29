@@ -23,6 +23,8 @@ follow [Semantic Versioning](https://semver.org/).
   offer a numbered picker to print a session's metadata; `q` quits. Piped
   output and `--json` stay non-interactive. Bare `agent-archive` on a TTY
   opens the same interactive list when already set up.
+- Bare `handoff` uses the same numbered picker to select an archived session
+  on a terminal. Scripts still supply a session ID, `--latest`, or `--file`.
 - `show` accepts a title substring (and short SESSION_ID) when the argument
   is not an exact id; multiple matches use the picker on a TTY.
 - Human `list` groups rows under project headings when more than one project

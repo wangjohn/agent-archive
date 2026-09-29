@@ -126,6 +126,43 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 	}
 }
 
+func TestHandoffWithoutIDUsesShowPicker(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, true)
+	stdin := strings.NewReader("1\n")
+	var out, errOut bytes.Buffer
+	f.env.IsTerminal = func(stream any) bool {
+		return stream == any(stdin) || stream == any(&out)
+	}
+	if code := Run([]string{"handoff", "--harness", "codex"}, stdin, &out, &errOut, f.env); code != 0 {
+		t.Fatalf("code=%d stderr=%s out=%s", code, errOut.String(), out.String())
+	}
+	for _, want := range []string{"TITLE", f.id[:minShortSessionID], "to hand off", "## Where it left off", "Fix the flaky widget test."} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("picker or handoff missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "hunter2secret") {
+		t.Fatalf("credential leaked:\n%s", out.String())
+	}
+}
+
+func TestHandoffPickerQuitDoesNotRender(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, true)
+	stdin := strings.NewReader("q\n")
+	var out, errOut bytes.Buffer
+	f.env.IsTerminal = func(stream any) bool {
+		return stream == any(stdin) || stream == any(&out)
+	}
+	if code := Run([]string{"handoff"}, stdin, &out, &errOut, f.env); code != 0 {
+		t.Fatalf("code=%d stderr=%s out=%s", code, errOut.String(), out.String())
+	}
+	if !strings.Contains(out.String(), "to hand off") || strings.Contains(out.String(), "## Where it left off") {
+		t.Fatalf("quitting picker rendered a handoff:\n%s", out.String())
+	}
+}
+
 // claude "$(agent-archive handoff --latest)" must not start a session whose
 // prompt is the not-set-up message: it goes to stderr, with exit 1.
 func TestHandoffReportsNotSetUp(t *testing.T) {

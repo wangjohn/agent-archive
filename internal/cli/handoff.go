@@ -78,10 +78,27 @@ var errHandoffNotSetUp = errors.New("handoff not set up")
 // content, which the command itself is the explicit request for; every
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
-func runHandoffCommand(args []string, stdout, stderr io.Writer, env handoffCommandDependencies) int {
-	opts, ok := parseHandoffOptions(args, stderr, env)
+func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) int {
+	interactive := browseInteractive(env, stdin, stdout)
+	opts, ok := parseHandoffOptions(args, stderr, env, interactive)
 	if !ok {
 		return 2
+	}
+	if opts.sessionID == "" && !opts.latest && opts.file == "" {
+		store, cfg, found, err := openReadOnlyStore(env)
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			return 1
+		}
+		if !found {
+			terminal.Println(stderr, notSetUpMessage)
+			return 1
+		}
+		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, opts.harness, "handoff", "hand off")
+		if code != 0 || !selected {
+			return code
+		}
+		opts.sessionID, opts.harness = row.SessionID, row.HarnessKey
 	}
 	home, err := env.readHome()
 	if err != nil {
@@ -113,7 +130,7 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env handoffComma
 	return 0
 }
 
-func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies) (handoffOptions, bool) {
+func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies, interactive bool) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
 	latest := fs.Bool("latest", false, "the most recent session for the project")
 	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
@@ -140,8 +157,8 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		}
 	}
 	switch {
-	case selectors == 0:
-		return usageError("name a session ID, --latest, or --file PATH (see `agent-archive list`)")
+	case selectors == 0 && !interactive:
+		return usageError("name a session ID, --latest, or --file PATH; run on a terminal to pick a session")
 	case selectors > 1:
 		return usageError("a session ID, --latest, and --file are mutually exclusive")
 	case *file != "" && *harness == "":
