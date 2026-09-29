@@ -200,9 +200,6 @@ linters:
       - path: internal/cli/setup_transaction\.go
         text: applySetup
         linters: [funlen, gocyclo]
-      - path: internal/cli/collect\.go
-        text: runPass
-        linters: [funlen, gocyclo]
       - path: internal/cli/handoff\.go
         text: runHandoffCommand
         linters: [funlen, gocyclo]
