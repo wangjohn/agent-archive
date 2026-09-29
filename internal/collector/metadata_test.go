@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -82,7 +83,7 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := Options{MachineID: "machine", ParserVersion: "one", SkillEvidence: config.SkillEvidenceMetadata, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -97,6 +98,9 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	pending, found, err := local.LoadPending(reg.ArchiveSessionID)
 	if err != nil || !found {
 		t.Fatalf("%v %v", found, err)
+	}
+	if pending.SkillEvidence != string(config.SkillEvidenceMetadata) || !pending.MetadataOnly {
+		t.Fatalf("parser refresh lost skill policy: %+v", pending)
 	}
 	remote.failMetadata = false
 	now = now.Add(24 * time.Hour)

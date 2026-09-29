@@ -8,6 +8,7 @@ $ agent-archive status --verbose
 \e[1mCapture\e[0m
   \e[32m✓\e[0m Codex   hooks installed   \e[2m1 session archived, verified just now\e[0m
   \e[2m·\e[0m Projects: ~/src/web-app
+  \e[2m·\e[0m Skill evidence: metadata
 
 \e[1mStorage\e[0m
   \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now\e[0m
@@ -30,6 +31,7 @@ $ agent-archive status --verbose
   Pending:       0 session(s)
   Last scan:     2026-09-25T12:00:00Z
   Last publish:  2026-09-25T12:00:00Z
+  Skill evidence: metadata
   Codex: published; source verified (published_source_verified; 1 session(s)); hooks installed
     Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.
     Installed version: unknown; support unknown.

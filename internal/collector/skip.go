@@ -120,7 +120,7 @@ func (p *pass) unchangedSinceLastScan(reg archive.SessionRegistration) (unchange
 	if !known {
 		return false, signature, nil
 	}
-	if signature.ParserVersion != p.opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion {
+	if signature.ParserVersion != p.opts.parserVersion() || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != p.opts.skillEvidence() {
 		return false, signature, nil
 	}
 	if (signature.Failed || sizeLimitGap(signature.Blocked)) && (signature.FailedMaxBytes != p.opts.maxTranscriptBytes() || signature.FailedRecordLimit != recordLimit) {
@@ -167,7 +167,7 @@ func (s *sessionScan) sourceSettled(reader sourceReader) bool {
 		return false
 	}
 	adapterVersion, known := harnessAdapterVersion(s.reg.Harness.Name)
-	if !known || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion {
+	if !known || signature.FilterVersion != archive.FilterVersion || signature.AdapterVersion != adapterVersion || pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
 		return false
 	}
 	return sourceStillAt(s.ctx, reader, signature)
@@ -232,6 +232,7 @@ func (p *pass) linkOwed(reg archive.SessionRegistration) (bool, error) {
 // that owes no further work.
 func (s *sessionScan) recordScanSignature(observed sourceState, bundle archive.SourceBundle) error {
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
+		SkillEvidence:  string(s.opts.skillEvidence()),
 		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
 		ParserVersion: s.opts.parserVersion(), FilterVersion: bundle.Capture.FilterVersion,
 		AdapterVersion: bundle.Capture.AdapterVersion, SourceFormat: bundle.Capture.SourceFormat,
@@ -252,6 +253,7 @@ func (s *sessionScan) recordBlockedSignature(reason state.BlockedReason, observe
 		return s.local.RemoveScanSignature(s.id())
 	}
 	return s.local.SaveScanSignature(s.id(), state.ScanSignature{
+		SkillEvidence:  string(s.opts.skillEvidence()),
 		TranscriptSize: observed.file.Size, TranscriptMtime: observed.file.Mtime,
 		ParserVersion: s.opts.parserVersion(), FilterVersion: archive.FilterVersion, AdapterVersion: adapterVersion,
 		SourceKind: observed.kind, CursorLastUpdatedAt: observed.cursor.LastUpdatedAt,

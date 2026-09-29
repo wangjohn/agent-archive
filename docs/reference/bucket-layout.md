@@ -46,6 +46,13 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   kept is in it. `show --normalized` and `handoff` read it and check its
   SHA-256 and identity against the metadata.
 
+The configured `skill_evidence` mode affects newly built source bundles.
+`none` carries no filesystem skill inventory or snapshots, `metadata` carries
+names and filtered hashes, and `body` also carries filtered snapshots. A
+policy change does not erase already uploaded source objects. A replaced
+source may remain as a predecessor or in bucket version history; removing
+old bytes requires reviewing those copies as well as the live pointer.
+
 ## How objects change
 
 - A session is published by uploading the new source first and verifying
