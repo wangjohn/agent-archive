@@ -59,9 +59,14 @@ func (s *Store) RecordSupersededWithPrivacy(archiveSessionID, key string, at tim
 	}
 	out := make([]SupersededSource, 0, len(existing)+1)
 	for _, e := range existing {
-		if e.Key != key {
-			out = append(out, e)
+		if e.Key == key {
+			// A content reversion can reuse an earlier key. Once a source
+			// is known to contain old-filter evidence, keep that marker
+			// across later supersessions of the same object.
+			privacySensitive = privacySensitive || e.PrivacySensitive
+			continue
 		}
+		out = append(out, e)
 	}
 	out = append(out, SupersededSource{Key: key, SupersededAt: at, PrivacySensitive: privacySensitive})
 	return errors.Join(lost, local.Write(s.supersededPath(archiveSessionID), out))
