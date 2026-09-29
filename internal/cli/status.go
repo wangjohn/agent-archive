@@ -268,6 +268,9 @@ func readStatus(env Env) (view statusView, err error) {
 	readConfiguredStatus(&view, cfg, home, env)
 	store := state.OpenReadOnly(home)
 	sessions := readSessionStatus(&view, cfg, home, store)
+	// The collector prunes the list each pass; one that has not run for a
+	// while must not show subagents from before the window.
+	view.Collector.ExpiredSubagents = state.CarryExpiredSubagents(view.Collector.ExpiredSubagents, nil, env.now())
 	for _, name := range cfg.Harnesses {
 		view.Apps = append(view.Apps, sessions.appStatus(name, cfg, home, view.Collector.SessionIssues))
 	}
@@ -1738,12 +1741,53 @@ func printStatusDetails(out io.Writer, view statusView) {
 	if n := view.Collector.UnrefreshableSummaries; n > 0 {
 		terminal.Printf(out, "  Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
 	}
-	if n := view.Collector.WaitingSubagents; n > 0 {
-		terminal.Printf(out, "  Subagents:     %d waiting for their transcripts\n", n)
+	for i, line := range subagentDetailLines(view.Collector) {
+		label := "  Subagents:     "
+		if i > 0 {
+			label = "                 "
+		}
+		terminal.Printf(out, "%s%s\n", label, line)
 	}
 	for _, warning := range view.Warnings {
 		terminal.Printf(out, "  Warning:       %s\n", warning)
 	}
+}
+
+// subagentDetailLines are the Details lines about subagents that are not a
+// problem: those waiting for their transcripts, and those dropped in the
+// last week because Claude Code never wrote them, counted by type.
+func subagentDetailLines(collector state.Status) []string {
+	var lines []string
+	if n := collector.WaitingSubagents; n > 0 {
+		lines = append(lines, fmt.Sprintf("%d waiting for their transcripts", n))
+	}
+	expired := collector.ExpiredSubagents
+	if len(expired) == 0 {
+		return lines
+	}
+	lines = append(lines, fmt.Sprintf("%d not archived in the last 7 days (Claude Code never wrote their transcripts; nothing to do)", len(expired)))
+	counts := map[string]int{}
+	for _, entry := range expired {
+		counts[entry.AgentType]++
+	}
+	types := slices.Collect(maps.Keys(counts))
+	// Most common first; on a tie the unknown type ("") comes before named
+	// ones, then names alphabetically.
+	slices.SortFunc(types, func(a, b string) int {
+		if c := counts[b] - counts[a]; c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	groups := make([]string, 0, len(types))
+	for _, agentType := range types {
+		name := agentType
+		if name == "" {
+			name = "unknown type"
+		}
+		groups = append(groups, fmt.Sprintf("%d %s", counts[agentType], name))
+	}
+	return append(lines, strings.Join(groups, ", "))
 }
 
 // printAppDetails writes one app's lines in the Details section.

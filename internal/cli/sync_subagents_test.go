@@ -87,7 +87,7 @@ func TestSyncPassesWithOnlyWaitingSubagents(t *testing.T) {
 		t.Fatalf("sync after the grace exit=%d stdout=%q stderr=%q", code, out, errOut)
 	}
 	env.Now = func() time.Time { return now.Add(31 * time.Minute) }
-	if verbose := statusOutput(t, env, "--verbose"); strings.Contains(verbose, "Subagents:") || strings.Contains(verbose, "Last error") {
+	if verbose := statusOutput(t, env, "--verbose"); strings.Contains(verbose, "waiting for their transcripts") || !strings.Contains(verbose, "  Subagents:     1 not archived in the last 7 days") || strings.Contains(verbose, "Last error") {
 		t.Fatalf("verbose status after the grace:\n%s", verbose)
 	}
 }
