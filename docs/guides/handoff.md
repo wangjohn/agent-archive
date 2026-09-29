@@ -7,6 +7,9 @@ summary Claude Code wrote when the session was compacted. Edit bodies are left
 out; the receiving agent should read the files as they are now.
 
 ```sh
+# On an interactive terminal, pick an archived session by number or short ID
+agent-archive handoff
+
 # Continue in Claude Code what you started in Codex, in the same repository
 claude "$(agent-archive handoff --latest --harness codex)"
 
@@ -21,6 +24,12 @@ agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness c
 ```
 
 ## Where the session comes from
+
+With no session selector, `handoff` opens the same numbered session picker as
+`show` when stdin and stdout are terminals. The picker lists archived
+sessions; `--harness` narrows the list. Quit with `q` without producing a
+handoff. In a script or pipeline, pass a session ID, `--latest`, or `--file`.
+Use `--latest` to hand off a local session that has not uploaded yet.
 
 A session registered on this Mac is read from its transcript as it is now, so
 a handoff right after you stop needs no sync and works while collection is

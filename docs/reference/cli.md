@@ -402,13 +402,17 @@ Example: agent-archive backfill undo --project ~/src/old-experiment
 Guide: [Continue a session in another agent](../guides/handoff.md).
 
 ```text
-Usage: agent-archive handoff SESSION_ID|--latest|--file PATH [options]
+Usage: agent-archive handoff [SESSION_ID|--latest|--file PATH] [options]
 
 Print a session as a prompt another coding agent can continue from. This
 prints conversation content, filtered as it is for the archive: injected
 instructions and credentials removed, tool output trimmed, edit bodies left
 out. A session on this machine is read from its transcript now, without
 waiting for a sync; otherwise it is downloaded from the archive.
+With no selector on a terminal, pick an archived session from the same
+numbered session browser as show. Without a terminal, give a SESSION_ID,
+--latest, or --file PATH. The picker lists archived sessions only; --latest
+can also find a local session that has not uploaded yet.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -428,6 +432,7 @@ waiting for a sync; otherwise it is downloaded from the archive.
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
+Example: agent-archive handoff
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 ```

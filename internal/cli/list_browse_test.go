@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+func TestBrowseRejectsSessionIDSharedByHarnesses(t *testing.T) {
+	t.Parallel()
+	const id = "abcdef0123456789abcdef0123456789"
+	rows := []listRow{
+		{Index: 1, SessionID: id, ShortID: id, HarnessKey: "codex"},
+		{Index: 2, SessionID: id, ShortID: id, HarnessKey: "claude"},
+	}
+	for _, answer := range []string{id, id[:minShortSessionID]} {
+		if _, ok := matchBrowseRow(answer, rows); ok {
+			t.Fatalf("ambiguous ID %q selected a harness", answer)
+		}
+	}
+	if row, ok := matchBrowseRow("2", rows); !ok || row.HarnessKey != "claude" {
+		t.Fatalf("numbered selection failed: row=%+v ok=%t", row, ok)
+	}
+}
+
 func TestListDefaultTableIsHumanReadable(t *testing.T) {
 	t.Parallel()
 	env, _, id := publishedFixture(t)
