@@ -138,9 +138,11 @@ func validateCandidateTranscript(local *state.Store, candidate state.SubagentCan
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_format_unavailable")
 	}
 	filtered, _, err := filterTranscript(adapter, reg, opts.maxTranscriptBytes())
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		// It exists but cannot be read or filtered: too large, not a regular
-		// file, unreadable, or in a format the adapter refuses.
+	// A transcript with lines but no recognized record yet is treated like an
+	// empty one: its first record may still be on its way.
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, archive.ErrUnsafeSourceFormat) {
+		// It exists but cannot be read: too large, a record too large, not a
+		// regular file, or an I/O failure.
 		return reg, rejectSubagentCandidate(local, candidate, "subagent_transcript_unreadable")
 	}
 	if err != nil || subagentTranscriptEmpty(filtered) {
