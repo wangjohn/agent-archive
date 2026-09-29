@@ -12,10 +12,11 @@ claude · agent-archive · 2h ago                                      ✓ compl
   Skills    code-review, simplify
   Subagents 2 linked (1 available, 1 expired)
   Imported  Sep 29, 12:30 by backfill
+  Omitted   injected instructions, redacted secrets, hook events before import,
+            unrecognized fields
 
-  ! Capture gaps
-    imported_without_hook_evidence — No hook observed this session before it wa…
-    tool_result_truncated ×2
+  ! Incomplete capture
+    incomplete_or_invalid_record ×2 — jsonl record omitted
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
      origin imported · parser 0.13.0 (partial) · filter 12

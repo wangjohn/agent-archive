@@ -12,10 +12,11 @@
   [2mSkills   [0m code-review, simplify
   [2mSubagents[0m 2 linked (1 available, 1 expired)
   [2mImported [0m Sep 29, 12:30 by backfill
+  [2mOmitted  [0m [2minjected instructions, redacted secrets, hook events before import,[0m
+            [2munrecognized fields[0m
 
-  [33m![0m [1mCapture gaps[0m
-    imported_without_hook_evidence — No hook observed this session before it wa…
-    tool_result_truncated ×2
+  [33m![0m [1mIncomplete capture[0m
+    incomplete_or_invalid_record ×2 — jsonl record omitted
 
   [2mID[0m 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
      [2morigin imported · parser 0.13.0 (partial) · filter 12[0m
