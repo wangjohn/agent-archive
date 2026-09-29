@@ -581,10 +581,11 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `--source archive`: an archived bundle is filtered like a local one,
    and the preamble still applies.
 2. **Launch (B).** The launch copy of the handoff is written to
-   `<data dir>/handoffs/launch-<name>-<unix>/handoff.md`, where `<name>` is
-   the file component `handoffFullPath` uses (directory 0700 created with
-   `os.Mkdir`, so a second launch in the same second fails; file 0600
-   created with `O_EXCL`). Each launch has its own directory so Claude's
+   `<data dir>/handoffs/launch-<name>-<unix>-<random>/handoff.md`, where
+   `<name>` is the file component `handoffFullPath` uses (directory 0700
+   created with `os.MkdirTemp`, so two launches in the same second get
+   separate directories and no existing name, symlink included, is reused;
+   file 0600 created with `O_EXCL`). Each launch has its own directory so Claude's
    `--add-dir` exposes no other saved handoff. `pruneHandoffs` removes
    `launch-*` directories older than 7 days by the directory's mtime, and
    `uninstall --delete-local-data` already covers `handoffs/`; it is never

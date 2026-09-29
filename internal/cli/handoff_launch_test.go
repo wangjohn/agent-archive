@@ -48,7 +48,10 @@ func TestHandoffLaunchesLocalAgentWithRetrievalInstructions(t *testing.T) {
 	}
 	path := handoffPathFromPrompt(t, got)
 	handoffs := filepath.Join(f.home, handoffDir)
-	launchDir := filepath.Join(handoffs, fmt.Sprintf("launch-%s-%d", f.id, f.env.now().Unix()))
+	launchDir := filepath.Dir(path)
+	if filepath.Dir(launchDir) != handoffs || !strings.HasPrefix(filepath.Base(launchDir), fmt.Sprintf("launch-%s-%d-", f.id, f.env.now().Unix())) {
+		t.Fatalf("launch directory %s, want launch-%s-<unix>-<random> in %s", launchDir, f.id, handoffs)
+	}
 	want := []string{"--add-dir", launchDir, "--", got.Args[3]}
 	if got.Destination != handoffDestinationClaude || got.Binary != "/opt/bin/claude" || got.Dir != f.project || !slices.Equal(got.Args, want) {
 		t.Fatalf("spec = %+v, want args %q in %s", got, want, f.project)
@@ -254,34 +257,45 @@ func TestHandoffLaunchWithoutSetupUsesPrivateTemporaryFile(t *testing.T) {
 	}
 }
 
-// writeLaunchHandoff never replaces a file: a second launch of the same
-// session in the same second fails rather than overwrite what an agent may
-// be reading. A copy outside the data directory is left for its caller to
-// remove, since a new-window launch returns before the agent reads it.
-func TestWriteLaunchHandoffRefusesExistingFileAndKeepsTemporaryCopy(t *testing.T) {
+// Two launches of one session in the same second each get their own
+// directory, named with the prefix pruneHandoffs looks for, and neither
+// replaces the other's copy. A name already taken, even by a symlink, is
+// never reused.
+func TestWriteLaunchHandoffSameSecondGetsSeparateDirectories(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 	target := handoffTarget{bundle: archive.SourceBundle{ArchiveSessionID: "sess-1"}}
-	path, err := writeLaunchHandoff(home, t.TempDir(), target, []byte("first"), now)
+	elsewhere := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, handoffDir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	squat := filepath.Join(home, handoffDir, fmt.Sprintf("launch-sess-1-%d", now.Unix()))
+	if err := os.Symlink(elsewhere, squat); err != nil {
+		t.Fatal(err)
+	}
+	first, err := writeLaunchHandoff(home, t.TempDir(), target, []byte("first"), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeLaunchHandoff(home, t.TempDir(), target, []byte("second"), now); err == nil || !strings.Contains(err.Error(), "try again") {
-		t.Fatalf("second write err = %v", err)
-	}
-	if data, _ := os.ReadFile(path); string(data) != "first" {
-		t.Fatalf("launch copy replaced: %q", data)
-	}
-	temp, err := writeLaunchHandoff(filepath.Join(home, "missing"), t.TempDir(), target, []byte("temp"), now)
+	second, err := writeLaunchHandoff(home, t.TempDir(), target, []byte("second"), now)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("second launch in the same second: %v", err)
 	}
-	if dir, ok := privateHandoffDir(launchSpec{HandoffFile: temp}, filepath.Join(home, "missing")); !ok || dir != filepath.Dir(temp) {
-		t.Fatalf("private dir = %q %v", dir, ok)
+	if filepath.Dir(first) == filepath.Dir(second) {
+		t.Fatalf("both launches share %s", filepath.Dir(first))
 	}
-	if data, err := os.ReadFile(temp); err != nil || string(data) != "temp" {
-		t.Fatalf("temporary copy: %q %v", data, err)
+	for path, want := range map[string]string{first: "first", second: "second"} {
+		name := filepath.Base(filepath.Dir(path))
+		if !strings.HasPrefix(name, fmt.Sprintf("launch-sess-1-%d-", now.Unix())) || filepath.Dir(filepath.Dir(path)) != filepath.Join(home, handoffDir) {
+			t.Errorf("launch copy at %s", path)
+		}
+		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+			t.Errorf("%s = %q %v, want %q", path, data, err, want)
+		}
+	}
+	if entries, _ := os.ReadDir(elsewhere); len(entries) != 0 {
+		t.Fatalf("wrote through the symlink: %v", entries)
 	}
 }
 
@@ -305,7 +319,7 @@ func TestLaunchHandoffDirectoriesArePrunedAndUninstalled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rel, _ := filepath.Rel(home, fresh); rel != filepath.Join(handoffDir, fmt.Sprintf("launch-sess-1-%d", now.Unix()), "handoff.md") {
+	if rel, _ := filepath.Rel(home, fresh); !strings.HasPrefix(rel, filepath.Join(handoffDir, fmt.Sprintf("launch-sess-1-%d-", now.Unix()))) || filepath.Base(rel) != "handoff.md" {
 		t.Fatalf("launch copy at %s", rel)
 	}
 	other := filepath.Join(home, handoffDir, "not-a-launch")

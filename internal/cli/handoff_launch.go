@@ -106,7 +106,7 @@ func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest 
 const launchHandoffName = "handoff.md"
 
 // writeLaunchHandoff saves the document a launched agent reads, in a new
-// 0700 directory: <home>/handoffs/launch-<name>-<unix>/. It is kept after the
+// 0700 directory: <home>/handoffs/launch-<name>-<unix>-<random>/. It is kept after the
 // agent exits, so a resumed session can read it again, until pruneHandoffs
 // removes it after handoffMaxAge. Without a data directory (`--file` before
 // setup) the directory is a new private one under tempDir instead: an
@@ -129,11 +129,11 @@ func writeLaunchHandoff(home, tempDir string, target handoffTarget, content []by
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return "", fmt.Errorf("write handoff: %w", err)
 	}
-	dir := filepath.Join(parent, fmt.Sprintf("%s%s-%d", launchHandoffPrefix, handoffFileName(target.bundle), now.Unix()))
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return "", fmt.Errorf("this session was handed off less than a second ago (%s exists); try again", dir)
-		}
+	// MkdirTemp adds a random suffix, so two launches of one session in
+	// the same second get separate directories, and it never reuses a name
+	// already there (a symlink included).
+	dir, err := os.MkdirTemp(parent, fmt.Sprintf("%s%s-%d-*", launchHandoffPrefix, handoffFileName(target.bundle), now.Unix()))
+	if err != nil {
 		return "", fmt.Errorf("write handoff: %w", err)
 	}
 	path := filepath.Join(dir, launchHandoffName)
