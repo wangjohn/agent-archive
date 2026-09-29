@@ -156,6 +156,11 @@ type Result struct {
 	// transcripts are not written yet. Each is retried on the next pass, and
 	// rejected once subagentTranscriptGrace has passed; neither is an error.
 	WaitingSubagents []string
+	// RunningSubagents lists the subagents, registered or not yet, that were
+	// resumed after their last SubagentStop and are still writing. Each is
+	// captured, or its published snapshot extended, when it stops again or
+	// its transcript goes quiet; it is not an error.
+	RunningSubagents []string
 	// RejectedSubagents maps each subagent candidate rejected this pass to
 	// its code. A rejection that lost nothing (the transcript was never
 	// written, say) is only counted here; any other is in Errors too.
@@ -195,7 +200,7 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		remote:           store,
 		opts:             opts,
 		now:              now,
-		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
+		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RunningSubagents: subagents.running, RejectedSubagents: subagents.rejected},
 		expiredSubagents: subagents.expired,
 	}
 	if replayErr != nil {
@@ -393,7 +398,11 @@ func (p *pass) scan(reg archive.SessionRegistration) {
 			p.result.NextReadyAt = scan.readyAt
 		}
 	case outcomeSkipped:
-		p.result.Skipped = append(p.result.Skipped, id)
+		if scan.subagentRunning {
+			p.result.RunningSubagents = append(p.result.RunningSubagents, id)
+		} else {
+			p.result.Skipped = append(p.result.Skipped, id)
+		}
 	}
 	p.opts.progress(id, outcome == outcomePublished)
 }
@@ -477,6 +486,7 @@ func (p *pass) saveStatus() error {
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
 		WaitingSubagents:       len(p.result.WaitingSubagents),
+		RunningSubagents:       len(p.result.RunningSubagents),
 		// The pass rebuilds everything else from scratch; this list is a
 		// week of history, so it carries the previous pass's forward.
 		ExpiredSubagents: state.CarryExpiredSubagents(previous.ExpiredSubagents, p.expiredSubagents, p.now),

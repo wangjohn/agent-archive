@@ -25,6 +25,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A Claude Code subagent resumed after it stopped (continued with
+  SendMessage) no longer fails `sync` with "subagent transcript has
+  incomplete native timestamp provenance" while it runs. Its archive keeps
+  the snapshot from its last stop and catches up at its next stop, or, if it
+  never stops again (its session was closed while it worked), once its
+  transcript has been quiet for 30 minutes. A subagent resumed before the
+  collector first saw it is no longer reported as not captured either. `sync`
+  counts these as "still running", and `status --verbose` and `status --json`
+  (`collector.running_subagents`) show them. None is a failure.
 - A Claude Code subagent whose transcript is never written (Claude Code
   reports some background agents that way) no longer fails every pass:
   `sync` exited 1 and `status` reported "N session(s) need capture or
