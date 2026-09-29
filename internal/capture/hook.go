@@ -127,6 +127,18 @@ func HandleEvent(home, harness string, payload map[string]any, now time.Time) er
 	}
 	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", time.Second)
 	if lockErr != nil {
+		if errors.Is(lockErr, local.ErrBusy) {
+			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now)
+			if err := recordHookBusy(home, harness, payload, now); err != nil {
+				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %v", queued, lockErr, errors.Join(queueErr, err))
+			}
+			if queueErr != nil {
+				return fmt.Errorf("capture registration busy; this hook was not retained: %w; %v", lockErr, queueErr)
+			}
+			if queued {
+				return nil
+			}
+		}
 		return fmt.Errorf("capture registration busy; this hook was not recorded: %w", lockErr)
 	}
 	defer unlock()
@@ -185,6 +197,23 @@ func HandleEvent(home, harness string, payload map[string]any, now time.Time) er
 		return nil
 	}
 	return err
+}
+
+// recordHookBusy only names an included configured project. A timeout may
+// occur on any lifecycle event, so no session or transcript data is retained.
+func recordHookBusy(home, harness string, payload map[string]any, now time.Time) error {
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
+		return err
+	}
+	project, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
+	if !owned || !project.Included {
+		return nil
+	}
+	return recordDiagnostic(home, Diagnostic{
+		Code: DiagnosticHookBusy, Harness: archive.CanonicalHarness(harness),
+		ProjectRoot: project.Root, ObservedAt: now,
+	}, true)
 }
 
 // startsCapture reports whether an event is one that can register a new
@@ -327,6 +356,10 @@ func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistrat
 }
 
 func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
+	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false)
+}
+
+func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool) error {
 	reason := strings.ToLower(eventName)
 	transcriptPath, _ := payload["transcript_path"].(string)
 	isCursor := archive.CanonicalHarness(harness) == "cursor"
@@ -410,7 +443,7 @@ func handleSessionStart(home string, store *state.Store, cfg config.Config, harn
 			ProjectRoot: root, ObservedAt: now,
 		})
 	}
-	if !provesFreshSessionStart(harness, payload) {
+	if !provedAtHook && !provesFreshSessionStart(harness, payload) {
 		return RecordDiagnostic(home, Diagnostic{
 			Code: DiagnosticUnknownSessionStart, Harness: archive.CanonicalHarness(harness),
 			ProjectRoot: root, ObservedAt: now,

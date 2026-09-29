@@ -27,6 +27,9 @@ const (
 	// DiagnosticHookFailed records a hook that stopped on an internal error
 	// (a recovered panic), so the event it carried was not recorded.
 	DiagnosticHookFailed DiagnosticCode = "hook_failed"
+	// DiagnosticHookBusy records that the hook could not acquire hooks.lock
+	// before its deadline. No event identifiers or payload are retained.
+	DiagnosticHookBusy DiagnosticCode = "hook_busy"
 )
 
 // Diagnostic is deliberately content-free. It records only the
@@ -80,8 +83,17 @@ var hookDiagnosticsWait = 50 * time.Millisecond
 // takes, means a pruned project's diagnostic can never come back, whichever
 // of the two runs first.
 func RecordDiagnostic(home string, diagnostic Diagnostic) error {
+	return recordDiagnostic(home, diagnostic, false)
+}
+
+// recordDiagnostic can report diagnostics-lock contention to callers whose
+// stderr is the only remaining place to explain a dropped hook event.
+func recordDiagnostic(home string, diagnostic Diagnostic, busyIsError bool) error {
 	unlock, err := local.NamedLockWait(home, DiagnosticsLockName, hookDiagnosticsWait)
 	if errors.Is(err, local.ErrBusy) {
+		if busyIsError {
+			return fmt.Errorf("capture diagnostics busy; status may not show this missed hook: %w", err)
+		}
 		return nil
 	}
 	if err != nil {
@@ -176,6 +188,8 @@ func DiagnosticMessage(code DiagnosticCode) string {
 		return "setup was still in progress, so the session was not registered; start a new session"
 	case DiagnosticHookFailed:
 		return "a hook stopped on an internal error, so its event was not recorded; please report it"
+	case DiagnosticHookBusy:
+		return "a hook could not acquire the capture lock before its deadline; a first-start intent may be recovered on the next collector pass; check status and start a new session if capture did not resume"
 	default:
 		return "capture evidence was not accepted"
 	}
