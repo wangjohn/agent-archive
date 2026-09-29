@@ -26,14 +26,17 @@ func waitingSummary(waiting []string, next time.Time) string {
 }
 
 // subagentsSummary is sync's count of subagents whose transcripts are not
-// written yet, and of those the collector decided not to capture, or ""
-// when there are none. Neither is a failure: a waiting subagent is
+// written yet, of those resumed and still running, and of those the
+// collector decided not to capture, or "" when there are none. Neither is a failure: a waiting subagent is
 // registered once its transcript appears, and a rejection that lost
 // something is also among the failed sessions, so it is not counted again.
 func subagentsSummary(result collector.Result) string {
 	summary := ""
 	if n := len(result.WaitingSubagents); n > 0 {
 		summary += fmt.Sprintf("; %d subagent(s) waiting for transcripts", n)
+	}
+	if n := len(result.RunningSubagents); n > 0 {
+		summary += fmt.Sprintf("; %d subagent(s) still running", n)
 	}
 	notCaptured := 0
 	for id := range result.RejectedSubagents {
