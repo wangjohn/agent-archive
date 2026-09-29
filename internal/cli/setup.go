@@ -238,6 +238,72 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 	// draft is saved, setup --yes refuses to run, so no fix may send the
 	// user there; nor may one for an installed app, which --yes keeps.
 	unfinished, draftSaved, _, _ := readDraft(home)
+	scope := setupPreflightScope(detected, existing, unfinished, draftSaved, installed)
+	checks := preflight(env, home, userHome, scope)
+	checks.print(p)
+	if checks.blocked() {
+		return &preflightError{checks: checks}
+	}
+	// A saved draft that names a bucket has already been past this.
+	if !found && unfinished.Config.Storage.Bucket == "" {
+		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
+	}
+	draft, done, err := selectSetupDraft(p, home, userHome, env, existing, found, installed, known)
+	if err != nil {
+		return err
+	}
+	if done {
+		return nil
+	}
+	return runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
+}
+
+func runSetupDraft(p *prompter, draft setupDraft, home, userHome, exe string, env Env, existing config.Config, installed bool, reviewed, discoveries map[string]applicationDiscovery, discoveredAt time.Time, errOut io.Writer, known func(config.Config) []backfill.KnownProject, verbose bool) error {
+	savedPath := draftPath(home)
+	save := func() error { return local.Write(savedPath, draft) }
+	var verifiedStorage credentials.Config
+	for {
+		retry, err := advanceSetupDraft(p, &draft, save, savedPath, home, userHome, env, known, &verifiedStorage, verbose)
+		if err != nil {
+			return err
+		}
+		if retry {
+			continue
+		}
+		done, err := reviewAndCommitSetup(p, &draft, save, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, &verifiedStorage, known)
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+	}
+}
+
+// retiredStagedRefs decides which opaque credential references become eligible
+// for cleanup after commit, without writing to the Keychain or draft.
+func retiredStagedRefs(retired, staged []string, active string) []string {
+	result := append([]string(nil), retired...)
+	for _, ref := range staged {
+		if ref != active && !containsString(result, ref) {
+			result = append(result, ref)
+		}
+	}
+	return result
+}
+
+// reviewedSetupConfig computes the configuration shown at review and passed
+// to applySetup. Draft persistence and installation happen elsewhere.
+func reviewedSetupConfig(existing config.Config, draft setupDraft) config.Config {
+	cfg := draft.Config
+	if cfg.RetentionDays <= 0 {
+		cfg.RetentionDays = defaultRetentionDays
+	}
+	cfg.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, cfg.Harnesses, draft.StopImported)
+	return cfg
+}
+
+func setupPreflightScope(detected []string, existing config.Config, unfinished setupDraft, draftSaved, installed bool) preflightScope {
 	scope := preflightScope{
 		apps:          preflightApps(detected, existing.Harnesses, slices.Concat(existing.DeclinedHarnesses, unfinished.Config.DeclinedHarnesses), unfinished.Config.Harnesses),
 		r2:            existing.Storage.Provider == credentials.ProviderR2 || unfinished.Config.Storage.Provider == credentials.ProviderR2,
@@ -249,24 +315,18 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 	case installed:
 		scope.kept = existing.Harnesses
 	}
-	checks := preflight(env, home, userHome, scope)
-	checks.print(p)
-	if checks.blocked() {
-		return &preflightError{checks: checks}
-	}
-	// A saved draft that names a bucket has already been past this.
-	if !found && unfinished.Config.Storage.Bucket == "" {
-		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
-	}
+	return scope
+}
+
+func selectSetupDraft(p *prompter, home, userHome string, env Env, existing config.Config, found, installed bool, known func(config.Config) []backfill.KnownProject) (setupDraft, bool, error) {
 	initial := existing
 	if !found {
 		initial.SkillEvidence = config.SkillEvidenceMetadata
 	}
 	draft := setupDraft{Version: draftFormat, Config: initial}
-	savedPath := draftPath(home)
 	saved, haveDraft, err := offerUnusableDraft(p, home)
 	if err != nil {
-		return err
+		return setupDraft{}, false, err
 	}
 	if haveDraft {
 		choice, e := p.menu("You have an unfinished setup. What would you like to do?", "continue",
@@ -276,7 +336,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 			option{"retention", "Change how long sessions are kept"},
 			option{"restart", "Start over"})
 		if e != nil {
-			return e
+			return setupDraft{}, false, e
 		}
 		if choice != "restart" {
 			draft = saved
@@ -294,10 +354,10 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 			}
 			if choice == "capture" {
 				if e = chooseCapture(p, &draft.Config, userHome, env, known); e != nil {
-					return e
+					return setupDraft{}, false, e
 				}
 				if e = offerStopImported(p, &draft, existing); e != nil {
-					return e
+					return setupDraft{}, false, e
 				}
 				draft.Step = 2
 				if draft.Config.Storage.Provider == "" {
@@ -311,12 +371,12 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 				}
 				draft.Config.RetentionDays, e = p.retentionDays(days)
 				if e != nil {
-					return e
+					return setupDraft{}, false, e
 				}
 			}
 		} else {
 			if e = discardDraft(home, saved, existing, env); e != nil {
-				return e
+				return setupDraft{}, false, e
 			}
 		}
 	} else if installed {
@@ -327,11 +387,11 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 			option{"all", "All settings"},
 			option{"exit", "Nothing, exit"})
 		if e != nil {
-			return e
+			return setupDraft{}, false, e
 		}
 		if choice == "exit" {
-			terminal.Println(out, "Nothing was changed.")
-			return nil
+			terminal.Println(p.out, "Nothing was changed.")
+			return setupDraft{}, true, nil
 		}
 		// One area is not three steps: its headings go without "Step n of 3".
 		p.singleArea = choice != "all"
@@ -343,203 +403,208 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 			draft.Step = 2
 			draft.Config.RetentionDays, err = p.retentionDays(existing.RetentionDays)
 			if err != nil {
-				return err
+				return setupDraft{}, false, err
 			}
 		}
 		if choice == "capture" { // Storage is still verified, but its prompts are skipped.
 			if err = chooseCapture(p, &draft.Config, userHome, env, known); err != nil {
-				return err
+				return setupDraft{}, false, err
 			}
 			if err = offerStopImported(p, &draft, existing); err != nil {
-				return err
+				return setupDraft{}, false, err
 			}
 			draft.Step = 2
 		}
 	}
-	save := func() error { return local.Write(savedPath, draft) }
-	var verifiedStorage credentials.Config
-	for {
-		if draft.Step == 0 {
-			if err = chooseCapture(p, &draft.Config, userHome, env, known); err != nil {
-				return err
-			}
-			draft.Step = 1
-			if err = save(); err != nil {
-				return err
-			}
-		}
-		// The apps are chosen now, so whether applySetup would refuse them
-		// beside another installation's hooks is known: say so before the
-		// storage and retention questions, not after them. The answers so
-		// far are saved for the next run.
-		if problems := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), draft.Config.Harnesses); len(problems) > 0 {
-			if err = save(); err != nil {
-				return err
-			}
-			return &otherInstallationError{problems: problems}
-		}
-		if draft.Step == 1 {
-			p.step(2, "Connect storage")
-			cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env, draft.FailedRegion)
-			if e != nil {
-				return e
-			}
-			// The storage questions asked for a failed region again.
-			draft.FailedRegion = ""
-			if saveSecret {
-				keychain, e := env.keychain()
-				if e != nil {
-					return fmt.Errorf("open Keychain: %w", e)
-				}
-				id, e := local.ID()
-				if e != nil {
-					return e
-				}
-				cfg.R2CredentialRef = "setup-" + id
-				draft.CredentialRef = cfg.R2CredentialRef
-				draft.StagedRefs = append(draft.StagedRefs, cfg.R2CredentialRef)
-				// Journal the opaque reference before storing, so cancellation/crash is recoverable.
-				draft.Config.Storage = cfg
-				if e = save(); e != nil {
-					return e
-				}
-				if e = keychain.Save(context.Background(), cfg.R2CredentialRef, secret); e != nil {
-					return fmt.Errorf("save staged credential: %w", e)
-				}
+	return draft, false, nil
+}
 
+func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedPath, home, userHome string, env Env, known func(config.Config) []backfill.KnownProject, verifiedStorage *credentials.Config, verbose bool) (bool, error) {
+	var err error
+	if draft.Step == 0 {
+		if err = chooseCapture(p, &draft.Config, userHome, env, known); err != nil {
+			return false, err
+		}
+		draft.Step = 1
+		if err = save(); err != nil {
+			return false, err
+		}
+	}
+	// The apps are chosen now, so whether applySetup would refuse them
+	// beside another installation's hooks is known: say so before the
+	// storage and retention questions, not after them. The answers so
+	// far are saved for the next run.
+	if problems := env.installation(home, userHome).otherInstallationProblems(env.hookFiles(userHome), draft.Config.Harnesses); len(problems) > 0 {
+		if err = save(); err != nil {
+			return false, err
+		}
+		return false, &otherInstallationError{problems: problems}
+	}
+	if draft.Step == 1 {
+		p.step(2, "Connect storage")
+		cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env, draft.FailedRegion)
+		if e != nil {
+			return false, e
+		}
+		// The storage questions asked for a failed region again.
+		draft.FailedRegion = ""
+		if saveSecret {
+			keychain, e := env.keychain()
+			if e != nil {
+				return false, fmt.Errorf("open Keychain: %w", e)
 			}
+			id, e := local.ID()
+			if e != nil {
+				return false, e
+			}
+			cfg.R2CredentialRef = "setup-" + id
+			draft.CredentialRef = cfg.R2CredentialRef
+			draft.StagedRefs = append(draft.StagedRefs, cfg.R2CredentialRef)
+			// Journal the opaque reference before storing, so cancellation/crash is recoverable.
 			draft.Config.Storage = cfg
-			draft.Step = 2
-			if err = save(); err != nil {
-				return err
+			if e = save(); e != nil {
+				return false, e
 			}
+			if e = keychain.Save(context.Background(), cfg.R2CredentialRef, secret); e != nil {
+				return false, fmt.Errorf("save staged credential: %w", e)
+			}
+
+		}
+		draft.Config.Storage = cfg
+		draft.Step = 2
+		if err = save(); err != nil {
+			return false, err
+		}
+	}
+	if err = save(); err != nil {
+		return false, err
+	}
+	return verifySetupDraftStorage(p, draft, save, savedPath, userHome, env, known, verifiedStorage, verbose)
+}
+
+func verifySetupDraftStorage(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, verifiedStorage *credentials.Config, verbose bool) (bool, error) {
+	if draft.Config.Storage.Provider == credentials.ProviderR2 {
+		kc, e := env.keychain()
+		if e != nil {
+			return false, e
+		}
+		if _, e = kc.Load(context.Background(), draft.Config.Storage.R2CredentialRef); e != nil {
+			draft.Step = 1
+			draft.Config.Storage.R2CredentialRef = ""
+			_ = save()
+			return false, fmt.Errorf("stored R2 credential is unavailable; enter it again during setup")
+		}
+	}
+	if draft.Config.Storage != *verifiedStorage {
+		// A draft resumed past the storage questions (after changing
+		// apps, say) still doesn't check a failed region again.
+		if s := &draft.Config.Storage; s.Provider == credentials.ProviderS3 && draft.FailedRegion != "" && s.Region == draft.FailedRegion {
+			region, err := askFailedRegion(p, s.Region)
+			if err != nil {
+				return false, err
+			}
+			s.Region = region
+		}
+		draft.FailedRegion = ""
+		terminal.Println(p.out, "")
+		e := runStorageCheck(p, &draft.Config, env)
+		if errors.Is(e, errStorageCheckInterrupted) {
+			return false, e
+		}
+		if e != nil {
+			return recoverSetupStorageFailure(p, draft, save, savedPath, userHome, env, known, e, verbose)
+		}
+		*verifiedStorage = draft.Config.Storage
+	}
+	return false, nil
+}
+
+func recoverSetupStorageFailure(p *prompter, draft *setupDraft, save func() error, savedPath, userHome string, env Env, known func(config.Config) []backfill.KnownProject, checkErr error, verbose bool) (bool, error) {
+	d := printStorageFailure(p, draft.Config.Storage, checkErr, verbose, "agent-archive setup --verbose")
+	// Saved to ask the storage questions again, so that
+	// "Continue where you left off" never repeats a check that just failed.
+	if err := local.Write(savedPath, reopenStorage(*draft, d)); err != nil {
+		return false, err
+	}
+	choice, promptErr := p.menu("What next?", "fix",
+		option{"fix", storageFixLabel(draft.Config.Storage, d)},
+		option{"retry", "Retry the check"},
+		option{"edit", "Change other settings"},
+		option{"cancel", "Stop for now (your answers are kept)"})
+	if promptErr != nil || choice == "cancel" {
+		return false, &storageCheckError{err: checkErr, outcome: "your answers are kept"}
+	}
+	// Retry and "Change other settings" keep the draft as it is, at the check.
+	if choice == "fix" && d.Cause == storage.CauseWrongRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
+		// When S3 didn't name the bucket's region, ask S3 for it, so the
+		// default is not the region that just failed.
+		region := d.Region
+		if region == "" {
+			region = firstNonEmpty(lookUpBucketRegion(p, env, draft.Config.Storage), draft.Config.Storage.Region)
+		}
+		var err error
+		if draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", region); err != nil {
+			return false, err
+		}
+	} else if choice == "fix" {
+		*draft = reopenStorage(*draft, d)
+	}
+	if choice == "edit" {
+		if err := editSetupReview(p, draft, userHome, backfilledProjects(env), known); err != nil {
+			return false, err
+		}
+	}
+	if err := save(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func reviewAndCommitSetup(p *prompter, draft *setupDraft, save func() error, home, userHome, exe string, env Env, existing config.Config, installed bool, reviewed map[string]applicationDiscovery, discoveries map[string]applicationDiscovery, discoveredAt time.Time, errOut io.Writer, verifiedStorage *credentials.Config, known func(config.Config) []backfill.KnownProject) (bool, error) {
+	var err error
+	// Review what will be committed, not what a draft may have saved.
+	draft.Config = reviewedSetupConfig(existing, *draft)
+	hookFiles, installedHookFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, existing)
+	blocked := showSetupReview(p, draft.Config, setupReview{existing: existing, reconfiguring: installed, discoveries: reviewed, hookFiles: hookFiles, installedHookFiles: installedHookFiles, userHome: userHome})
+	if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
+		return false, err
+	}
+	if existing.Paused {
+		p.note("Capture stays paused until you run agent-archive resume.")
+	}
+	reviewHookFiles(p, draft.Config.Harnesses, hookFiles, installedHookFiles, existing.Harnesses, len(existing.HookFiles) > 0, userHome)
+	warnCollectorEnvironment(p, draft.Config.Storage, userHome, env)
+	printReviewNotes(p)
+	action, e := reviewAction(p, installed, blocked)
+	if e != nil {
+		return false, e
+	}
+	if action == "check" {
+		// The storage check runs again too, which reads the bucket's
+		// public-access settings again.
+		*verifiedStorage = credentials.Config{}
+		return false, nil
+	}
+	if action == "cancel" {
+		terminal.Println(p.out, "Cancelled. Active settings are unchanged; your setup draft is saved.")
+		return true, nil
+	}
+	if action == "edit" {
+		if err = editSetupReview(p, draft, userHome, backfilledProjects(env), known); err != nil {
+			return false, err
 		}
 		if err = save(); err != nil {
-			return err
+			return false, err
 		}
-		if draft.Config.Storage.Provider == credentials.ProviderR2 {
-			kc, e := env.keychain()
-			if e != nil {
-				return e
-			}
-			if _, e = kc.Load(context.Background(), draft.Config.Storage.R2CredentialRef); e != nil {
-				draft.Step = 1
-				draft.Config.Storage.R2CredentialRef = ""
-				_ = save()
-				return fmt.Errorf("stored R2 credential is unavailable; enter it again during setup")
-			}
-		}
-		if draft.Config.Storage != verifiedStorage {
-			// A draft resumed past the storage questions (after changing
-			// apps, say) still doesn't check a failed region again.
-			if s := &draft.Config.Storage; s.Provider == credentials.ProviderS3 && draft.FailedRegion != "" && s.Region == draft.FailedRegion {
-				if s.Region, err = askFailedRegion(p, s.Region); err != nil {
-					return err
-				}
-			}
-			draft.FailedRegion = ""
-			terminal.Println(out, "")
-			e := runStorageCheck(p, &draft.Config, env)
-			if errors.Is(e, errStorageCheckInterrupted) {
-				return e
-			}
-			if e != nil {
-				d := printStorageFailure(p, draft.Config.Storage, e, verbose, "agent-archive setup --verbose")
-				// Saved to ask the storage questions again, so that
-				// "Continue where you left off" never repeats a check that
-				// just failed.
-				if err = local.Write(savedPath, reopenStorage(draft, d)); err != nil {
-					return err
-				}
-				choice, promptErr := p.menu("What next?", "fix",
-					option{"fix", storageFixLabel(draft.Config.Storage, d)},
-					option{"retry", "Retry the check"},
-					option{"edit", "Change other settings"},
-					option{"cancel", "Stop for now (your answers are kept)"})
-				if promptErr != nil || choice == "cancel" {
-					return &storageCheckError{err: e, outcome: "your answers are kept"}
-				}
-				// Retry and "Change other settings" keep the draft as it
-				// is, at the check.
-				if choice == "fix" && d.Cause == storage.CauseWrongRegion && draft.Config.Storage.Provider == credentials.ProviderS3 {
-					// The region is the one answer to change, asked right
-					// under the diagnosis. When S3 didn't name the bucket's
-					// region, ask S3 for it, as the storage questions would,
-					// so the default is not the region that just failed.
-					region := d.Region
-					if region == "" {
-						region = firstNonEmpty(lookUpBucketRegion(p, env, draft.Config.Storage), draft.Config.Storage.Region)
-					}
-					if draft.Config.Storage.Region, err = promptRegion(p, "Bucket region", region); err != nil {
-						return err
-					}
-				} else if choice == "fix" {
-					draft = reopenStorage(draft, d)
-				}
-				if choice == "edit" {
-					if err = editSetupReview(p, &draft, userHome, backfilledProjects(env), known); err != nil {
-						return err
-					}
-				}
-				if err = save(); err != nil {
-					return err
-				}
-				continue
-			}
-			verifiedStorage = draft.Config.Storage
-		}
-
-		if draft.Config.RetentionDays <= 0 {
-			draft.Config.RetentionDays = defaultRetentionDays
-		}
-		// Review what will be committed, not what a draft may have saved.
-		draft.Config.ImportedHarnesses = carriedImportedHarnesses(existing.ImportedHarnesses, draft.Config.Harnesses, draft.StopImported)
-		hookFiles, installedHookFiles := env.hookFiles(userHome), env.installedHookFiles(userHome, existing)
-		blocked := showSetupReview(p, draft.Config, setupReview{existing: existing, reconfiguring: installed, discoveries: reviewed, hookFiles: hookFiles, installedHookFiles: installedHookFiles, userHome: userHome})
-		if err = reviewChanges(home, existing, draft.Config, p, env); err != nil {
-			return err
-		}
-		if existing.Paused {
-			p.note("Capture stays paused until you run agent-archive resume.")
-		}
-		reviewHookFiles(p, draft.Config.Harnesses, hookFiles, installedHookFiles, existing.Harnesses, len(existing.HookFiles) > 0, userHome)
-		warnCollectorEnvironment(p, draft.Config.Storage, userHome, env)
-		printReviewNotes(p)
-		action, e := reviewAction(p, installed, blocked)
-		if e != nil {
-			return e
-		}
-		if action == "check" {
-			// The storage check runs again too, which reads the bucket's
-			// public-access settings again.
-			verifiedStorage = credentials.Config{}
-			continue
-		}
-		if action == "cancel" {
-			terminal.Println(out, "Cancelled. Active settings are unchanged; your setup draft is saved.")
-			return nil
-		}
-		if action == "edit" {
-			if err = editSetupReview(p, &draft, userHome, backfilledProjects(env), known); err != nil {
-				return err
-			}
-			if err = save(); err != nil {
-				return err
-			}
-			continue
-		}
-
-		for _, ref := range draft.StagedRefs {
-			if ref != draft.Config.Storage.R2CredentialRef && !containsString(draft.Config.RetiredCredentialRefs, ref) {
-				draft.Config.RetiredCredentialRefs = append(draft.Config.RetiredCredentialRefs, ref)
-			}
-		}
-		// Re-read under the machine lock in applySetup; it rejects concurrent config changes.
-		if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
-			return err
-		}
-		return finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true})
+		return false, nil
 	}
+
+	draft.Config.RetiredCredentialRefs = retiredStagedRefs(draft.Config.RetiredCredentialRefs, draft.StagedRefs, draft.Config.Storage.R2CredentialRef)
+	// Re-read under the machine lock in applySetup; it rejects concurrent config changes.
+	if err = applySetup(home, userHome, exe, existing, &draft.Config, draft.StopImported, env); err != nil {
+		return false, err
+	}
+	return true, finishSetup(p, errOut, home, draft.Config, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, offerImport: true})
 }
 
 // setupFinish is what finishSetup needs beyond the committed
