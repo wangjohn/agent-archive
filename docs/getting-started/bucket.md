@@ -3,7 +3,8 @@
 agent-archive stores sessions in a private bucket you own. Create it once;
 every Mac you set up can share it. You need a Cloudflare or AWS account for
 the bucket; there is no agent-archive account or hosted service. Cloudflare
-R2 is the quickest to set up.
+R2 is the quickest to set up. `agent-archive setup` links here when you
+choose "Show setup instructions" at its storage question.
 
 ## Cloudflare R2 (recommended)
 

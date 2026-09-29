@@ -86,7 +86,7 @@ var screens = []screen{
 		// A first run on a Mac with all three apps, from inside a Git
 		// repository, through to the next steps.
 		name:    "setup-fresh-apps-git-cwd",
-		answers: []string{"", "", "2", "work", "2", ""},
+		answers: []string{"", "2", "work", "2", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude", "cursor")
@@ -122,7 +122,7 @@ var screens = []screen{
 		// Inside a repository, the recent-projects list starts with it,
 		// included, and each project's session count.
 		name:    "setup-recent-projects-git-cwd",
-		answers: []string{"", "3", ""},
+		answers: []string{"n", "", "3", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -137,7 +137,7 @@ var screens = []screen{
 	{
 		// Leaving every project out asks again; a includes them all.
 		name:    "setup-recent-projects-none-left",
-		answers: []string{"", "1", "", "a", ""},
+		answers: []string{"n", "", "1", "", "a", ""},
 		exit:    1,
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
@@ -331,7 +331,7 @@ var screens = []screen{
 		// The review before a first setup commits, to a bucket that blocks
 		// public access, cancelled there.
 		name:    "setup-review-fresh",
-		answers: []string{"y", "", "2", "work", "2", "3"},
+		answers: []string{"y", "2", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "codex", "claude")
@@ -343,7 +343,7 @@ var screens = []screen{
 		// The review before a first setup to Cloudflare R2, whose keys
 		// cannot read public-access settings, cancelled there.
 		name:    "setup-review-fresh-r2",
-		answers: []string{"", "", "1", "0123456789abcdef0123456789abcdef", "team-archive", "ACCESSKEYID", "SECRET", "3"},
+		answers: []string{"", "1", "0123456789abcdef0123456789abcdef", "team-archive", "ACCESSKEYID", "SECRET", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
@@ -354,7 +354,7 @@ var screens = []screen{
 		// The review when the bucket allows public access, cancelled
 		// there.
 		name:    "setup-review-public-bucket",
-		answers: []string{"", "", "2", "work", "2", "3"},
+		answers: []string{"", "2", "work", "2", "3"},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")
@@ -400,7 +400,7 @@ var screens = []screen{
 		// A first setup whose project has past sessions offers to import
 		// them, and imports them.
 		name:    "setup-import-offer",
-		answers: []string{"", "", "2", "work", "2", "", ""},
+		answers: []string{"", "2", "work", "2", "", ""},
 		arrange: func(t *testing.T, f *screenFixture) {
 			t.Helper()
 			f.withApps(t, "claude")

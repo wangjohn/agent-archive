@@ -635,16 +635,19 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
-	// A paused Mac imports nothing (backfill refuses too); resume says so.
+	printNextSteps(p, cfg, paused, !finish.offerImport)
+	// The import is offered last, once the person knows how to see capture
+	// working, so it is a choice about history and not a step of setup. A
+	// paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
-	printNextSteps(p, cfg, finish.userHome, paused, !finish.offerImport)
+	printAnotherMac(p, cfg, finish.userHome)
 	return nil
 }
 
-// verifyStorage checks that setup can write, read, and delete in the
-// configured bucket, and records the bucket's privacy evidence and the check
+// verifyStorage checks that the credentials are accepted, then that setup can
+// write, read, and delete in the configured bucket, and records the bucket's privacy evidence and the check
 // time in cfg. connectErr is a failure to build a client at all; accessErr
 // is a failed check, which new settings may fix.
 func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
@@ -653,6 +656,12 @@ func verifyStorage(cfg *config.Config, env Env) (connectErr, accessErr error) {
 	store, err := env.openStore(*cfg)
 	if err != nil {
 		return fmt.Errorf("connect storage: %w", err), nil
+	}
+	// A wrong account, key, or profile fails here on one cheap listing that
+	// writes nothing, before the round trip's upload and clean-up each fail
+	// in turn. Only VerifyAccess decides that the bucket works.
+	if err = storage.Probe(ctx, store); err != nil {
+		return nil, err
 	}
 	if err = storage.VerifyAccess(ctx, store); err != nil {
 		return nil, err
@@ -778,9 +787,8 @@ var hookNextStep = map[string]string{
 // printNextSteps ends a committed setup with one line per app on what to do
 // next. Capture needs a proven fresh start (provesFreshSessionStart), so it
 // says that sessions already open are not captured. setup --yes asks
-// nothing, so it points at backfill for past sessions instead. The last line
-// sets up another Mac with the same storage.
-func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, unattended bool) {
+// nothing, so it points at backfill for past sessions instead.
+func printNextSteps(p *prompter, cfg config.Config, paused, unattended bool) {
 	if paused {
 		terminal.Println(p.out, "\nNext: run "+p.style.cmd("agent-archive resume")+" when you’re ready to start archiving.")
 	} else {
@@ -796,6 +804,11 @@ func printNextSteps(p *prompter, cfg config.Config, userHome string, paused, una
 		}
 		terminal.Println(p.out, "Check progress with "+p.style.cmd("agent-archive status")+".")
 	}
+}
+
+// printAnotherMac ends a committed setup with the command that sets up
+// another Mac with the same storage.
+func printAnotherMac(p *prompter, cfg config.Config, userHome string) {
 	if cfg.Storage.Provider == credentials.ProviderR2 {
 		terminal.Printf(p.out, "\nTo set up another Mac with this storage, set %s and\n%s there, then run:\n", envR2AccessKeyID, envR2SecretAccessKey)
 	} else {
@@ -879,13 +892,7 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 		known = func(config.Config) []backfill.KnownProject { return nil }
 	}
 	p.step(1, "Choose what to capture")
-	err := chooseHarnesses(p, env.detectHarnesses(userHome), cfg)
-	if err != nil {
-		return err
-	}
-	if len(cfg.Harnesses) == 0 {
-		return fmt.Errorf("choose at least one application")
-	}
+	detected := env.detectHarnesses(userHome)
 	// In a Git repository with no projects yet, the repository heads the
 	// recent-projects list, already included.
 	current := ""
@@ -897,6 +904,16 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 		if e == nil {
 			current = suggestedProject(dir)
 		}
+	}
+	if done, e := offerFirstCapture(p, cfg, detected, current, userHome); e != nil || done {
+		return e
+	}
+	err := chooseHarnesses(p, detected, cfg)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Harnesses) == 0 {
+		return fmt.Errorf("choose at least one application")
 	}
 	// addProjects asks again while no project is included, so both paths
 	// end with at least one.
@@ -917,6 +934,37 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 		cfg.RetentionDays = defaultRetentionDays
 	}
 	return nil
+}
+
+// offerFirstCapture is the first setup's one question for what to capture,
+// when it can guess both halves: the apps found on this Mac, and the Git
+// repository setup was run from. Yes takes both, with the default retention;
+// the review step's "Edit a setting" changes apps, projects, and retention,
+// and on no chooseCapture asks for each in turn. It reports whether the
+// answer settled the choice. Anything but a first setup, or one that cannot
+// guess both, asks the longer questions.
+func offerFirstCapture(p *prompter, cfg *config.Config, detected []string, current, userHome string) (bool, error) {
+	first := len(cfg.Harnesses) == 0 && len(cfg.DeclinedHarnesses) == 0 && len(cfg.Archive.Projects) == 0
+	if !first || len(detected) == 0 || current == "" {
+		return false, nil
+	}
+	var apps []string
+	for _, app := range allHarnesses {
+		if containsString(detected, app) {
+			apps = append(apps, app)
+		}
+	}
+	yes, err := p.yesNo("Archive "+appList(apps)+" sessions in "+displayPath(current, userHome)+"?", true)
+	if err != nil || !yes {
+		return false, err
+	}
+	cfg.Harnesses = apps
+	cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
+	if cfg.RetentionDays <= 0 {
+		cfg.RetentionDays = defaultRetentionDays
+	}
+	terminal.Println(p.out, "On the review screen, Edit a setting adds projects, drops apps, and changes how long sessions are kept.")
+	return true, nil
 }
 
 // foldInto merges the listed projects inside root, such as a repository
@@ -958,14 +1006,30 @@ func storedCredentialReadable(env Env, ref string) bool {
 	return err == nil
 }
 
+// bucketDocURL is the guide to creating a bucket by hand, which the storage
+// menu's instructions point at.
+const bucketDocURL = "https://github.com/wangjohn/agent-archive/blob/main/docs/getting-started/bucket.md"
+
+// storageMenuOptions is the storage menu: the providers to use an existing
+// bucket with, then the instructions.
+func storageMenuOptions() []option {
+	options := []option{
+		{"r2", "Cloudflare R2"},
+		{"s3", "Amazon S3"},
+	}
+	options = append(options, guidedStorageOptions()...)
+	return append(options, option{"help", "Show setup instructions"})
+}
+
+// guidedStorageOptions is where the "Create a new bucket for me" choices go
+// once guided bucket creation exists (dev/proposals/portable-handoff-and-onboarding.md,
+// Part 2). Until then the menu offers only existing buckets.
+func guidedStorageOptions() []option { return nil }
+
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
 	var secret credentials.R2Credentials
-	providers := []option{
-		{"r2", "Cloudflare R2"},
-		{"s3", "Amazon S3"},
-		{"help", "Show setup instructions"},
-	}
+	providers := storageMenuOptions()
 	// A saved provider wins, so discovery runs only when there is none.
 	defaultProvider := existing.Provider
 	if defaultProvider == "" {
@@ -973,14 +1037,8 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	}
 	choice, err := p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	for err == nil && choice == "help" {
-		terminal.Println(p.out, "Cloudflare R2, in the dashboard at https://dash.cloudflare.com:")
-		terminal.Println(p.out, "  1. R2 Object Storage > Create bucket. Leave public access off.")
-		terminal.Println(p.out, "  2. Manage API tokens > Create API token: Object Read & Write, applied to only that bucket.")
-		terminal.Println(p.out, "     Copy the Access Key ID and Secret Access Key.")
-		terminal.Println(p.out, "  3. Copy the Account ID from the R2 overview page, or the bucket's URL from its settings.")
-		terminal.Println(p.out, "Amazon S3: create a private bucket and configure an AWS profile with access to it.")
-		terminal.Println(p.out, "https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html")
-		terminal.Println(p.out, "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html")
+		terminal.Println(p.out, "Create a private bucket first (public access off), with a key or AWS profile that can read and write only it.")
+		terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
 		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	}
 	if err != nil {

@@ -6,14 +6,9 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 
 \e[1mStep 1 of 3 · Choose what to capture\e[0m
 
-\e[1mInclude Claude Code?\e[0m [\e[1mY\e[0m/n] › 
+\e[1mArchive Claude Code sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › 
 
-Projects to archive (✓ included):
-  1) \e[32m✓\e[0m ~/src/web-app  \e[2mthis folder\e[0m
-a includes all listed projects. Or enter 1 to include or leave it out, or a path to add a project.
-Enter a blank line when finished.
-\e[1mProjects\e[0m › 
-
+On the review screen, Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m
 

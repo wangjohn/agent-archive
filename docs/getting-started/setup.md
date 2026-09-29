@@ -11,8 +11,8 @@ and start. You need an existing private Cloudflare R2 or Amazon S3 bucket
 ([create one](bucket.md); [bucket permissions](../security/bucket-permissions.md)
 has the least access it needs). Run it from inside a project you want
 archived, so setup can offer it, or from anywhere: setup then offers the
-projects your apps have sessions in. Type `help` at the storage prompt for
-provider instructions. Setup asks questions, so it needs a terminal: without one it
+projects your apps have sessions in. Choose "Show setup instructions" at the
+storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions, so it needs a terminal: without one it
 stops before asking anything and changes nothing. Its prompt sequence is not
 a scripting API; to script it, use [`setup --yes`](#set-up-without-questions).
 
@@ -45,8 +45,15 @@ backfill`](../guides/backfill.md) afterwards.
 
 ## 1. Apps and projects
 
-Setup offers the apps it finds together: "Include Codex and Claude Code?"
-Accept to continue, or decline to choose apps individually. If no apps are
+The first time, when you run setup inside a Git project and it finds apps,
+it asks one question for both: "Archive Codex and Claude Code sessions in
+~/src/web-app?" Accept to continue: the apps and that project are chosen, and
+retention is the default 90 days. The review at the end still lets you add
+projects, drop apps, or change retention with "Edit a setting". Decline to
+answer the questions below instead.
+
+Otherwise setup offers the apps it finds together: "Include Codex and Claude
+Code?" Accept to continue, or decline to choose apps individually. If no apps are
 found, it opens the individual choices immediately. On reconfiguration, it
 lists the apps included and not included, then asks "Change which apps are
 included? [y/N]".
@@ -97,9 +104,11 @@ already have a profile with credentials, and R2 otherwise.
   `us-east-1`. These lookups use the profile's credentials only inside the
   AWS SDK; setup never prints or saves them.
 
-Setup checks the connection with one temporary synthetic object
-(`.setup-test/<random>.json`), which it deletes again. That proves the
-credentials work; it does not prove the bucket is private. Setup then
+Setup checks the connection in two steps. First it lists at most one object
+under `.setup-test/`, which writes nothing, so a wrong account ID, key, or
+profile fails within moments with an explanation. Then it writes one
+temporary synthetic object (`.setup-test/<random>.json`), reads it back, and
+deletes it. That proves the credentials work; it does not prove the bucket is private. Setup then
 inspects the bucket's public-access settings read-only (S3 only; see
 [privacy](../security/privacy.md#bucket-privacy-evidence)). R2 keys cannot
 read those settings, so for R2 the review reminds you to check that public
@@ -300,25 +309,7 @@ into your real launchd: stub `launchctl` in tests (see
 
 ## After setup
 
-When the projects you chose have past sessions on this Mac that aren't in
-the archive yet, setup offers to import them:
-
-```text
-Looking for past sessions in these projects… 214 found.
-Import the 214 past sessions from these projects? [Y/n]
-```
-
-Yes runs the same import as `agent-archive backfill --project DIR` for each
-chosen project, with the same checks, and uploads the sessions; it ends with
-the import's ID, and `agent-archive backfill undo ID` removes them again (see
-[backfill](../guides/backfill.md)). If the import stops or fails, setup
-stays done and prints the `agent-archive backfill` command that finishes
-it. No changes
-nothing; you can run `agent-archive backfill` any time. Setup skips the offer
-while capture is paused, when there is nothing to import, and with `--yes`,
-which asks nothing and mentions `agent-archive backfill` instead.
-
-Then setup says, with one line per app, what to do next:
+After "Configuration saved.", setup says, with one line per app, what to do next:
 
 - **Codex:** run `/hooks` and approve the archive hooks, then start a new
   session. Codex doesn't run hooks it hasn't approved, and this is the most
@@ -338,9 +329,30 @@ agent-archive status --json
 
 What each status line means is in
 [troubleshooting](../guides/troubleshooting.md#reading-status).
+
+Once it has said how to check capture, setup offers to import the past
+sessions of the projects you chose, when they have some on this Mac that
+aren't in the archive yet:
+
+```text
+Looking for past sessions in these projects… 214 found.
+Import the 214 past sessions from these projects? [Y/n]
+```
+
+Yes runs the same import as `agent-archive backfill --project DIR` for each
+chosen project, with the same checks, and uploads the sessions; it ends with
+the import's ID, and `agent-archive backfill undo ID` removes them again (see
+[backfill](../guides/backfill.md)). If the import stops or fails, setup
+stays done and prints the `agent-archive backfill` command that finishes
+it. No changes
+nothing; you can run `agent-archive backfill` any time. Setup skips the offer
+while capture is paused, when there is nothing to import, and with `--yes`,
+which asks nothing and mentions `agent-archive backfill` in its next steps
+instead.
+
 Setup's storage check and installed hooks establish configuration, not a captured session. After `agent-archive sync` or the next background pass, check that the app's Capture row says **archived, verified**, then confirm the session appears in `agent-archive list` and `agent-archive show SESSION_ID`. An overall `Ready` state alone does not establish that this app published a new session and had it read back. For a short route through the check, see [first successful capture](../README.md#first-successful-capture).
 
-Setup's last line is the command that sets up another Mac with the same
+Setup's last line, after the import offer, is the command that sets up another Mac with the same
 storage, apps and projects ([without questions](#set-up-without-questions)),
 ready to copy:
 

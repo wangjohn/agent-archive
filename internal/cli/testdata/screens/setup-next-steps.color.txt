@@ -66,14 +66,14 @@ Enter 1-3 [\e[1m1\e[0m] ›
 
 Configuration saved.
 
-Looking for past sessions in these projects… none to import.
-
 Next, in each app:
   Codex: run \e[36m/hooks\e[0m and approve the archive hooks, then start a new session (or \e[36m/clear\e[0m).
   Claude Code: nothing to approve; start a new session (or \e[36m/clear\e[0m).
   Cursor: nothing to approve; start a new Agent chat.
 Sessions already open are not captured. Start a new one in an included project.
 Check progress with \e[36magent-archive status\e[0m.
+
+Looking for past sessions in these projects… none to import.
 
 To set up another Mac with this storage, run there:
   \e[36magent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --project ~/src/web-app\e[0m
