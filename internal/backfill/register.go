@@ -56,6 +56,11 @@ type Registration struct {
 	// CursorDatabase is Cursor's state.vscdb, which a chat found only there
 	// is checked against before it is registered. Empty skips the check.
 	CursorDatabase string
+	// RepoKey, when set, returns archive.RepoKey of the git repository at a
+	// project root, or "" when it has none or the root is gone. Registration
+	// asks once per root, before a hold, never under hooks.lock, and records
+	// the answer on each imported session's registration.
+	RepoKey func(root string) string
 }
 
 // RegistrationResult counts what registration did with the plan's sessions.
@@ -97,6 +102,10 @@ type parentWork struct {
 	// checkChats).
 	chatChecked bool
 	chatGone    bool
+	// repoKey is the project's repository key, and repoKeyChecked whether it
+	// was asked for (see resolveRepoKeys).
+	repoKey        string
+	repoKeyChecked bool
 }
 
 // Run registers every candidate, in order.
@@ -107,6 +116,7 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 		works[i] = &parentWork{c: c}
 	}
 	flushed := [2]int{}
+	repoKeys := map[string]string{}
 	flush := func() error {
 		sessions, subagents := result.Sessions[flushed[0]:], result.Subagents[flushed[1]:]
 		flushed = [2]int{len(result.Sessions), len(result.Subagents)}
@@ -120,6 +130,7 @@ func (r Registration) Run(candidates []Candidate) (RegistrationResult, error) {
 			return result, ErrStopped
 		}
 		r.checkChats(works[i:])
+		r.resolveRepoKeys(works[i:], repoKeys)
 		err := r.hold(works, &i, &result)
 		if flushErr := flush(); err == nil {
 			err = flushErr
@@ -151,6 +162,33 @@ func (r Registration) checkChats(works []*parentWork) {
 		if w.c.SourceKind == archive.SourceKindCursorSQLite && !w.chatChecked {
 			w.chatChecked, w.chatGone = true, r.chatGone(w.c)
 		}
+	}
+}
+
+// resolveRepoKeys asks, before hooks.lock is taken, for the repository key of
+// each project the next hold can reach, at most once per project root
+// (repoKeys remembers the answers across holds). Asking runs git, which a
+// hold must not wait for.
+func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys map[string]string) {
+	if r.RepoKey == nil {
+		return
+	}
+	limit := maxHoldSteps
+	if r.MaxHoldSteps > 0 {
+		limit = r.MaxHoldSteps
+	}
+	for _, w := range works[:min(limit, len(works))] {
+		if w.repoKeyChecked {
+			continue
+		}
+		key, asked := repoKeys[w.c.ProjectRoot]
+		if !asked {
+			if key = r.RepoKey(w.c.ProjectRoot); !archive.IsRepoKey(key) {
+				key = ""
+			}
+			repoKeys[w.c.ProjectRoot] = key
+		}
+		w.repoKey, w.repoKeyChecked = key, true
 	}
 }
 
@@ -223,7 +261,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 		return true, err
 	}
 	reg, err := r.Store.RegisterNewSession(c.NativeSessionID, func(id string) archive.SessionRegistration {
-		return r.registration(c, id)
+		return r.registration(c, id, w.repoKey)
 	})
 	if err != nil {
 		return true, fmt.Errorf("register an imported session: %w", err)
@@ -243,7 +281,7 @@ func (r Registration) step(cfg config.Config, w *parentWork, result *Registratio
 // last is a backstop: no registration ever starts after its admission.
 func (r Registration) skip(cfg config.Config, w *parentWork, result *RegistrationResult) (bool, error) {
 	c := w.c
-	if !cfg.AcceptSession(r.registration(c, "")) {
+	if !cfg.AcceptSession(r.registration(c, "", "")) {
 		result.NotAdmitted++
 		return true, nil
 	}
@@ -315,17 +353,18 @@ func (r Registration) subagent(w *parentWork, sub Subagent) error {
 // valid reports whether c's registration would be valid. An invalid one is
 // counted, not returned as an error: it does not stop the import.
 func (r Registration) valid(c Candidate) bool {
-	return r.registration(c, "check").Validate() == nil
+	return r.registration(c, "check", "").Validate() == nil
 }
 
 // registration is the imported session's registration: its true start, the
 // import's admission, and the batch.
-func (r Registration) registration(c Candidate, archiveID string) archive.SessionRegistration {
+func (r Registration) registration(c Candidate, archiveID, repoKey string) archive.SessionRegistration {
 	return archive.SessionRegistration{
 		ArchiveSessionID: archiveID,
 		NativeSessionID:  c.NativeSessionID,
 		ProjectID:        archive.ProjectID(c.ProjectRoot),
 		ProjectRoot:      c.ProjectRoot,
+		RepoKey:          repoKey,
 		Harness:          archive.Harness{Name: c.Harness},
 		TranscriptPath:   c.TranscriptPath,
 		SourceKind:       c.SourceKind,

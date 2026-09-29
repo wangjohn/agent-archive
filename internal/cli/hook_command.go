@@ -54,7 +54,7 @@ func runHookCommand(args []string, stdin io.Reader, stderr io.Writer, env Env) (
 	if _, err := os.Stat(home); errors.Is(err, os.ErrNotExist) {
 		return 0
 	}
-	if err := capture.HandleEvent(home, *harness, payload, env.now()); err != nil {
+	if err := capture.HandleEventWithRepoKey(home, *harness, payload, env.now(), env.repoKeyResolver()); err != nil {
 		terminal.Printf(stderr, "agent-archive: hook: %v\n", err)
 	}
 	return 0

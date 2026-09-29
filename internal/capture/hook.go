@@ -114,12 +114,44 @@ func classifyHookEvent(harness, eventName string) hookEventKind {
 // only explained by a diagnostic. Otherwise the event is handled under
 // hooks.lock, which it waits at most a second for.
 func HandleEvent(home, harness string, payload map[string]any, now time.Time) error {
-	return handleEvent(home, harness, payload, now, nil)
+	return handleEvent(home, harness, payload, now, nil, nil)
+}
+
+// RepoKeyFunc returns archive.RepoKey of the git repository at a project
+// root, or "" when it has none or cannot tell. The hook runs no program
+// itself, so the command line passes one (see internal/gitremote); it must
+// return within a few hundred milliseconds and never panic.
+type RepoKeyFunc func(root string) string
+
+// HandleEventWithRepoKey is HandleEvent that also records repoKey's answer on
+// a session it registers, so the session carries its repository even if the
+// checkout is later moved or deleted. A nil repoKey records none, and the
+// collector derives one when it publishes.
+func HandleEventWithRepoKey(home, harness string, payload map[string]any, now time.Time, repoKey RepoKeyFunc) error {
+	return handleEvent(home, harness, payload, now, nil, repoKey)
+}
+
+// registrationRepoKey is repoKey(root), or "" when it is nil, panics, or does
+// not return a RepoKey: a repository key never fails a registration.
+func registrationRepoKey(repoKey RepoKeyFunc, root string) (key string) {
+	if repoKey == nil {
+		return ""
+	}
+	defer func() {
+		if recover() != nil {
+			key = ""
+		}
+	}()
+	key = repoKey(root)
+	if !archive.IsRepoKey(key) {
+		return ""
+	}
+	return key
 }
 
 // afterLock is used by the contention test to model a bounded slow durable
 // write while hooks.lock is held. Production calls never provide it.
-func handleEvent(home, harness string, payload map[string]any, now time.Time, afterLock func()) error {
+func handleEvent(home, harness string, payload map[string]any, now time.Time, afterLock func(), repoKey RepoKeyFunc) error {
 	if payload == nil {
 		return nil
 	}
@@ -176,7 +208,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 
 	switch kind {
 	case hookEventStart:
-		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
+		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, repoKey)
 	case hookEventTurnStart:
 		registered := true
 		if archive.CanonicalHarness(harness) == "cursor" {
@@ -190,7 +222,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 			// (observed on 3.21.13): its first hook is beforeSubmitPrompt.
 			// A never-seen conversation is registered there, under the
 			// same fresh-start proof a sessionStart would need.
-			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now)
+			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, repoKey)
 		} else {
 			err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
 		}
@@ -381,11 +413,11 @@ func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistrat
 	return nil
 }
 
-func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
-	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false)
+func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, repoKey RepoKeyFunc) error {
+	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false, repoKey)
 }
 
-func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool) error {
+func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool, repoKey RepoKeyFunc) error {
 	reason := strings.ToLower(eventName)
 	transcriptPath, _ := payload["transcript_path"].(string)
 	isCursor := archive.CanonicalHarness(harness) == "cursor"
@@ -477,6 +509,9 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 	}
 	observedHarness := archive.Harness{Name: strings.ToLower(strings.TrimSpace(harness))}
 	applyHarnessObservation(&observedHarness, harness, payload)
+	// Asked once, here, before the registration: it is bounded, and only a
+	// session that will register pays for it.
+	sessionRepoKey := registrationRepoKey(repoKey, root)
 	// RegisterNewSession saves under the archive ID's request lock and
 	// rechecks the index there, so an index entry retention is removing
 	// right now is never reused for a registration that would outlive it.
@@ -486,6 +521,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 			NativeSessionID:  nativeSessionID,
 			ProjectID:        archive.ProjectID(root),
 			ProjectRoot:      root,
+			RepoKey:          sessionRepoKey,
 			Harness:          observedHarness,
 			TranscriptPath:   transcriptPath,
 			SessionStartedAt: now,

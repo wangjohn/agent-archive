@@ -104,6 +104,7 @@ func (s *sessionScan) refreshedMetadata(last lastPublication, source archive.Sou
 	next, buildErr := archive.BuildMetadata(last.bundle, s.opts.MachineID, s.reg.SessionStartedAt, s.now, source, archive.ParserInfo{Version: s.opts.parserVersion()})
 	next.ApplyRegistrationProvenance(s.reg)
 	next.ApplyProjectName(s.reg.ProjectRoot)
+	next.ApplyRepoKey(s.opts.repoKey(s.reg))
 	if buildErr != nil && !archive.IsParseError(buildErr) {
 		// This build cannot derive metadata from the retained bundle at all
 		// (one cached under an older source schema, say). That is not a

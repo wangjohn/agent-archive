@@ -99,7 +99,7 @@ func importPlanLocked(env Env, stdout, stderr io.Writer, home string, plan backf
 	activity.set(stopRegister)
 	registration := backfill.Registration{
 		Home: home, Store: store, Batch: batch.ID, AdmittedAt: admittedAt, DestinationID: batch.DestinationID,
-		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(),
+		MaxHoldSteps: env.backfillHoldSteps, CursorDatabase: env.cursorDatabase(), RepoKey: env.repoKeyResolver(),
 		AfterHold: func(sessions, subagents []string) error {
 			batch.AddSessions(sessions, subagents)
 			if err := backfill.SaveBatch(home, batch); err != nil {

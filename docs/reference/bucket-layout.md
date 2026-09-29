@@ -25,7 +25,8 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   kept inside the metadata (`native_session_id`).
 - **`metadata.json`** is small JSON (schema:
   [`schemas/metadata.schema.json`](../../schemas/metadata.schema.json)): the
-  session's identity, machine, project ID, app and version, capture time,
+  session's identity, machine, project ID, repository key (a hash of the
+  git origin, when there is one), app and version, capture time,
   counts, models, skills, capture gaps, parser and filter versions, and the
   key, SHA-256, and size of the current source. `list` reads only these.
 - **`listing/`** holds time-ordered hints. A limited `list` pages through

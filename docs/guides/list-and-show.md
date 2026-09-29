@@ -65,7 +65,7 @@ claude · agent-archive · 2h ago                                      ✓ compl
   Subagents 2 linked (1 available, 1 expired)
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
-     origin hook · parser 0.13.0 (partial) · filter 12
+     origin hook · parser 0.14.0 (partial) · filter 12
 
   Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json

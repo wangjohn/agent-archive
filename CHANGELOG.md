@@ -8,6 +8,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Sessions in a git repository now carry a `repo_key` in their metadata: a
+  hash of the repository's `origin` address (credentials, scheme, port, and
+  `.git` removed, so SSH and HTTPS clones of one repository agree), which
+  identifies the repository wherever it is checked out. Only the hash is
+  stored, never the address; the
+  [privacy page](docs/security/privacy.md) explains what a hash of a known
+  address does and does not hide. Parser version is now `0.14.0`, so existing
+  sessions gain the field on the next metadata refresh, on the Mac that
+  captured them and only while the repository is still there. Nothing uses it
+  yet: a later release matches `handoff` to a session by repository rather
+  than checkout path.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.

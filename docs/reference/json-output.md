@@ -68,6 +68,13 @@ any transcript text or file path:
 Sidecars written by an older parser gain these fields on the next metadata
 refresh.
 
+From parser `0.14.0` a sidecar may also carry `repo_key`, an opaque
+identifier for the git repository the session ran in (`repo-` and 16 hex
+digits: a hash of the normalized `origin` address, never the address). Two
+sessions of one repository share it whatever their checkout paths, and
+whether cloned over SSH or HTTPS. It is absent for a project that is not a
+git repository or has no `origin`.
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output

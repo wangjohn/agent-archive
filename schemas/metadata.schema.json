@@ -52,6 +52,11 @@
       "type": "string",
       "minLength": 1
     },
+    "repo_key": {
+      "description": "From parser 0.14.0: identifies the git repository the session ran in, independent of where it is checked out. 'repo-' plus 16 hex digits of the SHA-256 of the normalized origin remote URL (host/owner/repo, credentials, scheme, port and .git removed); only this hash is stored, never the URL. Absent when the project had no origin remote a second machine could reach, or the project was gone when the metadata was derived.",
+      "type": "string",
+      "pattern": "^repo-[0-9a-f]{16}$"
+    },
     "started_at": {
       "type": "string",
       "format": "date-time"

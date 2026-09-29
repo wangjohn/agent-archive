@@ -90,11 +90,24 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   [bucket layout](../reference/bucket-layout.md) describes their lifetime.
 - **Metadata**: the machine ID of the Mac that captured it (random, made at
   setup), a project ID (a hash of the project's path, not the path itself),
-  the app and its version, the app's own session ID, capture times and the
+  a repository key (below), the app and its version, the app's own session ID, capture times and the
   session's last record time, counts (including how many distinct files were
   edited, never which), models, skills used, the names of the ten most-called
   tools (MCP tool names included) with their call counts, and the capture gaps the filter recorded (the names
   of omitted fields, never their values).
+- **Repository key** (`repo_key`, in the metadata): when a project is a git
+  repository with an `origin` remote, a hash of that remote's normalized
+  address (host, owner, and repository name, with any username or token,
+  scheme, port, and `.git` removed), so the same repository on another
+  computer can be recognized. Only the hash is stored: never the address, and
+  never a credential that was part of it. The hash is not secret from someone
+  who already knows the address. Anyone with read access to your bucket can
+  hash a repository URL they are curious about and check whether it appears,
+  which reveals that you worked in that repository, and for a public
+  repository the address is guessable. That is why only the hash is stored,
+  and why bucket read access should stay limited to you. A project that is
+  not a git repository, has no `origin`, or whose remote is a local path has
+  no key.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).

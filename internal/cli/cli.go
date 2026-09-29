@@ -98,6 +98,9 @@ type Env struct {
 	// exitProcess, set only by tests, replaces os.Exit where the session
 	// browser exits on a signal.
 	exitProcess func(int)
+	// repoKey, set only by tests, replaces the git lookup of a project's
+	// repository key (see repoKeyResolver).
+	repoKey func(root string) string
 	// backfillCheckpoint, set only by tests, is called inside the
 	// configuration commit between writing the batch file and saving the
 	// configuration ("batch saved"), after the commit ("committed"), after
