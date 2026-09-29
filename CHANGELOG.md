@@ -15,8 +15,9 @@ to schema version 4, which reports whether the total match count is known.
 ### Added
 
 - `list --limit N` caps how many sessions are shown (default 50, newest
-  first; `0` for all). A truncated text listing ends with
-  `Showing N of M session(s)…`; `list --json` is now `schema_version` 4
+  first; `0` for all). A truncated text listing reports
+  `Showing N or more session(s)` when the count is unknown, or
+  `Showing N of M session(s)` when exact; `list --json` is now `schema_version` 4
   and includes `limit`, `returned`, and `total_matched_known`; it includes
   `total_matched` only when the count is exact and `truncated` when the
   result was cut short.
