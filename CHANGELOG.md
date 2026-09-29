@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A sync's problems no longer hide each other in `status`: a read-back or
+  retention failure after collection is shown beside the problems the pass
+  already recorded (such as a session over the size limit, or retention
+  held by the clock) instead of replacing them.
+- `status --verbose` prints each of the last pass's problems on its own
+  `Last error:` line.
+
 ## [0.2.0] - 2026-09-29
 
 The archive browser now has bounded, readable listings and terminal pickers for
