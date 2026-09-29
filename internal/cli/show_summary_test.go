@@ -361,6 +361,30 @@ Claude Code ›
 	}
 }
 
+// A prompt word wider than the line, such as a link or text with no spaces,
+// is split so every row keeps the gutter, and a wide character is never cut.
+func TestTranscriptPromptSplitsLongWords(t *testing.T) {
+	t.Parallel()
+	transcript := archive.Transcript{Exchanges: []archive.TranscriptExchange{
+		{Kind: archive.TranscriptExchangePrompt, Text: "see https://example.com/a/very/long/path ok\n日本語のテキストです"},
+	}}
+	var b bytes.Buffer
+	renderTranscript(&b, summaryFixture(), transcript, transcriptOptions{summaryOptions: summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: 13}}})
+	_, got, _ := strings.Cut(b.String(), "─\n")
+	want := `┃ see
+┃ https://exa
+┃ mple.com/a/
+┃ very/long/p
+┃ ath
+┃ ok
+┃ 日本語のテ
+┃ キストです
+`
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // A session ID from the bucket is display text too, even as a fallback
 // title or in a hint.
 func TestSessionSummaryNeutralizesSessionID(t *testing.T) {

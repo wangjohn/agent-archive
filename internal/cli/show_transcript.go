@@ -100,15 +100,43 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 const promptGutter = "┃"
 
 // renderPrompt quotes the person's prompt with a gutter, wrapped to the
-// style's width so a long line keeps its gutter where it breaks.
+// style's width so a long line keeps its gutter where it breaks. Unlike
+// hang, a word wider than the line (a link, a pasted blob, text with no
+// spaces) is split, since the terminal would otherwise wrap it without the
+// gutter.
 func renderPrompt(w io.Writer, text string, s textStyle) {
 	width := s.width
 	if width > 0 {
 		width = max(width-visibleWidth(promptGutter+" "), 1)
 	}
 	for line := range strings.SplitSeq(hangingIndent("", text, width), "\n") {
-		terminal.Println(w, strings.TrimRight(s.cmd(promptGutter)+" "+line, " "))
+		for _, row := range splitColumns(line, width) {
+			terminal.Println(w, strings.TrimRight(s.cmd(promptGutter)+" "+row, " "))
+		}
 	}
+}
+
+// splitColumns cuts line into rows at most width columns wide, never
+// splitting a character; a wide character that would straddle the edge
+// starts the next row. A width of 0 or less keeps the line whole.
+func splitColumns(line string, width int) []string {
+	if width <= 0 || visibleWidth(line) <= width {
+		return []string{line}
+	}
+	var rows []string
+	var row strings.Builder
+	column := 0
+	for _, r := range line {
+		w := runeWidth(r)
+		if column > 0 && column+w > width {
+			rows = append(rows, row.String())
+			row.Reset()
+			column = 0
+		}
+		row.WriteRune(r)
+		column += w
+	}
+	return append(rows, row.String())
 }
 
 // renderTranscriptSteps writes an exchange's steps. Each run of the agent's
