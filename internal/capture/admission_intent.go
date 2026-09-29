@@ -17,9 +17,9 @@ import (
 )
 
 // An admission intent contains the minimum identity needed to retry a proven
-// start. It deliberately has no raw hook payload or conversation text. The
-// original proof is recorded at hook time because a transcript may no longer
-// be empty when the collector retries the start.
+// start or a Cursor transcript-path follow-up. It deliberately has no raw hook
+// payload or conversation text. The original start proof is recorded at hook
+// time because a transcript may no longer be empty when the collector retries.
 type admissionIntent struct {
 	Harness         string    `json:"harness"`
 	Event           string    `json:"event"`
@@ -119,11 +119,20 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 	return included
 }
 
-// queueAdmissionIntent is only used after hooks.lock times out. It never
-// queues an excluded, paused, pre-activation, or unproven start. The queue
-// lock bounds the directory count across concurrent hook processes.
+// queueAdmissionIntent is only used after hooks.lock times out. It queues a
+// proven start, or a Cursor response/stop that supplies a valid transcript
+// path. A follow-up can update an existing registration but never admit a new
+// session. The queue lock bounds the count across concurrent hook processes.
 func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (bool, error) {
-	if !startsCapture(kind, harness) || !provesFreshSessionStart(harness, payload) || setupjournal.TransactionPending(home) {
+	if setupjournal.TransactionPending(home) {
+		return false, nil
+	}
+	nativeID := firstNonEmptyString(payload, "session_id", "conversation_id")
+	cursorPath := cursorTranscriptPath(payload, nativeID)
+	start := startsCapture(kind, harness) && provesFreshSessionStart(harness, payload)
+	followup := archive.CanonicalHarness(harness) == "cursor" &&
+		(kind == hookEventResponse || firstNonEmptyString(payload, "hook_event_name") == "stop") && cursorPath != ""
+	if !start && !followup {
 		return false, nil
 	}
 	cfg, found, err := config.Load(home)
@@ -134,7 +143,6 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 	if !owned || !project.Included || !cfg.Archive.Eligible(project.Root, now) {
 		return false, nil
 	}
-	nativeID := firstNonEmptyString(payload, "session_id", "conversation_id")
 	if nativeID == "" {
 		return false, nil
 	}
@@ -144,7 +152,7 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 		CursorVersion: firstNonEmptyString(payload, "cursor_version"), ComposerMode: firstNonEmptyString(payload, "composer_mode"),
 	}
 	if intent.Harness == "cursor" {
-		intent.TranscriptPath = cursorTranscriptPath(payload, nativeID)
+		intent.TranscriptPath = cursorPath
 	} else {
 		intent.TranscriptPath = firstNonEmptyString(payload, "transcript_path")
 	}
@@ -215,6 +223,11 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 		return err
 	}
 	var failures []error
+	type deferredFollowup struct {
+		path   string
+		intent admissionIntent
+	}
+	var deferred []deferredFollowup
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -232,7 +245,12 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 		}
 		if !remove {
 			payload := map[string]any{"hook_event_name": intent.Event, "session_id": intent.NativeSessionID, "cwd": intent.ProjectRoot, "transcript_path": intent.TranscriptPath, "cursor_version": intent.CursorVersion, "composer_mode": intent.ComposerMode}
-			if !startsCapture(classifyHookEvent(intent.Harness, intent.Event), intent.Harness) || intent.NativeSessionID == "" {
+			kind := classifyHookEvent(intent.Harness, intent.Event)
+			start := startsCapture(kind, intent.Harness)
+			followup := intent.Harness == "cursor" &&
+				(intent.Event == "afterAgentResponse" || intent.Event == "stop") &&
+				cursorTranscriptPath(payload, intent.NativeSessionID) != ""
+			if (!start && !followup) || intent.NativeSessionID == "" {
 				remove = true
 			} else {
 				// A live hook, or an earlier intent for this session, may have
@@ -244,11 +262,56 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 					failures = append(failures, fmt.Errorf("look up admission intent: %w", err))
 					continue
 				}
-				if !registered {
+				if registered {
+					matches, err := replayRegistrationMatches(store, cfg, intent)
+					if err != nil {
+						failures = append(failures, fmt.Errorf("validate admission intent registration: %w", err))
+						continue
+					}
+					if !matches {
+						remove = true
+					}
+				}
+				if remove {
+					// A native ID already owned by another project, harness, or
+					// destination must not receive this event.
+				} else if !registered && start {
 					if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true); err != nil {
 						failures = append(failures, fmt.Errorf("replay admission intent: %w", err))
 						continue
 					}
+				} else if registered && followup {
+					if err := handleSessionStop(store, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt); err != nil {
+						failures = append(failures, fmt.Errorf("replay Cursor follow-up: %w", err))
+						continue
+					}
+				} else if registered && start && intent.Harness == "cursor" && intent.TranscriptPath != "" {
+					// The live first prompt may have registered with a null path
+					// while this earlier start waited in the queue. Retain the
+					// path without replaying its older registration time.
+					archiveID, _, err := store.ArchiveSessionID(intent.NativeSessionID)
+					if err != nil {
+						failures = append(failures, err)
+						continue
+					}
+					reg, found, err := store.LoadRegistration(archiveID)
+					if err != nil {
+						failures = append(failures, fmt.Errorf("load registered Cursor start: %w", err))
+						continue
+					}
+					if !found {
+						failures = append(failures, errors.New("registered Cursor start disappeared"))
+						continue
+					}
+					if err := adoptCursorTranscriptPath(store, &reg, intent.Harness, payload); err != nil {
+						failures = append(failures, fmt.Errorf("adopt queued Cursor path: %w", err))
+						continue
+					}
+				} else if followup {
+					// A concurrent start may sort after this event. Try once more
+					// after the starts in this batch have been handled.
+					deferred = append(deferred, deferredFollowup{path: path, intent: intent})
+					continue
 				}
 				remove = true
 			}
@@ -259,5 +322,49 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 			}
 		}
 	}
+	for _, followup := range deferred {
+		registered, err := HasRegistration(store, followup.intent.NativeSessionID)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("look up deferred Cursor follow-up: %w", err))
+			continue
+		}
+		if !registered {
+			// A timed-out follow-up never admits a session on its own.
+			// Leave it until a start arrives or the intent expires.
+			continue
+		}
+		matches, err := replayRegistrationMatches(store, cfg, followup.intent)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("validate deferred Cursor follow-up: %w", err))
+			continue
+		}
+		if !matches {
+			if err := os.Remove(followup.path); err != nil && !os.IsNotExist(err) {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		payload := map[string]any{"hook_event_name": followup.intent.Event, "session_id": followup.intent.NativeSessionID, "cwd": followup.intent.ProjectRoot, "transcript_path": followup.intent.TranscriptPath}
+		if err := handleSessionStop(store, "cursor", followup.intent.NativeSessionID, followup.intent.Event, payload, followup.intent.ObservedAt); err != nil {
+			failures = append(failures, fmt.Errorf("replay deferred Cursor follow-up: %w", err))
+			continue
+		}
+		if err := os.Remove(followup.path); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, err)
+		}
+	}
 	return errors.Join(failures...)
+}
+
+func replayRegistrationMatches(store *state.Store, cfg config.Config, intent admissionIntent) (bool, error) {
+	archiveID, found, err := store.ArchiveSessionID(intent.NativeSessionID)
+	if err != nil || !found {
+		return false, err
+	}
+	reg, found, err := store.LoadRegistration(archiveID)
+	if err != nil || !found {
+		return false, err
+	}
+	return filepath.Clean(reg.ProjectRoot) == filepath.Clean(intent.ProjectRoot) &&
+		archive.CanonicalHarness(reg.Harness.Name) == intent.Harness && cfg.AcceptSession(reg), nil
 }

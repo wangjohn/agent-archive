@@ -191,3 +191,42 @@ func TestAdmissionIntentDoesNotRewindLaterRegistration(t *testing.T) {
 		t.Fatalf("replay rewound registration: %#v, %v", regs, err)
 	}
 }
+
+func TestAdmissionIntentReplaysCursorPathAfterStart(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	conversation := "5f3c2a10-0000-4000-8000-00000000c123"
+	transcript := cursorTranscriptLocation(t, conversation)
+	// The follow-ups can arrive before a start finishes writing. None may
+	// admit the session, but their path must survive the first collector pass.
+	for _, event := range []string{"afterAgentResponse", "stop"} {
+		queued, err := queueAdmissionIntent(home, "cursor", classifyHookEvent("cursor", event), cursorDesktopPayload(event, conversation, project, transcript), at)
+		if err != nil || !queued {
+			t.Fatalf("queue %s = %t, %v", event, queued, err)
+		}
+	}
+	if regs, err := state.OpenReadOnly(home).LoadRegistrations(); err != nil || len(regs) != 0 {
+		t.Fatalf("follow-up admitted session: %#v, %v", regs, err)
+	}
+	queued, err := queueAdmissionIntent(home, "cursor", hookEventTurnStart, cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at)
+	if err != nil || !queued {
+		t.Fatalf("queue start = %t, %v", queued, err)
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	store := state.OpenReadOnly(home)
+	regs, err := store.LoadRegistrations()
+	if err != nil || len(regs) != 1 || regs[0].TranscriptPath != transcript {
+		t.Fatalf("registration after replay = %#v, %v", regs, err)
+	}
+	requests, err := store.LoadRequests()
+	if err != nil || len(requests) != 1 {
+		t.Fatalf("requests after replay = %#v, %v", requests, err)
+	}
+	entries, err := os.ReadDir(admissionIntentDir(home))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("remaining intents = %#v, %v", entries, err)
+	}
+}

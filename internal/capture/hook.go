@@ -197,6 +197,20 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 	case hookEventSubagentStop:
 		err = handleSubagentStop(store, cfg, harness, nativeSessionID, payload, now)
 	case hookEventStop, hookEventResponse:
+		// Cursor can deliver a response and stop before its first prompt has
+		// finished registering. Keep only their validated transcript path so
+		// a later proven start can still be published. This never admits a
+		// session on its own.
+		if archive.CanonicalHarness(harness) == "cursor" {
+			registered, lookupErr := HasRegistration(store, nativeSessionID)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if !registered {
+				_, err = queueAdmissionIntent(home, harness, kind, payload, now)
+				break
+			}
+		}
 		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
 	case hookEventIgnored:
 		// Handled by the early return above, before the lock was taken.

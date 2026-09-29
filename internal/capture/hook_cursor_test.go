@@ -213,6 +213,12 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		if err != nil || !found || id != regs[0].ArchiveSessionID || !regs[0].SessionStartedAt.Equal(at) {
 			t.Fatalf("iteration %d: index=%q found=%v err=%v registration=%#v", i, id, found, err, regs[0])
 		}
+		if regs[0].TranscriptPath != transcript {
+			t.Fatalf("iteration %d: transcript path was lost: %#v", i, regs[0])
+		}
+		if requests, err := store.LoadRequests(); err != nil || len(requests) != 1 {
+			t.Fatalf("iteration %d: response/stop request was lost: %#v, %v", i, requests, err)
+		}
 	}
 	if slowWrite {
 		sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
@@ -221,6 +227,34 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		if p99 >= 2*time.Second {
 			t.Fatalf("p99 hook latency %s exceeds the 2s app timeout", p99)
 		}
+	}
+}
+
+func TestCursorResponseBeforeFirstPromptPreservesTranscript(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	conversation := "5f3c2a10-0000-4000-8000-00000000c456"
+	transcript := cursorTranscriptLocation(t, conversation)
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("afterAgentResponse", conversation, project, transcript), at); err != nil {
+		t.Fatal(err)
+	}
+	if regs, err := state.OpenReadOnly(home).LoadRegistrations(); err != nil || len(regs) != 0 {
+		t.Fatalf("response admitted session: %#v, %v", regs, err)
+	}
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, project, nil), at); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reg := onlyCursorRegistration(t, home)
+	if reg.TranscriptPath != transcript {
+		t.Fatalf("response path not adopted: %#v", reg)
+	}
+	store := state.OpenReadOnly(home)
+	if requests, err := store.LoadRequests(); err != nil || len(requests) != 1 {
+		t.Fatalf("response request was lost: %#v, %v", requests, err)
 	}
 }
 
