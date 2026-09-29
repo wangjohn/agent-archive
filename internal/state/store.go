@@ -592,10 +592,19 @@ func (s *Store) RemovePending(id string) error {
 // Status summarizes the collector's local state for a future `status`
 // command. It never includes transcript content.
 type Status struct {
-	SessionIssues   map[string]string `json:"session_issues,omitempty"`
-	LastScanAt      time.Time         `json:"last_scan_at,omitzero"`
-	LastPublishedAt time.Time         `json:"last_published_at,omitzero"`
-	PendingCount    int               `json:"pending_count"`
+	// SessionIssues gives, per archive session ID, the kind of failure that
+	// kept the session from being scanned, published, or cleaned up in the
+	// last pass, as a code (see internal/cli's issueCodes), never the error
+	// itself.
+	SessionIssues map[string]string `json:"session_issues,omitempty"`
+	// IssueCounts counts SessionIssues by code, subagents included: the
+	// numbers the last error's summary of failed sessions is built from. It
+	// is cleared when a later failure replaces that summary, so status can
+	// trust it to describe the last error.
+	IssueCounts     map[string]int `json:"issue_counts,omitempty"`
+	LastScanAt      time.Time      `json:"last_scan_at,omitzero"`
+	LastPublishedAt time.Time      `json:"last_published_at,omitzero"`
+	PendingCount    int            `json:"pending_count"`
 	// LastError is every problem the last pass recorded, joined with "; ".
 	// It is kept, with the same contents, for older readers; LastErrors
 	// holds the same problems one per entry. Set both with SetLastErrors
@@ -622,6 +631,67 @@ type Status struct {
 	// each is registered once its transcript appears, or rejected when it
 	// never does, so only status --verbose and --json show it.
 	WaitingSubagents int `json:"waiting_subagents,omitempty"`
+	// ExpiredSubagents lists the subagents dropped in the last
+	// ExpiredSubagentWindow because Claude Code never wrote their
+	// transcripts, newest last and at most MaxExpiredSubagents of them. It
+	// is not a problem (there is nothing to do), so only status --verbose
+	// and --json show it. Each pass carries the list forward with
+	// CarryExpiredSubagents.
+	ExpiredSubagents []ExpiredSubagent `json:"expired_subagents,omitempty"`
+}
+
+// ExpiredSubagent is a subagent the collector stopped waiting for because
+// its transcript was never written. It names no content.
+type ExpiredSubagent struct {
+	ArchiveSessionID string `json:"archive_session_id"`
+	// AgentType is the sanitized type the SubagentStop hook reported, or
+	// empty when it named none. Like the rest of status.json, it is never
+	// uploaded.
+	AgentType string    `json:"agent_type,omitempty"`
+	ExpiredAt time.Time `json:"expired_at"`
+}
+
+const (
+	// ExpiredSubagentWindow is how long an ExpiredSubagent stays listed.
+	ExpiredSubagentWindow = 7 * 24 * time.Hour
+	// MaxExpiredSubagents caps the list; the oldest entries go first.
+	MaxExpiredSubagents = 100
+)
+
+// CarryExpiredSubagents returns previous followed by fresh, keeping only the
+// entries that expired within ExpiredSubagentWindow of now (an entry more
+// than the window in the future, from a clock that has since jumped back,
+// goes too), and one entry per subagent, the latest. It keeps the newest
+// MaxExpiredSubagents, sorted oldest first.
+func CarryExpiredSubagents(previous, fresh []ExpiredSubagent, now time.Time) []ExpiredSubagent {
+	latest := map[string]ExpiredSubagent{}
+	for _, entry := range slices.Concat(previous, fresh) {
+		age := now.Sub(entry.ExpiredAt)
+		if entry.ArchiveSessionID == "" || age >= ExpiredSubagentWindow || age <= -ExpiredSubagentWindow {
+			continue
+		}
+		if prior, found := latest[entry.ArchiveSessionID]; found && prior.ExpiredAt.After(entry.ExpiredAt) {
+			continue
+		}
+		latest[entry.ArchiveSessionID] = entry
+	}
+	out := make([]ExpiredSubagent, 0, len(latest))
+	for _, entry := range latest {
+		out = append(out, entry)
+	}
+	slices.SortFunc(out, func(a, b ExpiredSubagent) int {
+		if c := a.ExpiredAt.Compare(b.ExpiredAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ArchiveSessionID, b.ArchiveSessionID)
+	})
+	if len(out) > MaxExpiredSubagents {
+		out = out[len(out)-MaxExpiredSubagents:]
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // SetLastErrors replaces the problems the status records with problems,

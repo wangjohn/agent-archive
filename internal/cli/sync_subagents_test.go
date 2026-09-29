@@ -87,7 +87,7 @@ func TestSyncPassesWithOnlyWaitingSubagents(t *testing.T) {
 		t.Fatalf("sync after the grace exit=%d stdout=%q stderr=%q", code, out, errOut)
 	}
 	env.Now = func() time.Time { return now.Add(31 * time.Minute) }
-	if verbose := statusOutput(t, env, "--verbose"); strings.Contains(verbose, "Subagents:") || strings.Contains(verbose, "Last error") {
+	if verbose := statusOutput(t, env, "--verbose"); strings.Contains(verbose, "waiting for their transcripts") || !strings.Contains(verbose, "  Subagents:     1 not archived in the last 7 days") || strings.Contains(verbose, "Last error") {
 		t.Fatalf("verbose status after the grace:\n%s", verbose)
 	}
 }
@@ -105,6 +105,14 @@ func TestSyncFailsOnARealErrorBesideAWaitingSubagent(t *testing.T) {
 	code, out, errOut := syncAt(t, env, now.Add(5*time.Minute))
 	if code != 1 || !strings.Contains(out, "1 failed; 1 subagent(s) waiting for transcripts.") || strings.Contains(errOut, "phantom-child") {
 		t.Fatalf("sync exit=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	// The unreadable candidate has no registration, but counts as a subagent.
+	local, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, err := local.LoadStatus(); err != nil || !strings.HasPrefix(status.LastError, "1 subagent ") {
+		t.Fatalf("status=%+v err=%v", status, err)
 	}
 }
 
@@ -126,7 +134,8 @@ func TestSyncFailsOnceOnAnUnreadableSubagentTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status, err := local.LoadStatus(); err != nil || status.SessionIssues["phantom-child"] == "" || status.LastError == "" {
+	want := "1 subagent could not be captured (transcript unreadable, too large, or not matching its parent) — nothing to do, its parent session records the link as unavailable"
+	if status, err := local.LoadStatus(); err != nil || status.SessionIssues["phantom-child"] != issueSubagentNotCaptured || status.IssueCounts[issueSubagentNotCaptured] != 1 || status.LastError != want {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}
 	if code, out, errOut := syncAt(t, env, now.Add(2*time.Minute)); code != 0 || strings.Contains(out, "subagent") {

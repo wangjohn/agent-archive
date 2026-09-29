@@ -1,9 +1,11 @@
 package state
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"testing"
+	"time"
 )
 
 // The status file keeps each problem as its own entry, beside the joined text
@@ -66,6 +68,48 @@ func TestStatusAddsToAnOlderStatusFile(t *testing.T) {
 	status.AddLastError("c")
 	if want := []string{"a", "b", "c"}; !slices.Equal(status.LastErrors, want) || status.LastError != "a; b; c" {
 		t.Fatalf("LastErrors = %q, LastError = %q", status.LastErrors, status.LastError)
+	}
+}
+
+// The expired-subagent list is a week of history: each pass carries the
+// previous entries forward, drops those a week old or more (and those a week
+// or more in the future, from a clock that has since jumped back), keeps one
+// entry per subagent, the latest, and keeps only the newest
+// MaxExpiredSubagents.
+func TestCarryExpiredSubagentsPrunesDedupesAndCaps(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
+	previous := []ExpiredSubagent{
+		{ArchiveSessionID: "week-old", ExpiredAt: now.Add(-ExpiredSubagentWindow)},
+		{ArchiveSessionID: "almost-week-old", AgentType: "Plan", ExpiredAt: now.Add(-ExpiredSubagentWindow + time.Second)},
+		{ArchiveSessionID: "far-future", ExpiredAt: now.Add(ExpiredSubagentWindow)},
+		{ArchiveSessionID: "repeat", ExpiredAt: now.Add(-time.Hour)},
+		{ArchiveSessionID: "", ExpiredAt: now},
+	}
+	fresh := []ExpiredSubagent{
+		{ArchiveSessionID: "repeat", AgentType: "Explore", ExpiredAt: now},
+		{ArchiveSessionID: "new", ExpiredAt: now},
+	}
+	got := CarryExpiredSubagents(previous, fresh, now)
+	want := []ExpiredSubagent{
+		{ArchiveSessionID: "almost-week-old", AgentType: "Plan", ExpiredAt: now.Add(-ExpiredSubagentWindow + time.Second)},
+		{ArchiveSessionID: "new", ExpiredAt: now},
+		{ArchiveSessionID: "repeat", AgentType: "Explore", ExpiredAt: now},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("carried\n%+v\nwant\n%+v", got, want)
+	}
+	if got := CarryExpiredSubagents(nil, nil, now); got != nil {
+		t.Fatalf("empty list = %#v, want nil so status.json omits it", got)
+	}
+
+	var many []ExpiredSubagent
+	for i := range MaxExpiredSubagents + 5 {
+		many = append(many, ExpiredSubagent{ArchiveSessionID: fmt.Sprintf("s%03d", i), ExpiredAt: now.Add(time.Duration(i-200) * time.Minute)})
+	}
+	capped := CarryExpiredSubagents(many[:50], many[50:], now)
+	if len(capped) != MaxExpiredSubagents || capped[0].ArchiveSessionID != "s005" || capped[len(capped)-1].ArchiveSessionID != fmt.Sprintf("s%03d", MaxExpiredSubagents+4) {
+		t.Fatalf("capped to %d, first %+v, last %+v; want the newest %d", len(capped), capped[0], capped[len(capped)-1], MaxExpiredSubagents)
 	}
 }
 

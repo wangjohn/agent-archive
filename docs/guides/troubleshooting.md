@@ -32,8 +32,11 @@ find none say so without creating the data directory.
   Neither is a failure, and neither changes the exit code. Claude Code
   reports some background agents with a transcript it never writes; such a
   subagent waits up to 30 minutes, then is not captured and its parent
-  session records the link as unavailable. `status --verbose` shows how many
-  are waiting. A subagent lost for another reason (its transcript exists but
+  session records the link as unavailable, with a
+  `subagent_transcript_never_written` capture gap. `status --verbose` shows
+  how many are waiting, and how many of each type (as Claude Code reported
+  it; the type stays on this Mac) were dropped this way in the last 7
+  days. A subagent lost for another reason (its transcript exists but
   can't be read, or doesn't match its parent session) is a failed session:
   `sync` names it and exits 1, once.
 - `pause` persists until `resume`. If work is still running, the command
@@ -118,6 +121,21 @@ now and paths under your home folder start with `~`.
   **The bucket doesn't exist**, or **The bucket is in a different region**.
   Any other failure is shown as **Last error:** with the collector's own
   words. The provider's raw error is in `status --verbose`.
+- **Sessions that failed in the last pass** are summarized on one
+  **Last error:** row by kind, each with its count (sessions and subagents
+  apart) and what to do: for example "2 sessions failed to reach storage
+  (network or service unavailable) — check the network and the storage
+  service, then run agent-archive sync (the next pass also retries)". A
+  session over the transcript size limit needs nothing from you: its last
+  snapshot is kept. `agent-archive sync` prints each session's own error,
+  and `status --json` has each session's kind as a code
+  (`collector.session_issues`). When no kind is about storage, status
+  leads with the most pressing one ("Some sessions could not be captured")
+  and its next step instead of **The last sync failed**. When everything
+  the last pass recorded needs nothing from you (a subagent that could not
+  be captured, a transcript over the size limit), status doesn't lead with
+  a failure at all, and shows those problems on · **Last pass:** rows
+  instead of ✗ **Last error:** rows.
 - **Background collector on** (`--json`: background `loaded`, or `running`
   while a pass is executing) means launchd knows the scheduled job. When it
   **belongs to another installation** (`another_installation`), launchd runs
