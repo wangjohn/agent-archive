@@ -275,7 +275,12 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 				if remove {
 					// A native ID already owned by another project, harness, or
 					// destination must not receive this event.
-				} else if !registered && start {
+					if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+						failures = append(failures, err)
+					}
+					continue
+				}
+				if !registered && start {
 					if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true); err != nil {
 						failures = append(failures, fmt.Errorf("replay admission intent: %w", err))
 						continue

@@ -230,3 +230,36 @@ func TestAdmissionIntentReplaysCursorPathAfterStart(t *testing.T) {
 		t.Fatalf("remaining intents = %#v, %v", entries, err)
 	}
 }
+
+func TestAdmissionIntentDoesNotAttachPathToDifferentProject(t *testing.T) {
+	home, projectA, projectB := t.TempDir(), t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, projectA, at.Add(-time.Hour))
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{ProjectID: archive.ProjectID(projectB), Root: projectB, ActivatedAt: at.Add(-time.Hour), Included: true})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	conversation := "5f3c2a10-0000-4000-8000-00000000c789"
+	transcript := cursorTranscriptLocation(t, conversation)
+	queued, err := queueAdmissionIntent(home, "cursor", hookEventResponse, cursorDesktopPayload("afterAgentResponse", conversation, projectA, transcript), at)
+	if err != nil || !queued {
+		t.Fatalf("queue = %t, %v", queued, err)
+	}
+	if err := HandleEvent(home, "cursor", cursorDesktopPayload("beforeSubmitPrompt", conversation, projectB, nil), at); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	reg := onlyCursorRegistration(t, home)
+	if reg.ProjectRoot != projectB || reg.TranscriptPath != "" {
+		t.Fatalf("cross-project intent changed registration: %#v", reg)
+	}
+	if requests, err := state.OpenReadOnly(home).LoadRequests(); err != nil || len(requests) != 1 || len(requests[0].Reasons) != 1 || requests[0].Reasons[0] != "beforesubmitprompt" {
+		t.Fatalf("cross-project intent changed the first prompt request: %#v, %v", requests, err)
+	}
+}
