@@ -25,6 +25,7 @@ $ agent-archive status --json
   "privacy": "not_verified",
   "background": "loaded",
   "paused": true,
+  "skill_evidence": "metadata",
   "projects": [
     "/Users/alex/src/web-app"
   ],

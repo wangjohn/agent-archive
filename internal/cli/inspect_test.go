@@ -166,7 +166,7 @@ func TestListFiltersExactSkillHashFromMetadataOnly(t *testing.T) {
 	} {
 		wantID, rejectID := ids[0], ids[1]
 		var out, errOut bytes.Buffer
-		if code := Run([]string{"list", "--skill", "review", "--skill-sha256", hash, "--verbose"}, nil, &out, &errOut, env); code != 0 {
+		if code := Run([]string{"list", "--skill", "review", "--skill-sha256", hash, "--limit", "0", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 			t.Fatalf("hash=%s code=%d stderr=%s", hash, code, errOut.String())
 		}
 		// One ID is a prefix of the other, and tabwriter pads columns with
@@ -246,7 +246,7 @@ func TestListReportsInvalidSkillUsageValueBeforeMissingSkillFlag(t *testing.T) {
 	if code := Run([]string{"list", "--skill-usage", "bogus"}, nil, &out, &errOut, env); code != 2 {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
-	if !strings.Contains(errOut.String(), `must be used, available, or eligible_no_use, not "bogus"`) {
+	if !strings.Contains(errOut.String(), `must be used or available, not "bogus"`) {
 		t.Fatalf("wrong error for an invalid value: %s", errOut.String())
 	}
 	if strings.Contains(errOut.String(), "requires --skill") {
@@ -263,32 +263,32 @@ func TestListReportsInvalidSkillUsageValueBeforeMissingSkillFlag(t *testing.T) {
 	}
 }
 
-// No parser version emits observed_none, so eligible_no_use can match no
-// sidecar. `list` must say that rather than print an empty result that reads
-// like an answer, and must still exit 0 with no rows.
-func TestEligibleNoUseSaysItCannotReturnSessionsYet(t *testing.T) {
+// No parser version proves non-use. Reject the value even before setup or
+// checking the companion skill flag, so callers cannot mistake it for an
+// actual zero-match query.
+func TestEligibleNoUseReturnsUsageError(t *testing.T) {
 	t.Parallel()
-	env, _, id := publishedFixture(t)
-	var out, errOut bytes.Buffer
-	if code := Run([]string{"list", "--skill", "review", "--skill-usage", "eligible_no_use"}, nil, &out, &errOut, env); code != 0 {
-		t.Fatalf("code=%d stderr=%s", code, errOut.String())
-	}
-	for _, want := range []string{"cannot return sessions yet", "complete use observation", "forward compatibility"} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("explanation missing %q:\n%s", want, out.String())
+	env := testEnv(t, t.TempDir(), time.Now())
+	for _, args := range [][]string{
+		{"list", "--skill-usage", "eligible_no_use"},
+		{"list", "--skill", "review", "--skill-usage", "eligible_no_use"},
+		{"list", "--json", "--skill", "review", "--skill-usage", "eligible_no_use"},
+	} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, nil, &out, &errOut, env); code != 2 {
+			t.Fatalf("%v: code=%d stderr=%s", args, code, errOut.String())
+		}
+		if out.Len() != 0 || !strings.Contains(errOut.String(), "eligible_no_use is unsupported") || !strings.Contains(errOut.String(), "cannot prove non-use") {
+			t.Fatalf("%v: stdout=%q stderr=%q", args, out.String(), errOut.String())
 		}
 	}
-	if strings.Contains(out.String(), id) || strings.Contains(out.String(), "session(s).") {
-		t.Fatalf("listed rows for a query that cannot match:\n%s", out.String())
-	}
-	// The same words appear in `list --help`, so the flag's documentation
-	// and its behavior cannot drift apart.
+	var errOut bytes.Buffer
 	var help bytes.Buffer
 	if code := Run([]string{"list", "--help"}, nil, &help, &errOut, env); code != 0 {
 		t.Fatalf("help code=%d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(help.String(), "eligible_no_use cannot return sessions yet") {
-		t.Fatalf("help does not say the value cannot return sessions:\n%s", help.String())
+	if !strings.Contains(help.String(), "Non-use queries are unsupported") || !strings.Contains(help.String(), "used|available") {
+		t.Fatalf("help does not describe supported values:\n%s", help.String())
 	}
 }
 
@@ -489,7 +489,7 @@ func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--limit", "0"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	for _, r := range out.String() {
@@ -505,7 +505,7 @@ func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := Run([]string{"list", "--verbose"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--limit", "0", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("verbose code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "gpt]52;c;aGk= x y") || !strings.Contains(out.String(), "rev[2Jiew31m") {
@@ -630,7 +630,7 @@ func TestListWarnsAboutInvalidSidecarAndListsTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"list", "--no-cache", "--verbose"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--no-cache", "--limit", "0", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), id) || !strings.Contains(out.String(), "1 session(s).") {

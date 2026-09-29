@@ -14,6 +14,7 @@ import (
 var commandHelp = map[string]string{
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--skill-evidence none|metadata|body]
 
 Choose apps and projects, connect storage, then review and enable capture.
 Run again to continue saved setup or edit capture, storage, or retention.
@@ -41,6 +42,10 @@ An interrupted setup is recovered on the next run.
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this Mac). It must
                         name every app set up now: --yes never removes one
+  --skill-evidence MODE none: no filesystem skill evidence; metadata: names
+                        and filtered hashes; body: filtered SKILL.md text.
+                        Fresh setup defaults to metadata; earlier configs
+                        without this field keep body until changed.
 With --yes, the R2 secret access key is read from
 AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY, or else from standard input.
 Example: agent-archive setup
@@ -105,13 +110,10 @@ stdin, text is paged through $PAGER unless --no-pager.
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
   --skill-sha256 HEX             Filter by exact lowercase skill SHA-256
-  --skill-usage used|available|eligible_no_use
+  --skill-usage used|available
                                  How --skill matches (default used).
-                                 eligible_no_use cannot return sessions yet:
-                                 no parser version records both a complete
-                                 eligible-skill set and complete use
-                                 observation, so non-use is never proven. The
-                                 value stays accepted for forward compatibility.
+                                 Non-use queries are unsupported because no
+                                 parser proves complete eligibility and use.
   --since DATE|TIME|AGE          Captured at or after a date (2026-01-31,
                                  from midnight UTC; backfill's --since uses
                                  your local day), an RFC 3339 time, or an
@@ -122,20 +124,19 @@ stdin, text is paged through $PAGER unless --no-pager.
   --hook-captured                Only sessions hooks captured as they ran
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
+  --rebuild-index                Rebuild the listing index from live metadata;
+                                 scans the full archive and writes index keys
   --verbose                      Full SESSION_IDs, absolute times, origin,
                                  parser status, all models/skills, and title
   --no-pager                     Print directly; do not page through $PAGER
-  --no-cache                     Download every metadata sidecar instead of
-                                 reusing unchanged ones from the local
-                                 metadata cache (metadata only; never
-                                 conversation content)
-  --json                         Print {"schema_version": 2, "sessions": [...],
-                                 "limit", "returned", "total_matched"}: each
-                                 matching session's metadata, as show prints
-                                 it (never conversation content). A query that
-                                 cannot return sessions yet has "sessions": []
-                                 and an "unavailable" reason. Never paged or
-                                 interactive.
+  --no-cache                     Bypass the local metadata cache during full
+                                 scans; indexed listing always verifies live
+                                 sidecars (never conversation content)
+  --json                         Print {"schema_version": 4, "sessions": [...],
+                                 "limit", "returned", "total_matched_known"}:
+                                 "total_matched" is present only when exact;
+                                 each session is live metadata. Usage errors
+                                 print no JSON. Never paged or interactive.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 `,
 	"show": `Usage: agent-archive show [SESSION_ID|TITLE] [options]

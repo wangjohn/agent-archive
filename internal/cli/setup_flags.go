@@ -37,6 +37,7 @@ type setupOptions struct {
 	projects             []string
 	yes                  bool
 	verbose              bool
+	skillEvidence        string
 	storageFlagsSupplied bool
 }
 
@@ -61,6 +62,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.awsProfile, "aws-profile", "", "AWS profile for S3")
 	fs.StringVar(&opts.region, "region", "", "S3 bucket region")
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
+	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -80,7 +82,7 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 
 // given reports whether any answer flag was passed.
 func (o setupOptions) given() bool {
-	return o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0
+	return o.storageFlagsSupplied || o.apps != "" || len(o.projects) > 0 || o.skillEvidence != ""
 }
 
 // setupWithoutQuestions is setup --yes: the answers come from opts, the
@@ -213,6 +215,11 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 		return err
 	}
 	terminal.Printf(p.out, "Apps: %s. Projects: %d. Storage: %s bucket %s.\n", appList(cfg.Harnesses), includedProjects(cfg.Archive.Projects), providerName(cfg.Storage.Provider), cfg.Storage.Bucket)
+	policy := string(cfg.EffectiveSkillEvidence())
+	if cfg.SkillEvidence == "" {
+		policy += " (kept from previous setup)"
+	}
+	terminal.Printf(p.out, "Skill evidence: %s. User-level skill roots outside selected projects may be scanned.\n", policy)
 	if check := privacyCheck(cfg, p.clock()); check.mark == symbolFail {
 		printReviewChecklist(p, []reviewCheck{check})
 		return fmt.Errorf("bucket %s allows public access (%s); nothing was changed. Fix its access (%s), then run the same agent-archive setup --yes command again", cfg.Storage.Bucket, check.detail, check.link)
@@ -227,6 +234,15 @@ func reviewWithoutQuestions(home string, existing, cfg config.Config, p *prompte
 // check out. Every missing or wrong answer is reported together.
 func setupAnswers(existing config.Config, opts setupOptions, home, userHome string, installed bool, env Env) (config.Config, credentials.R2Credentials, error) {
 	cfg := existing
+	if cfg.SkillEvidence == "" && cfg.SchemaVersion == 0 {
+		cfg.SkillEvidence = config.SkillEvidenceMetadata
+	}
+	if opts.skillEvidence != "" {
+		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
+	}
+	if !config.ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
+		return cfg, credentials.R2Credentials{}, fmt.Errorf("--skill-evidence must be none, metadata, or body")
+	}
 	cfg.Archive.Projects = slices.Clone(existing.Archive.Projects)
 	problems := setupApps(&cfg, opts.apps, env.detectHarnesses(userHome), installed)
 	if len(problems) == 0 {

@@ -35,6 +35,9 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if !ok {
 		return outcomeSkipped, false, nil
 	}
+	if !sourceEvidenceWithinPolicy(last.bundle.SupplementalEvidence, s.opts.skillEvidence()) {
+		return outcomeSkipped, false, nil
+	}
 	prior := last.metadata
 	sameParser := prior.Parser.Version == s.opts.parserVersion()
 	if sameParser && !last.legacy {
@@ -83,7 +86,7 @@ func regenerateMetadata(s *sessionScan) (outcome sessionOutcome, handled bool, e
 	if err != nil || !changed {
 		return outcomeSkipped, false, err
 	}
-	pending := state.PendingPublication{MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: s.now, Attempted: true}
+	pending := state.PendingPublication{SkillEvidence: string(s.opts.skillEvidence()), MetadataOnly: true, Bundle: last.bundle, SourceKey: source.ref.Key, MetadataKey: key, SourceSHA256: source.ref.SHA256, SourceBytes: source.bytes, SourceSize: source.ref.CompressedBytes, MetadataBytes: metadataBytes, ReadyAt: s.now, Attempted: true}
 	if err := s.local.SavePending(s.id(), pending); err != nil {
 		return outcomeSkipped, false, err
 	}

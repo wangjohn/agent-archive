@@ -160,7 +160,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
 		MachineID:            cfg.MachineID,
-		SupplementalEvidence: skillObserver(env),
+		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
+		SkillEvidence:        cfg.EffectiveSkillEvidence(),
 		AcceptSession:        cfg.AcceptSession,
 		Now:                  env.Now,
 		RequireSkillUse:      cfg.RequireSkillUse,
@@ -461,11 +462,11 @@ func openConfiguredStoreContext(ctx context.Context, cfg config.Config, keychain
 //
 // An imported session gets no observation: today's skills attached to a
 // session that ran before them would be false evidence.
-func skillObserver(env Env) func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
+func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
 	userCache := map[string][]archive.SupplementalEvidence{}
 	projectCache := map[string][]archive.SupplementalEvidence{}
 	return func(reg archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
-		if reg.Imported() {
+		if reg.Imported() || mode == config.SkillEvidenceNone {
 			return nil, nil
 		}
 		userScope, ok := userCache[reg.Harness.Name]
@@ -474,7 +475,7 @@ func skillObserver(env Env) func(archive.SessionRegistration, time.Time) ([]arch
 			if err != nil {
 				return nil, err
 			}
-			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at})
+			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode})
 			if err != nil {
 				return nil, err
 			}
@@ -484,7 +485,7 @@ func skillObserver(env Env) func(archive.SessionRegistration, time.Time) ([]arch
 		projectScope, ok := projectCache[projectKey]
 		if !ok {
 			var err error
-			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at})
+			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode})
 			if err != nil {
 				return nil, err
 			}
