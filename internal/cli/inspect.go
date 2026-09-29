@@ -38,7 +38,7 @@ const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
 // a scheduled `_collect` and while collection is paused. found is false,
 // with a nil error, when setup has never run. cfg is meaningful only when
 // found is true.
-func openReadOnlyStore(env Env) (storage.ObjectStore, config.Config, bool, error) {
+func openReadOnlyStore(env readOnlyStoreDependencies) (storage.ObjectStore, config.Config, bool, error) {
 	// Read-only: before setup there is nothing to read, and no data
 	// directory is created just to say so.
 	home, err := env.readHome()
@@ -67,7 +67,7 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, config.Config, bool, error
 // Text listings are capped by --limit (default 50; 0 for all) and, on a
 // terminal, paged through $PAGER unless --no-pager, --json, or an interactive
 // browse (stdin and stdout are both terminals).
-func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env listCommandDependencies) int {
 	fs := env.newCommandFlags("list", stderr)
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
 	model := fs.String("model", "", "only sessions that requested or observed this model")
@@ -335,7 +335,7 @@ func warnSkippedSidecar(stderr io.Writer, command string) func(reader.SkippedSid
 // downloading sidecars whose ETag has not changed. It holds metadata only.
 // The cache is an optimization, so a data directory or cache that cannot be
 // opened means an uncached listing, never a failed one.
-func listCache(env Env, disabled bool) *reader.MetadataCache {
+func listCache(env metadataCacheDependencies, disabled bool) *reader.MetadataCache {
 	if disabled {
 		return nil
 	}
@@ -373,7 +373,7 @@ func validLowerSHA256(value string) bool {
 // is printed only when the user passes --normalized explicitly, keeping the
 // spec's rule that nothing prints transcript contents unless asked.
 // With no SESSION_ID on a TTY, it opens the same interactive picker as list.
-func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env showCommandDependencies) int {
 	fs := env.newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
 	normalized := fs.Bool("normalized", false, "also download, verify, and print the normalized conversation view (this prints transcript content)")

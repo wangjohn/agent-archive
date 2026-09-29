@@ -304,6 +304,81 @@ func TestDecodeSourceReportsTotalCapHitMidLine(t *testing.T) {
 	}
 }
 
+func TestDecodeSourceRejectsMalformedPayloadBeforeCallback(t *testing.T) {
+	t.Parallel()
+	textHeader := strings.Replace(headerLine(0, 0), `"native_text":0`, `"native_text":1`, 1)
+	cases := []struct {
+		name  string
+		lines []string
+		want  string
+	}{
+		{"negative counts", []string{headerLine(-1, 0)}, "negative counts"},
+		{"record has wrong type", []string{headerLine(1, 0), `{"kind":"native_record","record":"text"}`}, "decode source line 2"},
+		{"record is empty", []string{headerLine(1, 0), `{"kind":"native_record","record":{}}`}, "empty native record"},
+		{"text has wrong type", []string{textHeader, `{"kind":"native_text","content":42}`}, "decode source line 2"},
+		{"evidence has wrong type", []string{headerLine(0, 1), `{"kind":"supplemental_evidence","evidence":"text"}`}, "decode source line 2"},
+		{"too many text lines", []string{headerLine(0, 0), `{"kind":"native_text","format":"plain","content":"text"}`}, "more native text lines"},
+		{"too much evidence", []string{headerLine(0, 0), evidenceLineJSON}, "more supplemental evidence"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			callbacks := 0
+			err := DecodeSource(bytes.NewReader(gzipLines(t, c.lines...)), DecodeOptions{}, func(SourceLine) error {
+				callbacks++
+				return nil
+			})
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+			wantCallbacks := 1
+			if c.name == "negative counts" {
+				wantCallbacks = 0
+			}
+			if callbacks != wantCallbacks {
+				t.Fatalf("%d callbacks before rejection, want %d", callbacks, wantCallbacks)
+			}
+		})
+	}
+}
+
+func TestDecodeSourceDeliversEachKindInWireOrder(t *testing.T) {
+	t.Parallel()
+	textHeader := strings.Replace(headerLine(1, 1), `"native_text":0`, `"native_text":1`, 1)
+	compressed := gzipLines(t, textHeader, recordLine,
+		`{"kind":"native_text","format":"plain","content":"hello"}`, evidenceLineJSON)
+	var kinds []SourceLineKind
+	err := DecodeSource(bytes.NewReader(compressed), DecodeOptions{}, func(line SourceLine) error {
+		kinds = append(kinds, line.Kind)
+		switch line.Kind {
+		case SourceLineHeader:
+			if line.Header.Counts != (SourceCounts{NativeRecords: 1, NativeText: 1, SupplementalEvidence: 1}) {
+				t.Fatalf("unexpected header counts: %+v", line.Header.Counts)
+			}
+		case SourceLineNativeRecord:
+			if line.NativeRecord["type"] != "response_item" {
+				t.Fatalf("unexpected record: %+v", line.NativeRecord)
+			}
+		case SourceLineNativeText:
+			if line.NativeText.Content != "hello" {
+				t.Fatalf("unexpected text: %+v", line.NativeText)
+			}
+		case SourceLineSupplementalEvidence:
+			if line.Evidence.Kind != EvidenceKindExplicitFeedback {
+				t.Fatalf("unexpected evidence: %+v", line.Evidence)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SourceLineKind{SourceLineHeader, SourceLineNativeRecord, SourceLineNativeText, SourceLineSupplementalEvidence}
+	if canonicalJSON(t, kinds) != canonicalJSON(t, want) {
+		t.Fatalf("callback kinds = %v, want %v", kinds, want)
+	}
+}
+
 // The views built on a bundle are identical whether the bundle came from
 // memory or through the compressed JSONL decoder: the normalized view for
 // every fixture, and the handoff document for each harness's golden file.

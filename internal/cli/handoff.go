@@ -78,7 +78,7 @@ var errHandoffNotSetUp = errors.New("handoff not set up")
 // content, which the command itself is the explicit request for; every
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
-func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
+func runHandoffCommand(args []string, stdout, stderr io.Writer, env handoffCommandDependencies) int {
 	opts, ok := parseHandoffOptions(args, stderr, env)
 	if !ok {
 		return 2
@@ -113,7 +113,7 @@ func runHandoffCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	return 0
 }
 
-func parseHandoffOptions(args []string, stderr io.Writer, env Env) (handoffOptions, bool) {
+func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDependencies) (handoffOptions, bool) {
 	fs := env.newCommandFlags("handoff", stderr)
 	latest := fs.Bool("latest", false, "the most recent session for the project")
 	project := fs.String("project", "", "the project directory --latest searches (default: the current directory)")
@@ -183,7 +183,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env Env) (handoffOptio
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble}, true
 }
 
-func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, env Env) (handoffTarget, error) {
+func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, env handoffTargetDependencies) (handoffTarget, error) {
 	if opts.file != "" {
 		return handoffFromFile(opts.file, opts.harness, env)
 	}
@@ -201,7 +201,7 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 	}
 	dir := opts.project
 	if dir == "" {
-		dir, err = workingDir(env)
+		dir, err = env.workingDir()
 	}
 	if err != nil {
 		return handoffTarget{}, err
@@ -234,7 +234,7 @@ func planHandoffRendering(h archive.Handoff, bundle archive.SourceBundle, opts h
 	return handoffRenderPlan{fullPath: fullPath, full: full, fitted: fitted, fits: fits}
 }
 
-func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoffOptions, home string, stderr io.Writer, env Env) []byte {
+func prepareHandoff(h archive.Handoff, bundle archive.SourceBundle, opts handoffOptions, home string, stderr io.Writer, env handoffFileDependencies) []byte {
 	pruneHandoffs(home, env.now())
 	plan := planHandoffRendering(h, bundle, opts, home)
 	fitted := plan.fitted
@@ -273,7 +273,7 @@ func writeHandoffResult(rendered []byte, opts handoffOptions, stdout, stderr io.
 	return nil
 }
 
-func workingDir(env Env) (string, error) {
+func (env Env) workingDir() (string, error) {
 	if env.WorkingDir != nil {
 		return env.WorkingDir()
 	}
@@ -283,7 +283,7 @@ func workingDir(env Env) (string, error) {
 // handoffFromFile filters a native transcript that may have no registration.
 // Its modification time stands in for a start time, which only Cursor's text
 // fallback needs.
-func handoffFromFile(path, harness string, env Env) (handoffTarget, error) {
+func handoffFromFile(path, harness string, env handoffFileDependencies) (handoffTarget, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return handoffTarget{}, err
@@ -323,7 +323,7 @@ var errNotRegisteredHere = errors.New("no session registered on this machine")
 
 // currentSessions returns the native session IDs of the agent this command is
 // running inside, if it says.
-func currentSessions(env Env) map[string]bool {
+func currentSessions(env currentSessionDependencies) map[string]bool {
 	ids := map[string]bool{}
 	for _, key := range currentSessionEnv {
 		if value, ok := env.lookupEnv(key); ok && strings.TrimSpace(value) != "" {
@@ -363,7 +363,7 @@ func hasPrompt(bundle archive.SourceBundle) bool {
 
 type handoffResolver struct {
 	ctx     context.Context
-	env     Env
+	env     handoffResolverDependencies
 	home    string
 	cfg     config.Config
 	harness string

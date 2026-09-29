@@ -50,6 +50,24 @@ local build has the release's build flags. Plain `go build
 Git checkout reports `dev-<commit>` from `--version` (with `-dirty` when you
 had uncommitted changes); put that in bug reports.
 
+To build and install the current checkout in one command, including any
+uncommitted changes, run:
+
+```sh
+./scripts/install-from-source.sh
+```
+
+This installs a persistent development binary at
+`~/.local/share/agent-archive-dev/bin/agent-archive` and prints its absolute
+path. Use that path to run it; a release binary on `PATH` is left alone. To
+replace the `agent-archive` currently on `PATH` at the same path, run
+`./scripts/install-from-source.sh --replace-current`. You can also pass
+`--destination /absolute/path/to/agent-archive`. The command does not run
+setup or change hooks, data, credentials, or the background collector. Run
+setup from the development binary only when you intend to point hooks and the
+collector at it. Source builds are unsigned and do not test the release
+download, signature, or notarization.
+
 Put the binary on your `PATH` as plain `agent-archive`, for example:
 
 ```sh

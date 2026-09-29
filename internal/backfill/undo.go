@@ -601,9 +601,9 @@ func (p UndoPlan) WithRetentionKept() UndoPlan {
 	return p
 }
 
-// Empty reports whether nothing of the import is left to undo.
+// Empty reports whether the plan has no sessions or configuration changes left.
 func (p UndoPlan) Empty() bool {
-	return len(p.Sessions) == 0 && len(p.ExcludeProjects) == 0 && len(p.RemoveApps) == 0 && p.RestoreRetention == nil
+	return len(p.Sessions) == 0 && len(p.ExcludeProjects) == 0 && len(p.RemoveApps) == 0 && len(p.RemoveKeptOut) == 0 && p.RestoreRetention == nil
 }
 
 // UndoCounts summarises an undo's sessions. Sessions and Subagents count
@@ -660,10 +660,10 @@ func (p UndoPlan) ProjectDisplay() string { return p.view.display(p.Project) }
 
 // Grew reports whether p would remove anything confirmed did not show: a
 // session, a bucket delete for a session shown as only forgotten, a project,
-// or an app. Undo checks this after confirming, under the locks, and asks
-// for a new run rather than removing more than was confirmed. A session
-// resumed meanwhile does not count: the person already confirmed deleting
-// it, and one in active use would otherwise abort every run.
+// a kept-out entry, or an app. Undo checks this after confirming, under the
+// locks, and asks for a new run rather than removing more than was confirmed.
+// A session resumed meanwhile does not count: the person already confirmed
+// deleting it, and one in active use would otherwise abort every run.
 func (p UndoPlan) Grew(confirmed UndoPlan) bool {
 	sessions := map[string]UndoSession{}
 	for _, s := range confirmed.Sessions {
@@ -682,6 +682,11 @@ func (p UndoPlan) Grew(confirmed UndoPlan) bool {
 	}
 	for _, app := range p.RemoveApps {
 		if !slices.Contains(confirmed.RemoveApps, app) {
+			return true
+		}
+	}
+	for _, project := range p.RemoveKeptOut {
+		if !slices.ContainsFunc(confirmed.RemoveKeptOut, func(c archive.ProjectActivation) bool { return c.ProjectID == project.ProjectID }) {
 			return true
 		}
 	}

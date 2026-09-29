@@ -14,7 +14,7 @@ import (
 // else `less -FRX`, so a long listing can be scrolled and quit with q.
 // Piped or redirected stdout is never paged; a spawn failure falls back to
 // writing stdout directly after a stderr warning.
-func withPager(stdout, stderr io.Writer, env Env, noPager bool, write func(io.Writer) error) error {
+func withPager(stdout, stderr io.Writer, env pagerDependencies, noPager bool, write func(io.Writer) error) error {
 	var buf bytes.Buffer
 	if err := write(&buf); err != nil {
 		return err
@@ -35,7 +35,7 @@ func withPager(stdout, stderr io.Writer, env Env, noPager bool, write func(io.Wr
 // resolvePagerCommand chooses the pager command. An empty
 // AGENT_ARCHIVE_PAGER or PAGER, or the value "cat", disables paging, as does
 // --no-pager or a non-terminal stdout.
-func resolvePagerCommand(env Env, noPager bool, stdout io.Writer) (command string, page bool) {
+func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) (command string, page bool) {
 	if noPager || !env.isTerminal(stdout) {
 		return "", false
 	}
