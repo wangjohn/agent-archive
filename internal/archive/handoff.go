@@ -369,14 +369,16 @@ func handoffToolCall(call *NormalizedToolCall, root string, opts HandoffOptions)
 	if !listed {
 		return nil
 	}
-	tool := &HandoffToolCall{Name: name, Summary: summary, IsError: call.IsError != nil && *call.IsError}
+	var result string
+	var resultLines, resultBytes int
 	if call.ResultRecordIndex != nil {
 		text := call.resultText
-		tool.ResultBytes = len(text)
-		tool.ResultLines = lineCount(text)
-		tool.Result = trimResult(text, opts.resultLines(), opts.resultBytes())
+		result, resultLines, resultBytes = trimResult(text, opts.resultLines(), opts.resultBytes()), lineCount(text), len(text)
 	}
-	return tool
+	return &HandoffToolCall{
+		Name: name, Summary: summary, IsError: call.IsError != nil && *call.IsError,
+		Result: result, ResultLines: resultLines, ResultBytes: resultBytes,
+	}
 }
 
 // textTranscriptExchanges reads the role sections of a filtered text
