@@ -22,6 +22,7 @@ func TestChooseBackfillPlanAction(t *testing.T) {
 		{"import", backfillCommandOptions{}, importable, backfillPlanImport},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := chooseBackfillPlanAction(tc.opts, tc.plan); got != tc.want {
 				t.Fatalf("action = %d, want %d", got, tc.want)
 			}
