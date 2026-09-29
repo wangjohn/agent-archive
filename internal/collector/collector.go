@@ -201,6 +201,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	if replayErr != nil {
 		p.result.Errors["admission-intents"] = replayErr
 	}
+	// A loadWork failure returns before saveStatus, so this pass's expired
+	// subagents never reach status.json's list. That is accepted: the list
+	// is informational, and each parent's capture gap is already saved.
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}

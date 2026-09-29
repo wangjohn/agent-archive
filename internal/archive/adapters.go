@@ -55,7 +55,7 @@ const MaxRecordBytes = 64 * 1024 * 1024
 // maxRecordBytes is MaxRecordBytes, as a variable only so a test can lower it.
 var maxRecordBytes = MaxRecordBytes
 
-const adapterVersion = "0.13.0"
+const adapterVersion = "0.12.0"
 
 // maxOmittedKeyNames bounds how many distinct omitted key names one filtered
 // transcript reports, so a pathological source cannot grow the gap list.

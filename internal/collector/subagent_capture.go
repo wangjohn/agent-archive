@@ -340,14 +340,10 @@ const subagentNeverWritten = "subagent_transcript_never_written"
 const subagentExpiryProvenance = "collector:subagent-expiry"
 
 // subagentNeverWrittenDetail is the capture gap detail for a subagent whose
-// transcript was never written, naming its type when the hook reported a
-// valid one.
-func subagentNeverWrittenDetail(agentType string) string {
-	if agentType = archive.SanitizeSubagentType(agentType); agentType != "" {
-		return "Claude Code reported a subagent (type " + agentType + ") but never wrote its transcript"
-	}
-	return "Claude Code reported a subagent but never wrote its transcript"
-}
+// transcript was never written. It is fixed, archive-authored text: the
+// subagent's type stays on this Mac (the candidate, status), because a name
+// the sanitizer admits can still be a secret redaction does not recognize.
+const subagentNeverWrittenDetail = "Claude Code reported a subagent but never wrote its transcript"
 
 // rejectSubagentCandidate acknowledges candidate and tells its parent the
 // link is unavailable, then returns a subagentRejectedError with code. A
@@ -361,9 +357,9 @@ func rejectSubagentCandidate(local *state.Store, candidate state.SubagentCandida
 	}
 	evidence := []archive.SupplementalEvidence{link}
 	if code == subagentNeverWritten {
-		// Observed at the stop, like the link, so a retry after a failed
-		// write saves the same item, which the request keeps once.
-		gap, err := archive.NewCaptureGapEvidence(code, subagentNeverWrittenDetail(candidate.AgentType), subagentExpiryProvenance, candidate.ObservedAt)
+		// Fixed text observed at the stop, like the link, so a retry after a
+		// failed write saves the same item, which the request keeps once.
+		gap, err := archive.NewCaptureGapEvidence(code, subagentNeverWrittenDetail, subagentExpiryProvenance, candidate.ObservedAt)
 		if err != nil {
 			return err
 		}

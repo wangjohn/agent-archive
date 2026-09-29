@@ -1,6 +1,6 @@
 # Privacy filter rules
 
-> **Status: implemented** (filter 13). The user-facing summary is
+> **Status: implemented** (filter 12). The user-facing summary is
 > [privacy](../../docs/security/privacy.md); what changed in each filter
 > version is in the [filter changelog](privacy-filter-changelog.md).
 
@@ -306,11 +306,3 @@ Known misses.
 Redaction is best effort in both directions: a legitimate value that looks like
 a credential is redacted, and a tool argument that happens to contain one of
 the instruction tags above loses that span. Both are recorded as gaps.
-
-Capture gaps recorded as hook or collector evidence, rather than by the
-filter, keep only their `code` and `detail` and pass the same string rules.
-Their details are written by agent-archive. The one exception is a
-`subagent_transcript_never_written` gap (filter 13), which can name the
-subagent's type as Claude Code's `SubagentStop` hook reported it
-(`agent_type`): at most 64 characters, all ASCII letters, digits, `_`, `.`,
-`:`, or `-`. A type with anything else is left out whole.

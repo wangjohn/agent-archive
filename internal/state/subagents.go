@@ -33,8 +33,8 @@ type SubagentCandidate struct {
 	// AgentType is the subagent's type as the SubagentStop hook reported it
 	// ("Explore", "general-purpose", "my-plugin:reviewer"), already passed
 	// through archive.SanitizeSubagentType, or empty when unknown. It is
-	// informational: it only describes a subagent status and capture gaps
-	// report, and never decides anything.
+	// informational and local: status reports it, it is never uploaded, and
+	// it never decides anything.
 	AgentType string `json:"agent_type,omitempty"`
 }
 

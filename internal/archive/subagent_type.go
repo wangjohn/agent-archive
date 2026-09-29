@@ -12,9 +12,11 @@ const MaxSubagentTypeLength = 64
 // SanitizeSubagentType returns the subagent type a SubagentStop hook reported
 // ("Explore", "general-purpose", "my-plugin:reviewer") when it is at most
 // MaxSubagentTypeLength characters, all ASCII letters, digits, or one of
-// "_.:-", and "" otherwise. The type is harness-provided text that may reach
-// a capture gap's detail, so anything else is dropped whole rather than
-// trimmed. It is informational only and never drives a decision.
+// "_.:-", and "" otherwise. The type is harness-provided text kept only on
+// this Mac (the subagent candidate and status); it is never uploaded, since
+// a name this admits can still be a secret redaction does not recognize.
+// Anything else is dropped whole rather than trimmed. It is informational
+// only and never drives a decision.
 func SanitizeSubagentType(agentType string) string {
 	if agentType == "" || len(agentType) > MaxSubagentTypeLength {
 		return ""

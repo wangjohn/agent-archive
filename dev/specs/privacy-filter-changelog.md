@@ -5,25 +5,6 @@ rules, as a whole, are in the [filter specification](privacy-filter.md);
 version numbers and bump rules are in [versions](../maintainers/versions.md). Each archived session
 records the filter version that produced it (`filter_version`).
 
-## Source filter version 13
-
-Adapter version 0.13.0 goes with it; the parser is unchanged. Transcripts
-filter exactly as in filter 12; only a Claude Code parent session's hook
-evidence changes.
-
-- **Why a subagent is missing.** When Claude Code reports a subagent
-  (`SubagentStop`) but never writes its transcript, the collector stops
-  waiting for it after 30 minutes and marks the parent's link to it
-  unavailable. The parent now also records a
-  `subagent_transcript_never_written` capture gap (provenance
-  `collector:subagent-expiry`) with the detail "Claude Code reported a
-  subagent (type Explore) but never wrote its transcript", or the same
-  without the type when the hook named none. The type is the hook's
-  `agent_type`, uploaded only when it is at most 64 characters of ASCII
-  letters, digits, `_`, `.`, `:`, and `-` ("Explore", "general-purpose",
-  "my-plugin:reviewer"); any other value is left out whole. The detail
-  passes the usual string rules, redaction included.
-
 ## Source filter version 12
 
 Adapter version 0.12.0 goes with it; the parser is unchanged.

@@ -11,6 +11,17 @@ follow [Semantic Versioning](https://semver.org/).
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.
+- A Claude Code parent session whose subagent's transcript was never written
+  now says why the subagent is missing: its metadata carries a
+  `subagent_transcript_never_written` capture gap, "Claude Code reported a
+  subagent but never wrote its transcript".
+- `status --verbose` counts the subagents dropped in the last 7 days because
+  Claude Code never wrote their transcripts, by the type Claude Code
+  reported ("7 not archived in the last 7 days (Claude Code never wrote
+  their transcripts; nothing to do)", then "5 unknown type, 2 Explore"), and
+  `status --json` lists them as `collector.expired_subagents`. The type is
+  kept on this Mac only and never uploaded. Default `status` still says
+  nothing about them.
 
 ### Fixed
 
@@ -40,23 +51,6 @@ follow [Semantic Versioning](https://semver.org/).
   storage access": it names the kind ("Some sessions could not be
   captured") and its next step, or leads with no failure when there is
   nothing to do.
-
-### Added
-
-- A Claude Code parent session whose subagent's transcript was never written
-  now says why the subagent is missing: its metadata carries a
-  `subagent_transcript_never_written` capture gap, naming the subagent's
-  type when Claude Code reported one ("Claude Code reported a subagent (type
-  Explore) but never wrote its transcript"). The type is uploaded only when
-  it is a short name of letters, digits, `_`, `.`, `:`, and `-`. Filter
-  version 13 and adapter version 0.13.0, so existing sessions are filtered
-  again on the next pass; transcripts filter as before.
-- `status --verbose` lists the subagents dropped in the last 7 days because
-  Claude Code never wrote their transcripts, by type ("7 not archived in the
-  last 7 days (Claude Code never wrote their transcripts; nothing to do)",
-  then "5 unknown type, 2 Explore"), and `status --json` lists them as
-  `collector.expired_subagents`. Default `status` still says nothing about
-  them.
 
 ### Changed
 

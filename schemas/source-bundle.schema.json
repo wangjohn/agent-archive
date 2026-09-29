@@ -241,7 +241,7 @@
         },
         "detail": {
           "type": "string",
-          "description": "Archive-authored description of the omission. Never a transcript value. From filter version 3 the single unknown_field_omitted gap carries the distinct omitted key names, sorted and capped, as 'omitted keys: a, b, c'. From filter version 13 a subagent_transcript_never_written gap may name the subagent type Claude Code's SubagentStop hook reported, only when it is at most 64 characters of ASCII letters, digits, and '_.:-'."
+          "description": "Archive-authored description of the omission. Never a transcript value. From filter version 3 the single unknown_field_omitted gap carries the distinct omitted key names, sorted and capped, as 'omitted keys: a, b, c'. A subagent_transcript_never_written gap carries the fixed text 'Claude Code reported a subagent but never wrote its transcript'."
         }
       }
     },

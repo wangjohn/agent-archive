@@ -1,11 +1,16 @@
 package collector
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -319,20 +324,19 @@ func neverWrittenGaps(request state.Request) []archive.SupplementalEvidence {
 }
 
 // A subagent whose transcript was never written leaves its parent a capture
-// gap saying why it is missing, naming its type when the hook reported a
-// valid one, observed at the stop like the link.
+// gap saying why it is missing, in fixed text that never names the
+// subagent's type, observed at the stop like the link. The type, sanitized
+// again in case the candidate file was edited, is kept for status only.
 func TestNeverWrittenSubagentLeavesItsParentACaptureGap(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		agentType string
-		detail    string
+		wantType  string
 	}{
-		{"typed", "Explore", "Claude Code reported a subagent (type Explore) but never wrote its transcript"},
-		{"untyped", "", "Claude Code reported a subagent but never wrote its transcript"},
-		// A candidate file edited by hand, or written by another version, is
-		// sanitized again before its type is published.
-		{"invalid type", "Explore now", "Claude Code reported a subagent but never wrote its transcript"},
+		{"typed", "Explore", "Explore"},
+		{"untyped", "", ""},
+		{"invalid type", "Explore now", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -349,14 +353,46 @@ func TestNeverWrittenSubagentLeavesItsParentACaptureGap(t *testing.T) {
 				t.Fatalf("found=%t err=%v", found, err)
 			}
 			gaps := neverWrittenGaps(request)
-			if len(gaps) != 1 || gaps[0].Payload["detail"] != tc.detail || gaps[0].Provenance != subagentExpiryProvenance || !gaps[0].ObservedAt.Equal(stopAt) {
-				t.Fatalf("gaps=%+v, want one with detail %q", gaps, tc.detail)
+			if len(gaps) != 1 || gaps[0].Payload["detail"] != "Claude Code reported a subagent but never wrote its transcript" || gaps[0].Provenance != subagentExpiryProvenance || !gaps[0].ObservedAt.Equal(stopAt) {
+				t.Fatalf("gaps=%+v, want one with the fixed detail", gaps)
 			}
-			wantType := archive.SanitizeSubagentType(tc.agentType)
-			if len(outcome.expired) != 1 || outcome.expired[0].ArchiveSessionID != "child" || outcome.expired[0].AgentType != wantType || !outcome.expired[0].ExpiredAt.Equal(stopAt.Add(subagentTranscriptGrace)) {
-				t.Fatalf("expired=%+v, want the child with type %q", outcome.expired, wantType)
+			if encoded, err := json.Marshal(request.HookEvidence); err != nil || strings.Contains(string(encoded), "Explore") {
+				t.Fatalf("the parent's evidence names the type: %s (err %v)", encoded, err)
+			}
+			if len(outcome.expired) != 1 || outcome.expired[0].ArchiveSessionID != "child" || outcome.expired[0].AgentType != tc.wantType || !outcome.expired[0].ExpiredAt.Equal(stopAt.Add(subagentTranscriptGrace)) {
+				t.Fatalf("expired=%+v, want the child with type %q", outcome.expired, tc.wantType)
 			}
 		})
+	}
+}
+
+// A rejection retried after a failed write, even for a duplicate stop that
+// reported another type, saves exactly the evidence already saved, so the
+// parent keeps one link and one gap.
+func TestNeverWrittenGapDedupesOnRetry(t *testing.T) {
+	t.Parallel()
+	local, stopAt, _ := subagentGraceFixture(t, archive.SessionOriginHook)
+	candidates, err := local.LoadSubagentCandidates()
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates=%+v err=%v", candidates, err)
+	}
+	for _, agentType := range []string{"Explore", "Plan", ""} {
+		candidate := candidates[0]
+		candidate.AgentType = agentType
+		var rejected subagentRejectedError
+		if err := rejectSubagentCandidate(local, candidate, subagentNeverWritten); !errors.As(err, &rejected) {
+			t.Fatalf("type %q: err=%v", agentType, err)
+		}
+	}
+	request, found, err := local.LoadRequest("parent")
+	if err != nil || !found {
+		t.Fatalf("found=%t err=%v", found, err)
+	}
+	if gaps := captureGaps(request); len(gaps) != 1 || linkedSessionEvidenceCount(request, candidates[0].ArchiveSessionID) != 1 {
+		t.Fatalf("gaps=%+v links=%d, want one of each", gaps, linkedSessionEvidenceCount(request, candidates[0].ArchiveSessionID))
+	}
+	if !stopAt.Equal(request.HookEvidence[0].ObservedAt) {
+		t.Fatalf("evidence=%+v", request.HookEvidence)
 	}
 }
 
@@ -404,9 +440,9 @@ func TestNeverWrittenSubagentOfAForgottenParentIsAcknowledged(t *testing.T) {
 	}
 }
 
-// The parent's published metadata says why its subagent is missing, and
-// status lists the subagent, with its type, for a week of passes and no
-// longer.
+// The parent's published metadata says why its subagent is missing, without
+// its type, and status lists the subagent, with its type, for a week of
+// passes and no longer.
 func TestNeverWrittenSubagentReachesParentMetadataAndStatus(t *testing.T) {
 	t.Parallel()
 	local, stopAt, _ := subagentGraceFixture(t, archive.SessionOriginHook)
@@ -424,12 +460,31 @@ func TestNeverWrittenSubagentReachesParentMetadataAndStatus(t *testing.T) {
 	metadata := fetchMetadata(t, remote, "claude", "parent")
 	found := false
 	for _, gap := range metadata.CaptureGaps {
-		if gap.Code == subagentNeverWritten && gap.Detail == "Claude Code reported a subagent (type Explore) but never wrote its transcript" {
+		if gap.Code == subagentNeverWritten && gap.Detail == "Claude Code reported a subagent but never wrote its transcript" {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("parent capture gaps=%+v", metadata.CaptureGaps)
+	}
+	// The type stays on this Mac: nothing uploaded names it.
+	objects, err := remote.List(context.Background(), "")
+	if err != nil || len(objects) == 0 {
+		t.Fatalf("objects=%+v err=%v", objects, err)
+	}
+	for _, object := range objects {
+		data, err := remote.Get(context.Background(), object.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reader, err := gzip.NewReader(bytes.NewReader(data)); err == nil {
+			if data, err = io.ReadAll(reader); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if bytes.Contains(data, []byte("Explore")) {
+			t.Fatalf("uploaded %s names the subagent type", object.Key)
+		}
 	}
 	want := []state.ExpiredSubagent{{ArchiveSessionID: "child", AgentType: "Explore", ExpiredAt: expiredAt}}
 	for _, at := range []time.Time{expiredAt, expiredAt.Add(time.Hour), expiredAt.Add(state.ExpiredSubagentWindow - time.Minute)} {

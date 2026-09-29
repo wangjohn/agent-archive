@@ -95,12 +95,7 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   of omitted fields, never their values).
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
-  stop hook, the agent's final message (filtered like the transcript). When
-  Claude Code reports a subagent but never writes its transcript, the parent
-  session records a capture gap naming the subagent's type as the hook
-  reported it (`Explore`, `my-plugin:reviewer`), or no type when the name
-  is longer than 64 characters or holds anything but letters, digits, `_`,
-  `.`, `:`, and `-`.
+  stop hook, the agent's final message (filtered like the transcript).
 
 agent-archive adds nothing else about your Mac: no hostname, username, or
 IP address, beyond what already appears in the transcript (a working
@@ -142,9 +137,9 @@ something was removed.
 For the current configured bucket, `agent-archive purge plan` inventories
 unreferenced source objects and separately lists sessions whose current source
 still uses an older filter. It writes a private, expiring plan under the local
-data directory. `agent-archive purge plan --mode old-filter --before-filter 13`
+data directory. `agent-archive purge plan --mode old-filter --before-filter 12`
 narrows deletion candidates to unreferenced sources made by older filter
-versions; replace `13` with the version you are upgrading to. Review the
+versions; replace `12` with the version you are upgrading to. Review the
 printed bucket, prefix, keys, sizes, and digest. Pause **every** Mac uploading
 to the prefix, then run `agent-archive purge apply PLAN` within five minutes
 and enter the digest prefix, or pass `--yes` for a noninteractive run. The

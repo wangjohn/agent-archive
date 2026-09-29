@@ -645,7 +645,8 @@ type Status struct {
 type ExpiredSubagent struct {
 	ArchiveSessionID string `json:"archive_session_id"`
 	// AgentType is the sanitized type the SubagentStop hook reported, or
-	// empty when it named none.
+	// empty when it named none. Like the rest of status.json, it is never
+	// uploaded.
 	AgentType string    `json:"agent_type,omitempty"`
 	ExpiredAt time.Time `json:"expired_at"`
 }
