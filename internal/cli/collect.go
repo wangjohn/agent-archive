@@ -277,7 +277,7 @@ func finishPassWithRetention(env Env, cfg config.Config, localStore *state.Store
 // openPassStorage verifies scheduled collector access and refreshes health and
 // bucket privacy evidence while the caller still holds collector.lock.
 func openPassStorage(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, quietOnBusy bool) (storage.ObjectStore, config.Config, error) {
-	objectStore, err := env.openStore(cfg)
+	objectStore, err := env.openStoreContext(ctx, cfg)
 	if err != nil {
 		storeErr := fmt.Errorf("open storage: %w", err)
 		recordPreflightError(localStore, storeErr)
@@ -312,7 +312,7 @@ func openPassStorage(ctx context.Context, home string, cfg config.Config, env En
 		// re-read under the lock above, so the save cannot lose another
 		// writer's update.
 		if bucketPrivacyNeedsRefresh(cfg, env.now()) {
-			cfg.BucketPrivacy = inspectBucketPrivacy(cfg, objectStore, env.now())
+			cfg.BucketPrivacy = inspectBucketPrivacyContext(ctx, cfg, objectStore, env.now())
 			if err := config.Save(home, cfg); err != nil {
 				return nil, cfg, fmt.Errorf("save bucket privacy evidence: %w", err)
 			}
@@ -439,6 +439,10 @@ func recordPreflightError(localStore *state.Store, preflightErr error) {
 // Env.keychain), and a Keychain that is unavailable (a non-darwin build, or
 // cgo disabled) fails only an R2 configuration.
 func openConfiguredStore(cfg config.Config, keychain func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
+	return openConfiguredStoreContext(context.Background(), cfg, keychain)
+}
+
+func openConfiguredStoreContext(ctx context.Context, cfg config.Config, keychain func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
 	var store credentials.CredentialStore
 	// Spelled as storage.NewConfiguredStore reads it.
 	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderR2) {
@@ -447,7 +451,7 @@ func openConfiguredStore(cfg config.Config, keychain func() (credentials.Credent
 			return nil, fmt.Errorf("keychain unavailable: %w", err)
 		}
 	}
-	return storage.NewConfiguredStore(context.Background(), cfg.Storage, store)
+	return storage.NewConfiguredStore(ctx, cfg.Storage, store)
 }
 
 // skillObserver shares bounded observations within a pass: user-scope skill

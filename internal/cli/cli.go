@@ -12,6 +12,7 @@
 package cli
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/signal"
@@ -236,6 +237,13 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 		return e.OpenStore(cfg)
 	}
 	return openConfiguredStore(cfg, e.keychain)
+}
+
+func (e Env) openStoreContext(ctx context.Context, cfg config.Config) (storage.ObjectStore, error) {
+	if e.OpenStore != nil {
+		return e.OpenStore(cfg)
+	}
+	return openConfiguredStoreContext(ctx, cfg, e.keychain)
 }
 
 func (e Env) executable() (string, error) {
