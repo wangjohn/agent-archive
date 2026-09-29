@@ -26,12 +26,16 @@ import (
 // incompatibly.
 const SchemaVersion = 1
 
+// SkillEvidence controls how much filesystem skill data a source bundle carries.
 type SkillEvidence string
 
 const (
-	SkillEvidenceNone     SkillEvidence = "none"
+	// SkillEvidenceNone omits filesystem skill inventory and snapshots.
+	SkillEvidenceNone SkillEvidence = "none"
+	// SkillEvidenceMetadata includes names and hashes, without skill bodies.
 	SkillEvidenceMetadata SkillEvidence = "metadata"
-	SkillEvidenceBody     SkillEvidence = "body"
+	// SkillEvidenceBody includes filtered snapshots as well as metadata.
+	SkillEvidenceBody SkillEvidence = "body"
 )
 
 // EffectiveSkillEvidence preserves the behavior of configs saved before this
@@ -43,6 +47,7 @@ func (c Config) EffectiveSkillEvidence() SkillEvidence {
 	return c.SkillEvidence
 }
 
+// ValidSkillEvidence reports whether mode is one of the supported policies.
 func ValidSkillEvidence(mode SkillEvidence) bool {
 	switch mode {
 	case SkillEvidenceNone, SkillEvidenceMetadata, SkillEvidenceBody:
