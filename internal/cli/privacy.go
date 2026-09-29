@@ -30,9 +30,13 @@ func privacyConfigurationID(cfg config.Config) string {
 }
 
 func inspectBucketPrivacy(cfg config.Config, store storage.ObjectStore, at time.Time) *storage.PrivacyReport {
+	return inspectBucketPrivacyContext(context.Background(), cfg, store, at)
+}
+
+func inspectBucketPrivacyContext(ctx context.Context, cfg config.Config, store storage.ObjectStore, at time.Time) *storage.PrivacyReport {
 	report := storage.UnknownPrivacy(cfg.Storage.Provider)
 	if inspector, ok := store.(privacyInspector); ok {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		report = inspector.InspectPrivacy(ctx)
 	}
