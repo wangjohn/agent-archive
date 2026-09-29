@@ -450,7 +450,16 @@ first. Without a terminal, give a SESSION_ID, --latest, or --file PATH.
                         needs the agent's CLI (claude, codex, or agent) on
                         PATH. With no selector, hands off the Claude Code,
                         Codex, or Cursor session it runs in, or picks one on
-                        a terminal
+                        a terminal. If the source session was active in the
+                        last 2 minutes in this checkout, a terminal is asked
+                        whether to continue here, cancel, or use a worktree
+  --worktree            With --to, launch in a new git worktree beside the
+                        checkout (its directory name plus -handoff- and the
+                        first 8 characters of SESSION_ID), on a new branch
+                        at HEAD, with uncommitted changes and untracked (not
+                        ignored) files copied in
+  --branch NAME         With --worktree, the new branch (default: handoff/
+                        and the first 8 characters of SESSION_ID)
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
 Example: agent-archive handoff
@@ -458,10 +467,12 @@ Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: agent-archive handoff --latest --harness claude --to codex
 Example: agent-archive handoff SESSION_ID --to claude -- --model opus
+Example: agent-archive handoff SESSION_ID --to codex --worktree
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
+| `--branch` | a value | — |
 | `--file` | a value | — |
 | `--force` | no value | — |
 | `--format` | a value | `markdown` |
@@ -473,6 +484,7 @@ Example: agent-archive handoff SESSION_ID --to claude -- --model opus
 | `--project` | a value | — |
 | `--source` | a value | `auto` |
 | `--to` | a value | — |
+| `--worktree` | no value | — |
 
 ## agent-archive uninstall
 

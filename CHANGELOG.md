@@ -23,6 +23,13 @@ follow [Semantic Versioning](https://semver.org/).
 - Arguments after `--` go to the agent `handoff --to` launches, and
   `config.json` may set per-agent arguments (`handoff.args`) and a default
   destination per source harness (`handoff.default_to`).
+- `handoff --to NAME --worktree` launches the agent in a new git worktree
+  beside the checkout, on a new branch (`handoff/<id>`, or `--branch NAME`),
+  with your uncommitted changes (staged ones arrive unstaged) and untracked,
+  not ignored, files carried over. Your checkout and stash list are left as
+  they were. Without `--worktree`, handing off a session active in the last
+  2 minutes in the same checkout asks on a terminal whether to continue
+  there, cancel, or use a worktree, and warns otherwise.
 - `show --transcript` prints a session's conversation to read: each prompt,
   the agent's replies, one line per tool call (✗ when it failed), your `!`
   shell and local slash commands, compactions, and app notices such as a

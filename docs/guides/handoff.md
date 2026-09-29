@@ -44,6 +44,52 @@ The launched agent does not inherit the calling agent's session variables
 (such as `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`); your settings, such as
 `CLAUDE_CODE_USE_BEDROCK`, pass through.
 
+### Working in a separate checkout (`--worktree`)
+
+Two agents editing one checkout get in each other's way. `--worktree` gives
+the launched agent a checkout of its own:
+
+```sh
+agent-archive handoff SESSION_ID --to codex --worktree
+agent-archive handoff SESSION_ID --to claude --worktree --branch try-codex-fix
+```
+
+It runs `git worktree add -b handoff/<id> <repo>-handoff-<id> HEAD`, where
+`<id>` is the first 8 characters of the session ID and `<repo>-handoff-<id>`
+is a directory beside the checkout; `--branch NAME` names the branch instead.
+Your uncommitted changes and untracked files come along: the changes are
+recorded with `git stash create` and applied in the new worktree, which
+leaves your checkout and your stash list untouched, and untracked files are
+copied with their permissions (symlinks as symlinks). Changes you had staged
+arrive unstaged. Ignored files, such as `.env` or `node_modules`, are not
+copied. Launched from a subdirectory, the agent starts in the same
+subdirectory of the worktree. The worktree's path and branch are printed:
+
+```text
+handoff: created worktree /Users/me/src/app-handoff-3f2a9c1e on branch handoff/3f2a9c1e (carried 2 changed and 1 untracked files)
+```
+
+An existing branch or directory of that name is an error, never reused;
+pick another branch with `--branch`, or remove the old worktree with
+`git worktree remove`. If copying your changes fails after the worktree was
+made, the worktree is left in place and the error says where. When you are
+done, merge or cherry-pick the branch and run `git worktree remove` on the
+directory.
+
+Without `--worktree`, if the session being handed off is on this Mac, was
+active in the last 2 minutes, and belongs to the checkout the agent would
+start in, a terminal asks first:
+
+```text
+The source session was active just now; continue in the same checkout? [y/N/w]
+```
+
+`y` continues, `N` (the default) cancels with nothing launched, and `w`
+creates a worktree as `--worktree` does. Without a terminal, `handoff` prints
+a warning and continues. When an agent hands off its own session with
+`--to`, it is active by definition; the note is printed once and nothing is
+asked.
+
 Arguments after `--` go to the agent (a second `--` is refused, since the
 prompt follows one), after any set for it in `config.json`
 (see [configuration](../reference/configuration.md)):

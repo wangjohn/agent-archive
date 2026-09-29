@@ -21,6 +21,10 @@ type handoffOptions struct {
 	force      bool
 	noPreamble bool
 	maxBytes   int
+	// worktree launches in a new git worktree on branch (default
+	// handoff/<short id>) instead of the current checkout.
+	worktree bool
+	branch   string
 	// agentArgs are the arguments after `--`, given to the launched agent.
 	agentArgs []string
 }
@@ -46,6 +50,8 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	force := fs.Bool("force", false, "with --output, replace an existing file")
 	noPreamble := fs.Bool("no-preamble", false, "omit the note addressed to the receiving agent")
 	to := fs.String("to", "", "launch a local claude, codex, or cursor session with this handoff")
+	worktree := fs.Bool("worktree", false, "with --to, launch in a new git worktree carrying this checkout's uncommitted and untracked files")
+	branch := fs.String("branch", "", "with --worktree, the new branch (default: handoff/ and the first 8 characters of SESSION_ID)")
 	// Everything after the first `--` belongs to the agent, not to flag
 	// parsing, which would otherwise read it as a session ID.
 	var agentArgs []string
@@ -83,6 +89,10 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		return usageError("--max-bytes must be 0 or more")
 	case len(agentArgs) > 0 && *to == "":
 		return usageError("arguments after -- go to the launched agent; name it with --to")
+	case *worktree && *to == "":
+		return usageError("--worktree applies only when launching an agent with --to")
+	case *branch != "" && !*worktree:
+		return usageError("--branch applies only to --worktree")
 	}
 	if message := validateHandoffLaunchOptions(*to, *output, *format, *noPreamble); message != "" {
 		return usageError(message)
@@ -114,7 +124,8 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	}
 	return handoffOptions{sessionID: sessionID, project: *project, harness: canonical,
 		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
-		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, agentArgs: agentArgs}, true
+		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, agentArgs: agentArgs,
+		worktree: *worktree, branch: *branch}, true
 }
 
 // noSelectorMessage is the usage error for a handoff with nothing selected
