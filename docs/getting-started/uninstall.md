@@ -53,6 +53,13 @@ or `backfill undo`, and only while that Mac runs agent-archive and isn't
 paused. The sessions of a Mac you uninstall, wipe, retire, or pause for good
 stay in the bucket indefinitely, and nothing else cleans them up.
 
+To remove only unreferenced source snapshots from the currently configured
+bucket, run `agent-archive purge plan`, review its exact keys, pause every Mac
+uploading to that prefix, then run `agent-archive purge apply PLAN` within five
+minutes. Its report lists deleted and remaining keys. This does not delete
+current sessions or empty an entire bucket. The full-prefix shell procedure
+below is still needed for complete archive removal.
+
 To delete everything under your prefix now, pause or uninstall **every** Mac
 that uploads there. Use the [cleanup preparation block](../security/privacy.md#after-a-filter-upgrade)
 first in a bash or zsh shell. It defines `purge_prepare` and `purge_apply`,

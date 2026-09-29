@@ -12,6 +12,28 @@ import (
 )
 
 var commandHelp = map[string]string{
+	"purge": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
+       [--before-filter VERSION]
+       agent-archive purge apply PLAN [--yes]
+
+Create a private five-minute deletion plan, then review its exact keys.
+Plan lists still-current older-filter sessions separately and never proposes
+their current sources for deletion. Pause every Mac uploading to this prefix
+before apply. A versioned bucket keeps noncurrent versions and delete markers.
+`,
+	"purge plan": `Usage: agent-archive purge plan [--mode unreferenced|old-filter]
+       [--before-filter VERSION]
+
+Read metadata and list source objects without deleting anything. Old-filter
+mode selects only unreferenced sources whose filter version is below VERSION;
+both modes report still-current older-filter sessions separately.
+`,
+	"purge apply": `Usage: agent-archive purge apply PLAN [--yes]
+
+Pause every uploading Mac first. Confirm the plan digest or use --yes.
+Apply rechecks remote metadata before each deletion and writes a resumable
+report next to the plan. A plan expires five minutes after creation.
+`,
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
                [--skill-evidence none|metadata|body]

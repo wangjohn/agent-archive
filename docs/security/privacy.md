@@ -134,6 +134,24 @@ something was removed.
 
 ## After a filter upgrade
 
+For the current configured bucket, `agent-archive purge plan` inventories
+unreferenced source objects and separately lists sessions whose current source
+still uses an older filter. It writes a private, expiring plan under the local
+data directory. `agent-archive purge plan --mode old-filter --before-filter 12`
+narrows deletion candidates to unreferenced sources made by older filter
+versions; replace `12` with the version you are upgrading to. Review the
+printed bucket, prefix, keys, sizes, and digest. Pause **every** Mac uploading
+to the prefix, then run `agent-archive purge apply PLAN` within five minutes
+and enter the digest prefix, or pass `--yes` for a noninteractive run. The
+command rereads all metadata before each source deletion and writes a report
+next to the plan; retry that plan before expiry after a partial failure.
+This coordination is not atomic against an external writer. In a versioned
+bucket, an administrator must also remove noncurrent versions and delete
+markers. A current old-filter source cannot be deleted without deleting the
+session unless its original can be safely refiltered and republished first.
+Missing transcripts and retired destinations cannot be refiltered
+automatically.
+
 A new filter version (see the [filter changelog](../../dev/specs/privacy-filter-changelog.md))
 applies to what is uploaded from then on. It does not clean what is already
 in the bucket:

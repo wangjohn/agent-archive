@@ -373,6 +373,7 @@ Switch agents
 
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
+  agent-archive purge       Review and remove unreferenced source objects
 
 Run agent-archive COMMAND --help for options and examples.
 Use --version to show the installed version.
@@ -442,6 +443,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runHandoffCommand(args[1:], stdout, stderr, env)
 	case "backfill":
 		return runBackfillCommand(args[1:], stdin, stdout, stderr, env)
+	case "purge":
+		return runPurgeCommand(args[1:], stdin, stdout, stderr, env)
 	default:
 		terminal.Printf(stderr, "agent-archive: unknown command %q\n\n%s", args[0], usage)
 		return 2

@@ -48,6 +48,7 @@ Switch agents
 
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
+  agent-archive purge       Review and remove unreferenced source objects
 
 Run agent-archive COMMAND --help for options and examples.
 Use --version to show the installed version.
@@ -464,6 +465,57 @@ Example: agent-archive uninstall
 | --- | --- | --- |
 | `--delete-local-data` | no value | — |
 | `--yes` | no value | — |
+
+## agent-archive purge
+
+Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
+
+```text
+Usage: agent-archive purge plan [--mode unreferenced|old-filter]
+       [--before-filter VERSION]
+       agent-archive purge apply PLAN [--yes]
+
+Create a private five-minute deletion plan, then review its exact keys.
+Plan lists still-current older-filter sessions separately and never proposes
+their current sources for deletion. Pause every Mac uploading to this prefix
+before apply. A versioned bucket keeps noncurrent versions and delete markers.
+```
+
+No flags.
+
+## agent-archive purge apply
+
+Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
+
+```text
+Usage: agent-archive purge apply PLAN [--yes]
+
+Pause every uploading Mac first. Confirm the plan digest or use --yes.
+Apply rechecks remote metadata before each deletion and writes a resumable
+report next to the plan. A plan expires five minutes after creation.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--yes` | no value | — |
+
+## agent-archive purge plan
+
+Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
+
+```text
+Usage: agent-archive purge plan [--mode unreferenced|old-filter]
+       [--before-filter VERSION]
+
+Read metadata and list source objects without deleting anything. Old-filter
+mode selects only unreferenced sources whose filter version is below VERSION;
+both modes report still-current older-filter sessions separately.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--before-filter` | a value | — |
+| `--mode` | a value | `unreferenced` |
 
 ## agent-archive version
 

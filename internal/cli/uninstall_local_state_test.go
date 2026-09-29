@@ -50,7 +50,7 @@ var handListedLocalState = []string{
 	"registrations", "requests", "request-locks", "published", "pending", "sessions", "superseded", "pending-scans", "scan-signatures", "subagent-candidates", "forgotten", "refresh-skips", "imports",
 	"status.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"collector.lock", "collector-lock.json", "collector.log", "collector-error.log",
-	"cache", "handoffs",
+	"cache", "handoffs", "purge-plans",
 }
 
 // The entries uninstall deletes, the store's now taken from
