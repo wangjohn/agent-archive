@@ -25,7 +25,7 @@ type showLookup struct {
 // substrings among archived metadata (capped like list). Multiple matches on
 // a TTY open a one-shot picker that returns the chosen session (so the caller
 // can still honor --normalized); off a TTY they error with the candidates.
-func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env Env, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string) (showLookup, int) {
+func resolveShowQuery(ctx context.Context, store storage.ObjectStore, env showQueryDependencies, stdin io.Reader, stdout, stderr io.Writer, harness, query string, cfgProjects map[string]string) (showLookup, int) {
 	// Full archive IDs use the direct-read path. With --harness, a short ID
 	// or title would otherwise be mistaken for a literal object key.
 	if harness == "" || len(query) == 32 {

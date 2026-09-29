@@ -10,11 +10,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
 )
+
+func TestArchiveHandoffCandidatesPreservesOrderAndSkipsEmptySessions(t *testing.T) {
+	t.Parallel()
+	zero := 0
+	one := 1
+	sessions := []archive.Metadata{
+		{SessionID: "other-project", ProjectID: "other"},
+		{SessionID: "current", ProjectID: "project", NativeSessionID: "running"},
+		{SessionID: "empty", ProjectID: "project", Counts: archive.Counts{Turns: &zero}},
+		{SessionID: "unknown-count", ProjectID: "project"},
+		{SessionID: "one-turn", ProjectID: "project", Counts: archive.Counts{Turns: &one}},
+	}
+	got := archiveHandoffCandidates(sessions, map[string]bool{"project": true}, map[string]bool{"running": true})
+	if len(got) != 2 || got[0].SessionID != "unknown-count" || got[1].SessionID != "one-turn" {
+		t.Fatalf("candidates = %#v", got)
+	}
+}
 
 // handoffTranscript is a Codex session with a prompt, a tool call whose
 // output is a list of blocks, a credential, and a closing reply.
@@ -113,7 +131,7 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 func TestHandoffReportsNotSetUp(t *testing.T) {
 	t.Parallel()
 	out, errOut, code := runHandoff(t, testEnv(t, t.TempDir(), time.Now()), "--latest")
-	if code != 1 || out != "" || !strings.Contains(errOut, "Not set up") {
+	if code != 1 || out != "" || errOut != notSetUpMessage+"\n" {
 		t.Fatalf("code=%d out=%q stderr=%q", code, out, errOut)
 	}
 }

@@ -31,15 +31,6 @@ const archiveSessionsPrefix = "sessions"
 // prints, so a first-time user gets one consistent answer.
 const notSetUpMessage = "Not set up. Run `agent-archive setup` to get started."
 
-// eligibleNoUseUnavailableMessage is what `list --skill-usage eligible_no_use`
-// prints, with exit 0 and no rows. No parser version records both a complete
-// eligible-skill set and complete use observation, so no sidecar carries the
-// observed_none detection the query compares against and it can match nothing.
-// help.go and docs/guides/list-and-show.md state the same thing.
-const eligibleNoUseUnavailableMessage = "--skill-usage eligible_no_use cannot return sessions yet: no parser version\n" +
-	"records both a complete eligible-skill set and complete use observation, so\n" +
-	"non-use is never proven. The value stays accepted for forward compatibility."
-
 // openReadOnlyStore loads configuration and opens the configured object
 // store the same way a collector pass does (env.openStore), but without the
 // machine lock or the pause check: `list` and `show` only read remote
@@ -47,7 +38,7 @@ const eligibleNoUseUnavailableMessage = "--skill-usage eligible_no_use cannot re
 // a scheduled `_collect` and while collection is paused. found is false,
 // with a nil error, when setup has never run. cfg is meaningful only when
 // found is true.
-func openReadOnlyStore(env Env) (storage.ObjectStore, config.Config, bool, error) {
+func openReadOnlyStore(env readOnlyStoreDependencies) (storage.ObjectStore, config.Config, bool, error) {
 	// Read-only: before setup there is nothing to read, and no data
 	// directory is created just to say so.
 	home, err := env.readHome()
@@ -71,20 +62,22 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, config.Config, bool, error
 // runListCommand implements `agent-archive list`. It reads only metadata
 // sidecars (reader.ListMetadataWithOptions downloads no source bundle) and prints only
 // metadata fields, so its output can never contain transcript content. It
-// reuses unchanged sidecars from the local metadata cache unless --no-cache.
+// uses the time-ordered index when complete and verifies each displayed
+// sidecar live; full scans reuse the local metadata cache unless --no-cache.
 // Text listings are capped by --limit (default 50; 0 for all) and, on a
 // terminal, paged through $PAGER unless --no-pager, --json, or an interactive
 // browse (stdin and stdout are both terminals).
-func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env listCommandDependencies) int {
 	fs := env.newCommandFlags("list", stderr)
 	harness := fs.String("harness", "", "only sessions from this harness (codex, claude, cursor)")
 	model := fs.String("model", "", "only sessions that requested or observed this model")
 	skill := fs.String("skill", "", "only sessions involving this skill (see --skill-usage)")
 	skillSHA256 := fs.String("skill-sha256", "", "only sessions involving this exact lowercase skill SHA-256")
-	skillUsage := fs.String("skill-usage", string(reader.SkillUsageUsed), "with --skill/--skill-sha256: used, available, or eligible_no_use")
+	skillUsage := fs.String("skill-usage", string(reader.SkillUsageUsed), "with --skill/--skill-sha256: used or available")
 	since := fs.String("since", "", "only sessions captured at or after this date (2026-01-31), RFC 3339 time, or age (7d, 12h)")
 	complete := fs.Bool("complete", false, "only sessions with complete parser coverage and no capture gaps")
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
+	rebuildIndex := fs.Bool("rebuild-index", false, "rebuild the time-ordered listing index from all live metadata sidecars")
 	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
 	limit := fs.Int("limit", defaultListLimit, "show at most this many sessions, newest first (0 for all)")
@@ -103,18 +96,6 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if code != 0 {
 		return code
 	}
-	if opts.skillUsage == reader.SkillUsageEligibleNoUse {
-		if opts.jsonOut {
-			return printJSON(stdout, stderr, listDocument{
-				Version: listSchemaVersion, Sessions: []archive.Metadata{},
-				Limit: opts.limit, Returned: 0, TotalMatched: 0,
-				Unavailable: eligibleNoUseUnavailableMessage,
-			})
-		}
-		terminal.Println(stdout, eligibleNoUseUnavailableMessage)
-		return 0
-	}
-
 	store, cfg, found, err := openReadOnlyStore(env)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -124,24 +105,43 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Println(stderr, notSetUpMessage)
 		return 1
 	}
+	if *rebuildIndex {
+		if _, err := reader.RebuildIndex(context.Background(), store, archiveSessionsPrefix); err != nil {
+			terminal.Printf(stderr, "agent-archive: list: rebuild index: %v\n", err)
+			return 1
+		}
+	}
 	var stopList func()
 	if !opts.jsonOut {
 		stopList = startActivity(stdout, "Listing sessions…")
 	} else {
 		stopList = func() {}
 	}
-	sessions, err := reader.ListMetadataWithOptions(context.Background(), store, archiveSessionsPrefix, opts.filter, reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list")})
+	listOpts := reader.ListOptions{Cache: listCache(env, opts.noCache), Skipped: warnSkippedSidecar(stderr, "list")}
+	var listed reader.RecentResult
+	if opts.limit > 0 && !opts.imported && !opts.hookCaptured {
+		listed, err = reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, opts.limit, listOpts)
+	} else {
+		listed, err = reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, 0, listOpts)
+	}
 	stopList()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
 		return 1
 	}
-	sessions = filterListOrigin(sessions, opts.imported, opts.hookCaptured)
+	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
 	shown, totalMatched, truncated := applyListLimit(sessions, opts.limit)
+	if !opts.imported && !opts.hookCaptured && listed.Complete {
+		totalMatched = listed.TotalMatched
+		truncated = totalMatched > len(shown)
+	} else if !listed.Complete {
+		totalMatched = -1
+		truncated = true
+	}
 	if opts.jsonOut {
 		return printJSON(stdout, stderr, newListDocument(shown, opts.limit, totalMatched, truncated))
 	}
-	if totalMatched == 0 {
+	if len(shown) == 0 {
 		terminal.Println(stdout, "No archived sessions match.")
 		return 0
 	}
@@ -213,9 +213,11 @@ func listOptionsFromFlags(fs *commandFlags, v listFlagValues, now time.Time) (li
 	// than as a missing companion flag.
 	usage := reader.SkillUsage(v.skillUsage)
 	switch usage {
-	case reader.SkillUsageUsed, reader.SkillUsageAvailable, reader.SkillUsageEligibleNoUse:
+	case reader.SkillUsageUsed, reader.SkillUsageAvailable:
+	case reader.SkillUsageEligibleNoUse:
+		return listOptions{}, fs.usageError("--skill-usage eligible_no_use is unsupported: current parsers cannot prove non-use")
 	default:
-		return listOptions{}, fs.usageError("--skill-usage must be used, available, or eligible_no_use, not %q", v.skillUsage)
+		return listOptions{}, fs.usageError("--skill-usage must be used or available, not %q", v.skillUsage)
 	}
 	if usage != reader.SkillUsageUsed && v.skill == "" && v.skillSHA256 == "" {
 		return listOptions{}, fs.usageError("--skill-usage requires --skill or --skill-sha256")
@@ -268,10 +270,14 @@ func newListDocument(sessions []archive.Metadata, limit, totalMatched int, trunc
 	if sessions == nil {
 		sessions = []archive.Metadata{}
 	}
+	var count *int
+	if totalMatched >= 0 {
+		count = &totalMatched
+	}
 	return listDocument{
 		Version: listSchemaVersion, Sessions: sessions,
-		Limit: limit, Returned: len(sessions), TotalMatched: totalMatched,
-		Truncated: truncated,
+		Limit: limit, Returned: len(sessions), TotalMatchedKnown: totalMatched >= 0,
+		TotalMatched: count, Truncated: truncated,
 	}
 }
 
@@ -293,7 +299,7 @@ func harnessFlagError(value string) string {
 }
 
 // listSchemaVersion versions the `list --json` document.
-const listSchemaVersion = 2
+const listSchemaVersion = 4
 
 // defaultListLimit is how many sessions `list` shows when --limit is omitted.
 const defaultListLimit = 50
@@ -302,17 +308,15 @@ const defaultListLimit = 50
 // metadata sidecar, as `show` prints one, and never conversation content.
 // Limit is the --limit value (0 means all). Returned is len(Sessions);
 // TotalMatched is how many passed the filters before --limit. Truncated is
-// set when Sessions is a prefix of the full match set. Unavailable explains
-// a query that cannot return sessions yet, where the text listing prints
-// the same explanation instead of a table.
+// set when Sessions is a prefix of the full match set.
 type listDocument struct {
-	Version      int                `json:"schema_version"`
-	Sessions     []archive.Metadata `json:"sessions"`
-	Limit        int                `json:"limit"`
-	Returned     int                `json:"returned"`
-	TotalMatched int                `json:"total_matched"`
-	Truncated    bool               `json:"truncated,omitempty"`
-	Unavailable  string             `json:"unavailable,omitempty"`
+	Version           int                `json:"schema_version"`
+	Sessions          []archive.Metadata `json:"sessions"`
+	Limit             int                `json:"limit"`
+	Returned          int                `json:"returned"`
+	TotalMatched      *int               `json:"total_matched,omitempty"`
+	TotalMatchedKnown bool               `json:"total_matched_known"`
+	Truncated         bool               `json:"truncated,omitempty"`
 }
 
 // warnSkippedSidecar reports, on stderr, a metadata sidecar a listing left
@@ -331,7 +335,7 @@ func warnSkippedSidecar(stderr io.Writer, command string) func(reader.SkippedSid
 // downloading sidecars whose ETag has not changed. It holds metadata only.
 // The cache is an optimization, so a data directory or cache that cannot be
 // opened means an uncached listing, never a failed one.
-func listCache(env Env, disabled bool) *reader.MetadataCache {
+func listCache(env metadataCacheDependencies, disabled bool) *reader.MetadataCache {
 	if disabled {
 		return nil
 	}
@@ -369,7 +373,7 @@ func validLowerSHA256(value string) bool {
 // is printed only when the user passes --normalized explicitly, keeping the
 // spec's rule that nothing prints transcript contents unless asked.
 // With no SESSION_ID on a TTY, it opens the same interactive picker as list.
-func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
+func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env showCommandDependencies) int {
 	fs := env.newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
 	normalized := fs.Bool("normalized", false, "also download, verify, and print the normalized conversation view (this prints transcript content)")
