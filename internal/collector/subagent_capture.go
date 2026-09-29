@@ -23,6 +23,42 @@ const subagentTranscriptGrace = 30 * time.Minute
 // is not a failure.
 var errSubagentWaiting = errors.New("subagent transcript is not written yet")
 
+// errSubagentRunning marks a subagent whose transcript has records after the
+// last SubagentStop that vouched for it, the latest of them within
+// subagentTranscriptGrace: it was resumed (SendMessage continues a stopped
+// agent in the same transcript) and is still at work. Its next stop, or
+// subagentTranscriptGrace without a new record, moves the bound forward (see
+// subagentEndBound); until then the collector waits, keeping any published
+// snapshot. It is not a failure.
+var errSubagentRunning = errors.New("subagent is running again since its last stop")
+
+// errSubagentFutureRecord marks a subagent transcript whose last record is
+// dated more than subagentTranscriptGrace after the pass's clock. No wait
+// ends that: the record is never quiet (see subagentEndBound), so it would
+// look like a subagent still running for as long as the gap lasts.
+var errSubagentFutureRecord = errors.New("subagent transcript has records dated in the future")
+
+// subagentFutureDated reports whether filtered's last record is dated more
+// than subagentTranscriptGrace after now, the same allowance
+// awaitSubagentTranscript gives a stop observed in the future.
+func subagentFutureDated(filtered archive.FilteredTranscript, now time.Time) bool {
+	return filtered.NativeEndAt.Sub(now) > subagentTranscriptGrace
+}
+
+// subagentEndBound is the latest native time a subagent transcript's records
+// may carry: the SubagentStop observed at observedAt, or, once the transcript
+// has written nothing for subagentTranscriptGrace, its last record. A
+// subagent resumed after its stop may never stop again (its session was
+// closed while it worked); without the second bound the records it wrote
+// after that stop would never be archived. A last record dated after now
+// (a clock that jumped back) is never quiet.
+func subagentEndBound(filtered archive.FilteredTranscript, observedAt, now time.Time) time.Time {
+	if end := filtered.NativeEndAt; end.After(observedAt) && !end.After(now) && now.Sub(end) >= subagentTranscriptGrace {
+		return end
+	}
+	return observedAt
+}
+
 // subagentRejectedError is a candidate the collector decided not to register:
 // it is acknowledged, and its parent told the link is unavailable, so it is
 // never retried.
@@ -196,7 +232,17 @@ func validateCandidateTranscript(local *state.Store, candidate state.SubagentCan
 		return reg, awaitSubagentTranscript(local, candidate, now)
 	}
 	reg.SessionStartedAt = filtered.NativeStartAt
-	if code := checkNewSubagent(filtered, reg.ParentNativeSessionID, reg.SubagentID, parent.SessionStartedAt, candidate.ObservedAt); code != "" {
+	bound := subagentEndBound(filtered, candidate.ObservedAt, now)
+	if filtered.NativeEndAt.After(bound) && !subagentFutureDated(filtered, now) {
+		// Resumed after this stop and still at work. It is registered all
+		// the same, with this stop as its bound, which is what a later stop
+		// of a registered subagent must record; the scan holds its records
+		// to that bound (see errSubagentRunning). Rejecting it would report a
+		// failure and tell the parent the link is unavailable, only for the
+		// next stop to register it after all.
+		bound = filtered.NativeEndAt
+	}
+	if code := checkNewSubagent(filtered, reg.ParentNativeSessionID, reg.SubagentID, parent.SessionStartedAt, candidate.ObservedAt, bound); code != "" {
 		return reg, rejectSubagentCandidate(local, candidate, code)
 	}
 	if opts.AcceptSession != nil && !opts.AcceptSession(reg) {
@@ -264,10 +310,10 @@ func subagentTranscriptEmpty(filtered archive.FilteredTranscript) bool {
 }
 
 // checkNewSubagent applies the checks a subagent transcript with records must
-// pass before it is first registered, and returns the code it is rejected
-// with, or "".
-func checkNewSubagent(filtered archive.FilteredTranscript, parentNativeSessionID, agentID string, parentStartedAt, observedAt time.Time) string {
-	if checkSubagentProvenance(filtered, parentNativeSessionID, agentID, filtered.NativeStartAt, observedAt) != nil {
+// pass before it is first registered, its records ending by bound (see
+// subagentEndBound), and returns the code it is rejected with, or "".
+func checkNewSubagent(filtered archive.FilteredTranscript, parentNativeSessionID, agentID string, parentStartedAt, observedAt, bound time.Time) string {
+	if checkSubagentProvenance(filtered, parentNativeSessionID, agentID, filtered.NativeStartAt, bound) != nil {
 		return "subagent_provenance_unavailable"
 	}
 	if filtered.NativeStartAt.Before(parentStartedAt) || filtered.NativeStartAt.After(observedAt) {
@@ -286,28 +332,35 @@ func CheckImportedSubagent(filtered archive.FilteredTranscript, parentNativeSess
 	if subagentTranscriptEmpty(filtered) {
 		return errors.New("subagent transcript is empty")
 	}
-	if code := checkNewSubagent(filtered, parentNativeSessionID, agentID, parentStartedAt, observedAt); code != "" {
+	if code := checkNewSubagent(filtered, parentNativeSessionID, agentID, parentStartedAt, observedAt, observedAt); code != "" {
 		return errors.New(code)
 	}
 	return nil
 }
 
 // validateSubagentTranscript is called before registration and on every later
-// scan because the hook-provided path is mutable local state.
-func validateSubagentTranscript(reg archive.SessionRegistration, filtered archive.FilteredTranscript) error {
+// scan, judged at now, because the hook-provided path is mutable local state.
+func validateSubagentTranscript(reg archive.SessionRegistration, filtered archive.FilteredTranscript, now time.Time) error {
 	if reg.ParentSessionID == "" {
 		return nil
 	}
-	return checkSubagentProvenance(filtered, reg.ParentNativeSessionID, reg.SubagentID, reg.SessionStartedAt, reg.SubagentObservedAt)
+	err := checkSubagentProvenance(filtered, reg.ParentNativeSessionID, reg.SubagentID, reg.SessionStartedAt, subagentEndBound(filtered, reg.SubagentObservedAt, now))
+	if errors.Is(err, errSubagentRunning) && subagentFutureDated(filtered, now) {
+		return errSubagentFutureRecord
+	}
+	return err
 }
 
 // checkSubagentProvenance checks that a subagent transcript's native
 // timestamps are complete, start at startedAt, and end no later than
 // observedAt, and that its records name only the parent session and the
-// agent.
+// agent. A transcript that ends after observedAt is errSubagentRunning.
 func checkSubagentProvenance(filtered archive.FilteredTranscript, parentNativeSessionID, agentID string, startedAt, observedAt time.Time) error {
-	if !filtered.NativeStartComplete || filtered.NativeStartAt.IsZero() || filtered.NativeEndAt.IsZero() || observedAt.IsZero() || filtered.NativeEndAt.After(observedAt) {
+	if !filtered.NativeStartComplete || filtered.NativeStartAt.IsZero() || filtered.NativeEndAt.IsZero() || observedAt.IsZero() {
 		return errors.New("subagent transcript has incomplete native timestamp provenance")
+	}
+	if filtered.NativeEndAt.After(observedAt) {
+		return errSubagentRunning
 	}
 	if !filtered.NativeStartAt.Equal(startedAt) {
 		return errors.New("subagent native start changed after registration")

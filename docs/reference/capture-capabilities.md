@@ -93,6 +93,12 @@ when resuming or messaging an existing agent. A stop stages a local candidate;
 background collection establishes native eligibility. Nothing reads the child
 transcript or contacts storage in the hook.
 
+A child's records must end by its latest `SubagentStop`. An agent resumed
+after that stop writes past it; the collector keeps the child at what the
+stop covered and waits, not failing, until the next stop or until the
+transcript has written nothing for 30 minutes, when its last record becomes
+the bound. Identity and start checks apply to every record either way.
+
 "Complete timestamp provenance" applies to conversation-bearing records only.
 Claude Code interleaves bookkeeping entries with no top-level timestamp —
 `summary` and `file-history-snapshot` are the observed cases — and those do not
