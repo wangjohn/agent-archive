@@ -30,6 +30,15 @@ type subagentRejectedError struct{ code string }
 
 func (e subagentRejectedError) Error() string { return e.code }
 
+// Is reports whether target is ErrSubagentNotCaptured.
+func (subagentRejectedError) Is(target error) bool { return target == ErrSubagentNotCaptured }
+
+// ErrSubagentNotCaptured is matched, with errors.Is, by the error Result.Errors
+// holds for a subagent candidate rejected for a reason that lost a real
+// subagent (see expectedSubagentRejections): it is acknowledged and will not
+// be retried, so callers can say it was not captured rather than failed.
+var ErrSubagentNotCaptured = errors.New("subagent was not captured")
+
 // expectedSubagentRejections are the rejection codes that lose nothing: a
 // transcript that was never written, or that backfill found empty or gone; a
 // parent that is not, or no longer, archived here; a subagent that started

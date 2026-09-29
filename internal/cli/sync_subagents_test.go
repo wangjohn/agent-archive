@@ -126,7 +126,8 @@ func TestSyncFailsOnceOnAnUnreadableSubagentTranscript(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status, err := local.LoadStatus(); err != nil || status.SessionIssues["phantom-child"] == "" || status.LastError == "" {
+	want := "1 subagent could not be captured (transcript unreadable or not matching its parent) — nothing to do, its parent session records the link as unavailable"
+	if status, err := local.LoadStatus(); err != nil || status.SessionIssues["phantom-child"] != issueSubagentNotCaptured || status.IssueCounts[issueSubagentNotCaptured] != 1 || status.LastError != want {
 		t.Fatalf("status=%+v err=%v", status, err)
 	}
 	if code, out, errOut := syncAt(t, env, now.Add(2*time.Minute)); code != 0 || strings.Contains(out, "subagent") {

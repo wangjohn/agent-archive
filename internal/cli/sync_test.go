@@ -209,8 +209,11 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(status.LastError, "failed to scan, publish, or clean up") {
-		t.Fatalf("expected status.LastError to reflect the retention failure, got %q", status.LastError)
+	if want := "1 session failed to clean up — the next pass retries, or run agent-archive sync for details"; status.LastError != want {
+		t.Fatalf("expected status.LastError to reflect the retention failure, got %q want %q", status.LastError, want)
+	}
+	if len(status.SessionIssues) != 1 || status.IssueCounts[issueRetentionFailed] != 1 || len(status.IssueCounts) != 1 {
+		t.Fatalf("session issues=%v counts=%v", status.SessionIssues, status.IssueCounts)
 	}
 	// The session must still be registered locally: a failed delete must
 	// never be treated as if it had succeeded.

@@ -196,35 +196,11 @@ func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, en
 		}
 	}
 	if len(result.Errors) > 0 {
-		current, readErr := localStore.LoadStatus()
-		if readErr != nil {
-			return verifyErr, readErr
-		}
-		current.SessionIssues = map[string]string{}
-		for id, issue := range result.Errors {
-			current.SessionIssues[id] = sessionIssueCode(issue)
-		}
-		if err := localStore.SaveStatus(current); err != nil {
+		if err := recordSessionIssues(localStore, result.Errors, subagentLookup(localStore)); err != nil {
 			return verifyErr, err
 		}
-		recordPreflightError(localStore, fmt.Errorf("%d session(s) need capture or publication", len(result.Errors)))
 	}
 	return verifyErr, nil
-}
-
-// sessionIssueCode keeps status diagnostics stable while omitting raw errors,
-// which may include transcript content or storage credential-process output.
-func sessionIssueCode(issue error) string {
-	switch {
-	case errors.Is(issue, state.ErrQuarantined):
-		return "local_state_unreadable"
-	case strings.Contains(issue.Error(), "truncated, compacted, or rewritten"):
-		return "transcript_discontinuity"
-	case strings.Contains(issue.Error(), "collection limit"):
-		return "transcript_size_limit"
-	default:
-		return "capture_or_publication_failed"
-	}
 }
 
 // finishPassWithRetention gives cleanup its own deadline after collection.
@@ -386,23 +362,29 @@ func passStorageHealth(result collector.Result) string {
 // recordRetentionErrors merges retention.Sweep's per-session failures into
 // result, so sync's existing report/exit-code logic (which only knows about
 // collector.Result) covers them too without its own retention-specific
-// path, and updates the Status's last errors the same way collector.Run
-// already does for its own per-session errors — otherwise a retention
-// failure would never reach `status` at all, since, unlike collector.Run,
-// Sweep does not persist a Status of its own.
+// path, and records them in the Status with the pass's collection failures
+// (see recordSessionIssues): otherwise a retention failure would never
+// reach `status` at all, since, unlike collector.Run, Sweep does not
+// persist a Status of its own.
 func recordRetentionErrors(localStore *state.Store, result *collector.Result, sweep retention.Result) {
 	if result.Errors == nil {
 		result.Errors = map[string]error{}
 	}
 	for id, sweepErr := range sweep.Errors {
-		result.Errors[id] = fmt.Errorf("retention: %w", sweepErr)
+		// A session that also failed collection keeps that error beside
+		// this one.
+		addSessionError(result.Errors, id, fmt.Errorf("%w: %w", errRetentionFailed, sweepErr))
 	}
-	status, err := localStore.LoadStatus()
-	if err != nil {
-		return
+	_ = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore))
+}
+
+// addSessionError records err against a session, after any error the pass
+// already recorded for it.
+func addSessionError(errs map[string]error, id string, err error) {
+	if previous := errs[id]; previous != nil {
+		err = errors.Join(previous, err)
 	}
-	status.SetLastErrors(fmt.Sprintf("%d session(s) failed to scan, publish, or clean up", len(result.Errors)))
-	_ = localStore.SaveStatus(status)
+	errs[id] = err
 }
 
 // addStatusProblem adds problem to the Status's last errors, after whatever

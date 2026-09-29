@@ -117,6 +117,14 @@ now and paths under your home folder start with `~`.
   **The bucket doesn't exist**, or **The bucket is in a different region**.
   Any other failure is shown as **Last error:** with the collector's own
   words. The provider's raw error is in `status --verbose`.
+- **Sessions that failed in the last pass** are summarized on one
+  **Last error:** row by kind, each with its count (sessions and subagents
+  apart) and what to do: for example "2 sessions failed to upload (storage
+  unavailable) — check the network and the storage service, then run
+  agent-archive sync (the next pass also retries)". A session over the
+  transcript size limit needs nothing from you: its last snapshot is kept.
+  `agent-archive sync` prints each session's own error, and `status --json`
+  has each session's kind as a code (`collector.session_issues`).
 - **Background collector on** (`--json`: background `loaded`, or `running`
   while a pass is executing) means launchd knows the scheduled job. When it
   **belongs to another installation** (`another_installation`), launchd runs
