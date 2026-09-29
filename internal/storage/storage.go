@@ -47,6 +47,7 @@ type PageLister interface {
 	ListPage(ctx context.Context, prefix, continuation string, limit int32) (ObjectPage, error)
 }
 
+// ObjectPage contains one page of object keys and an optional continuation token.
 type ObjectPage struct {
 	Objects []Object
 	Next    string

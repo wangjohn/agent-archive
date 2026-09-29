@@ -16,8 +16,10 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
+// Prefix is the key prefix for immutable time-ordered listing hints.
 const Prefix = "listing/v1/"
 
+// ReadyKey marks a prefix whose listing hints are complete for existing sessions.
 const ReadyKey = "listing/v1-ready"
 
 const unreadyKey = "listing/v1-needs-rebuild"
@@ -36,6 +38,7 @@ type Entry struct {
 	CapturedAt  time.Time
 }
 
+// New constructs a hint for one validated metadata sidecar.
 func New(metadataKey string, data []byte) (Entry, error) {
 	var m archive.Metadata
 	if err := json.Unmarshal(data, &m); err != nil {
@@ -56,6 +59,7 @@ func New(metadataKey string, data []byte) (Entry, error) {
 	return Entry{Key: fmt.Sprintf("%s%019d/%s/%s/%s.json", Prefix, reverse, m.Harness.Name, m.SessionID, hash), MetadataKey: metadataKey, Hash: hash, CapturedAt: m.CapturedAt}, nil
 }
 
+// Parse decodes a listing hint key and rejects malformed components.
 func Parse(key string) (Entry, error) {
 	if !strings.HasPrefix(key, Prefix) {
 		return Entry{}, errors.New("not a listing index key")
@@ -82,6 +86,7 @@ func Parse(key string) (Entry, error) {
 	return Entry{Key: key, MetadataKey: metadataKey, Hash: hash, CapturedAt: time.Unix(0, int64(maxTime-reverse)).UTC()}, nil //nolint:gosec // subtraction is checked against MaxInt64 above
 }
 
+// SessionPrefix returns the pointer-key prefix for one archive session.
 func SessionPrefix(harness, id string) (string, error) {
 	if _, err := archive.MetadataObjectKey(harness, id); err != nil {
 		return "", err
@@ -89,6 +94,7 @@ func SessionPrefix(harness, id string) (string, error) {
 	return bySessionPrefix + harness + "/" + id + "/", nil
 }
 
+// Put writes an immutable hint and its per-session cleanup pointer.
 func Put(ctx context.Context, store storage.ObjectStore, entry Entry) error {
 	prefix, err := SessionPrefix(path.Base(path.Dir(path.Dir(entry.MetadataKey))), path.Base(path.Dir(entry.MetadataKey)))
 	if err != nil {
@@ -101,6 +107,7 @@ func Put(ctx context.Context, store storage.ObjectStore, entry Entry) error {
 	return store.Put(ctx, entry.Key, []byte(entry.MetadataKey))
 }
 
+// Ready reports whether existing sessions have complete listing hints.
 func Ready(ctx context.Context, store storage.ObjectStore) (bool, error) {
 	var err error
 	if statter, ok := store.(storage.ObjectStatter); ok {
@@ -114,6 +121,7 @@ func Ready(ctx context.Context, store storage.ObjectStore) (bool, error) {
 	return err == nil, err
 }
 
+// MarkReady records that a listing-index rebuild completed.
 func MarkReady(ctx context.Context, store storage.ObjectStore) error {
 	return store.Put(ctx, ReadyKey, []byte("listing-index-v1\n"))
 }
