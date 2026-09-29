@@ -452,7 +452,7 @@ func linkedStateLabel(state reader.LinkedState) string {
 // Neither means the capture went wrong, so the summary names them in one
 // quiet row instead of warning about them. Codes that share a phrase are
 // listed once.
-var routineGaps = []struct{ code, phrase string }{
+var routineGaps = []routineGapPhrase{
 	{"hidden_instruction_omitted", "injected instructions"},
 	{"hidden_or_unknown_nested_content_omitted", "hidden fields"},
 	{"sensitive_or_hidden_field_omitted", "sensitive fields"},
@@ -468,6 +468,11 @@ var routineGaps = []struct{ code, phrase string }{
 	{"unknown_record_type", "unrecognized records"},
 	{"cursor_message_type_unknown", "unrecognized messages"},
 	{"unsupported_value_omitted", "unsupported values"},
+}
+
+type routineGapPhrase struct {
+	code   string
+	phrase string
 }
 
 func routineGap(code string) bool {
