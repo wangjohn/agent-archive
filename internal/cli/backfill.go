@@ -162,8 +162,11 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 }
 
 type backfillCommandOptions struct {
-	filters                          backfill.Filters
-	dryRun, jsonOut, yes, background bool
+	filters    backfill.Filters
+	dryRun     bool
+	jsonOut    bool
+	yes        bool
+	background bool
 }
 
 type backfillPlanAction uint8
