@@ -1,9 +1,55 @@
 package archive
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
+
+func TestSummarizeTurnsDeduplicatesStreamedAssistantAndSortsModels(t *testing.T) {
+	t.Parallel()
+	turns := []NormalizedTurn{
+		{Kind: TurnKindHumanPrompt, Role: "user", Model: "z", Text: "hello"},
+		{Kind: TurnKindAssistant, Role: "assistant", MessageID: "response", Model: "b"},
+		{Kind: TurnKindAssistant, Role: "assistant", MessageID: "response", Model: "b"},
+		{Kind: TurnKindShellCommand, Role: "user", Model: "ignored"},
+		{Kind: TurnKindToolResult, Role: "user", Model: "ignored"},
+		{Kind: TurnKindAssistant, Role: "assistant", ResponseModel: "a"},
+	}
+	prompts, messages, shellCommands, models := summarizeTurns(turns)
+	if prompts != 1 || messages != 3 || shellCommands != 1 {
+		t.Fatalf("counts = %d/%d/%d", prompts, messages, shellCommands)
+	}
+	if len(models) != 3 || models[0].Attributes["gen_ai.request.model"] != "b" ||
+		models[1].Attributes["gen_ai.request.model"] != "z" ||
+		models[2].Attributes["gen_ai.response.model"] != "a" {
+		t.Fatalf("model order or attribution changed: %#v", models)
+	}
+	for _, model := range models {
+		if model.TurnCount == nil || *model.TurnCount != 1 {
+			t.Fatalf("unexpected model turn count: %#v", model)
+		}
+	}
+	if !reflect.DeepEqual(turns[1], NormalizedTurn{Kind: TurnKindAssistant, Role: "assistant", MessageID: "response", Model: "b"}) {
+		t.Fatal("summary mutated a normalized turn")
+	}
+}
+
+func TestStructuredCountsKeepsMissingTokensUnknownAndPrefersCompactionBoundaries(t *testing.T) {
+	t.Parallel()
+	view := NormalizedView{CompactBoundaries: 2, CompactSummaries: 3}
+	counts := structuredCounts(SourceBundle{}, view, 1, 2, 3)
+	if counts.InputTokens != nil || counts.OutputTokens != nil || counts.Compactions != nil {
+		t.Fatalf("unexpected unobserved counts: %#v", counts)
+	}
+	// A Claude bundle from a version that observes compactions must count
+	// boundaries rather than counting both the boundary and summary records.
+	bundle := SourceBundle{Capture: SourceCapture{Harness: Harness{Name: "claude"}, FilterVersion: FilterVersion}}
+	counts = structuredCounts(bundle, view, 1, 2, 3)
+	if counts.Compactions == nil || *counts.Compactions != 2 {
+		t.Fatalf("compactions = %v", counts.Compactions)
+	}
+}
 
 // Regression: pre-release review, carried over from agent-skills (e371b6a).
 func TestSessionClosurePreservesLastObservedTurnOutcome(t *testing.T) {
