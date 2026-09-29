@@ -545,3 +545,130 @@ Settled 2026-09-22.
 3. **No project column in `list` for v1.** `--latest` lists recent sessions
    when it finds no match; a portable repository key and a project name in
    metadata are phase 2.
+
+## Direct handoff v2
+
+Planned 2026-09-29. Goal: continuing a session in another agent takes one
+command and no copying. #132 (picker) and #136 (`--to`) are the base.
+
+### Target experience
+
+```text
+$ agent-archive handoff
+  (picker: local sessions, including ones not yet uploaded, and archived ones)
+  Continue in:  [1] Codex (default)  [2] Claude Code  [3] Cursor  [p] print  [c] copy  [w] write file
+handoff: launching codex in ~/src/app
+```
+
+Inside an agent, `/handoff codex` runs `agent-archive handoff --to codex`,
+which hands off *that* session and opens Codex in a new terminal tab.
+
+### Behavior
+
+1. **Selection (A).** The handoff picker merges this machine's top-level
+   registrations with archived rows, joined on `ArchiveSessionID`; a local
+   row wins and is marked "not yet uploaded" when the archive lacks it.
+   Sessions with no prompt yet are hidden. With `--to` and no selector:
+   if `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` names a registered
+   session, that session is used without asking; if `CURSOR_AGENT` is set
+   (Cursor exposes no session ID), `--latest --harness cursor` for the
+   working directory is used; otherwise a terminal gets the picker and a
+   non-terminal gets the existing usage error. `--to` no longer forces `--source local`: an archived
+   bundle is filtered like a local one, and the preamble still applies.
+2. **Launch (B).** The launch copy of the handoff is written to
+   `<data dir>/handoffs/launch-<name>-<unix>.md` (0600; the 7-day prune and
+   `uninstall --delete-local-data` already cover the directory) so a
+   resumed session can still read it. Without a data directory (`--file`
+   before setup) it goes to a private temp directory as today, and is not
+   removed while a new-window launch may still read it. The child's
+   environment drops the calling agent's session variables
+   (`handoffSessionEnv`, an explicit list, never a prefix: settings such as
+   `CLAUDE_CODE_USE_BEDROCK` must survive). Arguments after `--` go to the
+   agent. Per agent:
+   - Claude Code: `claude --add-dir <handoff dir> [extra] <prompt>`, run in
+     the directory. Without `--add-dir` the read is refused (verified).
+   - Codex: `codex --cd <dir> [extra] <prompt>`; every sandbox mode can read
+     the whole disk.
+   - Cursor: `agent` (else `cursor-agent`) `--workspace <dir> [extra] <prompt>`.
+   `config.Handoff` may set per-agent default arguments and a default
+   destination per source harness; there are no built-in extra flags.
+3. **Where it runs (C, D).** When stdin and stdout are terminals the agent
+   runs in this terminal, as today. Otherwise (called from inside an
+   agent) it opens without asking in a new window: a new tmux window when
+   `$TMUX` is set, else a new tab in iTerm2 / Terminal.app / Ghostty chosen
+   by `$TERM_PROGRAM`, else a new Terminal.app window; the command returns
+   after it opens. `--here` and `--new-window` force either.
+4. **Destination prompt (D).** With no `--to` on a terminal, after a
+   session is chosen: numbered installed agents (default: the configured
+   default, else Claude → Codex, Codex → Claude, Cursor → Claude), `p`
+   print (the old behavior; the pager when long), `c` copy (`pbcopy`),
+   `w` write to a file. A pipe or `--output` keeps today's behavior
+   byte for byte, so `codex "$(agent-archive handoff --latest)"` still
+   works.
+5. **Worktree and active source (E).** `--worktree` creates
+   `git worktree add -b <branch> <repo>-handoff-<short id> HEAD` beside
+   the checkout (`--branch NAME`, default `handoff/<short id>`), carries
+   uncommitted changes with `git stash create` + `git stash apply <sha>`
+   (never touching the stash stack or the original checkout; untracked
+   files are copied), and launches there. Without `--worktree`, if the
+   source session was active in the last 2 minutes in the same checkout,
+   a terminal is asked `Continue in the same checkout? [y/N/w]` (w = new
+   worktree); a non-terminal gets a stderr warning and proceeds.
+6. **In-agent command (F).** Custom commands are now skills in all three
+   agents. Setup installs a `handoff` skill by default:
+   `~/.claude/skills/handoff/SKILL.md` when Claude Code is set up and
+   `~/.agents/skills/handoff/SKILL.md` when Codex or Cursor is (both read
+   it). The skill tells the agent to run
+   `<absolute agent-archive> handoff --to <destination>` with the
+   destination the person named (default: another agent than itself), and
+   for Claude Code sets `disable-model-invocation: true` and
+   `allowed-tools` for that command only. It is recorded in the setup journal;
+   uninstall removes exactly the files it wrote; status lists them. A file
+   already at that path that setup did not write is left alone and
+   reported.
+
+### Shared names
+
+Packages rely on these; change them only in this section first.
+
+| Owner | Name |
+|---|---|
+| A `handoff_select.go` | `selectHandoffSession(env handoffSelectDependencies, home string, opts handoffOptions, stdin io.Reader, stdout, stderr io.Writer) (sessionID, harness string, selected bool, code int)`; `currentHandoffSession(env, home, opts) (sessionID string, ok bool, err error)` |
+| B `handoff_agents.go` | `type launchSpec struct { Destination handoffDestination; Binary string; Args []string; Dir string; Env []string }` (`Args` excludes the binary; `Env` is the child's full environment); `buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, extra []string, env launchSpecDependencies) (launchSpec, error)`; `handoffSessionEnv []string` |
+| B `handoff_launch.go` | `writeLaunchHandoff(home, tempDir string, target handoffTarget, content []byte, now time.Time) (path string, err error)`; `prepareLaunch(...) (launchSpec, error)`; `Env.LaunchHandoff func(spec launchSpec, stdin io.Reader, stdout, stderr io.Writer) error`; `Env.LookPath func(string) (string, error)` |
+| B `internal/config` | `Config.Handoff HandoffConfig` (`json:"handoff,omitempty"`): `Args map[string][]string`, `DefaultTo map[string]string` |
+| C `internal/termlaunch` | `type Spec struct { Dir string; Argv []string; Unset []string; ScriptDir string }`; `type Environment struct { GOOS string; LookupEnv func(string) (string, bool); Run func(ctx context.Context, name string, args ...string) error }`; `Open(ctx, spec, env) (where string, err error)`; `ErrNoTerminal` |
+| D `handoff_destination.go` | `chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error)`; `Env.OpenTerminal func(termlaunch.Spec) (string, error)`; `Env.Clipboard func([]byte) error` |
+| E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |
+| F `internal/agentcommands` | `Files(userHome string, harnesses []string, executable string) []File`; `type File struct { Harnesses []string; Path string; Content []byte }` |
+
+Flags live in `handoff_options.go`: A changes the no-selector rule, B adds
+`--` passthrough, D adds `--here` / `--new-window`, E adds `--worktree` /
+`--branch`.
+
+### Launcher script safety
+
+termlaunch never passes the prompt or paths through AppleScript or tmux
+string interpolation. It writes a 0700 `/bin/sh` script into `ScriptDir`
+that `cd`s to `Dir`, `unset`s `Unset`, and runs `Argv`, every word POSIX
+single-quoted (`'` → `'\''`); when the agent exits non-zero it waits for
+Enter so a failure stays readable. AppleScript and tmux receive only the
+script path, itself single-quoted and escaped for AppleScript string syntax.
+Terminals: tmux `new-window -c DIR`; iTerm2 `create tab with default
+profile command`; Terminal.app `do script`; Ghostty 1.3+ AppleScript `new
+tab` with a surface configuration, falling back to Terminal.app.
+
+### Packages and order
+
+| PR | Package | Base | Parallel with |
+|---|---|---|---|
+| 0 | this section; option parsing moved to `handoff_options.go` | main | — |
+| A | selection | 0 | B, C, F |
+| B | launch mechanics, config | 0 | A, C, F |
+| C | `internal/termlaunch` | 0 | A, B, F |
+| F | `/handoff` commands via setup | 0 | A, B, C |
+| D | destination prompt, wiring, no-TTY new window | A + B + C | E |
+| E | `--worktree`, active-source prompt | B | D |
+| G | docs lead with the one-command flow; live check | all | — |
+
+F merges after D, so `/handoff` never lands before it can open a window.
