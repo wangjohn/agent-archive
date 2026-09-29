@@ -3,8 +3,9 @@
 // Claude Code, Codex, or Cursor. It says what each file holds (Files) and
 // plans writing and removing them as setup-journal changes (PlanInstall,
 // PlanRemoval). Nothing records the files once setup commits, so a file is
-// setup's by its content alone (a marker line); anything else at the path
-// is left alone.
+// setup's by its content alone (a marker line), and an installation's by
+// the data directory its command names; anything else at the path is left
+// alone.
 package agentcommands
 
 import (
@@ -30,14 +31,17 @@ type File struct {
 // allHarnesses is every harness a command file is written for.
 var allHarnesses = []string{"codex", "claude", "cursor"}
 
-// Files is the command files for harnesses, running executable. Claude Code
-// reads the skills in its configuration directory claudeDir (~/.claude, or
-// $CLAUDE_CONFIG_DIR); Codex and Cursor both read ~/.agents/skills (Cursor
-// reads ~/.claude/skills too, so the instructions suit any of the three).
-func Files(userHome, claudeDir string, harnesses []string, executable string) []File {
+// Files is the command files for harnesses, running executable with
+// AGENT_ARCHIVE_HOME=dataHome, or with none for the default data directory
+// (dataHome ""), as the installation's hooks do: the agent's environment
+// need not have it. Claude Code reads the skills in its configuration
+// directory claudeDir (~/.claude, or $CLAUDE_CONFIG_DIR); Codex and Cursor
+// both read ~/.agents/skills (Cursor reads ~/.claude/skills too, so the
+// instructions suit any of the three).
+func Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File {
 	var files []File
 	if slices.Contains(harnesses, "claude") {
-		files = append(files, File{Harnesses: []string{"claude"}, Path: filepath.Join(claudeDir, "skills", "handoff", "SKILL.md"), Content: claudeSkill(executable)})
+		files = append(files, File{Harnesses: []string{"claude"}, Path: filepath.Join(claudeDir, "skills", "handoff", "SKILL.md"), Content: claudeSkill(executable, dataHome)})
 	}
 	var shared []string
 	for _, h := range []string{"codex", "cursor"} {
@@ -46,7 +50,7 @@ func Files(userHome, claudeDir string, harnesses []string, executable string) []
 		}
 	}
 	if len(shared) > 0 {
-		files = append(files, File{Harnesses: shared, Path: filepath.Join(userHome, ".agents", "skills", "handoff", "SKILL.md"), Content: agentsSkill(executable)})
+		files = append(files, File{Harnesses: shared, Path: filepath.Join(userHome, ".agents", "skills", "handoff", "SKILL.md"), Content: agentsSkill(executable, dataHome)})
 	}
 	return files
 }
@@ -59,16 +63,17 @@ const marker = "<!-- Written by agent-archive setup, which replaces this file; a
 // claudeSkill is Claude Code's skill: /handoff [agent], with $ARGUMENTS for
 // the agent, only the person may invoke it, and it may run the one command
 // without asking.
-func claudeSkill(executable string) []byte {
-	command := shellQuote(executable)
+func claudeSkill(executable, dataHome string) []byte {
+	command := commandLine(executable, dataHome)
 	front := []string{
 		"name: handoff",
 		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab.",
 		`argument-hint: "[claude|codex|cursor]"`,
 		"disable-model-invocation: true",
 	}
-	// A quoted path would not read back as a plain YAML value or a
-	// permission rule; without the rule the command is simply asked about.
+	// A quoted path or a variable would not read back as a plain YAML value
+	// or a permission rule; without the rule the command is simply asked
+	// about.
 	if command == executable {
 		front = append(front, "allowed-tools: Bash("+command+" handoff:*)")
 	}
@@ -76,13 +81,26 @@ func claudeSkill(executable string) []byte {
 }
 
 // agentsSkill is the skill Codex ($handoff) and Cursor read. Codex has no
-// argument substitution, so the agent comes from the request itself.
-func agentsSkill(executable string) []byte {
+// argument substitution, so the agent comes from the request itself. Nor
+// does either have disable-model-invocation, and the command opens another
+// agent, so the body repeats the description's guard.
+func agentsSkill(executable, dataHome string) []byte {
 	front := []string{
 		"name: handoff",
-		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab. Use only when the person asks to hand off.",
+		"description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab. Use only when the person explicitly asks to hand off.",
 	}
-	return skill(front, shellQuote(executable), "")
+	return skill(front, commandLine(executable, dataHome), "Only if they explicitly asked you to hand off, or to continue in another\nagent, run the command below; otherwise run nothing.\n\n")
+}
+
+// dataHomeVariable begins a command line naming a relocated data directory.
+const dataHomeVariable = "AGENT_ARCHIVE_HOME="
+
+// commandLine is the command a skill runs, less its arguments.
+func commandLine(executable, dataHome string) string {
+	if dataHome == "" {
+		return shellQuote(executable)
+	}
+	return dataHomeVariable + shellQuote(dataHome) + " " + shellQuote(executable)
 }
 
 func skill(front []string, command, arguments string) []byte {
@@ -111,10 +129,19 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
-// owned reports whether content is setup's: it carries marker, as what
-// Files renders for any executable does.
-func owned(content []byte) bool {
-	return slices.Contains(strings.Split(string(content), "\n"), marker)
+// owned reports whether content is setup's for the installation in
+// dataHome: it carries marker, as what Files renders for any executable
+// does, and its command names dataHome, or no data directory for the
+// default installation: another installation sharing this HOME, with hook
+// files of its own, keeps its file.
+func owned(content []byte, dataHome string) bool {
+	if !slices.Contains(strings.Split(string(content), "\n"), marker) {
+		return false
+	}
+	if dataHome == "" {
+		return !strings.Contains(string(content), dataHomeVariable)
+	}
+	return strings.Contains(string(content), dataHomeVariable+shellQuote(dataHome)+" ")
 }
 
 // PlanInstall plans the command files for harnesses, running executable:
@@ -124,9 +151,9 @@ func owned(content []byte) bool {
 // configuration was when setup last ran. Any other file, links and
 // directories included, is left alone; a wanted path holding one is
 // returned in foreign.
-func PlanInstall(userHome, claudeDir string, harnesses []string, executable, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
+func PlanInstall(userHome, claudeDir string, harnesses []string, executable, dataHome, previousClaudeDir string) (changes []hooks.Change, foreign []string, err error) {
 	wanted := map[string]bool{}
-	for _, f := range Files(userHome, claudeDir, harnesses, executable) {
+	for _, f := range Files(userHome, claudeDir, harnesses, executable, dataHome) {
 		wanted[f.Path] = true
 		current, state, err := read(f.Path)
 		if err != nil {
@@ -136,18 +163,18 @@ func PlanInstall(userHome, claudeDir string, harnesses []string, executable, pre
 		case state == missing:
 			changes = append(changes, hooks.Change{Path: f.Path, After: f.Content, Mode: 0600})
 		case state == regular && string(current) == string(f.Content):
-		case state == regular && owned(current):
+		case state == regular && owned(current, dataHome):
 			changes = append(changes, hooks.Change{Path: f.Path, Before: current, After: f.Content, Existed: true, Mode: 0600})
 		default:
 			foreign = append(foreign, f.Path)
 		}
 	}
-	for _, f := range append(Files(userHome, claudeDir, allHarnesses, ""), Files(userHome, previousClaudeDir, []string{"claude"}, "")...) {
+	for _, f := range append(Files(userHome, claudeDir, allHarnesses, "", ""), Files(userHome, previousClaudeDir, []string{"claude"}, "", "")...) {
 		if wanted[f.Path] {
 			continue
 		}
 		wanted[f.Path] = true // planned once, if both Claude Code paths are one
-		change, found, err := planRemoval(f.Path)
+		change, found, err := planRemoval(f.Path, dataHome)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -161,9 +188,9 @@ func PlanInstall(userHome, claudeDir string, harnesses []string, executable, pre
 // PlanRemoval plans removing every command file of setup's, for
 // uninstall. A file at one of their paths that is not setup's is returned
 // in kept and left alone.
-func PlanRemoval(userHome, claudeDir string) (changes []hooks.Change, kept []string, err error) {
-	for _, f := range Files(userHome, claudeDir, allHarnesses, "") {
-		change, found, err := planRemoval(f.Path)
+func PlanRemoval(userHome, claudeDir, dataHome string) (changes []hooks.Change, kept []string, err error) {
+	for _, f := range Files(userHome, claudeDir, allHarnesses, "", "") {
+		change, found, err := planRemoval(f.Path, dataHome)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -177,19 +204,19 @@ func PlanRemoval(userHome, claudeDir string) (changes []hooks.Change, kept []str
 }
 
 // planRemoval is the Change deleting path, when it is setup's.
-func planRemoval(path string) (hooks.Change, bool, error) {
+func planRemoval(path, dataHome string) (hooks.Change, bool, error) {
 	current, state, err := read(path)
-	if err != nil || state != regular || !owned(current) {
+	if err != nil || state != regular || !owned(current, dataHome) {
 		return hooks.Change{}, false, err
 	}
 	return hooks.Change{Path: path, Before: current, Existed: true, Mode: 0600, Delete: true}, true, nil
 }
 
 // Installed is the command files of setup's that are there now, for status.
-func Installed(userHome, claudeDir string) []string {
+func Installed(userHome, claudeDir, dataHome string) []string {
 	var paths []string
-	for _, f := range Files(userHome, claudeDir, allHarnesses, "") {
-		if current, state, err := read(f.Path); err == nil && state == regular && owned(current) {
+	for _, f := range Files(userHome, claudeDir, allHarnesses, "", "") {
+		if current, state, err := read(f.Path); err == nil && state == regular && owned(current, dataHome) {
 			paths = append(paths, f.Path)
 		}
 	}
@@ -203,7 +230,7 @@ func Installed(userHome, claudeDir string) []string {
 // with every one above it. A link is never removed: os.Remove would unlink
 // it whatever it names.
 func RemoveEmptyDirs(userHome, claudeDir string) {
-	for _, f := range Files(userHome, claudeDir, allHarnesses, "") {
+	for _, f := range Files(userHome, claudeDir, allHarnesses, "", "") {
 		stop := userHome
 		if slices.Contains(f.Harnesses, "claude") {
 			stop = claudeDir

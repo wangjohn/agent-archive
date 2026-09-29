@@ -37,11 +37,11 @@ func TestFilesFollowTheHarnesses(t *testing.T) {
 		{[]string{"cursor"}, []string{agents}},
 		{[]string{"codex", "claude", "cursor"}, []string{claude, agents}},
 	} {
-		if got := paths(Files(home, claudeDir(home), tc.harnesses, exe)); !reflect.DeepEqual(got, tc.want) {
+		if got := paths(Files(home, claudeDir(home), tc.harnesses, exe, "")); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("Files(%v) = %v, want %v", tc.harnesses, got, tc.want)
 		}
 	}
-	files := Files(home, claudeDir(home), []string{"cursor", "codex"}, exe)
+	files := Files(home, claudeDir(home), []string{"cursor", "codex"}, exe, "")
 	if !reflect.DeepEqual(files[0].Harnesses, []string{"codex", "cursor"}) {
 		t.Errorf("shared file harnesses = %v", files[0].Harnesses)
 	}
@@ -49,7 +49,7 @@ func TestFilesFollowTheHarnesses(t *testing.T) {
 
 func TestSkillContent(t *testing.T) {
 	t.Parallel()
-	files := Files("/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, exe)
+	files := Files("/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, exe, "")
 	claude, agents := string(files[0].Content), string(files[1].Content)
 	for _, want := range []string{
 		"---\nname: handoff\n",
@@ -64,7 +64,7 @@ func TestSkillContent(t *testing.T) {
 			t.Errorf("Claude Code skill lacks %q:\n%s", want, claude)
 		}
 	}
-	for _, want := range []string{"---\nname: handoff\ndescription: ", "    " + exe + " handoff --to <agent>\n", "codex if you are Claude Code", marker} {
+	for _, want := range []string{"---\nname: handoff\ndescription: ", "    " + exe + " handoff --to <agent>\n", "codex if you are Claude Code", "Only if they explicitly asked you to hand off", marker} {
 		if !strings.Contains(agents, want) {
 			t.Errorf("shared skill lacks %q:\n%s", want, agents)
 		}
@@ -80,7 +80,7 @@ func TestSkillContent(t *testing.T) {
 // permission rule is written: it would not match the command as run.
 func TestSkillQuotesAPathThatNeedsIt(t *testing.T) {
 	t.Parallel()
-	content := string(Files("/Users/me", claudeDir("/Users/me"), []string{"claude"}, "/Users/me/My Tools/agent-archive")[0].Content)
+	content := string(Files("/Users/me", claudeDir("/Users/me"), []string{"claude"}, "/Users/me/My Tools/agent-archive", "")[0].Content)
 	if !strings.Contains(content, "    '/Users/me/My Tools/agent-archive' handoff --to <agent>\n") {
 		t.Errorf("command not quoted:\n%s", content)
 	}
@@ -111,19 +111,19 @@ func readFile(t *testing.T, path string) string {
 func TestPlanInstallWritesThenLeavesTheFilesAsTheyAre(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, claudeDir(home))
+	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
 	must(t, err)
 	if len(changes) != 2 || len(foreign) != 0 {
 		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
 	}
 	must(t, hooks.Apply(changes))
-	for _, f := range Files(home, claudeDir(home), []string{"claude", "codex"}, exe) {
+	for _, f := range Files(home, claudeDir(home), []string{"claude", "codex"}, exe, "") {
 		if readFile(t, f.Path) != string(f.Content) {
 			t.Fatalf("%s not written", f.Path)
 		}
 	}
 	// Reinstalling the same files changes nothing.
-	changes, foreign, err = PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, claudeDir(home))
+	changes, foreign, err = PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
 	must(t, err)
 	if len(changes) != 0 || len(foreign) != 0 {
 		t.Fatalf("reinstall: changes=%+v foreign=%v", changes, foreign)
@@ -133,7 +133,7 @@ func TestPlanInstallWritesThenLeavesTheFilesAsTheyAre(t *testing.T) {
 func TestPlanInstallUpdatesOnlySetupsFiles(t *testing.T) {
 	t.Parallel()
 	render := func(executable string) string {
-		return string(Files("/h", claudeDir("/h"), []string{"claude"}, executable)[0].Content)
+		return string(Files("/h", claudeDir("/h"), []string{"claude"}, executable, "")[0].Content)
 	}
 	unmarked := func(content string) string { return strings.Replace(content, marker+"\n", "", 1) }
 	for _, tc := range []struct {
@@ -150,14 +150,14 @@ func TestPlanInstallUpdatesOnlySetupsFiles(t *testing.T) {
 			home := t.TempDir()
 			path := filepath.Join(home, ".claude", "skills", "handoff", "SKILL.md")
 			write(t, path, tc.content)
-			changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, claudeDir(home))
+			changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, "", claudeDir(home))
 			must(t, err)
 			if tc.owned {
 				if len(changes) != 1 || len(foreign) != 0 {
 					t.Fatalf("changes=%+v foreign=%v", changes, foreign)
 				}
 				must(t, hooks.Apply(changes))
-				if readFile(t, path) != string(Files(home, claudeDir(home), []string{"claude"}, exe)[0].Content) {
+				if readFile(t, path) != string(Files(home, claudeDir(home), []string{"claude"}, exe, "")[0].Content) {
 					t.Fatal("setup's file not updated")
 				}
 				return
@@ -172,13 +172,13 @@ func TestPlanInstallUpdatesOnlySetupsFiles(t *testing.T) {
 func TestPlanInstallLeavesLinksAndDirectories(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	files := Files(home, claudeDir(home), []string{"claude", "codex"}, exe)
+	files := Files(home, claudeDir(home), []string{"claude", "codex"}, exe, "")
 	target := filepath.Join(home, "dotfiles", "SKILL.md")
 	write(t, target, string(files[0].Content))
 	must(t, os.MkdirAll(filepath.Dir(files[0].Path), 0700))
 	must(t, os.Symlink(target, files[0].Path))
 	must(t, os.MkdirAll(files[1].Path, 0700))
-	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, claudeDir(home))
+	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
 	must(t, err)
 	if len(changes) != 0 || len(foreign) != 2 {
 		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
@@ -188,11 +188,11 @@ func TestPlanInstallLeavesLinksAndDirectories(t *testing.T) {
 func TestPlanInstallRemovesAFileNoLongerWanted(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, claudeDir(home))
+	changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
 	must(t, err)
 	must(t, hooks.Apply(changes))
 	// Codex is no longer set up: its file goes, and then its directories.
-	changes, _, err = PlanInstall(home, claudeDir(home), []string{"claude"}, exe, claudeDir(home))
+	changes, _, err = PlanInstall(home, claudeDir(home), []string{"claude"}, exe, "", claudeDir(home))
 	must(t, err)
 	if len(changes) != 1 || !changes[0].Delete {
 		t.Fatalf("changes = %+v", changes)
@@ -207,7 +207,7 @@ func TestPlanInstallRemovesAFileNoLongerWanted(t *testing.T) {
 	}
 	// A file of the person's own for an app not set up is not setup's concern.
 	write(t, filepath.Join(home, ".agents", "skills", "handoff", "SKILL.md"), "mine\n")
-	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, claudeDir(home))
+	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, "", claudeDir(home))
 	must(t, err)
 	if len(changes) != 0 || len(foreign) != 0 {
 		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
@@ -217,15 +217,15 @@ func TestPlanInstallRemovesAFileNoLongerWanted(t *testing.T) {
 func TestPlanRemovalKeepsWhatSetupDidNotWrite(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
-	changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, claudeDir(home))
+	changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, "", claudeDir(home))
 	must(t, err)
 	must(t, hooks.Apply(changes))
-	files := Files(home, claudeDir(home), []string{"claude", "codex"}, exe)
+	files := Files(home, claudeDir(home), []string{"claude", "codex"}, exe, "")
 	write(t, files[1].Path, "edited\n")
-	if got := Installed(home, claudeDir(home)); !reflect.DeepEqual(got, []string{files[0].Path}) {
+	if got := Installed(home, claudeDir(home), ""); !reflect.DeepEqual(got, []string{files[0].Path}) {
 		t.Fatalf("Installed = %v", got)
 	}
-	changes, kept, err := PlanRemoval(home, claudeDir(home))
+	changes, kept, err := PlanRemoval(home, claudeDir(home), "")
 	must(t, err)
 	if len(changes) != 1 || changes[0].Path != files[0].Path || !changes[0].Delete {
 		t.Fatalf("changes = %+v", changes)
@@ -264,6 +264,50 @@ func TestRemoveEmptyDirsStopsAtOneInUse(t *testing.T) {
 	RemoveEmptyDirs(empty, claudeDir(empty))
 	if _, err := os.Stat(empty); err != nil {
 		t.Fatal("home folder removed")
+	}
+}
+
+// A relocated installation's skill runs with its data directory, as its
+// hooks do, since the agent's environment need not have it.
+func TestSkillNamesARelocatedDataDirectory(t *testing.T) {
+	t.Parallel()
+	files := Files("/Users/me", claudeDir("/Users/me"), []string{"claude", "codex"}, exe, "/tmp/test home")
+	for _, f := range files {
+		content := string(f.Content)
+		if !strings.Contains(content, "    AGENT_ARCHIVE_HOME='/tmp/test home' "+exe+" handoff --to <agent>\n") {
+			t.Errorf("%s lacks the data directory:\n%s", f.Path, content)
+		}
+		if strings.Contains(content, "allowed-tools") {
+			t.Errorf("%s allows a command that is not a plain path:\n%s", f.Path, content)
+		}
+	}
+}
+
+// Each installation sharing a HOME (with hook files of its own) replaces,
+// removes, and lists only the skill naming its own data directory.
+func TestInstallationsKeepEachOthersSkills(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ writer, other string }{{"", "/data/b"}, {"/data/a", ""}, {"/data/a", "/data/b"}} {
+		home := t.TempDir()
+		changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, tc.writer, claudeDir(home))
+		must(t, err)
+		must(t, hooks.Apply(changes))
+		changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, "/other/agent-archive", tc.other, claudeDir(home))
+		must(t, err)
+		if len(changes) != 0 || len(foreign) != 1 {
+			t.Errorf("%q over %q: changes=%+v foreign=%v", tc.other, tc.writer, changes, foreign)
+		}
+		changes, kept, err := PlanRemoval(home, claudeDir(home), tc.other)
+		must(t, err)
+		if len(changes) != 0 || len(kept) != 2 {
+			t.Errorf("%q removing %q's: changes=%+v kept=%v", tc.other, tc.writer, changes, kept)
+		}
+		if got := Installed(home, claudeDir(home), tc.other); len(got) != 0 {
+			t.Errorf("%q lists %q's: %v", tc.other, tc.writer, got)
+		}
+		if got := Installed(home, claudeDir(home), tc.writer); len(got) != 2 {
+			t.Errorf("%q does not list its own: %v", tc.writer, got)
+		}
 	}
 }
 

@@ -39,7 +39,7 @@ func TestSetupInstallsTheHandoffSkillUnderTheSandboxedHome(t *testing.T) {
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
 	cfg, _, err := config.Load(home)
 	must(t, err)
-	files := agentcommands.Files(userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable)
+	files := agentcommands.Files(userHome, filepath.Join(userHome, ".claude"), []string{"codex", "claude"}, cfg.InstalledExecutable, env.installation(home, userHome).commandDataHome())
 	if len(files) != 2 {
 		t.Fatalf("files = %+v", files)
 	}
@@ -81,7 +81,7 @@ func TestSetupLeavesAHandoffSkillItDidNotWrite(t *testing.T) {
 	must(t, os.WriteFile(path, []byte("my own skill\n"), 0600))
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, true, project), 0)
-	if !strings.Contains(output, "Left ~/.agents/skills/handoff/SKILL.md as it is: it lacks agent-archive's marker line, so /handoff is not installed there.\n") {
+	if !strings.Contains(output, "Left ~/.agents/skills/handoff/SKILL.md as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /handoff is not installed there.\n") {
 		t.Fatalf("setup did not report the file it left:\n%s", output)
 	}
 	if strings.Contains(output, "Installed /handoff") {
@@ -90,7 +90,7 @@ func TestSetupLeavesAHandoffSkillItDidNotWrite(t *testing.T) {
 	if _, ok := statusJSON(t, env)["agent_commands"]; ok {
 		t.Fatal("status lists a file setup did not write")
 	}
-	if output := uninstallRun(t, env); !strings.Contains(output, "Kept ~/.agents/skills/handoff/SKILL.md: it lacks agent-archive's marker line, so it is yours.\n") {
+	if output := uninstallRun(t, env); !strings.Contains(output, "Kept ~/.agents/skills/handoff/SKILL.md: it is not this agent-archive installation's (it lacks the marker line, or names another data directory).\n") {
 		t.Fatalf("uninstall did not report the file it kept:\n%s", output)
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != "my own skill\n" {
@@ -113,7 +113,7 @@ func TestSetupAndUninstallKeepAHandoffSkillMadeOwn(t *testing.T) {
 	next := old
 	must(t, applySetup(home, userHome, old.InstalledExecutable, old, &next, nil, env))
 	output := uninstallRun(t, env)
-	if !strings.Contains(output, "Kept ~/.claude/skills/handoff/SKILL.md: it lacks agent-archive's marker line, so it is yours.\n") {
+	if !strings.Contains(output, "Kept ~/.claude/skills/handoff/SKILL.md: it is not this agent-archive installation's (it lacks the marker line, or names another data directory).\n") {
 		t.Fatalf("uninstall did not report the kept file:\n%s", output)
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != "tuned by hand\n" {
@@ -173,4 +173,69 @@ func TestAgentCommandsSpelling(t *testing.T) {
 	if !strings.Contains(string(data), `"agent_commands":["/p"]`) {
 		t.Errorf("status = %s", data)
 	}
+}
+
+// A second installation in the same HOME, with hook files of its own, runs
+// its skills with its data directory, and never replaces or removes the
+// first one's shared ~/.agents skill.
+func TestSecondInstallationKeepsTheFirstsHandoffSkill(t *testing.T) {
+	t.Parallel()
+	primary, secondary, userHome := twoInstallations(t)
+	setupRun(t, primary, s3SetupInput("b", "us-east-1", "p", true, false, false, t.TempDir()), 0)
+	first := readText(t, agentsSkillPath(userHome))
+	if strings.Contains(first, "AGENT_ARCHIVE_HOME") {
+		t.Fatalf("the default installation's skill names a data directory:\n%s", first)
+	}
+	claudeDir, codexDir := filepath.Join(userHome, "b", "claude"), filepath.Join(userHome, "b", "codex")
+	vars := map[string]string{"CLAUDE_CONFIG_DIR": claudeDir, "CODEX_HOME": codexDir}
+	secondary.LookupEnv = func(k string) (string, bool) { v, ok := vars[k]; return v, ok }
+	output := setupRun(t, secondary, s3SetupInput("b", "us-east-1", "p", true, true, false, t.TempDir()), 0)
+	if !strings.Contains(output, "Left ~/.agents/skills/handoff/SKILL.md as it is") {
+		t.Fatalf("setup did not report the first installation's skill:\n%s", output)
+	}
+	own := readText(t, filepath.Join(claudeDir, "skills", "handoff", "SKILL.md"))
+	if !strings.Contains(own, "AGENT_ARCHIVE_HOME=") {
+		t.Fatalf("the relocated installation's skill lacks its data directory:\n%s", own)
+	}
+	uninstallRun(t, secondary)
+	if readText(t, agentsSkillPath(userHome)) != first {
+		t.Fatal("the second installation changed the first one's skill")
+	}
+	if _, err := os.Stat(filepath.Join(claudeDir, "skills")); !os.IsNotExist(err) {
+		t.Fatalf("uninstall left the second installation's skill: %v", err)
+	}
+}
+
+// A failed setup puts back the skill it replaced, not only one it created.
+func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
+	t.Parallel()
+	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
+	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", false, true, false, project), 0)
+	path := claudeSkillPath(userHome)
+	older := strings.Replace(readText(t, path), "Run exactly this command", "Run this command", 1)
+	must(t, os.WriteFile(path, []byte(older), 0600))
+	var written string
+	originalLoad := env.LoadLaunchAgent
+	env.LoadLaunchAgent = func(p string) error {
+		if written == "" {
+			written = readText(t, path)
+			return errors.New("bootstrap failed")
+		}
+		return originalLoad(p)
+	}
+	setupRun(t, env, "retention\n120\ny\n", 1)
+	if written == older || written == "" {
+		t.Fatal("setup did not replace the skill before it failed")
+	}
+	if readText(t, path) != older {
+		t.Fatal("failed setup did not restore the skill it replaced")
+	}
+}
+
+func readText(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	must(t, err)
+	return string(data)
 }

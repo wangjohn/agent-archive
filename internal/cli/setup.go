@@ -637,7 +637,7 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
-	printAgentCommands(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)))
+	printAgentCommands(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)), finish.env.installation(home, finish.userHome).commandDataHome())
 	// A paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
@@ -648,14 +648,14 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 
 // printAgentCommands says in one line where setup installed the /handoff
 // command, and names each path it left alone because it is not setup's.
-func printAgentCommands(p *prompter, cfg config.Config, userHome, claudeDir string) {
+func printAgentCommands(p *prompter, cfg config.Config, userHome, claudeDir, dataHome string) {
 	var installed []string
-	for _, f := range agentcommands.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable) {
+	for _, f := range agentcommands.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable, dataHome) {
 		if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
 			installed = append(installed, displayPath(f.Path, userHome))
 			continue
 		}
-		terminal.Printf(p.out, "Left %s as it is: it lacks agent-archive's marker line, so /handoff is not installed there.\n", displayPath(f.Path, userHome))
+		terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /handoff is not installed there.\n", displayPath(f.Path, userHome))
 	}
 	if len(installed) > 0 {
 		terminal.Printf(p.out, "Installed /handoff, which continues a session in another agent: %s\n", strings.Join(installed, ", "))

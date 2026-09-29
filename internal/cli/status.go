@@ -357,7 +357,7 @@ func readConfiguredStatus(view *statusView, cfg config.Config, home string, env 
 	}
 	view.Paused = cfg.Paused
 	if userHome, err := env.userHomeDir(); err == nil {
-		view.AgentCommands = agentcommands.Installed(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))
+		view.AgentCommands = agentcommands.Installed(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)), env.installation(home, userHome).commandDataHome())
 	}
 	for _, p := range cfg.Archive.Projects {
 		if p.Included {

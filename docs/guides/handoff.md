@@ -55,7 +55,9 @@ and name the agent. With no agent named, the skill picks another agent than
 the one you are in. Each file carries a marker line: setup replaces and
 uninstall removes only a file with it, so delete that line to keep an edited
 copy. A file already at that path without it is left alone, and setup says
-so. `agent-archive status --verbose` lists the installed files.
+so. An installation with `AGENT_ARCHIVE_HOME` set runs the command with it,
+and leaves the skill of another installation sharing the same home folder
+alone. `agent-archive status --verbose` lists the installed files.
 
 ## Where the session comes from
 
