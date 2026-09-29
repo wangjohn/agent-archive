@@ -513,6 +513,7 @@ type resumedSubagentFixture struct {
 }
 
 func newResumedSubagentFixture(t *testing.T) *resumedSubagentFixture {
+	t.Helper()
 	home := t.TempDir()
 	local, err := state.Open(home)
 	if err != nil {
