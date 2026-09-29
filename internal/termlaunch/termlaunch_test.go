@@ -325,7 +325,8 @@ func runScript(t *testing.T, spec Spec, stdin string) (output string, code int) 
 
 func TestScriptPassesArgumentsByteForByte(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, "it's $(here) `x` ü\nnext #1")
+	name := "it's $(here) `x` ü\nnext #1"
+	dir := filepath.Join(root, name)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -96,11 +96,11 @@ func Open(ctx context.Context, spec Spec, env Environment) (where string, err er
 		dir := strings.ReplaceAll(spec.Dir, "#", "##")
 		return "a new tmux window", env.Run(ctx, "tmux", "new-window", "-c", dir, shellQuote(path))
 	}
-	termProgram, _ := env.LookupEnv("TERM_PROGRAM")
-	switch termProgram {
-	case "iTerm.app":
+	program, _ := env.LookupEnv("TERM_PROGRAM")
+	switch termProgram(program) {
+	case termITerm:
 		return "a new iTerm2 tab", env.Run(ctx, "osascript", osascriptArgs(iTermScript, path)...)
-	case "ghostty":
+	case termGhostty:
 		if err := env.Run(ctx, "osascript", osascriptArgs(ghosttyScript, path, spec.Dir)...); err == nil {
 			return "a new Ghostty tab", nil
 		}
@@ -108,6 +108,15 @@ func Open(ctx context.Context, spec Spec, env Environment) (where string, err er
 	}
 	return "a new Terminal window", env.Run(ctx, "osascript", osascriptArgs(terminalScript, path)...)
 }
+
+// termProgram is a $TERM_PROGRAM value with a terminal of its own; any other
+// value on macOS gets Terminal.app.
+type termProgram string
+
+const (
+	termITerm   termProgram = "iTerm.app"
+	termGhostty termProgram = "ghostty"
+)
 
 // The AppleScript run handlers. item 1 of argv is the launcher script's
 // path; Ghostty's also takes the working directory as item 2.
@@ -250,15 +259,17 @@ func script(spec Spec, self string) string {
 // handCommand is the command line a person can paste into a shell (Dir is
 // absolute, so cd needs no --).
 func handCommand(spec Spec) string {
-	cmd := "cd " + shellQuote(spec.Dir) + " && "
+	var b strings.Builder
+	b.WriteString("cd " + shellQuote(spec.Dir) + " && ")
 	if len(spec.Unset) > 0 {
-		cmd += "env"
+		b.WriteString("env")
 		for _, name := range spec.Unset {
-			cmd += " -u " + name
+			b.WriteString(" -u " + name)
 		}
-		cmd += " "
+		b.WriteString(" ")
 	}
-	return cmd + quoteWords(spec.Argv)
+	b.WriteString(quoteWords(spec.Argv))
+	return b.String()
 }
 
 func quoteWords(words []string) string {
