@@ -22,6 +22,7 @@ func intPtr(n int) *int { return &n }
 // summaryFixture is a Claude Code session with every row the summary shows.
 func summaryFixture() sessionView {
 	importedAt := time.Date(2026, 9, 29, 12, 30, 0, 0, time.UTC)
+	endedAt := time.Date(2026, 9, 29, 10, 58, 0, 0, time.UTC)
 	return sessionView{
 		Metadata: archive.Metadata{
 			SessionID:     "03e60c25f1a04b7c9d2e8f6a1b3c5d7e",
@@ -29,8 +30,9 @@ func summaryFixture() sessionView {
 			ProjectName:   "agent-archive",
 			StartedAt:     time.Date(2026, 9, 29, 10, 14, 0, 0, time.UTC),
 			CapturedAt:    time.Date(2026, 9, 29, 11, 2, 0, 0, time.UTC),
+			EndedAt:       &endedAt,
 			Harness:       archive.Harness{Name: "claude", Version: "2.4.1"},
-			Parser:        archive.ParserInfo{Name: "claude", Version: "0.12.0", Status: archive.ParserStatusPartial},
+			Parser:        archive.ParserInfo{Name: "claude", Version: "0.13.0", Status: archive.ParserStatusPartial},
 			FilterVersion: "12",
 			State:         archive.MetadataStateIdle,
 			TurnOutcome:   archive.TurnOutcomeCompleted,
@@ -43,7 +45,11 @@ func summaryFixture() sessionView {
 			SkillsUsed: []archive.SkillUse{{Name: "simplify"}, {Name: "code-review"}},
 			Counts: archive.Counts{
 				Turns: intPtr(35), Messages: intPtr(212), ToolCalls: intPtr(148),
-				UserShellCommands: intPtr(3), Compactions: intPtr(1),
+				UserShellCommands: intPtr(3), Compactions: intPtr(1), FilesTouched: intPtr(14),
+			},
+			ToolsUsed: []archive.ToolUsage{
+				{Name: "Bash", Count: 42}, {Name: "Edit", Count: 18}, {Name: "Read", Count: 12},
+				{Name: "Grep", Count: 9}, {Name: "mcp__github__create_pull_request", Count: 1},
 			},
 			CaptureGaps: []archive.CaptureGap{
 				{Code: archive.CaptureGapImportedWithoutHookEvidence, Detail: "No hook observed this session before it was imported (imported_at): activity before then has no hook lifecycle events, final-response text, or skill inventory."},
@@ -84,7 +90,7 @@ func TestSessionSummaryOmitsAbsentData(t *testing.T) {
 	view := sessionView{Metadata: archive.Metadata{
 		SessionID: "abcdef0123456789abcdef0123456789",
 		Harness:   archive.Harness{Name: "codex"},
-		Counts:    archive.Counts{Turns: intPtr(2), ToolCalls: intPtr(0)},
+		Counts:    archive.Counts{Turns: intPtr(2), ToolCalls: intPtr(0), FilesTouched: intPtr(0)},
 	}}
 	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC})
 	if !strings.HasPrefix(text, "abcdef01\n") {
@@ -93,7 +99,7 @@ func TestSessionSummaryOmitsAbsentData(t *testing.T) {
 	if !strings.Contains(text, "Activity  2 turns · 0 tool calls\n") {
 		t.Fatalf("activity row:\n%s", text)
 	}
-	for _, absent := range []string{"message", "compaction", "When", "Model", "Skills", "Subagents", "Parent", "Imported", "Capture gaps", "Transcript:", "completed"} {
+	for _, absent := range []string{"message", "compaction", "edited", "Tools", "When", "Model", "Skills", "Subagents", "Parent", "Imported", "Capture gaps", "Transcript:", "completed"} {
 		if strings.Contains(text, absent) {
 			t.Fatalf("%q shown for absent data:\n%s", absent, text)
 		}
@@ -130,6 +136,7 @@ func TestSessionSummaryNeutralizesEscapes(t *testing.T) {
 	view.ProjectName = "proj\x1b[31m"
 	view.Harness.Version = "1.0\u009b2J"
 	view.SkillsUsed = []archive.SkillUse{{Name: "skill\x07"}}
+	view.ToolsUsed = []archive.ToolUsage{{Name: "tool\x1b[2J", Count: 3}}
 	view.CaptureGaps = []archive.CaptureGap{{Code: "gap\x1b[1m", Detail: "detail\r\nmore"}}
 	view.Models = []archive.ModelSummary{{Attributes: map[string]string{"gen_ai.request.model": "model\x1b[0m", "agent_archive.request.reasoning_level": "hi\x9b"}}}
 	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC, Hints: true})
