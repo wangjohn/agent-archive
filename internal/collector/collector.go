@@ -424,6 +424,23 @@ func (p *pass) finishScan(reg archive.SessionRegistration) {
 	}
 }
 
+// SizeLimitProblem is the problem a pass records in its Status when n
+// sessions sit in a size-limit gap: not a failure, and nothing to do, but
+// capture of them has stopped at their last snapshot.
+func SizeLimitProblem(n int) string {
+	return fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", n)
+}
+
+// IsSizeLimitProblem reports whether problem is a SizeLimitProblem, for any
+// count.
+func IsSizeLimitProblem(problem string) bool {
+	var n int
+	if _, err := fmt.Sscanf(problem, "%d ", &n); err != nil || n < 1 {
+		return false
+	}
+	return problem == SizeLimitProblem(n)
+}
+
 // FailedSessionsProblem is the problem a pass records in its Status when n
 // sessions failed to scan or publish. A caller that reports those sessions
 // again, with a fuller count, replaces this entry rather than adding one.
@@ -451,7 +468,7 @@ func (p *pass) saveStatus() error {
 	// stopped at its last snapshot, which status must say rather than look
 	// healthy.
 	if len(p.sizeLimited) > 0 {
-		problems = append(problems, fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", len(p.sizeLimited)))
+		problems = append(problems, SizeLimitProblem(len(p.sizeLimited)))
 	}
 	status := state.Status{
 		LastScanAt:             p.now.UTC(),

@@ -218,11 +218,11 @@ func (i sessionIssues) summary() string { return issueSummary(i.tallies) }
 // recorded. Both collection and retention record through here, so a pass
 // with both kinds of failure reports one message covering all of them. Best
 // effort, like recordPreflightError: the pass's own error is what the
-// caller reports.
-func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, isSubagent func(string) bool, old string) error {
+// caller reports. It returns the summary it recorded.
+func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, isSubagent func(string) bool, old string) (string, error) {
 	current, err := localStore.LoadStatus()
 	if err != nil {
-		return err
+		return "", err
 	}
 	issues := classifySessions(sessionErrs, isSubagent)
 	current.SessionIssues = issues.codes
@@ -230,8 +230,9 @@ func recordSessionIssues(localStore *state.Store, sessionErrs map[string]error, 
 	for code, tally := range issues.tallies {
 		current.IssueCounts[code] = tally.total()
 	}
-	current.ReplaceLastError(old, issues.summary())
-	return localStore.SaveStatus(current)
+	summary := issues.summary()
+	current.ReplaceLastError(old, summary)
+	return summary, localStore.SaveStatus(current)
 }
 
 // subagentLookup reports whether a session is a subagent, from its
@@ -245,13 +246,28 @@ func subagentLookup(localStore *state.Store) func(string) bool {
 }
 
 // issueHeadline is the problem and next step status leads with for the last
-// pass's failed sessions, from the counts it recorded, when their kinds
-// decide it: none is a storage kind, each is one this version knows, and the
-// summary is the only problem recorded. ok is false otherwise, and status
-// keeps its general headline for a failed sync. A problem of "" with ok
-// means every kind has nothing to do, so status needs no headline for them.
+// pass's problems when their kinds decide it: the recorded problems are the
+// summary of failed sessions, whose counts hold no storage kind and only
+// codes this version knows, and the collector's size-limit notice, either of
+// them alone or both. ok is false otherwise, and status keeps its general
+// headline for a failed sync. A problem of "" with ok means every problem
+// has nothing to do, so status needs no failure headline for them.
 func issueHeadline(status state.Status) (problem, next string, ok bool) {
-	if len(status.IssueCounts) == 0 || len(status.LastErrors) > 1 {
+	if len(status.LastErrors) == 0 {
+		// Nothing recorded, or a status file from before LastErrors.
+		return "", "", false
+	}
+	others := 0
+	for _, recorded := range status.LastErrors {
+		if !collector.IsSizeLimitProblem(recorded) {
+			others++
+		}
+	}
+	if len(status.IssueCounts) == 0 {
+		// Only the size-limit notice: nothing to do.
+		return "", "", others == 0
+	}
+	if others != 1 {
 		return "", "", false
 	}
 	for code := range status.IssueCounts {

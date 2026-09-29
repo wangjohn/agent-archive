@@ -1309,8 +1309,17 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, sc.destinationRow(view), sc.privacyRow(view.PrivacyEvidence))
 	}
 	rows = append(rows, sc.backgroundRow(view))
+	// Problems with nothing to do (see issueHeadline) are information, not
+	// failures.
+	mark, quiet := sc.style.failMark(), false
+	if problem, _, ok := issueHeadline(view.Collector); ok && problem == "" {
+		mark, quiet = sc.info(), true
+	}
 	for _, text := range lastErrorRows(view.Collector) {
-		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{text}})
+		if quiet {
+			text = "Last pass: " + strings.TrimPrefix(text, "Last error: ")
+		}
+		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
 	}
 	uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})

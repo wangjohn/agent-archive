@@ -81,14 +81,28 @@ func runSyncCommand(args []string, stdout, stderr io.Writer, env Env) int {
 	terminal.Printf(stdout, "Scanned %d session(s): %d published, %s%d unchanged, %d failed%s.\n",
 		result.Scanned, len(result.Published), waitingSummary(result.Waiting, result.NextReadyAt), len(result.Skipped), len(result.Errors), subagentsSummary(result))
 	for id, sessionErr := range result.Errors {
-		for _, part := range joinedErrors(sessionErr) {
-			terminal.Printf(stderr, "agent-archive: sync: %s: %v\n", id, part)
+		for _, line := range sessionErrorLines(id, sessionErr) {
+			terminal.Println(stderr, line)
 		}
 	}
 	if len(result.Errors) > 0 {
 		return 1
 	}
 	return 0
+}
+
+// sessionErrorLines are the lines sync reports a session's error on: one
+// per error it joins, and one per line of an error that still spans several
+// (a join wrapped by fmt.Errorf), each prefixed so none reads as another
+// session's.
+func sessionErrorLines(id string, err error) []string {
+	var lines []string
+	for _, part := range joinedErrors(err) {
+		for line := range strings.SplitSeq(part.Error(), "\n") {
+			lines = append(lines, fmt.Sprintf("agent-archive: sync: %s: %s", id, line))
+		}
+	}
+	return lines
 }
 
 // joinedErrors lists the errors err joins (errors.Join), each join inside it

@@ -226,6 +226,17 @@ func TestSyncSurfacesRetentionErrorsInResultAndStatus(t *testing.T) {
 	}
 }
 
+// Every line sync prints for a session's error carries the session's
+// prefix, including each line of a join fmt.Errorf wrapped.
+func TestSessionErrorLinesPrefixEveryLine(t *testing.T) {
+	t.Parallel()
+	err := errors.Join(errors.New("a"), fmt.Errorf("retention: %w", errors.Join(errors.New("b"), errors.New("c"))))
+	want := []string{"agent-archive: sync: s1: a", "agent-archive: sync: s1: retention: b", "agent-archive: sync: s1: c"}
+	if got := sessionErrorLines("s1", err); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
 // sync reports each error a session's errors.Join holds on a line of its
 // own, and keeps an error fmt.Errorf wrapped around several on one.
 func TestJoinedErrorsSplitsOnlyJoins(t *testing.T) {
