@@ -12,7 +12,7 @@ Capture
   · Skill evidence: metadata
 
 Storage
-  ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now · uploaded just now
+  ! s3://team-archive/agent-archive/   refused access on the last pass · uploaded just now
   ✓ Background collector on            last scan just now
   ! Bucket privacy not verified        this storage can't be inspected
     Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html

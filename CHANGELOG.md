@@ -67,14 +67,21 @@ follow [Semantic Versioning](https://semver.org/).
   in the headline ("The last sync failed: storage refused access"). The
   per-project rows, the included projects, skill evidence, the Imported
   line, why bucket privacy couldn't be verified, and the pending count
-  moved to `status --verbose`. Hooks read "hooks on", versions drop the
-  app's own name, and the footer points at `status --verbose` and
-  `status APP`.
+  moved to `status --verbose`, where the global imports line is now
+  "Imported (all destinations)". Hooks read "hooks on", or "hooks
+  installed" while an app that needs approval has run none yet; versions
+  drop the app's own name; and the footer names the commands to run
+  (`agent-archive status --verbose`, `agent-archive status APP`). While the
+  headline says the last pass failed on storage, the destination row says
+  so ("refused access on the last pass") instead of "reachable". Cursor
+  chats with no transcript are counted on a line of their own, not as
+  uploading.
 - `status APP` (`claude`, `codex` or `cursor`) shows one app in full: every
   uploading session and a table of its projects with the sessions each
   captured, imported and is uploading, and how far read-back has got.
 - `status --json` adds, per application, `subagent_sessions`,
-  `imported_sessions`, `uploading_sessions`, and `uploading`, the sessions
+  `imported_sessions`, `uploading_sessions`,
+  `waiting_for_transcript_sessions`, and `uploading`, the sessions
   not yet uploaded with their project, start time and state
   (`uploading`, `first_upload`, or `failing` with its `issue`). Nothing
   else in it changed.

@@ -78,7 +78,7 @@ func TestCursorWaitingChatShowsInStatus(t *testing.T) {
 	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("status: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
-	if out := stdout.String(); strings.Contains(out, "Last error") || !strings.Contains(out, "1 session · 1 uploading") || !strings.Contains(out, "   waiting for its first upload\n") {
+	if out := stdout.String(); strings.Contains(out, "Last error") || !strings.Contains(out, "hooks not checked   1 session\n") || !strings.Contains(out, "· 1 chat has no transcript yet (a chat with transcripts turned off in Cursor never gets one)\n") || strings.Contains(out, "uploading") {
 		t.Fatalf("status = %s", out)
 	}
 }

@@ -93,7 +93,8 @@ $ agent-archive status --json
       "subagent_sessions": 0,
       "imported_sessions": 0,
       "uploading_sessions": 0,
-      "uploading": []
+      "uploading": [],
+      "waiting_for_transcript_sessions": 0
     }
   ],
   "collector": {

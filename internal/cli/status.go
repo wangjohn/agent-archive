@@ -98,7 +98,12 @@ type appStatus struct {
 	// that is not a recorded capture gap; Uploading lists them.
 	UploadingSessions int                `json:"uploading_sessions"`
 	Uploading         []uploadingSession `json:"uploading"`
-	LastPublishedAt   time.Time          `json:"last_published_at,omitzero"`
+	// WaitingForTranscriptSessions counts the app's top-level sessions
+	// that are pending only because no transcript was ever written for
+	// them (state.Outstanding's WaitingForTranscript), such as a Cursor
+	// chat with transcripts turned off; they are not uploading.
+	WaitingForTranscriptSessions int       `json:"waiting_for_transcript_sessions"`
+	LastPublishedAt              time.Time `json:"last_published_at,omitzero"`
 	// importedWithIssues counts the app's imports with a capture gap or a
 	// failed last scan, which the app's own gaps leave out.
 	importedWithIssues int
@@ -597,6 +602,12 @@ func (s statusSessions) appStatus(name string, cfg config.Config, home string, i
 func (s statusSessions) addUploading(app *appStatus, project *projectCaptureStatus, reg archive.SessionRegistration, issues map[string]string) {
 	o, found := s.owed[reg.ArchiveSessionID]
 	if !found || !o.Pending() || o.Blocked {
+		return
+	}
+	if o.WaitingForTranscript {
+		// Nothing of it can be uploaded until the app writes a transcript,
+		// which a Cursor chat with transcripts turned off never does.
+		app.WaitingForTranscriptSessions++
 		return
 	}
 	session := uploadingSession{
@@ -1217,11 +1228,23 @@ func printStatus(out io.Writer, view statusView, sc statusScreen) {
 		terminal.Printf(out, "%s %s\n", s.dim("As JSON:"), s.cmd("agent-archive status --json"))
 		return
 	}
-	more := "More: status --verbose"
+	commands := []string{"agent-archive status --verbose"}
 	if app := footerApp(view); app != "" {
-		more += " · status " + app
+		commands = append(commands, "agent-archive status "+app)
 	}
-	terminal.Println(out, s.dim(more))
+	sc.printFooter(out, commands...)
+}
+
+// printFooter writes the commands that show more, each as typed, on one
+// dim line, or one per line when the terminal is too narrow for that.
+func (sc statusScreen) printFooter(out io.Writer, commands ...string) {
+	line := "More: " + strings.Join(commands, " · ")
+	if sc.style.width > 0 && visibleWidth(line) > sc.style.width {
+		line = "More: " + strings.Join(commands, "\n      ")
+	}
+	for text := range strings.SplitSeq(line, "\n") {
+		terminal.Println(out, sc.style.dim(text))
+	}
 }
 
 // printHeader writes the overall state and, unless all is well, the one
@@ -1360,6 +1383,15 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	for _, app := range view.Apps {
 		rows = append(rows, sc.appRow(app, uploadingRowsShown))
 	}
+	if len(view.Apps) == 0 {
+		// A configuration without apps (an older one written by hand):
+		// the collector still publishes what is registered.
+		text := "No apps selected"
+		if n := view.Collector.PendingCount; n > 0 {
+			text += fmt.Sprintf(" · %d pending", n)
+		}
+		rows = append(rows, statusRow{mark: sc.info(), cells: []string{text}})
+	}
 	for _, app := range view.importedApps {
 		rows = append(rows, sc.importedAppRow(app, uploadingRowsShown))
 	}
@@ -1380,7 +1412,7 @@ func (sc statusScreen) captureRows(view statusView) []statusRow {
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Projects: " + projects}})
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{"Skill evidence: " + view.SkillEvidence}})
 	if view.ImportedSessions > 0 {
-		imported := fmt.Sprintf("Imported: %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
+		imported := fmt.Sprintf("Imported (all destinations): %s, %d waiting to upload", plural(view.ImportedSessions, "session"), view.ImportedPending)
 		if view.ImportedWithIssues > 0 {
 			imported += fmt.Sprintf(", %d with a capture gap or failed scan", view.ImportedWithIssues)
 		}
@@ -1409,6 +1441,9 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 		if sc.verbose {
 			hint = fmt.Sprintf(hookApproval[app.Name], s.cmd("/hooks"))
 		}
+		// Installed, but whether they run is up to the app until a session
+		// shows they do: not yet "on".
+		row.cells[1] = "hooks installed"
 	}
 	freshStart := app.Capabilities.FreshStart.State == capabilityUnavailable
 	switch {
@@ -1456,7 +1491,9 @@ func (sc statusScreen) appRow(app appStatus, limit int) statusRow {
 // importedAppRow is an app whose sessions were imported but whose hooks
 // were never set up: its imports, and the ones it is uploading.
 func (sc statusScreen) importedAppRow(app appStatus, limit int) statusRow {
-	row := statusRow{mark: sc.info(), cells: []string{appName(app.Name), "imported only"}, detail: appCounts(app)}
+	// Its hooks were never set up, so there are no sessions of its own to
+	// count.
+	row := statusRow{mark: sc.info(), cells: []string{appName(app.Name), "imported only"}, detail: strings.TrimPrefix(appCounts(app), "no sessions yet · ")}
 	row.notes = append(row.notes, sc.uploadingNotes(app, limit)...)
 	row.notes = append(row.notes, sc.gapNotes(app)...)
 	return row
@@ -1466,6 +1503,20 @@ func (sc statusScreen) importedAppRow(app appStatus, limit int) statusRow {
 // --json has the gaps themselves.
 func (sc statusScreen) gapNotes(app appStatus) []statusNote {
 	var notes []statusNote
+	if n := app.WaitingForTranscriptSessions; n > 0 {
+		unit := "session"
+		if app.Name == "cursor" {
+			unit = "chat"
+		}
+		text := plural(n, unit) + " have no transcript yet"
+		if n == 1 {
+			text = "1 " + unit + " has no transcript yet"
+		}
+		if app.Name == "cursor" {
+			text += " (a chat with transcripts turned off in Cursor never gets one)"
+		}
+		notes = append(notes, statusNote{sc.info(), text})
+	}
 	if len(app.CaptureGaps) > 0 {
 		text := plural(app.SessionsWithCaptureGaps, "session") + " have capture gaps"
 		if app.SessionsWithCaptureGaps == 1 {
@@ -1668,6 +1719,11 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 			// When it was checked matters less than when it last worked.
 			destination.detail = "reachable"
 		}
+		if failed, ok := lastPassStorageDetail(view); ok && destination.mark == sc.style.okMark() {
+			// The headline says the last pass failed on storage; an older
+			// successful check must not say it is fine.
+			destination.mark, destination.detail = sc.style.warnMark(), failed
+		}
 		if private && !sc.verbose {
 			destination.detail += " · bucket private"
 		} else {
@@ -1719,6 +1775,12 @@ func (sc statusScreen) headline(view statusView) (problem string, stated map[int
 	}
 	rows := lastErrorRows(view.Collector)
 	if view.lastErrorByIssue {
+		// The headline names one kind. The summary says no more only when
+		// that is the one kind with a headline; other kinds with nothing
+		// to do add nothing the user must act on.
+		if len(headlineIssueCodes(view.Collector.IssueCounts)) != 1 {
+			return problem, stated
+		}
 		for i, recorded := range view.Collector.LastErrors {
 			if !collector.IsSizeLimitProblem(recorded) {
 				stated[i] = true
@@ -1739,6 +1801,42 @@ func (sc statusScreen) headline(view statusView) (problem string, stated map[int
 		problem += ": " + cause
 	}
 	return problem, stated
+}
+
+// headlineIssueCodes are the issue codes of the last pass that have a
+// headline of their own (issueLabel.headline), each counted at least once.
+func headlineIssueCodes(counts map[string]int) []string {
+	var codes []string
+	for _, code := range issueCodes {
+		if counts[code] > 0 && issueLabels[code].headline != "" {
+			codes = append(codes, code)
+		}
+	}
+	return codes
+}
+
+// lastPassStorageDetail words, for the destination row, what the last
+// pass's storage failure was, while the headline is the one derived from
+// it: the destination was not reachable as the collector's health last
+// recorded, so the row must not say it is. ok is false otherwise.
+func lastPassStorageDetail(view statusView) (detail string, ok bool) {
+	if view.problem == "" || view.problem != view.lastErrorProblem || view.lastErrorByIssue {
+		return "", false
+	}
+	for _, row := range lastErrorRows(view.Collector) {
+		//lint:ignore LV1001 storageErrorCause returns these fixed phrasings; the switch words them for the destination row
+		switch row {
+		case "Storage refused access":
+			return "refused access on the last pass", true
+		case "Storage didn't accept the credentials":
+			return "didn't accept the credentials on the last pass", true
+		case "The bucket doesn't exist":
+			return "bucket not found on the last pass", true
+		case "The bucket is in a different region":
+			return "bucket in a different region on the last pass", true
+		}
+	}
+	return "unreachable on the last pass", true
 }
 
 // generalSyncProblem is the headline for a failed pass whose errors say
@@ -1841,12 +1939,38 @@ func (sc statusScreen) privacyRow(report storage.PrivacyReport) statusRow {
 	case "storage_configuration_changed":
 		detail = "storage settings changed since the last check"
 	}
-	if !sc.verbose && report.GuidanceURL != "" {
-		// Why it couldn't be verified is in status --verbose; what to do
-		// about it is the same.
-		return statusRow{mark: s.warnMark(), cells: []string{"Bucket privacy not verified"}, detail: "see " + report.GuidanceURL}
+	if !sc.verbose {
+		return statusRow{mark: s.warnMark(), cells: []string{"Bucket privacy not verified"}, detail: sc.shortPrivacyReason(report)}
 	}
 	return statusRow{mark: s.warnMark(), cells: []string{"Bucket privacy not verified"}, detail: detail, notes: []statusNote{review}}
+}
+
+// shortPrivacyReason is why bucket privacy isn't verified, in a few words,
+// for the short status. Only when this Mac can't inspect the bucket at all
+// does the provider's guidance (checking public access by hand) fix it, so
+// only then is its link added; --verbose always has it.
+func (sc statusScreen) shortPrivacyReason(report storage.PrivacyReport) string {
+	see := ""
+	if report.GuidanceURL != "" {
+		see = "; see " + report.GuidanceURL
+	}
+	//lint:ignore LV1001 storage.PrivacyReport.Reason is an untyped string owned by package storage
+	switch report.Reason {
+	case "inspection_unavailable":
+		return "this storage can't be inspected" + see
+	case "r2_management_credentials_not_configured":
+		return "R2 object credentials can't inspect it" + see
+	case "public_access_controls_not_fully_verified":
+		return "some settings couldn't be read"
+	case "inspection_stale":
+		if report.CheckedAt != nil && report.CheckedAt.After(sc.now) {
+			return "last check dated in the future"
+		}
+		return "not checked in over a day"
+	case "storage_configuration_changed":
+		return "not checked since storage changed"
+	}
+	return "not checked yet"
 }
 
 // backgroundRow is the background collector: whether launchd runs it, and

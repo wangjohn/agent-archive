@@ -298,6 +298,7 @@ func TestStatusSaysTheFailureOnce(t *testing.T) {
 	view.problem, view.lastErrorProblem, view.lastErrorByIssue = "Some sessions could not be captured", "Some sessions could not be captured", true
 	summary := issueSummary(map[string]issueTally{issueCaptureFailed: {sessions: 1}})
 	view.Collector.SetLastErrors(summary, collector.SizeLimitProblem(1))
+	view.Collector.IssueCounts = map[string]int{issueCaptureFailed: 1}
 	rows := failedStorageRows(view)
 	if len(rows) != 1 || strings.Contains(rows[0], "failed to capture") || !strings.Contains(rows[0], "size limit") {
 		t.Errorf("issue headline: rows %q", rows)
@@ -319,7 +320,7 @@ func TestStatusCompactLeavesDetailToVerbose(t *testing.T) {
 		"~/styleprofile: waiting for first session",
 		"· Projects: ~/agent-archive, ~/styleprofile",
 		"· Skill evidence: body",
-		"· Imported: 75 sessions, 0 waiting to upload; last import 2026-09-27-1",
+		"· Imported (all destinations): 75 sessions, 0 waiting to upload; last import 2026-09-27-1",
 		"uploaded, read-back pending (1 of 10 projects verified)",
 		"· Last upload: 2 minutes ago · 4 pending",
 		"R2 object credentials can't inspect public access",
@@ -336,7 +337,7 @@ func TestStatusCompactLeavesDetailToVerbose(t *testing.T) {
 			t.Errorf("status --verbose is missing %q:\n%s", row, verbose)
 		}
 	}
-	for _, row := range []string{"· 17 sessions have capture gaps\n", "Approve the archive hooks with /hooks in Codex.\n", "  ! Codex 0.155.0-alpha.9.2   hooks on   no sessions yet\n"} {
+	for _, row := range []string{"· 17 sessions have capture gaps\n", "Approve the archive hooks with /hooks in Codex.\n", "  ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet\n"} {
 		if !strings.Contains(text, row) {
 			t.Errorf("default status is missing %q:\n%s", row, text)
 		}
@@ -374,7 +375,7 @@ func TestStatusAppArgument(t *testing.T) {
 		out   string
 		error string
 	}{
-		{[]string{"CODEX"}, 0, "\nCapture\n  ! Codex   hooks on   no sessions yet\n", ""},
+		{[]string{"CODEX"}, 0, "\nCapture\n  ! Codex   hooks installed   no sessions yet\n", ""},
 		{[]string{"codex", "--verbose"}, 0, "\nDetails\n  Codex: waiting for first session", ""},
 		{[]string{"gemini"}, 2, "", "agent-archive: status: unknown app \"gemini\"; choose one of codex, claude, cursor; run agent-archive status --help\n"},
 		{[]string{"codex", "--json"}, 2, "", "agent-archive: status: an app and --json can't be combined; status --json lists every app under applications; run agent-archive status --help\n"},

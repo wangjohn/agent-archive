@@ -5,7 +5,7 @@ Agent Archive  ● Needs attention
     To change credentials, run agent-archive setup and choose storage.
 
 Capture
-  ✓ Claude Code 2.1.283       hooks on   212 sessions (+40 subagents) · 48 imported · 3 uploading
+  ✓ Claude Code 2.1.283       hooks on          212 sessions (+40 subagents) · 48 imported · 3 uploading
     · uploaded, read-back pending (1 of 10 projects verified)
     ✓ ~/agent-archive: verified
     · ~/styleprofile: uploaded, read-back pending
@@ -21,10 +21,10 @@ Capture
       ~/agent-archive   started 11:04
       ~/styleprofile    started 09:24
     · 17 sessions with a capture gap (109 gaps recorded; details in status --json)
-  ✓ Cursor 3.21.13            hooks on   14 sessions · 27 imported · 1 uploading
+  ✓ Cursor 3.21.13            hooks on          14 sessions · 27 imported · 1 uploading
     · 14 sessions archived, verified 1 hour ago
       ~/personal_website   started 11:40
-  ! Codex 0.155.0-alpha.9.2   hooks on   no sessions yet
+  ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet
     Run /hooks in Codex and approve the archive hooks; agent-archive can't see whether you have.
     · waiting for first session
     · ~/agent-archive: waiting for first session
@@ -39,10 +39,10 @@ Capture
     · ~/scratch: waiting for first session
   · Projects: ~/agent-archive, ~/styleprofile, ~/personal_website, ~/notes, ~/infra, ~/blog, ~/dotfiles, ~/api, ~/web-app, ~/scratch
   · Skill evidence: body
-  · Imported: 75 sessions, 0 waiting to upload; last import 2026-09-27-1
+  · Imported (all destinations): 75 sessions, 0 waiting to upload; last import 2026-09-27-1
 
 Storage
-  ✓ r2://agent-archive/agent-archive/   reachable, checked 2 minutes ago · uploaded 2 minutes ago
+  ! r2://agent-archive/agent-archive/   refused access on the last pass · uploaded 2 minutes ago
   ✓ Background collector on             last scan 1 minute ago
   ! Bucket privacy not verified         R2 object credentials can't inspect public access
     Check public access: https://developers.cloudflare.com/r2/buckets/public-buckets/

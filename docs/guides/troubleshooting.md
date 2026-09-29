@@ -81,22 +81,22 @@ Agent Archive  ● Needs attention
     To change credentials, run agent-archive setup and choose storage.
 
 Capture
-  ✓ Claude Code 2.1.283       hooks on   212 sessions (+40 subagents) · 48 imported · 3 uploading
+  ✓ Claude Code 2.1.283       hooks on          212 sessions (+40 subagents) · 48 imported · 3 uploading
       ~/agent-archive   started 11:12   waiting for its first upload
       ~/agent-archive   started 11:04
       ~/styleprofile    started 09:24
     · 17 sessions have capture gaps
-  ✓ Cursor 3.21.13            hooks on   14 sessions · 27 imported · 1 uploading
+  ✓ Cursor 3.21.13            hooks on          14 sessions · 27 imported · 1 uploading
       ~/personal_website   started 11:40
-  ! Codex 0.155.0-alpha.9.2   hooks on   no sessions yet
+  ! Codex 0.155.0-alpha.9.2   hooks installed   no sessions yet
     Approve the archive hooks with /hooks in Codex.
 
 Storage
-  ✓ r2://agent-archive/agent-archive/   reachable · uploaded 2 minutes ago
+  ! r2://agent-archive/agent-archive/   refused access on the last pass · uploaded 2 minutes ago
   ✓ Background collector on             last scan 1 minute ago
-  ! Bucket privacy not verified         see https://developers.cloudflare.com/r2/buckets/public-buckets/
+  ! Bucket privacy not verified         R2 object credentials can't inspect it; see https://developers.cloudflare.com/r2/buckets/public-buckets/
 
-More: status --verbose · status claude
+More: agent-archive status --verbose · agent-archive status claude
 ```
 
 **Capture** has a row per app: its version and hooks, then how many
@@ -107,8 +107,14 @@ project and when it started, at most five (`status APP` lists all); only
 something unusual is added: **waiting for its first upload** for a session
 never uploaded, and a ! row with the kind of failure for a session the last
 pass could not update. A session whose transcript can no longer be captured
-is counted under capture gaps instead. **Storage** has a row each for the
-destination with the last upload, the background collector, bucket privacy,
+is counted under capture gaps instead, and a Cursor chat that never got a
+transcript (transcripts turned off) on a line of its own. **hooks on** means
+the app's hooks are installed; **hooks installed** means they are, but the
+app runs them only once you approve them, and no session has shown that it
+does yet. **Storage** has a row each for the
+destination with the last upload (! when the last pass failed on storage),
+the background collector, bucket privacy (with the provider's guidance
+when this Mac can't inspect the bucket),
 and any error of the last sync that the line at the top doesn't already
 state. ✓ is fine, ! needs you, ✗ is blocked, and · is information. Times are
 relative to now and paths under your home folder start with `~`. The screen

@@ -12,7 +12,7 @@ $ agent-archive status --verbose
   \e[2m·\e[0m Skill evidence: metadata
 
 \e[1mStorage\e[0m
-  \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now · uploaded just now\e[0m
+  \e[33m!\e[0m s3://team-archive/agent-archive/   \e[2mrefused access on the last pass · uploaded just now\e[0m
   \e[32m✓\e[0m Background collector on            \e[2mlast scan just now\e[0m
   \e[33m!\e[0m Bucket privacy not verified        \e[2mthis storage can't be inspected\e[0m
     Check public access: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m

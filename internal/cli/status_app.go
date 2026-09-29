@@ -58,7 +58,7 @@ func printAppStatus(out, errOut io.Writer, view statusView, name string, sc stat
 		terminal.Printf(out, "%s %s\n", s.dim("As JSON:"), s.cmd("agent-archive status --json"))
 		return 0
 	}
-	terminal.Println(out, s.dim("More: status · status "+name+" --verbose"))
+	sc.printFooter(out, "agent-archive status", "agent-archive status "+name+" --verbose")
 	return 0
 }
 

@@ -24,4 +24,4 @@ Projects
   ~/web-app            0          0          0           waiting for first session
   ~/scratch            0          0          0           waiting for first session
 
-More: status · status claude --verbose
+More: agent-archive status · agent-archive status claude --verbose

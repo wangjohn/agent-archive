@@ -109,13 +109,13 @@ func TestStatusTextShowsNoCodesOrExactTimes(t *testing.T) {
 		"Read-back failed: not found (retrying in 5 minutes, 2 attempts so far)",
 		"Claude Code skipped a session in ~/src/api 40 minutes ago: setup was still in progress",
 		"  ✓ s3://team-archive/agent-archive/   reachable · uploaded 50 minutes ago\n",
-		"  ! Bucket privacy not verified        see https://example.com/guide\n",
+		"  ! Bucket privacy not verified        not checked in over a day\n",
 		"last scan 1 minute ago",
 		"✗ Storage refused access\n",
 		"! 2 local state files couldn't be read and were moved aside",
 		"· 1 session summary can't be refreshed",
 		"! Installed versions could not be read from ~/.agent-archive/application-versions.json",
-		"\nMore: status --verbose · status codex\n",
+		"\nMore: agent-archive status --verbose · agent-archive status codex\n",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("status is missing %q:\n%s", want, text)
@@ -284,7 +284,7 @@ func TestStatusTildeOnlyPathsStartingAtHome(t *testing.T) {
 // dated after now is not called over a day old.
 func TestStatusPrivacyRowWording(t *testing.T) {
 	t.Parallel()
-	sc := statusScreen{now: renderNow}
+	sc := statusScreen{now: renderNow, verbose: true}
 	past, future := renderNow.Add(-5*time.Minute), renderNow.Add(time.Hour)
 	row := sc.privacyRow(storage.PrivacyReport{State: "not_verified", Reason: "public_access_controls_not_fully_verified", CheckedAt: &past})
 	if row.cells[0] != "Bucket privacy not verified" || row.detail != "some public access settings couldn't be read, checked 5 minutes ago" {
@@ -335,7 +335,7 @@ func TestStatusVerboseKeepsTodaysDetail(t *testing.T) {
 		"    · 1 session with a capture gap (2 gaps recorded; details in status --json)\n",
 		"  · Projects: ~/src/web-app, ~/src/api\n",
 		"  · Skill evidence:\n",
-		"  · Imported: 4 sessions, 1 waiting to upload; last import import-7\n",
+		"  · Imported (all destinations): 4 sessions, 1 waiting to upload; last import import-7\n",
 		"reachable, checked 2 minutes ago · uploaded 50 minutes ago\n",
 		"the last check is over a day old, checked 3 hours ago\n",
 		"    Check public access: https://example.com/guide\n",

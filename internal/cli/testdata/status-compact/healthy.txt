@@ -9,4 +9,4 @@ Storage
   ✓ r2://agent-archive/agent-archive/   reachable · bucket private · uploaded 2 minutes ago
   ✓ Background collector on             last scan 1 minute ago
 
-More: status --verbose · status claude
+More: agent-archive status --verbose · agent-archive status claude

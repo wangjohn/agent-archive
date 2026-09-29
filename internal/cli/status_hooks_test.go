@@ -76,7 +76,7 @@ func TestStatusExplainsWhyHookTrustIsUnknown(t *testing.T) {
 	if code := runStatusCommand(nil, &stdout, &stderr, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "  ! Codex   hooks on   no sessions yet\n    Approve the archive hooks with /hooks in Codex.\n") {
+	if !strings.Contains(stdout.String(), "  ! Codex   hooks installed   no sessions yet\n    Approve the archive hooks with /hooks in Codex.\n") {
 		t.Fatalf("status does not say how to approve the hooks:\n%s", stdout.String())
 	}
 	stdout.Reset()
