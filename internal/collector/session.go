@@ -74,6 +74,9 @@ type sessionScan struct {
 	warnings []error
 	// gap is the capture gap the scan ended in, if it did (see block).
 	gap state.BlockedReason
+	// subagentRunning reports that the scan ended waiting for a resumed
+	// subagent to stop again (see errSubagentRunning).
+	subagentRunning bool
 	// filtered is the source as the refresh step already read and filtered
 	// it (see liveTranscriptChanged), which read then uses rather than
 	// filtering the whole source a second time in the same scan.
@@ -240,7 +243,13 @@ func (s *sessionScan) read() (read sourceRead, ok bool, err error) {
 			return read, false, nil
 		}
 	}
-	if err := validateSubagentTranscript(s.reg, read.filtered); err != nil {
+	if err := validateSubagentTranscript(s.reg, read.filtered, s.now); errors.Is(err, errSubagentRunning) {
+		// Records past the last stop are not vouched for yet. The published
+		// snapshot stands; the next SubagentStop, or the transcript going
+		// quiet, moves the bound and the scan after it publishes them.
+		s.subagentRunning = true
+		return read, false, nil
+	} else if err != nil {
 		return read, false, err
 	}
 	return read, true, nil

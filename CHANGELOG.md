@@ -17,6 +17,9 @@ follow [Semantic Versioning](https://semver.org/).
   background task finishing, paged on a terminal (`--no-pager` to print
   directly). `--full` adds tool results and shell output, trimmed.
   `--transcript --json` prints what `--normalized` printed.
+  Your prompts are quoted with a `┃` gutter that stays on wrapped lines,
+  and the agent's part of each exchange starts with the app's name
+  (`Claude Code ›`).
 - Browsing on a terminal (`list`, bare `show`) opens a session's summary in
   place of the list, on the terminal's alternate screen: `t` shows its
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
@@ -27,6 +30,11 @@ follow [Semantic Versioning](https://semver.org/).
   window: a list taller than the terminal is shown a page at a time (`n` and
   `p` move; any row number or short ID still works), and a summary taller
   than the terminal is cut with "… N more lines" and `m` to read it whole.
+- Metadata may include optional `ended_at` (latest record timestamp),
+  `tools_used` (the 10 most-called tools with counts), and
+  `counts.files_touched` (distinct files edited; a count only, never
+  paths). Parser version is now `0.13.0`, so existing sessions gain them on
+  the next metadata refresh.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
   `subagent_transcript_never_written` capture gap, "Claude Code reported a
@@ -59,13 +67,39 @@ follow [Semantic Versioning](https://semver.org/).
   agent-archive and leaving the pager on the terminal.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
-  instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what
+  instead of JSON. Capture gaps the archive records by design (filtered or
+  redacted content, fields the parser does not recognize) are named in one
+  dimmed Omitted row; only gaps that may mean content is missing get a
+  warning. Pass `--json` for the metadata sidecar, byte for byte what
   `show` printed before.
 - `show --normalized` is deprecated in favor of `show --transcript --json`.
   It still works, with unchanged output, and prints a note on stderr.
+- `handoff` shows file paths the same way everywhere: relative to the
+  workspace root (`./a.go`, `../repo/a.go`, and `/repo/a.go` are all
+  `a.go`; a relative path above the root, such as `../other/b.go`, keeps
+  that spelling; the root itself is `.`; Windows drive paths use forward
+  slashes), and its files-touched list no longer repeats one file under two
+  spellings. A search of the workspace root no longer ends in
+  `in <root>` (or `in .`). A Codex `local_shell_call` is listed even when
+  nothing about it was retained, and `tools_used` counts exactly the calls
+  `handoff` lists. It also recognizes Cursor's `edit_file_v2`, `read_file_v2`,
+  `ripgrep_raw_search`, and `glob_file_search` tools, so edits in chats
+  imported from Cursor's database are listed and counted in
+  `counts.files_touched`.
 
 ### Fixed
 
+- A Claude Code subagent resumed after it stopped (continued with
+  SendMessage) no longer fails `sync` with "subagent transcript has
+  incomplete native timestamp provenance" while it runs. Its archive keeps
+  the snapshot from its last stop and catches up at its next stop, or, if it
+  never stops again (its session was closed while it worked), once its
+  transcript has been quiet for 30 minutes. A subagent resumed before the
+  collector first saw it is no longer reported as not captured either. A
+  subagent record dated more than 30 minutes in the future is still reported
+  as a failure rather than waited on. `sync`
+  counts these as "still running", and `status --verbose` and `status --json`
+  (`collector.running_subagents`) show them. None is a failure.
 - A Claude Code subagent whose transcript is never written (Claude Code
   reports some background agents that way) no longer fails every pass:
   `sync` exited 1 and `status` reported "N session(s) need capture or

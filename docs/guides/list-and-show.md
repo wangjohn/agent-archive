@@ -53,28 +53,41 @@ A summary looks like this:
 Fix flaky OAuth callback tests
 claude · agent-archive · 2h ago                                      ✓ completed
 
-  When      Sep 29, 10:14 → 11:02 (48m span)
+  When      Sep 29, 10:14 → 10:58 (44m)
   Agent     Claude Code 2.4.1
   Model     claude-opus-5-5 (high reasoning) · 31 responses
             claude-haiku-4-5 · 4 responses
   Activity  35 turns · 212 messages · 148 tool calls · 3 shell commands ·
-            1 compaction
+            1 compaction · 14 files edited
+  Tools     Bash 42 · Edit 18 · Read 12 · Grep 9 ·
+            mcp__github__create_pull_request 1
   Skills    code-review, simplify
   Subagents 2 linked (1 available, 1 expired)
 
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
-     origin hook · parser 0.12.0 (partial) · filter 12
+     origin hook · parser 0.13.0 (partial) · filter 12
 
   Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
   JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
 ```
 
 Rows the metadata has no data for are left out; a count that is unknown is
-not shown as zero, and shell commands and compactions are listed only when
-there were some. A model's count is how many responses it gave. Times are in your local time zone. The metadata records
-when a session started and when it was last captured, not when it ended, so
-the time between them is labelled a span. A session with capture gaps lists
-each gap's code once, with how often it occurs.
+not shown as zero, and shell commands, compactions, and edited files are
+listed only when there were some. A model's count is how many responses it
+gave, and Tools lists the most-called tools (`tools_used`). Times are in
+your local time zone. The session ends at `ended_at`, its latest record
+timestamp. Metadata from before parser 0.13.0, or from an app whose records
+carry no timestamps, has no end time, so the summary uses when the session
+was last captured and labels the time since the start a span.
+
+Capture gaps are the parser's notes on what the archived copy leaves out.
+Most are expected: the privacy filter dropping injected instructions and
+hidden fields, redacted secrets, long content cut to size, and fields or
+records the parser does not recognize yet. The summary names those in one
+dimmed Omitted row. Only gaps that may mean content is missing, such as an
+unreadable record or a subagent whose transcript was never written, are
+listed under a warning, "Incomplete capture": each code once, with how
+often it occurs and its first detail. `show --json` has every gap.
 
 ## Browsing on a terminal
 
@@ -126,6 +139,13 @@ configured project basename. The ID column is a short prefix you can pass to
 `list --verbose` or add `--harness`. Projects with the same basename stay in
 separate groups, labeled with their project ID prefixes.
 
+Metadata also says what a session did without downloading its transcript:
+when it ended (`ended_at`), its most-called tools (`tools_used`), and how
+many distinct files it edited (`counts.files_touched`). Only names and
+counts are stored, never file paths. Sessions published by an older version
+gain them when the collector next refreshes their metadata. See
+[JSON output](../reference/json-output.md#show).
+
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its
 checksum and identity against the metadata, and prints each prompt, the
@@ -134,7 +154,10 @@ when the call failed), the `!` shell commands (`$ make test`) and local
 slash commands (`» /model`, with the app's reply) you ran, compaction
 summaries, notices the app posted (such as a background task finishing,
 with the agent's reply under it), and any final response a hook reported
-that the transcript lacks. Edit bodies are never shown. `--full` adds each
+that the transcript lacks. Your prompts are quoted with a `┃` gutter, and
+each stretch of the agent's replies and tool calls starts with the app's
+name (`Claude Code ›`), so you can tell who is speaking without color. Edit
+bodies are never shown. `--full` adds each
 tool result and shell command's output, trimmed to its first and last
 lines; it does not combine with `--json`, which has every retained result. On a terminal the summary and
 the transcript are paged like `list` (see [Scrolling](#scrolling));

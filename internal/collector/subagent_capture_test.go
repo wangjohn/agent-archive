@@ -2,8 +2,11 @@ package collector
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -367,15 +370,15 @@ func TestChildProvenanceRequiresAgentIdentityAndStableStart(t *testing.T) {
 	at := time.Now().UTC()
 	reg := archive.SessionRegistration{ParentSessionID: "parent", ParentNativeSessionID: "native-parent", SubagentID: "agent", SessionStartedAt: at, SubagentObservedAt: at.Add(time.Minute)}
 	filtered := archive.FilteredTranscript{NativeStartComplete: true, NativeStartAt: at, NativeEndAt: at, SessionIDs: []string{"native-parent"}}
-	if err := validateSubagentTranscript(reg, filtered); err == nil {
+	if err := validateSubagentTranscript(reg, filtered, at.Add(time.Minute)); err == nil {
 		t.Fatal("parent transcript without agent identity accepted as child")
 	}
 	filtered.AgentIDs = []string{"agent"}
-	if err := validateSubagentTranscript(reg, filtered); err != nil {
+	if err := validateSubagentTranscript(reg, filtered, at.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	filtered.NativeStartAt = at.Add(-time.Hour)
-	if err := validateSubagentTranscript(reg, filtered); err == nil {
+	if err := validateSubagentTranscript(reg, filtered, at.Add(time.Minute)); err == nil {
 		t.Fatal("replacement with old child start accepted")
 	}
 }
@@ -464,7 +467,7 @@ func TestHiddenOldRecordCannotMakeResumedChildLookFresh(t *testing.T) {
 	}
 	at := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	reg := archive.SessionRegistration{ParentSessionID: "parent-archive", ParentNativeSessionID: "parent", SubagentID: "agent", SessionStartedAt: at, SubagentObservedAt: at.Add(time.Minute)}
-	if err := validateSubagentTranscript(reg, filtered); err == nil {
+	if err := validateSubagentTranscript(reg, filtered, at.Add(time.Minute)); err == nil {
 		t.Fatal("excluded old native record was ignored for eligibility")
 	}
 }
@@ -496,4 +499,219 @@ func TestLaterChildStopSurvivesEarlierCaptureAcknowledgement(t *testing.T) {
 	if err != nil || len(remaining) != 0 {
 		t.Fatalf("processed stop retained: %+v %v", remaining, err)
 	}
+}
+
+// resumedSubagentFixture is a parent session and one Claude Code subagent of
+// it, with helpers to write the subagent's records, report its stops, and run
+// passes, for the tests of subagents resumed after they stop.
+type resumedSubagentFixture struct {
+	t         *testing.T
+	local     *state.Store
+	remote    *storagetest.MemoryStore
+	start     time.Time
+	childPath string
+}
+
+func newResumedSubagentFixture(t *testing.T) *resumedSubagentFixture {
+	t.Helper()
+	home := t.TempDir()
+	local, err := state.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &resumedSubagentFixture{t: t, local: local, remote: storagetest.NewMemoryStore(), start: time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC), childPath: filepath.Join(home, "child.jsonl")}
+	parentPath := filepath.Join(home, "parent.jsonl")
+	if err := os.WriteFile(parentPath, []byte(`{"type":"assistant","sessionId":"parent-native","timestamp":"2026-09-21T10:01:00Z","message":{"role":"assistant","content":"parent"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parent := archive.SessionRegistration{ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, TranscriptPath: parentPath, SessionStartedAt: f.start, RegisteredAt: f.start}
+	if err := local.SaveRegistration(parent); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// write appends a child record dated minutes after the parent's start.
+func (f *resumedSubagentFixture) write(minutes int) {
+	f.t.Helper()
+	file, err := os.OpenFile(f.childPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	at := f.start.Add(time.Duration(minutes) * time.Minute).Format(time.RFC3339)
+	if _, err := file.WriteString(`{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"` + at + `","message":{"role":"assistant","content":"child"}}` + "\n"); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// stop reports a SubagentStop minutes after the parent's start.
+func (f *resumedSubagentFixture) stop(minutes int) {
+	f.t.Helper()
+	if err := f.local.SaveSubagentCandidate(state.SubagentCandidate{ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1", ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1", TranscriptPath: f.childPath, ObservedAt: f.start.Add(time.Duration(minutes) * time.Minute)}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// run runs a pass minutes after the parent's start and fails on any error.
+func (f *resumedSubagentFixture) run(minutes int) Result {
+	f.t.Helper()
+	now := f.start.Add(time.Duration(minutes) * time.Minute)
+	result, err := Run(context.Background(), f.local, f.remote, Options{MachineID: "machine", Now: func() time.Time { return now }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if len(result.Errors) != 0 {
+		f.t.Fatalf("pass at +%dm failed: %v", minutes, result.Errors)
+	}
+	return result
+}
+
+// messages is the child's published message count.
+func (f *resumedSubagentFixture) messages() int {
+	f.t.Helper()
+	metadata := fetchMetadata(f.t, f.remote, "claude", "child")
+	if metadata.Counts.Messages == nil {
+		f.t.Fatal("child metadata has no message count")
+	}
+	return *metadata.Counts.Messages
+}
+
+func isRunning(result Result) bool {
+	return slices.Equal(result.RunningSubagents, []string{"child"}) && !slices.Contains(result.Published, "child")
+}
+
+// A subagent resumed after its stop writes records past the bound that stop
+// set. It waits, still running, at its published snapshot rather than failing
+// every pass; its next stop, or its transcript going quiet when no stop
+// comes, publishes the rest.
+func TestResumedSubagentWaitsForItsNextStop(t *testing.T) {
+	f := newResumedSubagentFixture(t)
+	f.write(2)
+	f.stop(3)
+	if result := f.run(4); !slices.Contains(result.Published, "child") {
+		t.Fatalf("first stop result=%#v", result)
+	}
+
+	// Resumed: a record after the first stop, and no second stop yet.
+	f.write(5)
+	result := f.run(10)
+	if !isRunning(result) {
+		t.Fatalf("running pass result=%#v", result)
+	}
+	if n := f.messages(); n != 1 {
+		t.Fatalf("running subagent published %d messages, want the snapshot of its last stop", n)
+	}
+	status, err := f.local.LoadStatus()
+	if err != nil || status.RunningSubagents != 1 {
+		t.Fatalf("status running=%d err=%v", status.RunningSubagents, err)
+	}
+
+	f.stop(6)
+	if result := f.run(70); len(result.RunningSubagents) != 0 || f.messages() != 2 {
+		t.Fatalf("after its next stop: result=%#v messages=%d", result, f.messages())
+	}
+
+	// Resumed again, and its session closed before it stopped: once its
+	// transcript is quiet for the grace, what it wrote is archived.
+	f.write(80)
+	if result := f.run(80 + 29); !isRunning(result) {
+		t.Fatalf("inside the grace: result=%#v", result)
+	}
+	if result := f.run(80 + 30); len(result.RunningSubagents) != 0 || f.messages() != 3 {
+		t.Fatalf("quiet for the grace: result=%#v messages=%d", result, f.messages())
+	}
+}
+
+// A subagent resumed before the pass after its stop is registered, not
+// rejected, and held to that stop: it publishes at its next stop, or once its
+// transcript is quiet.
+func TestSubagentResumedBeforeRegistrationWaits(t *testing.T) {
+	for _, next := range []string{"stop", "quiet"} {
+		t.Run(next, func(t *testing.T) {
+			f := newResumedSubagentFixture(t)
+			f.write(2)
+			f.stop(3)
+			f.write(5)
+			result := f.run(6)
+			if !isRunning(result) || len(result.RejectedSubagents) != 0 {
+				t.Fatalf("resumed candidate result=%#v", result)
+			}
+			if reg, found, err := f.local.LoadRegistration("child"); err != nil || !found || !reg.SubagentObservedAt.Equal(f.start.Add(3*time.Minute)) {
+				t.Fatalf("registration=%+v found=%v err=%v", reg, found, err)
+			}
+			if request, _, err := f.local.LoadRequest("parent"); err != nil || strings.Contains(fmt.Sprint(request.HookEvidence), string(archive.LinkedSessionUnavailable)) {
+				t.Fatalf("parent told the link is unavailable: %+v err=%v", request.HookEvidence, err)
+			}
+			at := 5 + 30
+			if next == "stop" {
+				f.stop(7)
+				at = 8
+			}
+			if result := f.run(at); len(result.RunningSubagents) != 0 || !slices.Contains(result.Published, "child") || f.messages() != 2 {
+				t.Fatalf("after %s: result=%#v", next, result)
+			}
+		})
+	}
+}
+
+// A registered subagent that stops again and is resumed before the next pass
+// is one running subagent, and that pass records its later stop.
+func TestRestoppedRunningSubagentCountsOnceAndKeepsItsStop(t *testing.T) {
+	f := newResumedSubagentFixture(t)
+	f.write(2)
+	f.stop(3)
+	f.run(4)
+	f.write(5)
+	f.stop(6)
+	f.write(7)
+	result := f.run(8)
+	if !isRunning(result) {
+		t.Fatalf("result=%#v", result)
+	}
+	if reg, _, err := f.local.LoadRegistration("child"); err != nil || !reg.SubagentObservedAt.Equal(f.start.Add(6*time.Minute)) {
+		t.Fatalf("later stop not recorded: observed=%v err=%v", reg.SubagentObservedAt, err)
+	}
+	status, err := f.local.LoadStatus()
+	if err != nil || status.RunningSubagents != 1 {
+		t.Fatalf("status running=%d err=%v", status.RunningSubagents, err)
+	}
+}
+
+// A record dated beyond the grace ahead of the clock never goes quiet, so it
+// is a provenance failure, not a subagent still running: a registered child
+// fails the pass, and a candidate is rejected rather than kept for good.
+func TestFutureDatedSubagentRecordIsNotRunning(t *testing.T) {
+	t.Run("registered", func(t *testing.T) {
+		f := newResumedSubagentFixture(t)
+		f.write(2)
+		f.stop(3)
+		f.run(4)
+		f.write(60)
+		result, err := Run(context.Background(), f.local, f.remote, Options{MachineID: "machine", Now: func() time.Time { return f.start.Add(10 * time.Minute) }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.RunningSubagents) != 0 || !errors.Is(result.Errors["child"], errSubagentFutureRecord) {
+			t.Fatalf("result=%#v", result)
+		}
+	})
+	t.Run("candidate", func(t *testing.T) {
+		f := newResumedSubagentFixture(t)
+		f.write(2)
+		f.stop(3)
+		f.write(60)
+		result, err := Run(context.Background(), f.local, f.remote, Options{MachineID: "machine", Now: func() time.Time { return f.start.Add(10 * time.Minute) }, AcceptSession: func(archive.SessionRegistration) bool { return true }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(result.RunningSubagents) != 0 || result.RejectedSubagents["child"] != "subagent_provenance_unavailable" {
+			t.Fatalf("result=%#v", result)
+		}
+		if candidates, err := f.local.LoadSubagentCandidates(); err != nil || len(candidates) != 0 {
+			t.Fatalf("candidate kept: %+v err=%v", candidates, err)
+		}
+	})
 }

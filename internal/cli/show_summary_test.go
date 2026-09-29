@@ -22,6 +22,7 @@ func intPtr(n int) *int { return &n }
 // summaryFixture is a Claude Code session with every row the summary shows.
 func summaryFixture() sessionView {
 	importedAt := time.Date(2026, 9, 29, 12, 30, 0, 0, time.UTC)
+	endedAt := time.Date(2026, 9, 29, 10, 58, 0, 0, time.UTC)
 	return sessionView{
 		Metadata: archive.Metadata{
 			SessionID:     "03e60c25f1a04b7c9d2e8f6a1b3c5d7e",
@@ -29,8 +30,9 @@ func summaryFixture() sessionView {
 			ProjectName:   "agent-archive",
 			StartedAt:     time.Date(2026, 9, 29, 10, 14, 0, 0, time.UTC),
 			CapturedAt:    time.Date(2026, 9, 29, 11, 2, 0, 0, time.UTC),
+			EndedAt:       &endedAt,
 			Harness:       archive.Harness{Name: "claude", Version: "2.4.1"},
-			Parser:        archive.ParserInfo{Name: "claude", Version: "0.12.0", Status: archive.ParserStatusPartial},
+			Parser:        archive.ParserInfo{Name: "claude", Version: "0.13.0", Status: archive.ParserStatusPartial},
 			FilterVersion: "12",
 			State:         archive.MetadataStateIdle,
 			TurnOutcome:   archive.TurnOutcomeCompleted,
@@ -43,12 +45,20 @@ func summaryFixture() sessionView {
 			SkillsUsed: []archive.SkillUse{{Name: "simplify"}, {Name: "code-review"}},
 			Counts: archive.Counts{
 				Turns: intPtr(35), Messages: intPtr(212), ToolCalls: intPtr(148),
-				UserShellCommands: intPtr(3), Compactions: intPtr(1),
+				UserShellCommands: intPtr(3), Compactions: intPtr(1), FilesTouched: intPtr(14),
+			},
+			ToolsUsed: []archive.ToolUsage{
+				{Name: "Bash", Count: 42}, {Name: "Edit", Count: 18}, {Name: "Read", Count: 12},
+				{Name: "Grep", Count: 9}, {Name: "mcp__github__create_pull_request", Count: 1},
 			},
 			CaptureGaps: []archive.CaptureGap{
 				{Code: archive.CaptureGapImportedWithoutHookEvidence, Detail: "No hook observed this session before it was imported (imported_at): activity before then has no hook lifecycle events, final-response text, or skill inventory."},
-				{Code: "tool_result_truncated", Record: 12},
-				{Code: "tool_result_truncated", Record: 40},
+				{Code: "hidden_instruction_omitted", Record: 3, Detail: "injected instruction block omitted"},
+				{Code: "hidden_instruction_omitted", Record: 9, Detail: "injected instruction block omitted"},
+				{Code: "sensitive_content_redacted", Record: 12, Detail: "content redacted"},
+				{Code: "unknown_field_omitted", Record: 20, Detail: "omitted keys: advisorModel"},
+				{Code: "incomplete_or_invalid_record", Record: 40, Detail: "jsonl record omitted"},
+				{Code: "incomplete_or_invalid_record", Record: 41, Detail: "jsonl record omitted"},
 			},
 			LinkedSessions: []archive.LinkedSessionReference{{SessionID: "child-1"}, {SessionID: "child-2"}},
 			Origin:         archive.SessionOriginImport,
@@ -84,7 +94,7 @@ func TestSessionSummaryOmitsAbsentData(t *testing.T) {
 	view := sessionView{Metadata: archive.Metadata{
 		SessionID: "abcdef0123456789abcdef0123456789",
 		Harness:   archive.Harness{Name: "codex"},
-		Counts:    archive.Counts{Turns: intPtr(2), ToolCalls: intPtr(0)},
+		Counts:    archive.Counts{Turns: intPtr(2), ToolCalls: intPtr(0), FilesTouched: intPtr(0)},
 	}}
 	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC})
 	if !strings.HasPrefix(text, "abcdef01\n") {
@@ -93,13 +103,51 @@ func TestSessionSummaryOmitsAbsentData(t *testing.T) {
 	if !strings.Contains(text, "Activity  2 turns · 0 tool calls\n") {
 		t.Fatalf("activity row:\n%s", text)
 	}
-	for _, absent := range []string{"message", "compaction", "When", "Model", "Skills", "Subagents", "Parent", "Imported", "Capture gaps", "Transcript:", "completed"} {
+	for _, absent := range []string{"message", "compaction", "edited", "Tools", "When", "Model", "Skills", "Subagents", "Parent", "Imported", "Omitted", "Incomplete", "Transcript:", "completed"} {
 		if strings.Contains(text, absent) {
 			t.Fatalf("%q shown for absent data:\n%s", absent, text)
 		}
 	}
 	if !strings.Contains(text, "Agent     Codex\n") || !strings.Contains(text, "origin hook") {
 		t.Fatalf("agent or provenance missing:\n%s", text)
+	}
+}
+
+// Gaps the archive records by design (filtering, redaction, fields the
+// parser does not recognize) are named in the quiet Omitted row and never
+// warn; any other code, including one this version does not know, is
+// listed under the warning.
+func TestSessionSummarySeparatesRoutineGaps(t *testing.T) {
+	t.Parallel()
+	view := sessionView{Metadata: archive.Metadata{
+		SessionID: "abcdef0123456789abcdef0123456789",
+		Harness:   archive.Harness{Name: "claude"},
+		CaptureGaps: []archive.CaptureGap{
+			{Code: "unknown_record_type", Detail: "record omitted"},
+			{Code: "hidden_instruction_omitted"},
+			{Code: "hidden_instruction_omitted"},
+			{Code: "sensitive_content_redacted"},
+			{Code: "unknown_field_omitted", Detail: "omitted keys: advisorModel, apiBlockIndex"},
+		},
+	}}
+	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC})
+	want := "  Omitted   injected instructions, redacted secrets, unrecognized fields,\n            unrecognized records\n"
+	if !strings.Contains(text, want) {
+		t.Fatalf("missing %q:\n%s", want, text)
+	}
+	for _, absent := range []string{"!", "Incomplete", "hidden_instruction_omitted", "omitted keys"} {
+		if strings.Contains(text, absent) {
+			t.Fatalf("%q shown for routine gaps:\n%s", absent, text)
+		}
+	}
+
+	view.CaptureGaps = append(view.CaptureGaps, archive.CaptureGap{Code: "some_future_gap", Detail: "new"})
+	text = renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC})
+	if !strings.Contains(text, "  ! Incomplete capture\n    some_future_gap — new\n") {
+		t.Fatalf("an unknown code is not warned about:\n%s", text)
+	}
+	if strings.Contains(text, "unknown_record_type") {
+		t.Fatalf("a routine code is listed under the warning:\n%s", text)
 	}
 }
 
@@ -130,6 +178,7 @@ func TestSessionSummaryNeutralizesEscapes(t *testing.T) {
 	view.ProjectName = "proj\x1b[31m"
 	view.Harness.Version = "1.0\u009b2J"
 	view.SkillsUsed = []archive.SkillUse{{Name: "skill\x07"}}
+	view.ToolsUsed = []archive.ToolUsage{{Name: "tool\x1b[2J", Count: 3}}
 	view.CaptureGaps = []archive.CaptureGap{{Code: "gap\x1b[1m", Detail: "detail\r\nmore"}}
 	view.Models = []archive.ModelSummary{{Attributes: map[string]string{"gen_ai.request.model": "model\x1b[0m", "agent_archive.request.reasoning_level": "hi\x9b"}}}
 	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC, Hints: true})
@@ -326,6 +375,65 @@ func TestTranscriptRendersCommandsAndNotices(t *testing.T) {
 	}
 }
 
+// The prompt is quoted with a gutter that survives wrapping and blank
+// lines, and each run of the agent's steps starts with its name: after the
+// prompt and after the person's own command, never before that command.
+func TestTranscriptMarksWhoIsSpeaking(t *testing.T) {
+	t.Parallel()
+	transcript := archive.Transcript{Exchanges: []archive.TranscriptExchange{
+		{Kind: archive.TranscriptExchangePrompt, Text: "please review the levenshtein repo for gaps\n\nthen write a packet", Steps: []archive.TranscriptStep{
+			{Kind: archive.TranscriptStepText, Text: "I'll start."},
+			{Kind: archive.TranscriptStepCommand, Text: "/model", Output: "Set model to claude-opus-5"},
+			{Kind: archive.TranscriptStepTool, Tool: &archive.HandoffToolCall{Name: "Bash", Summary: "go test ./..."}},
+		}},
+	}}
+	var b bytes.Buffer
+	renderTranscript(&b, summaryFixture(), transcript, transcriptOptions{summaryOptions: summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: 24}}})
+	_, got, _ := strings.Cut(b.String(), "─\n")
+	want := `┃ please review the
+┃ levenshtein repo for
+┃ gaps
+┃
+┃ then write a packet
+
+Claude Code ›
+I'll start.
+
+  » /model
+      │ Set model to claude-opus-5
+
+Claude Code ›
+  ▸ Bash go test ./...
+`
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A prompt word wider than the line, such as a link or text with no spaces,
+// is split so every row keeps the gutter, and a wide character is never cut.
+func TestTranscriptPromptSplitsLongWords(t *testing.T) {
+	t.Parallel()
+	transcript := archive.Transcript{Exchanges: []archive.TranscriptExchange{
+		{Kind: archive.TranscriptExchangePrompt, Text: "see https://example.com/a/very/long/path ok\n日本語のテキストです"},
+	}}
+	var b bytes.Buffer
+	renderTranscript(&b, summaryFixture(), transcript, transcriptOptions{summaryOptions: summaryOptions{Now: summaryNow, Location: time.UTC, Style: textStyle{width: 13}}})
+	_, got, _ := strings.Cut(b.String(), "─\n")
+	want := `┃ see
+┃ https://exa
+┃ mple.com/a/
+┃ very/long/p
+┃ ath
+┃ ok
+┃ 日本語のテ
+┃ キストです
+`
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // A session ID from the bucket is display text too, even as a fallback
 // title or in a hint.
 func TestSessionSummaryNeutralizesSessionID(t *testing.T) {
@@ -370,6 +478,21 @@ func TestShowFullNeedsReadableTranscript(t *testing.T) {
 		var out, errOut bytes.Buffer
 		if code := Run(args, nil, &out, &errOut, env); code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "--full is for the readable transcript") {
 			t.Fatalf("%v: code=%d out=%s stderr=%s", args, code, out.String(), errOut.String())
+		}
+	}
+}
+
+// Every code the Omitted row names is one the archive writes, so a typo
+// cannot turn a routine gap into a warning.
+func TestRoutineGapsAreKnownCodes(t *testing.T) {
+	t.Parallel()
+	known := map[string]bool{}
+	for _, code := range archive.CaptureGapCodes {
+		known[code] = true
+	}
+	for _, gap := range routineGaps {
+		if !known[gap.code] {
+			t.Errorf("routineGaps names %q, which is not in archive.CaptureGapCodes", gap.code)
 		}
 	}
 }
