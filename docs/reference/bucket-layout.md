@@ -37,6 +37,10 @@ names and filtered hashes, and `body` also carries filtered snapshots. A
 policy change does not erase already uploaded source objects. A replaced
 source may remain as a predecessor or in bucket version history; removing
 old bytes requires reviewing those copies as well as the live pointer.
+`agent-archive purge plan` lists unreferenced source keys and reports current
+older-filter sessions separately. Its private plan and report are local; they
+are not new bucket objects. [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)
+explains how to apply a plan with every uploading Mac paused.
 
 ## How objects change
 
