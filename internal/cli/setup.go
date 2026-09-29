@@ -248,7 +248,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool) error 
 	if !found && unfinished.Config.Storage.Bucket == "" {
 		terminal.Println(out, "You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions are available when you choose storage.")
 	}
-	draft, done, err := selectSetupDraft(p, home, userHome, env, existing, installed, known)
+	draft, done, err := selectSetupDraft(p, home, userHome, env, existing, found, installed, known)
 	if err != nil {
 		return err
 	}
@@ -318,8 +318,12 @@ func setupPreflightScope(detected []string, existing config.Config, unfinished s
 	return scope
 }
 
-func selectSetupDraft(p *prompter, home, userHome string, env Env, existing config.Config, installed bool, known func(config.Config) []backfill.KnownProject) (setupDraft, bool, error) {
-	draft := setupDraft{Version: draftFormat, Config: existing}
+func selectSetupDraft(p *prompter, home, userHome string, env Env, existing config.Config, found, installed bool, known func(config.Config) []backfill.KnownProject) (setupDraft, bool, error) {
+	initial := existing
+	if !found {
+		initial.SkillEvidence = config.SkillEvidenceMetadata
+	}
+	draft := setupDraft{Version: draftFormat, Config: initial}
 	saved, haveDraft, err := offerUnusableDraft(p, home)
 	if err != nil {
 		return setupDraft{}, false, err
@@ -336,6 +340,12 @@ func selectSetupDraft(p *prompter, home, userHome string, env Env, existing conf
 		}
 		if choice != "restart" {
 			draft = saved
+			// A draft from before skill policy existed is still a fresh setup
+			// when no configuration was ever committed. Use the fresh default
+			// rather than silently treating the unfinished draft as legacy.
+			if !found && draft.Config.SkillEvidence == "" {
+				draft.Config.SkillEvidence = config.SkillEvidenceMetadata
+			}
 			// Projects an import added after this draft was saved are kept:
 			// the draft never saw them, so it cannot have meant to drop them.
 			draft.Config.Archive.Projects = withBackfilledProjects(draft.Config.Archive.Projects, existing.Archive.Projects, backfilledProjects(env))

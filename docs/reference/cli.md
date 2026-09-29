@@ -48,6 +48,7 @@ Switch agents
 
 Maintenance
   agent-archive uninstall   Remove integrations; keep local data
+  agent-archive purge       Review and remove unreferenced source objects
 
 Run agent-archive COMMAND --help for options and examples.
 Use --version to show the installed version.
@@ -71,6 +72,7 @@ Guide: [Set up capture](../getting-started/setup.md).
 ```text
 Usage: agent-archive setup [--abandon-recovery] [--verbose]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
+               [--skill-evidence none|metadata|body]
 
 Choose apps and projects, connect storage, then review and enable capture.
 Run again to continue saved setup or edit capture, storage, or retention.
@@ -98,6 +100,10 @@ An interrupted setup is recovered on the next run.
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this Mac). It must
                         name every app set up now: --yes never removes one
+  --skill-evidence MODE none: no filesystem skill evidence; metadata: names
+                        and filtered hashes; body: filtered SKILL.md text.
+                        Fresh setup defaults to metadata; earlier configs
+                        without this field keep body until changed.
 With --yes, the R2 secret access key is read from
 AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY, or else from standard input.
 Example: agent-archive setup
@@ -117,6 +123,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 | `--r2-access-key-id` | a value | — |
 | `--r2-account` | a value | — |
 | `--region` | a value | — |
+| `--skill-evidence` | a value | — |
 | `--verbose` | no value | — |
 | `--yes` | no value | — |
 
@@ -207,13 +214,10 @@ stdin, text is paged through $PAGER unless --no-pager.
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
   --skill-sha256 HEX             Filter by exact lowercase skill SHA-256
-  --skill-usage used|available|eligible_no_use
+  --skill-usage used|available
                                  How --skill matches (default used).
-                                 eligible_no_use cannot return sessions yet:
-                                 no parser version records both a complete
-                                 eligible-skill set and complete use
-                                 observation, so non-use is never proven. The
-                                 value stays accepted for forward compatibility.
+                                 Non-use queries are unsupported because no
+                                 parser proves complete eligibility and use.
   --since DATE|TIME|AGE          Captured at or after a date (2026-01-31,
                                  from midnight UTC; backfill's --since uses
                                  your local day), an RFC 3339 time, or an
@@ -224,20 +228,19 @@ stdin, text is paged through $PAGER unless --no-pager.
   --hook-captured                Only sessions hooks captured as they ran
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
+  --rebuild-index                Rebuild the listing index from live metadata;
+                                 scans the full archive and writes index keys
   --verbose                      Full SESSION_IDs, absolute times, origin,
                                  parser status, all models/skills, and title
   --no-pager                     Print directly; do not page through $PAGER
-  --no-cache                     Download every metadata sidecar instead of
-                                 reusing unchanged ones from the local
-                                 metadata cache (metadata only; never
-                                 conversation content)
-  --json                         Print {"schema_version": 2, "sessions": [...],
-                                 "limit", "returned", "total_matched"}: each
-                                 matching session's metadata, as show prints
-                                 it (never conversation content). A query that
-                                 cannot return sessions yet has "sessions": []
-                                 and an "unavailable" reason. Never paged or
-                                 interactive.
+  --no-cache                     Bypass the local metadata cache during full
+                                 scans; indexed listing always verifies live
+                                 sidecars (never conversation content)
+  --json                         Print {"schema_version": 4, "sessions": [...],
+                                 "limit", "returned", "total_matched_known"}:
+                                 "total_matched" is present only when exact;
+                                 each session is live metadata. Usage errors
+                                 print no JSON. Never paged or interactive.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 ```
 
@@ -252,6 +255,7 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--model` | a value | — |
 | `--no-cache` | no value | — |
 | `--no-pager` | no value | — |
+| `--rebuild-index` | no value | — |
 | `--since` | a value | — |
 | `--skill` | a value | — |
 | `--skill-sha256` | a value | — |
@@ -461,6 +465,57 @@ Example: agent-archive uninstall
 | --- | --- | --- |
 | `--delete-local-data` | no value | — |
 | `--yes` | no value | — |
+
+## agent-archive purge
+
+Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
+
+```text
+Usage: agent-archive purge plan [--mode unreferenced|old-filter]
+       [--before-filter VERSION]
+       agent-archive purge apply PLAN [--yes]
+
+Create a private five-minute deletion plan, then review its exact keys.
+Plan lists still-current older-filter sessions separately and never proposes
+their current sources for deletion. Pause every Mac uploading to this prefix
+before apply. A versioned bucket keeps noncurrent versions and delete markers.
+```
+
+No flags.
+
+## agent-archive purge apply
+
+Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
+
+```text
+Usage: agent-archive purge apply PLAN [--yes]
+
+Pause every uploading Mac first. Confirm the plan digest or use --yes.
+Apply rechecks remote metadata before each deletion and writes a resumable
+report next to the plan. A plan expires five minutes after creation.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--yes` | no value | — |
+
+## agent-archive purge plan
+
+Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
+
+```text
+Usage: agent-archive purge plan [--mode unreferenced|old-filter]
+       [--before-filter VERSION]
+
+Read metadata and list source objects without deleting anything. Old-filter
+mode selects only unreferenced sources whose filter version is below VERSION;
+both modes report still-current older-filter sessions separately.
+```
+
+| Flag | Takes | Default |
+| --- | --- | --- |
+| `--before-filter` | a value | — |
+| `--mode` | a value | `unreferenced` |
 
 ## agent-archive version
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/state/statetest"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -57,7 +58,7 @@ func TestParserUpgradeReusesSourceAfterNativeLogDisappears(t *testing.T) {
 		t.Fatalf("changed durable source or wrong summary: %+v", next)
 	}
 	key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
-	if len(remote.keys) != 1 || remote.keys[0] != key {
+	if len(remote.keys) != 3 || remote.keys[2] != key {
 		t.Fatalf("metadata-only upgrade wrote %v", remote.keys)
 	}
 	after, _ := remote.Get(context.Background(), old.SourceBundle.Key)
@@ -82,7 +83,7 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	}
 	remote := &metadataFailStore{MemoryStore: storagetest.NewMemoryStore()}
 	now := reg.RegisteredAt.Add(time.Hour)
-	opts := Options{MachineID: "machine", ParserVersion: "one", Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
+	opts := Options{MachineID: "machine", ParserVersion: "one", SkillEvidence: config.SkillEvidenceMetadata, Now: func() time.Time { return now }, Retry: storage.RetryPolicy{MaxAttempts: 1}}
 	if result, err := Run(context.Background(), local, remote, opts); err != nil || len(result.Errors) != 0 {
 		t.Fatalf("%#v %v", result, err)
 	}
@@ -97,6 +98,9 @@ func TestParserMetadataRetryUsesSavedBytes(t *testing.T) {
 	pending, found, err := local.LoadPending(reg.ArchiveSessionID)
 	if err != nil || !found {
 		t.Fatalf("%v %v", found, err)
+	}
+	if pending.SkillEvidence != string(config.SkillEvidenceMetadata) || !pending.MetadataOnly {
+		t.Fatalf("parser refresh lost skill policy: %+v", pending)
 	}
 	remote.failMetadata = false
 	now = now.Add(24 * time.Hour)
@@ -318,8 +322,8 @@ func TestParserUpgradeWithNewContentPublishesOnce(t *testing.T) {
 			metadataWrites++
 		}
 	}
-	if metadataWrites != 1 || len(remote.keys) != 2 {
-		t.Fatalf("parser upgrade with new content wrote %v, want one source and one metadata object", remote.keys)
+	if metadataWrites != 1 || len(remote.keys) != 4 {
+		t.Fatalf("parser upgrade with new content wrote %v, want source, listing hints, and metadata", remote.keys)
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
 	if after.SourceBundle.SHA256 == before.SourceBundle.SHA256 || after.Parser.Version != "two" {
@@ -422,7 +426,7 @@ func TestBlockedSessionRegeneratesFromLastPublicationOnly(t *testing.T) {
 		t.Fatalf("%#v %v", result, err)
 	}
 	metadataKey, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
-	if len(remote.keys) != 1 || remote.keys[0] != metadataKey {
+	if len(remote.keys) != 3 || remote.keys[2] != metadataKey {
 		t.Fatalf("blocked session upgrade wrote %v", remote.keys)
 	}
 	after := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)

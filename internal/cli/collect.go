@@ -120,14 +120,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return collector.Result{}, fmt.Errorf("open local store: %w", err)
 	}
 
-	holder := "sync"
-	switch {
-	case pass.progress != nil:
-		holder = "backfill upload"
-	case quietOnBusy:
-		holder = "scheduled collection"
-	}
-	unlock, err := lockCollector(home, holder, env.now())
+	unlock, err := lockCollector(home, collectorPassHolder(quietOnBusy, pass), env.now())
 	if err != nil {
 		if errors.Is(err, local.ErrBusy) {
 			if quietOnBusy {
@@ -143,19 +136,9 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return collector.Result{}, fmt.Errorf("acquire lock: %w", err)
 	}
 	defer unlock()
-	pruneHandoffs(home, env.now())
-	if setupjournal.TransactionPending(home) {
-		return collector.Result{}, errors.New(recoveryPending(home))
-	}
-	cfg, found, err = config.Load(home)
+	cfg, err = reloadPassConfig(home, env)
 	if err != nil {
 		return collector.Result{}, err
-	}
-	if !found || !cfg.Archive.Enabled {
-		return collector.Result{}, errNotSetUp
-	}
-	if cfg.Paused {
-		return collector.Result{}, errPaused
 	}
 
 	started := time.Now()
@@ -164,46 +147,9 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	stop := func() bool {
 		return time.Since(started) >= collectSoftDeadline || (pass.stop != nil && pass.stop())
 	}
-	objectStore, err := env.openStore(cfg)
+	objectStore, cfg, err := openPassStorage(ctx, home, cfg, env, localStore, quietOnBusy)
 	if err != nil {
-		storeErr := fmt.Errorf("open storage: %w", err)
-		recordPreflightError(localStore, storeErr)
-		_ = recordStorageHealth(home, cfg, env, quietOnBusy, "credentials_unavailable")
-		return collector.Result{}, storeErr
-	}
-	if quietOnBusy {
-		var prior storageHealth
-		healthErr := local.Read(filepath.Join(home, "storage-health.json"), &prior)
-		if healthErr != nil || prior.ConfigurationID != configurationID(cfg) || prior.Context != "background_collector" || prior.State != "verified" || env.now().Sub(prior.CheckedAt) > storageHealthRefreshAfter {
-			probeErr := storage.VerifyAccess(ctx, objectStore)
-			state := "verified"
-			if probeErr != nil {
-				state = storageFailureState(probeErr)
-			}
-			if err := recordStorageHealth(home, cfg, env, true, state); err != nil {
-				return collector.Result{}, err
-			}
-			if probeErr != nil {
-				// Only a fixed message is recorded: the SDK's own can carry
-				// what a credential_process printed.
-				message := "background storage access failed; restore credentials or connectivity and retry"
-				if credentials.CredentialProcessFailed(probeErr) {
-					message = backgroundCredentialProcessFailure
-				}
-				recordPreflightError(localStore, errors.New(message))
-				return collector.Result{}, probeErr
-			}
-		}
-		// Privacy evidence is persisted in config.json exactly as setup saves
-		// it, so status and setup review read one source. The config was
-		// re-read under the lock above, so the save cannot lose another
-		// writer's update.
-		if bucketPrivacyNeedsRefresh(cfg, env.now()) {
-			cfg.BucketPrivacy = inspectBucketPrivacy(cfg, objectStore, env.now())
-			if err := config.Save(home, cfg); err != nil {
-				return collector.Result{}, fmt.Errorf("save bucket privacy evidence: %w", err)
-			}
-		}
+		return collector.Result{}, err
 	}
 
 	// The previous pass's time, read before this pass overwrites it: the
@@ -214,7 +160,8 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	}
 	result, err := collector.Run(ctx, localStore, objectStore, collector.Options{
 		MachineID:            cfg.MachineID,
-		SupplementalEvidence: skillObserver(env),
+		SupplementalEvidence: skillObserver(env, cfg.EffectiveSkillEvidence()),
+		SkillEvidence:        cfg.EffectiveSkillEvidence(),
 		AcceptSession:        cfg.AcceptSession,
 		Now:                  env.Now,
 		RequireSkillUse:      cfg.RequireSkillUse,
@@ -226,41 +173,64 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return result, err
 	}
 
-	// A read-back verification failure is reported, but only once the
-	// retention sweep below has run: it is no reason to skip cleanup.
+	verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
+	if err != nil {
+		return result, err
+	}
+
+	return finishPassWithRetention(env, cfg, localStore, objectStore, previousScanAt, result, verifyErr)
+}
+
+// verifyAndRecordPass performs read-back verification and records per-session
+// failures. Verification is returned separately so retention still runs first.
+func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (error, error) {
+	// A read-back verification failure is reported after the retention
+	// sweep: it is no reason to skip cleanup.
 	var verifyErr error
 	if _, err := verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore); err != nil {
 		verifyErr = fmt.Errorf("read-back verification: %w", err)
 	}
 	if health := passStorageHealth(result); health != "not_checked" {
 		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
-			return result, err
+			return verifyErr, err
 		}
 	}
 	if len(result.Errors) > 0 {
 		current, readErr := localStore.LoadStatus()
 		if readErr != nil {
-			return result, readErr
+			return verifyErr, readErr
 		}
 		current.SessionIssues = map[string]string{}
 		for id, issue := range result.Errors {
-			code := "capture_or_publication_failed"
-			switch {
-			case errors.Is(issue, state.ErrQuarantined):
-				code = "local_state_unreadable"
-			case strings.Contains(issue.Error(), "truncated, compacted, or rewritten"):
-				code = "transcript_discontinuity"
-			case strings.Contains(issue.Error(), "collection limit"):
-				code = "transcript_size_limit"
-			}
-			current.SessionIssues[id] = code
+			current.SessionIssues[id] = sessionIssueCode(issue)
 		}
 		if err := localStore.SaveStatus(current); err != nil {
-			return result, err
+			return verifyErr, err
 		}
 		recordPreflightError(localStore, fmt.Errorf("%d session(s) need capture or publication", len(result.Errors)))
 	}
+	return verifyErr, nil
+}
 
+// sessionIssueCode keeps status diagnostics stable while omitting raw errors,
+// which may include transcript content or storage credential-process output.
+func sessionIssueCode(issue error) string {
+	switch {
+	case errors.Is(issue, state.ErrQuarantined):
+		return "local_state_unreadable"
+	case strings.Contains(issue.Error(), "truncated, compacted, or rewritten"):
+		return "transcript_discontinuity"
+	case strings.Contains(issue.Error(), "collection limit"):
+		return "transcript_size_limit"
+	default:
+		return "capture_or_publication_failed"
+	}
+}
+
+// finishPassWithRetention gives cleanup its own deadline after collection.
+// It runs under the caller's collector lock and preserves verification errors
+// until after the sweep has completed.
+func finishPassWithRetention(env Env, cfg config.Config, localStore *state.Store, objectStore storage.ObjectStore, previousScanAt time.Time, result collector.Result, verifyErr error) (collector.Result, error) {
 	sweepCtx, cancelSweep := context.WithTimeout(context.Background(), sweepTimeout)
 	defer cancelSweep()
 	sweepOptions := retention.Options{
@@ -303,6 +273,86 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return result, verifyErr
 	}
 	return result, nil
+}
+
+// openPassStorage verifies scheduled collector access and refreshes health and
+// bucket privacy evidence while the caller still holds collector.lock.
+func openPassStorage(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, quietOnBusy bool) (storage.ObjectStore, config.Config, error) {
+	objectStore, err := env.openStoreContext(ctx, cfg)
+	if err != nil {
+		storeErr := fmt.Errorf("open storage: %w", err)
+		recordPreflightError(localStore, storeErr)
+		_ = recordStorageHealth(home, cfg, env, quietOnBusy, "credentials_unavailable")
+		return nil, cfg, storeErr
+	}
+	if quietOnBusy {
+		var prior storageHealth
+		healthErr := local.Read(filepath.Join(home, "storage-health.json"), &prior)
+		if healthErr != nil || prior.ConfigurationID != configurationID(cfg) || prior.Context != "background_collector" || prior.State != "verified" || env.now().Sub(prior.CheckedAt) > storageHealthRefreshAfter {
+			probeErr := storage.VerifyAccess(ctx, objectStore)
+			state := "verified"
+			if probeErr != nil {
+				state = storageFailureState(probeErr)
+			}
+			if err := recordStorageHealth(home, cfg, env, true, state); err != nil {
+				return nil, cfg, err
+			}
+			if probeErr != nil {
+				// Only a fixed message is recorded: the SDK's own can carry
+				// what a credential_process printed.
+				message := "background storage access failed; restore credentials or connectivity and retry"
+				if credentials.CredentialProcessFailed(probeErr) {
+					message = backgroundCredentialProcessFailure
+				}
+				recordPreflightError(localStore, errors.New(message))
+				return nil, cfg, probeErr
+			}
+		}
+		// Privacy evidence is persisted in config.json exactly as setup saves
+		// it, so status and setup review read one source. The config was
+		// re-read under the lock above, so the save cannot lose another
+		// writer's update.
+		if bucketPrivacyNeedsRefresh(cfg, env.now()) {
+			cfg.BucketPrivacy = inspectBucketPrivacyContext(ctx, cfg, objectStore, env.now())
+			if err := config.Save(home, cfg); err != nil {
+				return nil, cfg, fmt.Errorf("save bucket privacy evidence: %w", err)
+			}
+		}
+	}
+
+	return objectStore, cfg, nil
+}
+
+// collectorPassHolder names the lock owner in status and busy errors.
+func collectorPassHolder(quietOnBusy bool, pass passOptions) string {
+	switch {
+	case pass.progress != nil:
+		return "backfill upload"
+	case quietOnBusy:
+		return "scheduled collection"
+	default:
+		return "sync"
+	}
+}
+
+// reloadPassConfig runs under collector.lock. Setup or pause may have
+// changed configuration since the read-only preflight above.
+func reloadPassConfig(home string, env Env) (config.Config, error) {
+	pruneHandoffs(home, env.now())
+	if setupjournal.TransactionPending(home) {
+		return config.Config{}, errors.New(recoveryPending(home))
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if !found || !cfg.Archive.Enabled {
+		return config.Config{}, errNotSetUp
+	}
+	if cfg.Paused {
+		return config.Config{}, errPaused
+	}
+	return cfg, nil
 }
 
 // passStorageHealth derives the storage-access evidence one pass produced. A
@@ -390,6 +440,10 @@ func recordPreflightError(localStore *state.Store, preflightErr error) {
 // Env.keychain), and a Keychain that is unavailable (a non-darwin build, or
 // cgo disabled) fails only an R2 configuration.
 func openConfiguredStore(cfg config.Config, keychain func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
+	return openConfiguredStoreContext(context.Background(), cfg, keychain)
+}
+
+func openConfiguredStoreContext(ctx context.Context, cfg config.Config, keychain func() (credentials.CredentialStore, error)) (storage.ObjectStore, error) {
 	var store credentials.CredentialStore
 	// Spelled as storage.NewConfiguredStore reads it.
 	if strings.EqualFold(strings.TrimSpace(cfg.Storage.Provider), credentials.ProviderR2) {
@@ -398,7 +452,7 @@ func openConfiguredStore(cfg config.Config, keychain func() (credentials.Credent
 			return nil, fmt.Errorf("keychain unavailable: %w", err)
 		}
 	}
-	return storage.NewConfiguredStore(context.Background(), cfg.Storage, store)
+	return storage.NewConfiguredStore(ctx, cfg.Storage, store)
 }
 
 // skillObserver shares bounded observations within a pass: user-scope skill
@@ -408,11 +462,11 @@ func openConfiguredStore(cfg config.Config, keychain func() (credentials.Credent
 //
 // An imported session gets no observation: today's skills attached to a
 // session that ran before them would be false evidence.
-func skillObserver(env Env) func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
+func skillObserver(env Env, mode config.SkillEvidence) func(archive.SessionRegistration, time.Time) ([]archive.SupplementalEvidence, error) {
 	userCache := map[string][]archive.SupplementalEvidence{}
 	projectCache := map[string][]archive.SupplementalEvidence{}
 	return func(reg archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
-		if reg.Imported() {
+		if reg.Imported() || mode == config.SkillEvidenceNone {
 			return nil, nil
 		}
 		userScope, ok := userCache[reg.Harness.Name]
@@ -421,7 +475,7 @@ func skillObserver(env Env) func(archive.SessionRegistration, time.Time) ([]arch
 			if err != nil {
 				return nil, err
 			}
-			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at})
+			userScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, UserHome: userHome, ObservedAt: at, Mode: mode})
 			if err != nil {
 				return nil, err
 			}
@@ -431,7 +485,7 @@ func skillObserver(env Env) func(archive.SessionRegistration, time.Time) ([]arch
 		projectScope, ok := projectCache[projectKey]
 		if !ok {
 			var err error
-			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at})
+			projectScope, err = evidence.ObserveSkills(evidence.SkillOptions{Harness: reg.Harness.Name, ProjectRoot: reg.ProjectRoot, ObservedAt: at, Mode: mode})
 			if err != nil {
 				return nil, err
 			}

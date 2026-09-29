@@ -12,11 +12,11 @@ explicitly.
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "sessions": [ { "...": "one metadata sidecar per matching session" } ],
   "limit": 50,
   "returned": 50,
-  "total_matched": 847,
+  "total_matched_known": false,
   "truncated": true
 }
 ```
@@ -28,12 +28,15 @@ explicitly.
   [`metadata.schema.json`](schemas.md). An empty result is `[]`, never
   `null`.
 - `limit` is the `--limit` value (`50` by default; `0` means no cap).
-  `returned` is `sessions.length`. `total_matched` is how many sessions
-  passed the filters before `--limit`. `truncated` is present and `true`
-  only when `--limit` cut the list short.
-- `unavailable` is present only when the query can't return sessions yet
-  (today: `--skill-usage eligible_no_use`); it holds the explanation the text
-  listing prints, and `sessions` is empty.
+  `returned` is `sessions.length`. `total_matched_known` says whether the
+  count is exact. When false, `total_matched` is omitted and `truncated` is
+  true: the indexed read stopped once it found one more match than the limit.
+  When true, `total_matched` is the exact match count and `truncated` is
+  present only if the limit cut it short. Use `--limit 0` for an exact count.
+- Unsupported filter values return exit code `2` with an explanation on
+  stderr and no JSON on stdout. This includes `--skill-usage eligible_no_use`:
+  current parsers cannot prove non-use. Schema version `3` removed the
+  version `2` `unavailable` field; version `4` adds explicit count knowledge.
 - A sidecar that can't be read (deleted mid-listing, or written by a newer
   version) is left out; a warning naming it goes to stderr, never stdout.
 - `--json` is never auto-paged, even on a terminal.
@@ -75,6 +78,7 @@ Treat an absent field and `null` the same way.
 | `background` | The launchd job: `loaded`, `running`, `missing`, `another_installation` (launchd runs this installation's label from a different plist, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
 | `paused` | Whether collection is paused. |
 | `projects` | Included project roots. |
+| `skill_evidence` | Effective filesystem skill evidence policy: `none`, `metadata`, or `body`. Older configs without the field report `body`. |
 | `applications[]` | Per app: hook state (`installed`, `missing or incomplete`, `broken`, or `unknown` when the hook file could not be read or no executable is recorded to check the hooks against; `warnings` then names the file), `other_installations` (the data directories of other agent-archive installations whose hooks are in the same hook file; this installation never changes them, and setup won't install beside them), installed version and its support (`verified_by_capture` once a session from that version was read back, else `unverified`), capture evidence (`configured`, `hook_observed`, `captured_locally`, `published`, `read_back_verified`, with counts), `sessions_with_capture_gaps`, observed app and adapter versions, and per-project breakdowns. |
 | `collector` | The last pass: `last_scan_at`, `last_published_at`, `pending_count`, `last_error`, `session_issues` (per session), `quarantined_files` (state files moved aside; see [local state](local-state.md)), and `unrefreshable_summaries` (sessions whose metadata this version can't refresh). |
 | `capture_diagnostics` | Content-free records of sessions a hook declined, for included projects. |

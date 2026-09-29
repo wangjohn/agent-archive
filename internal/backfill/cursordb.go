@@ -437,24 +437,45 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 	if !res.Checked {
 		return nil
 	}
+	items, toRead, err := selectCursorDatabaseChats(res.Chats, plan.Candidates, state, plan.Filters.IncludeRemoved, since, until)
+	if err != nil {
+		return err
+	}
+	if res.ReadChat == nil {
+		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, CursorUncheckedUnreadable
+		return nil
+	}
+	if err := readCursorDatabaseChats(ctx, workers, res.ReadChat, toRead); err != nil {
+		if ctx.Err() != nil {
+			return err
+		}
+		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, cursorstore.ReasonOf(err)
+		return nil
+	}
+	appendCursorDatabaseChats(env, r, projectFilter, items, plan)
+	plan.CursorSubagentsNotImported += cursorDatabaseSubagentCount(plan.Candidates, res.Subagents)
+	return nil
+}
+
+// selectCursorDatabaseChats decides which listed rows may need a whole-chat
+// read. Archive classification is the only IO in this step.
+func selectCursorDatabaseChats(chats []CursorDatabaseChat, candidates []Candidate, state ArchiveState, includeRemoved bool, since, until time.Time) (items, toRead []*work, err error) {
 	fileChats := map[string]bool{}
-	for _, c := range plan.Candidates {
+	for _, c := range candidates {
 		if c.Harness == "cursor" {
 			fileChats[c.NativeSessionID] = true
 		}
 	}
-	dated := !since.IsZero() || !until.IsZero()
-	var items, toRead []*work
 	// Two rows with one composerId are one chat found twice. The row kept is
 	// one whose key is its ID, which the chat can be read back by, so a
 	// stray row naming another chat's ID never displaces the real one.
 	kept := map[string]int{}
-	for i, chat := range res.Chats {
-		if k, ok := kept[chat.ID]; !ok || (res.Chats[k].KeyID != chat.ID && chat.KeyID == chat.ID) {
+	for i, chat := range chats {
+		if k, ok := kept[chat.ID]; !ok || (chats[k].KeyID != chat.ID && chat.KeyID == chat.ID) {
 			kept[chat.ID] = i
 		}
 	}
-	for i, chat := range res.Chats {
+	for i, chat := range chats {
 		if fileChats[chat.ID] {
 			continue
 		}
@@ -472,39 +493,59 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 			w.duplicate = true
 			continue
 		}
-		// The collector reads the chat by its ID; a row whose composerId is
-		// not its key's can't be read back under the ID it would register.
-		w.t.identityMismatch = chat.ID != chat.KeyID
+		var reason SkipReason
 		if strings.TrimSpace(chat.ID) != "" {
-			reason, err := state.Classify("cursor", chat.ID)
+			reason, err = state.Classify("cursor", chat.ID)
 			if err != nil {
-				return fmt.Errorf("check the archive: %w", err)
+				return nil, nil, fmt.Errorf("check the archive: %w", err)
 			}
-			if plan.Filters.IncludeRemoved && (reason == SkipRemovedByUndo || reason == SkipRemovedByRetention) {
-				reason = ""
-			}
-			w.state = reason
 		}
-		w.filtered = dated && !inRange(chat.CreatedAt, since, until)
-		// A chat whose ID or workspace field is of another shape is that
-		// chat's unsafe_format, reported, not read.
-		w.unsafe = chat.Malformed
-		if w.state == "" && !w.filtered && !w.t.identityMismatch && !w.unsafe {
+		decision := decideCursorDatabaseChat(chat, reason, includeRemoved, since, until)
+		w.state, w.filtered, w.unsafe = decision.state, decision.filtered, decision.unsafe
+		w.t.identityMismatch = decision.identityMismatch
+		if decision.read {
 			toRead = append(toRead, w)
 		}
 	}
+	return items, toRead, nil
+}
 
-	if res.ReadChat == nil {
-		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, CursorUncheckedUnreadable
-		return nil
+type cursorDatabaseDecision struct {
+	state            SkipReason
+	filtered         bool
+	unsafe           bool
+	identityMismatch bool
+	read             bool
+}
+
+// decideCursorDatabaseChat is the pure gate before a whole-chat read. The
+// archive reason is supplied by the caller so no storage access occurs here.
+func decideCursorDatabaseChat(chat CursorDatabaseChat, reason SkipReason, includeRemoved bool, since, until time.Time) cursorDatabaseDecision {
+	if includeRemoved && (reason == SkipRemovedByUndo || reason == SkipRemovedByRetention) {
+		reason = ""
 	}
+	d := cursorDatabaseDecision{
+		state:    reason,
+		filtered: (!since.IsZero() || !until.IsZero()) && !inRange(chat.CreatedAt, since, until),
+		unsafe:   chat.Malformed,
+		// A row whose composerId is not its key's cannot be read back
+		// under the ID it would register.
+		identityMismatch: chat.ID != chat.KeyID,
+	}
+	d.read = d.state == "" && !d.filtered && !d.unsafe && !d.identityMismatch
+	return d
+}
+
+// readCursorDatabaseChats serializes reads through one Reader and filters
+// independent chats on the workers. A database failure aborts the whole set.
+func readCursorDatabaseChats(ctx context.Context, workers int, readChat func(context.Context, string) (cursorstore.Composer, error), toRead []*work) error {
 	// Reads go one at a time through the plan's one Reader; filtering, the
 	// costly part, runs on the workers.
 	var mu sync.Mutex
 	var readErr error
 	if err := forEach(ctx, workers, toRead, func(w *work) {
 		mu.Lock()
-		c, err := res.ReadChat(ctx, w.chat.KeyID)
+		c, err := readChat(ctx, w.chat.KeyID)
 		// A value of this chat's that does not decode is the chat's
 		// problem, unsafe_format; only a failure of the database itself
 		// (a lock, a failed copy, a changed file) leaves it unchecked.
@@ -533,11 +574,12 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 	}); err != nil {
 		return err
 	}
-	if readErr != nil {
-		plan.CursorDatabaseChecked, plan.CursorDatabaseUnchecked = false, cursorstore.ReasonOf(readErr)
-		return nil
-	}
+	return readErr
+}
 
+// appendCursorDatabaseChats resolves projects and adds only rows that still
+// exist. No candidate is committed until all database reads have succeeded.
+func appendCursorDatabaseChats(env Environment, r *resolver, projectFilter []string, items []*work, plan *Plan) {
 	for _, w := range items {
 		if w.vanished {
 			continue
@@ -559,15 +601,18 @@ func planCursorDatabase(ctx context.Context, env Environment, state ArchiveState
 		w.c.Skip = w.reason(plan.GeneratedAt)
 		plan.Candidates = append(plan.Candidates, w.c)
 	}
+}
 
+func cursorDatabaseSubagentCount(candidates []Candidate, subagents map[string][]string) int {
 	// Subagent chats are not imported yet: count those of every Cursor chat
 	// this plan imports, file or database, so the plan can say so.
-	for _, c := range plan.Candidates {
+	count := 0
+	for _, c := range candidates {
 		if c.Harness == "cursor" && c.Skip == "" {
-			plan.CursorSubagentsNotImported += len(res.Subagents[c.NativeSessionID])
+			count += len(subagents[c.NativeSessionID])
 		}
 	}
-	return nil
+	return count
 }
 
 // cursorChatFolder is the folder a database chat's project is resolved

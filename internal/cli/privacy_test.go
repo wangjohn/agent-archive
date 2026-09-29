@@ -20,6 +20,27 @@ type privateTestStore struct {
 	calls int
 }
 
+type canceledPrivacyStore struct {
+	*storagetest.MemoryStore
+	sawCancellation bool
+}
+
+func (s *canceledPrivacyStore) InspectPrivacy(ctx context.Context) storage.PrivacyReport {
+	s.sawCancellation = errors.Is(ctx.Err(), context.Canceled)
+	return storage.UnknownPrivacy("s3")
+}
+
+func TestPrivacyInspectionUsesPassContext(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	store := &canceledPrivacyStore{MemoryStore: storagetest.NewMemoryStore()}
+	inspectBucketPrivacyContext(ctx, config.Config{Storage: credentialsTestConfig()}, store, time.Now())
+	if !store.sawCancellation {
+		t.Fatal("privacy inspection ignored the pass context")
+	}
+}
+
 func (s *privateTestStore) InspectPrivacy(ctx context.Context) storage.PrivacyReport {
 	s.calls++
 	if _, ok := ctx.Deadline(); !ok {

@@ -202,9 +202,7 @@ func TestObserveSkillsFollowsProjectSkillLinkWithinProject(t *testing.T) {
 	}
 }
 
-// A user-level skill directory linked into a skills checkout elsewhere is a
-// supported way to install a skill; a user-level SKILL.md linked to a file
-// that is not a SKILL.md is not a skill and is not read.
+// User-level links outside the selected skill root are coverage gaps.
 func TestObserveSkillsUserSkillLinksMustResolveToASkill(t *testing.T) {
 	l := newSkillLayout(t)
 	writeSkillFile(t, filepath.Join(l.outside, "skills-repo", "linked", "SKILL.md"), "---\nname: linked\n---\nbody\n")
@@ -217,8 +215,47 @@ func TestObserveSkillsUserSkillLinksMustResolveToASkill(t *testing.T) {
 	if strings.Contains(all, "sentinel-notes") {
 		t.Fatalf("non-skill file archived: %s", all)
 	}
-	if len(snapshots) != 1 || snapshots[0]["name"] != "linked" || inventory["omitted_count"] != float64(1) {
+	if len(snapshots) != 0 || inventory["omitted_count"] != float64(2) {
 		t.Fatalf("inventory=%#v snapshots=%#v", inventory, snapshots)
+	}
+}
+
+func TestObserveSkillsDoesNotFollowExternalUserRoot(t *testing.T) {
+	l := newSkillLayout(t)
+	writeSkillFile(t, filepath.Join(l.outside, "skills", "external", "SKILL.md"), "outside-root-secret")
+	symlink(t, filepath.Join(l.outside, "skills"), filepath.Join(l.home, ".claude", "skills"))
+	inventory, snapshots, all := observeClaudeSkills(t, l, "user_claude")
+	if len(snapshots) != 0 || inventory["root_status"] != "unreadable" || strings.Contains(all, "outside-root-secret") {
+		t.Fatalf("followed external root: %#v %#v %s", inventory, snapshots, all)
+	}
+}
+
+func TestObserveSkillsFollowsNestedLinksWithinUserRoot(t *testing.T) {
+	l := newSkillLayout(t)
+	root := filepath.Join(l.home, ".claude", "skills")
+	writeSkillFile(t, filepath.Join(root, "real", "SKILL.md"), "---\nname: real\n---\ninside-root")
+	symlink(t, filepath.Join("..", "real", "SKILL.md"), filepath.Join(root, "linked", "SKILL.md"))
+	inventory, snapshots, _ := observeClaudeSkills(t, l, "user_claude")
+	if len(snapshots) != 2 || inventory["inventory_complete"] != true {
+		t.Fatalf("internal link skipped: %#v %#v", inventory, snapshots)
+	}
+}
+
+func TestReadBoundedRejectsFileSwappedAfterInspection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "SKILL.md")
+	writeSkillFile(t, path, "initial")
+	inspected, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(dir, "replacement")
+	writeSkillFile(t, replacement, "replacement-secret")
+	if err := os.Rename(replacement, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readBounded(path, maxSkillBytes, inspected); err == nil {
+		t.Fatal("read changed target")
 	}
 }
 

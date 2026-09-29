@@ -77,6 +77,11 @@ func reviewRows(cfg config.Config, discoveries map[string]applicationDiscovery, 
 		rows = append(rows, reviewRow{label: "Imported", values: []string{friendlyApps(cfg.ImportedHarnesses) + " (sessions imported by backfill stay published; new sessions are not captured)"}})
 	}
 	rows = append(rows, reviewRow{label: "Projects", values: projects})
+	skillScope := string(cfg.EffectiveSkillEvidence())
+	if cfg.SkillEvidence == "" {
+		skillScope += " (kept from previous setup)"
+	}
+	rows = append(rows, reviewRow{label: "Skills", values: []string{skillScope}, detail: "User skill roots outside selected projects may be scanned; change with Edit a setting"})
 	if showSessions {
 		rows = append(rows, reviewRow{label: "Sessions", values: []string{sessions}})
 	}
@@ -441,6 +446,7 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 		{"apps", "Apps to include"},
 		{"projects", "Projects to include"},
 		{"sessions", "All sessions or only sessions using skills"},
+		{"skills", "Skill evidence: none, metadata, or body"},
 		{"retention", "How long sessions are kept"},
 		{"storage", "Bucket or credentials"},
 		{"prefix", "Folder inside the bucket"},
@@ -476,6 +482,15 @@ func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled
 			return e
 		}
 		draft.Config.RequireSkillUse = !all
+	case "skills":
+		mode, e := p.menu("What skill evidence may be uploaded? User-level skill roots outside selected projects may be scanned.", string(draft.Config.EffectiveSkillEvidence()),
+			option{"none", "None (skill use in transcripts can still be detected)"},
+			option{"metadata", "Names and filtered hashes; no SKILL.md body"},
+			option{"body", "Filtered SKILL.md snapshots"})
+		if e != nil {
+			return e
+		}
+		draft.Config.SkillEvidence = config.SkillEvidence(mode)
 	case "retention":
 		draft.Config.RetentionDays, err = p.retentionDays(draft.Config.RetentionDays)
 	case "storage":

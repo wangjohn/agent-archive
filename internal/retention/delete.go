@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/listingindex"
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
@@ -20,6 +21,9 @@ func DeleteWholeSession(ctx context.Context, store storage.ObjectStore, harness,
 	}
 	if err := store.Delete(ctx, metadataKey); err != nil {
 		return fmt.Errorf("delete metadata: %w", err)
+	}
+	if err := listingindex.DeleteSession(ctx, store, harness, archiveSessionID); err != nil {
+		return fmt.Errorf("delete listing index: %w", err)
 	}
 	prefix := fmt.Sprintf("sessions/%s/%s/", harness, archiveSessionID)
 	objects, err := store.List(ctx, prefix)

@@ -481,12 +481,13 @@ func (s *Store) CompleteRequest(archiveSessionID, coveredToken string) (bool, er
 // every retry uses the same hash and timestamps even after process restart.
 // Bundle remains available for change detection and future parser-only rebuilds.
 type PendingPublication struct {
-	MetadataOnly bool                 `json:"metadata_only,omitempty"`
-	Bundle       archive.SourceBundle `json:"bundle"`
-	SourceKey    string               `json:"source_key"`
-	MetadataKey  string               `json:"metadata_key"`
-	SourceSHA256 string               `json:"source_sha256"`
-	SourceBytes  []byte               `json:"source_bytes"`
+	SkillEvidence string               `json:"skill_evidence,omitempty"`
+	MetadataOnly  bool                 `json:"metadata_only,omitempty"`
+	Bundle        archive.SourceBundle `json:"bundle"`
+	SourceKey     string               `json:"source_key"`
+	MetadataKey   string               `json:"metadata_key"`
+	SourceSHA256  string               `json:"source_sha256"`
+	SourceBytes   []byte               `json:"source_bytes"`
 	// SourceSize is the source's compressed size when SourceBytes is empty:
 	// a metadata-only publication over a source this build cannot reproduce
 	// byte for byte, which is checked in storage instead of re-uploaded.
@@ -679,8 +680,9 @@ func (s *Store) ScanPending(id string) (bool, error) {
 // Anything that invalidates the assertion removes the token (see
 // RemoveScanSignature's callers).
 type ScanSignature struct {
-	TranscriptSize  int64 `json:"transcript_size"`
-	TranscriptMtime int64 `json:"transcript_mtime_unix_nano"`
+	SkillEvidence   string `json:"skill_evidence,omitempty"`
+	TranscriptSize  int64  `json:"transcript_size"`
+	TranscriptMtime int64  `json:"transcript_mtime_unix_nano"`
 	// The derivation versions are part of the signature: a parser, filter, or
 	// adapter upgrade changes what an unchanged transcript would produce, so
 	// it must re-scan rather than skip.

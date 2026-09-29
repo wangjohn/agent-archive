@@ -154,7 +154,20 @@ func (s *sessionScan) resume() (outcome sessionOutcome, handled bool, err error)
 		return outcomeSkipped, true, err
 	}
 	if !havePending {
+		if signature, found, e := s.local.LoadScanSignature(s.id()); e != nil {
+			return outcomeSkipped, true, e
+		} else if found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
+			return outcomeSkipped, false, nil
+		}
 		return regenerateMetadata(s)
+	}
+	if pendingSkillMode(pending.SkillEvidence) != s.opts.skillEvidence() {
+		// An older pending file may contain broader evidence. Discard it
+		// before any retry; the next scan rebuilds under the active policy.
+		if err := s.local.RemovePending(s.id()); err != nil {
+			return outcomeSkipped, true, err
+		}
+		return outcomeSkipped, false, nil
 	}
 	if !pending.Attempted && s.req.Token != "" && s.req.Token != pending.RequestToken {
 		// A stop/end request is a natural debounce flush. A merely rate-limited,
@@ -307,7 +320,8 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	if haveCached {
 		baseEvidence = cached.SupplementalEvidence
 	}
-	supplemental := mergeSupplementalEvidence(baseEvidence, s.req.HookEvidence)
+	baseEvidence = limitSkillEvidence(baseEvidence, s.opts.skillEvidence())
+	supplemental := limitSkillEvidence(mergeSupplementalEvidence(baseEvidence, s.req.HookEvidence), s.opts.skillEvidence())
 
 	// now is a placeholder here; bundleEvidenceEqual ignores CapturedAt, so
 	// it has no effect on the comparison. The real value is assigned once it
@@ -320,6 +334,9 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 	// Observe the filesystem only with session activity. An unrelated skill edit
 	// must not refresh every historical session or extend its retention lifetime.
 	active := !haveCached || s.req.Token != "" || !nativeEvidenceExtends(cached, candidate) || !nativeEvidenceExtends(candidate, cached)
+	if signature, found, _ := s.local.LoadScanSignature(s.id()); found && pendingSkillMode(signature.SkillEvidence) != s.opts.skillEvidence() {
+		active = true
+	}
 	if s.opts.SupplementalEvidence == nil || !active {
 		return candidate, supplemental, nil
 	}
@@ -328,6 +345,7 @@ func (s *sessionScan) build(read sourceRead) (archive.SourceBundle, []archive.Su
 		return archive.SourceBundle{}, nil, fmt.Errorf("collect supplemental evidence: %w", err)
 	}
 	supplemental = mergeSupplementalEvidence(baseEvidence, observed, s.req.HookEvidence)
+	supplemental = limitSkillEvidence(supplemental, s.opts.skillEvidence())
 	candidate, err = archive.NewSourceBundle(s.reg, read.adapter, read.filtered, s.now, supplemental)
 	if err != nil {
 		return archive.SourceBundle{}, nil, fmt.Errorf("build observed source bundle: %w", err)
@@ -516,7 +534,8 @@ func (s *sessionScan) publish(read sourceRead, candidate archive.SourceBundle) (
 	// saved already marked attempted (see publishPending): marking it
 	// separately would write the whole file a second time.
 	pending := state.PendingPublication{
-		Bundle: candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
+		SkillEvidence: string(s.opts.skillEvidence()),
+		Bundle:        candidate, SourceKey: rendered.source.Key, MetadataKey: rendered.metadataKey,
 		SourceSHA256: rendered.source.SHA256, SourceBytes: rendered.sourceBytes, MetadataBytes: rendered.metadata,
 		RequestToken: s.req.Token, ReadyAt: readyAt, Attempted: !readyAt.After(s.now),
 	}

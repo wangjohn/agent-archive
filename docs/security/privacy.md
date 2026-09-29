@@ -65,10 +65,11 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   branch names; model names; token counts; timestamps; the app's own session
   and message IDs; summaries the app wrote when compacting a conversation;
   and final messages hooks reported.
-- **Skill evidence**: for every hook-captured session, the name, SHA-256
-  (of the whole file with its credentials redacted, from filter 12; of the
-  original bytes before), and filtered body (the first 16 KB) of each `SKILL.md` installed in that
-  app's skill folders, and which folder it came from. These are your
+- **Skill evidence**: fresh setup defaults to `metadata`: names and SHA-256
+  hashes of filtered `SKILL.md` text, with no body. Choose `none` for no
+  filesystem skill inventory or snapshots, or `body` to include up to 16 KB
+  of filtered text. A configuration written before this setting existed
+  retains `body` until you change it. The scanned folders include your
   **user-level** folders, whatever the project, plus the project's own:
 
   | App | User-level folders | Project folder |
@@ -79,11 +80,14 @@ filter-derived text stored in the bucket, not a separate redaction pass.
 
   Only each folder's immediate `<skill>/SKILL.md` files are read (up to 256
   per folder), never other files in them. In a user-level folder a
-  symlinked skill is followed wherever it points, as long as the file it
-  reaches is named `SKILL.md`; a project's `SKILL.md` that resolves outside
-  the project is skipped. There is no setting to turn this off: keep
-  a skill you don't want uploaded out of these folders. Sessions imported
-  with `backfill` carry no skill evidence.
+  symlinked skill is followed only when its resolved `SKILL.md` stays inside
+  that selected skill root. A project's `SKILL.md` that resolves outside the
+  project is skipped. Sessions imported with `backfill` carry no skill evidence.
+
+  Change the mode in setup. The change limits subsequent uploads, including
+  pending work rebuilt under the new mode, but does not remove copies already
+  on disk or in the bucket. Older source objects can remain after replacement;
+  [bucket layout](../reference/bucket-layout.md) describes their lifetime.
 - **Metadata**: the machine ID of the Mac that captured it (random, made at
   setup), a project ID (a hash of the project's path, not the path itself),
   the app and its version, the app's own session ID, capture times, counts,
@@ -129,6 +133,24 @@ redaction is recorded as a capture gap on the session, so a reader knows
 something was removed.
 
 ## After a filter upgrade
+
+For the current configured bucket, `agent-archive purge plan` inventories
+unreferenced source objects and separately lists sessions whose current source
+still uses an older filter. It writes a private, expiring plan under the local
+data directory. `agent-archive purge plan --mode old-filter --before-filter 12`
+narrows deletion candidates to unreferenced sources made by older filter
+versions; replace `12` with the version you are upgrading to. Review the
+printed bucket, prefix, keys, sizes, and digest. Pause **every** Mac uploading
+to the prefix, then run `agent-archive purge apply PLAN` within five minutes
+and enter the digest prefix, or pass `--yes` for a noninteractive run. The
+command rereads all metadata before each source deletion and writes a report
+next to the plan; retry that plan before expiry after a partial failure.
+This coordination is not atomic against an external writer. In a versioned
+bucket, an administrator must also remove noncurrent versions and delete
+markers. A current old-filter source cannot be deleted without deleting the
+session unless its original can be safely refiltered and republished first.
+Missing transcripts and retired destinations cannot be refiltered
+automatically.
 
 A new filter version (see the [filter changelog](../../dev/specs/privacy-filter-changelog.md))
 applies to what is uploaded from then on. It does not clean what is already

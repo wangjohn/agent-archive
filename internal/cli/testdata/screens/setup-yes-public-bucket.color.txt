@@ -4,6 +4,7 @@ $ agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile wo
 Checking your storage connection…
 \e[32m✓\e[0m Connected to your storage.
 Apps: Claude Code. Projects: 1. Storage: Amazon S3 bucket team-archive.
+Skill evidence: metadata. User-level skill roots outside selected projects may be scanned.
   \e[31m✗\e[0m Bucket is public        \e[2ma bucket policy allows public access\e[0m
     Fix its access before archiving: \e[36mhttps://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html\e[0m
 Setup incomplete: bucket team-archive allows public access (a bucket policy allows public access); nothing was changed. Fix its access (https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html), then run the same agent-archive setup --yes command again
