@@ -190,16 +190,20 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 	cursorstore.RemoveStaleSnapshots()
 	subagents := materializeSubagentCandidates(local, opts, now)
 	p := &pass{
-		ctx:    ctx,
-		local:  local,
-		remote: store,
-		opts:   opts,
-		now:    now,
-		result: Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
+		ctx:              ctx,
+		local:            local,
+		remote:           store,
+		opts:             opts,
+		now:              now,
+		result:           Result{Errors: subagents.errors, WaitingSubagents: subagents.waiting, RejectedSubagents: subagents.rejected},
+		expiredSubagents: subagents.expired,
 	}
 	if replayErr != nil {
 		p.result.Errors["admission-intents"] = replayErr
 	}
+	// A loadWork failure returns before saveStatus, so this pass's expired
+	// subagents never reach status.json's list. That is accepted: the list
+	// is informational, and each parent's capture gap is already saved.
 	if err := p.loadWork(); err != nil {
 		return Result{}, err
 	}
@@ -248,7 +252,10 @@ type pass struct {
 	sizeLimited []string
 	// pending counts the sessions left with outstanding work.
 	pending int
-	result  Result
+	// expiredSubagents lists the subagents this pass stopped waiting for
+	// (see state.Status.ExpiredSubagents).
+	expiredSubagents []state.ExpiredSubagent
+	result           Result
 }
 
 // loadWork lists the registered sessions and their pending requests. One
@@ -417,6 +424,23 @@ func (p *pass) finishScan(reg archive.SessionRegistration) {
 	}
 }
 
+// SizeLimitProblem is the problem a pass records in its Status when n
+// sessions sit in a size-limit gap: not a failure, and nothing to do, but
+// capture of them has stopped at their last snapshot.
+func SizeLimitProblem(n int) string {
+	return fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", n)
+}
+
+// IsSizeLimitProblem reports whether problem is a SizeLimitProblem, for any
+// count.
+func IsSizeLimitProblem(problem string) bool {
+	var n int
+	if _, err := fmt.Sscanf(problem, "%d ", &n); err != nil || n < 1 {
+		return false
+	}
+	return problem == SizeLimitProblem(n)
+}
+
 // FailedSessionsProblem is the problem a pass records in its Status when n
 // sessions failed to scan or publish. A caller that reports those sessions
 // again, with a fuller count, replaces this entry rather than adding one.
@@ -444,7 +468,7 @@ func (p *pass) saveStatus() error {
 	// stopped at its last snapshot, which status must say rather than look
 	// healthy.
 	if len(p.sizeLimited) > 0 {
-		problems = append(problems, fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", len(p.sizeLimited)))
+		problems = append(problems, SizeLimitProblem(len(p.sizeLimited)))
 	}
 	status := state.Status{
 		LastScanAt:             p.now.UTC(),
@@ -453,6 +477,9 @@ func (p *pass) saveStatus() error {
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
 		WaitingSubagents:       len(p.result.WaitingSubagents),
+		// The pass rebuilds everything else from scratch; this list is a
+		// week of history, so it carries the previous pass's forward.
+		ExpiredSubagents: state.CarryExpiredSubagents(previous.ExpiredSubagents, p.expiredSubagents, p.now),
 	}
 	status.SetLastErrors(problems...)
 	if err := p.local.SaveStatus(status); err != nil {

@@ -268,6 +268,9 @@ func readStatus(env Env) (view statusView, err error) {
 	readConfiguredStatus(&view, cfg, home, env)
 	store := state.OpenReadOnly(home)
 	sessions := readSessionStatus(&view, cfg, home, store)
+	// The collector prunes the list each pass; one that has not run for a
+	// while must not show subagents from before the window.
+	view.Collector.ExpiredSubagents = state.CarryExpiredSubagents(view.Collector.ExpiredSubagents, nil, env.now())
 	for _, name := range cfg.Harnesses {
 		view.Apps = append(view.Apps, sessions.appStatus(name, cfg, home, view.Collector.SessionIssues))
 	}
@@ -483,7 +486,7 @@ func (s statusSessions) addSession(app *appStatus, pair *projectCaptureStatus, r
 		pair.HookObserved = true
 	}
 	if issue := issues[reg.ArchiveSessionID]; issue != "" {
-		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: "Last scan could not update this session; retained evidence was kept. Run agent-archive sync for the failure."})
+		app.CaptureGaps = append(app.CaptureGaps, archive.CaptureGap{Code: issue, Detail: issueGapDetail(issue)})
 	}
 	if reg.Harness.Version != "" && !containsString(app.HarnessVersions, reg.Harness.Version) {
 		app.HarnessVersions = append(app.HarnessVersions, reg.Harness.Version)
@@ -774,7 +777,18 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		view.problem = "Collection is stuck"
 		view.Next = fmt.Sprintf("Collection is stuck: %s (process %d) has held the collector lock since %s, %s, well past a pass's time limit. If that command is no longer doing anything, quit process %d (in Activity Monitor or with kill %d); the next pass then resumes.", record.Holder, record.PID, record.Since.UTC().Format("2006-01-02 15:04 UTC"), durationAgo(env.now().Sub(record.Since)), record.PID, record.PID)
 	}
-	if view.Collector.LastError != "" {
+	// Failed sessions of kinds that are not about storage lead with their
+	// own problem and next step, or with none when there is nothing to do.
+	problem, next, byIssue := issueHeadline(view.Collector)
+	switch {
+	case view.Collector.LastError == "":
+	case byIssue:
+		if problem != "" {
+			view.State = "Needs attention"
+			view.problem = problem
+			view.Next = next
+		}
+	default:
 		view.State = "Needs attention"
 		view.problem = "The last sync failed"
 		view.Next = "Check storage access and run agent-archive sync. To change credentials, run agent-archive setup and choose storage."
@@ -1295,8 +1309,17 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, sc.destinationRow(view), sc.privacyRow(view.PrivacyEvidence))
 	}
 	rows = append(rows, sc.backgroundRow(view))
+	// Problems with nothing to do (see issueHeadline) are information, not
+	// failures.
+	mark, quiet := sc.style.failMark(), false
+	if problem, _, ok := issueHeadline(view.Collector); ok && problem == "" {
+		mark, quiet = sc.info(), true
+	}
 	for _, text := range lastErrorRows(view.Collector) {
-		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{text}})
+		if quiet {
+			text = "Last pass: " + strings.TrimPrefix(text, "Last error: ")
+		}
+		rows = append(rows, statusRow{mark: mark, cells: []string{text}})
 	}
 	uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
@@ -1718,12 +1741,53 @@ func printStatusDetails(out io.Writer, view statusView) {
 	if n := view.Collector.UnrefreshableSummaries; n > 0 {
 		terminal.Printf(out, "  Summaries:     %d session summary(ies) cannot be refreshed by this version and stay as published until the session changes.\n", n)
 	}
-	if n := view.Collector.WaitingSubagents; n > 0 {
-		terminal.Printf(out, "  Subagents:     %d waiting for their transcripts\n", n)
+	for i, line := range subagentDetailLines(view.Collector) {
+		label := "  Subagents:     "
+		if i > 0 {
+			label = "                 "
+		}
+		terminal.Printf(out, "%s%s\n", label, line)
 	}
 	for _, warning := range view.Warnings {
 		terminal.Printf(out, "  Warning:       %s\n", warning)
 	}
+}
+
+// subagentDetailLines are the Details lines about subagents that are not a
+// problem: those waiting for their transcripts, and those dropped in the
+// last week because Claude Code never wrote them, counted by type.
+func subagentDetailLines(collector state.Status) []string {
+	var lines []string
+	if n := collector.WaitingSubagents; n > 0 {
+		lines = append(lines, fmt.Sprintf("%d waiting for their transcripts", n))
+	}
+	expired := collector.ExpiredSubagents
+	if len(expired) == 0 {
+		return lines
+	}
+	lines = append(lines, fmt.Sprintf("%d not archived in the last 7 days (Claude Code never wrote their transcripts; nothing to do)", len(expired)))
+	counts := map[string]int{}
+	for _, entry := range expired {
+		counts[entry.AgentType]++
+	}
+	types := slices.Collect(maps.Keys(counts))
+	// Most common first; on a tie the unknown type ("") comes before named
+	// ones, then names alphabetically.
+	slices.SortFunc(types, func(a, b string) int {
+		if c := counts[b] - counts[a]; c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	groups := make([]string, 0, len(types))
+	for _, agentType := range types {
+		name := agentType
+		if name == "" {
+			name = "unknown type"
+		}
+		groups = append(groups, fmt.Sprintf("%d %s", counts[agentType], name))
+	}
+	return append(lines, strings.Join(groups, ", "))
 }
 
 // printAppDetails writes one app's lines in the Details section.

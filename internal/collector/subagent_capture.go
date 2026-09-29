@@ -30,6 +30,44 @@ type subagentRejectedError struct{ code string }
 
 func (e subagentRejectedError) Error() string { return e.code }
 
+// Is reports whether target is ErrSubagentNotCaptured or ErrSubagentCandidate.
+func (subagentRejectedError) Is(target error) bool {
+	return target == ErrSubagentNotCaptured || target == ErrSubagentCandidate
+}
+
+// ErrSubagentNotCaptured is matched, with errors.Is, by every rejection of a
+// subagent candidate: it is acknowledged and will not be retried. Only a
+// rejection that lost a real subagent reaches Result.Errors (see
+// expectedSubagentRejections); a caller that sees every rejection filters out
+// the expected ones itself.
+var ErrSubagentNotCaptured = errors.New("subagent was not captured")
+
+// ErrSubagentCandidate is matched, with errors.Is, by every error
+// Result.Errors holds for a subagent candidate (one a SubagentStop hook left,
+// not yet registered), so callers can count it as a subagent though no
+// registration says so.
+var ErrSubagentCandidate = errors.New("subagent candidate")
+
+// subagentCandidateError is a subagent candidate's failure, as its error
+// reads, marked as a candidate's (see ErrSubagentCandidate).
+type subagentCandidateError struct{ err error }
+
+func (e subagentCandidateError) Error() string { return e.err.Error() }
+
+func (e subagentCandidateError) Unwrap() error { return e.err }
+
+// Is reports whether target is ErrSubagentCandidate.
+func (subagentCandidateError) Is(target error) bool { return target == ErrSubagentCandidate }
+
+// candidateFailure marks err as a subagent candidate's failure, unless it
+// already is one.
+func candidateFailure(err error) error {
+	if errors.Is(err, ErrSubagentCandidate) {
+		return err
+	}
+	return subagentCandidateError{err: err}
+}
+
 // expectedSubagentRejections are the rejection codes that lose nothing: a
 // transcript that was never written, or that backfill found empty or gone; a
 // parent that is not, or no longer, archived here; a subagent that started
@@ -39,7 +77,7 @@ func (e subagentRejectedError) Error() string { return e.code }
 // but cannot be read) means a real subagent was lost, which the pass reports
 // as a failed session once.
 var expectedSubagentRejections = map[string]bool{
-	"subagent_transcript_never_written":     true,
+	subagentNeverWritten:                    true,
 	"subagent_transcript_unavailable":       true,
 	"subagent_parent_ownership_unavailable": true,
 	"subagent_start_ineligible":             true,
@@ -55,6 +93,9 @@ type subagentOutcome struct {
 	waiting []string
 	// rejected maps each candidate rejected this pass to its code.
 	rejected map[string]string
+	// expired lists the candidates rejected this pass because their
+	// transcripts were never written, for status to carry forward.
+	expired []state.ExpiredSubagent
 }
 
 // materializeSubagentCandidates registers each candidate a hook left, rejects
@@ -63,9 +104,12 @@ type subagentOutcome struct {
 func materializeSubagentCandidates(local *state.Store, opts Options, now time.Time) subagentOutcome {
 	candidates, issues, err := local.ScanSubagentCandidates()
 	if err != nil {
-		return subagentOutcome{errors: map[string]error{"subagent-candidates": err}}
+		return subagentOutcome{errors: map[string]error{"subagent-candidates": candidateFailure(err)}}
 	}
-	outcome := subagentOutcome{errors: issues, rejected: map[string]string{}}
+	outcome := subagentOutcome{errors: map[string]error{}, rejected: map[string]string{}}
+	for id, issue := range issues {
+		outcome.errors[id] = candidateFailure(issue)
+	}
 	for _, candidate := range candidates {
 		err := materializeSubagentCandidate(local, candidate, opts, now)
 		var rejected subagentRejectedError
@@ -75,11 +119,14 @@ func materializeSubagentCandidates(local *state.Store, opts Options, now time.Ti
 			outcome.waiting = append(outcome.waiting, candidate.ArchiveSessionID)
 		case errors.As(err, &rejected):
 			outcome.rejected[candidate.ArchiveSessionID] = rejected.code
+			if rejected.code == subagentNeverWritten {
+				outcome.expired = append(outcome.expired, state.ExpiredSubagent{ArchiveSessionID: candidate.ArchiveSessionID, AgentType: archive.SanitizeSubagentType(candidate.AgentType), ExpiredAt: now.UTC()})
+			}
 			if !expectedSubagentRejections[rejected.code] {
 				outcome.errors[candidate.ArchiveSessionID] = err
 			}
 		default:
-			outcome.errors[candidate.ArchiveSessionID] = err
+			outcome.errors[candidate.ArchiveSessionID] = candidateFailure(err)
 		}
 	}
 	return outcome
@@ -172,7 +219,7 @@ func awaitSubagentTranscript(local *state.Store, candidate state.SubagentCandida
 	if age := now.Sub(candidate.ObservedAt); age < subagentTranscriptGrace && age >= -subagentTranscriptGrace {
 		return errSubagentWaiting
 	}
-	return rejectSubagentCandidate(local, candidate, "subagent_transcript_never_written")
+	return rejectSubagentCandidate(local, candidate, subagentNeverWritten)
 }
 
 func checkSubagentRegistrationConflict(local *state.Store, candidate state.SubagentCandidate, reg archive.SessionRegistration) error {
@@ -284,18 +331,44 @@ func checkSubagentProvenance(filtered archive.FilteredTranscript, parentNativeSe
 	return nil
 }
 
+// subagentNeverWritten is the rejection code, and the parent's capture gap
+// code, of a candidate whose transcript Claude Code never wrote.
+const subagentNeverWritten = "subagent_transcript_never_written"
+
+// subagentExpiryProvenance marks the capture gap the collector records on a
+// parent whose subagent's transcript was never written.
+const subagentExpiryProvenance = "collector:subagent-expiry"
+
+// subagentNeverWrittenDetail is the capture gap detail for a subagent whose
+// transcript was never written. It is fixed, archive-authored text: the
+// subagent's type stays on this Mac (the candidate, status), because a name
+// the sanitizer admits can still be a secret redaction does not recognize.
+const subagentNeverWrittenDetail = "Claude Code reported a subagent but never wrote its transcript"
+
 // rejectSubagentCandidate acknowledges candidate and tells its parent the
-// link is unavailable, then returns a subagentRejectedError with code. Any
-// other error means one of those writes failed and the candidate stays.
+// link is unavailable, then returns a subagentRejectedError with code. A
+// transcript that was never written also leaves the parent a capture gap
+// saying why the subagent is missing. Any other error means one of those
+// writes failed and the candidate stays.
 func rejectSubagentCandidate(local *state.Store, candidate state.SubagentCandidate, code string) error {
-	evidence, err := archive.NewLinkedSessionEvidence(candidate.ArchiveSessionID, archive.LinkedSessionUnavailable, candidate.ObservedAt)
+	link, err := archive.NewLinkedSessionEvidence(candidate.ArchiveSessionID, archive.LinkedSessionUnavailable, candidate.ObservedAt)
 	if err != nil {
 		return err
+	}
+	evidence := []archive.SupplementalEvidence{link}
+	if code == subagentNeverWritten {
+		// Fixed text observed at the stop, like the link, so a retry after a
+		// failed write saves the same item, which the request keeps once.
+		gap, err := archive.NewCaptureGapEvidence(code, subagentNeverWrittenDetail, subagentExpiryProvenance, candidate.ObservedAt)
+		if err != nil {
+			return err
+		}
+		evidence = append(evidence, gap)
 	}
 	// A parent retention has forgotten has nobody left to notify. The
 	// candidate is still acknowledged: retrying it would report the same
 	// permanent condition on every pass.
-	if err := local.SaveRequest(candidate.ParentArchiveSessionID, code, candidate.ObservedAt, evidence); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
+	if err := local.SaveRequest(candidate.ParentArchiveSessionID, code, candidate.ObservedAt, evidence...); err != nil && !errors.Is(err, state.ErrSessionNotRegistered) {
 		return err
 	}
 	if err := local.AcknowledgeSubagentCandidate(candidate); err != nil {

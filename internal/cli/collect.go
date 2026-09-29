@@ -173,64 +173,43 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return result, err
 	}
 
-	verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
+	summary, verifyErr, err := verifyAndRecordPass(ctx, home, cfg, env, localStore, objectStore, quietOnBusy, result)
 	if err != nil {
 		return result, err
 	}
 
-	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previousScanAt, result, verifyErr)
+	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previousScanAt, result, summary, verifyErr)
 }
 
 // verifyAndRecordPass performs read-back verification and records per-session
-// failures. Verification is returned separately so retention still runs first.
-func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (error, error) {
+// failures, returning the summary it recorded for them ("" when none failed).
+// Verification is returned separately so retention still runs first.
+func verifyAndRecordPass(ctx context.Context, home string, cfg config.Config, env Env, localStore *state.Store, objectStore storage.ObjectStore, quietOnBusy bool, result collector.Result) (summary string, verifyErr error, err error) {
 	// A read-back verification failure is reported after the retention
 	// sweep: it is no reason to skip cleanup.
-	var verifyErr error
 	if _, err := verifyPublicationsWithin(ctx, home, cfg, env, localStore, objectStore); err != nil {
 		verifyErr = fmt.Errorf("read-back verification: %w", err)
 	}
 	if health := passStorageHealth(result); health != "not_checked" {
 		if err := recordStorageHealth(home, cfg, env, quietOnBusy, health); err != nil {
-			return verifyErr, err
+			return "", verifyErr, err
 		}
 	}
 	if len(result.Errors) > 0 {
-		current, readErr := localStore.LoadStatus()
-		if readErr != nil {
-			return verifyErr, readErr
+		// In place of collector.Run's own count of the same sessions; the
+		// pass's other problems stay.
+		summary, err = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), collector.FailedSessionsProblem(len(result.Errors)))
+		if err != nil {
+			return "", verifyErr, err
 		}
-		current.SessionIssues = map[string]string{}
-		for id, issue := range result.Errors {
-			current.SessionIssues[id] = sessionIssueCode(issue)
-		}
-		if err := localStore.SaveStatus(current); err != nil {
-			return verifyErr, err
-		}
-		replaceStatusProblem(localStore, collector.FailedSessionsProblem(len(result.Errors)), sessionsNeedCaptureProblem(len(result.Errors)))
 	}
-	return verifyErr, nil
-}
-
-// sessionIssueCode keeps status diagnostics stable while omitting raw errors,
-// which may include transcript content or storage credential-process output.
-func sessionIssueCode(issue error) string {
-	switch {
-	case errors.Is(issue, state.ErrQuarantined):
-		return "local_state_unreadable"
-	case strings.Contains(issue.Error(), "truncated, compacted, or rewritten"):
-		return "transcript_discontinuity"
-	case strings.Contains(issue.Error(), "collection limit"):
-		return "transcript_size_limit"
-	default:
-		return "capture_or_publication_failed"
-	}
+	return summary, verifyErr, nil
 }
 
 // finishPassWithRetention gives cleanup its own deadline after collection.
 // It runs under the caller's collector lock and preserves verification errors
 // until after the sweep has completed.
-func finishPassWithRetention(home string, env Env, cfg config.Config, localStore *state.Store, objectStore storage.ObjectStore, previousScanAt time.Time, result collector.Result, verifyErr error) (collector.Result, error) {
+func finishPassWithRetention(home string, env Env, cfg config.Config, localStore *state.Store, objectStore storage.ObjectStore, previousScanAt time.Time, result collector.Result, summary string, verifyErr error) (collector.Result, error) {
 	sweepCtx, cancelSweep := context.WithTimeout(context.Background(), sweepTimeout)
 	defer cancelSweep()
 	sweepOptions := retention.Options{
@@ -266,7 +245,7 @@ func finishPassWithRetention(home string, env Env, cfg config.Config, localStore
 		return result, errors.Join(verifyErr, sweepErr)
 	}
 	if len(sweepResult.Errors) > 0 {
-		recordRetentionErrors(localStore, &result, sweepResult)
+		recordRetentionErrors(localStore, &result, sweepResult, summary)
 	}
 	// A clock that disagrees with the storage service's holds every deletion
 	// by age until it is fixed, which status must say. A hold for one pass
@@ -389,44 +368,35 @@ func passStorageHealth(result collector.Result) string {
 // recordRetentionErrors merges retention.Sweep's per-session failures into
 // result, so sync's existing report/exit-code logic (which only knows about
 // collector.Result) covers them too without its own retention-specific
-// path, and updates the Status's last errors the same way collector.Run
-// already does for its own per-session errors — otherwise a retention
-// failure would never reach `status` at all, since, unlike collector.Run,
-// Sweep does not persist a Status of its own.
+// path, and records them in the Status with the pass's collection failures
+// (see recordSessionIssues): otherwise a retention failure would never
+// reach `status` at all, since, unlike collector.Run, Sweep does not
+// persist a Status of its own.
 //
-// The count it records covers the pass's own failed sessions too, so it
-// takes the place of the count verifyAndRecordPass recorded for them; the
-// pass's other problems stay.
-func recordRetentionErrors(localStore *state.Store, result *collector.Result, sweep retention.Result) {
+// The summary it records covers the pass's own failed sessions too, so it
+// takes the place of previous, the summary verifyAndRecordPass recorded for
+// them (recomputed now, it could read differently: a registration the sweep
+// removed counts as a session, not a subagent); the pass's other problems
+// stay.
+func recordRetentionErrors(localStore *state.Store, result *collector.Result, sweep retention.Result, previous string) {
 	if result.Errors == nil {
 		result.Errors = map[string]error{}
 	}
-	previous := ""
-	if n := len(result.Errors); n > 0 {
-		previous = sessionsNeedCaptureProblem(n)
-	}
 	for id, sweepErr := range sweep.Errors {
-		result.Errors[id] = fmt.Errorf("retention: %w", sweepErr)
+		// A session that also failed collection keeps that error beside
+		// this one.
+		addSessionError(result.Errors, id, fmt.Errorf("%w: %w", errRetentionFailed, sweepErr))
 	}
-	replaceStatusProblem(localStore, previous, fmt.Sprintf("%d session(s) failed to scan, publish, or clean up", len(result.Errors)))
+	_, _ = recordSessionIssues(localStore, result.Errors, subagentLookup(localStore), previous)
 }
 
-// sessionsNeedCaptureProblem is the problem a pass records when n sessions
-// still need capture or publication after it.
-func sessionsNeedCaptureProblem(n int) string {
-	return fmt.Sprintf("%d session(s) need capture or publication", n)
-}
-
-// replaceStatusProblem puts problem in place of the Status's recorded
-// problem old, keeping the pass's other problems, or adds it when old is
-// not recorded. Best effort, like recordPreflightError.
-func replaceStatusProblem(localStore *state.Store, old, problem string) {
-	status, err := localStore.LoadStatus()
-	if err != nil {
-		return
+// addSessionError records err against a session, after any error the pass
+// already recorded for it.
+func addSessionError(errs map[string]error, id string, err error) {
+	if previous := errs[id]; previous != nil {
+		err = errors.Join(previous, err)
 	}
-	status.ReplaceLastError(old, problem)
-	_ = localStore.SaveStatus(status)
+	errs[id] = err
 }
 
 // addStatusProblem adds problem to the Status's last errors, after whatever
@@ -459,6 +429,8 @@ func recordPreflightError(localStore *state.Store, preflightErr error) {
 		return
 	}
 	status.SetLastErrors(preflightErr.Error())
+	// The counts described the summary this error replaces.
+	status.IssueCounts = nil
 	_ = localStore.SaveStatus(status)
 }
 

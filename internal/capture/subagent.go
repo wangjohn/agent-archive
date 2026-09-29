@@ -63,6 +63,7 @@ func handleSubagentStop(store *state.Store, cfg config.Config, harness, parentNa
 		ParentArchiveSessionID: parent.ArchiveSessionID, ParentNativeSessionID: parent.NativeSessionID,
 		ProjectID: parent.ProjectID, ProjectRoot: parent.ProjectRoot, Harness: parent.Harness,
 		AgentID: agentID, TranscriptPath: path, ObservedAt: now,
+		AgentType: archive.SanitizeSubagentType(firstNonEmptyString(payload, "agent_type")),
 	})
 }
 
@@ -84,12 +85,9 @@ func saveLinkedSessionEvidence(store *state.Store, parentID, childID string, sta
 }
 
 func saveSubagentCaptureGap(store *state.Store, parentID, code, detail string, observedAt time.Time) error {
-	filtered, _, err := archive.FilterSupplementalEvidence([]archive.SupplementalEvidence{{
-		Kind: archive.EvidenceKindCaptureGap, ObservedAt: observedAt, Provenance: "hook:subagent-link",
-		Payload: map[string]any{"code": code, "detail": detail},
-	}})
-	if err != nil || len(filtered) == 0 {
+	evidence, err := archive.NewCaptureGapEvidence(code, detail, "hook:subagent-link", observedAt)
+	if err != nil {
 		return err
 	}
-	return store.SaveRequest(parentID, "subagent-link-unavailable", observedAt, filtered[0])
+	return store.SaveRequest(parentID, "subagent-link-unavailable", observedAt, evidence)
 }
