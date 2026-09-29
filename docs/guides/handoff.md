@@ -55,8 +55,9 @@ short session ID, or an ID prefix; a session ID that matches exactly wins
 over a title that also contains it. `--harness` narrows the search.
 
 The search looks at this Mac's sessions first, which needs no network and no
-upload (it reads each recently active session's title, the first prompt, and
-nothing deeper in the conversation), and goes on to the archive's sessions
+upload (a session's title, its first prompt, is read from its transcript file
+on this Mac, and only the title is matched, never the rest of the
+conversation), and goes on to the archive's sessions
 only when none of this Mac's match, so an archive that cannot be reached
 does not fail a title this Mac can answer. `--source local` or `--source
 archive` limits it to one. Only the 50 most recently active sessions on this
@@ -67,8 +68,11 @@ One match is handed off. Several are never guessed between: on a terminal the
 picker opens with just those sessions; without a terminal (a script, or an
 agent running the command) they are printed to standard error, each with its
 short ID, app, project, age, and title, and the command exits with code 1, so
-the caller can ask which and run it again with an ID. With none, the message
-points to `agent-archive list`.
+the caller can ask which and run it again with an ID. At most the 20 newest
+are listed, with a count of the rest; add more of the title, or `--harness`,
+to narrow. One match on this Mac is taken even when the archive holds
+others, so name an ID when in doubt. With none, the message points to
+`agent-archive list`.
 
 ## Where the session comes from
 

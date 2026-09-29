@@ -414,6 +414,22 @@ func TestHandoffExactIDNeedsNoTitle(t *testing.T) {
 	}
 }
 
+// A subagent is not offered by a title, but its own ID still names it, as it
+// did before titles.
+func TestHandoffSubagentIDStillNamesIt(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	sub := f.addSubagent(t, f.notUploaded, "native-sub")
+	opens := takeArchiveOffline(&f.env)
+	out, errOut, code := runHandoff(t, f.env, sub)
+	if code != 0 || out == "" || strings.Contains(errOut, "no session matches") {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if *opens != 0 {
+		t.Fatalf("opened the archive %d times", *opens)
+	}
+}
+
 // A subagent's archived record is not offered by a title either.
 func TestHandoffTitleSkipsArchivedSubagents(t *testing.T) {
 	t.Parallel()

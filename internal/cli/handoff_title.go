@@ -37,8 +37,9 @@ const handoffCandidateLimit = 20
 // matches as show does (a title substring, a short ID or an ID prefix, an
 // exact ID winning) over titles and metadata, never transcript content:
 //
-//  1. a session ID registered on this Mac, then, for a full ID, the archive
-//     (one read), which a title match may not shadow;
+//  1. a session ID registered on this Mac (a subagent's too, as handoff
+//     always took), then, for a full ID, the archive (one read), which a
+//     title match may not shadow;
 //  2. this Mac's sessions, which need no network;
 //  3. only when none of those match, the archive's.
 //
@@ -97,7 +98,7 @@ func (r *handoffQueryResolver) resolve() (code int, done bool) {
 			terminal.Printf(r.stderr, "agent-archive: handoff: note: could not read this Mac's sessions, searching the archive only: %v\n", err)
 		}
 		for _, reg := range regs {
-			if topLevelRegistration(reg) && reg.ArchiveSessionID == r.query && (opts.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == opts.harness) {
+			if reg.ArchiveSessionID == r.query && (opts.harness == "" || archive.CanonicalHarness(reg.Harness.Name) == opts.harness) {
 				opts.sessionID = r.query
 				return 0, false
 			}
