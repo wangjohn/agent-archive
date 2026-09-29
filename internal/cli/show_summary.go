@@ -38,8 +38,9 @@ type summaryOptions struct {
 const summaryWidth = 80
 
 // renderSessionSummary writes the human summary `show SESSION_ID` prints: a
-// title, one line of context, labelled rows for what the metadata records,
-// capture gaps, and identifiers. A row whose data is absent is left out;
+// title, one line of context, labelled rows for what the metadata records
+// (with what the archive omitted by design as one row), the capture gaps
+// that mean content is missing, and identifiers. A row whose data is absent is left out;
 // a nil count is unknown, never zero. It prints metadata only, never
 // conversation content, and every metadata string goes through
 // archive.DisplayLine.
@@ -63,13 +64,17 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 			if i == 0 {
 				label = s.dim(fmt.Sprintf("%-9s", row.label))
 			}
-			terminal.Printf(w, "  %s %s\n", label, ellipsize(value, width-12))
+			value = ellipsize(value, width-12)
+			if row.quiet {
+				value = s.dim(value)
+			}
+			terminal.Printf(w, "  %s %s\n", label, value)
 		}
 	}
 
 	if gaps := summaryGaps(m.CaptureGaps, width); len(gaps) > 0 {
 		terminal.Println(w)
-		terminal.Printf(w, "  %s %s\n", s.warnMark(), s.bold("Capture gaps"))
+		terminal.Printf(w, "  %s %s\n", s.warnMark(), s.bold("Incomplete capture"))
 		for _, line := range gaps {
 			terminal.Println(w, "    "+line)
 		}
@@ -116,6 +121,7 @@ func summaryTitle(m archive.Metadata) string {
 type summaryRow struct {
 	label  string
 	values []string
+	quiet  bool // values are dimmed
 }
 
 // summaryRows builds the labelled rows; a list too long for width
@@ -148,6 +154,10 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 			imported = formatSummaryTime(*m.ImportedAt, opts) + " by backfill"
 		}
 		add("Imported", imported)
+	}
+	if omitted := summaryOmitted(m.CaptureGaps); len(omitted) > 0 {
+		add("Omitted", wrapList(omitted, ", ", width)...)
+		rows[len(rows)-1].quiet = true
 	}
 	return rows
 }
@@ -436,18 +446,71 @@ func linkedStateLabel(state reader.LinkedState) string {
 	return archive.DisplayLine(string(state))
 }
 
+// routineGaps names, in the order the Omitted row lists them, the capture
+// gap codes that record something the archive leaves out by design (the
+// privacy filter, size caps) or because the parser does not recognize it.
+// Neither means the capture went wrong, so the summary names them in one
+// quiet row instead of warning about them. Codes that share a phrase are
+// listed once.
+var routineGaps = []struct{ code, phrase string }{
+	{"hidden_instruction_omitted", "injected instructions"},
+	{"hidden_or_unknown_nested_content_omitted", "hidden fields"},
+	{"sensitive_or_hidden_field_omitted", "sensitive fields"},
+	{"sensitive_content_redacted", "redacted secrets"},
+	{"binary_content_omitted", "binary content"},
+	{"content_truncated", "truncated long content"},
+	{"record_without_allowed_fields_omitted", "records with nothing kept"},
+	{"cursor_context_omitted", "attached context"},
+	{"cursor_tool_argument_omitted", "tool arguments"},
+	{"supplemental_evidence_omitted", "supplemental evidence"},
+	{archive.CaptureGapImportedWithoutHookEvidence, "hook events before import"},
+	{"unknown_field_omitted", "unrecognized fields"},
+	{"unknown_record_type", "unrecognized records"},
+	{"cursor_message_type_unknown", "unrecognized messages"},
+	{"unsupported_value_omitted", "unsupported values"},
+}
+
+func routineGap(code string) bool {
+	for _, gap := range routineGaps {
+		if gap.code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// summaryOmitted is the Omitted row: a phrase for each routine gap the
+// session has.
+func summaryOmitted(gaps []archive.CaptureGap) []string {
+	present := map[string]bool{}
+	for _, gap := range gaps {
+		present[gap.Code] = true
+	}
+	var phrases []string
+	listed := map[string]bool{}
+	for _, gap := range routineGaps {
+		if present[gap.code] && !listed[gap.phrase] {
+			listed[gap.phrase] = true
+			phrases = append(phrases, gap.phrase)
+		}
+	}
+	return phrases
+}
+
 // summaryGapLimit bounds how many distinct gap codes the summary lists.
 const summaryGapLimit = 6
 
-// summaryGaps is one line per capture gap code: the code, how many times it
-// occurs, and the first detail recorded for it, cut to one line.
+// summaryGaps is one line per capture gap code that may mean content is
+// missing (every code routineGaps does not name, including ones this
+// version does not know): the code, how many times it occurs, and the
+// first detail recorded for it, cut to one line.
 func summaryGaps(gaps []archive.CaptureGap, width int) []string {
 	counts := map[string]int{}
 	details := map[string]string{}
 	var codes []string
 	for _, gap := range gaps {
 		code := archive.DisplayLine(gap.Code)
-		if code == "" {
+		if code == "" || routineGap(gap.Code) {
 			continue
 		}
 		if counts[code] == 0 {

@@ -53,8 +53,12 @@ func summaryFixture() sessionView {
 			},
 			CaptureGaps: []archive.CaptureGap{
 				{Code: archive.CaptureGapImportedWithoutHookEvidence, Detail: "No hook observed this session before it was imported (imported_at): activity before then has no hook lifecycle events, final-response text, or skill inventory."},
-				{Code: "tool_result_truncated", Record: 12},
-				{Code: "tool_result_truncated", Record: 40},
+				{Code: "hidden_instruction_omitted", Record: 3, Detail: "injected instruction block omitted"},
+				{Code: "hidden_instruction_omitted", Record: 9, Detail: "injected instruction block omitted"},
+				{Code: "sensitive_content_redacted", Record: 12, Detail: "content redacted"},
+				{Code: "unknown_field_omitted", Record: 20, Detail: "omitted keys: advisorModel"},
+				{Code: "incomplete_or_invalid_record", Record: 40, Detail: "jsonl record omitted"},
+				{Code: "incomplete_or_invalid_record", Record: 41, Detail: "jsonl record omitted"},
 			},
 			LinkedSessions: []archive.LinkedSessionReference{{SessionID: "child-1"}, {SessionID: "child-2"}},
 			Origin:         archive.SessionOriginImport,
@@ -99,13 +103,51 @@ func TestSessionSummaryOmitsAbsentData(t *testing.T) {
 	if !strings.Contains(text, "Activity  2 turns · 0 tool calls\n") {
 		t.Fatalf("activity row:\n%s", text)
 	}
-	for _, absent := range []string{"message", "compaction", "edited", "Tools", "When", "Model", "Skills", "Subagents", "Parent", "Imported", "Capture gaps", "Transcript:", "completed"} {
+	for _, absent := range []string{"message", "compaction", "edited", "Tools", "When", "Model", "Skills", "Subagents", "Parent", "Imported", "Omitted", "Incomplete", "Transcript:", "completed"} {
 		if strings.Contains(text, absent) {
 			t.Fatalf("%q shown for absent data:\n%s", absent, text)
 		}
 	}
 	if !strings.Contains(text, "Agent     Codex\n") || !strings.Contains(text, "origin hook") {
 		t.Fatalf("agent or provenance missing:\n%s", text)
+	}
+}
+
+// Gaps the archive records by design (filtering, redaction, fields the
+// parser does not recognize) are named in the quiet Omitted row and never
+// warn; any other code, including one this version does not know, is
+// listed under the warning.
+func TestSessionSummarySeparatesRoutineGaps(t *testing.T) {
+	t.Parallel()
+	view := sessionView{Metadata: archive.Metadata{
+		SessionID: "abcdef0123456789abcdef0123456789",
+		Harness:   archive.Harness{Name: "claude"},
+		CaptureGaps: []archive.CaptureGap{
+			{Code: "unknown_record_type", Detail: "record omitted"},
+			{Code: "hidden_instruction_omitted"},
+			{Code: "hidden_instruction_omitted"},
+			{Code: "sensitive_content_redacted"},
+			{Code: "unknown_field_omitted", Detail: "omitted keys: advisorModel, apiBlockIndex"},
+		},
+	}}
+	text := renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC})
+	want := "  Omitted   injected instructions, redacted secrets, unrecognized fields,\n            unrecognized records\n"
+	if !strings.Contains(text, want) {
+		t.Fatalf("missing %q:\n%s", want, text)
+	}
+	for _, absent := range []string{"!", "Incomplete", "hidden_instruction_omitted", "omitted keys"} {
+		if strings.Contains(text, absent) {
+			t.Fatalf("%q shown for routine gaps:\n%s", absent, text)
+		}
+	}
+
+	view.CaptureGaps = append(view.CaptureGaps, archive.CaptureGap{Code: "some_future_gap", Detail: "new"})
+	text = renderSummaryText(view, summaryOptions{Now: summaryNow, Location: time.UTC})
+	if !strings.Contains(text, "  ! Incomplete capture\n    some_future_gap — new\n") {
+		t.Fatalf("an unknown code is not warned about:\n%s", text)
+	}
+	if strings.Contains(text, "unknown_record_type") {
+		t.Fatalf("a routine code is listed under the warning:\n%s", text)
 	}
 }
 
@@ -377,6 +419,21 @@ func TestShowFullNeedsReadableTranscript(t *testing.T) {
 		var out, errOut bytes.Buffer
 		if code := Run(args, nil, &out, &errOut, env); code != 2 || out.Len() != 0 || !strings.Contains(errOut.String(), "--full is for the readable transcript") {
 			t.Fatalf("%v: code=%d out=%s stderr=%s", args, code, out.String(), errOut.String())
+		}
+	}
+}
+
+// Every code the Omitted row names is one the archive writes, so a typo
+// cannot turn a routine gap into a warning.
+func TestRoutineGapsAreKnownCodes(t *testing.T) {
+	t.Parallel()
+	known := map[string]bool{}
+	for _, code := range archive.CaptureGapCodes {
+		known[code] = true
+	}
+	for _, gap := range routineGaps {
+		if !known[gap.code] {
+			t.Errorf("routineGaps names %q, which is not in archive.CaptureGapCodes", gap.code)
 		}
 	}
 }

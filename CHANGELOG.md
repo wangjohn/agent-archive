@@ -43,7 +43,10 @@ follow [Semantic Versioning](https://semver.org/).
 
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
-  instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what
+  instead of JSON. Capture gaps the archive records by design (filtered or
+  redacted content, fields the parser does not recognize) are named in one
+  dimmed Omitted row; only gaps that may mean content is missing get a
+  warning. Pass `--json` for the metadata sidecar, byte for byte what
   `show` printed before.
 - `show --normalized` is deprecated in favor of `show --transcript --json`.
   It still works, with unchanged output, and prints a note on stderr.
