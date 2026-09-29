@@ -137,8 +137,9 @@ func TestPlanInstallUpdatesOnlySetupsFiles(t *testing.T) {
 	}
 	unmarked := func(content string) string { return strings.Replace(content, marker+"\n", "", 1) }
 	for _, tc := range []struct {
-		name, content string
-		owned         bool
+		name    string
+		content string
+		owned   bool
 	}{
 		{"moved executable", render("/old/agent-archive"), true},
 		{"earlier release", "older wording\n" + marker + "\n", true},
@@ -287,7 +288,10 @@ func TestSkillNamesARelocatedDataDirectory(t *testing.T) {
 // removes, and lists only the skill naming its own data directory.
 func TestInstallationsKeepEachOthersSkills(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ writer, other string }{{"", "/data/b"}, {"/data/a", ""}, {"/data/a", "/data/b"}} {
+	for _, tc := range []struct {
+		writer string
+		other  string
+	}{{"", "/data/b"}, {"/data/a", ""}, {"/data/a", "/data/b"}} {
 		home := t.TempDir()
 		changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude", "codex"}, exe, tc.writer, claudeDir(home))
 		must(t, err)
