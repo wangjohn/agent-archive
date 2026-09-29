@@ -50,6 +50,28 @@ func TestStatusDestinationAgreesWithAStorageHeadline(t *testing.T) {
 	if row := destination(view); row.mark != symbolWarn || !strings.HasPrefix(row.detail, "unreachable on the last pass") {
 		t.Errorf("outage: %q %q", row.mark, row.detail)
 	}
+	for recorded, want := range map[string]string{
+		"list registrations: operation error S3: ListObjectsV2, https response error StatusCode: 500": "! unreachable on the last pass",
+		"open storage: load credentials: no profile":                                                  "! unreachable on the last pass",
+		backgroundCredentialProcessFailure:                                                            "! couldn't get credentials on the last pass",
+		// Not about storage: the clock hold proves storage answered, and
+		// the others are this Mac's own files and checks.
+		"retention: this Mac's clock is ahead of the storage service's; retention deletes nothing until it is corrected (by 5 minutes)": "✓ reachable",
+		"list registrations: open /Users/alex/.agent-archive/registrations: permission denied":                                          "✓ reachable",
+		"collection succeeded but retention cleanup failed: remove local copy: permission denied":                                       "✓ reachable",
+	} {
+		failing := mixedStatusView()
+		failing.Collector.SetLastErrors(recorded)
+		if row := destination(failing); row.mark+" "+strings.TrimSuffix(row.detail, " · uploaded 2 minutes ago") != want {
+			t.Errorf("%q: %q %q want %q", recorded, row.mark, row.detail, want)
+		}
+	}
+	// A destination the collector already found failing keeps its ✗.
+	signInFailed := mixedStatusView()
+	signInFailed.Authentication = storageHealth{State: "authentication_failed", CheckedAt: renderNow.Add(-time.Minute)}
+	if row := destination(signInFailed); row.mark != symbolFail || !strings.HasPrefix(row.detail, "sign-in failed") {
+		t.Errorf("sign-in failed: %q %q", row.mark, row.detail)
+	}
 	// A headline from the failed sessions' kinds is not about storage.
 	byIssue := mixedStatusView()
 	byIssue.problem, byIssue.lastErrorProblem, byIssue.lastErrorByIssue = "Some sessions could not be captured", "Some sessions could not be captured", true

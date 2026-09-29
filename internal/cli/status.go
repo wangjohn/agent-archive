@@ -1818,14 +1818,20 @@ func headlineIssueCodes(counts map[string]int) []string {
 // lastPassStorageDetail words, for the destination row, what the last
 // pass's storage failure was, while the headline is the one derived from
 // it: the destination was not reachable as the collector's health last
-// recorded, so the row must not say it is. ok is false otherwise.
+// recorded, so the row must not say it is. ok is false otherwise, and for
+// a failure that is not recognizably about storage (a retention clock hold,
+// which proves storage answered; a local file; a read-back check): the
+// general headline covers those too, but they say nothing against storage.
 func lastPassStorageDetail(view statusView) (detail string, ok bool) {
 	if view.problem == "" || view.problem != view.lastErrorProblem || view.lastErrorByIssue {
 		return "", false
 	}
-	for _, row := range lastErrorRows(view.Collector) {
-		//lint:ignore LV1001 storageErrorCause returns these fixed phrasings; the switch words them for the destination row
-		switch row {
+	recorded := view.Collector.LastErrors
+	if len(recorded) == 0 && view.Collector.LastError != "" {
+		recorded = strings.Split(view.Collector.LastError, "; ")
+	}
+	for _, problem := range recorded {
+		switch storageErrorCause(problem) {
 		case "Storage refused access":
 			return "refused access on the last pass", true
 		case "Storage didn't accept the credentials":
@@ -1836,7 +1842,35 @@ func lastPassStorageDetail(view statusView) (detail string, ok bool) {
 			return "bucket in a different region on the last pass", true
 		}
 	}
-	return "unreachable on the last pass", true
+	for _, problem := range recorded {
+		if strings.Contains(problem, backgroundCredentialProcessFailure) || credentials.RecoveryActionForMessage(problem) != "" {
+			return "couldn't get credentials on the last pass", true
+		}
+	}
+	if slices.ContainsFunc(recorded, storageProblem) {
+		return "unreachable on the last pass", true
+	}
+	return "", false
+}
+
+// storageProblem reports whether a problem the collector recorded as text is
+// about reaching storage: a call to S3 failed, storage could not be opened,
+// the collector's own storage access check failed, or the network did.
+func storageProblem(text string) bool {
+	for _, match := range recordedOperationService.FindAllStringSubmatch(text, -1) {
+		if match[1] == s3.ServiceID {
+			return true
+		}
+	}
+	if strings.Contains(text, "open storage: ") || strings.Contains(text, "background storage access failed") {
+		return true
+	}
+	for _, network := range []string{"dial tcp", "no such host", "connection refused", "connection reset", "i/o timeout", "network is unreachable", "TLS handshake timeout"} {
+		if strings.Contains(text, network) {
+			return true
+		}
+	}
+	return false
 }
 
 // generalSyncProblem is the headline for a failed pass whose errors say
