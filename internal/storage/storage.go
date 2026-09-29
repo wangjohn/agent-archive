@@ -39,6 +39,19 @@ type ObjectStore interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// PageLister lists one lexicographically ordered page. Continuation is an
+// opaque token supplied by the preceding page; an empty Next means done.
+// Keeping this as an extension lets older ObjectStore implementations retain
+// their existing all-results contract.
+type PageLister interface {
+	ListPage(ctx context.Context, prefix, continuation string, limit int32) (ObjectPage, error)
+}
+
+type ObjectPage struct {
+	Objects []Object
+	Next    string
+}
+
 // ObjectKeyer is implemented by stores that compose a full object key from a
 // relative archive key, such as S3Store applying its configured bucket
 // prefix. VerifyAccess uses it to report the exact object key in errors so a
@@ -189,6 +202,13 @@ func hasDotComponent(value string) bool {
 // bytes, as a download would, and a HEAD needs the same read permission as a
 // GET. A store that reports no checksum is read back and hashed instead.
 func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, metadataKey string, source, metadata []byte, retry RetryPolicy) error {
+	return PutSourceThenMetadataIndexed(ctx, store, sourceKey, metadataKey, source, metadata, retry, nil)
+}
+
+// PutSourceThenMetadataIndexed runs beforeMetadata after source verification
+// and before the authoritative sidecar. A failed index write leaves no new
+// sidecar; a failed sidecar write leaves only a harmless stale index entry.
+func PutSourceThenMetadataIndexed(ctx context.Context, store ObjectStore, sourceKey, metadataKey string, source, metadata []byte, retry RetryPolicy, beforeMetadata func() error) error {
 	if sourceKey == "" || metadataKey == "" {
 		return errors.New("source and metadata keys are required")
 	}
@@ -212,6 +232,11 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 	}); err != nil {
 		return fmt.Errorf("publish source %q: %w", sourceKey, err)
 	}
+	if beforeMetadata != nil {
+		if err := beforeMetadata(); err != nil {
+			return fmt.Errorf("publish listing index: %w", err)
+		}
+	}
 	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
 		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)
 	}
@@ -228,6 +253,12 @@ func PutSourceThenMetadata(ctx context.Context, store ObjectStore, sourceKey, me
 // is checked that way, without a download; otherwise the source is read back.
 // sourceSize, when positive, must match too.
 func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256 string, sourceSize int, metadataKey string, metadata []byte, retry RetryPolicy) error {
+	return PutMetadataForSourceIndexed(ctx, store, sourceKey, sourceSHA256, sourceSize, metadataKey, metadata, retry, nil)
+}
+
+// PutMetadataForSourceIndexed has the same source-first ordering with an
+// optional immutable index write immediately before the sidecar replacement.
+func PutMetadataForSourceIndexed(ctx context.Context, store ObjectStore, sourceKey, sourceSHA256 string, sourceSize int, metadataKey string, metadata []byte, retry RetryPolicy, beforeMetadata func() error) error {
 	if sourceKey == "" || metadataKey == "" || sourceSHA256 == "" {
 		return errors.New("source key, source checksum, and metadata key are required")
 	}
@@ -238,6 +269,11 @@ func PutMetadataForSource(ctx context.Context, store ObjectStore, sourceKey, sou
 		return verifyStoredObject(ctx, store, sourceKey, sourceSHA256, sourceSize)
 	}); err != nil {
 		return fmt.Errorf("verify source %q: %w", sourceKey, err)
+	}
+	if beforeMetadata != nil {
+		if err := beforeMetadata(); err != nil {
+			return fmt.Errorf("publish listing index: %w", err)
+		}
 	}
 	if err := retry.run(ctx, func() error { return store.Put(ctx, metadataKey, metadata) }); err != nil {
 		return fmt.Errorf("publish metadata %q: %w", metadataKey, err)

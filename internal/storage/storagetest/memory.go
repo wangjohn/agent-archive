@@ -102,6 +102,25 @@ func (s *MemoryStore) List(ctx context.Context, prefix string) ([]storage.Object
 	return objects, nil
 }
 
+// ListPage follows S3's key ordering and treats continuation as the last key
+// from the preceding page. The token is opaque to callers.
+func (s *MemoryStore) ListPage(ctx context.Context, prefix, continuation string, limit int32) (storage.ObjectPage, error) {
+	objects, err := s.List(ctx, prefix)
+	if err != nil {
+		return storage.ObjectPage{}, err
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	start := sort.Search(len(objects), func(i int) bool { return objects[i].Key > continuation })
+	end := min(start+int(limit), len(objects))
+	page := storage.ObjectPage{Objects: objects[start:end]}
+	if end < len(objects) {
+		page.Next = objects[end-1].Key
+	}
+	return page, nil
+}
+
 // Delete removes the object at key; a missing object is not an error.
 func (s *MemoryStore) Delete(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
@@ -123,6 +142,7 @@ func hasPrefixKey(key, prefix string) bool {
 var (
 	_ storage.ObjectStore   = (*MemoryStore)(nil)
 	_ storage.ObjectStatter = (*MemoryStore)(nil)
+	_ storage.PageLister    = (*MemoryStore)(nil)
 )
 
 // md5Hex is the ETag an S3-compatible store reports for a single-part,

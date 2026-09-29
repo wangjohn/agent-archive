@@ -270,6 +270,39 @@ func (s *S3Store) List(ctx context.Context, relativePrefix string) ([]Object, er
 	return objects, nil
 }
 
+// ListPage returns one provider page without fetching later pages.
+func (s *S3Store) ListPage(ctx context.Context, relativePrefix, continuation string, limit int32) (ObjectPage, error) {
+	prefix, err := s.keyForList(relativePrefix)
+	if err != nil {
+		return ObjectPage{}, err
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	input := &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix), MaxKeys: aws.Int32(limit)}
+	if continuation != "" {
+		input.ContinuationToken = aws.String(continuation)
+	}
+	output, err := s.client.ListObjectsV2(ctx, input)
+	if err != nil {
+		return ObjectPage{}, err
+	}
+	page := ObjectPage{Objects: make([]Object, 0, len(output.Contents))}
+	for _, item := range output.Contents {
+		if item.Key == nil {
+			continue
+		}
+		page.Objects = append(page.Objects, Object{Key: trimStorePrefix(*item.Key, s.prefix), Size: aws.ToInt64(item.Size), ETag: strings.Trim(aws.ToString(item.ETag), "\""), LastModified: aws.ToTime(item.LastModified)})
+	}
+	if output.IsTruncated != nil && *output.IsTruncated {
+		page.Next = aws.ToString(output.NextContinuationToken)
+		if page.Next == "" {
+			return ObjectPage{}, fmt.Errorf("list page is truncated without continuation token")
+		}
+	}
+	return page, nil
+}
+
 func (s *S3Store) keyForList(relativePrefix string) (string, error) {
 	if strings.TrimSpace(relativePrefix) == "" {
 		if s.prefix == "" {
