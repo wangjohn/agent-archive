@@ -293,6 +293,31 @@ func TestHandoffTitleSourceAndHarnessLimitTheSearch(t *testing.T) {
 	}
 }
 
+// --source and --harness bound an ID as they bound a title: a registered ID
+// is not taken from the archive side, nor by the wrong app, and a full ID
+// is not read from the archive when only this Mac is wanted.
+func TestHandoffFullIDRespectsSourceAndHarness(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for _, args := range [][]string{
+		{f.notUploaded, "--source", "archive"},
+		{f.notUploaded, "--harness", "claude"},
+	} {
+		out, errOut, code := runHandoff(t, f.env, args...)
+		if code != 1 || out != "" || !strings.Contains(errOut, "no session matches") {
+			t.Errorf("%v: code=%d stdout=%q stderr=%s", args, code, out, errOut)
+		}
+	}
+	opens := takeArchiveOffline(&f.env)
+	_, errOut, code := runHandoff(t, f.env, f.archiveOnly, "--source", "local")
+	if code != 1 || !strings.Contains(errOut, "no session matches") {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+	if *opens != 0 {
+		t.Fatalf("--source local opened the archive %d times", *opens)
+	}
+}
+
 // The chosen session's harness travels with its ID, so one ID published under
 // two harnesses is not a second question.
 func TestHandoffTitleKeepsTheMatchesHarness(t *testing.T) {
