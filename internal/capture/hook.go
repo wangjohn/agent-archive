@@ -130,10 +130,10 @@ func HandleEvent(home, harness string, payload map[string]any, now time.Time) er
 		if errors.Is(lockErr, local.ErrBusy) {
 			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now)
 			if err := recordHookBusy(home, harness, payload, now); err != nil {
-				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %v", queued, lockErr, errors.Join(queueErr, err))
+				return fmt.Errorf("capture registration busy (admission queued: %t): %w; %w", queued, lockErr, errors.Join(queueErr, err))
 			}
 			if queueErr != nil {
-				return fmt.Errorf("capture registration busy; this hook was not retained: %w; %v", lockErr, queueErr)
+				return fmt.Errorf("capture registration busy; this hook was not retained: %w; %w", lockErr, queueErr)
 			}
 			if queued {
 				return nil
