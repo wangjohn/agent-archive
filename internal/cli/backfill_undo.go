@@ -85,8 +85,39 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		terminal.Println(stdout, "No imports to undo.")
 		return 0
 	}
+	return (undoCommand{
+		home: home, userHome: userHome, cfg: cfg, batches: batches, batch: batch,
+		project: *project, yes: *yes, keepRetention: keepRetention,
+		stdin: stdin, stdout: stdout, stderr: stderr, env: env,
+	}).run()
+}
+
+type undoCommand struct {
+	home          string
+	userHome      string
+	cfg           config.Config
+	batches       []backfill.Batch
+	batch         *backfill.Batch
+	project       string
+	yes           bool
+	keepRetention bool
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	env           Env
+}
+
+// run plans and confirms while runBackfillUndo holds setup.lock.
+func (cmd undoCommand) run() int {
+	home, userHome, cfg, batches, batch := cmd.home, cmd.userHome, cmd.cfg, cmd.batches, cmd.batch
+	project, yes, keepRetention := cmd.project, cmd.yes, cmd.keepRetention
+	stdin, stdout, stderr, env := cmd.stdin, cmd.stdout, cmd.stderr, cmd.env
+	fail := func(format string, args ...any) int {
+		terminal.Printf(stderr, "agent-archive: backfill undo: "+format+"\n", args...)
+		return 1
+	}
 	bfEnv := env.backfillEnvironment(userHome, cfg)
-	plan, err := backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project)
+	plan, err := backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, project)
 	if err != nil {
 		return fail("%v", err)
 	}
@@ -96,25 +127,9 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	// Nothing to do needs no confirmation, so these come before the
 	// terminal requirement.
 	if plan.Empty() {
-		// An earlier run that stopped after changing the configuration left
-		// its changes unrecorded; recording them is all that is left.
-		if len(plan.Settled.Excluded) > 0 || plan.Settled.RetentionRestored {
-			batch.RecordUndone(plan.Settled)
-			if err := backfill.SaveBatch(home, *batch); err != nil {
-				return fail("%v", err)
-			}
-		}
-		if *project != "" {
-			terminal.Printf(stdout, "No sessions from %s are left in import %s. Nothing was changed.\n", plan.ProjectDisplay(), batch.ID)
-		} else {
-			terminal.Printf(stdout, "Import %s has nothing left to undo. Nothing was changed.\n", batch.ID)
-		}
-		if r := plan.RetentionKept; r != nil {
-			terminal.Printf(stdout, "Retention stays at %d days. To put back the %d days from before the import, run agent-archive backfill undo %s --restore-retention\n", r.To, r.From, batch.ID)
-		}
-		return 0
+		return cmd.finishEmpty(plan)
 	}
-	if !*yes && !env.isTerminal(stdin) {
+	if !yes && !env.isTerminal(stdin) {
 		return fail("confirming an undo needs a terminal. Nothing was changed. Run again with --yes to undo without asking.")
 	}
 	// The bucket must work before anything is confirmed, as for an import.
@@ -155,7 +170,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 	}
 	backfill.RenderUndo(stdout, plan)
 	terminal.Println(stdout)
-	if !*yes {
+	if !yes {
 		confirmed, err := newPrompter(stdin, stdout).yesNo(backfill.UndoQuestion(plan), false)
 		if err != nil {
 			return fail("%v. Nothing was changed.", err)
@@ -165,6 +180,42 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 			return 0
 		}
 	}
+
+	return cmd.apply(plan, bfEnv, bucket)
+}
+
+// finishEmpty records configuration changes left unrecorded by an interrupted
+// undo, then reports the already settled plan.
+func (cmd undoCommand) finishEmpty(plan backfill.UndoPlan) int {
+	batch := cmd.batch
+	if len(plan.Settled.Excluded) > 0 || plan.Settled.RetentionRestored {
+		batch.RecordUndone(plan.Settled)
+		if err := backfill.SaveBatch(cmd.home, *batch); err != nil {
+			terminal.Printf(cmd.stderr, "agent-archive: backfill undo: %v\n", err)
+			return 1
+		}
+	}
+	if cmd.project != "" {
+		terminal.Printf(cmd.stdout, "No sessions from %s are left in import %s. Nothing was changed.\n", plan.ProjectDisplay(), batch.ID)
+	} else {
+		terminal.Printf(cmd.stdout, "Import %s has nothing left to undo. Nothing was changed.\n", batch.ID)
+	}
+	if r := plan.RetentionKept; r != nil {
+		terminal.Printf(cmd.stdout, "Retention stays at %d days. To put back the %d days from before the import, run agent-archive backfill undo %s --restore-retention\n", r.To, r.From, batch.ID)
+	}
+	return 0
+}
+
+// apply holds collector.lock through the recheck, transaction, and removal.
+func (cmd undoCommand) apply(plan backfill.UndoPlan, bfEnv backfill.Environment, bucket storage.ObjectStore) int {
+	home, cfg, batches, batch := cmd.home, cmd.cfg, cmd.batches, cmd.batch
+	project, keepRetention := cmd.project, cmd.keepRetention
+	stdout, stderr, env := cmd.stdout, cmd.stderr, cmd.env
+	fail := func(format string, args ...any) int {
+		terminal.Printf(stderr, "agent-archive: backfill undo: "+format+"\n", args...)
+		return 1
+	}
+	var found bool
 
 	stopWait := startActivity(stdout, "Waiting for collector…")
 	releaseCollector, err := lockCollectorWait(home, "backfill undo", env.now(), backfillCollectorWait)
@@ -189,7 +240,7 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 		return fail("the configuration changed while this was open; run undo again. Nothing was changed.")
 	}
 	confirmed := plan
-	if plan, err = backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, *project); err != nil {
+	if plan, err = backfill.PlanUndo(bfEnv, state.OpenReadOnly(home), cfg, batches, *batch, project); err != nil {
 		return fail("%v", err)
 	}
 	if keepRetention {

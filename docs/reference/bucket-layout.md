@@ -13,6 +13,11 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
         source.<sha256>.jsonl.gz     an earlier snapshot, until retention removes it
   .setup-test/<random>.json          a connection test object, deleted within seconds
   .setup-test/clock-<random>.json    a clock check before retention deletes anything, deleted at once
+  listing/
+    v1-ready                       written after a complete index rebuild
+    v1-needs-rebuild               older bucket detected by an uploading Mac
+    v1/<reverse-time>/<app>/<id>/<hash>.json  immutable listing hint
+    by-session/<app>/<id>/<hash>    cleanup pointer for a listing hint
 ```
 
 - **Archive session ID.** 32 lowercase hex characters, assigned on the Mac
@@ -23,6 +28,16 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   session's identity, machine, project ID, app and version, capture time,
   counts, models, skills, capture gaps, parser and filter versions, and the
   key, SHA-256, and size of the current source. `list` reads only these.
+- **`listing/`** holds time-ordered hints. A limited `list` pages through
+  these keys and verifies each candidate against its current `metadata.json`
+  before showing it. Index entries never contain conversation content and
+  can be stale after republish or deletion. `list --rebuild-index` scans an
+  older bucket's sidecars and writes the `v1-ready` marker last. Until then,
+  limited listing uses the full sidecar scan. Retention and undo remove a
+  session's hints using the `by-session` pointers. Upgrade every uploading Mac
+  before rebuilding: an older writer cannot create hints for its new uploads.
+  If a hint is damaged, listing falls back to a full sidecar scan; rerun
+  `list --rebuild-index` to repair the index.
 - **`source.<sha256>.jsonl.gz`** is gzip of newline-delimited JSON (source
   schema 2; [`schemas/source-bundle.schema.json`](../../schemas/source-bundle.schema.json)):
   a header line, one line per retained native record, then text transcripts
