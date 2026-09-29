@@ -129,3 +129,55 @@ func TestStricterPolicyRebuildsFrozenPendingSource(t *testing.T) {
 		t.Fatal("live metadata did not point to policy-limited source")
 	}
 }
+
+func TestStricterPolicyReplacesPublishedSourceWithoutTranscriptChange(t *testing.T) {
+	project := t.TempDir()
+	skill := filepath.Join(project, ".agents", "skills", "sample", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skill, []byte("---\nname: sample\n---\nprivate-skill-body"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reg := registration(t, writeTranscript(t, t.TempDir(), "codex.jsonl", codexTranscript))
+	reg.ProjectRoot = project
+	local := newTestStore(t)
+	if err := local.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	remote := storagetest.NewMemoryStore()
+	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	mode := config.SkillEvidenceBody
+	options := Options{MachineID: "m", Now: func() time.Time { return now }, SkillEvidence: mode,
+		SupplementalEvidence: func(_ archive.SessionRegistration, at time.Time) ([]archive.SupplementalEvidence, error) {
+			return evidence.ObserveSkills(evidence.SkillOptions{Harness: "codex", ProjectRoot: project, ObservedAt: at, Mode: mode})
+		},
+	}
+	if _, err := Run(context.Background(), local, remote, options); err != nil {
+		t.Fatal(err)
+	}
+	old := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	mode = config.SkillEvidenceNone
+	options.SkillEvidence = mode
+	now = now.Add(time.Hour)
+	if _, err := Run(context.Background(), local, remote, options); err != nil {
+		t.Fatal(err)
+	}
+	next := fetchMetadata(t, remote, "codex", reg.ArchiveSessionID)
+	if next.SourceBundle.Key == old.SourceBundle.Key {
+		t.Fatal("policy downgrade retained old source")
+	}
+	source, err := remote.Get(context.Background(), next.SourceBundle.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := archive.ReadSourceBundle(bytes.NewReader(source), archive.DecodeOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range bundle.SupplementalEvidence {
+		if item.Kind == archive.EvidenceKindSkillInventory || item.Kind == archive.EvidenceKindSkillSnapshot {
+			t.Fatalf("downgraded source carried %s", item.Kind)
+		}
+	}
+}
