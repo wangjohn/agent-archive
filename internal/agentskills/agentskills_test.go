@@ -589,6 +589,19 @@ func TestStaleWithNothingToCompare(t *testing.T) {
 	}
 }
 
+// A skill of the person's own linked in (its directory a link) is not
+// setup's to call out of date, even with the marker line in it.
+func TestStaleLeavesALinkedSkillDirectoryAlone(t *testing.T) {
+	t.Parallel()
+	home, elsewhere := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(elsewhere, "SKILL.md"), "older wording\n"+marker+"\n")
+	must(t, os.MkdirAll(filepath.Join(home, ".claude", "skills"), 0700))
+	must(t, os.Symlink(elsewhere, filepath.Join(home, ".claude", "skills", "handoff")))
+	if got := staleOf(twoSkills(), home, claudeDir(home), exe, ""); got != nil {
+		t.Errorf("Stale = %v", got)
+	}
+}
+
 // Stale follows the installation's data directory as Installed does: a
 // relocated installation's skill is judged against a render naming its
 // directory, and another installation's file is never reported.
