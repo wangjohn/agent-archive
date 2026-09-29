@@ -1,0 +1,38 @@
+--- empty ---
+Nothing to import.
+
+--- included, retention off ---
+Backfill imports every session found on this Mac into
+s3 / bucket. Nothing has been uploaded yet.
+
+PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL
+~/repo                                     1      –       –      1  already included
+
+Total: 1 session, 1 KB,
+       started 2026-09-20.
+
+If you continue:
+  • Retention is off, so these sessions are kept until you delete them.
+  • Undo any time with `agent-archive backfill undo`.
+
+--- mixed, filtered, retention ---
+Backfill imports sessions matching --since 2026-09-20
+into s3 / bucket. Nothing has been uploaded yet.
+
+PROJECT                               CLAUDE  CODEX  CURSOR  TOTAL
+~/日本語-project                              1      –       –      1  will be added
+
+Not a repository:
+~/notes                                    –      1       –      1  will be added
+  Every future session in a folder under it that isn't in a nearer project
+  will be captured too.
+
+Total: 2 sessions (plus 1 subagent transcript), 7 KB,
+       started 2026-09-20 to 2026-09-22.
+
+If you continue:
+  • 2 projects are added, and new Claude Code sessions in them are captured.
+    New Codex sessions need that app added in setup.
+  • Retention is 30 days, so these sessions are deleted on 2026-10-23.
+    Choose `edit` to keep them longer.
+  • Undo any time with `agent-archive backfill undo`.
