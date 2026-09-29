@@ -101,8 +101,8 @@ func printInterruptedImport(out io.Writer, home string, plan backfill.Plan, cfg 
 
 // runBackfillCommand implements `agent-archive backfill`: it finds the
 // sessions already on this Mac, shows the plan, and after confirmation
-// imports them (see dev/specs/backfill.md). `--dry-run
-// [--json]` prints the plan and writes nothing, locally or remotely.
+// imports them (see dev/specs/backfill.md). `--dry-run [--json]` prints
+// the plan and writes nothing, locally or remotely.
 func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int {
 	// A copy of Cursor's database a killed backfill or collector left in the
 	// temporary folder goes first, whatever this command is (history, undo,
@@ -114,6 +114,85 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	if len(args) > 0 && args[0] == "undo" {
 		return runBackfillUndo(args[1:], stdin, stdout, stderr, env)
 	}
+	opts, ok := parseBackfillOptions(args, stderr, env)
+	if !ok {
+		return 2
+	}
+	home, err := env.readHome()
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: backfill: resolve home: %v\n", err)
+		return 1
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: backfill: load config: %v\n", err)
+		return 1
+	}
+	if !found {
+		terminal.Println(stderr, "agent-archive: backfill: "+errNotSetUp.Error())
+		return 1
+	}
+	// A dry run works while paused or while a setup transaction is pending:
+	// it writes nothing. An import refuses both before it looks at anything.
+	if !opts.dryRun {
+		if refusal := importRefusal(home, cfg); refusal != "" {
+			terminal.Println(stderr, "agent-archive: backfill: "+refusal)
+			return 1
+		}
+		if !opts.yes && !env.isTerminal(stdin) {
+			terminal.Println(stderr, "agent-archive: backfill: confirming an import needs a terminal. Nothing was changed. Run again with --yes to import without asking, or with --dry-run to see the plan.")
+			return 1
+		}
+	}
+	userHome, err := env.userHomeDir()
+	if err != nil {
+		terminal.Printf(stderr, "agent-archive: backfill: resolve user home: %v\n", err)
+		return 1
+	}
+
+	style := styleFor(stdout)
+	plan, ok := planBackfill(env, stdout, stderr, home, userHome, cfg, opts, style)
+	if !ok {
+		return 1
+	}
+	if handled, code := reportBackfillPlan(env, stdout, stderr, home, cfg, plan, opts, style); handled {
+		return code
+	}
+	return importBackfillPlan(env, stdin, stdout, stderr, home, cfg, plan, opts)
+}
+
+type backfillCommandOptions struct {
+	filters                          backfill.Filters
+	dryRun, jsonOut, yes, background bool
+}
+
+type backfillPlanAction uint8
+
+const (
+	backfillPlanJSON backfillPlanAction = iota
+	backfillPlanDryRun
+	backfillPlanEmptyImport
+	backfillPlanImport
+)
+
+// chooseBackfillPlanAction decides the command path from validated options
+// and the read-only plan, before any storage check or import write.
+func chooseBackfillPlanAction(opts backfillCommandOptions, plan backfill.Plan) backfillPlanAction {
+	switch {
+	case opts.jsonOut:
+		return backfillPlanJSON
+	case opts.dryRun:
+		return backfillPlanDryRun
+	case len(plan.Imported()) == 0:
+		return backfillPlanEmptyImport
+	default:
+		return backfillPlanImport
+	}
+}
+
+// parseBackfillOptions validates the command's selection and output choices
+// before reading configuration or transcripts.
+func parseBackfillOptions(args []string, stderr io.Writer, env Env) (backfillCommandOptions, bool) {
 	fs := env.newCommandFlags("backfill", stderr)
 	var harnesses, projects stringList
 	fs.Var(&harnesses, "harness", "only sessions from this app (claude, codex, cursor); repeatable")
@@ -128,9 +207,12 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	yes := fs.Bool("yes", false, "skip the confirmation")
 	background := fs.Bool("background", false, "register the sessions and let the collector upload them")
 	if !fs.parseFlagsOnly(args) {
-		return 2
+		return backfillCommandOptions{}, false
 	}
-	usageError := func(message string) int { return fs.usageError("%s", message) }
+	usageError := func(message string) (backfillCommandOptions, bool) {
+		fs.usageError("%s", message)
+		return backfillCommandOptions{}, false
+	}
 	// Backfill selects whole local days, so --since and --until accept the
 	// same forms as list's --since and name the local day they fall on.
 	sinceDay, err := backfillDay(*since, env.now())
@@ -156,42 +238,15 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		return usageError("--background applies only to an import, not --dry-run")
 	}
 
-	home, err := env.readHome()
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: backfill: resolve home: %v\n", err)
-		return 1
-	}
-	cfg, found, err := config.Load(home)
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: backfill: load config: %v\n", err)
-		return 1
-	}
-	if !found {
-		terminal.Println(stderr, "agent-archive: backfill: "+errNotSetUp.Error())
-		return 1
-	}
-	// A dry run works while paused or while a setup transaction is pending:
-	// it writes nothing. An import refuses both before it looks at anything.
-	if !*dryRun {
-		if refusal := importRefusal(home, cfg); refusal != "" {
-			terminal.Println(stderr, "agent-archive: backfill: "+refusal)
-			return 1
-		}
-		if !*yes && !env.isTerminal(stdin) {
-			terminal.Println(stderr, "agent-archive: backfill: confirming an import needs a terminal. Nothing was changed. Run again with --yes to import without asking, or with --dry-run to see the plan.")
-			return 1
-		}
-	}
-	userHome, err := env.userHomeDir()
-	if err != nil {
-		terminal.Printf(stderr, "agent-archive: backfill: resolve user home: %v\n", err)
-		return 1
-	}
+	return backfillCommandOptions{filters: filters, dryRun: *dryRun, jsonOut: *jsonOut, yes: *yes, background: *background}, true
+}
 
-	style := styleFor(stdout)
+// planBackfill owns the planning spinner and interrupt watcher. It closes both
+// before reporting an error or handing the completed plan to the next phase.
+func planBackfill(env Env, stdout, stderr io.Writer, home, userHome string, cfg config.Config, opts backfillCommandOptions, style textStyle) (backfill.Plan, bool) {
 	var stopLooking func()
-	if !*jsonOut {
-		label := backfill.SearchLine(filters)
+	if !opts.jsonOut {
+		label := backfill.SearchLine(opts.filters)
 		if style.live {
 			stopLooking = style.spin(stdout, label).stop
 		} else {
@@ -206,13 +261,13 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 	// folder. A second Ctrl-C, SIGTERM, or SIGHUP quits at once, removing
 	// the copy first.
 	planCtx, stopPlanning := interruptibleContext(env, stderr)
-	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, filters)
+	plan, err := backfill.BuildPlan(planCtx, env.backfillEnvironment(userHome, cfg), newArchiveState(home, cfg), cfg, opts.filters)
 	interrupted := planCtx.Err() != nil
 	stopPlanning()
 	stopLooking()
 	if err != nil {
-		if !*jsonOut {
-			label := backfill.SearchLine(filters)
+		if !opts.jsonOut {
+			label := backfill.SearchLine(opts.filters)
 			switch {
 			case interrupted && style.live:
 				terminal.Println(stdout, label+" stopped.")
@@ -226,42 +281,55 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 		}
 		if interrupted {
 			terminal.Println(stderr, "agent-archive: backfill: stopped. Nothing was changed.")
-			return 1
+			return backfill.Plan{}, false
 		}
 		terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
-		return 1
+		return backfill.Plan{}, false
 	}
-	if *jsonOut {
+	return plan, true
+}
+
+// reportBackfillPlan handles JSON, dry-run, and empty-import paths. An empty
+// import may finish an interrupted batch; a nonempty one needs a storage check.
+func reportBackfillPlan(env Env, stdout, stderr io.Writer, home string, cfg config.Config, plan backfill.Plan, opts backfillCommandOptions, style textStyle) (bool, int) {
+	action := chooseBackfillPlanAction(opts, plan)
+	if action == backfillPlanJSON {
 		if err := backfill.RenderJSON(stdout, plan); err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
-			return 1
+			return true, 1
 		}
-		return 0
+		return true, 0
 	}
 	if style.live {
-		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(filters), plan.Found())
+		terminal.Printf(stdout, "%s %d found.\n", backfill.SearchLine(opts.filters), plan.Found())
 	} else {
 		terminal.Printf(stdout, "%d found.\n", plan.Found())
 	}
-	if *dryRun {
+	if action == backfillPlanDryRun {
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
 		terminal.Println(stdout)
 		printInterruptedImport(stdout, home, plan, cfg)
 		terminal.Println(stdout, "Dry run: nothing was changed.")
-		return 0
+		return true, 0
 	}
-	if len(plan.Imported()) == 0 {
+	if action == backfillPlanEmptyImport {
 		terminal.Println(stdout)
 		backfill.RenderText(stdout, plan)
 		printInterruptedImport(stdout, home, plan, cfg)
 		if err := finishInterruptedBatch(env, stdout, home, plan, cfg); err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v\n", err)
-			return 1
+			return true, 1
 		}
-		return 0
+		return true, 0
 	}
 
+	return false, 0
+}
+
+// importBackfillPlan checks storage and confirmation before entering the
+// existing import transaction. That transaction and its locks are unchanged.
+func importBackfillPlan(env Env, stdin io.Reader, stdout, stderr io.Writer, home string, cfg config.Config, plan backfill.Plan, opts backfillCommandOptions) int {
 	// Step 2: storage must work before anything is confirmed. The check
 	// writes one test object and deletes it again.
 	checkStyle := activityStyle(stdout)
@@ -299,7 +367,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 
 	// Step 3: confirm. edit raises the retention of the whole archive and
 	// shows the plan again with the new deletion date.
-	if !*yes {
+	if !opts.yes {
 		confirmed, err := confirmImport(newPrompter(stdin, stdout), stdout, &plan, cfg.RetentionDays)
 		if err != nil {
 			terminal.Printf(stderr, "agent-archive: backfill: %v. Nothing was changed.\n", err)
@@ -310,7 +378,7 @@ func runBackfillCommand(args []string, stdin io.Reader, stdout, stderr io.Writer
 			return 0
 		}
 	}
-	return importPlan(env, stdout, stderr, home, plan, configFingerprint(cfg), *background)
+	return importPlan(env, stdout, stderr, home, plan, configFingerprint(cfg), opts.background)
 }
 
 // offerSetupImport follows a committed interactive setup: when the chosen
