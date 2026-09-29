@@ -78,8 +78,16 @@ gave, and Tools lists the most-called tools (`tools_used`). Times are in
 your local time zone. The session ends at `ended_at`, its latest record
 timestamp. Metadata from before parser 0.13.0, or from an app whose records
 carry no timestamps, has no end time, so the summary uses when the session
-was last captured and labels the time since the start a span. A session with capture gaps lists
-each gap's code once, with how often it occurs.
+was last captured and labels the time since the start a span.
+
+Capture gaps are the parser's notes on what the archived copy leaves out.
+Most are expected: the privacy filter dropping injected instructions and
+hidden fields, redacted secrets, long content cut to size, and fields or
+records the parser does not recognize yet. The summary names those in one
+dimmed Omitted row. Only gaps that may mean content is missing, such as an
+unreadable record or a subagent whose transcript was never written, are
+listed under a warning, "Incomplete capture": each code once, with how
+often it occurs and its first detail. `show --json` has every gap.
 
 ## Browsing on a terminal
 
@@ -133,7 +141,10 @@ when the call failed), the `!` shell commands (`$ make test`) and local
 slash commands (`» /model`, with the app's reply) you ran, compaction
 summaries, notices the app posted (such as a background task finishing,
 with the agent's reply under it), and any final response a hook reported
-that the transcript lacks. Edit bodies are never shown. `--full` adds each
+that the transcript lacks. Your prompts are quoted with a `┃` gutter, and
+each stretch of the agent's replies and tool calls starts with the app's
+name (`Claude Code ›`), so you can tell who is speaking without color. Edit
+bodies are never shown. `--full` adds each
 tool result and shell command's output, trimmed to its first and last
 lines; it does not combine with `--json`, which has every retained result. On a terminal the transcript is
 paged like `list`; `--no-pager` prints it directly. `--transcript --json`
