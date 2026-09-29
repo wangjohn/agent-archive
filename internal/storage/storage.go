@@ -187,8 +187,8 @@ func hasDotComponent(value string) bool {
 	return false
 }
 
-// PutSourceThenMetadataIndexed implements source-first publication. The source is
-// uploaded and verified in storage before metadata is published. Retry
+// PutSourceThenMetadataIndexed implements source-first publication. The
+// source is uploaded and verified in storage before metadata is published. Retry
 // attempts reuse the exact input bytes, so a retry cannot produce another
 // source hash or timestamp.
 //

@@ -109,6 +109,41 @@ func TestPutMetadataForSourceChecksTheRecordedSource(t *testing.T) {
 	}
 }
 
+func TestIndexedPublicationAbortsBeforeMetadataWhenIndexWriteFails(t *testing.T) {
+	ctx := context.Background()
+	store := storagetest.NewMemoryStore()
+	source := []byte("source bytes")
+	metadata := []byte("metadata bytes")
+	sum := storage.SHA256Hex(source)
+	indexErr := errors.New("index unavailable")
+	callback := func() error {
+		if got, err := store.Get(ctx, "source"); err != nil || string(got) != string(source) {
+			t.Fatalf("source not verified before index callback: %q, %v", got, err)
+		}
+		return indexErr
+	}
+	for _, publish := range []struct {
+		name string
+		run  func() error
+	}{
+		{"source and metadata", func() error {
+			return storage.PutSourceThenMetadataIndexed(ctx, store, "source", "metadata", source, metadata, storage.RetryPolicy{MaxAttempts: 1}, callback)
+		}},
+		{"metadata only", func() error {
+			return storage.PutMetadataForSourceIndexed(ctx, store, "source", sum, len(source), "metadata", metadata, storage.RetryPolicy{MaxAttempts: 1}, callback)
+		}},
+	} {
+		t.Run(publish.name, func(t *testing.T) {
+			if err := publish.run(); !errors.Is(err, indexErr) {
+				t.Fatalf("error = %v, want index failure", err)
+			}
+			if _, err := store.Get(ctx, "metadata"); !errors.Is(err, storage.ErrNotFound) {
+				t.Fatalf("metadata published after index failure: %v", err)
+			}
+		})
+	}
+}
+
 func TestVerifyAccessWithoutObjectKeyerNotesRelativeKey(t *testing.T) {
 	store := failingDeleteStore{storagetest.NewMemoryStore()}
 	err := storage.VerifyAccess(context.Background(), store)
