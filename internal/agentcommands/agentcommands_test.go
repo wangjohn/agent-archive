@@ -371,6 +371,25 @@ func TestRemoveEmptyDirsKeepsLinks(t *testing.T) {
 	}
 }
 
+// A relocated installation's skill stays its own after the executable
+// moves (an upgrade), even with a data directory that needs quoting.
+func TestRelocatedSkillSurvivesAMovedExecutable(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	const data = "/data/it's here"
+	changes, _, err := PlanInstall(home, claudeDir(home), []string{"claude"}, "/old/agent-archive", data, claudeDir(home))
+	must(t, err)
+	must(t, hooks.Apply(changes))
+	changes, foreign, err := PlanInstall(home, claudeDir(home), []string{"claude"}, exe, data, claudeDir(home))
+	must(t, err)
+	if len(changes) != 1 || len(foreign) != 0 || !strings.Contains(string(changes[0].After), exe) {
+		t.Fatalf("changes=%+v foreign=%v", changes, foreign)
+	}
+	if got := Installed(home, claudeDir(home), data); len(got) != 1 {
+		t.Fatalf("Installed = %v", got)
+	}
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

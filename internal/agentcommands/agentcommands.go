@@ -164,7 +164,7 @@ func PlanInstall(userHome, claudeDir string, harnesses []string, executable, dat
 			changes = append(changes, hooks.Change{Path: f.Path, After: f.Content, Mode: 0600})
 		case state == regular && string(current) == string(f.Content):
 		case state == regular && owned(current, dataHome):
-			changes = append(changes, hooks.Change{Path: f.Path, Before: current, After: f.Content, Existed: true, Mode: 0600})
+			changes = append(changes, hooks.Change{Path: f.Path, Before: current, After: f.Content, Existed: true, Mode: mode(f.Path)})
 		default:
 			foreign = append(foreign, f.Path)
 		}
@@ -209,7 +209,7 @@ func planRemoval(path, dataHome string) (hooks.Change, bool, error) {
 	if err != nil || state != regular || !owned(current, dataHome) {
 		return hooks.Change{}, false, err
 	}
-	return hooks.Change{Path: path, Before: current, Existed: true, Mode: 0600, Delete: true}, true, nil
+	return hooks.Change{Path: path, Before: current, Existed: true, Mode: mode(path), Delete: true}, true, nil
 }
 
 // Installed is the command files of setup's that are there now, for status.
@@ -241,6 +241,15 @@ func RemoveEmptyDirs(userHome, claudeDir string) {
 			}
 		}
 	}
+}
+
+// mode is the permissions of the file at path, for a Change replacing or
+// removing it, so that a rollback puts them back with its content.
+func mode(path string) os.FileMode {
+	if info, err := os.Lstat(path); err == nil {
+		return info.Mode().Perm()
+	}
+	return 0600
 }
 
 type fileState int
