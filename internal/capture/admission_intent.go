@@ -39,6 +39,34 @@ const (
 
 func admissionIntentDir(home string) string { return filepath.Join(home, "admission-intents") }
 
+// ClearAdmissionIntents discards starts observed before a pause. Callers hold
+// hooks.lock while changing the pause flag, so a hook that times out during
+// that change either queues before this purge or observes the paused config.
+func ClearAdmissionIntents(home string) error {
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("lock admission intent queue: %w", err)
+	}
+	defer unlock()
+	entries, err := os.ReadDir(admissionIntentDir(home))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(admissionIntentDir(home), entry.Name())); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
 // queueAdmissionIntent is only used after hooks.lock times out. It never
 // queues an excluded, paused, pre-activation, or unproven start. The queue
 // lock bounds the directory count across concurrent hook processes.
@@ -143,10 +171,22 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 			payload := map[string]any{"hook_event_name": intent.Event, "session_id": intent.NativeSessionID, "cwd": intent.ProjectRoot, "transcript_path": intent.TranscriptPath, "cursor_version": intent.CursorVersion, "composer_mode": intent.ComposerMode}
 			if !startsCapture(classifyHookEvent(intent.Harness, intent.Event), intent.Harness) || intent.NativeSessionID == "" {
 				remove = true
-			} else if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true); err != nil {
-				failures = append(failures, fmt.Errorf("replay admission intent: %w", err))
-				continue
 			} else {
+				// A live hook, or an earlier intent for this session, may have
+				// registered it since this record was queued. Replaying that old
+				// start as a continuation would move RegisteredAt backwards and
+				// write duplicate lifecycle evidence.
+				registered, err := HasRegistration(store, intent.NativeSessionID)
+				if err != nil {
+					failures = append(failures, fmt.Errorf("look up admission intent: %w", err))
+					continue
+				}
+				if !registered {
+					if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true); err != nil {
+						failures = append(failures, fmt.Errorf("replay admission intent: %w", err))
+						continue
+					}
+				}
 				remove = true
 			}
 		}

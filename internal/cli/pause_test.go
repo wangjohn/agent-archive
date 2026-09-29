@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/state"
 )
 
 func TestPauseBusyMakesNoFalseClaimAndDoesNotLoseConfig(t *testing.T) {
@@ -66,5 +68,36 @@ func TestPauseBlocksSyncAndResumeUnblocksIt(t *testing.T) {
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || cfg.Paused {
 		t.Fatalf("cfg=%#v found=%v err=%v", cfg, found, err)
+	}
+}
+
+func TestPauseDiscardsQueuedStartsBeforeResume(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	release, err := local.NamedLock(home, "hooks.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "queued-before-pause", "cwd": project}
+	if err := capture.HandleEvent(home, "claude", payload, at); err != nil {
+		release()
+		t.Fatal(err)
+	}
+	release()
+	env := testEnv(t, home, at.Add(time.Minute))
+	var out, errOut bytes.Buffer
+	if code := runPauseCommand(&out, &errOut, env, true); code != 0 {
+		t.Fatalf("pause: code=%d stderr=%s", code, errOut.String())
+	}
+	if code := runPauseCommand(&out, &errOut, env, false); code != 0 {
+		t.Fatalf("resume: code=%d stderr=%s", code, errOut.String())
+	}
+	if err := capture.ReplayAdmissionIntents(home, at.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil || len(regs) != 0 {
+		t.Fatalf("a session queued before pause was admitted after resume: %#v, %v", regs, err)
 	}
 }

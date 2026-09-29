@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -57,10 +58,20 @@ func runPauseCommand(stdout, stderr io.Writer, env Env, paused bool) int {
 	if found && !cfg.Archive.Enabled {
 		return fail("integrations are not installed. Run agent-archive setup to reinstall")
 	}
+	// A process could have stopped after saving Paused but before clearing
+	// queued starts. Clear again while still paused before enabling hooks.
+	if cfg.Paused && !paused {
+		if err := capture.ClearAdmissionIntents(home); err != nil {
+			return fail("could not clear pending session starts; still paused: %v", err)
+		}
+	}
 	if _, err := config.SetPaused(home, paused); err != nil {
 		return fail("%v", err)
 	}
 	if paused {
+		if err := capture.ClearAdmissionIntents(home); err != nil {
+			return fail("paused, but could not clear pending session starts: %v", err)
+		}
 		terminal.Println(stdout, "Paused. Run `agent-archive resume` to continue. Already registered sessions can catch up, including activity written during the pause.")
 	} else {
 		terminal.Println(stdout, "Resumed. Registered sessions can catch up; new sessions begun while paused are not imported. Run agent-archive sync for an immediate pass.")

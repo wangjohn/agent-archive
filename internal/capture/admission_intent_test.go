@@ -97,3 +97,25 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 		t.Fatalf("full queue = %t, %v", queued, err)
 	}
 }
+
+func TestAdmissionIntentDoesNotRewindLaterRegistration(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	payload := claudeStart(project, "native-1", "startup", "")
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, payload, at)
+	if err != nil || !queued {
+		t.Fatalf("queue = %t, %v", queued, err)
+	}
+	later := at.Add(time.Minute)
+	if err := HandleEvent(home, "claude", payload, later); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplayAdmissionIntents(home, later.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil || len(regs) != 1 || !regs[0].RegisteredAt.Equal(later) {
+		t.Fatalf("replay rewound registration: %#v, %v", regs, err)
+	}
+}
