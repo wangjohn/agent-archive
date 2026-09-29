@@ -3,6 +3,7 @@ package capture
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -152,14 +153,14 @@ func TestFirstPromptRegistrationIsCursorOnly(t *testing.T) {
 	}
 }
 
-// Hooks for one new chat can overlap: a first prompt, and a fast response
-// and stop. hooks.lock serializes them, so whichever lands first registers
-// and the rest continue it: one registration, one archive ID, the first
-// hook's time as the start.
+// Hooks for one new chat can overlap: a first prompt, a fast response, and a
+// stop. A 100 ms hold under hooks.lock models a slow durable write per event.
+// The bounded CI load target is 3 hooks x 10 rounds, zero missing
+// registrations, and a p99 hook latency below the installed 2 second timeout.
 func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
-	// Not parallel: a hook waits at most a second for hooks.lock, and three
-	// hooks queued behind each other's fsyncs can pass that on a machine
-	// busy with the parallel tests' I/O.
+	// Not parallel: this is a wall-clock acceptance test.
+	slowWrite := os.Getenv("AGENT_ARCHIVE_PERF") == "1"
+	var durations []time.Duration
 	for i := range 10 {
 		home, project := t.TempDir(), t.TempDir()
 		setUpTestConfig(t, home, project, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
@@ -171,6 +172,7 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		}
 		var wg sync.WaitGroup
 		errs := make(chan error, 3)
+		times := make(chan time.Duration, 3)
 		for _, event := range []string{"beforeSubmitPrompt", "afterAgentResponse", "stop"} {
 			wg.Add(1)
 			go func(event string) {
@@ -179,15 +181,28 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 				if event == "beforeSubmitPrompt" {
 					path = nil
 				}
-				errs <- HandleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, path), at)
+				start := time.Now()
+				var afterLock func()
+				if slowWrite {
+					afterLock = func() { time.Sleep(100 * time.Millisecond) }
+				}
+				errs <- handleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, path), at, afterLock)
+				times <- time.Since(start)
 			}(event)
 		}
 		wg.Wait()
 		close(errs)
+		close(times)
+		for elapsed := range times {
+			durations = append(durations, elapsed)
+		}
 		for err := range errs {
 			if err != nil {
 				t.Fatal(err)
 			}
+		}
+		if err := ReplayAdmissionIntents(home, at.Add(time.Second)); err != nil {
+			t.Fatal(err)
 		}
 		store, _ := state.Open(home)
 		regs, err := store.LoadRegistrations()
@@ -197,6 +212,14 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 		id, found, err := store.ArchiveSessionID(conversation)
 		if err != nil || !found || id != regs[0].ArchiveSessionID || !regs[0].SessionStartedAt.Equal(at) {
 			t.Fatalf("iteration %d: index=%q found=%v err=%v registration=%#v", i, id, found, err, regs[0])
+		}
+	}
+	if slowWrite {
+		sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+		p95, p99 := durations[28], durations[29]
+		t.Logf("3-hook x10 slow-write burst: missing registrations=0 p95=%s p99=%s", p95, p99)
+		if p99 >= 2*time.Second {
+			t.Fatalf("p99 hook latency %s exceeds the 2s app timeout", p99)
 		}
 	}
 }

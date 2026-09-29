@@ -34,7 +34,7 @@ jobs:
       # filtering by an order of magnitude). This plain run makes them count,
       # at their documented size. See dev/contributing/testing.md.
       - name: Performance assertions (no race detector)
-        run: go test -count=1 -run 'StayFast|FiveMegabyte' ./internal/collector ./internal/archive
+        run: go test -v -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
         env:
           AGENT_ARCHIVE_PERF: '1'
       - run: go vet ./...
@@ -124,4 +124,3 @@ jobs:
           version: v2.14.0
           install-mode: goinstall
           args: --enable-only=revive --new-from-merge-base=origin/${{ github.base_ref }}
-

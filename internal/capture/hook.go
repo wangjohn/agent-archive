@@ -114,6 +114,12 @@ func classifyHookEvent(harness, eventName string) hookEventKind {
 // only explained by a diagnostic. Otherwise the event is handled under
 // hooks.lock, which it waits at most a second for.
 func HandleEvent(home, harness string, payload map[string]any, now time.Time) error {
+	return handleEvent(home, harness, payload, now, nil)
+}
+
+// afterLock is used by the contention test to model a bounded slow durable
+// write while hooks.lock is held. Production calls never provide it.
+func handleEvent(home, harness string, payload map[string]any, now time.Time, afterLock func()) error {
 	if payload == nil {
 		return nil
 	}
@@ -125,7 +131,10 @@ func HandleEvent(home, harness string, payload map[string]any, now time.Time) er
 	if setupjournal.TransactionPending(home) {
 		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
-	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", time.Second)
+	// Leave room in the harness's two-second timeout for a retry intent and
+	// diagnostic if capture is contended. Those writes are synchronous and
+	// cannot be guaranteed against an indefinitely stalled filesystem.
+	unlock, lockErr := local.NamedLockWait(home, "hooks.lock", 750*time.Millisecond)
 	if lockErr != nil {
 		if errors.Is(lockErr, local.ErrBusy) {
 			queued, queueErr := queueAdmissionIntent(home, harness, kind, payload, now)
@@ -142,6 +151,9 @@ func HandleEvent(home, harness string, payload map[string]any, now time.Time) er
 		return fmt.Errorf("capture registration busy; this hook was not recorded: %w", lockErr)
 	}
 	defer unlock()
+	if afterLock != nil {
+		afterLock()
+	}
 	// Setup may have started while this hook was waiting for the lock.
 	if setupjournal.TransactionPending(home) {
 		return recordSetupInProgress(home, kind, harness, payload, now)

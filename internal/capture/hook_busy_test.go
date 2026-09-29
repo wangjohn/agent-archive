@@ -25,7 +25,7 @@ func TestHookLockTimeoutLeavesContentFreeDiagnostic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("queued first start: %v", err)
 	}
-	if elapsed := time.Since(begin); elapsed < time.Second || elapsed > 2*time.Second {
+	if elapsed := time.Since(begin); elapsed < 750*time.Millisecond || elapsed > 1750*time.Millisecond {
 		t.Fatalf("hook wait = %s", elapsed)
 	}
 	diagnostics, err := ReadDiagnostics(home)
