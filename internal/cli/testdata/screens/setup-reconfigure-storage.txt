@@ -35,6 +35,7 @@ Review your changes
 
   Apps       Codex (version not detected)
   Projects   ~/src/web-app
+  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
   Keep for   90 days
 

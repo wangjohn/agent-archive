@@ -8,6 +8,7 @@ Agent Archive  ● Needs attention
 Capture
   ✓ Codex   hooks installed   1 session archived, verified just now
   · Projects: ~/src/web-app
+  · Skill evidence: metadata
 
 Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
@@ -30,6 +31,7 @@ Details
   Pending:       0 session(s)
   Last scan:     2026-09-25T12:00:00Z
   Last publish:  2026-09-25T12:00:00Z
+  Skill evidence: metadata
   Codex: published; source verified (published_source_verified; 1 session(s)); hooks installed
     Hook trust: unknown here; it is granted inside the app and is not observable from this Mac's files.
     Installed version: unknown; support unknown.
