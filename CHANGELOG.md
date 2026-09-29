@@ -17,6 +17,9 @@ follow [Semantic Versioning](https://semver.org/).
   background task finishing, paged on a terminal (`--no-pager` to print
   directly). `--full` adds tool results and shell output, trimmed.
   `--transcript --json` prints what `--normalized` printed.
+  Your prompts are quoted with a `┃` gutter that stays on wrapped lines,
+  and the agent's part of each exchange starts with the app's name
+  (`Claude Code ›`).
 - Browsing on a terminal (`list`, bare `show`) opens a session's summary in
   place of the list, on the terminal's alternate screen: `t` shows its
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
