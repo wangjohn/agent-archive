@@ -10,6 +10,13 @@ out; the receiving agent should read the files as they are now.
 # On an interactive terminal, pick an archived session by number or short ID
 agent-archive handoff
 
+# Launch a local Codex session with the latest local Claude Code session
+agent-archive handoff --latest --harness claude --to codex
+
+# Or launch Claude Code or Cursor Agent locally
+agent-archive handoff SESSION_ID --to claude
+agent-archive handoff SESSION_ID --to cursor
+
 # Continue in Claude Code what you started in Codex, in the same repository
 claude "$(agent-archive handoff --latest --harness codex)"
 
@@ -22,6 +29,20 @@ agent-archive handoff SESSION_ID --output /tmp/handoff.md
 # A transcript the archive never captured, on this Mac; needs no setup
 agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness codex
 ```
+
+`--to` launches the installed local `claude`, `codex`, or `cursor-agent` CLI
+in the current directory (or `--project DIR` with `--latest`). It writes the
+filtered handoff to a private temporary file and sends the agent a short prompt
+to read it; the file is removed when the agent exits. The command reads only a
+local transcript; it never downloads a session from the archive or starts a
+remote agent. The receiving agent is told that Agent Archive exists, where to
+find its executable, and how to ask for more context.
+`agent-archive show SESSION_ID --normalized` reads the published archive copy,
+which may lag the local transcript or not exist yet.
+`agent-archive handoff SESSION_ID --source local --max-bytes 0` reads the
+current, complete **filtered** local record. Neither command exposes
+unfiltered raw transcript data. The handoff uses the usual 120,000-byte
+default budget; `--max-bytes 0` includes all filtered content.
 
 ## Where the session comes from
 
@@ -40,7 +61,9 @@ transcript that cannot be read falls back to the archive's copy.
 
 `--latest` names its choice on stderr, passes over sessions with no prompt
 yet, and, when run by an agent that names its own session (Claude Code does,
-through `CLAUDE_CODE_SESSION_ID`), skips that session. It matches the current
+through `CLAUDE_CODE_SESSION_ID`), skips that session unless `--to` is used.
+With `--to`, the calling session is eligible because it is the source being
+handed off. `--latest` matches the current
 directory's project, not projects beneath it. On another Mac it matches the
 project only when the repository is checked out at the same path; when
 nothing matches it lists the five most recent archived sessions with the

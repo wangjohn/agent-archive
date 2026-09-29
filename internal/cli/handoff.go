@@ -42,6 +42,7 @@ type handoffTarget struct {
 	bundle   archive.SourceBundle
 	metadata *archive.Metadata
 	source   string
+	filePath string
 	// describe is the stderr line naming a --latest choice.
 	describe string
 	// startedAt and lastActivityAt are what this machine knows about a local
@@ -59,6 +60,7 @@ type handoffOptions struct {
 	source     string
 	format     string
 	output     string
+	to         string
 	latest     bool
 	force      bool
 	noPreamble bool
@@ -123,6 +125,13 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		return 1
 	}
 	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
+	if opts.to != "" {
+		if err := launchPreparedHandoff(rendered, h, target, opts, stdin, stdout, stderr, env); err != nil {
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if err := writeHandoffResult(rendered, opts, stdout, stderr); err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return 1
@@ -142,6 +151,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	output := fs.String("output", "", "write to this file (mode 0600) instead of stdout")
 	force := fs.Bool("force", false, "with --output, replace an existing file")
 	noPreamble := fs.Bool("no-preamble", false, "omit the note addressed to the receiving agent")
+	to := fs.String("to", "", "launch a local claude, codex, or cursor session with this handoff")
 	sessionID, ok := fs.parseWithArgument(args)
 	if !ok {
 		return handoffOptions{}, false
@@ -157,7 +167,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		}
 	}
 	switch {
-	case selectors == 0 && !interactive:
+	case selectors == 0 && (!interactive || *to != ""):
 		return usageError("name a session ID, --latest, or --file PATH; run on a terminal to pick a session")
 	case selectors > 1:
 		return usageError("a session ID, --latest, and --file are mutually exclusive")
@@ -169,6 +179,16 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		return usageError("--force applies only to --output")
 	case *maxBytes < 0:
 		return usageError("--max-bytes must be 0 or more")
+	case *to != "" && *to != "claude" && *to != "codex" && *to != "cursor":
+		return usageError("--to must be claude, codex, or cursor")
+	case *to != "" && *output != "":
+		return usageError("--to and --output cannot be used together")
+	case *to != "" && *format != "markdown":
+		return usageError("--to requires markdown format")
+	case *to != "" && *noPreamble:
+		return usageError("--to includes the receiving-agent preamble")
+	case *to != "" && *source == "archive":
+		return usageError("--to works only with local sessions; --source archive is unavailable")
 	}
 	canonical, ok := harnessFlag(*harness)
 	if !ok {
@@ -188,6 +208,9 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if *file != "" && *source == "archive" {
 		return usageError("--file reads a local transcript; --source archive does not apply")
 	}
+	if *to != "" {
+		*source = "local"
+	}
 	// The ID names local files and bucket keys; only the characters archive
 	// session IDs are made of are accepted, so it cannot reach outside them.
 	if sessionID != "" {
@@ -196,7 +219,7 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 		}
 	}
 	return handoffOptions{sessionID: sessionID, project: *project, harness: canonical,
-		file: *file, source: *source, maxBytes: *maxBytes, format: *format,
+		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
 		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble}, true
 }
 
@@ -211,8 +234,13 @@ func resolveHandoffTarget(opts handoffOptions, home string, stderr io.Writer, en
 	if !found {
 		return handoffTarget{}, errHandoffNotSetUp
 	}
+	skip := currentSessions(env)
+	if opts.to != "" {
+		// The calling agent is the source of a direct handoff.
+		skip = nil
+	}
 	resolver := handoffResolver{ctx: context.Background(), env: env, home: home, cfg: cfg,
-		harness: opts.harness, source: opts.source, skip: currentSessions(env), stderr: stderr}
+		harness: opts.harness, source: opts.source, skip: skip, stderr: stderr}
 	if !opts.latest {
 		return resolver.byID(opts.sessionID)
 	}
@@ -330,7 +358,7 @@ func handoffFromFile(path, harness string, env handoffFileDependencies) (handoff
 	if err != nil {
 		return handoffTarget{}, err
 	}
-	return handoffTarget{bundle: bundle, source: "file", lastActivityAt: info.ModTime()}, nil
+	return handoffTarget{bundle: bundle, source: "file", filePath: abs, lastActivityAt: info.ModTime()}, nil
 }
 
 // errNotRegisteredHere means a session ID has no registration on this machine,
