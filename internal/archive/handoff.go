@@ -214,21 +214,29 @@ func BuildHandoff(bundle SourceBundle, metadata *Metadata, opts HandoffOptions) 
 	if err != nil {
 		return Handoff{}, err
 	}
+	var exchanges []HandoffExchange
+	var leftOff string
+	var plan []HandoffPlanItem
+	var files []string
+	toolResultsUnavailable := bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0
+	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
+		// A Cursor text transcript: role sections, no records to walk.
+		exchanges, leftOff = textTranscriptExchanges(bundle.NativeText, opts)
+		toolResultsUnavailable = false
+	} else {
+		exchanges, leftOff, plan, files = selectHandoffExchanges(handoffEvents(view), workspaceRoot(bundle), opts)
+	}
 	h := Handoff{
 		Version:                HandoffVersion,
 		Session:                handoffSession(bundle, view, metadata, opts),
 		Workspace:              recordedWorkspace(bundle),
-		ToolResultsUnavailable: bundle.harness() == "cursor" && len(view.ToolResults) == 0 && len(view.ToolCalls) > 0,
-		Exchanges:              []HandoffExchange{},
+		ToolResultsUnavailable: toolResultsUnavailable,
+		Exchanges:              exchanges,
+		LeftOff:                leftOff,
+		Plan:                   plan,
+		FilesTouched:           files,
 		Gaps:                   countGaps(bundle.Capture.Gaps),
 	}
-	if len(bundle.NativeRecords) == 0 && len(bundle.NativeText) > 0 {
-		// A Cursor text transcript: role sections, no records to walk.
-		h.Exchanges, h.LeftOff = textTranscriptExchanges(bundle.NativeText, opts)
-		h.ToolResultsUnavailable = false
-		return displayHandoff(h), nil
-	}
-	h.Exchanges, h.LeftOff, h.Plan, h.FilesTouched = selectHandoffExchanges(handoffEvents(view), workspaceRoot(bundle), opts)
 	return displayHandoff(h), nil
 }
 
