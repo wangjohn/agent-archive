@@ -33,6 +33,8 @@ R2 credentials are not here: they are in the macOS Keychain under the service
 | `setup-draft.json` | Setup's saved progress, so an interrupted setup can continue. Holds no secrets. |
 | `setup-transaction.json` | Present only while setup is changing files, or after it was interrupted; see [troubleshooting](../guides/troubleshooting.md#an-interrupted-setup). |
 | `application-versions.json` | Installed app versions setup found. |
+| `purge-plans/<id>.json` | Private 0600, five-minute remote deletion plan with exact keys, sizes, destination, and digest. |
+| `purge-plans/<id>.json.report` | Private 0600 progress report written after each deletion, so a partial apply can resume before plan expiry. |
 
 ## Sessions (`internal/state`)
 

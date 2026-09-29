@@ -502,7 +502,7 @@ var localStateEntries = []string{
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
 	"admission-intents", "admission-intents.lock",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
-	"cache", handoffDir,
+	"cache", handoffDir, "purge-plans",
 }
 
 // removeLocalState deletes agent-archive's own entries under home (see
