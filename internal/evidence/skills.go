@@ -137,6 +137,16 @@ func skillRoots(options SkillOptions) []skillRoot {
 	return roots
 }
 
+func boundedSkillEntries(entries []os.DirEntry) ([]os.DirEntry, int) {
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	omitted := 0
+	if len(entries) > maxSkillsPerRoot {
+		omitted = len(entries) - maxSkillsPerRoot
+		entries = entries[:maxSkillsPerRoot]
+	}
+	return entries, omitted
+}
+
 func observeRoot(harness string, root skillRoot, observedAt time.Time, remainingSnapshotBytes *int64, mode config.SkillEvidence) ([]archive.SupplementalEvidence, error) {
 	bounds := newSkillBounds(root)
 	if root.user != "" && bounds.root == "" {
@@ -159,12 +169,7 @@ func observeRoot(harness string, root skillRoot, observedAt time.Time, remaining
 		}
 		return []archive.SupplementalEvidence{inventoryObservation(harness, root.scope, rootStatus, nil, complete, observedAt)}, nil
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
-	omittedEntries := 0
-	if len(entries) > maxSkillsPerRoot {
-		omittedEntries = len(entries) - maxSkillsPerRoot
-		entries = entries[:maxSkillsPerRoot]
-	}
+	entries, omittedEntries := boundedSkillEntries(entries)
 	provenance := "filesystem:" + strings.ToLower(strings.TrimSpace(harness))
 	var inventory []any
 	var snapshots []archive.SupplementalEvidence
