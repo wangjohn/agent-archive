@@ -54,6 +54,17 @@ var collectorHelperDirs = []string{"AWS_VAULT_FILE_DIR", "OP_CONFIG_DIR"}
 // launchdPath is the PATH launchd gives a job whose plist sets none.
 const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
+type collectorEnvironmentLookup interface {
+	lookupEnv(string) (string, bool)
+}
+
+// collectorEnvironmentSource supplies only the shell values and path
+// resolution needed when writing the scheduled collector's environment.
+type collectorEnvironmentSource interface {
+	collectorEnvironmentLookup
+	absolutePath(string) string
+}
+
 // collectorEnvironment is what the collector's LaunchAgent sets besides
 // AGENT_ARCHIVE_HOME, so a scheduled pass loads storage credentials the way
 // setup's storage check just did. launchd starts the job with none of the
@@ -70,6 +81,10 @@ const launchdPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 // directories, never secrets. R2's credentials come from the Keychain in
 // process, so an R2 collector needs nothing more.
 func (e Env) collectorEnvironment(storage credentials.Config) map[string]string {
+	return buildCollectorEnvironment(e, storage)
+}
+
+func buildCollectorEnvironment(e collectorEnvironmentSource, storage credentials.Config) map[string]string {
 	if storage.Provider != credentials.ProviderS3 {
 		return nil
 	}
@@ -112,6 +127,10 @@ func (e Env) collectorEnvironment(storage credentials.Config) map[string]string 
 // carries a user name or password: the collector runs without them, so
 // setup says so.
 func (e Env) collectorEnvironmentLeftOut(storage credentials.Config) []string {
+	return collectorEnvironmentOmissions(e, storage)
+}
+
+func collectorEnvironmentOmissions(e collectorEnvironmentLookup, storage credentials.Config) []string {
 	if storage.Provider != credentials.ProviderS3 {
 		return nil
 	}

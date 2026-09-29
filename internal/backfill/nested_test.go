@@ -264,6 +264,12 @@ func TestUndoRemovesKeptOutEntriesOnlyWhenNothingContainsThem(t *testing.T) {
 	if plan, err = PlanUndo(env, f.store, f.cfg, []Batch{a, b, c}, c, ""); err != nil || len(plan.RemoveKeptOut) != 1 {
 		t.Fatalf("an undone import's kept-out entry stayed: %v %v", plan.RemoveKeptOut, err)
 	}
+	if len(plan.Sessions) != 0 || len(plan.ExcludeProjects) != 0 || len(plan.RemoveApps) != 0 || plan.RestoreRetention != nil {
+		t.Fatalf("expected kept-out-only cleanup: %+v", plan)
+	}
+	if plan.Empty() || !plan.Grew(UndoPlan{}) {
+		t.Fatalf("kept-out-only cleanup was skipped or omitted from the confirmation recheck: %+v", plan)
+	}
 	if err := f.store.SaveRegistration(aReg); err != nil {
 		t.Fatal(err)
 	}

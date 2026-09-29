@@ -95,6 +95,72 @@ func TestMaterializeRejectsMismatchedSubagentOwnership(t *testing.T) {
 	}
 }
 
+// A failed pass can stop after saving the child registration but before
+// saving hook evidence or acknowledging the candidate. The next pass must
+// finish that work without changing the child's owner or duplicating evidence.
+func TestMaterializeResumesAfterRegistrationWrite(t *testing.T) {
+	for _, origin := range []archive.SessionOrigin{archive.SessionOriginHook, archive.SessionOriginImport} {
+		t.Run(string(origin), func(t *testing.T) {
+			home := t.TempDir()
+			local, err := state.Open(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+			observed := start.Add(3 * time.Minute)
+			childPath := filepath.Join(home, "child.jsonl")
+			if err := os.WriteFile(childPath, []byte(`{"type":"assistant","sessionId":"parent-native","agentId":"agent-1","timestamp":"2026-09-21T10:02:00Z","message":{"role":"assistant","content":"child"}}`+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			parent := archive.SessionRegistration{
+				ArchiveSessionID: "parent", NativeSessionID: "parent-native", ProjectID: "project", ProjectRoot: "/project",
+				Harness: archive.Harness{Name: "claude"}, TranscriptPath: childPath, SessionStartedAt: start,
+				RegisteredAt: start, AdmittedAt: observed, Origin: origin, DestinationID: "destination",
+			}
+			if err := local.SaveRegistration(parent); err != nil {
+				t.Fatal(err)
+			}
+			candidate := state.SubagentCandidate{
+				ArchiveSessionID: "child", NativeSessionID: "parent-native:subagent:agent-1",
+				ParentArchiveSessionID: "parent", ParentNativeSessionID: "parent-native", ProjectID: "project",
+				ProjectRoot: "/project", Harness: archive.Harness{Name: "claude"}, AgentID: "agent-1",
+				TranscriptPath: childPath, ObservedAt: observed, Origin: origin,
+			}
+			seed := assembleSubagentRegistration(parent, candidate)
+			seed.SessionStartedAt = start.Add(2 * time.Minute)
+			if err := local.SaveRegistration(seed); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := local.SaveSubagentCandidate(candidate); err != nil {
+					t.Fatal(err)
+				}
+				if err := materializeSubagentCandidate(local, candidate, Options{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if candidates, err := local.LoadSubagentCandidates(); err != nil || len(candidates) != 0 {
+				t.Fatalf("pending candidates=%v err=%v", candidates, err)
+			}
+			got, found, err := local.LoadRegistration("child")
+			if err != nil || !found || got.ParentSessionID != parent.ArchiveSessionID || got.DestinationID != parent.DestinationID || got.Origin != origin || !got.SessionStartedAt.Equal(seed.SessionStartedAt) {
+				t.Fatalf("registration=%+v found=%t err=%v", got, found, err)
+			}
+			request, found, err := local.LoadRequest("child")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if origin == archive.SessionOriginImport {
+				if found || got.StartedAtSource != archive.StartedAtSourceTranscript {
+					t.Fatalf("import request=%+v found=%t start source=%q", request, found, got.StartedAtSource)
+				}
+			} else if !found || len(request.HookEvidence) != 1 || request.HookEvidence[0].Kind != archive.EvidenceKindLifecycleHook {
+				t.Fatalf("hook request=%+v found=%t", request, found)
+			}
+		})
+	}
+}
+
 func linkedSessionEvidenceCount(req state.Request, childID string) int {
 	count := 0
 	for _, item := range req.HookEvidence {
