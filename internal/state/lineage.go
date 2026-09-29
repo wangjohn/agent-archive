@@ -19,6 +19,11 @@ import (
 type SupersededSource struct {
 	Key          string    `json:"key"`
 	SupersededAt time.Time `json:"superseded_at"`
+	// PrivacySensitive marks a predecessor made with an older filter. It can
+	// be removed after the new publication is read-back verified and the
+	// reader grace interval has elapsed, even when it is the immediate
+	// predecessor. Older ledger files omit this field and keep their policy.
+	PrivacySensitive bool `json:"privacy_sensitive,omitempty"`
 }
 
 func (s *Store) supersededPath(archiveSessionID string) string {
@@ -36,6 +41,12 @@ func (s *Store) supersededPath(archiveSessionID string) string {
 // on to identify the immediate predecessor of the current snapshot, so
 // the most recently superseded key must always be last.
 func (s *Store) RecordSuperseded(archiveSessionID, key string, at time.Time) error {
+	return s.RecordSupersededWithPrivacy(archiveSessionID, key, at, false)
+}
+
+// RecordSupersededWithPrivacy persists the stronger cleanup policy for a
+// source replaced because its filter version changed.
+func (s *Store) RecordSupersededWithPrivacy(archiveSessionID, key string, at time.Time, privacySensitive bool) error {
 	if !safeFileComponent(archiveSessionID) {
 		return errors.New("archive session ID is not a safe file name component")
 	}
@@ -52,7 +63,7 @@ func (s *Store) RecordSuperseded(archiveSessionID, key string, at time.Time) err
 			out = append(out, e)
 		}
 	}
-	out = append(out, SupersededSource{Key: key, SupersededAt: at})
+	out = append(out, SupersededSource{Key: key, SupersededAt: at, PrivacySensitive: privacySensitive})
 	return errors.Join(lost, local.Write(s.supersededPath(archiveSessionID), out))
 }
 

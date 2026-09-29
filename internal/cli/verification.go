@@ -146,6 +146,21 @@ func readVerification(home, id string) (verificationEvidence, error) {
 	return v, err
 }
 
+// privacyPublicationVerified requires the exact current publication to have
+// passed the same full read-back used by status. A stale local verification
+// record, changed destination, or remote pointer cannot authorize cleanup.
+func privacyPublicationVerified(home string, cfg config.Config, store *state.Store, reg archive.SessionRegistration, current archive.Metadata) bool {
+	if current.MachineID != cfg.MachineID || current.SessionID != reg.ArchiveSessionID {
+		return false
+	}
+	record, err := readVerification(home, reg.ArchiveSessionID)
+	if err != nil || record.Outcome != verificationOutcomeVerified || record.VerifiedAt.IsZero() || record.ConfigurationID != sessionVerificationConfigurationID(cfg, reg) || record.SourceSHA256 != current.SourceBundle.SHA256 {
+		return false
+	}
+	summary, found, err := store.LoadPublishedSummary(reg.ArchiveSessionID)
+	return err == nil && found && summary.Published && !summary.LastPublishedAt.IsZero() && record.PublishedAt.Equal(summary.LastPublishedAt)
+}
+
 func recordStorageHealth(home string, cfg config.Config, env Env, background bool, state string) error {
 	contextName := "manual_sync"
 	if background {

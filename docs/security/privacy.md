@@ -158,19 +158,19 @@ in the bucket:
 
 - **Sessions whose transcript is still on the capturing Mac** are refiltered
   and republished automatically on that Mac's next passes. The copy made
-  with the old filter becomes the session's previous source, and retention
-  always keeps a session's immediate predecessor, so for a session that
-  doesn't change again the old copy stays until the whole session expires
-  (90 days after its last capture by default).
+  with the old filter becomes a privacy-sensitive predecessor. After the new
+  publication passes metadata and source read-back verification, retention
+  removes the old copy after the 24-hour reader grace interval. A failed
+  verification or deletion leaves it for retry on the next pass.
 - **Sessions whose transcript is still there but no longer holds everything
   that was archived** (the app truncated or compacted it) are not replaced
   by the shorter transcript: the archived copy itself is filtered again
   with the new filter and republished, and the session is recorded as
   having a rewritten transcript. The old copy then stays as the previous
-  source, as above. If the app later restores the full transcript and the
-  new filter writes some of its records differently from the old one (a
-  new redaction label, say), the collector cannot tell the restored file
-  from a rewritten one: the archived copy is kept, and records added to
+  source, with the same verified cleanup rule. If the app later restores the
+  full transcript and the new filter writes some of its records differently
+  from the old one (a new redaction label, say), the collector cannot tell
+  the restored file from a rewritten one: the archived copy is kept, and records added to
   that transcript afterwards are not archived.
 - **Sessions whose transcript is gone** (deleted, or on a Mac that no longer
   runs agent-archive) are never refiltered: their current copy stays as the

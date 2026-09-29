@@ -265,6 +265,9 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 	sweepCtx, cancelSweep := context.WithTimeout(context.Background(), sweepTimeout)
 	defer cancelSweep()
 	sweepOptions := retention.Options{
+		PrivacyVerified: func(reg archive.SessionRegistration, current archive.Metadata) bool {
+			return privacyPublicationVerified(home, cfg, localStore, reg, current)
+		},
 		Now: env.Now,
 		// Retention sweeps every session this machine registered, including
 		// ones cfg.AcceptSession no longer admits for publication: an excluded

@@ -73,6 +73,42 @@ func removeRemoteSource(t *testing.T, remote *storagetest.MemoryStore, id string
 	return metadata
 }
 
+func TestPrivacyCleanupRequiresExactVerifiedPublication(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	remote := storagetest.NewMemoryStore()
+	cfg, localStore := publishSyntheticSessions(t, home, project, remote, at, 1)
+	regs, err := localStore.LoadRegistrations()
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("registrations: %#v %v", regs, err)
+	}
+	reg := regs[0]
+	key, _ := archive.MetadataObjectKey("codex", reg.ArchiveSessionID)
+	current, err := reader.ReadMetadata(context.Background(), remote, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if privacyPublicationVerified(home, cfg, localStore, reg, current) {
+		t.Fatal("unverified publication accepted")
+	}
+	env := testEnv(t, home, at.Add(time.Minute))
+	if _, err := verifyPublicationsWithin(context.Background(), home, cfg, env, localStore, remote); err != nil {
+		t.Fatal(err)
+	}
+	if !privacyPublicationVerified(home, cfg, localStore, reg, current) {
+		t.Fatal("verified publication rejected")
+	}
+	changed := current
+	changed.SourceBundle.SHA256 = strings.Repeat("f", 64)
+	if privacyPublicationVerified(home, cfg, localStore, reg, changed) {
+		t.Fatal("changed remote source accepted")
+	}
+	cfg.Storage.Bucket = "another-bucket"
+	if privacyPublicationVerified(home, cfg, localStore, reg, current) {
+		t.Fatal("changed destination accepted")
+	}
+}
+
 func TestReadBackFailureBacksOffAndDoesNotFailSync(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()

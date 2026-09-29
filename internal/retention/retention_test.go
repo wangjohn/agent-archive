@@ -452,6 +452,107 @@ func TestSweepKeepsTruePredecessorAfterContentReversion(t *testing.T) {
 	}
 }
 
+func TestSweepRemovesVerifiedPrivacyPredecessorAfterGrace(t *testing.T) {
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	predecessor := publishTwice(t, local, remote, "s1", t.TempDir(), t0)
+	entries, err := local.LoadSuperseded("s1")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("ledger: %#v %v", entries, err)
+	}
+	if err := local.RecordSupersededWithPrivacy("s1", predecessor, entries[0].SupersededAt, true); err != nil {
+		t.Fatal(err)
+	}
+	now := t0.Add(25 * time.Hour)
+	result, err := Sweep(context.Background(), local, remote, agreeing(Options{Now: func() time.Time { return now }, PrivacyVerified: func(archive.SessionRegistration, archive.Metadata) bool { return false }}))
+	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 0 {
+		t.Fatalf("unverified: %#v %v", result, err)
+	}
+	if _, err := remote.Get(context.Background(), predecessor); err != nil {
+		t.Fatalf("unverified source deleted: %v", err)
+	}
+	result, err = Sweep(context.Background(), local, remote, agreeing(Options{Now: func() time.Time { return now }, PrivacyVerified: func(archive.SessionRegistration, archive.Metadata) bool { return true }}))
+	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 1 {
+		t.Fatalf("verified: %#v %v", result, err)
+	}
+	if _, err := remote.Get(context.Background(), predecessor); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("predecessor remained: %v", err)
+	}
+	current := fetchMetadata(t, remote, "s1").SourceBundle.Key
+	if _, err := remote.Get(context.Background(), current); err != nil {
+		t.Fatalf("current source removed: %v", err)
+	}
+}
+
+func TestSweepPrivacyPredecessorDeletionFailureRetries(t *testing.T) {
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	predecessor := publishTwice(t, local, remote, "s1", t.TempDir(), t0)
+	if err := local.RecordSupersededWithPrivacy("s1", predecessor, t0.Add(10*time.Minute), true); err != nil {
+		t.Fatal(err)
+	}
+	now := t0.Add(25 * time.Hour)
+	opts := agreeing(Options{Now: func() time.Time { return now }, PrivacyVerified: func(archive.SessionRegistration, archive.Metadata) bool { return true }})
+	blocked := failingDeleteStore{ObjectStore: remote, failKey: predecessor}
+	result, err := Sweep(context.Background(), local, blocked, opts)
+	if err != nil || len(result.Errors) == 0 {
+		t.Fatalf("delete failure not reported: %#v %v", result, err)
+	}
+	if _, err := remote.Get(context.Background(), predecessor); err != nil {
+		t.Fatalf("failed delete removed source: %v", err)
+	}
+	result, err = Sweep(context.Background(), local, remote, opts)
+	if err != nil || len(result.Errors) != 0 || result.DeletedSnapshots != 1 {
+		t.Fatalf("retry: %#v %v", result, err)
+	}
+}
+
+type replaceMetadataOnSecondRead struct {
+	storage.ObjectStore
+	key         string
+	replacement []byte
+	reads       int
+}
+
+func (s *replaceMetadataOnSecondRead) Get(ctx context.Context, key string) ([]byte, error) {
+	if key == s.key {
+		s.reads++
+		if s.reads == 2 {
+			if err := s.ObjectStore.Put(ctx, key, s.replacement); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return s.ObjectStore.Get(ctx, key)
+}
+
+func TestSweepPrivacyPredecessorRechecksChangedMetadata(t *testing.T) {
+	local := newTestStore(t)
+	remote := storagetest.NewMemoryStore()
+	t0 := time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC)
+	predecessor := publishTwice(t, local, remote, "s1", t.TempDir(), t0)
+	if err := local.RecordSupersededWithPrivacy("s1", predecessor, t0.Add(10*time.Minute), true); err != nil {
+		t.Fatal(err)
+	}
+	meta := fetchMetadata(t, remote, "s1")
+	meta.SourceBundle.Key = predecessor
+	replacement, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataKey, _ := archive.MetadataObjectKey("codex", "s1")
+	changed := &replaceMetadataOnSecondRead{ObjectStore: remote, key: metadataKey, replacement: replacement}
+	result, err := Sweep(context.Background(), local, changed, agreeing(Options{Now: func() time.Time { return t0.Add(25 * time.Hour) }, PrivacyVerified: func(archive.SessionRegistration, archive.Metadata) bool { return true }}))
+	if err != nil || len(result.Errors) == 0 {
+		t.Fatalf("changed metadata not reported: %#v %v", result, err)
+	}
+	if _, err := remote.Get(context.Background(), predecessor); err != nil {
+		t.Fatalf("newly current predecessor was deleted: %v", err)
+	}
+}
+
 // countingStore counts Get calls, to assert a sweep skipped the remote
 // metadata read when it could not have deleted anything.
 type countingStore struct {
