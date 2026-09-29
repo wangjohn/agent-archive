@@ -166,7 +166,7 @@ func TestListFiltersExactSkillHashFromMetadataOnly(t *testing.T) {
 	} {
 		wantID, rejectID := ids[0], ids[1]
 		var out, errOut bytes.Buffer
-		if code := Run([]string{"list", "--skill", "review", "--skill-sha256", hash, "--verbose"}, nil, &out, &errOut, env); code != 0 {
+		if code := Run([]string{"list", "--skill", "review", "--skill-sha256", hash, "--limit", "0", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 			t.Fatalf("hash=%s code=%d stderr=%s", hash, code, errOut.String())
 		}
 		// One ID is a prefix of the other, and tabwriter pads columns with
@@ -489,7 +489,7 @@ func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--limit", "0"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	for _, r := range out.String() {
@@ -505,7 +505,7 @@ func TestListPrintsBucketNamesWithoutControls(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := Run([]string{"list", "--verbose"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--limit", "0", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("verbose code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "gpt]52;c;aGk= x y") || !strings.Contains(out.String(), "rev[2Jiew31m") {
@@ -630,7 +630,7 @@ func TestListWarnsAboutInvalidSidecarAndListsTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	if code := Run([]string{"list", "--no-cache", "--verbose"}, nil, &out, &errOut, env); code != 0 {
+	if code := Run([]string{"list", "--no-cache", "--limit", "0", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), id) || !strings.Contains(out.String(), "1 session(s).") {

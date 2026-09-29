@@ -44,7 +44,9 @@ func ListRecent(ctx context.Context, store storage.ObjectStore, prefix string, f
 		for _, obj := range page.Objects {
 			entry, err := listingindex.Parse(obj.Key)
 			if err != nil {
-				continue
+				// A damaged hint could conceal a live session. Use the
+				// authoritative full scan until the index is rebuilt.
+				return listRecentFull(ctx, store, prefix, filter, limit, opts)
 			}
 			if !filter.From.IsZero() && entry.CapturedAt.Before(filter.From) {
 				result.TotalMatched = len(result.Sessions)

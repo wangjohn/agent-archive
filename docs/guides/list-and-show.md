@@ -24,11 +24,13 @@ agent-archive list --skill review --skill-usage available
 agent-archive list --skill review --skill-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 agent-archive list --complete          # complete parser coverage, no capture gaps
 
-# For scripts: {"schema_version": 3, "sessions": [...], "limit", "returned",
-# "total_matched"} (and "truncated" when --limit cut the list). Never paged
+# For scripts: {"schema_version": 4, "sessions": [...], "limit", "returned",
+# "total_matched_known"}. "total_matched" is omitted when the indexed
+# listing stops after the limit. Never paged
 # or interactive.
 agent-archive list --json
 agent-archive list --json --limit 0
+agent-archive list --rebuild-index  # one-time full scan for older archives
 
 # One session's metadata sidecar, as JSON. With no SESSION_ID on a terminal,
 # the same interactive picker as list. A title substring also works.

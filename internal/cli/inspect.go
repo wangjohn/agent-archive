@@ -62,7 +62,8 @@ func openReadOnlyStore(env Env) (storage.ObjectStore, config.Config, bool, error
 // runListCommand implements `agent-archive list`. It reads only metadata
 // sidecars (reader.ListMetadataWithOptions downloads no source bundle) and prints only
 // metadata fields, so its output can never contain transcript content. It
-// reuses unchanged sidecars from the local metadata cache unless --no-cache.
+// uses the time-ordered index when complete and verifies each displayed
+// sidecar live; full scans reuse the local metadata cache unless --no-cache.
 // Text listings are capped by --limit (default 50; 0 for all) and, on a
 // terminal, paged through $PAGER unless --no-pager, --json, or an interactive
 // browse (stdin and stdout are both terminals).
@@ -130,7 +131,10 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
 	shown, totalMatched, truncated := applyListLimit(sessions, opts.limit)
-	if !listed.Complete {
+	if !opts.imported && !opts.hookCaptured && listed.Complete {
+		totalMatched = listed.TotalMatched
+		truncated = totalMatched > len(shown)
+	} else if !listed.Complete {
 		totalMatched = -1
 		truncated = true
 	}
@@ -306,13 +310,13 @@ const defaultListLimit = 50
 // TotalMatched is how many passed the filters before --limit. Truncated is
 // set when Sessions is a prefix of the full match set.
 type listDocument struct {
-	Version      int                `json:"schema_version"`
-	Sessions     []archive.Metadata `json:"sessions"`
-	Limit        int                `json:"limit"`
-	Returned     int                `json:"returned"`
-	TotalMatched *int               `json:"total_matched,omitempty"`
-	TotalMatchedKnown bool          `json:"total_matched_known"`
-	Truncated    bool               `json:"truncated,omitempty"`
+	Version           int                `json:"schema_version"`
+	Sessions          []archive.Metadata `json:"sessions"`
+	Limit             int                `json:"limit"`
+	Returned          int                `json:"returned"`
+	TotalMatched      *int               `json:"total_matched,omitempty"`
+	TotalMatchedKnown bool               `json:"total_matched_known"`
+	Truncated         bool               `json:"truncated,omitempty"`
 }
 
 // warnSkippedSidecar reports, on stderr, a metadata sidecar a listing left

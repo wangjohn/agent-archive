@@ -221,17 +221,18 @@ stdin, text is paged through $PAGER unless --no-pager.
   --hook-captured                Only sessions hooks captured as they ran
   --limit N                      Show at most N sessions, newest first
                                  (default 50; 0 for all)
+  --rebuild-index                Rebuild the listing index from live metadata;
+                                 scans the full archive and writes index keys
   --verbose                      Full SESSION_IDs, absolute times, origin,
                                  parser status, all models/skills, and title
   --no-pager                     Print directly; do not page through $PAGER
-  --no-cache                     Download every metadata sidecar instead of
-                                 reusing unchanged ones from the local
-                                 metadata cache (metadata only; never
-                                 conversation content)
-  --json                         Print {"schema_version": 3, "sessions": [...],
-                                 "limit", "returned", "total_matched"}: each
-                                 matching session's metadata, as show prints
-                                 it (never conversation content). Usage errors
+  --no-cache                     Bypass the local metadata cache during full
+                                 scans; indexed listing always verifies live
+                                 sidecars (never conversation content)
+  --json                         Print {"schema_version": 4, "sessions": [...],
+                                 "limit", "returned", "total_matched_known"}:
+                                 "total_matched" is present only when exact;
+                                 each session is live metadata. Usage errors
                                  print no JSON. Never paged or interactive.
 Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 ```
@@ -247,6 +248,7 @@ Example: agent-archive list --skill review-pr --skill-sha256 HASH --since 7d
 | `--model` | a value | — |
 | `--no-cache` | no value | — |
 | `--no-pager` | no value | — |
+| `--rebuild-index` | no value | — |
 | `--since` | a value | — |
 | `--skill` | a value | — |
 | `--skill-sha256` | a value | — |

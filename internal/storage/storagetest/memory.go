@@ -105,18 +105,41 @@ func (s *MemoryStore) List(ctx context.Context, prefix string) ([]storage.Object
 // ListPage follows S3's key ordering and treats continuation as the last key
 // from the preceding page. The token is opaque to callers.
 func (s *MemoryStore) ListPage(ctx context.Context, prefix, continuation string, limit int32) (storage.ObjectPage, error) {
-	objects, err := s.List(ctx, prefix)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return storage.ObjectPage{}, err
 	}
 	if limit <= 0 || limit > 1000 {
 		limit = 1000
 	}
-	start := sort.Search(len(objects), func(i int) bool { return objects[i].Key > continuation })
-	end := min(start+int(limit), len(objects))
-	page := storage.ObjectPage{Objects: objects[start:end]}
-	if end < len(objects) {
-		page.Next = objects[end-1].Key
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	keys := make([]string, 0, limit+1)
+	for key := range s.objects {
+		if key <= continuation || (prefix != "" && !hasPrefixKey(key, prefix)) {
+			continue
+		}
+		at := sort.SearchStrings(keys, key)
+		if at >= int(limit)+1 {
+			continue
+		}
+		keys = append(keys, "")
+		copy(keys[at+1:], keys[at:])
+		keys[at] = key
+		if len(keys) > int(limit)+1 {
+			keys = keys[:limit+1]
+		}
+	}
+	more := len(keys) > int(limit)
+	if more {
+		keys = keys[:limit]
+	}
+	page := storage.ObjectPage{Objects: make([]storage.Object, 0, len(keys))}
+	for _, key := range keys {
+		obj := s.objects[key]
+		page.Objects = append(page.Objects, storage.Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
+	}
+	if more {
+		page.Next = keys[len(keys)-1]
 	}
 	return page, nil
 }

@@ -18,6 +18,7 @@ import (
 
 const Prefix = "listing/v1/"
 const ReadyKey = "listing/v1-ready"
+const unreadyKey = "listing/v1-needs-rebuild"
 const bySessionPrefix = "listing/by-session/"
 const maxTime = uint64(9999999999999999999)
 
@@ -63,6 +64,9 @@ func Parse(key string) (Entry, error) {
 	if err != nil || reverse > maxTime {
 		return Entry{}, errors.New("invalid listing timestamp")
 	}
+	if maxTime-reverse > uint64(1<<63-1) {
+		return Entry{}, errors.New("listing timestamp out of range")
+	}
 	metadataKey, err := archive.MetadataObjectKey(parts[1], parts[2])
 	if err != nil {
 		return Entry{}, err
@@ -103,6 +107,31 @@ func Ready(ctx context.Context, store storage.ObjectStore) (bool, error) {
 
 func MarkReady(ctx context.Context, store storage.ObjectStore) error {
 	return store.Put(ctx, ReadyKey, []byte("listing-index-v1\n"))
+}
+
+// SeedIfEmpty enables bounded listing for a fresh destination before its
+// first metadata publication. A legacy destination is marked for rebuild so
+// later publications do not repeat the full discovery scan.
+func SeedIfEmpty(ctx context.Context, store storage.ObjectStore) error {
+	ready, err := Ready(ctx, store)
+	if err != nil || ready {
+		return err
+	}
+	if _, err := store.Get(ctx, unreadyKey); err == nil {
+		return nil
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		return err
+	}
+	objects, err := store.List(ctx, "sessions/")
+	if err != nil {
+		return err
+	}
+	for _, object := range objects {
+		if strings.HasSuffix(object.Key, "/metadata.json") {
+			return store.Put(ctx, unreadyKey, []byte("run list --rebuild-index\n"))
+		}
+	}
+	return MarkReady(ctx, store)
 }
 
 // DeleteSession removes index hints after authoritative metadata deletion.

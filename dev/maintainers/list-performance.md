@@ -18,3 +18,11 @@ The benchmark in `internal/reader/list_index_bench_test.go` reports elapsed
 time and allocations for the cold full-scan baseline, indexed cold listing,
 and indexed warm listing. Memory-store listing is an in-process stand-in for
 remote pages; the request-count target above is the release gate.
+
+On an Intel macOS development machine, a one-iteration run on 2026-09-28
+measured 97.7 ms and 98.6 MB allocated for the cold full scan; indexed cold
+and warm runs measured 6.5 ms / 214 KB and 6.7 ms / 214 KB respectively.
+These are local measurements, not a network latency guarantee. The indexed
+test asserts one listing page and 52 reads (one marker, 51 live sidecars)
+for 300 sessions; the same early-stop rule applies to the 10,000-session
+benchmark fixture.

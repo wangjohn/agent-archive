@@ -128,18 +128,23 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 
 // upload writes a pending publication to storage.
 func (s *sessionScan) upload(pending state.PendingPublication) error {
-	entry, err := listingindex.New(pending.MetadataKey, pending.MetadataBytes)
-	if err != nil {
-		return fmt.Errorf("build listing index: %w", err)
+	if err := listingindex.SeedIfEmpty(s.ctx, s.remote); err != nil {
+		return fmt.Errorf("prepare listing index: %w", err)
 	}
-	writeIndex := func() error { return listingindex.Put(s.ctx, s.remote, entry) }
+	writeIndex := func() error {
+		entry, err := listingindex.New(pending.MetadataKey, pending.MetadataBytes)
+		if err != nil {
+			return err
+		}
+		return listingindex.Put(s.ctx, s.remote, entry)
+	}
 	if !pending.CarriesNoSource() {
 		if err := storage.PutSourceThenMetadataIndexed(s.ctx, s.remote, pending.SourceKey, pending.MetadataKey, pending.SourceBytes, pending.MetadataBytes, s.opts.Retry, writeIndex); err != nil {
 			return fmt.Errorf("publish: %w", err)
 		}
 		return nil
 	}
-	err = storage.PutMetadataForSourceIndexed(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, writeIndex)
+	err := storage.PutMetadataForSourceIndexed(s.ctx, s.remote, pending.SourceKey, pending.SourceSHA256, pending.SourceSize, pending.MetadataKey, pending.MetadataBytes, s.opts.Retry, writeIndex)
 	if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrChecksumMismatch) {
 		// The recorded source is not in storage as recorded, and without its
 		// bytes this publication can never succeed. Dropping it keeps it from
