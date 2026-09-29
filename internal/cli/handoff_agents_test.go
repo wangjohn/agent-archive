@@ -129,3 +129,16 @@ func TestHandoffOptionsPassArgumentsAfterDoubleDash(t *testing.T) {
 		}
 	}
 }
+
+// A second `--` among the agent's arguments would put the words after it
+// ahead of the prompt as positional arguments, so it is refused.
+func TestBuildLaunchSpecRefusesDoubleDashInArguments(t *testing.T) {
+	t.Parallel()
+	env := fakeLaunchEnv{onPath: map[string]bool{"claude": true, "codex": true, "agent": true}}
+	for _, dest := range []handoffDestination{handoffDestinationClaude, handoffDestinationCodex, handoffDestinationCursor} {
+		_, err := buildLaunchSpec(dest, "P", "/h/f.md", "/d", []string{"--model", "o3", "--", "other prompt"}, env)
+		if err == nil || !strings.Contains(err.Error(), "cannot include `--`") {
+			t.Errorf("%s: err = %v", dest, err)
+		}
+	}
+}

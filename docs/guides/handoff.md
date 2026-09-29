@@ -44,7 +44,8 @@ The launched agent does not inherit the calling agent's session variables
 (such as `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`); your settings, such as
 `CLAUDE_CODE_USE_BEDROCK`, pass through.
 
-Arguments after `--` go to the agent, after any set for it in `config.json`
+Arguments after `--` go to the agent (a second `--` is refused, since the
+prompt follows one), after any set for it in `config.json`
 (see [configuration](../reference/configuration.md)):
 
 ```sh

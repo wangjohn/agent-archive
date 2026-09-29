@@ -91,6 +91,11 @@ func buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, e
 	if !ok {
 		return launchSpec{}, fmt.Errorf("unknown agent %q", dest)
 	}
+	if slices.Contains(extra, "--") {
+		// Words after a second `--` would come before the prompt as
+		// positional arguments, and the agent would take one as its prompt.
+		return launchSpec{}, fmt.Errorf("arguments for %s cannot include `--`: the handoff prompt goes after it", dest)
+	}
 	var binary string
 	for _, name := range command.binaries {
 		path, err := env.lookPath(name)
