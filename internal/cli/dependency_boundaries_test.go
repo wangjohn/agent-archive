@@ -18,10 +18,13 @@ type preflightProbe struct {
 }
 
 func (p preflightProbe) hookFiles(string) hooks.Files { return p.files }
+
 func (p preflightProbe) installation(home, userHome string) installation {
 	return installation{home: home, userHome: userHome, accountHome: userHome}
 }
+
 func (p preflightProbe) jobState(string) string { return p.job }
+
 func (p preflightProbe) keychain() (credentials.CredentialStore, error) {
 	return p.open()
 }
@@ -73,7 +76,7 @@ func TestCollectorEnvironmentBuilderUsesOnlyItsSource(t *testing.T) {
 	}
 	storage := credentials.Config{Provider: credentials.ProviderS3}
 	got := buildCollectorEnvironment(probe, storage)
-	if got["AWS_CONFIG_FILE"] != filepath.Join(probe.base, "config/custom") {
+	if got["AWS_CONFIG_FILE"] != filepath.Join(probe.base, "config", "custom") {
 		t.Fatalf("AWS config path = %q", got["AWS_CONFIG_FILE"])
 	}
 	if _, ok := got["AWS_ENDPOINT_URL_S3"]; ok {
