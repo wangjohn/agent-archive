@@ -124,8 +124,21 @@ func intentProjectStillOwned(root string, projects []archive.ProjectActivation) 
 // path. A follow-up can update an existing registration but never admit a new
 // session. The queue lock bounds the count across concurrent hook processes.
 func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (bool, error) {
+	intent, queued, err := hookAdmissionIntent(home, harness, kind, payload, now)
+	if err != nil || !queued {
+		return false, err
+	}
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
+	if err != nil {
+		return false, fmt.Errorf("lock admission intent queue: %w", err)
+	}
+	defer unlock()
+	return writeAdmissionIntent(home, intent, payload)
+}
+
+func hookAdmissionIntent(home, harness string, kind hookEventKind, payload map[string]any, now time.Time) (admissionIntent, bool, error) {
 	if setupjournal.TransactionPending(home) {
-		return false, nil
+		return admissionIntent{}, false, nil
 	}
 	nativeID := firstNonEmptyString(payload, "session_id", "conversation_id")
 	cursorPath := cursorTranscriptPath(payload, nativeID)
@@ -133,18 +146,18 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 	followup := archive.CanonicalHarness(harness) == "cursor" &&
 		(kind == hookEventResponse || firstNonEmptyString(payload, "hook_event_name") == "stop") && cursorPath != ""
 	if !start && !followup {
-		return false, nil
+		return admissionIntent{}, false, nil
 	}
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
-		return false, err
+		return admissionIntent{}, false, err
 	}
 	project, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
 	if !owned || !project.Included || !cfg.Archive.Eligible(project.Root, now) {
-		return false, nil
+		return admissionIntent{}, false, nil
 	}
 	if nativeID == "" {
-		return false, nil
+		return admissionIntent{}, false, nil
 	}
 	intent := admissionIntent{
 		Harness: archive.CanonicalHarness(harness), Event: firstNonEmptyString(payload, "hook_event_name"),
@@ -156,20 +169,19 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 	} else {
 		intent.TranscriptPath = firstNonEmptyString(payload, "transcript_path")
 	}
-	unlock, err := local.NamedLockWait(home, "admission-intents.lock", admissionQueueWait)
-	if err != nil {
-		return false, fmt.Errorf("lock admission intent queue: %w", err)
-	}
-	defer unlock()
+	return intent, true, nil
+}
+
+func writeAdmissionIntent(home string, intent admissionIntent, payload map[string]any) (bool, error) {
 	// A pause or setup may have committed while this hook waited for the
 	// queue lock. Recheck after taking it so a stale config cannot write a
 	// private retry record after the corresponding purge.
-	cfg, found, err = config.Load(home)
+	cfg, found, err := config.Load(home)
 	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused || setupjournal.TransactionPending(home) {
 		return false, err
 	}
 	current, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
-	if !owned || !current.Included || current.Root != project.Root || cfg.DestinationID() != intent.DestinationID || !cfg.Archive.Eligible(current.Root, now) {
+	if !owned || !current.Included || current.Root != intent.ProjectRoot || cfg.DestinationID() != intent.DestinationID || !cfg.Archive.Eligible(current.Root, intent.ObservedAt) {
 		return false, nil
 	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
@@ -183,7 +195,7 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 	if err != nil {
 		return false, err
 	}
-	if err := local.Write(filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", now.UTC().UnixNano(), id)), intent); err != nil {
+	if err := local.Write(filepath.Join(admissionIntentDir(home), fmt.Sprintf("%020d-%s.json", intent.ObservedAt.UnixNano(), id)), intent); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -194,6 +206,11 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 // never revives an excluded project. Successfully handled and expired intents
 // are removed, while transient failures remain for the next pass. Hook
 // registration is idempotent by native session ID.
+type deferredFollowup struct {
+	path   string
+	intent admissionIntent
+}
+
 func ReplayAdmissionIntents(home string, now time.Time) error {
 	if setupjournal.TransactionPending(home) {
 		return nil
@@ -223,142 +240,151 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 		return err
 	}
 	var failures []error
-	type deferredFollowup struct {
-		path   string
-		intent admissionIntent
-	}
 	var deferred []deferredFollowup
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		path := filepath.Join(admissionIntentDir(home), entry.Name())
-		var intent admissionIntent
-		if err := local.Read(path, &intent); err != nil {
-			failures = append(failures, fmt.Errorf("read admission intent: %w", err))
-			continue
+		followup, err := replayAdmissionFile(home, store, cfg, path, now)
+		if err != nil {
+			failures = append(failures, err)
 		}
-		remove := now.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(now.Add(time.Minute))
-		project, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
-		if !owned || !project.Included || project.Root != intent.ProjectRoot || intent.DestinationID != cfg.DestinationID() || !intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) || !cfg.Archive.Eligible(project.Root, intent.ObservedAt) {
-			remove = true
-		}
-		if !remove {
-			payload := map[string]any{"hook_event_name": intent.Event, "session_id": intent.NativeSessionID, "cwd": intent.ProjectRoot, "transcript_path": intent.TranscriptPath, "cursor_version": intent.CursorVersion, "composer_mode": intent.ComposerMode}
-			kind := classifyHookEvent(intent.Harness, intent.Event)
-			start := startsCapture(kind, intent.Harness)
-			followup := intent.Harness == "cursor" &&
-				(intent.Event == "afterAgentResponse" || intent.Event == "stop") &&
-				cursorTranscriptPath(payload, intent.NativeSessionID) != ""
-			if (!start && !followup) || intent.NativeSessionID == "" {
-				remove = true
-			} else {
-				// A live hook, or an earlier intent for this session, may have
-				// registered it since this record was queued. Replaying that old
-				// start as a continuation would move RegisteredAt backwards and
-				// write duplicate lifecycle evidence.
-				registered, err := HasRegistration(store, intent.NativeSessionID)
-				if err != nil {
-					failures = append(failures, fmt.Errorf("look up admission intent: %w", err))
-					continue
-				}
-				if registered {
-					matches, err := replayRegistrationMatches(store, cfg, intent)
-					if err != nil {
-						failures = append(failures, fmt.Errorf("validate admission intent registration: %w", err))
-						continue
-					}
-					if !matches {
-						remove = true
-					}
-				}
-				if remove {
-					// A native ID already owned by another project, harness, or
-					// destination must not receive this event.
-					if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-						failures = append(failures, err)
-					}
-					continue
-				}
-				if !registered && start {
-					if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true); err != nil {
-						failures = append(failures, fmt.Errorf("replay admission intent: %w", err))
-						continue
-					}
-				} else if registered && followup {
-					if err := handleSessionStop(store, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt); err != nil {
-						failures = append(failures, fmt.Errorf("replay Cursor follow-up: %w", err))
-						continue
-					}
-				} else if registered && start && intent.Harness == "cursor" && intent.TranscriptPath != "" {
-					// The live first prompt may have registered with a null path
-					// while this earlier start waited in the queue. Retain the
-					// path without replaying its older registration time.
-					archiveID, _, err := store.ArchiveSessionID(intent.NativeSessionID)
-					if err != nil {
-						failures = append(failures, err)
-						continue
-					}
-					reg, found, err := store.LoadRegistration(archiveID)
-					if err != nil {
-						failures = append(failures, fmt.Errorf("load registered Cursor start: %w", err))
-						continue
-					}
-					if !found {
-						failures = append(failures, errors.New("registered Cursor start disappeared"))
-						continue
-					}
-					if err := adoptCursorTranscriptPath(store, &reg, intent.Harness, payload); err != nil {
-						failures = append(failures, fmt.Errorf("adopt queued Cursor path: %w", err))
-						continue
-					}
-				} else if followup {
-					// A concurrent start may sort after this event. Try once more
-					// after the starts in this batch have been handled.
-					deferred = append(deferred, deferredFollowup{path: path, intent: intent})
-					continue
-				}
-				remove = true
-			}
-		}
-		if remove {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				failures = append(failures, err)
-			}
+		if followup != nil {
+			deferred = append(deferred, *followup)
 		}
 	}
 	for _, followup := range deferred {
-		registered, err := HasRegistration(store, followup.intent.NativeSessionID)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("look up deferred Cursor follow-up: %w", err))
-			continue
-		}
-		if !registered {
-			// A timed-out follow-up never admits a session on its own.
-			// Leave it until a start arrives or the intent expires.
-			continue
-		}
-		matches, err := replayRegistrationMatches(store, cfg, followup.intent)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("validate deferred Cursor follow-up: %w", err))
-			continue
-		}
-		if !matches {
-			if err := os.Remove(followup.path); err != nil && !os.IsNotExist(err) {
-				failures = append(failures, err)
-			}
-			continue
-		}
-		payload := map[string]any{"hook_event_name": followup.intent.Event, "session_id": followup.intent.NativeSessionID, "cwd": followup.intent.ProjectRoot, "transcript_path": followup.intent.TranscriptPath}
-		if err := handleSessionStop(store, "cursor", followup.intent.NativeSessionID, followup.intent.Event, payload, followup.intent.ObservedAt); err != nil {
-			failures = append(failures, fmt.Errorf("replay deferred Cursor follow-up: %w", err))
-			continue
-		}
-		if err := os.Remove(followup.path); err != nil && !os.IsNotExist(err) {
+		if err := replayDeferredFollowup(store, cfg, followup); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func replayAdmissionFile(home string, store *state.Store, cfg config.Config, path string, now time.Time) (*deferredFollowup, error) {
+	var intent admissionIntent
+	if err := local.Read(path, &intent); err != nil {
+		return nil, fmt.Errorf("read admission intent: %w", err)
+	}
+	if !replayIntentEligible(cfg, intent, now) {
+		return nil, removeAdmissionIntent(path)
+	}
+	payload := intentPayload(intent)
+	start, followup := replayIntentKinds(intent, payload)
+	if (!start && !followup) || intent.NativeSessionID == "" {
+		return nil, removeAdmissionIntent(path)
+	}
+	registered, err := HasRegistration(store, intent.NativeSessionID)
+	if err != nil {
+		return nil, fmt.Errorf("look up admission intent: %w", err)
+	}
+	if registered {
+		matches, err := replayRegistrationMatches(store, cfg, intent)
+		if err != nil {
+			return nil, fmt.Errorf("validate admission intent registration: %w", err)
+		}
+		if !matches {
+			return nil, removeAdmissionIntent(path)
+		}
+	}
+	if !registered && followup && !start {
+		return &deferredFollowup{path: path, intent: intent}, nil
+	}
+	if err := replayAdmissionAction(home, store, cfg, intent, payload, registered, start, followup); err != nil {
+		return nil, err
+	}
+	return nil, removeAdmissionIntent(path)
+}
+
+func replayIntentEligible(cfg config.Config, intent admissionIntent, now time.Time) bool {
+	if now.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(now.Add(time.Minute)) {
+		return false
+	}
+	project, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
+	return owned && project.Included && project.Root == intent.ProjectRoot &&
+		intent.DestinationID == cfg.DestinationID() &&
+		intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) &&
+		cfg.Archive.Eligible(project.Root, intent.ObservedAt)
+}
+
+func intentPayload(intent admissionIntent) map[string]any {
+	return map[string]any{
+		"hook_event_name": intent.Event, "session_id": intent.NativeSessionID,
+		"cwd": intent.ProjectRoot, "transcript_path": intent.TranscriptPath,
+		"cursor_version": intent.CursorVersion, "composer_mode": intent.ComposerMode,
+	}
+}
+
+func replayIntentKinds(intent admissionIntent, payload map[string]any) (start, followup bool) {
+	start = startsCapture(classifyHookEvent(intent.Harness, intent.Event), intent.Harness)
+	followup = intent.Harness == "cursor" &&
+		(intent.Event == "afterAgentResponse" || intent.Event == "stop") &&
+		cursorTranscriptPath(payload, intent.NativeSessionID) != ""
+	return start, followup
+}
+
+func replayAdmissionAction(home string, store *state.Store, cfg config.Config, intent admissionIntent, payload map[string]any, registered, start, followup bool) error {
+	switch {
+	case !registered && start:
+		if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true); err != nil {
+			return fmt.Errorf("replay admission intent: %w", err)
+		}
+	case registered && followup:
+		if err := handleSessionStop(store, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt); err != nil {
+			return fmt.Errorf("replay Cursor follow-up: %w", err)
+		}
+	case registered && start && intent.Harness == "cursor" && intent.TranscriptPath != "":
+		return adoptQueuedCursorPath(store, intent, payload)
+	}
+	return nil
+}
+
+func adoptQueuedCursorPath(store *state.Store, intent admissionIntent, payload map[string]any) error {
+	archiveID, _, err := store.ArchiveSessionID(intent.NativeSessionID)
+	if err != nil {
+		return err
+	}
+	reg, found, err := store.LoadRegistration(archiveID)
+	if err != nil {
+		return fmt.Errorf("load registered Cursor start: %w", err)
+	}
+	if !found {
+		return errors.New("registered Cursor start disappeared")
+	}
+	if err := adoptCursorTranscriptPath(store, &reg, intent.Harness, payload); err != nil {
+		return fmt.Errorf("adopt queued Cursor path: %w", err)
+	}
+	return nil
+}
+
+func replayDeferredFollowup(store *state.Store, cfg config.Config, followup deferredFollowup) error {
+	registered, err := HasRegistration(store, followup.intent.NativeSessionID)
+	if err != nil {
+		return fmt.Errorf("look up deferred Cursor follow-up: %w", err)
+	}
+	if !registered {
+		// A follow-up never admits a session. Keep it until a start or expiry.
+		return nil
+	}
+	matches, err := replayRegistrationMatches(store, cfg, followup.intent)
+	if err != nil {
+		return fmt.Errorf("validate deferred Cursor follow-up: %w", err)
+	}
+	if !matches {
+		return removeAdmissionIntent(followup.path)
+	}
+	if err := handleSessionStop(store, "cursor", followup.intent.NativeSessionID, followup.intent.Event, intentPayload(followup.intent), followup.intent.ObservedAt); err != nil {
+		return fmt.Errorf("replay deferred Cursor follow-up: %w", err)
+	}
+	return removeAdmissionIntent(followup.path)
+}
+
+func removeAdmissionIntent(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func replayRegistrationMatches(store *state.Store, cfg config.Config, intent admissionIntent) (bool, error) {

@@ -32,7 +32,7 @@ decodes and local writes, counted, not timed). Their wall-clock targets run
 only at full size in a plain build, which CI does in a step of its own:
 
 ```sh
-AGENT_ARCHIVE_PERF=1 go test -v -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
+AGENT_ARCHIVE_PERF=1 go test -v -p 1 -count=1 -run 'StayFast|FiveMegabyte|TestCursorOverlappingHooksRegisterOnce' ./internal/collector ./internal/archive ./internal/capture
 ```
 
 ## Levenshtein checks
