@@ -11,8 +11,9 @@ OpenAI and Anthropic are constantly one-upping each other or the best model, but
 `agent-archive` solves these problems, and can perform the following:
 
 - Automatically upload Claude Code, Codex, and Cursor transcripts into a cloud object storage like S3 or R2.
-- Hand off a session from one agent to another with `agent-archive handoff`, useful especially if you run into rate limits halfway through a session.
-- View all of your past sessions across coding agents with `agent-archive list`. This is useful for setting up analytics automations to understand how you're using your agents, how different agents perform across different tasks, and for performing meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
+- Hand off a local session from one computer to another with `agent-archive handoff`. When working locally across multiple computers, agent-archive makes it very easy to continue sessions and to keep a single source of truth for all of your sessions.
+- Hand off a session from one coding agent to another (also using `agent-archive handoff`). Useful especially if you run into rate limits halfway through a session.
+- View all of your past sessions across coding agents with `agent-archive list`. This allows you to set up automations to understand how you're using your agents, how different coding agents perform across different tasks, and can help you perform meta-improvements on your AGENTS.md and lint rules that span across Claude Code, Codex, and Cursor.
 
 ## Quickstart
 
