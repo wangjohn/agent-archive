@@ -364,17 +364,20 @@ func TestDefaultPagerArgumentsSurviveTheShell(t *testing.T) {
 func TestUserPagerRunsAsGiven(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		pager   string
-		less    string
-		lv      string
-		want    string
-		wantEnv []string
+		vars      map[string]string
+		want      string
+		wantEnv   []string
+		versionOf string
 	}{
-		{pager: "less -R", want: "less -R", wantEnv: []string{"LESS=FRX", "LV=-c"}},
-		{pager: "most", less: "-iMR", want: "most", wantEnv: []string{"LV=-c"}},
-		{pager: "lv", less: "-R", lv: "-a", want: "lv"},
-		{pager: "less", want: "less -FRX --mouse --wheel-lines=3 " + lessPrompts(1, false)},
-		{pager: "/usr/bin/less", less: "-R", want: "/usr/bin/less -FRX --mouse --wheel-lines=3 " + lessPrompts(1, false)},
+		{vars: map[string]string{"PAGER": "less -R"}, want: "less -R", wantEnv: []string{"LESS=FRX", "LV=-c"}},
+		{vars: map[string]string{"PAGER": "most", "LESS": "-iMR"}, want: "most", wantEnv: []string{"LV=-c"}},
+		// LESS set but empty is the user's choice too.
+		{vars: map[string]string{"PAGER": "most", "LESS": ""}, want: "most", wantEnv: []string{"LV=-c"}},
+		{vars: map[string]string{"PAGER": "lv", "LESS": "-R", "LV": "-a"}, want: "lv"},
+		{vars: map[string]string{"PAGER": "less"}, want: "less -FRX --mouse --wheel-lines=3 " + lessPrompts(1, false), versionOf: "less"},
+		{vars: map[string]string{"PAGER": "/usr/bin/less", "LESS": "-R"}, want: "/usr/bin/less -FRX --mouse --wheel-lines=3 " + lessPrompts(1, false), versionOf: "/usr/bin/less"},
+		// sh expands ~/ in the command; the version is asked of the same file.
+		{vars: map[string]string{"PAGER": "~/bin/less", "HOME": "/Users/alex"}, want: "~/bin/less -FRX --mouse --wheel-lines=3 " + lessPrompts(1, false), versionOf: "/Users/alex/bin/less"},
 	} {
 		var got string
 		var gotEnv []string
@@ -382,9 +385,8 @@ func TestUserPagerRunsAsGiven(t *testing.T) {
 		env := Env{
 			IsTerminal: func(any) bool { return true },
 			LookupEnv: func(key string) (string, bool) {
-				values := map[string]string{"PAGER": tc.pager, "LESS": tc.less, "LV": tc.lv}
-				value := values[key]
-				return value, value != ""
+				value, set := tc.vars[key]
+				return value, set
 			},
 			LessVersion: func(program string) (int, bool) { versionOf = program; return 668, true },
 			RunPager: func(_ context.Context, command string, environment []string, _ io.Reader, _, _ io.Writer) error {
@@ -394,11 +396,104 @@ func TestUserPagerRunsAsGiven(t *testing.T) {
 		}
 		var out bytes.Buffer
 		if _, _, err := pageText(context.Background(), &out, io.Discard, env, false, false, []byte("x\n")); err != nil || got != tc.want || !slices.Equal(gotEnv, tc.wantEnv) {
-			t.Errorf("PAGER=%q LESS=%q LV=%q ran %q with %q (%v), want %q with %q", tc.pager, tc.less, tc.lv, got, gotEnv, err, tc.want, tc.wantEnv)
+			t.Errorf("%v ran %q with %q (%v), want %q with %q", tc.vars, got, gotEnv, err, tc.want, tc.wantEnv)
 		}
-		if strings.Contains(tc.pager, "less") && !strings.Contains(tc.pager, " ") && versionOf != tc.pager {
-			t.Errorf("PAGER=%q: version asked of %q", tc.pager, versionOf)
+		if versionOf != tc.versionOf {
+			t.Errorf("%v: version asked of %q, want %q", tc.vars, versionOf, tc.versionOf)
 		}
+	}
+}
+
+// exitError is the error runPager returns for a pager that ran script: an
+// exit status, or death by a signal.
+func exitError(t *testing.T, script string) error {
+	t.Helper()
+	err := exec.CommandContext(t.Context(), "sh", "-c", script).Run()
+	if _, ok := errors.AsType[*exec.ExitError](err); !ok {
+		t.Fatalf("sh -c %q: %v, want an exit error", script, err)
+	}
+	return err
+}
+
+// Only a pager that could not be started falls back to printing the text
+// directly, as git does. One that ran and exited with an error, as less
+// does when Ctrl-C quits it (LESS=-K), or was killed by a signal, showed
+// the text already: printing it again would flood the screen. The warning
+// names the pager, not its whole command.
+func TestPagerFallsBackOnlyWhenItCannotStart(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		err      error
+		fallback bool
+	}{
+		{"exit 2, as less -K on Ctrl-C", exitError(t, "exit 2"), false},
+		{"killed by Ctrl-C", exitError(t, "kill -INT $$"), false},
+		{"exit 1", exitError(t, "exit 1"), false},
+		{"command not found", exitError(t, "exit 127"), true},
+		{"not executable", exitError(t, "exit 126"), true},
+		{"sh could not start", errors.New("fork/exec /bin/sh: no such file or directory"), true},
+	} {
+		for _, stayOpen := range []bool{false, true} {
+			env := testEnv(t, t.TempDir(), time.Now())
+			env.IsTerminal = func(any) bool { return true }
+			env.RunPager = func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error { return tc.err }
+			var out, errOut bytes.Buffer
+			paged, _, err := pageText(context.Background(), &out, &errOut, env, false, stayOpen, []byte("text\n"))
+			if err != nil || paged == tc.fallback || (out.String() == "text\n") != tc.fallback || (errOut.Len() > 0) != tc.fallback {
+				t.Errorf("%s (stayOpen %v): paged=%v err=%v stdout=%q stderr=%q", tc.name, stayOpen, paged, err, out.String(), errOut.String())
+			}
+			if tc.fallback && (!strings.Contains(errOut.String(), `pager "less" failed`) || strings.Contains(errOut.String(), "-P")) {
+				t.Errorf("%s: warning %q does not name just the pager", tc.name, errOut.String())
+			}
+		}
+	}
+}
+
+// After Ctrl-C while the pager ran, nothing is printed again, whatever the
+// pager's exit.
+func TestPagerNeverFallsBackAfterCtrlC(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, t.TempDir(), time.Now())
+	var stdout, stderr bytes.Buffer
+	env.IsTerminal = func(stream any) bool { return stream == any(&stdout) }
+	signals := make(chan os.Signal, 1)
+	env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+	env.RunPager = func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error {
+		signals <- os.Interrupt
+		// Let the watch see it before the pager exits.
+		deadline := time.Now().Add(5 * time.Second)
+		for len(signals) > 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(10 * time.Millisecond)
+		return errors.New("fork/exec: interrupted")
+	}
+	err := withPager(context.Background(), &stdout, &stderr, env, false, func(w io.Writer) error {
+		_, err := io.WriteString(w, "text\n")
+		return err
+	})
+	if err != nil || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("err=%v stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+}
+
+// less's version is asked before Ctrl-C is left to the pager, so a slow
+// `less --version` does not swallow Ctrl-C with nothing on the screen.
+func TestPagerIsChosenBeforeCtrlCIsLeftToIt(t *testing.T) {
+	t.Parallel()
+	env := testEnv(t, t.TempDir(), time.Now())
+	var stdout bytes.Buffer
+	env.IsTerminal = func(stream any) bool { return stream == any(&stdout) }
+	var order []string
+	env.LessVersion = func(string) (int, bool) { order = append(order, "version"); return 668, true }
+	env.Interrupts = func() (<-chan os.Signal, func()) { order = append(order, "watch"); return nil, func() {} }
+	env.RunPager = func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error { return nil }
+	if err := withPager(context.Background(), &stdout, io.Discard, env, false, func(w io.Writer) error {
+		_, err := io.WriteString(w, "text\n")
+		return err
+	}); err != nil || !slices.Equal(order, []string{"version", "watch"}) {
+		t.Fatalf("err=%v order=%v", err, order)
 	}
 }
 
@@ -429,7 +524,7 @@ func TestPagerKeepsCtrlCAndStopsOnSIGTERM(t *testing.T) {
 		env := testEnv(t, t.TempDir(), time.Now())
 		var stdout bytes.Buffer
 		env.IsTerminal = func(stream any) bool { return stream == any(&stdout) }
-		signals := make(chan os.Signal)
+		signals := make(chan os.Signal, len(tc.signals))
 		stopped := false
 		env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() { stopped = true } }
 		exited := -1
@@ -442,13 +537,19 @@ func TestPagerKeepsCtrlCAndStopsOnSIGTERM(t *testing.T) {
 				// Ctrl-C alone: the pager runs on until the user quits it.
 				select {
 				case <-ctx.Done():
-					return errors.New("the pager was stopped by Ctrl-C")
+					t.Error("Ctrl-C stopped the pager")
+					return ctx.Err()
 				case <-time.After(50 * time.Millisecond):
 					return nil
 				}
 			}
-			<-ctx.Done()
-			return ctx.Err()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(5 * time.Second):
+				t.Errorf("signals %v did not stop the pager", tc.signals)
+				return nil
+			}
 		}
 		err := withPager(context.Background(), &stdout, io.Discard, env, false, func(w io.Writer) error {
 			_, err := io.WriteString(w, "text\n")
