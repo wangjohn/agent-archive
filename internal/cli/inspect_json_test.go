@@ -32,7 +32,7 @@ func TestListJSONPrintsVersionedMetadataDocument(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatalf("stdout is not JSON: %v\n%s", err, out.String())
 	}
-	if doc.Version != 3 || len(doc.Sessions) != 1 || doc.Sessions[0].SessionID != id || doc.Sessions[0].Harness.Name == "" {
+	if doc.Version != listSchemaVersion || len(doc.Sessions) != 1 || doc.Sessions[0].SessionID != id || doc.Sessions[0].Harness.Name == "" {
 		t.Fatalf("doc = %+v", doc)
 	}
 	var fields map[string]json.RawMessage
@@ -40,7 +40,7 @@ func TestListJSONPrintsVersionedMetadataDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, present := fields["unavailable"]; present {
-		t.Fatalf("version 3 document contains removed unavailable field: %s", out.String())
+		t.Fatalf("list document contains removed unavailable field: %s", out.String())
 	}
 	if doc.Limit != defaultListLimit || doc.Returned != 1 || doc.TotalMatched != 1 || doc.Truncated {
 		t.Fatalf("limit fields = limit=%d returned=%d total=%d truncated=%v", doc.Limit, doc.Returned, doc.TotalMatched, doc.Truncated)

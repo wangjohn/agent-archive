@@ -168,6 +168,10 @@ func projectLabels(cfg config.Config) map[string]string {
 // printListFooter writes the trailing count / truncation line.
 func printListFooter(w io.Writer, shown, totalMatched int, truncated bool) {
 	if truncated {
+		if totalMatched < 0 {
+			terminal.Printf(w, "Showing %d or more session(s). Use --limit 0 for an exact count, or narrow with --since / --harness.\n", shown)
+			return
+		}
 		terminal.Printf(w, "Showing %d of %d session(s). Use --limit 0 for all, or narrow with --since / --harness.\n", shown, totalMatched)
 		return
 	}
