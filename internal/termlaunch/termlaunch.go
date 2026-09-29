@@ -192,6 +192,15 @@ func validate(spec Spec) error {
 // writeScript creates the launcher script under a random name, never
 // following or replacing an existing file.
 func writeScript(spec Spec) (string, error) {
+	// Anyone who can write to the directory could swap the script between
+	// writing and running it.
+	info, err := os.Stat(spec.ScriptDir)
+	if err != nil {
+		return "", fmt.Errorf("termlaunch: %w", err)
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o022 != 0 {
+		return "", fmt.Errorf("termlaunch: script directory %s is not a directory only its owner can write to", spec.ScriptDir)
+	}
 	var b [12]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -201,7 +210,11 @@ func writeScript(spec Spec) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("termlaunch: %w", err)
 	}
-	_, err = f.WriteString(script(spec, path))
+	// The umask must not strip the execute bit the terminal needs.
+	err = f.Chmod(0o700)
+	if err == nil {
+		_, err = f.WriteString(script(spec, path))
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}

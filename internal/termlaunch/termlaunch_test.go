@@ -234,6 +234,43 @@ func TestOpenRejectsUnsafeSpecs(t *testing.T) {
 	}
 }
 
+func TestOpenRefusesAScriptDirectoryOthersCanWrite(t *testing.T) {
+	root := t.TempDir()
+	shared := filepath.Join(root, "shared")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	for name, dir := range map[string]string{"shared": shared, "missing": filepath.Join(root, "missing")} {
+		t.Run(name, func(t *testing.T) {
+			spec := testSpec(t)
+			spec.ScriptDir = dir
+			env, calls := fakeEnv("darwin", map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, "")
+			if _, err := Open(context.Background(), spec, env); err == nil {
+				t.Fatal("Open accepted the script directory")
+			}
+			if len(*calls) != 0 {
+				t.Errorf("ran %q", *calls)
+			}
+		})
+	}
+	if entries, _ := os.ReadDir(shared); len(entries) != 0 {
+		t.Errorf("wrote %v", entries)
+	}
+}
+
+func TestRunReportsTheCommandsOutput(t *testing.T) {
+	if err := run(context.Background(), "/bin/sh", "-c", "exit 0"); err != nil {
+		t.Fatal(err)
+	}
+	err := run(context.Background(), "/bin/sh", "-c", "echo 'no such window' >&2; exit 2")
+	if err == nil || !strings.Contains(err.Error(), "/bin/sh: exit status 2: no such window") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestScriptIsPrivateAndExecutable(t *testing.T) {
 	spec := testSpec(t)
 	path, err := writeScript(spec)
