@@ -99,7 +99,7 @@ func TestListJSONReportsLimitFields(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatalf("json: %v\n%s", err, out.String())
 	}
-	if doc.Version != 2 || doc.Limit != 2 || doc.Returned != 2 || doc.TotalMatched != 4 || !doc.Truncated {
+	if doc.Version != 3 || doc.Limit != 2 || doc.Returned != 2 || doc.TotalMatched != 4 || !doc.Truncated {
 		t.Fatalf("doc=%+v", doc)
 	}
 	if len(doc.Sessions) != 2 || doc.Sessions[0].SessionID != newestFirst[0] {
