@@ -116,7 +116,9 @@ func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, e
 		var summary bytes.Buffer
 		renderSessionSummary(&summary, view, b.summaryOptions(false))
 		hint := b.transcriptHint()
-		rest, redraw := b.drawDetails(summary.String(), hint, notice)
+		var rest string
+		var redraw bool
+		rest, notice, redraw = b.drawDetails(summary.String(), hint, notice)
 		action, next, err := b.detailsPrompt(row, summary.Bytes(), rest, hint, notice, redraw)
 		if err != nil || action != browseRedraw {
 			return action, err
@@ -142,6 +144,15 @@ func (n browseNotice) print(stdout, stderr io.Writer) {
 	terminal.Println(stdout, n.text)
 }
 
+// oneRow cuts text to one terminal row width columns wide, ending a cut
+// with "…".
+func oneRow(text string, width int) string {
+	if visibleWidth(text) <= width {
+		return text
+	}
+	return truncateVisible(text, width-1) + "…"
+}
+
 // minDetailLines is the fewest summary lines the details show, however
 // short the terminal.
 const minDetailLines = 5
@@ -158,46 +169,55 @@ func detailsQuestion(cut bool) string {
 // drawDetails prints the summary. When it does not fit the terminal above
 // the notice (or a blank line), the hint, and the prompt, only the lines
 // that fit are printed, then how many more there are; rest is the lines
-// left out. redraw reports that the terminal's size is known and the
+// left out. A notice that would push the details past the terminal's
+// height is cut to one row, unless it is an error, which is kept whole;
+// shown is the notice as it is to be printed. redraw reports that the terminal's size is known and the
 // screen can be cleared, so the details can be drawn again in place with a
 // notice rather than have one printed below them.
-func (b *sessionBrowser) drawDetails(summary, hint string, notice browseNotice) (rest string, redraw bool) {
+func (b *sessionBrowser) drawDetails(summary, hint string, notice browseNotice) (rest string, shown browseNotice, redraw bool) {
 	width, height, ok := b.env.terminalSize(b.stdout)
 	if !ok {
 		terminal.Print(b.stdout, summary)
-		return "", false
+		return "", notice, false
 	}
 	redraw = b.screen.clears()
 	// Below the summary: the notice or a blank line, the hint, and the
 	// prompt.
-	chrome := max(displayLines(notice.text, width), 1) + displayLines(hint, width) + displayLines(b.prompt.promptText(detailsQuestion(true), false, nil, -1, ": "), width)
+	below := displayLines(hint, width) + displayLines(b.prompt.promptText(detailsQuestion(true), false, nil, -1, ": "), width)
+	chrome := max(displayLines(notice.text, width), 1) + below
 	if displayLines(summary, width)+chrome <= height {
 		terminal.Print(b.stdout, summary)
-		return "", redraw
+		return "", notice, redraw
+	}
+	if !notice.error && height-chrome-1 < minDetailLines {
+		// The summary is at its fewest lines, so the notice gets one row,
+		// as in the list.
+		notice.text = oneRow(notice.text, width)
+		chrome = 1 + below
 	}
 	lines := strings.Split(strings.TrimSuffix(summary, "\n"), "\n")
 	// One row is kept for the line saying how many more there are.
 	budget := max(height-chrome-1, minDetailLines)
-	shown, used := 0, 0
-	for shown < len(lines) && used+lineRows(lines[shown], width) <= budget {
-		used += lineRows(lines[shown], width)
-		shown++
+	count, used := 0, 0
+	for count < len(lines) && used+lineRows(lines[count], width) <= budget {
+		used += lineRows(lines[count], width)
+		count++
 	}
-	if shown == len(lines) {
+	if count == len(lines) {
 		terminal.Print(b.stdout, summary)
-		return "", redraw
+		return "", notice, redraw
 	}
-	shown = max(shown, 1)
-	for _, line := range lines[:shown] {
+	count = max(count, 1)
+	for _, line := range lines[:count] {
 		terminal.Println(b.stdout, line)
 	}
-	more := len(lines) - shown
+	more := len(lines) - count
 	noun := "lines"
 	if more == 1 {
 		noun = "line"
 	}
 	terminal.Println(b.stdout, b.format.Style.dim(fmt.Sprintf("… %d more %s", more, noun)))
-	return strings.Join(lines[shown:], "\n") + "\n", redraw
+	return strings.Join(lines[count:], "\n") + "\n", notice, redraw
 }
 
 // transcriptHint says how to use and leave the pager t opens, or is empty
@@ -253,9 +273,11 @@ func (b *sessionBrowser) detailsPrompt(row listRow, summary []byte, rest, hint s
 				break
 			}
 			if _, _, page := resolvePagerCommand(b.env, b.noPager, b.stdout); !page {
-				// Without a pager, the lines left out follow the ones shown.
+				// Without a pager, the lines left out are printed below the
+				// prompt. The details no longer fit the screen, so they are
+				// not drawn again: that would cut the summary again.
 				terminal.Print(b.stdout, rest)
-				rest = ""
+				rest, redraw = "", false
 				continue
 			}
 			// The whole summary, through the pager as the transcript is.
@@ -466,7 +488,7 @@ func (l *sessionPicker) pick(p *prompter, stdout io.Writer, sessions []archive.M
 		for {
 			if notice != "" {
 				// Cut to one row, so the page still fits.
-				terminal.Println(stdout, truncateVisible(notice, width))
+				terminal.Println(stdout, oneRow(notice, width))
 				notice = ""
 			} else {
 				terminal.Println(stdout)

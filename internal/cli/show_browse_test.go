@@ -445,8 +445,8 @@ func TestBrowserCutDetailsGolden(t *testing.T) {
 	b := &sessionBrowser{env: env, prompt: newPrompter(strings.NewReader("q\n"), &out), stdout: &out, screen: &altScreen{}}
 	summary := renderSummaryText(summaryFixture(), summaryOptions{Now: summaryNow, Location: time.UTC})
 	hint := b.transcriptHint()
-	rest, redraw := b.drawDetails(summary, hint, browseNotice{})
-	if action, _, err := b.detailsPrompt(listRow{}, []byte(summary), rest, hint, browseNotice{}, redraw); err != nil || action != browseQuit || rest == "" {
+	rest, notice, redraw := b.drawDetails(summary, hint, browseNotice{})
+	if action, _, err := b.detailsPrompt(listRow{}, []byte(summary), rest, hint, notice, redraw); err != nil || action != browseQuit || rest == "" {
 		t.Fatalf("action %v, err %v, rest %q", action, err, rest)
 	}
 	if n := displayLines(out.String(), 80); n != 14 {
@@ -491,6 +491,34 @@ func TestBrowserDetailsRedrawWithAMessage(t *testing.T) {
 	const message = "Enter t for the transcript, m for the whole summary, b (or just Enter) for the list, or q to quit.\nt opens"
 	if n := displayLines(screens[1], 100); n != 9 || !strings.Contains(screens[1], " more lines\n"+message) {
 		t.Fatalf("redrawn details take %d rows of 9:\n%s", n, screens[1])
+	}
+}
+
+// A message that wraps is cut to one row when the summary is already at its
+// fewest lines, so the redrawn details still fit.
+func TestBrowserDetailsCutAWrappedMessageToFit(t *testing.T) {
+	t.Parallel()
+	out, _, _, _ := browseSized(t, fixedTerminal{80, 9}, "1\nzz\nq\n")
+	screens := detailsScreens(out)
+	if len(screens) != 2 {
+		t.Fatalf("details drawn %d times, want 2:\n%s", len(screens), out)
+	}
+	if n := displayLines(screens[1], 80); n != 9 || !strings.Contains(screens[1], " more lines\nEnter t for the transcript, m for") || !strings.Contains(screens[1], "…\nt opens") {
+		t.Fatalf("redrawn details take %d rows of 9:\n%s", n, screens[1])
+	}
+}
+
+// Once m has printed the rest without a pager, the details are not drawn
+// again (that would cut the summary again), and m is no longer offered.
+func TestBrowserMoreWithoutPagerKeepsTheWholeSummary(t *testing.T) {
+	t.Parallel()
+	out, _, _, id := browseSized(t, fixedTerminal{100, 9}, "1\nm\nm\nq\n", "list", "--no-pager")
+	if screens := detailsScreens(out); len(screens) != 1 {
+		t.Fatalf("details drawn %d times, want 1:\n%s", len(screens), out)
+	}
+	_, after, _ := strings.Cut(out, cutDetailsPrompt+": ")
+	if !strings.Contains(after, "ID "+id) || !strings.Contains(after, "Enter t for the transcript, b (or just Enter) for the list, or q to quit.\n\n"+detailsPrompt+": ") || strings.Contains(after, cutDetailsPrompt) {
+		t.Fatalf("second m:\n%s", after)
 	}
 }
 
