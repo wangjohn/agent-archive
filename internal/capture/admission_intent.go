@@ -67,6 +67,57 @@ func ClearAdmissionIntents(home string) error {
 	return errors.Join(failures...)
 }
 
+// PruneAdmissionIntents removes retry records for projects that setup has
+// excluded. The queue lock also serializes this with hook-side writes.
+func PruneAdmissionIntents(home string, projects []archive.ProjectActivation) error {
+	unlock, err := local.NamedLockWait(home, "admission-intents.lock", 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("lock admission intent queue: %w", err)
+	}
+	defer unlock()
+	entries, err := os.ReadDir(admissionIntentDir(home))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(admissionIntentDir(home), entry.Name())
+		var intent admissionIntent
+		readErr := local.Read(path, &intent)
+		if readErr == nil && intentProjectStillOwned(intent.ProjectRoot, projects) {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// Without retaining the hook's original cwd, an intent for a parent project
+// cannot be distinguished from one that started in a newly configured nested
+// project. Drop those ambiguous intents rather than admitting them under the
+// parent after setup changes ownership.
+func intentProjectStillOwned(root string, projects []archive.ProjectActivation) bool {
+	included := false
+	for _, project := range projects {
+		if project.Root == root {
+			included = project.Included
+			continue
+		}
+		if local.PathWithin(resolvedPath(project.Root), resolvedPath(root)) {
+			return false
+		}
+	}
+	return included
+}
+
 // queueAdmissionIntent is only used after hooks.lock times out. It never
 // queues an excluded, paused, pre-activation, or unproven start. The queue
 // lock bounds the directory count across concurrent hook processes.
@@ -101,6 +152,17 @@ func queueAdmissionIntent(home, harness string, kind hookEventKind, payload map[
 		return false, fmt.Errorf("lock admission intent queue: %w", err)
 	}
 	defer unlock()
+	// A pause or setup may have committed while this hook waited for the
+	// queue lock. Recheck after taking it so a stale config cannot write a
+	// private retry record after the corresponding purge.
+	cfg, found, err = config.Load(home)
+	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused || setupjournal.TransactionPending(home) {
+		return false, err
+	}
+	current, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
+	if !owned || !current.Included || current.Root != project.Root || !cfg.Archive.Eligible(current.Root, now) {
+		return false, nil
+	}
 	entries, err := os.ReadDir(admissionIntentDir(home))
 	if !os.IsNotExist(err) && err != nil {
 		return false, err
@@ -164,7 +226,7 @@ func ReplayAdmissionIntents(home string, now time.Time) error {
 		}
 		remove := now.Sub(intent.ObservedAt) > maxAdmissionIntentAge || intent.ObservedAt.After(now.Add(time.Minute))
 		project, owned := ConfiguredProjectActivationFor(cfg, intent.ProjectRoot)
-		if !owned || !project.Included || project.Root != intent.ProjectRoot || !cfg.Archive.Eligible(project.Root, intent.ObservedAt) {
+		if !owned || !project.Included || project.Root != intent.ProjectRoot || !intentProjectStillOwned(intent.ProjectRoot, cfg.Archive.Projects) || !cfg.Archive.Eligible(project.Root, intent.ObservedAt) {
 			remove = true
 		}
 		if !remove {

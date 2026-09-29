@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
@@ -51,6 +52,42 @@ func TestAdmissionIntentReplayIsIdempotentAndExpires(t *testing.T) {
 	}
 }
 
+func TestAdmissionIntentDropsParentWhenNestedProjectIsConfigured(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	setUpTestConfig(t, home, project, at.Add(-time.Hour))
+	nested := filepath.Join(project, "nested")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	queued, err := queueAdmissionIntent(home, "claude", hookEventStart, claudeStart(nested, "native-nested", "startup", ""), at)
+	if err != nil || !queued {
+		t.Fatalf("queue = %t, %v", queued, err)
+	}
+	cfg, _, err := config.Load(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Archive.Projects = append(cfg.Archive.Projects, archive.ProjectActivation{ProjectID: archive.ProjectID(nested), Root: nested, ActivatedAt: at.Add(-time.Hour), Included: false})
+	if err := config.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := PruneAdmissionIntents(home, cfg.Archive.Projects); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(admissionIntentDir(home))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("nested intent retained: %#v, %v", entries, err)
+	}
+	regs, err := state.OpenReadOnly(home).LoadRegistrations()
+	if err != nil || len(regs) != 0 {
+		t.Fatalf("nested session admitted: %#v, %v", regs, err)
+	}
+}
+
 func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 	home, project := t.TempDir(), t.TempDir()
 	at := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
@@ -67,6 +104,13 @@ func TestAdmissionIntentRechecksProjectAndQueueBound(t *testing.T) {
 	cfg.Archive.Projects[0].Included = false
 	if err := config.Save(home, cfg); err != nil {
 		t.Fatal(err)
+	}
+	if err := PruneAdmissionIntents(home, cfg.Archive.Projects); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(admissionIntentDir(home))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("excluded intent retained: %#v, %v", entries, err)
 	}
 	if err := ReplayAdmissionIntents(home, at.Add(time.Minute)); err != nil {
 		t.Fatal(err)

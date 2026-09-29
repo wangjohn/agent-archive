@@ -556,6 +556,9 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 	if e := capture.PruneDiagnostics(home, cfg.Archive.Projects); e != nil {
 		terminal.Printf(errOut, "Could not prune capture diagnostics for excluded projects: %v\n", e)
 	}
+	if e := capture.PruneAdmissionIntents(home, cfg.Archive.Projects); e != nil {
+		terminal.Printf(errOut, "Could not prune pending session starts for excluded projects: %v\n", e)
+	}
 	terminal.Println(p.out, "\nConfiguration saved.")
 	// A paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
