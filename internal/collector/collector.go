@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/capture"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 	"github.com/wangjohn/agent-archive/internal/state"
@@ -170,6 +171,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		return Result{}, errors.New("machine ID is required")
 	}
 	now := opts.now()
+	// Recover first-start events that could not obtain hooks.lock on the
+	// user's turn before scanning registrations for this pass.
+	replayErr := capture.ReplayAdmissionIntents(local.Home(), now)
 	// The caller holds the collector lock, so this pass is the only writer
 	// of the files it owns and may move a corrupt one aside.
 	local = local.ForCollectorPass()
@@ -184,6 +188,9 @@ func Run(ctx context.Context, local *state.Store, store storage.ObjectStore, opt
 		opts:   opts,
 		now:    now,
 		result: Result{Errors: materializeSubagentCandidates(local, opts)},
+	}
+	if replayErr != nil {
+		p.result.Errors["admission-intents"] = replayErr
 	}
 	if err := p.loadWork(); err != nil {
 		return Result{}, err

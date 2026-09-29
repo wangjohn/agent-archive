@@ -73,7 +73,16 @@ func TestUninstallPurgeRemovesCollectorAndDiagnosticState(t *testing.T) {
 	if err := capture.RecordDiagnostic(home, capture.Diagnostic{Code: capture.DiagnosticSetupInProgress, Harness: "codex", ProjectRoot: cfg.Archive.Projects[0].Root, ObservedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"scan-signatures", "superseded", "forgotten", "cache", capture.DiagnosticsLockName, "capture-diagnostics.json"} {
+	if err := os.MkdirAll(filepath.Join(home, "admission-intents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := capture.ClearAdmissionIntents(home); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "admission-intents", "queued.json"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"scan-signatures", "superseded", "forgotten", "cache", capture.DiagnosticsLockName, "capture-diagnostics.json", "admission-intents", "admission-intents.lock"} {
 		if _, err := os.Stat(filepath.Join(home, name)); err != nil {
 			t.Fatalf("test precondition: %s was not created: %v", name, err)
 		}

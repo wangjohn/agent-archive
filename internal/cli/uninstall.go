@@ -152,9 +152,16 @@ func uninstall(purge, yes bool, stdin io.Reader, out io.Writer, env Env) error {
 		terminal.Println(out, problem)
 	}
 	if purge {
-		// The purge releases the locks once their files are gone: hooks.lock,
-		// then the collector lock, then setup.lock.
-		if err := purgeLocalData(home, cfg, out, env, func() { releaseHooks(); unlock(); release() }); err != nil {
+		// A timed-out hook can still be writing an admission intent without
+		// hooks.lock. Hold its queue lock while deleting the retry directory.
+		releaseAdmission, lockErr := local.NamedLock(home, "admission-intents.lock")
+		if lockErr != nil {
+			return fmt.Errorf("lock pending session starts before purge: %w", lockErr)
+		}
+		releaseAdmission = releaseOnce(releaseAdmission)
+		defer releaseAdmission()
+		// The purge releases the locks once their files are gone.
+		if err := purgeLocalData(home, cfg, out, env, func() { releaseAdmission(); releaseHooks(); unlock(); release() }); err != nil {
 			return err
 		}
 	}
@@ -416,7 +423,7 @@ func deleteCredentialRefs(env Env, refs map[string]bool) ([]string, error) {
 // local entry is gone and while it still holds them: held, they are what
 // keeps a hook, collector, or setup from acting on a half-deleted directory,
 // and unlinking before release means a later opener gets its own inode.
-var uninstallLockFiles = []string{"hooks.lock", "collector.lock", "setup.lock"}
+var uninstallLockFiles = []string{"admission-intents.lock", "hooks.lock", "collector.lock", "setup.lock"}
 
 // missingDirs is dir and each of its parents that does not exist, deepest
 // first: what os.MkdirAll(dir) would create.
@@ -493,6 +500,7 @@ func checkRemovableHome(home, userHome string) error {
 var localStateEntries = []string{
 	"config.json", "setup-draft.json", "setup-transaction.json", "imports",
 	"storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "application-versions.json",
+	"admission-intents", "admission-intents.lock",
 	"collector.lock", collectorLockRecordName, "collector.log", "collector-error.log",
 	"cache", handoffDir, "purge-plans",
 }
@@ -518,7 +526,7 @@ func removeLocalState(home string) (leftover []string, err error) {
 	for _, entry := range entries {
 		name := entry.Name()
 		//lint:ignore LV1001 file names found in the state directory, an open set; these are the lock files
-		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" {
+		if name == "setup.lock" || name == "hooks.lock" || name == "collector.lock" || name == "admission-intents.lock" {
 			continue
 		}
 		if !known[name] && !strings.HasPrefix(name, ".pending-") && !isMovedAside(name, known) {
