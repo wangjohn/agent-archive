@@ -81,10 +81,10 @@ func runCollectCommand(_ []string, _ io.Writer, stderr io.Writer, env Env) int {
 // is reported as an error or treated as an expected, silent no-op.
 //
 // Once localStore exists, any failure before collector.Run gets its own
-// chance to record Status is written into that same Status's LastError.
+// chance to record Status is written into that same Status's last errors.
 // Without this, a broken lock or bad storage credentials would fail every
 // scheduled _collect tick while `status` kept reporting the last successful
-// scan's LastError (typically empty), leaving a misconfigured install
+// scan's last errors (typically none), leaving a misconfigured install
 // looking healthy.
 func runOnePass(env Env, quietOnBusy bool) (collector.Result, error) {
 	return runPass(env, quietOnBusy, passOptions{})
@@ -386,10 +386,10 @@ func passStorageHealth(result collector.Result) string {
 // recordRetentionErrors merges retention.Sweep's per-session failures into
 // result, so sync's existing report/exit-code logic (which only knows about
 // collector.Result) covers them too without its own retention-specific
-// path, and updates Status.LastError the same way collector.Run already
-// does for its own per-session errors — otherwise a retention failure would
-// never reach `status` at all, since, unlike collector.Run, Sweep does not
-// persist a Status of its own.
+// path, and updates the Status's last errors the same way collector.Run
+// already does for its own per-session errors — otherwise a retention
+// failure would never reach `status` at all, since, unlike collector.Run,
+// Sweep does not persist a Status of its own.
 func recordRetentionErrors(localStore *state.Store, result *collector.Result, sweep retention.Result) {
 	if result.Errors == nil {
 		result.Errors = map[string]error{}
@@ -401,22 +401,19 @@ func recordRetentionErrors(localStore *state.Store, result *collector.Result, sw
 	if err != nil {
 		return
 	}
-	status.LastError = fmt.Sprintf("%d session(s) failed to scan, publish, or clean up", len(result.Errors))
+	status.SetLastErrors(fmt.Sprintf("%d session(s) failed to scan, publish, or clean up", len(result.Errors)))
 	_ = localStore.SaveStatus(status)
 }
 
-// addStatusProblem adds problem to Status.LastError, after whatever the pass
-// already recorded there, rather than replacing it. Best effort, like
+// addStatusProblem adds problem to the Status's last errors, after whatever
+// the pass already recorded there, rather than replacing them. Best effort, like
 // recordPreflightError.
 func addStatusProblem(localStore *state.Store, problem string) {
 	status, err := localStore.LoadStatus()
 	if err != nil {
 		return
 	}
-	if status.LastError != "" {
-		problem = status.LastError + "; " + problem
-	}
-	status.LastError = problem
+	status.AddLastError(problem)
 	_ = localStore.SaveStatus(status)
 }
 
@@ -434,7 +431,7 @@ func recordPreflightError(localStore *state.Store, preflightErr error) {
 	if err != nil {
 		return
 	}
-	status.LastError = preflightErr.Error()
+	status.SetLastErrors(preflightErr.Error())
 	_ = localStore.SaveStatus(status)
 }
 

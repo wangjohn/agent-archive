@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -375,15 +377,91 @@ func TestStatusLastErrorPlainCause(t *testing.T) {
 		"publish: operation error S3: PutObject, api error NoSuchBucket: The specified bucket does not exist":                                                         "The bucket doesn't exist",
 		"list registrations: operation error S3: ListObjectsV2, api error InvalidAccessKeyId: The key does not exist":                                                 "Storage didn't accept the credentials",
 		"list registrations: operation error S3: ListObjectsV2, api error PermanentRedirect: use the right endpoint":                                                  "The bucket is in a different region",
-		"2 session(s) failed to scan or publish":                                                                     "Last error: 2 session(s) failed to scan or publish",
-		"2 session(s) failed to scan or publish; list registrations: api error AccessDenied: Access Denied":          "Last error: 2 session(s) failed to scan or publish; Storage refused access",
+		"2 session(s) failed to scan or publish": "Last error: 2 session(s) failed to scan or publish",
 		"list registrations: operation error S3: ListObjectsV2, api error SlowDown: Please reduce your request rate": "Last error: list registrations: operation error S3: ListObjectsV2, api error SlowDown: Please reduce your request rate",
 		"the note says AccessDenied: is expected here":                                                               "Last error: the note says AccessDenied: is expected here",
 		// A refusal by the role or sign-in service is a credential problem,
 		// not the bucket's, as storage.Diagnose has it: shown as recorded.
 		"list registrations: operation error S3: ListObjectsV2, get identity: get credentials: failed to refresh cached credentials, operation error STS: AssumeRole, https response error StatusCode: 403, RequestID: R, api error AccessDenied: User is not authorized to perform: sts:AssumeRole": "Last error: list registrations: operation error S3: ListObjectsV2, get identity: get credentials: failed to refresh cached credentials, operation error STS: AssumeRole, https response error StatusCode: 403, RequestID: R, api error AccessDenied: User is not authorized to perform: sts:AssumeRole",
 	} {
-		if got := lastErrorText(recorded); got != want {
+		var status state.Status
+		status.SetLastErrors(recorded)
+		if got := lastErrorRows(status); !slices.Equal(got, []string{want}) {
+			t.Errorf("%q: %q want %q", recorded, got, want)
+		}
+	}
+}
+
+// A recorded problem whose own text contains "; ", as a storage provider's
+// message can, is one row, and none of its text is read as a problem of its
+// own.
+func TestStatusLastErrorWithSeparatorIsOneRow(t *testing.T) {
+	t.Parallel()
+	recorded := "list registrations: operation error S3: ListObjectsV2, api error SlowDown: Please reduce your request rate; AccessDenied: may follow if you do not"
+	var status state.Status
+	status.SetLastErrors(recorded)
+	want := []string{"Last error: " + recorded}
+	if got := lastErrorRows(status); !slices.Equal(got, want) {
+		t.Fatalf("rows %q want %q", got, want)
+	}
+	view := busyStatusView()
+	view.Collector.SetLastErrors(recorded)
+	if got := failedStorageRows(view); !slices.Equal(got, want) {
+		t.Fatalf("Storage section's ✗ rows %q want %q", got, want)
+	}
+}
+
+// Each problem the last pass recorded is its own row, with its own cause.
+func TestStatusLastErrorsEachGetARow(t *testing.T) {
+	t.Parallel()
+	var status state.Status
+	status.SetLastErrors(
+		"2 session(s) failed to scan or publish",
+		"list registrations: api error AccessDenied: Access Denied",
+		"publish: operation error S3: PutObject, api error NoSuchBucket: gone; see the console",
+	)
+	want := []string{
+		"Last error: 2 session(s) failed to scan or publish",
+		"Storage refused access",
+		"The bucket doesn't exist",
+	}
+	if got := lastErrorRows(status); !slices.Equal(got, want) {
+		t.Fatalf("rows %q want %q", got, want)
+	}
+	view := busyStatusView()
+	view.Collector.SetLastErrors(status.LastErrors...)
+	if got := failedStorageRows(view); !slices.Equal(got, want) {
+		t.Fatalf("Storage section's ✗ rows %q want %q", got, want)
+	}
+}
+
+// failedStorageRows is the text of each ✗ row in view's Storage section.
+func failedStorageRows(view statusView) []string {
+	sc := statusScreen{style: textStyle{}, now: renderNow, home: "/Users/alex"}
+	var failed []string
+	for _, row := range sc.storageRows(view) {
+		if row.mark == sc.style.failMark() {
+			failed = append(failed, strings.Join(row.cells, " "))
+		}
+	}
+	return failed
+}
+
+// A status file written before the problems were recorded as a list has only
+// the joined text, which is split where the collector joined it and shown on
+// one line, as it always was.
+func TestStatusLastErrorFromOlderStatusFile(t *testing.T) {
+	t.Parallel()
+	for recorded, want := range map[string][]string{
+		"list registrations: AccessDenied: Access Denied":                                                   {"Storage refused access"},
+		"2 session(s) failed to scan or publish":                                                            {"Last error: 2 session(s) failed to scan or publish"},
+		"2 session(s) failed to scan or publish; list registrations: api error AccessDenied: Access Denied": {"Last error: 2 session(s) failed to scan or publish; Storage refused access"},
+	} {
+		var status state.Status
+		if err := json.Unmarshal([]byte(`{"pending_count":0,"last_error":`+strconv.Quote(recorded)+`}`), &status); err != nil {
+			t.Fatal(err)
+		}
+		if got := lastErrorRows(status); !slices.Equal(got, want) {
 			t.Errorf("%q: %q want %q", recorded, got, want)
 		}
 	}

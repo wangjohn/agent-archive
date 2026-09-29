@@ -94,9 +94,10 @@ now and paths under your home folder start with `~`.
   read-back-verified evidence. `--verbose` doesn't change it.
 - **Before setup**, status shows only that setup is needed (`--json`:
   background `missing`, authentication `not_configured`).
-- **A failed sync** shows its cause on the Storage section's ✗ row when the
-  storage provider refused the request: **Storage refused access** (the
-  credentials aren't allowed to list, read, write and delete in the bucket),
+- **A failed sync** shows each problem the last pass recorded on a ✗ row of
+  its own in the Storage section, with its cause when the storage provider
+  refused the request: **Storage refused access** (the credentials aren't
+  allowed to list, read, write and delete in the bucket),
   **Storage didn't accept the credentials** (an expired or unknown key),
   **The bucket doesn't exist**, or **The bucket is in a different region**.
   Any other failure is shown as **Last error:** with the collector's own

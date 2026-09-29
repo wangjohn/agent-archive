@@ -481,7 +481,7 @@ var screens = []screen{
 			must(t, err)
 			status, err := store.LoadStatus()
 			must(t, err)
-			status.LastError = "list registrations: AccessDenied: Access Denied"
+			status.SetLastErrors("list registrations: AccessDenied: Access Denied")
 			must(t, store.SaveStatus(status))
 		},
 	},
@@ -507,7 +507,7 @@ var screens = []screen{
 			must(t, err)
 			status, err := store.LoadStatus()
 			must(t, err)
-			status.LastError = "list registrations: AccessDenied: Access Denied"
+			status.SetLastErrors("list registrations: AccessDenied: Access Denied")
 			must(t, store.SaveStatus(status))
 		},
 	},

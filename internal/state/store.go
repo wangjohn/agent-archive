@@ -596,7 +596,16 @@ type Status struct {
 	LastScanAt      time.Time         `json:"last_scan_at,omitzero"`
 	LastPublishedAt time.Time         `json:"last_published_at,omitzero"`
 	PendingCount    int               `json:"pending_count"`
-	LastError       string            `json:"last_error,omitempty"`
+	// LastError is every problem the last pass recorded, joined with "; ".
+	// It is kept, with the same contents, for older readers; LastErrors
+	// holds the same problems one per entry. Set both with SetLastErrors
+	// or AddLastError.
+	LastError string `json:"last_error,omitempty"`
+	// LastErrors lists the problems the last pass recorded, one per entry,
+	// so a reader never has to split LastError (whose entries can
+	// themselves contain "; "). A status file written before this field
+	// existed has only LastError.
+	LastErrors []string `json:"last_errors,omitempty"`
 	// QuarantinedFiles lists, relative to the archive directory, the local
 	// state files a pass found undecodable and moved aside (see
 	// ErrQuarantined). They stay listed until someone inspects and deletes
@@ -608,6 +617,30 @@ type Status struct {
 	// cannot be rebuilt. Their metadata stays as published until the
 	// session changes. It names no session and no content.
 	UnrefreshableSummaries int `json:"unrefreshable_summaries,omitempty"`
+}
+
+// SetLastErrors replaces the problems the status records with problems,
+// keeping LastError and LastErrors in step. An empty problem is left out, and
+// no problems clears both.
+func (s *Status) SetLastErrors(problems ...string) {
+	problems = slices.DeleteFunc(slices.Clone(problems), func(problem string) bool { return problem == "" })
+	if len(problems) == 0 {
+		s.LastError, s.LastErrors = "", nil
+		return
+	}
+	s.LastErrors = problems
+	s.LastError = strings.Join(problems, "; ")
+}
+
+// AddLastError adds problem after the problems the status already records.
+// A status file from before LastErrors existed has its LastError split where
+// the collector joined problems, on "; ", as status reads it.
+func (s *Status) AddLastError(problem string) {
+	problems := s.LastErrors
+	if len(problems) == 0 && s.LastError != "" {
+		problems = strings.Split(s.LastError, "; ")
+	}
+	s.SetLastErrors(append(problems[:len(problems):len(problems)], problem)...)
 }
 
 func (s *Store) statusPath() string { return filepath.Join(s.home, "status.json") }
