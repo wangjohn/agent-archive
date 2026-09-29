@@ -23,6 +23,7 @@ func TestSkillEvidenceLegacyMigrationAndValidation(t *testing.T) {
 	if err != nil || updated.SkillEvidence != SkillEvidenceMetadata || updated.SchemaVersion != 1 {
 		t.Fatalf("updated: %+v %v", updated, err)
 	}
+	//lint:ignore LV1001 deliberately tests rejection of an unsupported policy value
 	updated.SkillEvidence = "invalid"
 	if err := Save(home, updated); err == nil {
 		t.Fatal("accepted invalid mode")
