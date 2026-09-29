@@ -274,6 +274,61 @@ func TestHandoffTitleBeforeSetup(t *testing.T) {
 	}
 }
 
+// --source keeps a title search to one side, and --harness to one app, for a
+// full ID as for a title.
+func TestHandoffTitleSourceAndHarnessLimitTheSearch(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	for _, args := range [][]string{
+		{"archived elsewhere", "--source", "local"},
+		{"not uploaded", "--source", "archive"},
+		{"archived elsewhere", "--harness", "claude"},
+		{f.archiveOnly, "--harness", "claude"},
+	} {
+		out, errOut, code := runHandoff(t, f.env, args...)
+		if code != 1 || out != "" || !strings.Contains(errOut, "no session matches") {
+			t.Errorf("%v: code=%d stdout=%q stderr=%s", args, code, out, errOut)
+		}
+	}
+}
+
+// The chosen session's harness travels with its ID, so one ID published under
+// two harnesses is not a second question.
+func TestHandoffTitleKeepsTheMatchesHarness(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	data, err := f.mem.Get(context.Background(), "sessions/codex/"+f.archiveOnly+"/metadata.json")
+	must(t, err)
+	var sidecar map[string]any
+	must(t, json.Unmarshal(data, &sidecar))
+	sidecar["title"] = "A different title"
+	data, err = json.Marshal(sidecar)
+	must(t, err)
+	must(t, f.mem.Put(context.Background(), "sessions/claude/"+f.archiveOnly+"/metadata.json", data))
+	out, errOut, code := runHandoff(t, f.env, "archived elsewhere")
+	if code != 0 || !strings.Contains(out, "Archived elsewhere") {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// An ID read from stored metadata is checked before it names a file or key.
+func TestHandoffTitleRefusesAnUnsafeStoredID(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	data, err := f.mem.Get(context.Background(), "sessions/codex/"+f.archiveOnly+"/metadata.json")
+	must(t, err)
+	var sidecar map[string]any
+	must(t, json.Unmarshal(data, &sidecar))
+	sidecar["session_id"], sidecar["title"] = "../../escape", "Hostile title"
+	data, err = json.Marshal(sidecar)
+	must(t, err)
+	must(t, f.mem.Put(context.Background(), "sessions/codex/hostile/metadata.json", data))
+	out, errOut, code := runHandoff(t, f.env, "hostile title")
+	if code != 1 || out != "" {
+		t.Fatalf("code=%d stdout=%q stderr=%s", code, out, errOut)
+	}
+}
+
 // The ID of a session this Mac has registered names it even before it has a
 // prompt to title it by, as handoff always allowed.
 func TestHandoffExactIDNeedsNoTitle(t *testing.T) {

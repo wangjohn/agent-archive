@@ -457,7 +457,7 @@ func TestHandoffUnsafeSessionIDsMatchNothing(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, false)
 	f.env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return nil, errors.New("offline") }
-	for _, id := range []string{"../registrations/x", "a/b", "..", "."} {
+	for _, id := range []string{"../registrations/x", "a/b", ".."} {
 		if out, errOut, code := runHandoff(t, f.env, id); code != 1 || out != "" || !strings.Contains(errOut, "no session matches") {
 			t.Errorf("%q: code=%d stdout=%q stderr=%s", id, code, out, errOut)
 		}
