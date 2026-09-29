@@ -27,7 +27,7 @@ func browse(t *testing.T, input string, args ...string) (out, errOut string, pag
 	env.IsTerminal = func(stream any) bool {
 		return stream == any(stdin) || stream == any(&stdout)
 	}
-	env.RunPager = func(_ context.Context, command string, in io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, _ []string, in io.Reader, _, _ io.Writer) error {
 		text, err := io.ReadAll(in)
 		pages = append(pages, pagerCall{command: command, text: string(text)})
 		return err
@@ -227,7 +227,7 @@ func TestPagerStopsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Env{}.runPager(ctx, "sleep 30", strings.NewReader(""), io.Discard, io.Discard)
+		done <- Env{}.runPager(ctx, "sleep 30", nil, strings.NewReader(""), io.Discard, io.Discard)
 	}()
 	time.Sleep(100 * time.Millisecond)
 	cancel()
@@ -243,9 +243,10 @@ func TestPagerStopsOnCancel(t *testing.T) {
 func TestBrowserPagerCommand(t *testing.T) {
 	t.Parallel()
 	for pager, want := range map[string]string{
-		"":                     "less -RX --mouse --wheel-lines=3 " + shellQuote("-Ps"+lessPrompt(1, true)) + " -+F",
+		"":                     "less -RX --mouse --wheel-lines=3 " + lessPrompts(1, true) + " -+F",
 		"less -FR":             "less -FR -+F",
-		"/usr/bin/less":        "/usr/bin/less -+F",
+		"/usr/bin/less":        "/usr/bin/less -RX --mouse --wheel-lines=3 " + lessPrompts(1, true) + " -+F",
+		"less -R":              "less -R -+F",
 		"most":                 "most",
 		"less -R | tee /tmp/x": "less -R | tee /tmp/x",
 		"less -R # note":       "less -R # note",
@@ -258,7 +259,10 @@ func TestBrowserPagerCommand(t *testing.T) {
 		env.IsTerminal = func(any) bool { return true }
 		env.LookupEnv = func(key string) (string, bool) { return pager, key == "PAGER" && pager != "" }
 		var got string
-		env.RunPager = func(_ context.Context, command string, _ io.Reader, _, _ io.Writer) error { got = command; return nil }
+		env.RunPager = func(_ context.Context, command string, _ []string, _ io.Reader, _, _ io.Writer) error {
+			got = command
+			return nil
+		}
 		paged, waited, err := pageText(context.Background(), &out, io.Discard, env, false, true, []byte("x"))
 		if err != nil || !paged || got != want || waited != strings.Contains(want, "-+F") {
 			t.Errorf("%q: ran %q (waited %v), want %q", pager, got, waited, want)
@@ -277,7 +281,7 @@ func TestBrowserWaitsAfterOtherPagers(t *testing.T) {
 	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
 	env.LookupEnv = func(key string) (string, bool) { return "most", key == "PAGER" }
 	pages := 0
-	env.RunPager = func(_ context.Context, command string, _ io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, _ []string, _ io.Reader, _, _ io.Writer) error {
 		pages++
 		if command != "most" {
 			t.Errorf("pager %q", command)
@@ -312,7 +316,7 @@ func TestBrowserSignalDuringTranscript(t *testing.T) {
 	exited := make(chan int, 1)
 	env.exitProcess = func(code int) { exited <- code }
 	cancelled := make(chan struct{})
-	env.RunPager = func(ctx context.Context, _ string, _ io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(ctx context.Context, _ string, _ []string, _ io.Reader, _, _ io.Writer) error {
 		signals <- syscall.SIGTERM
 		<-ctx.Done()
 		close(cancelled)

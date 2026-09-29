@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -23,13 +24,61 @@ import (
 // and quit with q. Piped or redirected stdout is never paged; a spawn
 // failure falls back to writing stdout directly after a stderr warning.
 // Cancelling ctx stops the pager.
+//
+// While the pager runs, Ctrl-C belongs to it (less uses it to cancel a
+// search), so agent-archive neither exits nor leaves the pager behind on
+// the terminal; SIGTERM or SIGHUP stops the pager, then exits as the signal
+// would have.
 func withPager(ctx context.Context, stdout, stderr io.Writer, env pagerDependencies, noPager bool, write func(io.Writer) error) error {
 	var buf bytes.Buffer
 	if err := write(&buf); err != nil {
 		return err
 	}
-	_, _, err := pageText(ctx, stdout, stderr, env, noPager, false, buf.Bytes())
+	if _, _, page := resolvePagerCommand(env, noPager, stdout); !page {
+		_, err := stdout.Write(buf.Bytes())
+		return err
+	}
+	pagerCtx, stopPager := context.WithCancel(ctx)
+	defer stopPager()
+	stopped := watchPagerSignals(env, stopPager)
+	_, _, err := pageText(pagerCtx, stdout, stderr, env, noPager, false, buf.Bytes())
+	if sig := stopped(); sig != nil {
+		env.exit(signalExitCode(sig))
+	}
 	return err
+}
+
+// watchPagerSignals handles interrupts while a pager runs: Ctrl-C is caught
+// and dropped, so it reaches only the pager (a caught signal, unlike an
+// ignored one, is reset for the pager when it starts), and any other signal
+// calls stopPager. The returned function ends the watch and returns the
+// signal that stopped the pager, if one did.
+func watchPagerSignals(env pagerDependencies, stopPager func()) func() os.Signal {
+	signals, stopSignals := env.interrupts()
+	done := make(chan struct{})
+	result := make(chan os.Signal, 1)
+	go func() {
+		for {
+			select {
+			case sig := <-signals:
+				if sig == os.Interrupt {
+					continue
+				}
+				stopPager()
+				result <- sig
+				return
+			case <-done:
+				result <- nil
+				return
+			}
+		}
+	}()
+	return func() os.Signal {
+		close(done)
+		sig := <-result
+		stopSignals()
+		return sig
+	}
 }
 
 // lessMouseVersion is the first less with --mouse and --wheel-lines, with
@@ -43,22 +92,25 @@ const lessMouseVersion = 551
 const lessFitVersion = 530
 
 // defaultPagerCommand is the pager when neither AGENT_ARCHIVE_PAGER nor
-// PAGER is set: less, with -F to quit at once when the text fits on one
-// screen, -R to show color, and a prompt naming the keys (lessPrompt).
+// PAGER is set, or one is a bare less: program (less, or the path the user
+// gave), with -F to quit at once when the text fits on one screen, -R to
+// show color, and a prompt naming the keys (lessPrompt).
 //
 // The mouse wheel should scroll the text, not the terminal's history:
 //   - less 551 and later get --mouse (the wheel scrolls three lines) and -X
 //     (the text stays on the screen after q).
-//   - An older less, or one whose version is unknown, runs without -X, on
-//     the alternate screen, where terminals turn the wheel into arrow keys.
-//   - A less known to be older than 530 keeps -X, since without it -F wipes
-//     a short text as soon as it is shown.
+//   - less 530 to 550 runs without -X, on the alternate screen, where
+//     terminals turn the wheel into arrow keys.
+//   - A less older than 530 keeps -X, since without it -F wipes a short
+//     text as soon as it is shown.
+//   - A less whose version is unknown (BusyBox's, say) gets only -FR: it
+//     may not understand the prompt or the mouse options.
 //
 // stayOpen is for the session browser, which redraws the screen when the
 // pager exits: no -F, and -+F overrides an F from $LESS, so less waits for
 // q even for a short text; the prompt then says q goes back.
-func defaultPagerCommand(env pagerDependencies, stayOpen bool, text []byte) string {
-	version, known := env.lessVersion()
+func defaultPagerCommand(env pagerDependencies, program string, stayOpen bool, text []byte) string {
+	version, known := env.lessVersion(program)
 	mouse := known && version >= lessMouseVersion
 	flags := "-"
 	if !stayOpen {
@@ -68,30 +120,38 @@ func defaultPagerCommand(env pagerDependencies, stayOpen bool, text []byte) stri
 	if mouse || (known && version < lessFitVersion) {
 		flags += "X"
 	}
-	command := "less " + flags
+	args := []string{shellQuote(program), flags}
 	if mouse {
-		command += " --mouse --wheel-lines=3"
+		args = append(args, "--mouse", "--wheel-lines=3")
 	}
-	command += " " + shellQuote("-Ps"+lessPrompt(countLines(text), stayOpen))
+	if known {
+		// The short, medium (-m), and long (-M) prompts, so the keys show
+		// whichever $LESS picks.
+		prompt := lessPrompt(countLines(text), stayOpen)
+		for _, option := range []string{"-Ps", "-Pm", "-PM"} {
+			args = append(args, shellQuote(option+prompt))
+		}
+	}
 	if stayOpen {
-		command += " -+F"
+		args = append(args, "-+F")
 	}
-	return command
+	return strings.Join(args, " ")
 }
 
 // lessPrompt is less's prompt for a text of lines lines, in less's prompt
-// language (less(1), PROMPTS): "lines 1-48 of 1210 - " while less knows
-// which lines are on the screen, with the percentage once less knows it
-// (after reading piped text to its end) and "(END)" at the end, then the
-// keys: "arrows/space scroll, / search, q quit". Without line numbers
-// (less -n) only the keys remain. It is ASCII with no quote or dollar sign,
-// so it passes through shellQuote, sh, and less's option parsing unchanged.
+// language (less(1), PROMPTS): "lines 1-48 of 1210 (4%) - " while less
+// knows which lines are on the screen, with "(END)" in place of the
+// percentage at the end, and the percentage left out until less knows it
+// (after reading piped text to its end); then the keys: "arrows/space
+// scroll, / search, q quit". Without line numbers (less -n) only the keys
+// remain. It is ASCII with no quote or dollar sign, so it passes through
+// shellQuote, sh, and less's option parsing unchanged.
 func lessPrompt(lines int, stayOpen bool) string {
 	quit := "q quit"
 	if stayOpen {
 		quit = "q back"
 	}
-	return fmt.Sprintf(`?ltlines %%lt-%%lb of %d?Pb (%%Pb\%%).?e (END). - .arrows/space scroll, / search, %s`, lines, quit)
+	return fmt.Sprintf(`?ltlines %%lt-%%lb of %d ?e(END) :?Pb(%%Pb\%%) ..- .arrows/space scroll, / search, %s`, lines, quit)
 }
 
 // countLines is the number of lines less shows for text, before wrapping.
@@ -118,22 +178,45 @@ func pageText(ctx context.Context, stdout, stderr io.Writer, env pagerDependenci
 		_, err := stdout.Write(text)
 		return false, false, err
 	}
+	var environment []string
 	switch {
 	case !chosen:
-		command = defaultPagerCommand(env, stayOpen, text)
+		program := command
+		if program == "" {
+			program = "less"
+		}
+		command = defaultPagerCommand(env, program, stayOpen, text)
 		waited = stayOpen
-	case stayOpen && isLess(command):
-		command += " -+F"
-		waited = true
+	default:
+		environment = userPagerEnvironment(env)
+		if stayOpen && isLess(command) {
+			command += " -+F"
+			waited = true
+		}
 	}
 	// A pager stopped because ctx was cancelled (a signal) did run; that is
 	// not a failure to fall back from.
-	if err := env.runPager(ctx, command, bytes.NewReader(text), stdout, stderr); err != nil && ctx.Err() == nil {
+	if err := env.runPager(ctx, command, environment, bytes.NewReader(text), stdout, stderr); err != nil && ctx.Err() == nil {
 		terminal.Printf(stderr, "agent-archive: warning: pager %q failed (%v); printing directly\n", command, err)
 		_, copyErr := stdout.Write(text)
 		return false, false, copyErr
 	}
 	return true, waited, nil
+}
+
+// userPagerEnvironment is what a pager the user chose gets added to its
+// environment, as git does: LESS=FRX when LESS is unset, so a less quits
+// at once on a short text and leaves the text on the screen, and LV=-c
+// when LV is unset, so lv shows color.
+func userPagerEnvironment(env pagerDependencies) []string {
+	var added []string
+	if _, set := env.lookupEnv("LESS"); !set {
+		added = append(added, "LESS=FRX")
+	}
+	if _, set := env.lookupEnv("LV"); !set {
+		added = append(added, "LV=-c")
+	}
+	return added
 }
 
 // isLess reports whether command runs less by itself, so options can be
@@ -147,11 +230,13 @@ func isLess(command string) bool {
 	return len(fields) > 0 && filepath.Base(fields[0]) == "less" && !slices.Contains(fields, "--")
 }
 
-// resolvePagerCommand returns the pager command the user set, if any. page
-// is false when nothing is to be paged: --no-pager, a non-terminal stdout,
-// or an empty AGENT_ARCHIVE_PAGER or PAGER, or the value "cat". chosen is
-// false when the user set no pager, so the default (defaultPagerCommand)
-// runs.
+// resolvePagerCommand returns the pager to run. page is false when nothing
+// is to be paged: --no-pager, a non-terminal stdout, or an empty
+// AGENT_ARCHIVE_PAGER or PAGER, or the value "cat". chosen is false when
+// the default command (defaultPagerCommand) runs: when the user set no
+// pager (command is then ""), or set a bare less with no options (command
+// is then that program, "less" or a path to it). Otherwise command is the
+// user's, run as given.
 func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) (command string, chosen, page bool) {
 	if noPager || !env.isTerminal(stdout) {
 		return "", false, false
@@ -161,34 +246,51 @@ func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) 
 			if value == "" || value == "cat" {
 				return "", false, false
 			}
+			if isLess(value) && len(strings.Fields(value)) == 1 {
+				return strings.TrimSpace(value), false, true
+			}
 			return value, true, true
 		}
 	}
 	return "", false, true
 }
 
-// lessVersion is the version of the less on PATH, as `less --version`
-// reports it ("less 668 (...)"); known is false when less cannot be run or
-// says something else.
-func (e Env) lessVersion() (version int, known bool) {
+// lessVersion is the version of program (less, or a path to it), as
+// `less --version` reports it ("less 668 (...)"); known is false when it
+// cannot be run or says something else.
+func (e Env) lessVersion(program string) (version int, known bool) {
 	if e.LessVersion != nil {
-		return e.LessVersion()
+		return e.LessVersion(program)
 	}
-	return detectLessVersion()
+	return detectLessVersion(program)
 }
 
-// detectLessVersion runs `less --version` once per process, with a short
-// timeout: Env.LessVersion's default. The package's tests replace it with
-// one that stops the test, so no test runs the real less.
-var detectLessVersion = sync.OnceValues(func() (int, bool) {
+// lessVersions caches detectLessVersion's answers by program.
+var lessVersions sync.Map
+
+// lessVersionResult is one cached answer of detectLessVersion.
+type lessVersionResult struct {
+	version int
+	known   bool
+}
+
+// detectLessVersion runs `program --version` once per process and program,
+// with a short timeout: Env.LessVersion's default. The package's tests
+// replace it with one that stops the test, so no test runs the real less.
+var detectLessVersion = func(program string) (int, bool) {
+	if cached, ok := lessVersions.Load(program); ok {
+		result := cached.(lessVersionResult)
+		return result.version, result.known
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), lessVersionTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "less", "--version").Output()
-	if err != nil {
-		return 0, false
+	version, known := 0, false
+	if out, err := exec.CommandContext(ctx, program, "--version").Output(); err == nil {
+		version, known = parseLessVersion(string(out))
 	}
-	return parseLessVersion(string(out))
-})
+	lessVersions.Store(program, lessVersionResult{version: version, known: known})
+	return version, known
+}
 
 // lessVersionTimeout bounds `less --version`, which a broken less on PATH
 // could otherwise hang on.
@@ -214,17 +316,21 @@ func parseLessVersion(out string) (int, bool) {
 // killed.
 const pagerStopDelay = 3 * time.Second
 
-// runPager runs command through sh. Cancelling ctx sends the pager SIGTERM
-// (sh execs a lone command, so the signal reaches the pager itself) and
-// waits for it to exit, killing it after pagerStopDelay, so no pager is
-// left behind on the terminal.
-func (e Env) runPager(ctx context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error {
+// runPager runs command through sh, with environment ("NAME=value") added
+// to the process's own. Cancelling ctx sends the pager SIGTERM (sh execs a
+// lone command, so the signal reaches the pager itself) and waits for it to
+// exit, killing it after pagerStopDelay, so no pager is left behind on the
+// terminal.
+func (e Env) runPager(ctx context.Context, command string, environment []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if e.RunPager != nil {
-		return e.RunPager(ctx, command, stdin, stdout, stderr)
+		return e.RunPager(ctx, command, environment, stdin, stdout, stderr)
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = pagerStopDelay
+	if len(environment) > 0 {
+		cmd.Env = append(os.Environ(), environment...)
+	}
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

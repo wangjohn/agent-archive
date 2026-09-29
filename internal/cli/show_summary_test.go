@@ -261,7 +261,7 @@ func TestShowTranscriptPages(t *testing.T) {
 	var out, errOut bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(&out) }
 	var paged []string
-	env.RunPager = func(_ context.Context, command string, in io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, _ []string, in io.Reader, _, _ io.Writer) error {
 		text, err := io.ReadAll(in)
 		paged = append(paged, command+"\n"+string(text))
 		return err

@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -139,7 +141,7 @@ func TestListPagesOnTerminal(t *testing.T) {
 		_, ok := stream.(*bytes.Buffer)
 		return ok
 	}
-	env.RunPager = func(_ context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, _ []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		sawCommand = command
 		_, err := io.Copy(&paged, stdin)
 		return err
@@ -148,7 +150,7 @@ func TestListPagesOnTerminal(t *testing.T) {
 	if code := Run([]string{"list"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
-	if want := defaultPagerCommand(env, false, paged.Bytes()); sawCommand != want {
+	if want := defaultPagerCommand(env, "less", false, paged.Bytes()); sawCommand != want {
 		t.Fatalf("pager command=%q", sawCommand)
 	}
 	if !strings.Contains(paged.String(), "session(s).") || out.Len() != 0 {
@@ -198,7 +200,7 @@ func TestListPagerFailureFallsBack(t *testing.T) {
 		_, ok := stream.(*bytes.Buffer)
 		return ok
 	}
-	env.RunPager = func(context.Context, string, io.Reader, io.Writer, io.Writer) error {
+	env.RunPager = func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error {
 		return errors.New("no less")
 	}
 	var out, errOut bytes.Buffer
@@ -246,17 +248,31 @@ func TestResolvePagerCommand(t *testing.T) {
 	if _, _, ok := resolvePagerCommand(env, false, &stdout); ok {
 		t.Fatal("empty AGENT_ARCHIVE_PAGER should disable even when PAGER is set")
 	}
+	// A bare less, as oh-my-zsh sets PAGER, gets the default treatment.
+	for _, pager := range []string{"less", "/usr/bin/less", " less "} {
+		env.LookupEnv = func(key string) (string, bool) { return pager, key == "PAGER" }
+		if cmd, chosen, ok := resolvePagerCommand(env, false, &stdout); !ok || chosen || cmd != strings.TrimSpace(pager) {
+			t.Fatalf("PAGER=%q: %q chosen=%v page=%v", pager, cmd, chosen, ok)
+		}
+	}
+}
+
+// lessPrompts is the -Ps, -Pm, and -PM options defaultPagerCommand passes
+// for a text of lines lines, quoted for sh.
+func lessPrompts(lines int, stayOpen bool) string {
+	prompt := lessPrompt(lines, stayOpen)
+	return shellQuote("-Ps"+prompt) + " " + shellQuote("-Pm"+prompt) + " " + shellQuote("-PM"+prompt)
 }
 
 // The default less scrolls on the mouse wheel: with --mouse where less has
 // it (551 and later), else on the alternate screen (no -X), except for a
-// less so old that -F without -X wipes a short text. The browser's less
-// waits for q (no -F, and -+F against $LESS) and says q goes back.
+// less so old that -F without -X wipes a short text. A less of unknown
+// version gets no prompt or mouse options. The browser's less waits for q
+// (no -F, and -+F against $LESS) and says q goes back.
 func TestDefaultPagerCommandFollowsLessVersion(t *testing.T) {
 	t.Parallel()
 	text := []byte("one\ntwo\nthree\n")
-	quit := shellQuote("-Ps" + lessPrompt(3, false))
-	back := shellQuote("-Ps" + lessPrompt(3, true))
+	quit, back := lessPrompts(3, false), lessPrompts(3, true)
 	for _, tc := range []struct {
 		version  int
 		known    bool
@@ -268,14 +284,14 @@ func TestDefaultPagerCommandFollowsLessVersion(t *testing.T) {
 		{550, true, false, "less -FR " + quit},
 		{530, true, false, "less -FR " + quit},
 		{529, true, false, "less -FRX " + quit},
-		{0, false, false, "less -FR " + quit},
+		{0, false, false, "less -FR"},
 		{668, true, true, "less -RX --mouse --wheel-lines=3 " + back + " -+F"},
 		{550, true, true, "less -R " + back + " -+F"},
 		{487, true, true, "less -RX " + back + " -+F"},
-		{0, false, true, "less -R " + back + " -+F"},
+		{0, false, true, "less -R -+F"},
 	} {
-		env := Env{LessVersion: func() (int, bool) { return tc.version, tc.known }}
-		if got := defaultPagerCommand(env, tc.stayOpen, text); got != tc.want {
+		env := Env{LessVersion: func(string) (int, bool) { return tc.version, tc.known }}
+		if got := defaultPagerCommand(env, "less", tc.stayOpen, text); got != tc.want {
 			t.Errorf("less %d (known %v, stayOpen %v): %q, want %q", tc.version, tc.known, tc.stayOpen, got, tc.want)
 		}
 	}
@@ -283,10 +299,12 @@ func TestDefaultPagerCommandFollowsLessVersion(t *testing.T) {
 
 // The prompt names the keys, says whether q quits or goes back, and counts
 // the text's lines itself, since less does not know how many lines piped
-// text has until it reaches the end.
+// text has until it reaches the end. As less's own prompts do, it shows
+// (END) at the end in place of the percentage, which less computes from the
+// top line and so never reaches 100%.
 func TestLessPromptNamesTheKeys(t *testing.T) {
 	t.Parallel()
-	if got, want := lessPrompt(1210, false), `?ltlines %lt-%lb of 1210?Pb (%Pb\%).?e (END). - .arrows/space scroll, / search, q quit`; got != want {
+	if got, want := lessPrompt(1210, false), `?ltlines %lt-%lb of 1210 ?e(END) :?Pb(%Pb\%) ..- .arrows/space scroll, / search, q quit`; got != want {
 		t.Fatalf("prompt %q, want %q", got, want)
 	}
 	if got := lessPrompt(3, true); !strings.HasSuffix(got, ", q back") {
@@ -307,17 +325,18 @@ func TestLessPromptNamesTheKeys(t *testing.T) {
 }
 
 // The default command reaches less exactly as built: sh hands each
-// argument, the quoted prompt included, to the program byte for byte. The
-// test runs sh with printf in place of less.
+// argument, the quoted prompts included, to the program byte for byte. The
+// test runs sh with printf in place of less. A bare less the user set runs
+// by the path the user gave.
 func TestDefaultPagerArgumentsSurviveTheShell(t *testing.T) {
 	t.Parallel()
 	for _, stayOpen := range []bool{false, true} {
 		for _, version := range []int{668, 540} {
-			env := Env{LessVersion: func() (int, bool) { return version, true }}
-			command := defaultPagerCommand(env, stayOpen, []byte("x\n"))
-			args, ok := strings.CutPrefix(command, "less ")
+			env := Env{LessVersion: func(string) (int, bool) { return version, true }}
+			command := defaultPagerCommand(env, "/usr/bin/less", stayOpen, []byte("x\n"))
+			args, ok := strings.CutPrefix(command, "/usr/bin/less ")
 			if !ok {
-				t.Fatalf("command %q does not run less", command)
+				t.Fatalf("command %q does not run /usr/bin/less", command)
 			}
 			var out, errOut bytes.Buffer
 			cmd := exec.CommandContext(t.Context(), "sh", "-c", `printf '%s\n' `+args)
@@ -326,8 +345,10 @@ func TestDefaultPagerArgumentsSurviveTheShell(t *testing.T) {
 				t.Fatalf("sh -c %q: %v %s", args, err, errOut.String())
 			}
 			got := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-			if want := "-Ps" + lessPrompt(1, stayOpen); !slices.Contains(got, want) {
-				t.Fatalf("less would get %q, want the argument %q", got, want)
+			for _, option := range []string{"-Ps", "-Pm", "-PM"} {
+				if want := option + lessPrompt(1, stayOpen); !slices.Contains(got, want) {
+					t.Fatalf("less would get %q, want the argument %q", got, want)
+				}
 			}
 			if stayOpen && got[len(got)-1] != "-+F" {
 				t.Fatalf("browser pager arguments %q do not end with -+F", got)
@@ -336,23 +357,105 @@ func TestDefaultPagerArgumentsSurviveTheShell(t *testing.T) {
 	}
 }
 
-// A pager the user chose runs as given: no prompt or mouse options.
+// A pager the user chose runs as given, with LESS=FRX and LV=-c added when
+// they are unset, as git does, so a less the user named without options
+// still leaves a short text on the screen. A bare less instead gets the
+// default command, by the path the user gave, and nothing added.
 func TestUserPagerRunsAsGiven(t *testing.T) {
 	t.Parallel()
-	for _, pager := range []string{"less -R", "most", "less"} {
+	for _, tc := range []struct {
+		pager   string
+		less    string
+		lv      string
+		want    string
+		wantEnv []string
+	}{
+		{pager: "less -R", want: "less -R", wantEnv: []string{"LESS=FRX", "LV=-c"}},
+		{pager: "most", less: "-iMR", want: "most", wantEnv: []string{"LV=-c"}},
+		{pager: "lv", less: "-R", lv: "-a", want: "lv"},
+		{pager: "less", want: "less -FRX --mouse --wheel-lines=3 " + lessPrompts(1, false)},
+		{pager: "/usr/bin/less", less: "-R", want: "/usr/bin/less -FRX --mouse --wheel-lines=3 " + lessPrompts(1, false)},
+	} {
 		var got string
+		var gotEnv []string
+		var versionOf string
 		env := Env{
-			IsTerminal:  func(any) bool { return true },
-			LookupEnv:   func(key string) (string, bool) { return pager, key == "PAGER" },
-			LessVersion: func() (int, bool) { return 668, true },
-			RunPager: func(_ context.Context, command string, _ io.Reader, _, _ io.Writer) error {
-				got = command
+			IsTerminal: func(any) bool { return true },
+			LookupEnv: func(key string) (string, bool) {
+				values := map[string]string{"PAGER": tc.pager, "LESS": tc.less, "LV": tc.lv}
+				value := values[key]
+				return value, value != ""
+			},
+			LessVersion: func(program string) (int, bool) { versionOf = program; return 668, true },
+			RunPager: func(_ context.Context, command string, environment []string, _ io.Reader, _, _ io.Writer) error {
+				got, gotEnv = command, environment
 				return nil
 			},
 		}
 		var out bytes.Buffer
-		if _, _, err := pageText(context.Background(), &out, io.Discard, env, false, false, []byte("x\n")); err != nil || got != pager {
-			t.Errorf("PAGER=%q ran %q (%v)", pager, got, err)
+		if _, _, err := pageText(context.Background(), &out, io.Discard, env, false, false, []byte("x\n")); err != nil || got != tc.want || !slices.Equal(gotEnv, tc.wantEnv) {
+			t.Errorf("PAGER=%q LESS=%q LV=%q ran %q with %q (%v), want %q with %q", tc.pager, tc.less, tc.lv, got, gotEnv, err, tc.want, tc.wantEnv)
+		}
+		if strings.Contains(tc.pager, "less") && !strings.Contains(tc.pager, " ") && versionOf != tc.pager {
+			t.Errorf("PAGER=%q: version asked of %q", tc.pager, versionOf)
+		}
+	}
+}
+
+// The environment reaches the pager's process: the default runPager adds
+// it to the process's own. The test runs sh with a command that prints the
+// variable in place of a pager.
+func TestPagerEnvironmentReachesThePager(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	if err := (Env{}).runPager(t.Context(), `printf '%s' "$AGENT_ARCHIVE_TEST_PAGER_VAR"`, []string{"AGENT_ARCHIVE_TEST_PAGER_VAR=FRX"}, strings.NewReader(""), &out, io.Discard); err != nil || out.String() != "FRX" {
+		t.Fatalf("pager saw %q (%v)", out.String(), err)
+	}
+}
+
+// While a paged display's pager runs, Ctrl-C is left to the pager: the
+// command neither exits nor stops it. SIGTERM stops the pager, then the
+// command exits as the signal would have.
+func TestPagerKeepsCtrlCAndStopsOnSIGTERM(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		signals  []os.Signal
+		wantExit int
+	}{
+		{[]os.Signal{os.Interrupt}, -1},
+		{[]os.Signal{os.Interrupt, syscall.SIGTERM}, 128 + int(syscall.SIGTERM)},
+		{[]os.Signal{syscall.SIGHUP}, 128 + int(syscall.SIGHUP)},
+	} {
+		env := testEnv(t, t.TempDir(), time.Now())
+		var stdout bytes.Buffer
+		env.IsTerminal = func(stream any) bool { return stream == any(&stdout) }
+		signals := make(chan os.Signal)
+		stopped := false
+		env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() { stopped = true } }
+		exited := -1
+		env.exitProcess = func(code int) { exited = code }
+		env.RunPager = func(ctx context.Context, _ string, _ []string, _ io.Reader, _, _ io.Writer) error {
+			for _, sig := range tc.signals {
+				signals <- sig
+			}
+			if tc.wantExit < 0 {
+				// Ctrl-C alone: the pager runs on until the user quits it.
+				select {
+				case <-ctx.Done():
+					return errors.New("the pager was stopped by Ctrl-C")
+				case <-time.After(50 * time.Millisecond):
+					return nil
+				}
+			}
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		err := withPager(context.Background(), &stdout, io.Discard, env, false, func(w io.Writer) error {
+			_, err := io.WriteString(w, "text\n")
+			return err
+		})
+		if err != nil || exited != tc.wantExit || !stopped || stdout.Len() != 0 {
+			t.Errorf("signals %v: err=%v exit=%d (want %d) handler stopped=%v stdout=%q", tc.signals, err, exited, tc.wantExit, stopped, stdout.String())
 		}
 	}
 }
@@ -383,7 +486,7 @@ func pagedRun(t *testing.T, env Env, color bool, args ...string) (paged, command
 	stdout := &screenOutput{color: color}
 	env.IsTerminal = func(stream any) bool { return stream == any(stdout) }
 	var text bytes.Buffer
-	env.RunPager = func(_ context.Context, cmd string, in io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, cmd string, _ []string, in io.Reader, _, _ io.Writer) error {
 		command = cmd
 		_, err := io.Copy(&text, in)
 		return err

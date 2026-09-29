@@ -172,8 +172,8 @@ metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
 several matches on a terminal open a picker. With no SESSION_ID on a
 terminal, browse sessions as list does: pick one for its summary, then t for
 its transcript, Enter or b to go back, or q to quit. On a terminal, the
-summary and transcript are paged: scroll with the mouse wheel, arrows, or
-space, search with /, and quit with q.
+summary and transcript are paged; in the default less, scroll with the mouse
+wheel, arrows, or space, search with /, and quit with q.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the

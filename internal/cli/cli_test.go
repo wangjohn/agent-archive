@@ -62,7 +62,7 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		Interrupts:           noInterrupts,
 		// A less new enough for --mouse, as macOS ships; the tests of the
 		// other defaults set their own.
-		LessVersion: func() (int, bool) { return testLessVersion, true },
+		LessVersion: func(string) (int, bool) { return testLessVersion, true },
 	}
 }
 

@@ -46,7 +46,7 @@ consistent with each other.
 | `AWS_VAULT_BACKEND`, `AWS_VAULT_KEYCHAIN_NAME`, `AWS_VAULT_PROMPT`, `AWS_VAULT_PASS_PREFIX`, `AWS_VAULT_FILE_DIR`; `OP_ACCOUNT`, `OP_CONFIG_DIR` | Where aws-vault and 1Password's `op` find credentials, when a profile's `credential_process` runs one of them. For S3, setup copies the ones set in its shell into the collector's LaunchAgent (the directories as absolute paths, or as written when they start with `~/`). The same helpers keep secrets in variables too (`AWS_VAULT_FILE_PASSPHRASE`, `OP_SERVICE_ACCOUNT_TOKEN`, `OP_SESSION_*`); those are never copied. |
 | `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID` | Set by the app for commands it runs; `handoff --latest` skips that session. |
 | `NO_COLOR` | Disables colored output. |
-| `AGENT_ARCHIVE_PAGER`, `PAGER` | The pager for long output on a terminal (`list`, `show`, `status`, `purge plan`), run as given; `AGENT_ARCHIVE_PAGER` wins. Empty or `cat` disables paging. With neither set, `less` with mouse-wheel scrolling and key hints ([Scrolling](../guides/list-and-show.md#scrolling)). |
+| `AGENT_ARCHIVE_PAGER`, `PAGER` | The pager for long output on a terminal (`list`, `show`, `status`, `purge plan`); `AGENT_ARCHIVE_PAGER` wins. Empty or `cat` disables paging. With neither set, or one set to a bare `less`, `less` with mouse-wheel scrolling and key hints. Any other pager runs as given, with `LESS=FRX` and `LV=-c` added when those are unset ([Scrolling](../guides/list-and-show.md#scrolling)). |
 | `AGENT_ARCHIVE_VERSION`, `AGENT_ARCHIVE_INSTALL_DIR` | `install.sh` only: the release and directory to install. |
 
 Nothing else from your shell reaches the background collector. An S3 profile

@@ -42,12 +42,16 @@ follow [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - The default pager scrolls on the mouse wheel and names its keys. With no
-  `AGENT_ARCHIVE_PAGER` or `PAGER` set, `less` 551 or later runs with
-  `--mouse` (hold Option while dragging to select text in iTerm2); an older
-  `less` runs on the alternate screen, where the wheel scrolls it too. The
-  prompt reads, for example, "lines 1-48 of 1210 - arrows/space scroll, /
-  search, q quit" ("q back" from the session browser). A pager you set runs
-  unchanged.
+  `AGENT_ARCHIVE_PAGER` or `PAGER` set, or one set to a bare `less`, `less`
+  551 or later runs with `--mouse` (hold Option while dragging to select
+  text in iTerm2), and `less` 530 to 550 runs on the alternate screen, where
+  the wheel scrolls it too. The prompt reads, for example, "lines 1-48 of
+  1210 - arrows/space scroll, / search, q quit" ("q back" from the
+  session browser). Any other pager you set runs as given, with `LESS=FRX`
+  and `LV=-c` added when those are unset, as git does.
+- Ctrl-C while a pager shows `list`, `show`, `status`, or `purge plan` now
+  goes to the pager (in `less`, it cancels a search) instead of ending
+  agent-archive and leaving the pager on the terminal.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
   instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what

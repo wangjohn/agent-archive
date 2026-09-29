@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -56,9 +57,13 @@ func (*pagerStub) isTerminal(any) bool { return true }
 
 func (*pagerStub) lookupEnv(string) (string, bool) { return "more", true }
 
-func (*pagerStub) lessVersion() (int, bool) { return 0, false }
+func (*pagerStub) lessVersion(string) (int, bool) { return 0, false }
 
-func (s *pagerStub) runPager(_ context.Context, _ string, _ io.Reader, _, _ io.Writer) error {
+func (*pagerStub) interrupts() (<-chan os.Signal, func()) { return nil, func() {} }
+
+func (*pagerStub) exit(int) {}
+
+func (s *pagerStub) runPager(_ context.Context, _ string, _ []string, _ io.Reader, _, _ io.Writer) error {
 	s.run++
 	return errors.New("pager unavailable")
 }

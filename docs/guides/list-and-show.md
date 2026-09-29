@@ -142,8 +142,9 @@ On a terminal, anything longer than a screen goes through a pager: the
 `status`, and `purge plan`. Piped or redirected output, and `--json`, are
 never paged; `--no-pager` prints directly on a terminal too.
 
-With no pager set, Agent Archive runs `less`, which quits at once when the
-text fits on one screen and otherwise shows the keys on its last line:
+With no pager set, or with the pager set to a bare `less` (as oh-my-zsh
+does), Agent Archive runs `less` its own way: it quits at once when the text
+fits on one screen and otherwise shows the keys on its last line:
 
 ```text
 lines 1-48 of 1210 - arrows/space scroll, / search, q quit
@@ -157,12 +158,18 @@ lines 1-48 of 1210 - arrows/space scroll, / search, q quit
   Because `less` then reads the mouse, hold Option while dragging to select
   text in iTerm2 (Shift in most other terminals; in Terminal, turn off View
   > Allow Mouse Reporting).
-- An older `less` shows the text on the terminal's alternate screen, where
-  the terminal turns the wheel into arrow keys.
+- `less` 530 to 550 shows the text on the terminal's alternate screen,
+  where the terminal turns the wheel into arrow keys, and clears it on `q`.
+- An older `less` keeps the text on the normal screen, where the wheel may
+  scroll the terminal instead. A `less` that doesn't report its version
+  (BusyBox's) runs as `less -FR`, without key hints.
 
 To use another pager, set `AGENT_ARCHIVE_PAGER` (or `PAGER`), for example
-`AGENT_ARCHIVE_PAGER='less -R'`; it runs exactly as given, without the key
-hints or mouse options. Set either to `cat`, or to nothing, to never page.
+`AGENT_ARCHIVE_PAGER='less -R'`. It runs as given, without the key hints or
+mouse options, with two additions as git makes them: `LESS=FRX` when `LESS`
+is not set, and `LV=-c` when `LV` is not set. From the session browser, a
+plain `less` command also gets `-+F`, so a short transcript waits for `q`.
+Set either variable to `cat`, or to nothing, to never page.
 
 ## Model and setting keys
 
