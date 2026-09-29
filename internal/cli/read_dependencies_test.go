@@ -23,6 +23,7 @@ type readStoreStub struct {
 }
 
 func (s *readStoreStub) readHome() (string, error) { return s.home, nil }
+
 func (s *readStoreStub) openStore(cfg config.Config) (storage.ObjectStore, error) {
 	s.calls++
 	if cfg.MachineID != "reader-test" {
@@ -51,8 +52,10 @@ type pagerStub struct {
 	run int
 }
 
-func (*pagerStub) isTerminal(any) bool             { return true }
+func (*pagerStub) isTerminal(any) bool { return true }
+
 func (*pagerStub) lookupEnv(string) (string, bool) { return "more", true }
+
 func (s *pagerStub) runPager(_ string, _ io.Reader, _, _ io.Writer) error {
 	s.run++
 	return errors.New("pager unavailable")
@@ -92,11 +95,14 @@ type resolverStub struct {
 }
 
 func (*resolverStub) readHome() (string, error) { return "", nil }
+
 func (s *resolverStub) openStore(config.Config) (storage.ObjectStore, error) {
 	s.calls++
 	return s.store, nil
 }
-func (*resolverStub) now() time.Time         { return time.Unix(1, 0) }
+
+func (*resolverStub) now() time.Time { return time.Unix(1, 0) }
+
 func (*resolverStub) cursorDatabase() string { return "" }
 
 func TestHandoffResolverUsesReadStoreBoundary(t *testing.T) {
