@@ -30,14 +30,43 @@ type subagentRejectedError struct{ code string }
 
 func (e subagentRejectedError) Error() string { return e.code }
 
-// Is reports whether target is ErrSubagentNotCaptured.
-func (subagentRejectedError) Is(target error) bool { return target == ErrSubagentNotCaptured }
+// Is reports whether target is ErrSubagentNotCaptured or ErrSubagentCandidate.
+func (subagentRejectedError) Is(target error) bool {
+	return target == ErrSubagentNotCaptured || target == ErrSubagentCandidate
+}
 
-// ErrSubagentNotCaptured is matched, with errors.Is, by the error Result.Errors
-// holds for a subagent candidate rejected for a reason that lost a real
-// subagent (see expectedSubagentRejections): it is acknowledged and will not
-// be retried, so callers can say it was not captured rather than failed.
+// ErrSubagentNotCaptured is matched, with errors.Is, by every rejection of a
+// subagent candidate: it is acknowledged and will not be retried. Only a
+// rejection that lost a real subagent reaches Result.Errors (see
+// expectedSubagentRejections); a caller that sees every rejection filters out
+// the expected ones itself.
 var ErrSubagentNotCaptured = errors.New("subagent was not captured")
+
+// ErrSubagentCandidate is matched, with errors.Is, by every error
+// Result.Errors holds for a subagent candidate (one a SubagentStop hook left,
+// not yet registered), so callers can count it as a subagent though no
+// registration says so.
+var ErrSubagentCandidate = errors.New("subagent candidate")
+
+// subagentCandidateError is a subagent candidate's failure, as its error
+// reads, marked as a candidate's (see ErrSubagentCandidate).
+type subagentCandidateError struct{ err error }
+
+func (e subagentCandidateError) Error() string { return e.err.Error() }
+
+func (e subagentCandidateError) Unwrap() error { return e.err }
+
+// Is reports whether target is ErrSubagentCandidate.
+func (subagentCandidateError) Is(target error) bool { return target == ErrSubagentCandidate }
+
+// candidateFailure marks err as a subagent candidate's failure, unless it
+// already is one.
+func candidateFailure(err error) error {
+	if errors.Is(err, ErrSubagentCandidate) {
+		return err
+	}
+	return subagentCandidateError{err: err}
+}
 
 // expectedSubagentRejections are the rejection codes that lose nothing: a
 // transcript that was never written, or that backfill found empty or gone; a
@@ -72,9 +101,12 @@ type subagentOutcome struct {
 func materializeSubagentCandidates(local *state.Store, opts Options, now time.Time) subagentOutcome {
 	candidates, issues, err := local.ScanSubagentCandidates()
 	if err != nil {
-		return subagentOutcome{errors: map[string]error{"subagent-candidates": err}}
+		return subagentOutcome{errors: map[string]error{"subagent-candidates": candidateFailure(err)}}
 	}
-	outcome := subagentOutcome{errors: issues, rejected: map[string]string{}}
+	outcome := subagentOutcome{errors: map[string]error{}, rejected: map[string]string{}}
+	for id, issue := range issues {
+		outcome.errors[id] = candidateFailure(issue)
+	}
 	for _, candidate := range candidates {
 		err := materializeSubagentCandidate(local, candidate, opts, now)
 		var rejected subagentRejectedError
@@ -88,7 +120,7 @@ func materializeSubagentCandidates(local *state.Store, opts Options, now time.Ti
 				outcome.errors[candidate.ArchiveSessionID] = err
 			}
 		default:
-			outcome.errors[candidate.ArchiveSessionID] = err
+			outcome.errors[candidate.ArchiveSessionID] = candidateFailure(err)
 		}
 	}
 	return outcome

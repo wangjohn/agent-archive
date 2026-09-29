@@ -431,6 +431,8 @@ func recordPreflightError(localStore *state.Store, preflightErr error) {
 		return
 	}
 	status.SetLastErrors(preflightErr.Error())
+	// The counts described the summary this error replaces.
+	status.IssueCounts = nil
 	_ = localStore.SaveStatus(status)
 }
 

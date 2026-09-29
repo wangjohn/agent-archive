@@ -21,28 +21,11 @@ import (
 // is returned as-is with no retry. A transcript whose filtered records come
 // to more than maxBytes, or whose raw file is more than maxRawBytes(maxBytes),
 // yields an error wrapping errTranscriptTooLarge.
-var errTranscriptTooLarge error = sizeLimitError("transcript exceeds collection limit")
+var errTranscriptTooLarge = errors.New("transcript exceeds collection limit")
 
 // errRecordTooLarge means one record of the transcript is longer than
 // recordLimit.
-var errRecordTooLarge error = sizeLimitError("transcript record exceeds the record size limit")
-
-// ErrSizeLimit is matched, with errors.Is, by every error the collector
-// returns for a transcript over one of its size limits: the whole transcript
-// or one record too large. A pass records such a transcript as a capture gap
-// rather than an error, so a session fails with it only when recording the
-// gap fails too; callers use it to say which kind of failure that was.
-var ErrSizeLimit = errors.New("transcript exceeds a collection size limit")
-
-// sizeLimitError is one of the collector's size-limit errors. Each is its
-// own value, so errors.Is still tells them apart, and each matches
-// ErrSizeLimit.
-type sizeLimitError string
-
-func (e sizeLimitError) Error() string { return string(e) }
-
-// Is reports whether target is ErrSizeLimit.
-func (sizeLimitError) Is(target error) bool { return target == ErrSizeLimit }
+var errRecordTooLarge = errors.New("transcript record exceeds the record size limit")
 
 // checkFilteredSize is errTranscriptTooLarge for filtered records over
 // maxBytes: the size limit applies to what is kept, not to the tool output
