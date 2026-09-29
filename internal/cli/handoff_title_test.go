@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -324,8 +325,77 @@ func TestHandoffTitleRefusesAnUnsafeStoredID(t *testing.T) {
 	must(t, err)
 	must(t, f.mem.Put(context.Background(), "sessions/codex/hostile/metadata.json", data))
 	out, errOut, code := runHandoff(t, f.env, "hostile title")
-	if code != 1 || out != "" {
+	if code != 1 || out != "" || !strings.Contains(errOut, "unusable ID") {
 		t.Fatalf("code=%d stdout=%q stderr=%s", code, out, errOut)
+	}
+}
+
+// A stored session ID and title are printed to a terminal or an agent, so
+// neither may carry a terminal escape into the candidate list.
+func TestHandoffTitleCandidatesCarryNoTerminalEscapes(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	data, err := f.mem.Get(context.Background(), "sessions/codex/"+f.archiveOnly+"/metadata.json")
+	must(t, err)
+	var sidecar map[string]any
+	must(t, json.Unmarshal(data, &sidecar))
+	hostile := "\x1b]0;pwned\x07beef-\x1b[2Jid"
+	sidecar["session_id"], sidecar["title"] = hostile, "Archived \x1b[31mred\x1b[0m elsewhere\u202e"
+	data, err = json.Marshal(sidecar)
+	must(t, err)
+	must(t, f.mem.Put(context.Background(), "sessions/codex/hostile-id/metadata.json", data))
+	_, errOut, code := runHandoff(t, f.env, "elsewhere")
+	if code != 1 || !strings.Contains(errOut, "matches 2 sessions") {
+		t.Fatalf("code=%d stderr=%q", code, errOut)
+	}
+	for _, r := range errOut {
+		if r == '\x1b' || r == '\x07' || r == '\u202e' {
+			t.Fatalf("stderr carries a control character %q:\n%q", r, errOut)
+		}
+	}
+}
+
+// The same ID under two harnesses is two candidates, not the last one twice.
+func TestHandoffTitleListsAnIDPublishedUnderTwoHarnesses(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	data, err := f.mem.Get(context.Background(), "sessions/codex/"+f.archiveOnly+"/metadata.json")
+	must(t, err)
+	var sidecar map[string]any
+	must(t, json.Unmarshal(data, &sidecar))
+	sidecar["harness"] = map[string]any{"name": "claude"}
+	data, err = json.Marshal(sidecar)
+	must(t, err)
+	must(t, f.mem.Put(context.Background(), "sessions/claude/"+f.archiveOnly+"/metadata.json", data))
+	_, errOut, code := runHandoff(t, f.env, "archived elsewhere", "--source", "archive")
+	if code != 1 || !strings.Contains(errOut, "matches 2 sessions") || !strings.Contains(errOut, "codex") || !strings.Contains(errOut, "claude") {
+		t.Fatalf("code=%d stderr=%s", code, errOut)
+	}
+}
+
+// A title as common as a word in every prompt lists a few candidates and
+// counts the rest, on stderr and in the picker, rather than flooding the
+// caller.
+func TestHandoffTitleLimitsTheCandidatesListed(t *testing.T) {
+	t.Parallel()
+	f := newPickerFixture(t)
+	const extra = handoffCandidateLimit + 5
+	for i := range extra {
+		f.addSession(t, "codex", fmt.Sprintf("native-bulk-%d", i), fmt.Sprintf("Bulk job %d", i), f.env.now().Add(time.Duration(10+i)*time.Hour))
+	}
+	_, errOut, code := runHandoff(t, f.env, "bulk job")
+	lines := strings.Split(strings.TrimSpace(errOut), "\n")
+	if code != 1 || len(lines) != 1+handoffCandidateLimit+1 || !strings.Contains(errOut, fmt.Sprintf("matches %d sessions", extra)) ||
+		!strings.Contains(errOut, "and 5 more") {
+		t.Fatalf("code=%d, %d lines:\n%s", code, len(lines), errOut)
+	}
+	// The newest are the ones listed.
+	if !strings.Contains(errOut, fmt.Sprintf("Bulk job %d", extra-1)) || strings.Contains(errOut, "Bulk job 0 ") {
+		t.Fatalf("not the newest first:\n%s", errOut)
+	}
+	out, errOut, code := runPicker(t, f.env, "q\n", "bulk job")
+	if code != 0 || !strings.Contains(out, fmt.Sprintf("Showing %d of %d session(s)", handoffCandidateLimit, extra)) {
+		t.Fatalf("picker: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
 

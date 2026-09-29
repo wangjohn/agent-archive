@@ -80,13 +80,15 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		terminal.Printf(stderr, "agent-archive: handoff: resolve home: %v\n", err)
 		return 1
 	}
-	if opts.sessionID == "" && !opts.latest && opts.file == "" {
-		if code, done := chooseHandoffSession(&opts, home, interactive, stdin, stdout, stderr, env); done {
+	// Only an argument the person typed is a query; an ID the picker or the
+	// calling agent chose below is already a session's.
+	if opts.sessionID != "" {
+		if code, done := resolveHandoffQuery(&opts, home, interactive, stdin, stdout, stderr, env); done {
 			return code
 		}
 	}
-	if opts.sessionID != "" {
-		if code, done := resolveHandoffQuery(&opts, home, interactive, stdin, stdout, stderr, env); done {
+	if opts.sessionID == "" && !opts.latest && opts.file == "" {
+		if code, done := chooseHandoffSession(&opts, home, interactive, stdin, stdout, stderr, env); done {
 			return code
 		}
 	}

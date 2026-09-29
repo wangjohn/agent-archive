@@ -26,6 +26,11 @@ const handoffTitleScanLimit = defaultListLimit
 // shape worth a direct archive read before searching titles (as show does).
 const fullArchiveSessionIDLength = 32
 
+// handoffCandidateLimit is how many matching sessions a title lists, on stderr
+// or in the picker, before saying how many more there are. The caller may be
+// an agent, whose context a title as common as "fix" must not flood.
+const handoffCandidateLimit = 20
+
 // resolveHandoffQuery turns the positional argument, a session ID or a title,
 // into the one session to hand off, replacing opts.sessionID (and opts.harness
 // when it was not given) with that session's archive ID and harness. It
@@ -48,7 +53,21 @@ func resolveHandoffQuery(opts *handoffOptions, home string, interactive bool, st
 		return 0, false
 	}
 	r := handoffQueryResolver{opts: opts, query: query, home: home, cfg: cfg, interactive: interactive, stdin: stdin, stdout: stdout, stderr: stderr, env: env}
-	return r.resolve()
+	code, done = r.resolve()
+	if done {
+		return code, true
+	}
+	// The ID names a registration file and bucket keys and, however it was
+	// found, may have come from stored data: the parse no longer vets it.
+	harness := opts.harness
+	if harness == "" {
+		harness = archive.HarnessClaude
+	}
+	if _, err := archive.MetadataObjectKey(harness, opts.sessionID); err != nil {
+		terminal.Printf(stderr, "agent-archive: handoff: the matching session has an unusable ID: %v\n", err)
+		return 1, true
+	}
+	return 0, false
 }
 
 type handoffQueryResolver struct {
@@ -188,15 +207,21 @@ func matchHandoffRows(rows []handoffPickerRow, query string) []handoffPickerRow 
 	for i, row := range rows {
 		sessions[i] = row.metadata
 	}
-	byID := make(map[string]handoffPickerRow, len(rows))
+	// One ID can be published under two harnesses, so the harness is part
+	// of the key.
+	byKey := make(map[string]handoffPickerRow, len(rows))
 	for _, row := range rows {
-		byID[row.metadata.SessionID] = row
+		byKey[handoffRowKey(row.metadata)] = row
 	}
 	var matched []handoffPickerRow
 	for _, m := range matchSessionsByQuery(sessions, query) {
-		matched = append(matched, byID[m.SessionID])
+		matched = append(matched, byKey[handoffRowKey(m)])
 	}
 	return matched
+}
+
+func handoffRowKey(m archive.Metadata) string {
+	return m.Harness.Name + "/" + m.SessionID
 }
 
 // choose settles on one of several or one matching row.
@@ -209,7 +234,9 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 			return 1, true
 		}
 		format.Style, format.GroupByProject, format.Numbered = styleFor(r.stdout), true, true
-		picked, selected, err := pickBrowseRow(newPrompter(r.stdin, r.stdout), r.stdout, formatHandoffRows(matches, format), len(matches), false, format, "hand off")
+		format.NarrowHint = "Narrow with more of the title, or --harness, or name a session: agent-archive handoff SESSION_ID."
+		shown := matches[:min(len(matches), handoffCandidateLimit)]
+		picked, selected, err := pickBrowseRow(newPrompter(r.stdin, r.stdout), r.stdout, formatHandoffRows(shown, format), len(matches), len(shown) < len(matches), format, "hand off")
 		if err != nil {
 			terminal.Printf(r.stderr, "agent-archive: handoff: %v\n", err)
 			return 1, true
@@ -217,16 +244,11 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 		if !selected {
 			return 0, true
 		}
-		for _, m := range matches {
-			if m.metadata.SessionID == picked.SessionID {
+		for _, m := range shown {
+			if m.metadata.SessionID == picked.SessionID && m.metadata.Harness.Name == picked.HarnessKey {
 				row = m
 			}
 		}
-	}
-	// The ID reaches file names and bucket keys, and came from stored data.
-	if _, err := archive.MetadataObjectKey(row.metadata.Harness.Name, row.metadata.SessionID); err != nil {
-		terminal.Printf(r.stderr, "agent-archive: handoff: the matching session has an unusable ID: %v\n", err)
-		return 1, true
 	}
 	r.opts.sessionID, r.opts.harness = row.metadata.SessionID, row.metadata.Harness.Name
 	return 0, false
@@ -237,12 +259,17 @@ func (r *handoffQueryResolver) choose(matches []handoffPickerRow) (code int, don
 func (r *handoffQueryResolver) printCandidates(matches []handoffPickerRow, format listFormatOptions) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "agent-archive: handoff: %q matches %d sessions; pass one SESSION_ID, or run on a terminal to pick:\n", archive.DisplayLine(r.query), len(matches))
+	shown := matches[:min(len(matches), handoffCandidateLimit)]
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	for _, row := range formatHandoffRows(matches, format) {
-		// The table is built in memory, where writes cannot fail.
-		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", row.ShortID, row.Harness, row.Project, row.When, row.Title)
+	for _, row := range formatHandoffRows(shown, format) {
+		// The table is built in memory, where writes cannot fail. The ID is
+		// stored data, like the title, and may hold control characters.
+		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", archive.DisplayLine(row.ShortID), row.Harness, row.Project, row.When, row.Title)
 	}
 	_ = tw.Flush()
+	if len(shown) < len(matches) {
+		fmt.Fprintf(&b, "  ... and %d more; use more of the title, or --harness, to narrow\n", len(matches)-len(shown))
+	}
 	terminal.Print(r.stderr, b.String())
 }
 
