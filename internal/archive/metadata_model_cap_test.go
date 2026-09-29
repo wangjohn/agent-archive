@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -129,8 +130,8 @@ func TestMetadataSchemaBoundsModelTokensAndMCPCalls(t *testing.T) {
 	}
 	var totals tokenTotals
 	for i := range MaxModelTokens + 10 {
-		totals.observe(map[string]any{"input_tokens": float64(i + 1)}, fmt.Sprint(i), strings.Repeat("é", 200)+fmt.Sprint(i))
-		totals.observe(map[string]any{"input_tokens": 1.0}, "x"+fmt.Sprint(i), fmt.Sprintf("model-%03d", i))
+		totals.observe(map[string]any{"input_tokens": float64(i + 1)}, strconv.Itoa(i), strings.Repeat("é", 200)+strconv.Itoa(i))
+		totals.observe(map[string]any{"input_tokens": 1.0}, "x"+strconv.Itoa(i), fmt.Sprintf("model-%03d", i))
 	}
 	base.Counts.InputTokens, base.ModelTokens = nil, nil
 	_, base.ModelTokens = totals.usage()

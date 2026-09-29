@@ -82,7 +82,9 @@ unknown, never zero):
   "reasoning_tokens"}`, sorted by model. Each token field of `counts` is the
   sum of that field over `model_tokens`. Tokens on a record that names no
   model are under `unknown`. For Codex the model is the one its latest turn
-  set, so a model switched mid-session splits there.
+  set, so a model switched mid-session splits there. At most 32 entries are
+  kept, with a model id cut at 128 characters; beyond that the models with
+  the fewest tokens are added together under `other`.
 - `mcp_calls`: the (up to) 50 MCP servers the session called, as `{"name",
   "count"}`, by count, then name; the server is the part of an
   `mcp__<server>__<tool>` tool name. Codex's MCP calls do not name their
