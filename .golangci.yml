@@ -176,6 +176,11 @@ linters:
       - path: internal/(local/files|reader/cache)\.go
         text: G302
         linters: [gosec]
+      # The handoff launcher is a script a terminal executes: 0700, private
+      # to the user but executable.
+      - path: internal/termlaunch/termlaunch\.go
+        text: G302
+        linters: [gosec]
       # A skip-reason enum value, not a credential.
       - path: internal/backfill/backfill\.go
         text: G101
