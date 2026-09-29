@@ -62,6 +62,10 @@ func publishNSessions(t *testing.T, n int) (Env, []string) {
 func TestListLimitCapsNewestSessions(t *testing.T) {
 	t.Parallel()
 	env, newestFirst := publishNSessions(t, 5)
+	var rebuilt, rebuildErr bytes.Buffer
+	if code := Run([]string{"list", "--rebuild-index", "--json", "--limit", "0"}, nil, &rebuilt, &rebuildErr, env); code != 0 {
+		t.Fatalf("rebuild code=%d stderr=%s", code, rebuildErr.String())
+	}
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"list", "--limit", "2", "--verbose"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
@@ -70,7 +74,7 @@ func TestListLimitCapsNewestSessions(t *testing.T) {
 	if len(listed) != 2 || listed[0] != newestFirst[0] || listed[1] != newestFirst[1] {
 		t.Fatalf("listed=%v want newest two %v\n%s", listed, newestFirst[:2], out.String())
 	}
-	if !strings.Contains(out.String(), "Showing 2 of 5 session(s).") || !strings.Contains(out.String(), "--limit 0") {
+	if !strings.Contains(out.String(), "Showing 2 or more session(s).") || !strings.Contains(out.String(), "--limit 0") {
 		t.Fatalf("missing truncated footer:\n%s", out.String())
 	}
 
@@ -91,6 +95,10 @@ func TestListLimitCapsNewestSessions(t *testing.T) {
 func TestListJSONReportsLimitFields(t *testing.T) {
 	t.Parallel()
 	env, newestFirst := publishNSessions(t, 4)
+	var rebuilt, rebuildErr bytes.Buffer
+	if code := Run([]string{"list", "--rebuild-index", "--json", "--limit", "0"}, nil, &rebuilt, &rebuildErr, env); code != 0 {
+		t.Fatalf("rebuild code=%d stderr=%s", code, rebuildErr.String())
+	}
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"list", "--json", "--limit", "2"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
@@ -99,7 +107,7 @@ func TestListJSONReportsLimitFields(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatalf("json: %v\n%s", err, out.String())
 	}
-	if doc.Version != 2 || doc.Limit != 2 || doc.Returned != 2 || doc.TotalMatched != 4 || !doc.Truncated {
+	if doc.Version != listSchemaVersion || doc.Limit != 2 || doc.Returned != 2 || doc.TotalMatched != nil || doc.TotalMatchedKnown || !doc.Truncated {
 		t.Fatalf("doc=%+v", doc)
 	}
 	if len(doc.Sessions) != 2 || doc.Sessions[0].SessionID != newestFirst[0] {
@@ -114,7 +122,7 @@ func TestListJSONReportsLimitFields(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Limit != 0 || doc.Returned != 4 || doc.TotalMatched != 4 || doc.Truncated || len(doc.Sessions) != 4 {
+	if doc.Limit != 0 || doc.Returned != 4 || doc.TotalMatched == nil || *doc.TotalMatched != 4 || !doc.TotalMatchedKnown || doc.Truncated || len(doc.Sessions) != 4 {
 		t.Fatalf("unlimited doc=%+v", doc)
 	}
 }
@@ -151,7 +159,7 @@ func TestListPagesOnTerminal(t *testing.T) {
 	if code := Run([]string{"list", "--json"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
-	if sawCommand != "" || !strings.Contains(out.String(), `"schema_version": 2`) {
+	if sawCommand != "" || !strings.Contains(out.String(), `"schema_version": 4`) {
 		t.Fatalf("json was paged (cmd=%q) or missing:\n%s", sawCommand, out.String())
 	}
 

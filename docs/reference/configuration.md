@@ -27,6 +27,7 @@ consistent with each other.
 | `installed_executable` | The `agent-archive` path written into the hooks and the LaunchAgent. |
 | `retention_days` | Whole-session retention in days: 90 by default, 1 to 36,500. There is no "keep forever". |
 | `require_skill_use` | When `true`, only sessions that used a skill are captured. Default `false`: all sessions. |
+| `skill_evidence` | `none` omits filesystem skill inventory and snapshots; `metadata` uploads skill names and hashes of filtered skill text but no body; `body` uploads filtered SKILL.md snapshots. Fresh setup saves `metadata`. A schema 1 config without this field retains `body` and setup labels it “kept from previous setup”. Skill use detected in a native transcript can still satisfy `require_skill_use` with `none`. |
 | `paused` | Set by `pause`, cleared by `resume`. |
 | `destination_since`, `previous_destinations` | When the current storage destination was configured, and the ones it replaced. Sessions stay with the destination they were published to. |
 | `storage_verified_at`, `bucket_privacy` | The last storage access check and bucket privacy inspection. Evidence, not settings. |
@@ -58,3 +59,11 @@ itself, or the helper's own configuration file), or run
 `agent-archive sync` from your shell.
 
 Cursor's hook file is always `~/.cursor/hooks.json`.
+
+Skill observation scans documented project roots and user-level skill roots,
+including roots outside the selected project. It follows user-level links only
+within the selected skill root. Change the policy with interactive setup's
+“Skill evidence” setting or `setup --yes --skill-evidence none|metadata|body`.
+The change applies to future publications, including rebuilt pending work;
+it does not delete older local copies or bucket objects. See
+[privacy](../security/privacy.md) for cleanup guidance.

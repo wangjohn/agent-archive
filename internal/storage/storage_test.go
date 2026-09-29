@@ -66,6 +66,36 @@ func TestS3StoreFakeHTTPRoundTrip(t *testing.T) {
 	}
 }
 
+func TestS3StoreListPageUsesContinuation(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Query().Get("continuation-token")+"|"+r.URL.Query().Get("max-keys"))
+		w.Header().Set("Content-Type", "application/xml")
+		if r.URL.Query().Get("continuation-token") == "" {
+			_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken><Contents><Key>agent-archive/listing/v1/a</Key><Size>1</Size></Contents></ListBucketResult>`)
+		} else {
+			_, _ = io.WriteString(w, `<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>agent-archive/listing/v1/b</Key><Size>1</Size></Contents></ListBucketResult>`)
+		}
+	}))
+	defer server.Close()
+	awsCfg := aws.Config{Region: "us-east-1", Credentials: awscredentials.NewStaticCredentialsProvider("test-access", "test-secret", "")}
+	store, err := NewS3Store(S3StoreOptions{Client: NewClient(awsCfg, server.URL, true, 1), Bucket: "archive", Prefix: "agent-archive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.ListPage(context.Background(), "listing/v1/", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.ListPage(context.Background(), "listing/v1/", first.Next, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Next != "next" || second.Next != "" || len(first.Objects) != 1 || first.Objects[0].Key != "listing/v1/a" || len(second.Objects) != 1 || second.Objects[0].Key != "listing/v1/b" || len(calls) != 2 || calls[0] != "|1" || calls[1] != "next|1" {
+		t.Fatalf("pages first=%+v second=%+v calls=%v", first, second, calls)
+	}
+}
+
 type fakeS3 struct {
 	mu      sync.Mutex
 	objects map[string][]byte

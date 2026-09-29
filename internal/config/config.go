@@ -26,6 +26,36 @@ import (
 // incompatibly.
 const SchemaVersion = 1
 
+// SkillEvidence controls how much filesystem skill data a source bundle carries.
+type SkillEvidence string
+
+const (
+	// SkillEvidenceNone omits filesystem skill inventory and snapshots.
+	SkillEvidenceNone SkillEvidence = "none"
+	// SkillEvidenceMetadata includes names and hashes, without skill bodies.
+	SkillEvidenceMetadata SkillEvidence = "metadata"
+	// SkillEvidenceBody includes filtered snapshots as well as metadata.
+	SkillEvidenceBody SkillEvidence = "body"
+)
+
+// EffectiveSkillEvidence preserves the behavior of configs saved before this
+// setting existed. Fresh setup persists metadata explicitly.
+func (c Config) EffectiveSkillEvidence() SkillEvidence {
+	if c.SkillEvidence == "" {
+		return SkillEvidenceBody
+	}
+	return c.SkillEvidence
+}
+
+// ValidSkillEvidence reports whether mode is one of the supported policies.
+func ValidSkillEvidence(mode SkillEvidence) bool {
+	switch mode {
+	case SkillEvidenceNone, SkillEvidenceMetadata, SkillEvidenceBody:
+		return true
+	}
+	return false
+}
+
 // Config is this machine's complete archive configuration. It contains no
 // secrets: R2 secrets live in Keychain (see credentials.Config.R2CredentialRef)
 // and S3 credentials are resolved through the named AWS profile.
@@ -76,6 +106,9 @@ type Config struct {
 	// field, or one built without setting it, behaves correctly rather than
 	// silently declining everything.
 	RequireSkillUse bool `json:"require_skill_use"`
+	// SkillEvidence controls filesystem skill inventory and snapshot uploads.
+	// An absent field is a legacy body policy, not a new-install default.
+	SkillEvidence SkillEvidence `json:"skill_evidence,omitempty"`
 	// RetentionDays is whole-session retention, proposed as 90 by setup.
 	// Enforcing it is the Retention slice's job, not this package's.
 	RetentionDays int `json:"retention_days"`
@@ -100,6 +133,9 @@ func Load(home string) (cfg Config, found bool, err error) {
 	if err != nil {
 		return Config{}, false, fmt.Errorf("read %s: %w", path(home), err)
 	}
+	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
+		return Config{}, false, fmt.Errorf("read %s: unsupported skill_evidence %q; choose none, metadata, or body", path(home), cfg.SkillEvidence)
+	}
 	return cfg, true, nil
 }
 
@@ -108,6 +144,9 @@ var ErrUnreadable = errors.New("the settings file cannot be read")
 
 // Save durably writes cfg, replacing any prior configuration atomically.
 func Save(home string, cfg Config) error {
+	if !ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
+		return fmt.Errorf("unsupported skill_evidence %q; choose none, metadata, or body", cfg.SkillEvidence)
+	}
 	if cfg.SchemaVersion == 0 {
 		cfg.SchemaVersion = SchemaVersion
 	}

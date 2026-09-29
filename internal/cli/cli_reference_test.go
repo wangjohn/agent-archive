@@ -85,6 +85,9 @@ var commandGuides = map[string]string{
 	"backfill undo":    "[Undo an import](../guides/backfill.md#undo)",
 	"handoff":          "[Continue a session in another agent](../guides/handoff.md)",
 	"uninstall":        "[Uninstall](../getting-started/uninstall.md)",
+	"purge":            "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",
+	"purge plan":       "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",
+	"purge apply":      "[Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)",
 	"version":          "[Install](../getting-started/install.md)",
 }
 

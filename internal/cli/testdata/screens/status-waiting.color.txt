@@ -8,6 +8,7 @@ $ agent-archive status
   \e[32m✓\e[0m Codex   hooks installed   \e[2mwaiting for first session\e[0m
     \e[2m·\e[0m Run \e[36m/hooks\e[0m in Codex and approve the archive hooks; agent-archive can't see whether you have.
   \e[2m·\e[0m Projects: ~/src/web-app
+  \e[2m·\e[0m Skill evidence: metadata
 
 \e[1mStorage\e[0m
   \e[32m✓\e[0m s3://team-archive/agent-archive/   \e[2mreachable, checked by setup just now\e[0m

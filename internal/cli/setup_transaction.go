@@ -216,6 +216,20 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if fresher := freshestBucketPrivacy(*next, current.BucketPrivacy); fresher != nil {
 		next.BucketPrivacy = fresher
 	}
+	mergeCommittedSetupState(old, next, stopImported)
+	if err := prepareSetupConfig(home, executable, old, next, env); err != nil {
+		return err
+	}
+	journal, err := planSetupTransaction(home, userHome, executable, old, next, env)
+	if err != nil {
+		return err
+	}
+	return setupjournal.Commit(home, journal, env.launchd())
+}
+
+// mergeCommittedSetupState carries operational ownership from the committed
+// configuration, never from a resumable draft. It does no I/O.
+func mergeCommittedSetupState(old config.Config, next *config.Config, stopImported []string) {
 	// Operational ownership comes from committed state, never a resumable
 	// draft. A crash after commit can leave a pre-commit draft on disk.
 	next.DestinationSince = old.DestinationSince
@@ -226,6 +240,12 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 			next.RetiredCredentialRefs = append(next.RetiredCredentialRefs, ref)
 		}
 	}
+}
+
+// prepareSetupConfig checks the destination and newly included folders under
+// setup's locks, then completes the settings the transaction will write.
+func prepareSetupConfig(home, executable string, old config.Config, next *config.Config, env Env) error {
+	var err error
 	if old.MachineID != "" && !destinationEqual(old.Storage, next.Storage) {
 		// The same rule as reviewChanges: a session waiting for its
 		// transcript does not block the change, and like any unpublished
@@ -287,6 +307,12 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	// status checks them against it rather than against whatever path status
 	// was later started through. It is written with the same transaction.
 	next.InstalledExecutable = executable
+	return nil
+}
+
+// planSetupTransaction builds the hook, LaunchAgent, config, and job changes.
+// It does not apply them; setupjournal.Commit owns that transaction boundary.
+func planSetupTransaction(home, userHome, executable string, old config.Config, next *config.Config, env Env) (setupjournal.Journal, error) {
 	// Hooks go where the apps read them in the environment setup runs in;
 	// the paths are recorded so later commands find them without it.
 	files := env.hookFiles(userHome)
@@ -298,11 +324,11 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	// Another installation's hooks in a file this one would install into
 	// mean every session would be captured twice; they are its to remove.
 	if problems := env.installation(home, userHome).otherInstallationProblems(files, next.Harnesses); len(problems) > 0 {
-		return &otherInstallationError{problems: problems}
+		return setupjournal.Journal{}, &otherInstallationError{problems: problems}
 	}
 	changes, err := hooks.Plan(files, env.installation(home, userHome).hook(executable), next.Harnesses)
 	if err != nil {
-		return err
+		return setupjournal.Journal{}, err
 	}
 	// Remove our hooks from apps no longer selected, and from an app's
 	// previous file when its configuration directory has moved.
@@ -312,7 +338,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		}
 		removal, found, err := hooks.PlanRemovalOf(previousFiles, env.installation(home, userHome).owner(), app)
 		if err != nil {
-			return err
+			return setupjournal.Journal{}, err
 		}
 		if found {
 			changes = append(changes, removal)
@@ -323,42 +349,42 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	// verified with; launchd would otherwise start it with none of them.
 	plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath), env.collectorEnvironment(next.Storage))
 	if err != nil {
-		return err
+		return setupjournal.Journal{}, err
 	}
 	change, err := fileChange(plistPath, plist)
 	if err != nil {
-		return err
+		return setupjournal.Journal{}, err
 	}
 	changes = append(changes, change)
 	data, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
-		return err
+		return setupjournal.Journal{}, err
 	}
 	change, err = fileChange(filepath.Join(home, "config.json"), append(data, '\n'))
 	if err != nil {
-		return err
+		return setupjournal.Journal{}, err
 	}
 	changes = append(changes, change)
 	job := env.jobState(plistPath)
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job == "unknown" {
-		return fmt.Errorf("cannot determine the background job's state; restore access to launchctl and retry")
+		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to launchctl and retry")
 	}
 	if job == setupjournal.JobAnotherInstallation {
-		return fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)
+		return setupjournal.Journal{}, fmt.Errorf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own", launchLabel(plistPath), plistPath)
 	}
 	// The prototype's job is the account's, retired only by the account's
 	// default installation: a test installation must not change it.
 	var legacy *setupjournal.LegacyJob
 	if env.installation(home, userHome).isDefault() {
 		if legacy, err = setupjournal.PlanLegacyMigration(userHome, env.launchd()); err != nil {
-			return err
+			return setupjournal.Journal{}, err
 		}
 	}
 	relabeled, err := setupjournal.PlanRelabel(env.installation(home, userHome).previousCollectorPlists(), env.launchd())
 	if err != nil {
-		return err
+		return setupjournal.Journal{}, err
 	}
 	var firstRelabeled *setupjournal.LegacyJob
 	var moreRelabeled []*setupjournal.LegacyJob
@@ -366,7 +392,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
 	}
 	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: plistPath, WasLoaded: setupjournal.JobActive(job)}
-	return setupjournal.Commit(home, journal, env.launchd())
+	return journal, nil
 }
 
 // otherInstallationError is a setup refused because another installation's

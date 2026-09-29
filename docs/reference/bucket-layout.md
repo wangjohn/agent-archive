@@ -13,6 +13,11 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
         source.<sha256>.jsonl.gz     an earlier snapshot, until retention removes it
   .setup-test/<random>.json          a connection test object, deleted within seconds
   .setup-test/clock-<random>.json    a clock check before retention deletes anything, deleted at once
+  listing/
+    v1-ready                       written after a complete index rebuild
+    v1-needs-rebuild               older bucket detected by an uploading Mac
+    v1/<reverse-time>/<app>/<id>/<hash>.json  immutable listing hint
+    by-session/<app>/<id>/<hash>    cleanup pointer for a listing hint
 ```
 
 - **Archive session ID.** 32 lowercase hex characters, assigned on the Mac
@@ -23,6 +28,16 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   session's identity, machine, project ID, app and version, capture time,
   counts, models, skills, capture gaps, parser and filter versions, and the
   key, SHA-256, and size of the current source. `list` reads only these.
+- **`listing/`** holds time-ordered hints. A limited `list` pages through
+  these keys and verifies each candidate against its current `metadata.json`
+  before showing it. Index entries never contain conversation content and
+  can be stale after republish or deletion. `list --rebuild-index` scans an
+  older bucket's sidecars and writes the `v1-ready` marker last. Until then,
+  limited listing uses the full sidecar scan. Retention and undo remove a
+  session's hints using the `by-session` pointers. Upgrade every uploading Mac
+  before rebuilding: an older writer cannot create hints for its new uploads.
+  If a hint is damaged, listing falls back to a full sidecar scan; rerun
+  `list --rebuild-index` to repair the index.
 - **`source.<sha256>.jsonl.gz`** is gzip of newline-delimited JSON (source
   schema 2; [`schemas/source-bundle.schema.json`](../../schemas/source-bundle.schema.json)):
   a header line, one line per retained native record, then text transcripts
@@ -30,6 +45,17 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   subagent sessions). Only what the [privacy filter](../security/privacy.md)
   kept is in it. `show --normalized` and `handoff` read it and check its
   SHA-256 and identity against the metadata.
+
+The configured `skill_evidence` mode affects newly built source bundles.
+`none` carries no filesystem skill inventory or snapshots, `metadata` carries
+names and filtered hashes, and `body` also carries filtered snapshots. A
+policy change does not erase already uploaded source objects. A replaced
+source may remain as a predecessor or in bucket version history; removing
+old bytes requires reviewing those copies as well as the live pointer.
+`agent-archive purge plan` lists unreferenced source keys and reports current
+older-filter sessions separately. Its private plan and report are local; they
+are not new bucket objects. [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade)
+explains how to apply a plan with every uploading Mac paused.
 
 ## How objects change
 
@@ -42,8 +68,11 @@ here as `<prefix>/`; with no prefix, keys start at `sessions/`).
   nothing; a service that reports no checksum has the source read back and
   hashed instead. A source already stored with the same bytes is not
   uploaded again.
-- The previous source is kept (the immediate predecessor always, older ones
-  for a 24-hour grace period), then deleted by the Mac that owns the session.
+- The previous source is kept (the ordinary immediate predecessor always,
+  older ones for a 24-hour grace period). When a filter-version change
+  republishes a session, its old-filter predecessor is marked for cleanup
+  after the new publication passes read-back verification and 24 hours have
+  elapsed. A failed delete is retried by that Mac's retention sweep.
 - When a session expires (retention, 90 days by default) or `backfill undo`
   removes it, its metadata is deleted before its sources, so an interruption
   leaves at worst unreferenced source objects for the next pass, never a

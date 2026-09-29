@@ -8,6 +8,7 @@ Capture
   ✓ Codex   hooks installed   waiting for first session
     · Run /hooks in Codex and approve the archive hooks; agent-archive can't see whether you have.
   · Projects: ~/src/web-app
+  · Skill evidence: metadata
 
 Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now

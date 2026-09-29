@@ -48,6 +48,7 @@ Step 3 of 3 · Ready to start
 
   Apps       Codex (version not detected)
   Projects   ~/src/web-app
+  Skills     metadata  User skill roots outside selected projects may be scanned; change with Edit a setting
   Storage    s3://agent-archive-alex/agent-archive/  eu-west-2 · profile default
   Keep for   90 days
 

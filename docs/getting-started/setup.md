@@ -117,6 +117,7 @@ Step 3 of 3 · Ready to start
 
   Apps       Codex 0.121.0 · Claude Code 2.1.90
   Projects   ~/src/web-app
+  Skills     metadata  User skill roots outside selected projects may be scanned
   Storage    s3://team-archive/agent-archive/  us-east-1 · profile work
   Keep for   90 days
 
@@ -135,6 +136,14 @@ back under "Apps and projects" in a later `agent-archive setup`. The
 deletion period is 90 days by default; older sessions are deleted from the
 bucket automatically. When you reconfigure, each changed value is marked `*`
 with its old value beneath it.
+
+The Skills row controls filesystem skill evidence. Fresh setup uses
+`metadata` (names and filtered hashes, no body). Choose Edit a setting to
+select `none` or `body`. User-level skill folders may be scanned outside
+your included projects. If an older configuration did not record a mode,
+setup displays `body (kept from previous setup)` and lets you change it.
+Changing the mode affects future uploads; it does not remove earlier local
+or bucket copies.
 
 In the checklist, ✓ is fine, ! needs you, and ✗ needs fixing first. While
 any row is ✗, setup does not offer to start: fix what it names, then choose
@@ -214,6 +223,9 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   It can add apps but never removes one: it must name every app already set
   up, and to remove an app (and its hooks) you run `agent-archive setup`.
 - `--project` adds to the projects already set up; repeat it for several.
+- `--skill-evidence none|metadata|body` sets the skill evidence mode. A fresh
+  setup defaults to `metadata`; an older configuration without the field
+  retains `body` until changed.
 - Without storage flags, the storage already set up is kept, so
   `agent-archive setup --yes --project DIR` just adds a project.
 

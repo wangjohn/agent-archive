@@ -485,7 +485,7 @@ func TestPromptEvidenceRidesTheUploadIntervalAndIsPublished(t *testing.T) {
 			t.Fatalf("prompt %d forced an upload inside the interval: result=%#v err=%v", i, result, err)
 		}
 	}
-	if objects, err := store.List(context.Background(), ""); err != nil || len(objects) != 2 {
+	if objects, err := store.List(context.Background(), ""); err != nil || len(objects) != 5 {
 		t.Fatalf("prompts uploaded new objects: %v err=%v", objects, err)
 	}
 	requests, err := local.LoadRequests()
@@ -757,9 +757,65 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	if _, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t0 }}); err != nil {
 		t.Fatal(err)
 	}
-
+	// Model the old release's *remote* source as well as its local cache.
+	// Rewriting only local state leaves remote metadata pointing at a source
+	// already made by the current filter, so there is no old predecessor.
+	published, err := store.LoadPublishedState("session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldBundle, _, found := published.LastPublished()
+	if !found {
+		t.Fatal("missing initial publication")
+	}
+	oldBundle.Capture.FilterVersion = "0"
+	oldCompressed, err := archive.BuildCompressedSource(oldBundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorSource, err := archive.SourceObjectKey(oldBundle, oldCompressed.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldRef := archive.SourceReference{Key: priorSource, SHA256: oldCompressed.SHA256, CompressedBytes: len(oldCompressed.Bytes)}
+	oldMeta := fetchMetadata(t, cloud, "codex", "session-1")
+	oldMeta.SourceBundle = oldRef
+	oldMeta.FilterVersion = "0"
+	oldMetaBytes, err := json.Marshal(oldMeta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metaKey, _ := archive.MetadataObjectKey("codex", "session-1")
+	if err := cloud.Put(context.Background(), priorSource, oldCompressed.Bytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := cloud.Put(context.Background(), metaKey, oldMetaBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := published.SavePublication(oldBundle, t0, oldRef, oldMetaBytes); err != nil {
+		t.Fatal(err)
+	}
 	simulateFilterUpgrade(t, store)
 	t1 := t0.Add(20 * 24 * time.Hour)
+	// A failed local ledger write must leave this publication pending so the
+	// old-filter source remains eligible for cleanup after the fault clears.
+	ledgerPath := filepath.Join(store.Home(), "superseded", "session-1.json")
+	if err := os.MkdirAll(filepath.Dir(ledgerPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(ledgerPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
+	if err != nil || failed.Errors["session-1"] == nil {
+		t.Fatalf("ledger fault must report a session error: %#v %v", failed, err)
+	}
+	if pending, err := store.HasPending("session-1"); err != nil || !pending {
+		t.Fatalf("ledger fault lost the pending publication: pending=%v err=%v", pending, err)
+	}
+	if err := os.Remove(ledgerPath); err != nil {
+		t.Fatal(err)
+	}
 	result, err := Run(context.Background(), store, cloud, Options{MachineID: "m", Now: func() time.Time { return t1 }})
 	if err != nil || len(result.Errors) != 0 || len(result.Published) != 1 {
 		t.Fatalf("filter upgrade should republish: result=%#v err=%v", result, err)
@@ -770,6 +826,9 @@ func TestFilterUpgradeKeepsCaptureTimeOfUnchangedTranscript(t *testing.T) {
 	}
 	if bundle := fetchBundle(t, cloud, metadata); bundle.Capture.FilterVersion != archive.FilterVersion || !bundle.Capture.CapturedAt.Equal(t0) {
 		t.Fatalf("republished bundle: filter %q captured %s", bundle.Capture.FilterVersion, bundle.Capture.CapturedAt)
+	}
+	if ledger, err := store.LoadSuperseded("session-1"); err != nil || len(ledger) != 1 || ledger[0].Key != priorSource || !ledger[0].PrivacySensitive {
+		t.Fatalf("filter upgrade predecessor not marked for privacy cleanup: %#v %v; prior=%s current=%s", ledger, err, priorSource, metadata.SourceBundle.Key)
 	}
 
 	// New activity arriving with the upgrade is captured when it was read.
@@ -1330,6 +1389,9 @@ func TestRunRecordsSupersededSourceOnRepublish(t *testing.T) {
 	}
 	if len(superseded) != 1 || superseded[0].Key != firstMetadata.SourceBundle.Key || !superseded[0].SupersededAt.Equal(t1) {
 		t.Fatalf("superseded=%#v firstKey=%q", superseded, firstMetadata.SourceBundle.Key)
+	}
+	if superseded[0].PrivacySensitive {
+		t.Fatal("ordinary republish marked as privacy-sensitive")
 	}
 	// The superseded object must still exist in storage (grace period).
 	if _, err := store.Get(context.Background(), firstMetadata.SourceBundle.Key); err != nil {

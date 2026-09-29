@@ -33,6 +33,8 @@ R2 credentials are not here: they are in the macOS Keychain under the service
 | `setup-draft.json` | Setup's saved progress, so an interrupted setup can continue. Holds no secrets. |
 | `setup-transaction.json` | Present only while setup is changing files, or after it was interrupted; see [troubleshooting](../guides/troubleshooting.md#an-interrupted-setup). |
 | `application-versions.json` | Installed app versions setup found. |
+| `purge-plans/<id>.json` | Private 0600, five-minute remote deletion plan with exact keys, sizes, destination, and digest. |
+| `purge-plans/<id>.json.report` | Private 0600 progress report written after each deletion, so a partial apply can resume before plan expiry. |
 
 ## Sessions (`internal/state`)
 
@@ -46,7 +48,7 @@ R2 credentials are not here: they are in the macOS Keychain under the service
 | `pending-scans/`, `scan-signatures/` | Transcript reads in progress, and what each transcript looked like at its last read, so an unchanged one isn't read again. |
 | `pending/<id>.json` | A publication frozen before its first upload: the exact source and metadata bytes, so retries are byte-identical. |
 | `published/<id>.json` | The last bundle built and the last one published, with the uploaded source's key, SHA-256, and size, and its metadata. |
-| `superseded/<id>.json` | Earlier source objects of the session, oldest first, which retention deletes after a grace period. |
+| `superseded/<id>.json` | Earlier source objects of the session, oldest first. Filter-version predecessors carry a privacy-sensitive marker; retention removes them after verified republish and a 24-hour reader grace interval, retrying failures. |
 | `refresh-skips/<id>.json` | A session whose metadata this build can't refresh (`metadata_underivable`, or `source_unavailable` when the recorded source is gone), with the parser version and source key it applies to. It is not retried until either changes; `status` counts these as unrefreshable summaries. |
 | `forgotten/<hash>.json` | A record of each session retention or undo removed, so backfill doesn't import it again. |
 | `status.json` | The collector's last pass: scan and publish times, counts, errors. |

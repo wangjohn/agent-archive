@@ -7,6 +7,7 @@ Agent Archive  ● Paused
 Capture
   ✓ Codex   hooks installed   1 session archived, verified just now
   · Projects: ~/src/web-app
+  · Skill evidence: metadata
 
 Storage
   ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
