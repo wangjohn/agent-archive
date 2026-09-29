@@ -293,7 +293,7 @@ can skip them.
   find, or your shell's AWS files differing from the collector's.
 
 - A source bundle written by an early build as a single JSON document
-  (schema 1) is not read: `show --normalized` and `handoff` report
+  (schema 1) is not read: `show --transcript` and `handoff` report
   "unsupported source schema version 1" for it.
 - Setup retires the old `com.agent-skills.skill-runs-upload` job of the
   prototype this tool grew out of, only when its label and command match

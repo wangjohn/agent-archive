@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -150,9 +149,9 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		GroupByProject: true,
 	}
 	if browseInteractive(env, stdin, stdout) {
-		return runSessionBrowser(stdin, stdout, stderr, store, shown, totalMatched, truncated, format, true)
+		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, shown, totalMatched, truncated, format, opts.noPager, "list")
 	}
-	if err := withPager(stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
 		return printListTable(w, shown, totalMatched, truncated, format)
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -367,20 +366,22 @@ func validLowerSHA256(value string) bool {
 	return err == nil
 }
 
-// runShowCommand implements `agent-archive show SESSION_ID`. By
-// default it prints only the session's metadata sidecar. Conversation
-// content — the normalized view derived from the verified source bundle —
-// is printed only when the user passes --normalized explicitly, keeping the
-// spec's rule that nothing prints transcript contents unless asked.
-// With no SESSION_ID on a TTY, it opens the same interactive picker as list.
+// runShowCommand implements `agent-archive show SESSION_ID`. By default it
+// prints a readable summary of the session's metadata sidecar; --json prints
+// the sidecar itself. Conversation content — read from the verified source
+// bundle — is printed only when the user passes --transcript (or the
+// deprecated --normalized) explicitly, or presses t in the browser, keeping
+// the spec's rule that nothing prints transcript contents unless asked.
+// With no SESSION_ID on a TTY, it opens the same session browser as list.
 func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env showCommandDependencies) int {
 	fs := env.newCommandFlags("show", stderr)
 	harness := fs.String("harness", "", "the session's harness, if the same ID exists under more than one")
-	normalized := fs.Bool("normalized", false, "also download, verify, and print the normalized conversation view (this prints transcript content)")
-	// show always prints JSON; --json is accepted so the three inspection
-	// commands (list, show, status) take the same flag.
-	_ = fs.Bool("json", false, "print JSON (the default and only format; accepted for consistency with list and status)")
-	// Flags may follow SESSION_ID too (`show SESSION_ID --normalized`).
+	transcript := fs.Bool("transcript", false, "also download and verify the source bundle, and print the conversation (this prints transcript content)")
+	full := fs.Bool("full", false, "with --transcript, also print each tool call's trimmed result")
+	normalized := fs.Bool("normalized", false, "deprecated: the same as --transcript --json")
+	noPager := fs.Bool("no-pager", false, "print a transcript directly; do not page through $PAGER")
+	jsonOut := fs.Bool("json", false, "print the metadata sidecar as JSON (with --transcript, also the normalized view)")
+	// Flags may follow SESSION_ID too (`show SESSION_ID --transcript`).
 	sessionID, ok := fs.parseWithArgument(args)
 	if !ok {
 		return 2
@@ -390,9 +391,25 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return fs.usageError("%s", harnessFlagError(*harness))
 	}
 	*harness = canonical
+	if *normalized {
+		terminal.Println(stderr, "agent-archive: show: --normalized is deprecated; use --transcript --json")
+		*transcript, *jsonOut = true, true
+	}
+	if *full && !*transcript {
+		return fs.usageError("--full needs --transcript")
+	}
+	if *full && *jsonOut {
+		return fs.usageError("--full is for the readable transcript; --json always includes every retained tool result")
+	}
 
 	if sessionID == "" && !browseInteractive(env, stdin, stdout) {
 		return fs.usageError("a SESSION_ID is required (see agent-archive list)")
+	}
+	if sessionID == "" && *transcript {
+		if *normalized {
+			return fs.usageError("--normalized needs a SESSION_ID; pick a session with show, then run show SESSION_ID --normalized")
+		}
+		return fs.usageError("--transcript needs a SESSION_ID; pick a session with show and press t, or run show SESSION_ID --transcript")
 	}
 
 	store, cfg, found, err := openReadOnlyStore(env)
@@ -405,19 +422,31 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
+	ctx := context.Background()
+	summary := summaryOptions{Now: env.now(), Style: styleFor(stdout), Projects: projectLabels(cfg), Hints: true}
 	if sessionID == "" {
-		if *normalized {
-			return fs.usageError("--normalized needs a SESSION_ID; pick a session with show, then run show SESSION_ID --normalized")
+		if *jsonOut {
+			// The one-shot picker, as before the browser: a script-like
+			// request for one document.
+			row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, *harness, "show", "show")
+			if code != 0 || !selected {
+				return code
+			}
+			view, err := readSessionView(ctx, store, row.HarnessKey, row.SessionID)
+			if err != nil {
+				terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+				return 1
+			}
+			return printJSON(stdout, stderr, view)
 		}
-		row, selected, code := selectArchivedSession(env, store, cfg, stdin, stdout, stderr, *harness, "show", "show")
-		if code != 0 || !selected {
+		browse, ok, code := findBrowseSessions(env, store, cfg, stdout, stderr, *harness, "show")
+		if !ok {
 			return code
 		}
-		return showSessionMetadata(stdout, stderr, store, row.SessionID, row.HarnessKey)
+		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, browse.sessions, browse.totalMatched, browse.truncated, browse.format, *noPager, "show")
 	}
 
-	ctx := context.Background()
-	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, projectLabels(cfg))
+	lookup, code := resolveShowQuery(ctx, store, env, stdin, stdout, stderr, *harness, sessionID, summary.Projects)
 	if code != 0 {
 		return code
 	}
@@ -434,7 +463,7 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 1
 	}
 
-	if !*normalized {
+	if !*transcript {
 		metadata, err := reader.ReadMetadata(ctx, store, key)
 		if err != nil {
 			stopShow()
@@ -443,30 +472,67 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		}
 		view := metadataWithLinks(ctx, store, metadata)
 		stopShow()
-		return printJSON(stdout, stderr, view)
+		if *jsonOut {
+			return printJSON(stdout, stderr, view)
+		}
+		renderSessionSummary(stdout, view, summary)
+		return 0
 	}
 
-	metadata, bundle, err := reader.RefreshAndLoad(ctx, store, key, reader.Limits{})
+	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
+		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager,
+	})
+}
+
+// sessionTranscriptOptions are the show flags that shape a transcript.
+type sessionTranscriptOptions struct {
+	summary    summaryOptions
+	full       bool
+	json       bool
+	normalized bool
+	noPager    bool
+}
+
+// printSessionTranscript downloads and verifies the session's source bundle
+// and prints its transcript: readable and paged, or with --json the sidecar
+// and the normalized view. stopShow ends the loading activity line.
+func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
+	view, bundle, err := loadVerifiedSession(ctx, store, key)
 	if err != nil {
 		stopShow()
-		if errors.Is(err, reader.ErrRefreshRequired) {
-			terminal.Printf(stderr, "agent-archive: show: the session's source bundle is not available (it may have just been replaced or deleted by retention); retry, or run `agent-archive show %s` without --normalized for its metadata\n", sessionID)
-		} else {
-			terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+		flag := "--transcript"
+		if opts.normalized {
+			flag = "--normalized"
 		}
+		terminal.Printf(stderr, "agent-archive: show: %s\n", describeBundleError(err, sessionID, flag))
 		return 1
 	}
-	view, err := archive.ParseNormalized(bundle)
-	linked := metadataWithLinks(ctx, store, metadata)
+	if opts.json {
+		normalizedView, err := archive.ParseNormalized(bundle)
+		stopShow()
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
+			return 1
+		}
+		if code := printJSON(stdout, stderr, view); code != 0 {
+			return code
+		}
+		return printJSON(stdout, stderr, normalizedOutput{Turns: normalizedView.Turns, ToolCalls: normalizedView.ToolCalls, ToolResults: normalizedView.ToolResults, HookFinals: normalizedView.HookFinals})
+	}
+	t, err := buildTranscript(bundle)
 	stopShow()
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
 		return 1
 	}
-	if code := printJSON(stdout, stderr, linked); code != 0 {
-		return code
+	if err := withPager(ctx, stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+		renderTranscript(w, view, t, transcriptOptions{summaryOptions: opts.summary, Full: opts.full})
+		return nil
+	}); err != nil {
+		terminal.Printf(stderr, "agent-archive: show: %v\n", err)
+		return 1
 	}
-	return printJSON(stdout, stderr, normalizedOutput{Turns: view.Turns, ToolCalls: view.ToolCalls, ToolResults: view.ToolResults, HookFinals: view.HookFinals})
+	return 0
 }
 
 // Preserve the sidecar fields while exposing live link availability separately.
@@ -478,14 +544,11 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 // governs stored metadata objects; `show` renders a view of one, and keeping
 // the sidecar's fields at the top level is what existing readers of this
 // command already parse. Validate stored objects, not command output.
-func metadataWithLinks(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata) any {
-	return struct {
-		archive.Metadata
-		LinkedAvailability []reader.LinkedAvailability `json:"linked_session_availability,omitempty"`
-	}{metadata, reader.ResolveLinkedSessions(ctx, store, metadata)}
+func metadataWithLinks(ctx context.Context, store storage.ObjectStore, metadata archive.Metadata) sessionView {
+	return sessionView{metadata, reader.ResolveLinkedSessions(ctx, store, metadata)}
 }
 
-// normalizedOutput is the JSON shape `show --normalized` prints for
+// normalizedOutput is the JSON shape `show --transcript --json` prints for
 // archive.NormalizedView, which carries no JSON tags of its own.
 // NativeSkillUses is left out: it is an intermediate deriveSkills folds into
 // the metadata's skills_used, which the sidecar printed first already shows.

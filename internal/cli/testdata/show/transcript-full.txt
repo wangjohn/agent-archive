@@ -1,0 +1,30 @@
+Fix flaky OAuth callback tests
+Claude Code 2.4.1 · claude-opus-5-5 (high reasoning) · Sep 29, 10:14 → 11:02 (48m span)
+
+── You · Sep 22, 10:00 ─────────────────────
+Why does the widget test fail?
+
+Let me run it.
+
+  ▸ Bash go test ./widget/... ✗
+      │ --- FAIL: TestWidgetSize
+      │     widget_test.go:12: size = 3, want 4
+      │ FAIL
+  ▸ Read widget/size.go (lines 10–29)
+      │ func Size(w Widget) int {
+      │ 	return len(w.parts) - 1
+      │ }
+
+Size subtracts one. I'll fix it and track the rest.
+
+  ▸ Edit widget/size.go
+      │ The file was updated.
+  ▸ TodoWrite updated the plan
+      │ Todos updated
+
+── Background task completed · Sep 22, 10:01 ────
+
+── You · Sep 22, 10:02 ─────────────────────
+Use token = [REDACTED] when you rerun.
+
+Tests pass now. Next: add a regression test for Size.

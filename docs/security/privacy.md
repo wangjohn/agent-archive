@@ -178,7 +178,7 @@ in the bucket:
 - **Sessions in an earlier destination** (after you changed storage) are
   not touched at all.
 
-`show` prints a session's `filter_version`. To remove the older copies now,
+`show` prints a session's filter version (`filter_version` in `show --json`). To remove the older copies now,
 delete from the bucket the source objects no session's metadata points at.
 Pause every Mac that uploads to the bucket first, so no publication is in
 flight: a new source is uploaded before the metadata that points at it.

@@ -84,7 +84,7 @@ writers can race these shell commands, so keep all uploading Macs paused
 throughout.
 
 To delete only one Mac's sessions, find its machine ID first (`jq -r .machine_id config.json`
-in that Mac's data directory, or the `machine_id` that `show` prints for one
+in that Mac's data directory, or the `machine_id` that `show --json` prints for one
 of its sessions). Pause **every** uploading Mac, run the linked preparation
 block above in the same shell, and make a new machine plan:
 
@@ -126,7 +126,7 @@ page for the API.
 Objects expire one by one, by their own age. A session whose metadata was
 refreshed later than its source (after a parser upgrade) can be left, for a
 while, with metadata whose source is gone: `list` still shows it and `show
---normalized` reports the source missing, until the metadata expires too.
+--transcript` reports the source missing, until the metadata expires too.
 
 ## When uninstall refuses
 

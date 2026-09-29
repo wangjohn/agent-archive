@@ -55,8 +55,9 @@ func TestListJSONPrintsVersionedMetadataDocument(t *testing.T) {
 	}
 }
 
-// show always prints JSON; it accepts --json like list and status.
-func TestShowAcceptsJSONFlag(t *testing.T) {
+// Like list, show prints text by default and its metadata sidecar with
+// --json.
+func TestShowPrintsSummaryUnlessJSON(t *testing.T) {
 	t.Parallel()
 	env, _, id := publishedFixture(t)
 	var plain, flagged, errOut bytes.Buffer
@@ -66,7 +67,11 @@ func TestShowAcceptsJSONFlag(t *testing.T) {
 	if code := Run([]string{"show", id, "--json"}, nil, &flagged, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut.String())
 	}
-	if plain.String() != flagged.String() || !json.Valid(flagged.Bytes()) {
-		t.Fatalf("show --json differs from show:\n%s\n---\n%s", plain.String(), flagged.String())
+	if json.Valid(plain.Bytes()) || !strings.Contains(plain.String(), "ID "+id) || !strings.Contains(plain.String(), "--transcript") {
+		t.Fatalf("show did not print a summary:\n%s", plain.String())
+	}
+	var decoded archiveMetadataSessionID
+	if err := json.Unmarshal(flagged.Bytes(), &decoded); err != nil || decoded.SessionID != id {
+		t.Fatalf("show --json is not the sidecar (%v):\n%s", err, flagged.String())
 	}
 }

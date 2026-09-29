@@ -97,19 +97,22 @@ func TestListInteractiveShowAndQuit(t *testing.T) {
 	if !strings.Contains(text, "#") || !strings.Contains(text, "Enter number") {
 		t.Fatalf("expected numbered interactive prompt:\n%s", text)
 	}
-	var meta archiveMetadataSessionID
-	if err := json.Unmarshal([]byte(extractJSONObject(text)), &meta); err != nil {
-		t.Fatalf("show json: %v\n%s", err, text)
+	// The summary viewed last is printed again after the alternate screen
+	// is left, so its ID stays in scrollback.
+	_, after, ok := strings.Cut(text, leaveAltScreenSequence)
+	if !ok || !strings.Contains(after, "ID "+id) {
+		t.Fatalf("summary not printed after leaving the browser:\n%q", text)
 	}
-	if meta.SessionID != id {
-		t.Fatalf("showed %q want %q\n%s", meta.SessionID, id, text)
+	if strings.Contains(text, "visible") {
+		t.Fatalf("browser printed transcript content without t:\n%s", text)
 	}
 }
 
-func TestShowWithoutIDInteractivePicksOnce(t *testing.T) {
+// Bare show on a terminal is the same browser as list, and loops.
+func TestShowWithoutIDInteractiveBrowses(t *testing.T) {
 	t.Parallel()
 	env, _, id := publishedFixture(t)
-	stdin := strings.NewReader("1\n")
+	stdin := strings.NewReader("1\nb\n1\nq\n")
 	var out, errOut bytes.Buffer
 	env.IsTerminal = func(stream any) bool {
 		return stream == any(stdin) || stream == any(&out)
@@ -117,16 +120,30 @@ func TestShowWithoutIDInteractivePicksOnce(t *testing.T) {
 	if code := Run([]string{"show"}, stdin, &out, &errOut, env); code != 0 {
 		t.Fatalf("code=%d stderr=%s out=%s", code, errOut.String(), out.String())
 	}
+	if strings.Count(out.String(), "Enter number") != 2 || !strings.Contains(out.String(), "ID "+id) {
+		t.Fatalf("show should browse twice:\n%s", out.String())
+	}
+}
+
+// show --json on a terminal keeps the one-shot picker and prints the
+// chosen sidecar.
+func TestShowJSONWithoutIDPicksOnce(t *testing.T) {
+	t.Parallel()
+	env, _, id := publishedFixture(t)
+	stdin := strings.NewReader("1\n")
+	var out, errOut bytes.Buffer
+	env.IsTerminal = func(stream any) bool {
+		return stream == any(stdin) || stream == any(&out)
+	}
+	if code := Run([]string{"show", "--json"}, stdin, &out, &errOut, env); code != 0 {
+		t.Fatalf("code=%d stderr=%s out=%s", code, errOut.String(), out.String())
+	}
 	var meta archiveMetadataSessionID
 	if err := json.Unmarshal([]byte(extractJSONObject(out.String())), &meta); err != nil {
 		t.Fatalf("json: %v\n%s", err, out.String())
 	}
-	if meta.SessionID != id {
-		t.Fatalf("got %q want %q", meta.SessionID, id)
-	}
-	// One-shot: a second prompt would wait for more input; we only sent one line.
-	if strings.Count(out.String(), "Enter number") != 1 {
-		t.Fatalf("show should prompt once:\n%s", out.String())
+	if meta.SessionID != id || strings.Count(out.String(), "Enter number") != 1 || strings.Contains(out.String(), enterAltScreenSequence) {
+		t.Fatalf("got %q want %q:\n%s", meta.SessionID, id, out.String())
 	}
 }
 

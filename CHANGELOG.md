@@ -11,6 +11,17 @@ follow [Semantic Versioning](https://semver.org/).
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.
+- `show --transcript` prints a session's conversation to read: each prompt,
+  the agent's replies, one line per tool call (✗ when it failed), your `!`
+  shell and local slash commands, compactions, and app notices such as a
+  background task finishing, paged on a terminal (`--no-pager` to print
+  directly). `--full` adds tool results and shell output, trimmed.
+  `--transcript --json` prints what `--normalized` printed.
+- Browsing on a terminal (`list`, bare `show`) opens a session's summary in
+  place of the list, on the terminal's alternate screen: `t` shows its
+  transcript, Enter or `b` goes back to the list, and `q` quits. The last
+  summary viewed stays in scrollback. Bare `show` now keeps browsing like
+  `list` instead of exiting after one pick.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
   `subagent_transcript_never_written` capture gap, "Claude Code reported a
@@ -22,6 +33,15 @@ follow [Semantic Versioning](https://semver.org/).
   `status --json` lists them as `collector.expired_subagents`. The type is
   kept on this Mac only and never uploaded. Default `status` still says
   nothing about them.
+
+### Changed
+
+- **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
+  (title, when, app, models, activity, skills, subagents, capture gaps)
+  instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what
+  `show` printed before.
+- `show --normalized` is deprecated in favor of `show --transcript --json`.
+  It still works, with unchanged output, and prints a note on stderr.
 
 ### Fixed
 
