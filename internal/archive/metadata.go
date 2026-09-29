@@ -328,13 +328,15 @@ const toolNameLimit = 128
 
 // deriveToolsUsed counts calls by tool name (callToolName, as handoff lists
 // them) and keeps the MaxToolsUsed most-called, by count descending and then
-// name ascending. A call with neither a name nor arguments (a Codex Extension
-// completion) names no tool and is left out, as handoff leaves it out; it is
-// still one of counts.tool_calls.
+// name ascending. A call with no name of its own is counted under its
+// invocation record's type (a Codex local_shell_call, whose action the filter
+// drops); a nameless completion echo (a Codex item_completed that no
+// invocation reported) names no tool and is left out. Either is still one of
+// counts.tool_calls.
 func deriveToolsUsed(calls []NormalizedToolCall) []ToolUsage {
 	counts := map[string]int{}
 	for _, call := range calls {
-		if call.Name == "" && len(call.Input) == 0 {
+		if call.Name == "" && !toolInvocationTypes[strings.ToLower(strings.TrimSpace(firstString(call.raw, "type")))] {
 			continue
 		}
 		if name := metadataToolName(callToolName(call)); name != "" {

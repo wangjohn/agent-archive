@@ -603,9 +603,9 @@ func firstLine(s string, limit int) string {
 
 var (
 	shellToolNames  = map[string]bool{"bash": true, "shell": true, "exec_command": true, "local_shell_call": true, "commandexecution": true, "run_terminal_cmd": true}
-	readToolNames   = map[string]bool{"read": true, "read_file": true, "view": true}
-	editToolNames   = map[string]bool{"edit": true, "multiedit": true, "write": true, "notebookedit": true, "apply_patch": true, "str_replace": true, "strreplace": true, "search_replace": true, "edit_file": true, "create_file": true, "write_file": true, "delete_file": true}
-	searchToolNames = map[string]bool{"grep": true, "glob": true, "search": true, "codebase_search": true, "grep_search": true, "file_search": true}
+	readToolNames   = map[string]bool{"read": true, "read_file": true, "read_file_v2": true, "view": true}
+	editToolNames   = map[string]bool{"edit": true, "multiedit": true, "write": true, "notebookedit": true, "apply_patch": true, "str_replace": true, "strreplace": true, "search_replace": true, "edit_file": true, "edit_file_v2": true, "create_file": true, "write_file": true, "delete_file": true}
+	searchToolNames = map[string]bool{"grep": true, "glob": true, "search": true, "codebase_search": true, "grep_search": true, "file_search": true, "ripgrep_raw_search": true, "glob_file_search": true}
 	agentToolNames  = map[string]bool{"agent": true, "task": true}
 	planToolNames   = map[string]bool{"todowrite": true, "todo_write": true, "update_plan": true}
 )
@@ -624,7 +624,7 @@ func toolSummary(name string, input map[string]any, raw map[string]any, root str
 			return firstLine(command, handoffSummaryCap)
 		}
 	case readToolNames[lower]:
-		file := relativeTo(firstString(input, "file_path", "path", "target_file"), root)
+		file := workspaceFile(firstString(input, touchedPathKeys...), root)
 		if file == "" {
 			break
 		}
@@ -638,14 +638,14 @@ func toolSummary(name string, input map[string]any, raw map[string]any, root str
 	case editToolNames[lower]:
 		if files := touchedFiles(name, input, raw); len(files) > 0 {
 			for i := range files {
-				files[i] = relativeTo(files[i], root)
+				files[i] = workspaceFile(files[i], root)
 			}
 			return strings.Join(files, ", ")
 		}
 		return ""
 	case searchToolNames[lower]:
-		pattern := firstString(input, "pattern", "query", "glob_pattern", "glob")
-		where := relativeTo(firstString(input, "path", "target_directory"), root)
+		pattern := firstString(input, "pattern", "query", "glob_pattern", "glob", "globPattern")
+		where := workspaceFile(firstString(input, "path", "target_directory", "targetDirectory"), root)
 		if pattern != "" && where != "" {
 			return firstLine(pattern+" in "+where, handoffSummaryCap)
 		}
@@ -721,6 +721,13 @@ func argumentText(args map[string]any, keys ...string) string {
 	return ""
 }
 
+// touchedPathKeys are the argument names an editing or reading call puts its
+// file under: Claude's file_path and notebook_path, Cursor's path and
+// target_file, and relativeWorkspacePath, where Cursor's database chats keep
+// the file of edit_file_v2 and read_file_v2 (their params; they have no
+// rawArgs).
+var touchedPathKeys = []string{"file_path", "path", "target_file", "notebook_path", "relativeWorkspacePath"}
+
 // touchedFiles lists the files an editing call names: its path argument, or
 // for apply_patch the files named in the patch headers.
 func touchedFiles(name string, input map[string]any, raw map[string]any) []string {
@@ -728,7 +735,7 @@ func touchedFiles(name string, input map[string]any, raw map[string]any) []strin
 	if !editToolNames[lower] {
 		return nil
 	}
-	if file := firstString(input, "file_path", "path", "target_file", "notebook_path"); file != "" {
+	if file := firstString(input, touchedPathKeys...); file != "" {
 		return []string{file}
 	}
 	patch := firstString(input, "input", "patch")
@@ -746,35 +753,68 @@ func touchedFiles(name string, input map[string]any, raw map[string]any) []strin
 	return out
 }
 
-// relativeTo shows a file under root relative to it, so the list reads the
-// same on a machine where the repository lives elsewhere.
-func relativeTo(file, root string) string {
-	if root == "" || !path.IsAbs(file) {
-		return file
-	}
-	clean := path.Clean(file)
-	if relative, ok := strings.CutPrefix(clean, root+"/"); ok {
-		return relative
-	}
-	return clean
-}
-
-// touchedFileKey is how a touched file is listed and deduplicated: a path
-// under root relative to it (relativeTo), and any relative path cleaned, so
-// "/repo/a.go", "a.go", and "./a.go" in a session rooted at /repo are one
-// file.
-func touchedFileKey(file, root string) string {
+// workspaceFile is how a file a call names is shown and deduplicated, so the
+// list reads the same on a machine where the repository lives elsewhere: a
+// relative path is resolved against root, a path under root is shown
+// relative to it, and anything else is cleaned. In a session rooted at
+// /repo, "/repo/a.go", "a.go", "./a.go", and "../repo/a.go" are all "a.go".
+// A Windows drive path (C:\repo\a.go) is read with forward slashes and an
+// upper-case drive letter. root itself, ".", and "" name no file and are "".
+func workspaceFile(file, root string) string {
 	if file == "" {
 		return ""
 	}
-	if !path.IsAbs(file) {
-		return path.Clean(file)
+	windows := isDrivePath(file) || isDrivePath(root)
+	file, root = slashPath(file, windows), slashPath(root, windows)
+	if !path.IsAbs(file) && !isDrivePath(file) {
+		if root == "" {
+			if file = path.Clean(file); file == "." {
+				return ""
+			}
+			return file
+		}
+		file = path.Join(root, file)
 	}
-	return relativeTo(file, root)
+	file = path.Clean(file)
+	if root == "" {
+		return file
+	}
+	root = path.Clean(root)
+	if file == root {
+		return ""
+	}
+	if relative, ok := strings.CutPrefix(file, strings.TrimSuffix(root, "/")+"/"); ok {
+		return relative
+	}
+	return file
+}
+
+// isDrivePath reports whether p starts with a Windows drive (C:\ or C:/).
+func isDrivePath(p string) bool {
+	if len(p) < 3 || p[1] != ':' || (p[2] != '\\' && p[2] != '/') {
+		return false
+	}
+	c := p[0] | 0x20
+	return c >= 'a' && c <= 'z'
+}
+
+// slashPath reads a path from a Windows session (windows) with forward
+// slashes and an upper-case drive letter; any other path is unchanged, since
+// a backslash is a legal file-name character there.
+func slashPath(p string, windows bool) string {
+	if !windows {
+		return p
+	}
+	p = strings.ReplaceAll(p, `\`, "/")
+	if isDrivePath(p) {
+		p = strings.ToUpper(p[:1]) + p[1:]
+	}
+	return p
 }
 
 // callToolName is the name a call is listed under: the tool's own name, or
-// for a call with none (Codex's local_shell_call) the type of its record.
+// for a call with none the type of its record. The filter drops Codex's
+// local_shell_call action, so such a call is listed as "local_shell_call".
 func callToolName(call NormalizedToolCall) string {
 	if call.Name != "" {
 		return call.Name
@@ -783,14 +823,14 @@ func callToolName(call NormalizedToolCall) string {
 }
 
 // sessionFilesTouched lists, in first-touched order, the distinct files the
-// editing calls among calls named (touchedFiles), keyed by touchedFileKey.
+// editing calls among calls named (touchedFiles), keyed by workspaceFile.
 // handoff lists these files and metadata publishes how many there are
 // (counts.files_touched), so the two always agree.
 func sessionFilesTouched(calls []NormalizedToolCall, root string) []string {
 	files := fileSet{}
 	for _, call := range calls {
 		for _, file := range touchedFiles(callToolName(call), call.Input, call.raw) {
-			files.add(touchedFileKey(file, root))
+			files.add(workspaceFile(file, root))
 		}
 	}
 	return files.list

@@ -1,0 +1,58 @@
+{
+  "composer": {
+    "_v": 18,
+    "composerId": "c0ffee00-0000-4000-8000-000000000005",
+    "createdAt": 1790000000000,
+    "fullConversationHeadersOnly": [
+      {"bubbleId": "b1", "type": 1, "createdAt": 1790000001000},
+      {"bubbleId": "b2", "type": 2, "createdAt": 1790000002000},
+      {"bubbleId": "b3", "type": 2, "createdAt": 1790000003000},
+      {"bubbleId": "b4", "type": 2, "createdAt": 1790000004000},
+      {"bubbleId": "b5", "type": 2, "createdAt": 1790000005000}
+    ]
+  },
+  "bubbles": [
+    {"id": "b1", "value": {
+      "_v": 3, "bubbleId": "b1", "type": 1,
+      "text": "Rename the widget's parts field.",
+      "createdAt": "2026-09-21T14:13:21Z"
+    }},
+    {"id": "b2", "value": {
+      "_v": 3, "bubbleId": "b2", "type": 2,
+      "createdAt": "2026-09-21T14:13:22Z",
+      "toolFormerData": {
+        "toolCallId": "call-1", "name": "ripgrep_raw_search", "status": "completed",
+        "params": "{\"pattern\":\"parts\",\"path\":\"internal/widget\"}",
+        "result": "{\"matches\":2}"
+      }
+    }},
+    {"id": "b3", "value": {
+      "_v": 3, "bubbleId": "b3", "type": 2,
+      "createdAt": "2026-09-21T14:13:23Z",
+      "toolFormerData": {
+        "toolCallId": "call-2", "name": "read_file_v2", "status": "completed",
+        "params": "{\"relativeWorkspacePath\":\"internal/widget/widget.go\"}",
+        "result": "{\"contents\":\"package widget\"}"
+      }
+    }},
+    {"id": "b4", "value": {
+      "_v": 3, "bubbleId": "b4", "type": 2,
+      "createdAt": "2026-09-21T14:13:24Z",
+      "toolFormerData": {
+        "toolCallId": "call-3", "name": "edit_file_v2", "status": "completed",
+        "params": "{\"relativeWorkspacePath\":\"internal/widget/widget.go\"}",
+        "result": "{\"diff\":\"applied\"}"
+      }
+    }},
+    {"id": "b5", "value": {
+      "_v": 3, "bubbleId": "b5", "type": 2,
+      "text": "Renamed it.",
+      "createdAt": "2026-09-21T14:13:25Z",
+      "toolFormerData": {
+        "toolCallId": "call-4", "name": "edit_file_v2", "status": "completed",
+        "params": "{\"relativeWorkspacePath\":\"./internal/widget/widget.go\"}",
+        "result": "{\"diff\":\"applied\"}"
+      }
+    }}
+  ]
+}

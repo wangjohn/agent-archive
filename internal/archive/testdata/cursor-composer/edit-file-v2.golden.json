@@ -1,0 +1,131 @@
+{
+  "format": "cursor-composer",
+  "records": [
+    {
+      "session_id": "c0ffee00-0000-4000-8000-000000000005",
+      "timestamp": "2026-09-21T14:13:20Z",
+      "type": "session"
+    },
+    {
+      "id": "b1",
+      "message": {
+        "content": [
+          {
+            "text": "Rename the widget's parts field.",
+            "type": "text"
+          }
+        ]
+      },
+      "role": "user",
+      "timestamp": "2026-09-21T14:13:21Z"
+    },
+    {
+      "id": "b2",
+      "message": {
+        "content": [
+          {
+            "id": "call-1",
+            "input": {
+              "path": "internal/widget",
+              "pattern": "parts"
+            },
+            "name": "ripgrep_raw_search",
+            "type": "tool_use"
+          },
+          {
+            "content": "{\"matches\":2}",
+            "status": "completed",
+            "tool_use_id": "call-1",
+            "type": "tool_result"
+          }
+        ]
+      },
+      "role": "assistant",
+      "timestamp": "2026-09-21T14:13:22Z"
+    },
+    {
+      "id": "b3",
+      "message": {
+        "content": [
+          {
+            "id": "call-2",
+            "input": {
+              "relativeWorkspacePath": "internal/widget/widget.go"
+            },
+            "name": "read_file_v2",
+            "type": "tool_use"
+          },
+          {
+            "content": "{\"contents\":\"package widget\"}",
+            "status": "completed",
+            "tool_use_id": "call-2",
+            "type": "tool_result"
+          }
+        ]
+      },
+      "role": "assistant",
+      "timestamp": "2026-09-21T14:13:23Z"
+    },
+    {
+      "id": "b4",
+      "message": {
+        "content": [
+          {
+            "id": "call-3",
+            "input": {
+              "relativeWorkspacePath": "internal/widget/widget.go"
+            },
+            "name": "edit_file_v2",
+            "type": "tool_use"
+          },
+          {
+            "content": "{\"diff\":\"applied\"}",
+            "status": "completed",
+            "tool_use_id": "call-3",
+            "type": "tool_result"
+          }
+        ]
+      },
+      "role": "assistant",
+      "timestamp": "2026-09-21T14:13:24Z"
+    },
+    {
+      "id": "b5",
+      "message": {
+        "content": [
+          {
+            "text": "Renamed it.",
+            "type": "text"
+          },
+          {
+            "id": "call-4",
+            "input": {
+              "relativeWorkspacePath": "./internal/widget/widget.go"
+            },
+            "name": "edit_file_v2",
+            "type": "tool_use"
+          },
+          {
+            "content": "{\"diff\":\"applied\"}",
+            "status": "completed",
+            "tool_use_id": "call-4",
+            "type": "tool_result"
+          }
+        ]
+      },
+      "role": "assistant",
+      "timestamp": "2026-09-21T14:13:25Z"
+    }
+  ],
+  "boundary": {
+    "retained_records": 6,
+    "retained_bytes": 1523
+  },
+  "session_ids": [
+    "c0ffee00-0000-4000-8000-000000000005"
+  ],
+  "first_event_at": "2026-09-21T14:13:20Z",
+  "native_start_at": "2026-09-21T14:13:20Z",
+  "native_end_at": "2026-09-21T14:13:25Z",
+  "native_start_complete": true
+}

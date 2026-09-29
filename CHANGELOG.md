@@ -41,6 +41,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `handoff` shows file paths the same way everywhere: resolved against the
+  workspace root and shown relative to it (`./a.go`, `../repo/a.go`, and
+  `/repo/a.go` are all `a.go`; Windows drive paths use forward slashes), and
+  its files-touched list no longer repeats one file under two spellings. It
+  also recognizes Cursor's `edit_file_v2`, `read_file_v2`,
+  `ripgrep_raw_search`, and `glob_file_search` tools, so edits in chats
+  imported from Cursor's database are listed and counted in
+  `counts.files_touched`.
+
 - Long-running CLI steps show a short TTY spinner (registering sessions,
   finishing upload, waiting for the collector, scanning, listing, loading a
   session, looking for past sessions, checking storage). Piped and CI output

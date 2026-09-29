@@ -44,18 +44,87 @@ func TestDeriveToolsUsedSortsBreaksTiesAndCaps(t *testing.T) {
 	}
 }
 
-// A call with no name of its own is listed under its record type, as
-// handoff lists it; one with neither a name nor arguments names no tool.
+// A Codex local_shell_call, filtered, has neither a name nor arguments (the
+// filter drops its action); it is counted under its record type. Its
+// completion echo is deduplicated, and named completions count by name.
 func TestDeriveToolsUsedNamelessCalls(t *testing.T) {
 	t.Parallel()
-	calls := []NormalizedToolCall{
-		{raw: map[string]any{"type": "local_shell_call"}, Input: map[string]any{"command": []any{"ls"}}},
-		{raw: map[string]any{"type": "extension"}},
-		{Name: "   "},
+	filtered, err := CodexAdapter{}.FilterJSONL(strings.NewReader(string(fixture(t, "codex-tool-events.jsonl"))))
+	if err != nil {
+		t.Fatal(err)
 	}
-	want := []ToolUsage{{"local_shell_call", 1}}
-	if got := deriveToolsUsed(calls); !reflect.DeepEqual(got, want) {
+	m := parserTestMetadata(t, parserTestBundle(t, "codex", CodexAdapter{}, filtered))
+	want := []ToolUsage{{"local_shell_call", 1}, {"search_docs", 1}, {"widget-extension", 1}}
+	if !reflect.DeepEqual(m.ToolsUsed, want) {
+		t.Fatalf("tools used = %v, want %v", m.ToolsUsed, want)
+	}
+	// A completion echo with no name, which no invocation reported, names
+	// no tool; neither does a blank name.
+	calls := []NormalizedToolCall{
+		{raw: map[string]any{"type": "commandExecution"}, Input: map[string]any{"command": "ls"}},
+		{raw: map[string]any{"type": "Extension"}},
+		{Name: "   ", raw: map[string]any{"type": "tool_use"}},
+		{raw: map[string]any{"type": "local_shell_call"}},
+	}
+	if got, want := deriveToolsUsed(calls), []ToolUsage{{"local_shell_call", 1}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("tools used = %v, want %v", got, want)
+	}
+}
+
+// workspaceFile shows and deduplicates a named file relative to the
+// workspace root, however the call spelled it.
+func TestWorkspaceFileNormalizesSpellings(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		file string
+		root string
+		want string
+	}{
+		{"/work/widget/a.go", "/work/widget", "a.go"},
+		{"a.go", "/work/widget", "a.go"},
+		{"./a.go", "/work/widget", "a.go"},
+		{"../widget/d.go", "/work/widget", "d.go"},
+		{"sub/../b.go", "/work/widget", "b.go"},
+		{"/work/other/e.go", "/work/widget", "/work/other/e.go"},
+		{"../other/e.go", "/work/widget", "/work/other/e.go"},
+		{"/work/widgetry/f.go", "/work/widget", "/work/widgetry/f.go"},
+		{".", "/work/widget", ""},
+		{"/work/widget", "/work/widget", ""},
+		{"", "/work/widget", ""},
+		{"./a.go", "", "a.go"},
+		{".", "", ""},
+		{"/x//y.go", "", "/x/y.go"},
+		{`C:\work\widget\a.go`, `C:\work\widget`, "a.go"},
+		{`c:\work\widget\sub\b.go`, `C:\work\widget`, "sub/b.go"},
+		{`sub\b.go`, `C:\work\widget`, "sub/b.go"},
+		{`D:\elsewhere\c.go`, `C:\work\widget`, "D:/elsewhere/c.go"},
+		{`C:\work\widget\a.go`, "", "C:/work/widget/a.go"},
+		{`odd\name.go`, "/work/widget", `odd\name.go`},
+	} {
+		if got := workspaceFile(tc.file, tc.root); got != tc.want {
+			t.Errorf("workspaceFile(%q, %q) = %q, want %q", tc.file, tc.root, got, tc.want)
+		}
+	}
+}
+
+// A subagent's records inlined in a parent transcript belong to the child's
+// session: they neither count nor set the parent's ended_at.
+func TestEndedAtIgnoresSidechainRecords(t *testing.T) {
+	t.Parallel()
+	bundle := claudeLines(t,
+		`{"type":"user","timestamp":"2026-09-24T10:00:00Z","message":{"role":"user","content":"delegate"}}`,
+		`{"type":"assistant","timestamp":"2026-09-24T10:01:00Z","message":{"id":"m1","role":"assistant","content":"started it"}}`,
+		`{"type":"assistant","isSidechain":true,"timestamp":"2026-09-24T12:00:00Z","message":{"id":"m2","role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"a.go"}}]}}`,
+	)
+	m, err := BuildMetadata(bundle, "machine", time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC), time.Date(2026, 9, 24, 13, 0, 0, 0, time.UTC), SourceReference{Key: "k", SHA256: strings.Repeat("a", 64)}, ParserInfo{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 9, 24, 10, 1, 0, 0, time.UTC); m.EndedAt == nil || !m.EndedAt.Equal(want) {
+		t.Fatalf("ended at = %v, want %v", m.EndedAt, want)
+	}
+	if m.ToolsUsed != nil || m.Counts.FilesTouched == nil || *m.Counts.FilesTouched != 0 {
+		t.Fatalf("tools used = %v, files touched = %v", m.ToolsUsed, m.Counts.FilesTouched)
 	}
 }
 
@@ -221,8 +290,55 @@ func TestCursorComposerMetadataHasEndTimeAndTools(t *testing.T) {
 	if m.EndedAt == nil || !m.EndedAt.Equal(filtered.NativeEndAt) {
 		t.Fatalf("ended at = %v, want %v", m.EndedAt, filtered.NativeEndAt)
 	}
-	if len(m.ToolsUsed) == 0 || m.Counts.FilesTouched == nil {
-		t.Fatalf("tools used = %v, files touched = %v", m.ToolsUsed, m.Counts.FilesTouched)
+	// The chat reads a file and runs a command: it edits nothing.
+	if want := []ToolUsage{{"read_file", 1}, {"run_terminal_command_v2", 1}}; !reflect.DeepEqual(m.ToolsUsed, want) {
+		t.Fatalf("tools used = %v, want %v", m.ToolsUsed, want)
+	}
+	if m.Counts.FilesTouched == nil || *m.Counts.FilesTouched != 0 {
+		t.Fatalf("files touched = %v, want 0", m.Counts.FilesTouched)
+	}
+}
+
+// Cursor's database chats edit with edit_file_v2, whose params name the file
+// as relativeWorkspacePath. Two edits of one file, spelled two ways, touch
+// one file, and handoff lists it and summarizes each call.
+func TestCursorComposerEditFileV2TouchesFiles(t *testing.T) {
+	t.Parallel()
+	filtered, err := (CursorAdapter{}).FilterComposer(loadComposerFixture(t, "edit-file-v2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle := parserTestBundle(t, "cursor", CursorAdapter{}, filtered)
+	m := parserTestMetadata(t, bundle)
+	if m.Counts.FilesTouched == nil || *m.Counts.FilesTouched != 1 {
+		t.Fatalf("files touched = %v, want 1", m.Counts.FilesTouched)
+	}
+	if want := []ToolUsage{{"edit_file_v2", 2}, {"read_file_v2", 1}, {"ripgrep_raw_search", 1}}; !reflect.DeepEqual(m.ToolsUsed, want) {
+		t.Fatalf("tools used = %v, want %v", m.ToolsUsed, want)
+	}
+	handoff, err := BuildHandoff(bundle, &m, HandoffOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"internal/widget/widget.go"}; !reflect.DeepEqual(handoff.FilesTouched, want) {
+		t.Fatalf("handoff files = %v, want %v", handoff.FilesTouched, want)
+	}
+	var summaries []string
+	for _, exchange := range handoff.Exchanges {
+		for _, step := range exchange.Steps {
+			if step.Tool != nil {
+				summaries = append(summaries, step.Tool.Name+": "+step.Tool.Summary)
+			}
+		}
+	}
+	want := []string{
+		"ripgrep_raw_search: parts in internal/widget",
+		"read_file_v2: internal/widget/widget.go",
+		"edit_file_v2: internal/widget/widget.go",
+		"edit_file_v2: internal/widget/widget.go",
+	}
+	if !reflect.DeepEqual(summaries, want) {
+		t.Fatalf("summaries = %q, want %q", summaries, want)
 	}
 }
 
