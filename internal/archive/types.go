@@ -514,6 +514,12 @@ type Counts struct {
 	// known only for Claude Code bundles from filter 5 on.
 	Compactions      *int `json:"compactions,omitempty"`
 	ExplicitFeedback *int `json:"explicit_feedback,omitempty"`
+	// FilesTouched counts the distinct files the session's editing calls
+	// named: the same files handoff lists (see sessionFilesTouched). A path
+	// under the workspace root and the same path relative to it count once.
+	// It is known wherever tool_calls is, from parser 0.13.0 on. Only the
+	// count is published, never a path.
+	FilesTouched     *int `json:"files_touched,omitempty"`
 	InputTokens      *int `json:"input_tokens,omitempty"`
 	OutputTokens     *int `json:"output_tokens,omitempty"`
 	CacheReadTokens  *int `json:"cache_read_tokens,omitempty"`
@@ -547,6 +553,13 @@ type SkillUse struct {
 	Evidence  SkillUseEvidence `json:"evidence"`
 }
 
+// ToolUsage is one tool name and how many calls the session made to it. See
+// Metadata.ToolsUsed.
+type ToolUsage struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
 // Metadata is the replaceable, source-first reader index. It contains no
 // tool payloads and no full transcript. Title is an optional short preview of
 // the first filtered human prompt, derived for browsing.
@@ -562,8 +575,12 @@ type Metadata struct {
 	// ProjectName is the basename of the session's project root at publish
 	// time, so list can label the project without local config. Omitted when
 	// unknown.
-	ProjectName         string                   `json:"project_name,omitempty"`
-	StartedAt           time.Time                `json:"started_at"`
+	ProjectName string    `json:"project_name,omitempty"`
+	StartedAt   time.Time `json:"started_at"`
+	// EndedAt is the latest timestamp any retained record of the session
+	// carries, never earlier than StartedAt. Omitted when no record carries
+	// a timestamp (a Cursor transcript) or the source could not be parsed.
+	EndedAt             *time.Time               `json:"ended_at,omitempty"`
 	CapturedAt          time.Time                `json:"captured_at"`
 	MetadataDerivedAt   time.Time                `json:"metadata_derived_at"`
 	Harness             Harness                  `json:"harness"`
@@ -578,10 +595,16 @@ type Metadata struct {
 	SkillsUsed          []SkillUse               `json:"skills_used,omitempty"`
 	SkillDetection      SkillDetection           `json:"skill_detection"`
 	Counts              Counts                   `json:"counts"`
-	CaptureGaps         []CaptureGap             `json:"capture_gaps,omitempty"`
-	SourceBundle        SourceReference          `json:"source_bundle"`
-	ParentSessionID     string                   `json:"parent_session_id,omitempty"`
-	LinkedSessions      []LinkedSessionReference `json:"linked_sessions,omitempty"`
+	// ToolsUsed is the session's most-called tools by call count (descending,
+	// then name ascending), at most MaxToolsUsed of them. Names are the
+	// harness's own, MCP tools included, redacted and length-bounded (see
+	// metadataToolName). Omitted when no named tool call was observed or the
+	// counts are unknown; counts.tool_calls tells the two apart.
+	ToolsUsed       []ToolUsage              `json:"tools_used,omitempty"`
+	CaptureGaps     []CaptureGap             `json:"capture_gaps,omitempty"`
+	SourceBundle    SourceReference          `json:"source_bundle"`
+	ParentSessionID string                   `json:"parent_session_id,omitempty"`
+	LinkedSessions  []LinkedSessionReference `json:"linked_sessions,omitempty"`
 	// Origin, ImportedAt, and StartedAtSource describe a session backfill
 	// imported. All three are omitted for hook-captured sessions, so their
 	// metadata is unchanged. See ApplyRegistrationProvenance.
