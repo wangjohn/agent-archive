@@ -318,6 +318,7 @@ func intentPayload(intent admissionIntent) map[string]any {
 
 func replayIntentKinds(intent admissionIntent, payload map[string]any) (start, followup bool) {
 	start = startsCapture(classifyHookEvent(intent.Harness, intent.Event), intent.Harness)
+	//lint:ignore LV1001 intent.Event is the hook_event_name Cursor sends; only its response and stop events carry a transcript path follow-up
 	followup = intent.Harness == "cursor" &&
 		(intent.Event == "afterAgentResponse" || intent.Event == "stop") &&
 		cursorTranscriptPath(payload, intent.NativeSessionID) != ""
