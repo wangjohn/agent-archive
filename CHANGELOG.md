@@ -58,6 +58,12 @@ to schema version 4, which reports whether the total match count is known.
 - `status` shows each problem the last pass recorded on its own ✗ row, and
   a storage provider's error message containing `; ` is no longer split in
   two or shown as the wrong cause.
+- A sync's problems no longer hide each other in `status`: a read-back or
+  retention failure after collection is shown beside the problems the pass
+  already recorded (such as a session over the size limit, or retention
+  held by the clock) instead of replacing them.
+- `status --verbose` prints each of the last pass's problems on its own
+  `Last error:` line.
 
 ## [0.1.1] - 2026-09-28
 

@@ -86,8 +86,9 @@ now and paths under your home folder start with `~`.
   section with what is behind each row: the state codes, exact times (UTC),
   full paths, each app's installed version and support, each project's
   verification state, read-back evidence and retries, the bucket privacy
-  check's reason code and guidance, and the last error as the collector
-  recorded it. Include it when you report a problem.
+  check's reason code and guidance, and each problem of the last pass as
+  the collector recorded it, one per line. Include it when you report a
+  problem.
 - **`status --json`** is the same evidence as a versioned document for
   scripts ([JSON output](../reference/json-output.md#status---json)); it
   separates configured, hook-observed, captured, published, and
