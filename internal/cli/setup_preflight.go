@@ -109,12 +109,26 @@ type preflightScope struct {
 	credentialRef string
 }
 
+// preflightDependencies is the part of the command environment needed to
+// check whether setup can apply. Env supplies these methods in production;
+// a preflight test can provide only these capabilities.
+type preflightDependencies interface {
+	hookFiles(userHome string) hooks.Files
+	installation(home, userHome string) installation
+	jobState(plist string) string
+	keychain() (credentials.CredentialStore, error)
+}
+
+type keychainOpener interface {
+	keychain() (credentials.CredentialStore, error)
+}
+
 // preflight checks what applying the setup needs, before setup asks
 // anything: that the hook files of scope's apps (in allHarnesses order)
 // are ones setup can install into, that launchctl answers about the
 // background job, and, when scope.r2 is set, that the Keychain opens for
 // an R2 key.
-func preflight(env Env, home, userHome string, scope preflightScope) preflightChecks {
+func preflight(env preflightDependencies, home, userHome string, scope preflightScope) preflightChecks {
 	checks := hookFileChecks(scope.apps, env.hookFiles(userHome), userHome, func(app string) string {
 		fix := "Setup edits only plain JSON. Fix the file, then run agent-archive setup again."
 		if !containsString(scope.kept, app) {
@@ -188,7 +202,7 @@ const keychainProbeRef = "agent-archive-setup-check"
 // reference) without showing UI is not refused as locked or unavailable.
 // A missing or unreadable item is no problem here: setup asks for the key
 // again.
-func keychainCheck(env Env, ref string) preflightCheck {
+func keychainCheck(env keychainOpener, ref string) preflightCheck {
 	kc, err := env.keychain()
 	if err == nil {
 		if ref == "" {
