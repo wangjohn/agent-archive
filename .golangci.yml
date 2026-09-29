@@ -203,6 +203,3 @@ linters:
       - path: internal/cli/handoff\.go
         text: runHandoffCommand
         linters: [funlen, gocyclo]
-      - path: internal/backfill/render\.go
-        text: RenderText
-        linters: [gocyclo]

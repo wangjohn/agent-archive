@@ -3,6 +3,7 @@ package backfill
 import (
 	"bytes"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,5 +46,65 @@ func TestSkipReasonsGolden(t *testing.T) {
 		if skipLabels[reason] == "" {
 			t.Errorf("%s has no label", reason)
 		}
+	}
+}
+
+// These plans exercise the text-only decisions around empty results, an
+// included project, and mixed repository/folder rows with missing hooks.
+func TestRenderTextPresentationGolden(t *testing.T) {
+	t.Parallel()
+	start := time.Date(2026, 9, 20, 23, 0, 0, 0, time.UTC)
+	base := Plan{GeneratedAt: fixedNow, Home: "/Users/p", Destination: Destination{Provider: "s3", Bucket: "bucket"}, CursorDatabaseChecked: true}
+	cases := []struct {
+		name string
+		plan Plan
+	}{
+		{"empty", base},
+		{"included, retention off", func() Plan {
+			p := base
+			p.Harnesses = []string{"claude"}
+			p.Candidates = []Candidate{{Harness: "claude", ProjectRoot: "/Users/p/repo", ProjectKind: ProjectKindRepository, ProjectIncluded: true, ProjectExists: true, StartedAt: start, Bytes: 1024}}
+			return p
+		}()},
+		{"mixed, filtered, retention", func() Plan {
+			p := base
+			p.Filters.Since = "2026-09-20"
+			p.Harnesses = []string{"claude"}
+			p.RetentionDays = 30
+			p.Candidates = []Candidate{
+				{Harness: "claude", ProjectRoot: "/Users/p/日本語-project", ProjectKind: ProjectKindRepository, ProjectExists: true, StartedAt: start, Bytes: 2048, Subagents: []Subagent{{Bytes: 512}}},
+				{Harness: "codex", ProjectRoot: "/Users/p/notes", ProjectKind: ProjectKindDirectory, ProjectExists: true, StartedAt: start.Add(48 * time.Hour), Bytes: 4096},
+			}
+			return p
+		}()},
+	}
+	var out bytes.Buffer
+	for i, tc := range cases {
+		out.WriteString("--- " + tc.name + " ---\n")
+		RenderText(&out, tc.plan)
+		if i < len(cases)-1 {
+			out.WriteByte('\n')
+		}
+	}
+	golden.Check(t, filepath.Join("testdata", "render-presentation.txt"), out.Bytes())
+}
+
+func TestRenderTextPresentationDecisions(t *testing.T) {
+	t.Parallel()
+	projects := []ProjectSummary{{Included: true}, {Included: false}}
+	if got := addedProjectMessage(projects, nil); got != "1 project is added, and new sessions in it are captured." {
+		t.Errorf("singular project message: %q", got)
+	}
+	if got := addedProjectMessage(projects, []string{"cursor", "claude"}); !strings.Contains(got, "new Claude Code and Cursor sessions") {
+		t.Errorf("hook order: %q", got)
+	}
+	if got := addedProjectMessage(projects[:1], []string{"claude"}); got != "" {
+		t.Errorf("included-only project message: %q", got)
+	}
+	if got := missingSetupMessage([]string{"codex", "cursor"}); got != "New Codex and Cursor sessions need those apps added in setup." {
+		t.Errorf("multiple missing hooks: %q", got)
+	}
+	if got := missingSetupMessage(nil); got != "" {
+		t.Errorf("no missing hooks: %q", got)
 	}
 }

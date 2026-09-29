@@ -196,13 +196,23 @@ func RenderText(w io.Writer, p Plan) {
 		renderSkipped(w, p)
 		return
 	}
+	renderPlanIntro(w, p)
+	renderProjectTable(w, p, projects)
+	renderPlanTotals(w, p, projects)
+	renderSkipped(w, p)
+	renderPlanNextSteps(w, p, projects)
+}
+
+func renderPlanIntro(w io.Writer, p Plan) {
 	if p.Filters.Active() {
 		terminal.Printf(w, "Backfill imports sessions matching %s\ninto %s. Nothing has been uploaded yet.\n", p.filterFlags(), p.destination())
 	} else {
 		terminal.Printf(w, "Backfill imports every session found on this Mac into\n%s. Nothing has been uploaded yet.\n", p.destination())
 	}
 	terminal.Println(w)
+}
 
+func renderProjectTable(w io.Writer, p Plan, projects []ProjectSummary) {
 	var repos, others []ProjectSummary
 	for _, s := range projects {
 		if s.Kind == ProjectKindRepository {
@@ -229,79 +239,59 @@ func RenderText(w io.Writer, p Plan) {
 		}
 	}
 	terminal.Println(w)
+}
 
-	sessions, subagents := 0, 0
-	var bytes int64
-	var first, last time.Time
-	for _, s := range projects {
-		sessions += s.Total()
-		subagents += s.Subagents
-		bytes += s.Bytes
-		if !s.FirstStart.IsZero() && (first.IsZero() || s.FirstStart.Before(first)) {
-			first = s.FirstStart
-		}
-		if s.LastStart.After(last) {
-			last = s.LastStart
-		}
+func renderPlanTotals(w io.Writer, p Plan, projects []ProjectSummary) {
+	totals := summarizeProjects(projects)
+	total := "Total: " + CountNoun(totals.sessions, "session")
+	if totals.subagents > 0 {
+		total += fmt.Sprintf(" (plus %s)", CountNoun(totals.subagents, "subagent transcript"))
 	}
-	total := "Total: " + CountNoun(sessions, "session")
-	if subagents > 0 {
-		total += fmt.Sprintf(" (plus %s)", CountNoun(subagents, "subagent transcript"))
-	}
-	terminal.Printf(w, "%s, %s,\n", total, FormatSize(bytes))
+	terminal.Printf(w, "%s, %s,\n", total, FormatSize(totals.bytes))
 	loc := p.GeneratedAt.Location()
-	firstDay, lastDay := first.In(loc).Format(dateLayout), last.In(loc).Format(dateLayout)
+	firstDay, lastDay := totals.first.In(loc).Format(dateLayout), totals.last.In(loc).Format(dateLayout)
 	if firstDay == lastDay {
 		terminal.Printf(w, "       started %s.\n", firstDay)
 	} else {
 		terminal.Printf(w, "       started %s to %s.\n", firstDay, lastDay)
 	}
+}
 
-	renderSkipped(w, p)
+// planTotals is derived solely from the project rows shown above it.
+type planTotals struct {
+	sessions  int
+	subagents int
+	bytes     int64
+	first     time.Time
+	last      time.Time
+}
+
+func summarizeProjects(projects []ProjectSummary) planTotals {
+	var totals planTotals
+	for _, s := range projects {
+		totals.sessions += s.Total()
+		totals.subagents += s.Subagents
+		totals.bytes += s.Bytes
+		if !s.FirstStart.IsZero() && (totals.first.IsZero() || s.FirstStart.Before(totals.first)) {
+			totals.first = s.FirstStart
+		}
+		if s.LastStart.After(totals.last) {
+			totals.last = s.LastStart
+		}
+	}
+	return totals
+}
+
+func renderPlanNextSteps(w io.Writer, p Plan, projects []ProjectSummary) {
 	terminal.Println(w)
 	terminal.Println(w, "If you continue:")
-	added := 0
-	for _, s := range projects {
-		if !s.Included {
-			added++
+	if project := addedProjectMessage(projects, p.Harnesses); project != "" {
+		terminal.Printf(w, "  • %s\n", project)
+		if setup := missingSetupMessage(p.AppsWithoutHooks()); setup != "" {
+			terminal.Printf(w, "    %s\n", setup)
 		}
-	}
-	var hooked []string
-	for _, h := range harnessOrder {
-		if slices.Contains(p.Harnesses, h) {
-			hooked = append(hooked, harnessNames[h])
-		}
-	}
-	missing := p.AppsWithoutHooks()
-	var missingNames []string
-	for _, h := range missing {
-		missingNames = append(missingNames, harnessNames[h])
-	}
-	needSetup := ""
-	if len(missing) == 1 {
-		needSetup = fmt.Sprintf("New %s sessions need that app added in setup.", missingNames[0])
-	} else if len(missing) > 1 {
-		needSetup = fmt.Sprintf("New %s sessions need those apps added in setup.", joinAnd(missingNames))
-	}
-	switch {
-	case added > 0:
-		verb := "projects are"
-		if added == 1 {
-			verb = "project is"
-		}
-		captured := "new sessions in them are captured."
-		if added == 1 {
-			captured = "new sessions in it are captured."
-		}
-		if len(hooked) > 0 {
-			captured = strings.Replace(captured, "new sessions", "new "+joinAnd(hooked)+" sessions", 1)
-		}
-		terminal.Printf(w, "  • %d %s added, and %s\n", added, verb, captured)
-		if needSetup != "" {
-			terminal.Printf(w, "    %s\n", needSetup)
-		}
-	case needSetup != "":
-		terminal.Printf(w, "  • %s\n", needSetup)
+	} else if setup := missingSetupMessage(p.AppsWithoutHooks()); setup != "" {
+		terminal.Printf(w, "  • %s\n", setup)
 	}
 	if expires, ok := p.ExpiresOn(); ok {
 		terminal.Printf(w, "  • Retention is %d days, so these sessions are deleted on %s.\n    Choose `edit` to keep them longer.\n", p.RetentionDays, expires)
@@ -309,6 +299,50 @@ func RenderText(w io.Writer, p Plan) {
 		terminal.Println(w, "  • Retention is off, so these sessions are kept until you delete them.")
 	}
 	terminal.Println(w, "  • Undo any time with `agent-archive backfill undo`.")
+}
+
+func addedProjectMessage(projects []ProjectSummary, harnesses []string) string {
+	added := 0
+	for _, s := range projects {
+		if !s.Included {
+			added++
+		}
+	}
+	if added == 0 {
+		return ""
+	}
+	var hooked []string
+	for _, h := range harnessOrder {
+		if slices.Contains(harnesses, h) {
+			hooked = append(hooked, harnessNames[h])
+		}
+	}
+	verb := "projects are"
+	if added == 1 {
+		verb = "project is"
+	}
+	captured := "new sessions in them are captured."
+	if added == 1 {
+		captured = "new sessions in it are captured."
+	}
+	if len(hooked) > 0 {
+		captured = strings.Replace(captured, "new sessions", "new "+joinAnd(hooked)+" sessions", 1)
+	}
+	return fmt.Sprintf("%d %s added, and %s", added, verb, captured)
+}
+
+func missingSetupMessage(missing []string) string {
+	var missingNames []string
+	for _, h := range missing {
+		missingNames = append(missingNames, harnessNames[h])
+	}
+	if len(missing) == 1 {
+		return fmt.Sprintf("New %s sessions need that app added in setup.", missingNames[0])
+	}
+	if len(missing) > 1 {
+		return fmt.Sprintf("New %s sessions need those apps added in setup.", joinAnd(missingNames))
+	}
+	return ""
 }
 
 func (p Plan) renderRow(w io.Writer, width int, s ProjectSummary) {
