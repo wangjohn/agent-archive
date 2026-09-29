@@ -215,9 +215,6 @@ linters:
       - path: internal/backfill/plan\.go
         text: BuildPlan
         linters: [funlen, gocyclo]
-      - path: internal/backfill/cursordb\.go
-        text: planCursorDatabase
-        linters: [gocyclo]
       - path: internal/backfill/undo\.go
         text: PlanUndo
         linters: [gocyclo]

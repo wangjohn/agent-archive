@@ -11,6 +11,39 @@ import (
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
+// The listing gate avoids whole-chat reads for rows the archive or listing
+// already rules out. IncludeRemoved only reopens the two removed states.
+func TestCursorDatabaseDecisionReadGate(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 9, 20, 18, 0, 0, 0, time.UTC)
+	chat := CursorDatabaseChat{ID: "x", KeyID: "x", CreatedAt: at}
+	for _, tc := range []struct {
+		name           string
+		chat           CursorDatabaseChat
+		reason         SkipReason
+		includeRemoved bool
+		since          time.Time
+		wantRead       bool
+		wantState      SkipReason
+	}{
+		{name: "eligible", chat: chat, wantRead: true},
+		{name: "archived", chat: chat, reason: SkipAlreadyArchived, wantState: SkipAlreadyArchived},
+		{name: "removed", chat: chat, reason: SkipRemovedByUndo, wantState: SkipRemovedByUndo},
+		{name: "include removed", chat: chat, reason: SkipRemovedByUndo, includeRemoved: true, wantRead: true},
+		{name: "before since", chat: chat, since: at.Add(time.Hour)},
+		{name: "malformed", chat: CursorDatabaseChat{ID: "x", KeyID: "x", CreatedAt: at, Malformed: true}},
+		{name: "mismatched key", chat: CursorDatabaseChat{ID: "x", KeyID: "stray", CreatedAt: at}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := decideCursorDatabaseChat(tc.chat, tc.reason, tc.includeRemoved, tc.since, time.Time{})
+			if got.read != tc.wantRead || got.state != tc.wantState {
+				t.Fatalf("decision %+v, want read %v and state %q", got, tc.wantRead, tc.wantState)
+			}
+		})
+	}
+}
+
 // One chat whose composerData the reader can't decode (a header without a
 // message ID) is that chat's unsafe_format; the database's other chats are
 // still imported, and the database counts as checked.
