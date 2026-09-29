@@ -267,6 +267,25 @@ func TestRemoveEmptyDirsStopsAtOneInUse(t *testing.T) {
 	}
 }
 
+// A linked directory (a dotfile manager's ~/.claude/skills, or a handoff
+// skill of the person's own linked in) is never unlinked, even when what
+// it names is empty: os.Remove would remove the link itself.
+func TestRemoveEmptyDirsKeepsLinks(t *testing.T) {
+	t.Parallel()
+	home, dotfiles := t.TempDir(), t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(dotfiles, "skills", "handoff"), 0700))
+	must(t, os.MkdirAll(filepath.Join(home, ".claude"), 0700))
+	must(t, os.Symlink(filepath.Join(dotfiles, "skills"), filepath.Join(home, ".claude", "skills")))
+	must(t, os.MkdirAll(filepath.Join(home, ".agents", "skills"), 0700))
+	must(t, os.Symlink(t.TempDir(), filepath.Join(home, ".agents", "skills", "handoff")))
+	RemoveEmptyDirs(home, claudeDir(home))
+	for _, link := range []string{filepath.Join(home, ".claude", "skills"), filepath.Join(home, ".agents", "skills", "handoff")} {
+		if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Errorf("%s unlinked: %v", link, err)
+		}
+	}
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

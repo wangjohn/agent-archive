@@ -200,7 +200,8 @@ func Installed(userHome, claudeDir string) []string {
 // deepest first, while they are empty: what writing a file there created,
 // once the file is gone. It stops at the home folder, and at Claude Code's
 // configuration directory claudeDir; a directory holding anything is kept,
-// with every one above it.
+// with every one above it. A link is never removed: os.Remove would unlink
+// it whatever it names.
 func RemoveEmptyDirs(userHome, claudeDir string) {
 	for _, f := range Files(userHome, claudeDir, allHarnesses, "") {
 		stop := userHome
@@ -208,7 +209,7 @@ func RemoveEmptyDirs(userHome, claudeDir string) {
 			stop = claudeDir
 		}
 		for dir := filepath.Dir(f.Path); dir != filepath.Clean(stop) && local.PathWithin(dir, stop); dir = filepath.Dir(dir) {
-			if os.Remove(dir) != nil {
+			if info, err := os.Lstat(dir); err != nil || !info.IsDir() || os.Remove(dir) != nil {
 				break
 			}
 		}
