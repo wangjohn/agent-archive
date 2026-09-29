@@ -298,20 +298,21 @@ func addTurnModel(models map[string]*ModelSummary, turn NormalizedTurn) {
 
 func structuredCounts(bundle SourceBundle, view NormalizedView, prompts, messages, shellCommands int) Counts {
 	toolCalls, toolResults := len(view.ToolCalls), len(view.ToolResults)
-	counts := Counts{
-		Turns: &prompts, Messages: &messages, ToolCalls: &toolCalls, ToolResults: &toolResults,
-		UserShellCommands: &shellCommands, InputTokens: view.Tokens.Input, OutputTokens: view.Tokens.Output,
-		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
-	}
+	var compactions *int
 	if compactionsObservable(bundle) {
 		// Count boundaries; use summaries only when no boundary was retained.
-		compactions := view.CompactBoundaries
-		if compactions == 0 {
-			compactions = view.CompactSummaries
+		count := view.CompactBoundaries
+		if count == 0 {
+			count = view.CompactSummaries
 		}
-		counts.Compactions = &compactions
+		compactions = &count
 	}
-	return counts
+	return Counts{
+		Turns: &prompts, Messages: &messages, ToolCalls: &toolCalls, ToolResults: &toolResults,
+		UserShellCommands: &shellCommands, Compactions: compactions,
+		InputTokens: view.Tokens.Input, OutputTokens: view.Tokens.Output,
+		CacheReadTokens: view.Tokens.CacheRead, CacheWriteTokens: view.Tokens.CacheWrite,
+	}
 }
 
 // sessionTitleLimit is the maximum rune length of Metadata.Title.
