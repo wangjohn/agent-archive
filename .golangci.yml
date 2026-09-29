@@ -203,7 +203,7 @@ linters:
       - path: internal/cli/collect\.go
         text: runPass
         linters: [funlen, gocyclo]
-      - path: internal/cli/handoff\\.go
+      - path: internal/cli/handoff\.go
         text: runHandoffCommand
         linters: [funlen, gocyclo]
       - path: internal/cli/backfill_undo\.go
