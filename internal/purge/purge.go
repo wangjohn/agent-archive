@@ -25,6 +25,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/storage"
 )
 
+// Lifetime is the maximum time a saved purge plan remains valid.
 const Lifetime = 5 * time.Minute
 
 const maxSourceRead = 32 << 20
@@ -33,12 +34,15 @@ const maxSourceRead = 32 << 20
 type Mode string
 
 const (
+	// ModeUnreferenced selects all source objects not referenced by current metadata.
 	ModeUnreferenced Mode = "unreferenced"
-	ModeOldFilter    Mode = "old-filter"
+	// ModeOldFilter selects unreferenced sources with an older filter version.
+	ModeOldFilter Mode = "old-filter"
 )
 
 var sourceName = regexp.MustCompile(`^source\.[0-9a-f]{64}\.jsonl\.gz$`)
 
+// Candidate describes an unreferenced source proposed for deletion.
 type Candidate struct {
 	Key           string `json:"key"`
 	Size          int64  `json:"size"`
@@ -46,12 +50,14 @@ type Candidate struct {
 	FilterVersion string `json:"filter_version,omitempty"`
 }
 
+// CurrentOldSession describes a live session using an older filter version.
 type CurrentOldSession struct {
 	MetadataKey   string `json:"metadata_key"`
 	SourceKey     string `json:"source_key"`
 	FilterVersion string `json:"filter_version"`
 }
 
+// Plan records the candidate inventory and destination for a short-lived purge.
 type Plan struct {
 	Version            int                 `json:"version"`
 	DestinationID      string              `json:"destination_id"`
@@ -222,6 +228,7 @@ func digest(plan Plan) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// Validate checks the plan destination, expiry, and content digest.
 func (p Plan) Validate(destinationID string, now time.Time) error {
 	if p.Version != 1 || p.DestinationID != destinationID {
 		return errors.New("purge plan destination changed or version unsupported")
@@ -239,6 +246,7 @@ func (p Plan) Validate(destinationID string, now time.Time) error {
 	return nil
 }
 
+// Report records completed and remaining deletions for a resumable purge.
 type Report struct {
 	PlanDigest string   `json:"plan_digest"`
 	Deleted    []string `json:"deleted"`
