@@ -151,7 +151,7 @@ func runListCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if browseInteractive(env, stdin, stdout) {
 		return runSessionBrowser(env, newPrompter(stdin, stdout), stdout, stderr, store, shown, totalMatched, truncated, format, opts.noPager, "list")
 	}
-	if err := withPager(stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+	if err := withPager(context.Background(), stdout, stderr, env, opts.noPager, func(w io.Writer) error {
 		return printListTable(w, shown, totalMatched, truncated, format)
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: list: %v\n", err)
@@ -479,17 +479,35 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		return 0
 	}
 
+	return printSessionTranscript(ctx, store, env, stdout, stderr, key, sessionID, stopShow, sessionTranscriptOptions{
+		summary: summary, full: *full, json: *jsonOut, normalized: *normalized, noPager: *noPager,
+	})
+}
+
+// sessionTranscriptOptions are the show flags that shape a transcript.
+type sessionTranscriptOptions struct {
+	summary    summaryOptions
+	full       bool
+	json       bool
+	normalized bool
+	noPager    bool
+}
+
+// printSessionTranscript downloads and verifies the session's source bundle
+// and prints its transcript: readable and paged, or with --json the sidecar
+// and the normalized view. stopShow ends the loading activity line.
+func printSessionTranscript(ctx context.Context, store storage.ObjectStore, env showCommandDependencies, stdout, stderr io.Writer, key, sessionID string, stopShow func(), opts sessionTranscriptOptions) int {
 	view, bundle, err := loadVerifiedSession(ctx, store, key)
 	if err != nil {
 		stopShow()
 		flag := "--transcript"
-		if *normalized {
+		if opts.normalized {
 			flag = "--normalized"
 		}
 		terminal.Printf(stderr, "agent-archive: show: %s\n", describeBundleError(err, sessionID, flag))
 		return 1
 	}
-	if *jsonOut {
+	if opts.json {
 		normalizedView, err := archive.ParseNormalized(bundle)
 		stopShow()
 		if err != nil {
@@ -507,8 +525,8 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 		terminal.Printf(stderr, "agent-archive: show: normalized view unavailable: %v\n", err)
 		return 1
 	}
-	if err := withPager(stdout, stderr, env, *noPager, func(w io.Writer) error {
-		renderTranscript(w, view, t, transcriptOptions{summaryOptions: summary, Full: *full})
+	if err := withPager(ctx, stdout, stderr, env, opts.noPager, func(w io.Writer) error {
+		renderTranscript(w, view, t, transcriptOptions{summaryOptions: opts.summary, Full: opts.full})
 		return nil
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: show: %v\n", err)

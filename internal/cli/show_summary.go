@@ -274,8 +274,9 @@ func formatSpan(d time.Duration) string {
 // transcript one adds nothing.
 func summaryModels(models []archive.ModelSummary) []string {
 	type entry struct {
-		name, reasoning string
-		turns           *int
+		name      string
+		reasoning string
+		turns     *int
 	}
 	var entries []*entry
 	byKey := map[string]*entry{}

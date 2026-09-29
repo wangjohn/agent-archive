@@ -103,14 +103,14 @@ func (b *sessionBrowser) details(view sessionView, row listRow) (browseAction, e
 	for {
 		b.screen.clear()
 		renderSessionSummary(b.stdout, view, b.summaryOptions(false))
-		action, err := b.detailsPrompt(view, row)
+		action, err := b.detailsPrompt(row)
 		if err != nil || action != browseRedraw {
 			return action, err
 		}
 	}
 }
 
-func (b *sessionBrowser) detailsPrompt(view sessionView, row listRow) (browseAction, error) {
+func (b *sessionBrowser) detailsPrompt(row listRow) (browseAction, error) {
 	for {
 		terminal.Println(b.stdout)
 		answer, err := b.prompt.line(b.prompt.promptText("[t] transcript  [Enter/b] back to list  [q] quit", false, nil, -1, ": "))
@@ -123,7 +123,7 @@ func (b *sessionBrowser) detailsPrompt(view sessionView, row listRow) (browseAct
 		case "q", "quit":
 			return browseQuit, nil
 		case "t", "transcript":
-			action, err := b.transcript(view, row)
+			action, err := b.transcript(row)
 			if err != nil || action != browseStay {
 				return action, err
 			}
@@ -136,7 +136,7 @@ func (b *sessionBrowser) detailsPrompt(view sessionView, row listRow) (browseAct
 // transcript downloads and verifies the session's bundle and shows its
 // transcript through the pager. A bundle that cannot be read is reported
 // under the details, which stay open.
-func (b *sessionBrowser) transcript(view sessionView, row listRow) (browseAction, error) {
+func (b *sessionBrowser) transcript(row listRow) (browseAction, error) {
 	ctx := context.Background()
 	stop := startActivity(b.stdout, "Loading transcript…")
 	text, err := b.renderTranscript(ctx, row)
