@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentcommands"
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/backfill"
 	"github.com/wangjohn/agent-archive/internal/capture"
@@ -635,12 +637,29 @@ func finishSetup(p *prompter, errOut io.Writer, home string, cfg config.Config, 
 		terminal.Printf(errOut, "Could not prune pending session starts after setup: %v\n", e)
 	}
 	terminal.Println(p.out, "\nConfiguration saved.")
+	printAgentCommands(p, cfg, finish.userHome, claudeConfigDir(finish.env.installedHookFiles(finish.userHome, cfg)))
 	// A paused Mac imports nothing (backfill refuses too); resume says so.
 	if finish.offerImport && !paused {
 		offerSetupImport(p, errOut, home, finish.userHome, finish.env)
 	}
 	printNextSteps(p, cfg, finish.userHome, paused, !finish.offerImport)
 	return nil
+}
+
+// printAgentCommands says in one line where setup installed the /handoff
+// command, and names each path it left alone because it is not setup's.
+func printAgentCommands(p *prompter, cfg config.Config, userHome, claudeDir string) {
+	var installed []string
+	for _, f := range agentcommands.Files(userHome, claudeDir, cfg.Harnesses, cfg.InstalledExecutable) {
+		if current, err := os.ReadFile(f.Path); err == nil && bytes.Equal(current, f.Content) {
+			installed = append(installed, displayPath(f.Path, userHome))
+			continue
+		}
+		terminal.Printf(p.out, "Left %s as it is: it lacks agent-archive's marker line, so /handoff is not installed there.\n", displayPath(f.Path, userHome))
+	}
+	if len(installed) > 0 {
+		terminal.Printf(p.out, "Installed /handoff, which continues a session in another agent: %s\n", strings.Join(installed, ", "))
+	}
 }
 
 // verifyStorage checks that setup can write, read, and delete in the

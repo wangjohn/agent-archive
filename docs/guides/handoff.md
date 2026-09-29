@@ -44,6 +44,19 @@ current, complete **filtered** local record. Neither command exposes
 unfiltered raw transcript data. The handoff uses the usual 120,000-byte
 default budget; `--max-bytes 0` includes all filtered content.
 
+## From inside an agent: /handoff
+
+Setup installs a `handoff` skill for the apps it sets up:
+`~/.claude/skills/handoff/SKILL.md` (in `$CLAUDE_CONFIG_DIR` when set) for
+Claude Code, and `~/.agents/skills/handoff/SKILL.md` for Codex and Cursor.
+In Claude Code, `/handoff codex` runs `agent-archive handoff --to codex` for
+the current session; in Codex, ask for `$handoff` (or pick it from `/skills`)
+and name the agent. With no agent named, the skill picks another agent than
+the one you are in. Each file carries a marker line: setup replaces and
+uninstall removes only a file with it, so delete that line to keep an edited
+copy. A file already at that path without it is left alone, and setup says
+so. `agent-archive status --verbose` lists the installed files.
+
 ## Where the session comes from
 
 With no session selector, `handoff` opens the same numbered session picker as

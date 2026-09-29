@@ -5,7 +5,10 @@ agent-archive uninstall
 ```
 
 After confirmation, uninstall stops the background collector, removes its
-LaunchAgent and the hook entries setup added, and disables capture. It keeps
+LaunchAgent, the hook entries setup added, and the `/handoff` skill files it
+wrote (see [handoff](../guides/handoff.md#from-inside-an-agent-handoff)), and
+disables capture. A skill file without setup's marker line is yours, and is
+kept and reported. It keeps
 local evidence, settings, and credentials, so `agent-archive setup` can
 reinstall. Unrelated hook handlers, the bucket, and the `agent-archive`
 executable are always kept. Confirming needs a terminal; `--yes` skips the
