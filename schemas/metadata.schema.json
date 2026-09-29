@@ -56,6 +56,11 @@
       "type": "string",
       "format": "date-time"
     },
+    "ended_at": {
+      "description": "From parser 0.13.0: the latest timestamp any retained record of the session carries (the maximum, since records may be out of order), never earlier than started_at. Absent when no record carries a timestamp (a Cursor transcript) or the source could not be parsed.",
+      "type": "string",
+      "format": "date-time"
+    },
     "captured_at": {
       "type": "string",
       "format": "date-time"
@@ -188,6 +193,11 @@
           "type": "integer",
           "minimum": 0
         },
+        "files_touched": {
+          "description": "From parser 0.13.0: how many distinct files the session's recognized editing calls (Edit, Write, apply_patch, edit_file, and the like) named; a path under the workspace root and the same path relative to it count once. Only the count is published, never a path.",
+          "type": "integer",
+          "minimum": 0
+        },
         "input_tokens": {
           "type": "integer",
           "minimum": 0
@@ -204,6 +214,14 @@
           "type": "integer",
           "minimum": 0
         }
+      }
+    },
+    "tools_used": {
+      "description": "From parser 0.13.0: the session's most-called tools, by call count descending and then name ascending, at most 10. Names are the harness's own (MCP tools included, e.g. mcp__server__tool), credential-redacted, on one line, and at most 128 characters. Absent when no named tool call was observed or the counts are unknown; counts.tool_calls tells the two apart.",
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/tool_usage"
       }
     },
     "capture_gaps": {
@@ -411,6 +429,25 @@
             "native_invocation",
             "skill_read_inference"
           ]
+        }
+      }
+    },
+    "tool_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "count"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     },

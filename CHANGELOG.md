@@ -43,6 +43,11 @@ follow [Semantic Versioning](https://semver.org/).
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
   summary viewed stays in scrollback. Bare `show` now keeps browsing like
   `list` instead of exiting after one pick.
+- Metadata may include optional `ended_at` (latest record timestamp),
+  `tools_used` (the 10 most-called tools with counts), and
+  `counts.files_touched` (distinct files edited; a count only, never
+  paths). Parser version is now `0.13.0`, so existing sessions gain them on
+  the next metadata refresh.
 
 ### Changed
 
@@ -52,6 +57,18 @@ follow [Semantic Versioning](https://semver.org/).
   `show` printed before.
 - `show --normalized` is deprecated in favor of `show --transcript --json`.
   It still works, with unchanged output, and prints a note on stderr.
+- `handoff` shows file paths the same way everywhere: relative to the
+  workspace root (`./a.go`, `../repo/a.go`, and `/repo/a.go` are all
+  `a.go`; a relative path above the root, such as `../other/b.go`, keeps
+  that spelling; the root itself is `.`; Windows drive paths use forward
+  slashes), and its files-touched list no longer repeats one file under two
+  spellings. A search of the workspace root no longer ends in
+  `in <root>` (or `in .`). A Codex `local_shell_call` is listed even when
+  nothing about it was retained, and `tools_used` counts exactly the calls
+  `handoff` lists. It also recognizes Cursor's `edit_file_v2`, `read_file_v2`,
+  `ripgrep_raw_search`, and `glob_file_search` tools, so edits in chats
+  imported from Cursor's database are listed and counted in
+  `counts.files_touched`.
 - Long-running CLI steps show a short TTY spinner (registering sessions,
   finishing upload, waiting for the collector, scanning, listing, loading a
   session, looking for past sessions, checking storage). Piped and CI output

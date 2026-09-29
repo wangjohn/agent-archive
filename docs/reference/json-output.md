@@ -52,6 +52,22 @@ session. Because of that field, `show` output is a view of a metadata object,
 not an instance of `metadata.schema.json`; validate stored sidecars (or
 `list --json` items), not `show` output.
 
+From parser `0.13.0` a sidecar also summarizes what the session did, without
+any transcript text or file path:
+
+- `ended_at`: the latest timestamp any retained record carries, never
+  earlier than `started_at`. Absent when no record has a timestamp (Cursor
+  transcripts).
+- `tools_used`: the (up to) 10 most-called tools as `{"name", "count"}`,
+  by count, then name. Absent when no named tool call was seen or the counts
+  are unknown; `counts.tool_calls` tells the two apart.
+- `counts.files_touched`: how many distinct files the session's editing
+  calls named, the same files `handoff` lists. Like every count, it is
+  absent when unknown, and `0` means known none.
+
+Sidecars written by an older parser gain these fields on the next metadata
+refresh.
+
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
