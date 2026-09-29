@@ -97,8 +97,16 @@ func (s *sessionScan) publishPending(pending state.PendingPublication) (sessionO
 	// it again on every pass (a ledger that no longer decodes did exactly
 	// that). A failure is reported once the publication is recorded.
 	if previous, hadPrevious := s.published.LastPublishedSource(); hadPrevious && previous.Key != pending.SourceKey {
-		if err := s.local.RecordSuperseded(s.id(), previous.Key, s.now); err != nil {
-			s.warn(fmt.Errorf("record superseded source (it stays until the session expires): %w", err))
+		priorBundle, _, havePrior := s.published.LastPublished()
+		privacySensitive := havePrior && priorBundle.Capture.FilterVersion != pending.Bundle.Capture.FilterVersion
+		if err := s.local.RecordSupersededWithPrivacy(s.id(), previous.Key, s.now, privacySensitive); err != nil {
+			if privacySensitive {
+				// Keep the pending publication for another attempt. Saving the
+				// new published state here would lose the only retry path for
+				// this old-filter source, leaving it until session expiry.
+				return outcomeSkipped, fmt.Errorf("record privacy-sensitive predecessor: %w", err)
+			}
+			s.warn(fmt.Errorf("record superseded source for cleanup: %w", err))
 		}
 	}
 	var saveErr error

@@ -68,8 +68,11 @@ explains how to apply a plan with every uploading Mac paused.
   nothing; a service that reports no checksum has the source read back and
   hashed instead. A source already stored with the same bytes is not
   uploaded again.
-- The previous source is kept (the immediate predecessor always, older ones
-  for a 24-hour grace period), then deleted by the Mac that owns the session.
+- The previous source is kept (the ordinary immediate predecessor always,
+  older ones for a 24-hour grace period). When a filter-version change
+  republishes a session, its old-filter predecessor is marked for cleanup
+  after the new publication passes read-back verification and 24 hours have
+  elapsed. A failed delete is retried by that Mac's retention sweep.
 - When a session expires (retention, 90 days by default) or `backfill undo`
   removes it, its metadata is deleted before its sources, so an interruption
   leaves at worst unreferenced source objects for the next pass, never a

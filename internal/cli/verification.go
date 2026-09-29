@@ -146,6 +146,26 @@ func readVerification(home, id string) (verificationEvidence, error) {
 	return v, err
 }
 
+// privacyPublicationVerified requires the exact current publication to have
+// passed the same full read-back used by status. A stale local verification
+// record, changed destination, or remote pointer cannot authorize cleanup.
+func privacyPublicationVerified(home string, cfg config.Config, store *state.Store, reg archive.SessionRegistration, current archive.Metadata) bool {
+	if current.MachineID != cfg.MachineID || current.SessionID != reg.ArchiveSessionID {
+		return false
+	}
+	record, err := readVerification(home, reg.ArchiveSessionID)
+	if err != nil || record.Outcome != verificationOutcomeVerified || record.VerifiedAt.IsZero() || record.ConfigurationID != sessionVerificationConfigurationID(cfg, reg) || record.SourceSHA256 != current.SourceBundle.SHA256 {
+		return false
+	}
+	published, err := store.LoadPublishedState(reg.ArchiveSessionID)
+	if err != nil {
+		return false
+	}
+	_, publishedAt, found := published.LastPublished()
+	reference, recorded := published.LastPublishedSource()
+	return found && recorded && !publishedAt.IsZero() && record.PublishedAt.Equal(publishedAt) && reference == current.SourceBundle
+}
+
 func recordStorageHealth(home string, cfg config.Config, env Env, background bool, state string) error {
 	contextName := "manual_sync"
 	if background {
@@ -226,7 +246,10 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 	var due []candidate
 	var localErrs []error
 	for _, reg := range regs {
-		if !cfg.AcceptSession(reg) {
+		// Excluded sessions still own publications in this destination.
+		// Verify them so a privacy-sensitive predecessor can age out even
+		// when its project or app was deselected after publication.
+		if !cfg.InCurrentDestination(reg) {
 			continue
 		}
 		// The summary at the head of the published state says when the
@@ -265,6 +288,9 @@ func verifyPublicationsWithin(ctx context.Context, home string, cfg config.Confi
 	// app's capture works (status never promotes an app on an import), so
 	// they go first: a large import must not hold them behind the cap.
 	sort.SliceStable(due, func(i, j int) bool {
+		if cfg.AcceptSession(due[i].reg) != cfg.AcceptSession(due[j].reg) {
+			return cfg.AcceptSession(due[i].reg)
+		}
 		if due[i].reg.Imported() != due[j].reg.Imported() {
 			return !due[i].reg.Imported()
 		}
