@@ -12,9 +12,36 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
+
+func TestMergeCommittedSetupStateKeepsOperationalOwnership(t *testing.T) {
+	t.Parallel()
+	since := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	old := config.Config{
+		DestinationSince:      since,
+		PreviousDestinations:  []credentials.Config{{Provider: credentials.ProviderS3, Bucket: "prior"}},
+		ImportedHarnesses:     []string{"claude", "codex", "cursor"},
+		RetiredCredentialRefs: []string{"old-ref"},
+	}
+	next := config.Config{
+		Harnesses:             []string{"claude"},
+		SkillEvidence:         config.SkillEvidenceMetadata,
+		RetiredCredentialRefs: []string{"new-ref"},
+	}
+	mergeCommittedSetupState(old, &next, []string{"cursor"})
+	if !next.DestinationSince.Equal(since) || !reflect.DeepEqual(next.ImportedHarnesses, []string{"codex"}) ||
+		!reflect.DeepEqual(next.RetiredCredentialRefs, []string{"new-ref", "old-ref"}) ||
+		next.SkillEvidence != config.SkillEvidenceMetadata {
+		t.Fatalf("merged setup state = %+v", next)
+	}
+	old.PreviousDestinations[0].Bucket = "changed"
+	if len(next.PreviousDestinations) != 1 || next.PreviousDestinations[0].Bucket != "prior" {
+		t.Fatalf("previous destinations alias committed state: %+v", next.PreviousDestinations)
+	}
+}
 
 func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
 	t.Parallel()
