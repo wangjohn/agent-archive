@@ -33,6 +33,9 @@ follow [Semantic Versioning](https://semver.org/).
   prompt) and `project_name` (project basename at publish). Parser version
   is now `0.12.0` so existing sessions get titles on the next metadata
   refresh.
+- `status --json` has `collector.last_errors`: each problem the last pass
+  recorded, one per entry. `collector.last_error` is unchanged (the same
+  problems joined with `; `).
 
 ### Changed
 
@@ -40,6 +43,12 @@ follow [Semantic Versioning](https://semver.org/).
   finishing upload, waiting for the collector, scanning, listing, loading a
   session, looking for past sessions, checking storage). Piped and CI output
   stay plain.
+
+### Fixed
+
+- `status` shows each problem the last pass recorded on its own ✗ row, and
+  a storage provider's error message containing `; ` is no longer split in
+  two or shown as the wrong cause.
 
 ## [0.1.1] - 2026-09-28
 

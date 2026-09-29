@@ -18,7 +18,6 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
@@ -431,15 +430,14 @@ func (p *pass) saveStatus() error {
 	if len(p.sizeLimited) > 0 {
 		problems = append(problems, fmt.Sprintf("%d session(s) stopped being captured: over the transcript size limit, kept at their last snapshot", len(p.sizeLimited)))
 	}
-	lastError := strings.Join(problems, "; ")
 	status := state.Status{
 		LastScanAt:             p.now.UTC(),
 		PendingCount:           p.pending,
 		LastPublishedAt:        lastPublishedAt,
-		LastError:              lastError,
 		QuarantinedFiles:       p.local.QuarantinedFiles(),
 		UnrefreshableSummaries: p.local.CountRefreshSkips(p.opts.parserVersion()),
 	}
+	status.SetLastErrors(problems...)
 	if err := p.local.SaveStatus(status); err != nil {
 		return fmt.Errorf("save status: %w", err)
 	}

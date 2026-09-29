@@ -1295,8 +1295,8 @@ func (sc statusScreen) storageRows(view statusView) []statusRow {
 		rows = append(rows, sc.destinationRow(view), sc.privacyRow(view.PrivacyEvidence))
 	}
 	rows = append(rows, sc.backgroundRow(view))
-	if view.Collector.LastError != "" {
-		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{lastErrorText(view.Collector.LastError)}})
+	for _, text := range lastErrorRows(view.Collector) {
+		rows = append(rows, statusRow{mark: sc.style.failMark(), cells: []string{text}})
 	}
 	uploads := fmt.Sprintf("Last upload: %s · %d pending", sc.ago(view.Collector.LastPublishedAt), view.Collector.PendingCount)
 	rows = append(rows, statusRow{mark: sc.info(), cells: []string{uploads}})
@@ -1577,13 +1577,34 @@ func clauses(sentence string) []string {
 // sentence.
 var proseCommand = regexp.MustCompile(`agent-archive (?:` + strings.Join(slices.Sorted(maps.Keys(commandHelp)), "|") + `)\b(?: --[a-z][a-z-]*)*`)
 
-// lastErrorText is the Storage section's line for the collector's last
-// error. A storage refusal the collector recorded is shown by its plain
-// cause (see storage.Diagnose); the raw error text is in status --verbose.
-// Anything else, like the collector's own counts of failed sessions, is
-// shown as recorded.
-func lastErrorText(lastError string) string {
-	parts := strings.Split(lastError, "; ")
+// lastErrorRows are the Storage section's lines for the collector's last
+// errors, one per problem the pass recorded. A storage refusal is shown by
+// its plain cause (see storage.Diagnose); the raw error text is in status
+// --verbose. Anything else, like the collector's own counts of failed
+// sessions, is shown as recorded.
+//
+// A status file written before Status.LastErrors existed has only the joined
+// LastError. It is split where the collector joined problems, on "; ", and
+// shown on one line as before.
+func lastErrorRows(status state.Status) []string {
+	if len(status.LastErrors) == 0 {
+		if status.LastError == "" {
+			return nil
+		}
+		return []string{lastErrorText(strings.Split(status.LastError, "; "))}
+	}
+	rows := make([]string, 0, len(status.LastErrors))
+	for _, problem := range status.LastErrors {
+		rows = append(rows, lastErrorText([]string{problem}))
+	}
+	return rows
+}
+
+// lastErrorText is one line for problems: a storage refusal's plain cause
+// alone, or "Last error: " and the problems, each storage refusal among them
+// by its cause.
+func lastErrorText(problems []string) string {
+	parts := slices.Clone(problems)
 	plain := false
 	for i, part := range parts {
 		if cause := storageErrorCause(part); cause != "" {

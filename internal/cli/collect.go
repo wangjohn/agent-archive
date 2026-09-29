@@ -401,22 +401,19 @@ func recordRetentionErrors(localStore *state.Store, result *collector.Result, sw
 	if err != nil {
 		return
 	}
-	status.LastError = fmt.Sprintf("%d session(s) failed to scan, publish, or clean up", len(result.Errors))
+	status.SetLastErrors(fmt.Sprintf("%d session(s) failed to scan, publish, or clean up", len(result.Errors)))
 	_ = localStore.SaveStatus(status)
 }
 
-// addStatusProblem adds problem to Status.LastError, after whatever the pass
-// already recorded there, rather than replacing it. Best effort, like
+// addStatusProblem adds problem to the Status's last errors, after whatever
+// the pass already recorded there, rather than replacing them. Best effort, like
 // recordPreflightError.
 func addStatusProblem(localStore *state.Store, problem string) {
 	status, err := localStore.LoadStatus()
 	if err != nil {
 		return
 	}
-	if status.LastError != "" {
-		problem = status.LastError + "; " + problem
-	}
-	status.LastError = problem
+	status.AddLastError(problem)
 	_ = localStore.SaveStatus(status)
 }
 
@@ -434,7 +431,7 @@ func recordPreflightError(localStore *state.Store, preflightErr error) {
 	if err != nil {
 		return
 	}
-	status.LastError = preflightErr.Error()
+	status.SetLastErrors(preflightErr.Error())
 	_ = localStore.SaveStatus(status)
 }
 
