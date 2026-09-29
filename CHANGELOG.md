@@ -20,6 +20,9 @@ follow [Semantic Versioning](https://semver.org/).
   background task finishing, paged on a terminal (`--no-pager` to print
   directly). `--full` adds tool results and shell output, trimmed.
   `--transcript --json` prints what `--normalized` printed.
+  Your prompts are quoted with a `┃` gutter that stays on wrapped lines,
+  and the agent's part of each exchange starts with the app's name
+  (`Claude Code ›`).
 - Browsing on a terminal (`list`, bare `show`) opens a session's summary in
   place of the list, on the terminal's alternate screen: `t` shows its
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
@@ -49,7 +52,10 @@ follow [Semantic Versioning](https://semver.org/).
   archive cannot be read. Sessions with no prompt yet are left out.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
-  instead of JSON. Pass `--json` for the metadata sidecar, byte for byte what
+  instead of JSON. Capture gaps the archive records by design (filtered or
+  redacted content, fields the parser does not recognize) are named in one
+  dimmed Omitted row; only gaps that may mean content is missing get a
+  warning. Pass `--json` for the metadata sidecar, byte for byte what
   `show` printed before.
 - `show --normalized` is deprecated in favor of `show --transcript --json`.
   It still works, with unchanged output, and prints a note on stderr.
@@ -68,6 +74,17 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A Claude Code subagent resumed after it stopped (continued with
+  SendMessage) no longer fails `sync` with "subagent transcript has
+  incomplete native timestamp provenance" while it runs. Its archive keeps
+  the snapshot from its last stop and catches up at its next stop, or, if it
+  never stops again (its session was closed while it worked), once its
+  transcript has been quiet for 30 minutes. A subagent resumed before the
+  collector first saw it is no longer reported as not captured either. A
+  subagent record dated more than 30 minutes in the future is still reported
+  as a failure rather than waited on. `sync`
+  counts these as "still running", and `status --verbose` and `status --json`
+  (`collector.running_subagents`) show them. None is a failure.
 - A Claude Code subagent whose transcript is never written (Claude Code
   reports some background agents that way) no longer fails every pass:
   `sync` exited 1 and `status` reported "N session(s) need capture or

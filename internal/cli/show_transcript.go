@@ -35,12 +35,18 @@ func buildTranscript(bundle archive.SourceBundle) (archive.Transcript, error) {
 
 // renderTranscript writes `show --transcript`: a short header, then each
 // exchange's prompt (or app notice), the agent's replies, one line per tool
-// call, and the shell and slash commands the person ran. The transcript's
-// strings are already display text (archive.BuildTranscript), so
-// multi-line text is printed as it is.
+// call, and the shell and slash commands the person ran. The prompt is
+// quoted with a gutter and each run of the agent's steps starts with the
+// app's name, so where one speaker stops and the other starts shows without
+// color. The transcript's strings are already display text
+// (archive.BuildTranscript), so multi-line text is printed as it is.
 func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts transcriptOptions) {
 	m := view.Metadata
 	s := opts.Style
+	agent := appName(archive.DisplayLine(m.Harness.Name))
+	if agent == "" {
+		agent = "Agent"
+	}
 	terminal.Println(w, s.bold(summaryTitle(m)))
 	header := []string{}
 	if agent := strings.TrimSpace(appName(archive.DisplayLine(m.Harness.Name)) + " " + archive.DisplayLine(m.Harness.Version)); agent != "" {
@@ -75,9 +81,9 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 		}
 		terminal.Println(w, s.bold("── "+heading+" "+strings.Repeat("─", max(4, 40-visibleWidth(heading)))))
 		if exchange.Kind == archive.TranscriptExchangePrompt && exchange.Text != "" {
-			terminal.Println(w, exchange.Text)
+			renderPrompt(w, exchange.Text, s)
 		}
-		renderTranscriptSteps(w, exchange.Steps, opts)
+		renderTranscriptSteps(w, exchange.Steps, agent, opts)
 	}
 	for _, final := range t.HookFinals {
 		terminal.Println(w)
@@ -90,17 +96,68 @@ func renderTranscript(w io.Writer, view sessionView, t archive.Transcript, opts 
 	}
 }
 
-func renderTranscriptSteps(w io.Writer, steps []archive.TranscriptStep, opts transcriptOptions) {
+// promptGutter marks each line of the person's prompt.
+const promptGutter = "┃"
+
+// renderPrompt quotes the person's prompt with a gutter, wrapped to the
+// style's width so a long line keeps its gutter where it breaks. Unlike
+// hang, a word wider than the line (a link, a pasted blob, text with no
+// spaces) is split, since the terminal would otherwise wrap it without the
+// gutter.
+func renderPrompt(w io.Writer, text string, s textStyle) {
+	width := s.width
+	if width > 0 {
+		width = max(width-visibleWidth(promptGutter+" "), 1)
+	}
+	for line := range strings.SplitSeq(hangingIndent("", text, width), "\n") {
+		for _, row := range splitColumns(line, width) {
+			terminal.Println(w, strings.TrimRight(s.cmd(promptGutter)+" "+row, " "))
+		}
+	}
+}
+
+// splitColumns cuts line into rows at most width columns wide, never
+// splitting a character; a wide character that would straddle the edge
+// starts the next row. A width of 0 or less keeps the line whole.
+func splitColumns(line string, width int) []string {
+	if width <= 0 || visibleWidth(line) <= width {
+		return []string{line}
+	}
+	var rows []string
+	var row strings.Builder
+	column := 0
+	for _, r := range line {
+		w := runeWidth(r)
+		if column > 0 && column+w > width {
+			rows = append(rows, row.String())
+			row.Reset()
+			column = 0
+		}
+		row.WriteRune(r)
+		column += w
+	}
+	return append(rows, row.String())
+}
+
+// renderTranscriptSteps writes an exchange's steps. Each run of the agent's
+// own steps (replies, tool calls, a compaction summary) starts with the
+// agent's name; the person's shell and slash commands do not.
+func renderTranscriptSteps(w io.Writer, steps []archive.TranscriptStep, agent string, opts transcriptOptions) {
 	s := opts.Style
 	// A blank line separates prose from the command lines around it; a run
 	// of tool calls and commands stays together.
-	previousLine := false
+	previousLine, speaking := false, false
 	for i, step := range steps {
 		isLine := step.Kind != archive.TranscriptStepText && step.Kind != archive.TranscriptStepSummary
-		if i == 0 || !isLine || !previousLine {
+		isAgent := step.Kind == archive.TranscriptStepText || step.Kind == archive.TranscriptStepTool || step.Kind == archive.TranscriptStepSummary
+		switch {
+		case isAgent && !speaking:
+			terminal.Println(w)
+			terminal.Println(w, s.bold(agent+" ›"))
+		case i == 0 || !isLine || !previousLine:
 			terminal.Println(w)
 		}
-		previousLine = isLine
+		previousLine, speaking = isLine, isAgent
 		switch step.Kind {
 		case archive.TranscriptStepText:
 			terminal.Println(w, step.Text)
