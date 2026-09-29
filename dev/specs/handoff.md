@@ -590,9 +590,8 @@ which hands off *that* session and opens Codex in a new terminal tab.
    `launch-*` directories older than 7 days by the directory's mtime, and
    `uninstall --delete-local-data` already covers `handoffs/`; it is never
    removed early, so a resumed session can still read it. Without a data directory (`--file` before setup) it goes
-   to a private `os.MkdirTemp` directory as today: removed when an
-   in-terminal launch exits, left for the OS to clean after a new-window
-   launch (which returns before the agent reads it). The child's
+   to a private `os.MkdirTemp` directory, also never removed early (a
+   resumed session may read it again) and left for the OS to clean. The child's
    environment drops the calling agent's session variables
    (`handoffSessionEnv`, an explicit list, never a prefix: settings such as
    `CLAUDE_CODE_USE_BEDROCK` must survive). It includes every

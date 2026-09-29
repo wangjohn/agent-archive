@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,13 +13,12 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
 
 // launchPreparedHandoff starts opts.to in this terminal with the filtered
 // record, and returns when the agent exits.
-func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, opts handoffOptions, home string, stdin io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) (resultErr error) {
+func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, opts handoffOptions, home string, stdin io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) error {
 	dir, err := launchDir(opts, env)
 	if err != nil {
 		return err
@@ -29,29 +27,11 @@ func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarge
 	if err != nil {
 		return err
 	}
-	if private, ok := privateHandoffDir(spec, home); ok {
-		// Nothing resumes a session from a copy outside the data
-		// directory, so once the agent exits here, nothing reads it.
-		defer func() {
-			if err := os.RemoveAll(private); err != nil {
-				resultErr = errors.Join(resultErr, fmt.Errorf("remove private handoff: %w", err))
-			}
-		}()
-	}
 	terminal.Printf(stderr, "handoff: launching local %s in %s\n", opts.to, dir)
 	if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
 		return fmt.Errorf("launch %s: %w", opts.to, err)
 	}
 	return nil
-}
-
-// privateHandoffDir is the temporary directory writeLaunchHandoff made for
-// spec's launch copy, when it is not in the data directory.
-func privateHandoffDir(spec launchSpec, home string) (string, bool) {
-	if spec.HandoffFile == "" || local.PathWithin(spec.HandoffFile, home) {
-		return "", false
-	}
-	return filepath.Dir(spec.HandoffFile), true
 }
 
 // launchDir is the absolute directory the agent starts in: --project, else
@@ -109,10 +89,8 @@ const launchHandoffName = "handoff.md"
 // 0700 directory: <home>/handoffs/launch-<name>-<unix>-<random>/. It is kept after the
 // agent exits, so a resumed session can read it again, until pruneHandoffs
 // removes it after handoffMaxAge. Without a data directory (`--file` before
-// setup) the directory is a new private one under tempDir instead: an
-// in-terminal launch removes it when the agent exits, and a new-window
-// launch, which returns before the agent reads it, leaves it for the system
-// to clear.
+// setup) the directory is a new private one under tempDir instead, also
+// kept (a resumed session may read it again) for the system to clear.
 func writeLaunchHandoff(home, tempDir string, target handoffTarget, content []byte, now time.Time) (string, error) {
 	if _, err := os.Stat(home); err != nil {
 		dir, err := os.MkdirTemp(tempDir, "agent-archive-handoff-")

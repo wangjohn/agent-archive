@@ -12,8 +12,7 @@ follow [Semantic Versioning](https://semver.org/).
   filtered session record. The receiving agent is told how to inspect the
   archived or current local record with Agent Archive. The record is kept in
   the data directory's `handoffs/` for 7 days, so a resumed session can read
-  it again (before setup, in a private temporary folder removed when the
-  agent exits). Each launch's copy has a folder of its own, which is all
+  it again (before setup, in a private temporary folder the system clears). Each launch's copy has a folder of its own, which is all
   Claude Code gets with `--add-dir`; Codex and Cursor get the checkout with
   `--cd` and `--workspace`. Cursor's `agent` CLI is tried before
   `cursor-agent`. The

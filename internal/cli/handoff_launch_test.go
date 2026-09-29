@@ -216,8 +216,8 @@ func TestHandoffLaunchMissingAgentLeavesNoFile(t *testing.T) {
 }
 
 // Without setup there is no data directory, so the launch copy goes to a
-// private temporary directory. An agent run in this terminal has read it by
-// the time it exits, so that directory is removed then.
+// private temporary directory. It outlives the agent, since a resumed
+// session may read it again; the system clears it.
 func TestHandoffLaunchWithoutSetupUsesPrivateTemporaryFile(t *testing.T) {
 	t.Parallel()
 	transcript := filepath.Join(t.TempDir(), "session.jsonl")
@@ -249,8 +249,8 @@ func TestHandoffLaunchWithoutSetupUsesPrivateTemporaryFile(t *testing.T) {
 	if code != 0 || path == "" {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
-	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
-		t.Fatalf("private directory left after the agent exited: %v", err)
+	if data, err := os.ReadFile(path); err != nil || !strings.Contains(string(data), "Fix the build.") {
+		t.Fatalf("private copy after the agent exited: %q %v", data, err)
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
 		t.Fatalf("data directory created: %v", err)

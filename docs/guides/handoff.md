@@ -37,8 +37,8 @@ agent-archive handoff --file ~/.codex/sessions/.../rollout-....jsonl --harness c
 private folder of its own, file mode 0600) and sends the agent a short
 prompt to read it. The file is kept so a resumed session can read it again,
 and removed after 7 days like other saved handoffs. With `--file` before setup there is no data directory, so the file
-goes to a private folder in the system's temporary directory, removed when
-the agent exits. Claude Code is given only that folder with `--add-dir`,
+goes to a private folder in the system's temporary directory, kept for the
+system to clear. Claude Code is given only that folder with `--add-dir`,
 since it reads outside the project only from an added directory.
 The launched agent does not inherit the calling agent's session variables
 (such as `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`); your settings, such as
