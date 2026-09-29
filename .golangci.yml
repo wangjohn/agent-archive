@@ -221,9 +221,6 @@ linters:
       - path: internal/backfill/undo\.go
         text: PlanUndo
         linters: [gocyclo]
-      - path: internal/backfill/render\.go
-        text: RenderText
-        linters: [gocyclo]
       - path: internal/archive/handoff(_render)?\.go
         text: (BuildHandoff|RenderHandoffMarkdown)
         linters: [funlen, gocyclo]
