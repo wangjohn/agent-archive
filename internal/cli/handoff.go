@@ -52,9 +52,17 @@ type handoffTarget struct {
 }
 
 type handoffOptions struct {
-	sessionID, project, harness, file, source, format, output string
-	latest, force, noPreamble                                 bool
-	maxBytes                                                  int
+	sessionID  string
+	project    string
+	harness    string
+	file       string
+	source     string
+	format     string
+	output     string
+	latest     bool
+	force      bool
+	noPreamble bool
+	maxBytes   int
 }
 
 // currentSessionEnv names environment variables an agent sets for the commands
@@ -64,7 +72,7 @@ type handoffOptions struct {
 // if present but has not been observed.
 var currentSessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"}
 
-var errHandoffNotSetUp = errors.New(notSetUpMessage)
+var errHandoffNotSetUp = errors.New("handoff not set up")
 
 // runHandoffCommand implements `agent-archive handoff`. It prints transcript
 // content, which the command itself is the explicit request for; every
