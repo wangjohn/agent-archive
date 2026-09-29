@@ -178,7 +178,7 @@ func runPass(env Env, quietOnBusy bool, pass passOptions) (collector.Result, err
 		return result, err
 	}
 
-	return finishPassWithRetention(env, cfg, localStore, objectStore, previousScanAt, result, verifyErr)
+	return finishPassWithRetention(home, env, cfg, localStore, objectStore, previousScanAt, result, verifyErr)
 }
 
 // verifyAndRecordPass performs read-back verification and records per-session
@@ -230,7 +230,7 @@ func sessionIssueCode(issue error) string {
 // finishPassWithRetention gives cleanup its own deadline after collection.
 // It runs under the caller's collector lock and preserves verification errors
 // until after the sweep has completed.
-func finishPassWithRetention(env Env, cfg config.Config, localStore *state.Store, objectStore storage.ObjectStore, previousScanAt time.Time, result collector.Result, verifyErr error) (collector.Result, error) {
+func finishPassWithRetention(home string, env Env, cfg config.Config, localStore *state.Store, objectStore storage.ObjectStore, previousScanAt time.Time, result collector.Result, verifyErr error) (collector.Result, error) {
 	sweepCtx, cancelSweep := context.WithTimeout(context.Background(), sweepTimeout)
 	defer cancelSweep()
 	sweepOptions := retention.Options{
