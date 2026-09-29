@@ -93,16 +93,18 @@ func runBackfillUndo(args []string, stdin io.Reader, stdout, stderr io.Writer, e
 }
 
 type undoCommand struct {
-	home, userHome string
-	cfg            config.Config
-	batches        []backfill.Batch
-	batch          *backfill.Batch
-	project        string
-	yes            bool
-	keepRetention  bool
-	stdin          io.Reader
-	stdout, stderr io.Writer
-	env            Env
+	home          string
+	userHome      string
+	cfg           config.Config
+	batches       []backfill.Batch
+	batch         *backfill.Batch
+	project       string
+	yes           bool
+	keepRetention bool
+	stdin         io.Reader
+	stdout        io.Writer
+	stderr        io.Writer
+	env           Env
 }
 
 // run plans and confirms while runBackfillUndo holds setup.lock.

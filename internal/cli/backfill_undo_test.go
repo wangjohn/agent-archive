@@ -1090,6 +1090,7 @@ func TestBackfillUndoCommitsBeforeRemoving(t *testing.T) {
 // A rerun completes the undo after a crash between marking the batch,
 // changing the configuration, and removing the imported sessions.
 func TestBackfillUndoResumesAfterCommitCheckpoint(t *testing.T) {
+	t.Parallel()
 	for _, checkpoint := range []string{"undo marked", "undo configured", "undo recorded"} {
 		t.Run(checkpoint, func(t *testing.T) {
 			t.Parallel()
