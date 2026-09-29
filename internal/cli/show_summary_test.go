@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -260,7 +261,7 @@ func TestShowTranscriptPages(t *testing.T) {
 	var out, errOut bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(&out) }
 	var paged []string
-	env.RunPager = func(command string, in io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, in io.Reader, _, _ io.Writer) error {
 		text, err := io.ReadAll(in)
 		paged = append(paged, command+"\n"+string(text))
 		return err
@@ -331,7 +332,7 @@ func TestSessionSummaryNeutralizesSessionID(t *testing.T) {
 	t.Parallel()
 	view := sessionView{Metadata: archive.Metadata{SessionID: "\x1b[2J\u202eé0123456789", Harness: archive.Harness{Name: "codex"}}}
 	for _, text := range []string{
-		renderSummaryText(view, summaryOptions{Now: summaryNow, Hints: true, HintHarness: "codex"}),
+		renderSummaryText(view, summaryOptions{Now: summaryNow, Hints: true}),
 		func() string {
 			var b bytes.Buffer
 			renderTranscript(&b, view, archive.Transcript{}, transcriptOptions{})

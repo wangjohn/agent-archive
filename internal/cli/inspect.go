@@ -453,11 +453,6 @@ func runShowCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, en
 	if lookup.Cancelled {
 		return 0
 	}
-	// The hints name the full ID, and the harness when it was given, which
-	// the same ID under two harnesses needs.
-	if *harness != "" {
-		summary.HintHarness = lookup.Harness
-	}
 	sessionID, *harness = lookup.SessionID, lookup.Harness
 
 	stopShow := startActivity(stdout, "Loading session…")

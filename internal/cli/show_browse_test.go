@@ -27,7 +27,7 @@ func browse(t *testing.T, input string, args ...string) (out, errOut string, pag
 	env.IsTerminal = func(stream any) bool {
 		return stream == any(stdin) || stream == any(&stdout)
 	}
-	env.RunPager = func(command string, in io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, in io.Reader, _, _ io.Writer) error {
 		text, err := io.ReadAll(in)
 		pages = append(pages, pagerCall{command: command, text: string(text)})
 		return err
@@ -87,6 +87,11 @@ func TestBrowserTranscriptOpensPager(t *testing.T) {
 	// After the pager, the details are drawn again.
 	if n := strings.Count(out, detailsPrompt); n != 2 || strings.Contains(out, "visible") {
 		t.Fatalf("details shown %d times after the pager:\n%s", n, out)
+	}
+	// The browser enters the alternate screen again after the pager, in
+	// case the pager left it.
+	if n := strings.Count(out, enterAltScreenSequence); n != 2 {
+		t.Fatalf("alternate screen entered %d times, want 2:\n%q", n, out)
 	}
 }
 
@@ -240,13 +245,17 @@ func TestBrowserPagerCommand(t *testing.T) {
 		"/usr/bin/less":        "/usr/bin/less -+F",
 		"most":                 "most",
 		"less -R | tee /tmp/x": "less -R | tee /tmp/x",
+		"less -R # note":       "less -R # note",
+		"less -- -R":           "less -- -R",
+		"less 'prompt'":        "less 'prompt'",
+		"less -R\\":            "less -R\\",
 	} {
 		env := testEnv(t, t.TempDir(), time.Now())
 		var out bytes.Buffer
 		env.IsTerminal = func(any) bool { return true }
 		env.LookupEnv = func(key string) (string, bool) { return pager, key == "PAGER" && pager != "" }
 		var got string
-		env.RunPager = func(command string, _ io.Reader, _, _ io.Writer) error { got = command; return nil }
+		env.RunPager = func(_ context.Context, command string, _ io.Reader, _, _ io.Writer) error { got = command; return nil }
 		paged, waited, err := pageText(context.Background(), &out, io.Discard, env, false, true, []byte("x"))
 		if err != nil || !paged || got != want || waited != strings.Contains(want, "-+F") {
 			t.Errorf("%q: ran %q (waited %v), want %q", pager, got, waited, want)
@@ -265,7 +274,7 @@ func TestBrowserWaitsAfterOtherPagers(t *testing.T) {
 	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
 	env.LookupEnv = func(key string) (string, bool) { return "most", key == "PAGER" }
 	pages := 0
-	env.RunPager = func(command string, _ io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, _ io.Reader, _, _ io.Writer) error {
 		pages++
 		if command != "most" {
 			t.Errorf("pager %q", command)
@@ -281,5 +290,46 @@ func TestBrowserWaitsAfterOtherPagers(t *testing.T) {
 	}
 	if n := strings.Count(out, enterAltScreenSequence); n != 2 {
 		t.Fatalf("alternate screen entered %d times, want 2:\n%q", n, out)
+	}
+}
+
+func (s *screenStub) exit(int) {}
+
+// A signal while the transcript's pager runs stops the pager, then the
+// browser restores the screen and exits as the signal would have, without
+// printing the transcript as a failed pager's fallback.
+func TestBrowserSignalDuringTranscript(t *testing.T) {
+	t.Parallel()
+	env, _, _ := publishedFixture(t)
+	stdin := strings.NewReader("1\nt\nq\n")
+	var stdout, stderr syncBuffer
+	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
+	signals := make(chan os.Signal, 1)
+	env.Interrupts = func() (<-chan os.Signal, func()) { return signals, func() {} }
+	exited := make(chan int, 1)
+	env.exitProcess = func(code int) { exited <- code }
+	cancelled := make(chan struct{})
+	env.RunPager = func(ctx context.Context, _ string, _ io.Reader, _, _ io.Writer) error {
+		signals <- syscall.SIGTERM
+		<-ctx.Done()
+		close(cancelled)
+		return ctx.Err()
+	}
+	done := make(chan int, 1)
+	go func() { done <- Run([]string{"list"}, stdin, &stdout, &stderr, env) }()
+	select {
+	case code := <-exited:
+		if code != 128+int(syscall.SIGTERM) {
+			t.Fatalf("exit %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no exit after SIGTERM:\n%s", stdout.String())
+	}
+	<-cancelled
+	<-done
+	out := stdout.String()
+	// The fake exit returns, so what follows it is not checked.
+	if strings.Count(out, leaveAltScreenSequence) != 1 || strings.Contains(out, "visible") || strings.Contains(stderr.String(), "printing directly") {
+		t.Fatalf("output %q, stderr %q", out, stderr.String())
 	}
 }

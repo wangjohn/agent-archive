@@ -28,9 +28,9 @@ type summaryOptions struct {
 	// Projects labels a project ID when the sidecar has no project_name.
 	Projects map[string]string
 	// Hints adds the lines naming the transcript and JSON commands. They
-	// name the full session ID, and HintHarness when the ID needed one.
-	Hints       bool
-	HintHarness string
+	// name the full session ID and its harness, which together are never
+	// ambiguous.
+	Hints bool
 }
 
 // summaryWidth is the column the header's status is aligned to, and the
@@ -93,8 +93,8 @@ func renderSessionSummary(w io.Writer, view sessionView, opts summaryOptions) {
 	}
 	if opts.Hints {
 		command := "agent-archive show " + shellWord(id)
-		if opts.HintHarness != "" {
-			command += " --harness " + shellWord(archive.DisplayLine(opts.HintHarness))
+		if harness := archive.DisplayLine(m.Harness.Name); harness != "" {
+			command += " --harness " + shellWord(harness)
 		}
 		terminal.Println(w)
 		terminal.Printf(w, "  %s %s\n", s.dim("Transcript:"), s.cmd(cut(command+" --transcript", 14)))

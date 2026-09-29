@@ -65,8 +65,8 @@ claude · agent-archive · 2h ago                                      ✓ compl
   ID 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
      origin hook · parser 0.12.0 (partial) · filter 12
 
-  Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --transcript
-  JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --json
+  Transcript: agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript
+  JSON:       agent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json
 ```
 
 Rows the metadata has no data for are left out; a count that is unknown is

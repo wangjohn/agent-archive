@@ -136,7 +136,7 @@ func TestListPagesOnTerminal(t *testing.T) {
 		_, ok := stream.(*bytes.Buffer)
 		return ok
 	}
-	env.RunPager = func(command string, stdin io.Reader, stdout, stderr io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, stdin io.Reader, stdout, stderr io.Writer) error {
 		sawCommand = command
 		_, err := io.Copy(&paged, stdin)
 		return err
@@ -195,7 +195,7 @@ func TestListPagerFailureFallsBack(t *testing.T) {
 		_, ok := stream.(*bytes.Buffer)
 		return ok
 	}
-	env.RunPager = func(string, io.Reader, io.Writer, io.Writer) error {
+	env.RunPager = func(context.Context, string, io.Reader, io.Writer, io.Writer) error {
 		return errors.New("no less")
 	}
 	var out, errOut bytes.Buffer

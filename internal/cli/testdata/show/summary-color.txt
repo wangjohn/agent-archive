@@ -18,5 +18,5 @@
   [2mID[0m 03e60c25f1a04b7c9d2e8f6a1b3c5d7e
      [2morigin imported · parser 0.12.0 (partial) · filter 12[0m
 
-  [2mTranscript:[0m [36magent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --transcript[0m
-  [2mJSON:      [0m [36magent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --json[0m
+  [2mTranscript:[0m [36magent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --transcript[0m
+  [2mJSON:      [0m [36magent-archive show 03e60c25f1a04b7c9d2e8f6a1b3c5d7e --harness claude --json[0m
