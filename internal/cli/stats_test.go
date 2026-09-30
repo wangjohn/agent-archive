@@ -595,6 +595,11 @@ func TestStatsOneDayWindowReadsNaturally(t *testing.T) {
 		id: "today", harness: "claude", project: "p", captured: statsDay(time.September, 29, 9), models: []string{"claude-opus-5"},
 		turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 1000, 0, 0}},
 	}.publish(t, mem)
+	// The day before has a session, so the detail screen compares with it.
+	syntheticSession{
+		id: "yesterday", harness: "claude", project: "p", captured: statsDay(time.September, 28, 9), models: []string{"claude-opus-5"},
+		turns: 1, perModel: []modelTokenSpec{{"claude-opus-5", 1000, 1000, 0, 0}},
+	}.publish(t, mem)
 	out := mustRunStats(t, env, 100, "--days", "1", "--prices", goldenPrices)
 	for _, bad := range []string{"1 days", "Sep 29 Sep 29"} {
 		if strings.Contains(out, bad) {
