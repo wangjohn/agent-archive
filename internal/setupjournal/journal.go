@@ -4,8 +4,8 @@
 // jobs earlier installations left that it retires (RetireeJobs; which jobs
 // those are is the scheduler's to say, see scheduler.Inspector.Installed),
 // and the check every other command and the hook make that one is pending.
-// launchd is reached only through the Launchd a caller passes; prompts and
-// output stay in internal/cli.
+// The scheduler is reached only through the Backends a caller passes; prompts
+// and output stay in internal/cli.
 package setupjournal
 
 import (
@@ -16,6 +16,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/state"
 )
 
@@ -45,9 +46,18 @@ type Journal struct {
 	Changes       []hooks.Change `json:"changes"`
 	Plist         string         `json:"plist"`
 	WasLoaded     bool           `json:"was_loaded"`
+	// Backend is the name of the scheduler that runs the collector's job (see
+	// scheduler.Definer.Name), and JobRef the job's ref in it. Both are
+	// optional: a journal written before they existed has neither, and then
+	// the backend is DefaultBackend and the job is the one Plist names (see
+	// scheduler.Definer.Locate). Every field before them is still written, so
+	// a release that does not know them recovers the journal all the same
+	// (encoding/json skips unknown fields).
+	Backend string `json:"backend,omitempty"`
+	JobRef  string `json:"job_ref,omitempty"`
 	// FilesOnly is a transaction of files alone (setup --refresh, when it
 	// leaves the collector's job as it is): neither Commit nor Restore asks
-	// launchd anything, or starts, stops, or reloads the job. Without it a
+	// the scheduler anything, or starts, stops, or reloads the job. Without it a
 	// commit starts the collector, and a rollback stops the one a failed
 	// commit started.
 	//
@@ -72,12 +82,12 @@ func (j Journal) relabeled() []*LegacyJob {
 // collector when it was loaded, applies every file change, retires the jobs
 // the journal retires, and starts the collector. A failure on the way puts
 // everything back from the journal (Restore); success removes it.
-func Commit(home string, journal Journal, launchd Launchd) error {
+func Commit(home string, journal Journal, backends Backends) error {
 	if err := local.Write(JournalPath(home), journal); err != nil {
 		return err
 	}
 	fail := func(cause error) error {
-		if rb := Restore(home, journal, launchd); rb != nil {
+		if rb := Restore(home, journal, backends); rb != nil {
 			return errors.Join(cause, fmt.Errorf("rollback incomplete; run setup again: %w", rb))
 		}
 		return fmt.Errorf("previous installation restored: %w", cause)
@@ -91,23 +101,24 @@ func Commit(home string, journal Journal, launchd Launchd) error {
 		}
 		return nil
 	}
+	collector := backends.target(journal.Backend, journal.JobRef, journal.Plist)
 	if journal.WasLoaded {
-		if err := launchd.Unload(journal.Plist); err != nil {
+		if err := collector.unload(); err != nil {
 			return fail(fmt.Errorf("stop previous collector: %w", err))
 		}
 	}
 	if err := hooks.Apply(journal.Changes); err != nil {
 		return fail(err)
 	}
-	if err := retireLegacyJob(journal.Legacy, launchd); err != nil {
+	if err := retireLegacyJob(journal.Legacy, backends); err != nil {
 		return fail(err)
 	}
 	for _, job := range journal.relabeled() {
-		if err := retireLegacyJob(job, launchd); err != nil {
+		if err := retireLegacyJob(job, backends); err != nil {
 			return fail(fmt.Errorf("retire the %s: %w", relabeledJobName, err))
 		}
 	}
-	if err := launchd.Load(journal.Plist); err != nil {
+	if err := collector.load(); err != nil {
 		return fail(fmt.Errorf("start background collector: %w", err))
 	}
 	if err := os.Remove(JournalPath(home)); err != nil {
@@ -119,7 +130,7 @@ func Commit(home string, journal Journal, launchd Launchd) error {
 // Restore puts back what journal records. It restores only files still
 // equal to their before or after snapshots: a user's later edits are never
 // overwritten by crash recovery. The journal is removed once it is done.
-func Restore(home string, journal Journal, launchd Launchd) error {
+func Restore(home string, journal Journal, backends Backends) error {
 	// Every file is checked before anything, the collector included, is
 	// touched: a recovery that stops halfway would leave less to go on.
 	var changed []hooks.Change
@@ -146,34 +157,35 @@ func Restore(home string, journal Journal, launchd Launchd) error {
 			return err
 		}
 	}
-	state := launchd.JobState(journal.Plist)
-	if JobActive(state) {
-		if err := launchd.Unload(journal.Plist); err != nil {
-			return launchctlBlocked(home, "stop the background collector", err)
+	collector := backends.target(journal.Backend, journal.JobRef, journal.Plist)
+	state := collector.state()
+	if state.Active() {
+		if err := collector.unload(); err != nil {
+			return collector.blocked(home, "stop the background collector", err)
 		}
-	} else if state == "unknown" {
-		return &RecoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to launchctl and rerun setup"}
+	} else if state == scheduler.Unknown {
+		return &RecoveryBlockedError{home: home, cause: "the background collector's state is unknown, so recovery cannot safely continue; restore access to " + collector.tool() + " and rerun setup"}
 	}
 	if err := hooks.Rollback(changed); err != nil {
 		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("the files setup changed could not all be put back (%v)", err)}
 	}
-	// A label another installation runs from its own plist is not this
-	// one's to restart: launchd refuses to bootstrap over it, and stopping
+	// A job another installation runs from its own definition is not this
+	// one's to restart: the scheduler refuses to load over it, and stopping
 	// it is not ours to do. The files are back and the record is removed
 	// below, so the journal never outlives the point where anything more
 	// can be done for the job. Setup, run again, refuses to install over
 	// the other installation and says what to do (uninstall it, or set
 	// AGENT_ARCHIVE_HOME).
-	if journal.WasLoaded && state != JobAnotherInstallation {
-		if err := launchd.Load(journal.Plist); err != nil {
-			return launchctlBlocked(home, "restart the background collector", err)
+	if journal.WasLoaded && state != scheduler.AnotherInstallation {
+		if err := collector.load(); err != nil {
+			return collector.blocked(home, "restart the background collector", err)
 		}
 	}
-	if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, launchd); err != nil {
+	if err := restoreLegacyJob(home, journal.Legacy, legacyJobName, backends); err != nil {
 		return err
 	}
 	for _, job := range journal.relabeled() {
-		if err := restoreLegacyJob(home, job, relabeledJobName, launchd); err != nil {
+		if err := restoreLegacyJob(home, job, relabeledJobName, backends); err != nil {
 			return err
 		}
 	}
@@ -187,7 +199,7 @@ const (
 )
 
 // RecoveryBlockedError is a recovery that cannot proceed without the user:
-// a file changed outside setup, or launchd cannot be asked. Rerunning setup
+// a file changed outside setup, or the scheduler cannot be asked. Rerunning setup
 // alone would stop at the same place, so it carries the way out.
 type RecoveryBlockedError struct {
 	home  string
@@ -197,12 +209,6 @@ type RecoveryBlockedError struct {
 // Error says why recovery cannot go on.
 func (e *RecoveryBlockedError) Error() string {
 	return "cannot recover the interrupted setup: " + e.cause
-}
-
-// launchctlBlocked is a recovery stopped because launchctl failed to do what
-// it was asked, which rerunning setup alone may not change either.
-func launchctlBlocked(home, action string, err error) error {
-	return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("launchctl could not %s (%v); once launchctl works again, rerun setup", action, err)}
 }
 
 // Guidance says where the interrupted setup is recorded and the way out:
@@ -215,7 +221,7 @@ func (e *RecoveryBlockedError) Guidance() string {
 // if there is one. It reads the journal first, then takes the collector lock
 // (lockCollector) and hooks.lock, so nothing runs a pass or a hook while
 // files are restored.
-func Recover(home string, launchd Launchd, lockCollector func() (func(), error)) error {
+func Recover(home string, backends Backends, lockCollector func() (func(), error)) error {
 	var journal Journal
 	err := local.Read(JournalPath(home), &journal)
 	if os.IsNotExist(err) {
@@ -237,5 +243,5 @@ func Recover(home string, launchd Launchd, lockCollector func() (func(), error))
 		return err
 	}
 	defer releaseHooks()
-	return Restore(home, journal, launchd)
+	return Restore(home, journal, backends)
 }

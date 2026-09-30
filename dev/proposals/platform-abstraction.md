@@ -283,6 +283,21 @@ Each recommendation from the first draft was checked against the code before bei
 - **Real systemd is unseen from a Mac.** Lingering, the user bus, `append:` logging, the Cursor Linux path and `cursor-agent` hooks (reported failing silently on Linux) stay unverified until 5b's real-manager job and 5c's live run; docs do not advertise Linux before those pass.
 - **Rebase cost.** The number of open PRs touching `Env` is the main schedule risk, which is why 5a-0 starts on `main` immediately and 5a-1 rebases on whatever has merged, or stacks on #172.
 
+## 5a-3 as built
+
+5a-3 landed in four stacked pull requests (desired state and typed errors, the conformance suite and `schedulertest.Model`, `Installed` and the macOS history, the journal's `backend` and `job_ref`). Where the code proved the signatures above wrong, it differs in these ways:
+
+- **`Inspector.Definition(site, ref) Status`** is added. `setup --refresh` reads a definition without asking the manager (a refresh whose definition it leaves alone runs no `launchctl` at all, pinned by the 5a-0 characterization), and `Inspect` always asks. `Definition` is `Inspect` without the state.
+- **`Status.DefinitionErr`** is the error of the read, or of the first part of the definition that could not be parsed (the program before the environment), with what could be read still set: refresh reports an unreadable program, leaves a definition that already runs the new executable alone, and only then reports an unreadable environment, as before.
+- **`Installed` returns `[]Job`** (`Ref` and an `Alias`: `EarlierLabel` or `Prototype`, empty for the installation's own job), not `[]Ref`. Which alias a job is decides the wording of setup's refusals, whether a job another installation runs blocks setup (the prototype's) or is skipped (an earlier label's), and which journal field records it; `status` and `uninstall` must skip the prototype. It returns the jobs it recognized together with the error that blocks setup, so `status` and `uninstall`, which ignore that error, keep working.
+- **`Retiree` has an `Alias`**, for the same reason, and its artifacts are the definition as found (`After` is what recovery puts back), which retiring deletes.
+- **`Definer.Locate(definition) (Site, Ref, error)`** is added. The journal names a job by the path of its definition and a journal is recovered under whichever `$HOME` the next setup has, so recovery needs the site and the job a recorded path names; that is adapter knowledge (`<home>/Library/LaunchAgents/<label>.plist`), and `job_ref`, when recorded, overrides the ref it names.
+- **`NotOwnedError` and `IndeterminateError`** carry `Words` and `Problem`, so their text is the words the untyped errors always said. `Problem.Kind` is a defined string type.
+- **The launchd `Plan` refuses a spec that is not the collector** (`_collect` every minute, at load) rather than render it as something else; nothing else runs under launchd yet.
+- **`setupjournal` resolves a backend by name** through `Backends`, a `func(name string) (scheduler.Scheduler, error)`, so it uses the whole port (`Inspect`, `Load`, `Unload`, `Locate`, `Words`) and not `Controller` alone. A journal that names a backend the system does not have is refused, its jobs untouched.
+- **`cli` no longer imports the launchd adapter**; only `host` does (`TestOnlyHostImportsAdapters`, and its depguard mirror, lost their `cli` entry).
+- `DefaultPATH` is wired through the collector environment now (`collectorPath`, `collectorEnvironmentProblems`); 5c changes what it returns on Linux.
+
 ## Definition of done for "platform-agnostic"
 
 Everything except `internal/scheduler/host` and the adapter directories compiles and passes its tests against `internal/scheduler` and `internal/platform` alone, using the schedulertest model. Adding an operating system or a second scheduler touches only its own adapter directory, `host`, the OS value, and the docs.

@@ -226,7 +226,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err != nil {
 		return err
 	}
-	err = setupjournal.Commit(home, journal, env.launchd())
+	err = setupjournal.Commit(home, journal, env.backends())
 	// A command file created and rolled back, or removed, leaves the
 	// directories written for it; they go while empty.
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.hookFiles(userHome)))
@@ -429,7 +429,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	if len(relabeled) > 0 {
 		firstRelabeled, moreRelabeled = relabeled[0], relabeled[1:]
 	}
-	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: jobChanges[0].Path, WasLoaded: jobActive(job.State)}
+	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: jobChanges[0].Path, WasLoaded: jobActive(job.State), Backend: in.sched().Name(), JobRef: string(plan.Ref)}
 	return journal, nil
 }
 
@@ -566,7 +566,7 @@ func abandonRecovery(out io.Writer, env Env) error {
 }
 
 func recoverSetup(home string, env Env) error {
-	return setupjournal.Recover(home, env.launchd(), func() (func(), error) { return lockCollector(home, "setup", env.now()) })
+	return setupjournal.Recover(home, env.backends(), func() (func(), error) { return lockCollector(home, "setup", env.now()) })
 }
 
 func withoutBucketPrivacy(cfg config.Config) config.Config {

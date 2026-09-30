@@ -1,0 +1,97 @@
+package setupjournal
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/wangjohn/agent-archive/internal/scheduler"
+)
+
+// DefaultBackend is the scheduler a journal that names none was written for:
+// launchd, the only one there was when journals had no backend field.
+const DefaultBackend = "launchd"
+
+// Backends resolves the name of a scheduler, as a journal records it, to the
+// scheduler that drives its jobs. internal/cli provides it from its Env, so its
+// tests' stand-ins apply here too; this package's tests pass their own. Nothing
+// in this package runs a scheduler's tool itself, and each job is driven
+// through the backend that made it, which is how a setup that moves to another
+// backend can still retire the jobs the first one left.
+//
+// This package trusts an implementation to decide ownership: a job's name
+// alone does not prove it is this installation's, so Inspect must compare the
+// definition the manager loaded the job from with the one it expects, and
+// Unload must stop the job only when they are the same, returning an error
+// (and leaving the job running) when they are not or cannot be compared.
+type Backends func(name string) (scheduler.Scheduler, error)
+
+// target is one job a journal drives: the backend that runs it, and where
+// its definition is. A job the journal cannot resolve (a backend this build
+// does not have, a definition path no backend named) is unknown, changes
+// nothing, and fails to load or stop with why.
+type target struct {
+	sched scheduler.Scheduler
+	site  scheduler.Site
+	ref   scheduler.Ref
+	err   error
+}
+
+// target resolves the job of a journal or a retired job: backend names the
+// scheduler (empty means DefaultBackend, which is how every journal before the
+// field was written), definition is the path of its definition, which says
+// where it is (the site), and jobRef, when the journal has one, is the job's
+// ref (else it is the one the definition's path names).
+func (b Backends) target(backend, jobRef, definition string) target {
+	name := backend
+	if name == "" {
+		name = DefaultBackend
+	}
+	sched, err := b(name)
+	if err != nil {
+		return target{err: err}
+	}
+	site, ref, err := sched.Locate(definition)
+	if err != nil {
+		return target{sched: sched, err: err}
+	}
+	if jobRef != "" {
+		ref = scheduler.Ref(jobRef)
+	}
+	return target{sched: sched, site: site, ref: ref}
+}
+
+// state is the job's state, unknown when it cannot be asked.
+func (t target) state() scheduler.JobState {
+	if t.err != nil {
+		return scheduler.Unknown
+	}
+	return t.sched.Inspect(context.Background(), t.site, t.ref).State
+}
+
+func (t target) load() error {
+	if t.err != nil {
+		return t.err
+	}
+	return t.sched.Load(context.Background(), t.site, t.ref)
+}
+
+func (t target) unload() error {
+	if t.err != nil {
+		return t.err
+	}
+	return t.sched.Unload(context.Background(), t.site, t.ref)
+}
+
+// tool is the command that drives the job's scheduler, for messages.
+func (t target) tool() string {
+	if t.sched == nil {
+		return "the scheduler"
+	}
+	return t.sched.Words().Tool
+}
+
+// blocked is a recovery stopped because the tool failed to do what it was
+// asked, which rerunning setup alone may not change either.
+func (t target) blocked(home, action string, err error) error {
+	return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("%s could not %s (%v); once %s works again, rerun setup", t.tool(), action, err, t.tool())}
+}

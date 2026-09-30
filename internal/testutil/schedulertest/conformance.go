@@ -96,6 +96,7 @@ func RunConformance(t *testing.T, b Backend) {
 	t.Run("NoCredentialValuesInADefinition", func(t *testing.T) { noCredentials(t, b) })
 	t.Run("UnreadableAndAbsentDefinitions", func(t *testing.T) { unreadableDefinitions(t, b) })
 	t.Run("InstalledListsTheInstallationsJobs", func(t *testing.T) { installedJobs(t, b) })
+	t.Run("LocateIsTheInverseOfPlan", func(t *testing.T) { locateInverse(t, b) })
 }
 
 // site is a user home the suite may write under, and a scheduler over it.
@@ -500,5 +501,29 @@ func installedJobs(t *testing.T, b Backend) {
 	earlier = b.Earlier(t, elsewhere, own.inst)
 	if jobs, err = s.Installed(ctx, elsewhere, own.inst); err != nil || len(jobs) != 2 || jobs[0] != (scheduler.Job{Ref: ref}) || jobs[1].Ref != earlier {
 		t.Errorf("Installed with only an earlier job defined: %+v, %v; want %s first, then %s", jobs, err, ref, earlier)
+	}
+}
+
+// Locate names the site and the job of a definition path: the inverse of where
+// Plan puts an artifact, so a journal that records a path can address the job
+// it made at the site it was made at. A path no Plan could have written is
+// refused.
+func locateInverse(t *testing.T, b Backend) {
+	t.Helper()
+	s, _, site := fresh(t, b)
+	for _, sp := range specimens(t.TempDir()) {
+		plan := define(t, s, site, sp)
+		for _, artifact := range plan.Artifacts {
+			path, _ := artifact.Path()
+			got, ref, err := s.Locate(path)
+			if err != nil || got != site || ref != plan.Ref {
+				t.Errorf("Locate(%s) = %+v, %q, %v; want %+v, %q", path, got, ref, err, site, plan.Ref)
+			}
+		}
+	}
+	for _, path := range []string{"", "relative/job", filepath.Join(site.UserHome, "elsewhere", "job"), filepath.Join(site.UserHome, "x") + "/../y"} {
+		if _, _, err := s.Locate(path); err == nil {
+			t.Errorf("Locate(%q) accepted a path no plan writes", path)
+		}
 	}
 }

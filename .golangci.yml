@@ -112,7 +112,7 @@ linters:
             - pkg: golang.org/x/term
               desc: prompts belong to cli
             - pkg: os/exec
-              desc: launchd is driven only through the Launchd the caller passes
+              desc: a scheduler is driven only through the Backends the caller passes
             - pkg: os/signal
               desc: cli owns process signals
             - pkg: github.com/wangjohn/agent-archive/internal/credentials
@@ -184,16 +184,14 @@ linters:
               desc: host chooses adapters, never the other way round
             - pkg: github.com/wangjohn/agent-archive/internal/cli
               desc: cli drives the scheduler, never the other way round
-        # host chooses the adapter for the system; cli still speaks launchd's
-        # vocabulary (plist labels, the plist codec) until 5a-3 of
-        # dev/proposals/platform-abstraction.md moves it behind the adapter.
+        # host chooses the adapter for the system, and nothing else imports one:
+        # cli, setupjournal and every other package name the port.
         # TestOnlyHostImportsAdapters checks the same on every platform.
         only-host-imports-scheduler-adapters:
           files:
             - "$all"
             - "!$test"
             - "!**/internal/scheduler/host/*.go"
-            - "!**/internal/cli/*.go"
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/scheduler/launchd
               desc: import the port (internal/scheduler); host chooses the adapter

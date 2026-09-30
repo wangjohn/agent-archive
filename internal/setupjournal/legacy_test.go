@@ -56,7 +56,7 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 	if err := local.Write(JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
-	if err := Recover(home, launchd, noLock); err != nil {
+	if err := Recover(home, backends(launchd), noLock); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(legacyPath); err != nil || string(data) != legacyPlist {
@@ -74,7 +74,7 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 		t.Fatal("journal not removed")
 	}
 	// Recovery is idempotent once the journal is gone.
-	if err := Recover(home, launchd, noLock); err != nil {
+	if err := Recover(home, backends(launchd), noLock); err != nil {
 		t.Fatal(err)
 	}
 }

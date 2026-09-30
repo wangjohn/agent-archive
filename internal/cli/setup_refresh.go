@@ -173,7 +173,7 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	// Registering for the signals absorbs them until Commit returns.
 	_, stopSignals := env.interrupts()
 	defer stopSignals()
-	err = setupjournal.Commit(home, plan.journal, env.launchd())
+	err = setupjournal.Commit(home, plan.journal, env.backends())
 	// A skill file removed leaves the directories written for it.
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))
 	return plan, userHome, err
@@ -282,7 +282,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	// The job is left as it is: no file change needs launchd, and none asks
 	// it anything. A new plist for a loaded job is the one thing that does,
 	// since launchd runs the definition it loaded, not the file.
-	plan.journal = setupjournal.Journal{Changes: changes, Plist: definitionPath(definition), FilesOnly: true}
+	plan.journal = setupjournal.Journal{Changes: changes, Plist: definitionPath(definition), Backend: in.sched().Name(), JobRef: string(in.ref()), FilesOnly: true}
 	if plan.plist {
 		if err := planJobRestart(&plan, in, userHome, env); err != nil {
 			return plan, err

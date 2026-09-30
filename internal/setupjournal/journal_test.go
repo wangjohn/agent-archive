@@ -223,7 +223,7 @@ func (f *txFixture) crash(t *testing.T, applied bool) {
 func TestCommitRetiresEveryOwnedJobAndNothingElse(t *testing.T) {
 	t.Parallel()
 	f := newTxFixture(t)
-	if err := Commit(f.home, f.journal, f.sim); err != nil {
+	if err := Commit(f.home, f.journal, backends(f.sim)); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range f.journal.Changes {
@@ -266,7 +266,7 @@ func TestCommitRollsBackAFailureAtEachStep(t *testing.T) {
 			t.Parallel()
 			f := newTxFixture(t)
 			tc.fail(f)
-			err := Commit(f.home, f.journal, f.sim)
+			err := Commit(f.home, f.journal, backends(f.sim))
 			if err == nil || !strings.Contains(err.Error(), "previous installation restored") || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v", err)
 			}
@@ -291,7 +291,7 @@ func TestCommitRollbackLeavesAnotherInstallationsCollectorAlone(t *testing.T) {
 	elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(f.own)
 	f.sim.loaded[simLabel(f.own)] = elsewhere
 	f.loaded[simLabel(f.own)] = elsewhere
-	err := Commit(f.home, f.journal, f.sim)
+	err := Commit(f.home, f.journal, backends(f.sim))
 	var blocked *RecoveryBlockedError
 	if err == nil || errors.As(err, &blocked) || !strings.Contains(err.Error(), "previous installation restored") || !strings.Contains(err.Error(), "belongs to another installation") || strings.Contains(err.Error(), "launchctl") {
 		t.Fatalf("err = %v", err)
@@ -311,7 +311,7 @@ func TestCommitReportsAnIncompleteRollback(t *testing.T) {
 	f := newTxFixture(t)
 	f.sim.failLoad[f.own] = 1
 	f.sim.failLoad[f.legacy] = 1
-	err := Commit(f.home, f.journal, f.sim)
+	err := Commit(f.home, f.journal, backends(f.sim))
 	var blocked *RecoveryBlockedError
 	if err == nil || !strings.Contains(err.Error(), "start background collector") || !strings.Contains(err.Error(), "rollback incomplete; run setup again") || !errors.As(err, &blocked) {
 		t.Fatalf("err = %v", err)
@@ -322,7 +322,7 @@ func TestCommitReportsAnIncompleteRollback(t *testing.T) {
 	if !TransactionPending(f.home) {
 		t.Fatal("an incomplete rollback removed its journal")
 	}
-	if err := Recover(f.home, f.sim, noLock); err != nil {
+	if err := Recover(f.home, backends(f.sim), noLock); err != nil {
 		t.Fatal(err)
 	}
 	f.requireAsFound(t)
@@ -364,7 +364,7 @@ func TestRestoreRefusesBeforeTouchingAnything(t *testing.T) {
 				f.crash(t, applied)
 				tc.edit(t, f)
 				before, loaded := f.snapshot(), maps.Clone(f.sim.loaded)
-				err := Recover(f.home, f.sim, noLock)
+				err := Recover(f.home, backends(f.sim), noLock)
 				var blocked *RecoveryBlockedError
 				if !errors.As(err, &blocked) || !strings.Contains(err.Error(), tc.want) {
 					t.Fatalf("err = %v", err)
@@ -398,7 +398,7 @@ func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 		f.crash(t, true)
 		elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(f.own)
 		f.sim.loaded[simLabel(f.own)] = elsewhere
-		if err := Recover(f.home, f.sim, noLock); err != nil {
+		if err := Recover(f.home, backends(f.sim), noLock); err != nil {
 			t.Fatal(err)
 		}
 		f.loaded[simLabel(f.own)] = elsewhere
@@ -424,14 +424,14 @@ func TestRecoveryLeavesAnotherInstallationsJobAlone(t *testing.T) {
 			// too; since then, another installation loaded this one's
 			// label from its own plist.
 			for _, job := range append([]*LegacyJob{f.journal.Legacy}, f.journal.relabeled()...) {
-				if err := retireLegacyJob(job, f.sim); err != nil {
+				if err := retireLegacyJob(job, backends(f.sim)); err != nil {
 					t.Fatal(err)
 				}
 			}
 			elsewhere := "/Users/real/Library/LaunchAgents/" + filepath.Base(plist)
 			f.sim.loaded[simLabel(plist)] = elsewhere
 			f.sim.calls = nil
-			if err := Recover(f.home, f.sim, noLock); err != nil {
+			if err := Recover(f.home, backends(f.sim), noLock); err != nil {
 				t.Fatal(err)
 			}
 			f.loaded[simLabel(plist)] = elsewhere
@@ -455,13 +455,13 @@ func TestRecoverTakesTheLockOnlyForAReadableJournal(t *testing.T) {
 	home := t.TempDir()
 	sim := newLaunchdSim()
 	var taken bool
-	if err := Recover(home, sim, locked(&taken)); err != nil || taken {
+	if err := Recover(home, backends(sim), locked(&taken)); err != nil || taken {
 		t.Fatalf("no journal: err=%v lock taken=%v", err, taken)
 	}
 	if err := os.WriteFile(JournalPath(home), []byte(`{"changes":[`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := Recover(home, sim, locked(&taken))
+	err := Recover(home, backends(sim), locked(&taken))
 	var blocked *RecoveryBlockedError
 	if !errors.As(err, &blocked) || !strings.Contains(err.Error(), "could not be read") || taken || len(sim.calls) != 0 {
 		t.Fatalf("corrupt journal: err=%v lock taken=%v calls=%v", err, taken, sim.calls)
@@ -473,7 +473,7 @@ func TestRecoverTakesTheLockOnlyForAReadableJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	busy := errors.New("a collector pass is running")
-	if err := Recover(home, sim, func() (func(), error) { return nil, busy }); !errors.Is(err, busy) || len(sim.calls) != 0 || !TransactionPending(home) {
+	if err := Recover(home, backends(sim), func() (func(), error) { return nil, busy }); !errors.Is(err, busy) || len(sim.calls) != 0 || !TransactionPending(home) {
 		t.Fatalf("lock held: err=%v calls=%v", err, sim.calls)
 	}
 }
@@ -511,7 +511,7 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 			}
 		}()
 		home, journal, settings, added := newJournal(t)
-		if err := Commit(home, journal, quiet); err != nil {
+		if err := Commit(home, journal, backends(quiet)); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := os.ReadFile(settings); string(got) != "new" {
@@ -538,7 +538,7 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(filepath.Dir(added), 0o700) })
-		err := Commit(home, journal, quiet)
+		err := Commit(home, journal, backends(quiet))
 		if err == nil || !strings.Contains(err.Error(), "previous installation restored") {
 			t.Fatalf("err = %v", err)
 		}
@@ -564,7 +564,7 @@ func TestFilesOnlyTransactionNeverAsksLaunchd(t *testing.T) {
 		if err := hooks.Apply(journal.Changes); err != nil {
 			t.Fatal(err)
 		}
-		if err := Recover(home, quiet, noLock); err != nil {
+		if err := Recover(home, backends(quiet), noLock); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := os.ReadFile(settings); string(got) != "old" {
