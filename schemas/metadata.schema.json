@@ -57,6 +57,21 @@
       "type": "string",
       "pattern": "^repo-[0-9a-f]{16}$"
     },
+    "git_head": {
+      "description": "The commit the session's working directory had checked out, as the session's own hooks recorded it by running git there (a linked worktree's own HEAD; a submodule's when the session ran inside one). 'start' is HEAD, with whether the working tree was dirty, when the hook that registered the session ran; 'last' is HEAD at the most recent stop hook that could read it. Either is absent when no hook could tell (git not installed, not a repository, a branch with no commits, git slower than the hook's budget) and on sessions registered before this field, imported by backfill, or recorded as subagents; neither is ever inferred afterwards. Only commit names, a boolean, and times are recorded: never a branch, remote, path, or file name. The commit may exist only on the capturing machine.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/git_head_observation"
+        },
+        "last": {
+          "description": "Replaced only when a stop hook finds HEAD at a different commit, so observed_at is the first stop that saw this commit. Carries no dirty flag.",
+          "$ref": "#/$defs/git_head_observation"
+        }
+      }
+    },
     "started_at": {
       "type": "string",
       "format": "date-time"
@@ -603,6 +618,30 @@
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ]
+    },
+    "git_head_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha",
+        "observed_at"
+      ],
+      "properties": {
+        "sha": {
+          "description": "HEAD's full object name: 40 hex digits (SHA-1) or 64 (SHA-256).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "dirty": {
+          "description": "Whether the working tree had staged, unstaged, or untracked (not ignored) changes against sha. A submodule counts when its checked-out commit differs, not for changes inside it. Absent when unknown.",
+          "type": "boolean"
+        },
+        "observed_at": {
+          "description": "The time of the hook event that saw it.",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     },
     "git_event": {
       "type": "object",

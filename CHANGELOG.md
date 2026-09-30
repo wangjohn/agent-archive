@@ -8,6 +8,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **The commit a session started on.** When a session starts in a git
+  repository, the hook records the commit checked out in its working
+  directory and whether the working tree had uncommitted changes, and each
+  stop records the commit checked out then. The metadata carries them as
+  `git_head` (`start` with `sha`, `dirty` and `observed_at`; `last` with
+  `sha` and `observed_at`), `show` has a `Commit` row, and `show --json` and
+  `list --json` include the field. Only full commit names, a yes/no, and
+  times are kept: no branch, remote, path, or file name. The hook runs
+  `git rev-parse` and `git status` with the same short timeout as the
+  repository key, before it takes its lock, and records nothing when git is
+  missing, slow, or the directory is not a repository. Sessions registered
+  before this release, imported sessions, and subagents have no `git_head`,
+  and nothing infers one later. See
+  [JSON output](docs/reference/json-output.md#show) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
 - **`agent-archive stats` is interactive on a terminal.** Plain `stats` opens
   a screen with a bar of keys: `o` `d` `p` `m` `a` switch between the
   overview, detail, projects, models and agents views, `w` cycles the window

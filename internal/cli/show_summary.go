@@ -144,6 +144,7 @@ func summaryRows(view sessionView, opts summaryOptions, width int) []summaryRow 
 	add("Activity", wrapList(summaryActivity(m.Counts), " · ", width)...)
 	add("Tools", wrapList(summaryTools(m.ToolsUsed), " · ", width)...)
 	add("Git", wrapList(summaryGit(m), " · ", width)...)
+	add("Commit", wrapList(summaryCommit(m.GitHead), " · ", width)...)
 	add("Skills", wrapList(displayAll(skillNames(m)), ", ", width)...)
 	add("Subagents", summarySubagents(m, view.LinkedAvailability))
 	if m.ParentSessionID != "" {
@@ -401,6 +402,33 @@ func summaryGit(m archive.Metadata) []string {
 	items = append(items, summaryPullRequests(m.GitActivity, archive.GitEventPRCreated, m.Counts.PRsCreated, "opened")...)
 	items = append(items, summaryPullRequests(m.GitActivity, archive.GitEventPRMerged, m.Counts.PRsMerged, "merged")...)
 	return items
+}
+
+// summaryCommit is the commit the session started on, with whether its tree
+// was dirty, and the last one a stop hook saw when that differs, each
+// abbreviated to 12 digits. Empty when no hook recorded either.
+func summaryCommit(head *archive.SessionGitHead) []string {
+	if head == nil {
+		return nil
+	}
+	var items []string
+	if start := head.Start; start != nil {
+		item := "started on " + shortCommit(start.SHA)
+		if start.Dirty != nil && *start.Dirty {
+			item += " with uncommitted changes"
+		}
+		items = append(items, item)
+	}
+	if last := head.Last; last != nil && (head.Start == nil || last.SHA != head.Start.SHA) {
+		items = append(items, "last seen on "+shortCommit(last.SHA))
+	}
+	return items
+}
+
+// shortCommit is a commit's first 12 hex digits, for reading, not for
+// checking out: show --json has the full name.
+func shortCommit(sha string) string {
+	return archive.DisplayLine(sha[:min(12, len(sha))])
 }
 
 // summaryPullRequests is "PR #n <verb>" for each pull request of kind in

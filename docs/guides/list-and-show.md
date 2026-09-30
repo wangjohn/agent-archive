@@ -182,6 +182,12 @@ requests the session created or merged, when its own tool calls confirmed
 them; the `Git` row counts commits and pushes and names each pull request.
 See [JSON output](../reference/json-output.md#show).
 
+A session captured by this release's hooks in a git repository also records
+the commit it started on, whether the working tree had uncommitted changes,
+and the last commit a stop hook saw; the `Commit` row shows them
+(`started on 3f9c2ab4d1e0 with uncommitted changes · last seen on
+9e01d4c7a2b8`), and `--json` has the full names in `git_head`.
+
 `show` prints conversation content only when asked, with `--transcript` or
 the browser's `t`: it downloads the session's source bundle, verifies its
 checksum and identity against the metadata, and prints each prompt, the

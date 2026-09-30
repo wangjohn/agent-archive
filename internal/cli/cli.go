@@ -104,6 +104,9 @@ type Env struct {
 	// repoKey, set only by tests, replaces the git lookup of a project's
 	// repository key (see repoKeyResolver).
 	repoKey func(root string) string
+	// gitHead, set only by tests, replaces the git lookup of the commit a
+	// session's working directory has checked out (see gitHeadResolver).
+	gitHead func(dir string, withDirty bool) (string, *bool)
 	// openKeys, set only by tests, stands in for stdin read a key at a time
 	// on the session browser's screens (see keyTerminal), or reports that
 	// keys cannot be read, which keeps the browser reading lines. Defaults

@@ -123,6 +123,18 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   again; one derived later stays if the remote is removed or git cannot be
   run; a changed remote replaces it only at the session's next content
   publish or metadata refresh; and a finished session never updates.
+- **Commit** (`git_head`, in the metadata): for a session whose working
+  directory is in a git repository, the full name of the commit checked out
+  when the session started, whether the working tree then had uncommitted
+  changes (a yes or no; which files, and what changed, are never read into
+  the archive), and the commit checked out at the latest stop hook, each
+  with the time a hook saw it. agent-archive's hooks run `git rev-parse` and
+  `git status` in that directory to find them, with a short timeout. No
+  branch, remote address, or path is taken from git. Anyone who can read
+  your bucket and the repository can match a session to the commit it
+  started from. A session that was not in a repository, whose hooks could
+  not run git in time, that started before this was recorded, or that
+  `backfill` imported, has none, and nothing fills it in later.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).

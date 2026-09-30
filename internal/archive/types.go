@@ -322,7 +322,16 @@ type SessionRegistration struct {
 	// registered: a hash, never the URL. Empty when there was no portable
 	// origin, or on older registrations; the collector then derives it from
 	// ProjectRoot when it publishes.
-	RepoKey               string    `json:"repo_key,omitempty"`
+	RepoKey string `json:"repo_key,omitempty"`
+	// StartHead is the commit the session's working directory had checked
+	// out, and whether its tree was dirty, when the hook registered it. Set
+	// once; nil when git could not tell in time, and on registrations made
+	// before the field, by backfill, or for a subagent.
+	StartHead *GitHead `json:"start_head,omitempty"`
+	// LastHead is HEAD at the latest stop hook that could read it, replaced
+	// only when the commit changes (see GitHead.ObservedAt). Nil when no
+	// stop hook has.
+	LastHead              *GitHead  `json:"last_head,omitempty"`
 	ParentSessionID       string    `json:"parent_session_id,omitempty"`
 	ParentNativeSessionID string    `json:"parent_native_session_id,omitempty"`
 	SubagentID            string    `json:"subagent_id,omitempty"`
@@ -644,8 +653,12 @@ type Metadata struct {
 	// of where it is checked out: a hash of the normalized origin URL (see
 	// RepoKey), never the URL. Omitted when the project had no portable
 	// origin remote.
-	RepoKey   string    `json:"repo_key,omitempty"`
-	StartedAt time.Time `json:"started_at"`
+	RepoKey string `json:"repo_key,omitempty"`
+	// GitHead is the commit the session's working directory had checked out
+	// when it started and when a stop hook last looked, as its hooks
+	// recorded them (see ApplyGitHead). Omitted when no hook could tell.
+	GitHead   *SessionGitHead `json:"git_head,omitempty"`
+	StartedAt time.Time       `json:"started_at"`
 	// EndedAt is the latest timestamp any retained record of the session
 	// carries, never earlier than StartedAt. Omitted when no record carries
 	// a timestamp (a Cursor transcript) or the source could not be parsed.

@@ -4,8 +4,9 @@
 // continues a registered one, records lifecycle and final-response evidence
 // and subagent links as local requests, and leaves a content-free diagnostic
 // when a start is declined. It never touches the network or writes to
-// stdout, runs no program of its own (the one git call, for a repository
-// key, is a lookup the command passes in, made before hooks.lock and bounded),
+// stdout, runs no program of its own (git, for a repository key and the
+// checked-out commit, runs in lookups the command passes in, made before
+// hooks.lock and bounded),
 // and every wait it can make is bounded: the command around it (in
 // internal/cli) owns flag parsing, the exit code, and panic recovery.
 package capture
@@ -120,13 +121,16 @@ func HandleEvent(home, harness string, payload map[string]any, now time.Time, op
 	for _, option := range options {
 		option(&o)
 	}
-	return handleEvent(home, harness, payload, now, nil, nil, o.repoKey)
+	return handleEvent(home, harness, payload, now, nil, nil, o)
 }
 
 // Option adjusts HandleEvent.
 type Option func(*eventOptions)
 
-type eventOptions struct{ repoKey RepoKeyFunc }
+type eventOptions struct {
+	repoKey RepoKeyFunc
+	gitHead GitHeadFunc
+}
 
 // RepoKeyFunc returns archive.RepoKey of the git repository at a project
 // root, or "" when it has none or cannot tell. The hook runs no program
@@ -142,9 +146,26 @@ func WithRepoKey(repoKey RepoKeyFunc) Option {
 	return func(o *eventOptions) { o.repoKey = repoKey }
 }
 
-// repoKeyBudget is the longest the hook waits for a repository key. The
-// lookup bounds itself (internal/gitremote) but a hung mount can stall a
-// process before its timeout starts, so the wait is bounded here too.
+// GitHeadFunc reports the commit checked out in the git repository holding
+// dir: HEAD's full object name, or "" when there is none or it cannot tell,
+// and, when withDirty is set, whether the working tree differs from it (nil
+// when unknown). Like RepoKeyFunc it is passed in by the command line (see
+// internal/gitremote), must return within a few hundred milliseconds, and
+// must never panic.
+type GitHeadFunc func(dir string, withDirty bool) (sha string, dirty *bool)
+
+// WithGitHead records gitHead's answers for the session's working directory:
+// HEAD and whether the tree was dirty on a session HandleEvent registers
+// (StartHead), and HEAD at each stop of a registered session (LastHead).
+// Without it neither is recorded, and nothing derives them later.
+func WithGitHead(gitHead GitHeadFunc) Option {
+	return func(o *eventOptions) { o.gitHead = gitHead }
+}
+
+// repoKeyBudget is the longest the hook waits for a repository key, and for
+// the checked-out commit, which is asked at the same time. The lookups bound
+// themselves (internal/gitremote) but a hung mount can stall a process before
+// its timeout starts, so the wait is bounded here too.
 const repoKeyBudget = 600 * time.Millisecond
 
 // hooksLockWait is how long a hook waits for hooks.lock when it did not spend
@@ -161,45 +182,137 @@ func lockWaitAfter(spent time.Duration) time.Duration {
 	return min(hooksLockWait, max(hooksLockWait-spent, minHooksLockWait))
 }
 
-// startRepoKey is newSessionRepoKey for an event that can register a session:
-// a start, or, for Cursor only (see the hookEventTurnStart case), a turn
-// start. Any other event gets "".
-func startRepoKey(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, repoKey RepoKeyFunc) string {
-	if repoKey == nil {
-		return ""
-	}
-	if kind == hookEventStart || (kind == hookEventTurnStart && archive.CanonicalHarness(harness) == "cursor") {
-		return newSessionRepoKey(home, harness, payload, now, repoKey)
-	}
-	return ""
+// gitLookups is what the lookups made before hooks.lock found: a new
+// session's repository key and starting commit, or a registered session's
+// commit at a stop. Each is empty when not asked or not known.
+type gitLookups struct {
+	repoKey   string
+	startHead *archive.GitHead
+	lastHead  *archive.GitHead
 }
 
-// newSessionRepoKey is the repository key for a session this event may
-// register: "" unless capture is on, the start is in an included configured
-// project, would be admitted (declinedStart, the rule the registration itself
-// applies), and is not a continuation of a session already registered. So the
-// lookup runs for at most one admitted start per session, and never for a
-// project that is not archived or a start that will be declined. It reads the
-// configuration and the session index without hooks.lock; a stale answer only
-// costs a key that is not recorded (the collector derives one later).
-func newSessionRepoKey(home, harness string, payload map[string]any, now time.Time, repoKey RepoKeyFunc) string {
+// lookupsBeforeLock runs the git lookups this event needs: newSessionLookups
+// for an event that can register a session (a start, or, for Cursor only, see
+// the hookEventTurnStart case, a turn start), stopLookups for a stop. Any
+// other event, and an event without lookups to run, gets none.
+func lookupsBeforeLock(home, harness string, kind hookEventKind, payload map[string]any, now time.Time, o eventOptions) gitLookups {
+	if o.repoKey == nil && o.gitHead == nil {
+		return gitLookups{}
+	}
+	switch {
+	case startsCapture(kind, harness):
+		return newSessionLookups(home, harness, payload, now, o)
+	case kind == hookEventStop:
+		return stopLookups(home, payload, now, o.gitHead)
+	}
+	return gitLookups{}
+}
+
+// newSessionLookups is the repository key and the starting commit for a
+// session this event may register: none unless capture is on, the start is in
+// an included configured project, would be admitted (declinedStart, the rule
+// the registration itself applies), and is not a continuation of a session
+// already registered. So the lookups run for at most one admitted start per
+// session, and never for a project that is not archived or a start that will
+// be declined. They read the configuration and the session index without
+// hooks.lock; a stale answer only costs what is not recorded (the collector
+// derives a repository key later; a starting commit is then unknown). The
+// repository key is asked of the project root and the commit of the working
+// directory the hook reports, which is the session's own checkout when that
+// is a linked worktree inside the project. The two run at the same time, so
+// together they take at most repoKeyBudget.
+func newSessionLookups(home, harness string, payload map[string]any, now time.Time, o eventOptions) gitLookups {
 	cfg, found, err := config.Load(home)
 	if err != nil || !found || cfg.Paused {
-		return ""
+		return gitLookups{}
 	}
 	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
-	owner, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
+	dir := projectRoot(payload)
+	owner, owned := ConfiguredProjectActivationFor(cfg, dir)
 	// declinedStart is also what says capture is enabled and the project is
 	// included and active (archive.Config.Eligible).
 	if nativeSessionID == "" || !owned || declinedStart(cfg, owner.Root, now, harness, payload, false) != "" {
-		return ""
+		return gitLookups{}
 	}
 	// An index entry with no registration behind it is treated as never seen
 	// by the registration below, so it still gets a key.
 	if registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID); err != nil || registered {
-		return ""
+		return gitLookups{}
 	}
-	return boundedRepoKey(repoKey, owner.Root)
+	var out gitLookups
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		out.startHead = boundedGitHead(o.gitHead, dir, true, now)
+	}()
+	out.repoKey = boundedRepoKey(o.repoKey, owner.Root)
+	<-done
+	return out
+}
+
+// stopLookups is HEAD in the working directory a stop hook reports, for a
+// registered session in an included project: none otherwise, so git never
+// runs for a session that is not archived. It reads the configuration and
+// the session index without hooks.lock, like newSessionLookups. Only HEAD is
+// asked, not whether the tree is dirty, which costs more and would be asked
+// on every turn.
+func stopLookups(home string, payload map[string]any, now time.Time, gitHead GitHeadFunc) gitLookups {
+	if gitHead == nil {
+		return gitLookups{}
+	}
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
+		return gitLookups{}
+	}
+	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
+	dir := projectRoot(payload)
+	owner, owned := ConfiguredProjectActivationFor(cfg, dir)
+	if nativeSessionID == "" || !owned || !owner.Included {
+		return gitLookups{}
+	}
+	if registered, err := HasRegistration(state.OpenReadOnly(home), nativeSessionID); err != nil || !registered {
+		return gitLookups{}
+	}
+	return gitLookups{lastHead: boundedGitHead(gitHead, dir, false, now)}
+}
+
+// boundedGitHead is gitHead's answer for dir as a GitHead observed at now,
+// or nil when gitHead is nil, panics, does not return within repoKeyBudget,
+// or does not return a full object name: the commit never fails or delays a
+// registration. The waiting goroutine may outlive the call; its answer is
+// then dropped.
+func boundedGitHead(gitHead GitHeadFunc, dir string, withDirty bool, now time.Time) *archive.GitHead {
+	if gitHead == nil || dir == "" || !filepath.IsAbs(dir) {
+		return nil
+	}
+	type result struct {
+		sha   string
+		dirty *bool
+	}
+	answer := make(chan result, 1)
+	go func() {
+		defer func() {
+			if recover() != nil {
+				answer <- result{}
+			}
+		}()
+		sha, dirty := gitHead(dir, withDirty)
+		answer <- result{sha, dirty}
+	}()
+	timer := time.NewTimer(repoKeyBudget)
+	defer timer.Stop()
+	select {
+	case got := <-answer:
+		var dirty *bool
+		if withDirty && got.dirty != nil {
+			dirty = new(*got.dirty)
+		}
+		if head := (&archive.GitHead{SHA: got.sha, Dirty: dirty, ObservedAt: now}); head.Valid() {
+			return head
+		}
+	case <-timer.C:
+	}
+	return nil
 }
 
 // boundedRepoKey is repoKey(root), or "" when it is nil, panics, does not
@@ -237,7 +350,7 @@ type lockHooks func(home string, wait time.Duration) (func(), error)
 // busy-lock test can time the hook's wait apart from the writes after it.
 // afterLock is used by the contention test to model a bounded slow durable
 // write while hooks.lock is held. Production calls provide neither.
-func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func(), repoKey RepoKeyFunc) error {
+func handleEvent(home, harness string, payload map[string]any, now time.Time, lock lockHooks, afterLock func(), o eventOptions) error {
 	if payload == nil {
 		return nil
 	}
@@ -252,7 +365,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 	// Asked before hooks.lock is taken, never under it: a slow lookup must not
 	// use up the hook's budget or make concurrent hooks find the lock busy.
 	lookupStarted := time.Now()
-	sessionRepoKey := startRepoKey(home, harness, kind, payload, now, repoKey)
+	lookups := lookupsBeforeLock(home, harness, kind, payload, now, o)
 	// Leave room in the harness's two-second timeout for a retry intent and
 	// diagnostic if capture is contended. Those writes are synchronous and
 	// cannot be guaranteed against an indefinitely stalled filesystem.
@@ -306,7 +419,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 
 	switch kind {
 	case hookEventStart:
-		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, sessionRepoKey)
+		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, lookups)
 	case hookEventTurnStart:
 		registered := true
 		if archive.CanonicalHarness(harness) == "cursor" {
@@ -320,7 +433,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 			// (observed on 3.21.13): its first hook is beforeSubmitPrompt.
 			// A never-seen conversation is registered there, under the
 			// same fresh-start proof a sessionStart would need.
-			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, sessionRepoKey)
+			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, lookups)
 		} else {
 			err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
 		}
@@ -341,7 +454,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, lo
 				break
 			}
 		}
-		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now)
+		err = handleSessionStop(store, harness, nativeSessionID, eventName, payload, now, lookups.lastHead)
 	case hookEventIgnored:
 		// Handled by the early return above, before the lock was taken.
 	}
@@ -511,11 +624,11 @@ func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistrat
 	return nil
 }
 
-func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, repoKey string) error {
-	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false, repoKey)
+func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, lookups gitLookups) error {
+	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false, lookups)
 }
 
-func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool, repoKey string) error {
+func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool, lookups gitLookups) error {
 	reason := strings.ToLower(eventName)
 	transcriptPath, _ := payload["transcript_path"].(string)
 	isCursor := archive.CanonicalHarness(harness) == "cursor"
@@ -607,7 +720,8 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 			NativeSessionID:  nativeSessionID,
 			ProjectID:        archive.ProjectID(root),
 			ProjectRoot:      root,
-			RepoKey:          repoKey,
+			RepoKey:          lookups.repoKey,
+			StartHead:        lookups.startHead,
 			Harness:          observedHarness,
 			TranscriptPath:   transcriptPath,
 			SessionStartedAt: now,
@@ -798,7 +912,7 @@ func saveLifecycleEvidence(store *state.Store, archiveID, harness, reason string
 	return store.SaveEvidence(archiveID, reason, now, *evidence)
 }
 
-func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time) error {
+func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, lastHead *archive.GitHead) error {
 	archiveID, found, err := store.ArchiveSessionID(nativeSessionID)
 	if err != nil {
 		return fmt.Errorf("look up archive session ID: %w", err)
@@ -824,6 +938,9 @@ func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName s
 			return err
 		}
 	}
+	if err := recordLastHead(store, registration, lastHead); err != nil {
+		return err
+	}
 	reason := strings.ToLower(eventName)
 	var evidence []archive.SupplementalEvidence
 	if isSessionLifecycleEvent(eventName) {
@@ -843,6 +960,30 @@ func handleSessionStop(store *state.Store, harness, nativeSessionID, eventName s
 		evidence = append(evidence, *filtered)
 	}
 	return store.SaveRequest(archiveID, reason, now, evidence...)
+}
+
+// recordLastHead saves head as the registration's LastHead when it names a
+// different commit from the one recorded, so a stop that finds HEAD where it
+// was writes nothing. The write goes through UpdateRegistration, like
+// adoptCursorTranscriptPath's, so a session retention forgot meanwhile is
+// reported as state.ErrSessionNotRegistered.
+func recordLastHead(store *state.Store, reg archive.SessionRegistration, head *archive.GitHead) error {
+	if !head.Valid() || (reg.LastHead != nil && reg.LastHead.SHA == head.SHA) {
+		return nil
+	}
+	found, err := store.UpdateRegistration(reg.ArchiveSessionID, func(current *archive.SessionRegistration) error {
+		if current.LastHead == nil || current.LastHead.SHA != head.SHA {
+			current.LastHead = head
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("record last HEAD: %w", err)
+	}
+	if !found {
+		return state.ErrSessionNotRegistered
+	}
+	return nil
 }
 
 func isSessionLifecycleEvent(eventName string) bool {

@@ -188,7 +188,7 @@ func TestCursorOverlappingHooksRegisterOnce(t *testing.T) {
 				if slowWrite {
 					afterLock = func() { time.Sleep(100 * time.Millisecond) }
 				}
-				errs <- handleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, path), at, nil, afterLock, nil)
+				errs <- handleEvent(home, "cursor", cursorDesktopPayload(event, conversation, project, path), at, nil, afterLock, eventOptions{})
 				times <- time.Since(start)
 			}(event)
 		}

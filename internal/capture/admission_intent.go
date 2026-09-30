@@ -334,11 +334,11 @@ func replayIntentKinds(intent admissionIntent, payload map[string]any) (start, f
 func replayAdmissionAction(home string, store *state.Store, cfg config.Config, intent admissionIntent, payload map[string]any, registered, start, followup bool) error {
 	switch {
 	case !registered && start:
-		if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true, ""); err != nil {
+		if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true, gitLookups{}); err != nil {
 			return fmt.Errorf("replay admission intent: %w", err)
 		}
 	case registered && followup:
-		if err := handleSessionStop(store, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt); err != nil {
+		if err := handleSessionStop(store, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, nil); err != nil {
 			return fmt.Errorf("replay Cursor follow-up: %w", err)
 		}
 	case registered && start && intent.Harness == "cursor" && intent.TranscriptPath != "":
@@ -381,7 +381,7 @@ func replayDeferredFollowup(store *state.Store, cfg config.Config, followup defe
 	if !matches {
 		return removeAdmissionIntent(followup.path)
 	}
-	if err := handleSessionStop(store, "cursor", followup.intent.NativeSessionID, followup.intent.Event, intentPayload(followup.intent), followup.intent.ObservedAt); err != nil {
+	if err := handleSessionStop(store, "cursor", followup.intent.NativeSessionID, followup.intent.Event, intentPayload(followup.intent), followup.intent.ObservedAt, nil); err != nil {
 		return fmt.Errorf("replay deferred Cursor follow-up: %w", err)
 	}
 	return removeAdmissionIntent(followup.path)

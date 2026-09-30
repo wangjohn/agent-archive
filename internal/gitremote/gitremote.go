@@ -1,10 +1,11 @@
 // Package gitremote finds a project's git origin remote and turns it into an
-// archive.RepoKey, best effort. It is the only place the program runs git.
+// archive.RepoKey, and reads the commit a working directory has checked out
+// (Head, Dirty), best effort. It is the only place the program runs git.
 //
 // Every failure (git not installed, a directory that is not a repository, no
 // origin, a slow disk) is an empty result, never an error: a repository key
-// is an optimization for matching sessions across machines, and no caller may
-// fail, or wait long, for it. The hook runtime imports nothing that runs a
+// and a HEAD are annotations on a session, and no caller may fail, or wait
+// long, for them. The hook runtime imports nothing that runs a
 // program, so it is handed a resolver by the command line instead (see
 // internal/cli's `_hook`).
 package gitremote
@@ -29,8 +30,13 @@ import (
 // Timeout bounds one git invocation. A hook has about two seconds in all.
 const Timeout = 500 * time.Millisecond
 
-// maxOutput is the most git output read; a remote URL is far shorter.
+// maxOutput is the most git output read; a remote URL or an object name is
+// far shorter.
 const maxOutput = 4096
+
+// ErrOutputLimit is ExecRunner's error when git printed more than maxOutput
+// bytes. The output it returns with it is the first maxOutput bytes.
+var ErrOutputLimit = errors.New("git printed more than expected")
 
 // Runner runs git with args in dir and returns its standard output. It must
 // stop when ctx ends. Tests substitute one; ExecRunner is the real one.
@@ -98,7 +104,8 @@ func (r *Resolver) Key(root string) string {
 // and git's own failure on a missing directory is the same answer. The
 // environment carries none of the caller's GIT_* variables (a stray GIT_DIR
 // would answer for another repository), git never prompts, and output past a
-// few kilobytes is an error, not a truncated URL.
+// few kilobytes is ErrOutputLimit, returned with what was kept, not a
+// truncated URL.
 func ExecRunner(ctx context.Context, _ string, args ...string) ([]byte, error) {
 	git, err := realLocator.find()
 	if err != nil {
@@ -115,7 +122,7 @@ func ExecRunner(ctx context.Context, _ string, args ...string) ([]byte, error) {
 		return nil, err
 	}
 	if out.over {
-		return nil, errors.New("git printed more than a remote URL")
+		return out.buf.Bytes(), ErrOutputLimit
 	}
 	return out.buf.Bytes(), nil
 }
