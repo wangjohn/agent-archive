@@ -32,7 +32,7 @@ func hintCommand(t *testing.T, page string) []string {
 func runHint(t *testing.T, env Env, hint []string, extra ...string) statsDocument {
 	t.Helper()
 	var doc statsDocument
-	if err := json.Unmarshal([]byte(mustRunStats(t, env, 0, append(extra, hint...)...)), &doc); err != nil {
+	if err := json.Unmarshal([]byte(mustRunStats(t, env, 0, append(append([]string{"--no-cache"}, extra...), hint...)...)), &doc); err != nil {
 		t.Fatalf("stats %v: %v", hint, err)
 	}
 	return doc
@@ -62,7 +62,7 @@ func TestStatsAllInHintsListEveryRow(t *testing.T) {
 
 	t.Run("projects screen", func(t *testing.T) {
 		t.Parallel()
-		page := mustRunStats(t, env, 100, "--view", "projects")
+		page := mustRunStats(t, env, 100, "--no-cache", "--view", "projects")
 		hint := hintCommand(t, page)
 		if !strings.Contains(page, "+ 5 more (all in --json --by project)") {
 			t.Errorf("the projects screen says something else about the 5 it leaves out:\n%s", page[len(page)-400:])
@@ -86,7 +86,7 @@ func TestStatsAllInHintsListEveryRow(t *testing.T) {
 
 	t.Run("models screen", func(t *testing.T) {
 		t.Parallel()
-		page := mustRunStats(t, env, 100, "--view", "models")
+		page := mustRunStats(t, env, 100, "--no-cache", "--view", "models")
 		hint := hintCommand(t, page)
 		if !strings.Contains(page, "+ 5 more (all in --json)") {
 			t.Errorf("the models screen says something else about the 5 it leaves out:\n%s", page[len(page)-500:])
