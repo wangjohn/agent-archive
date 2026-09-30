@@ -1,0 +1,8 @@
+{"version":"2.1.0","type":"user","uuid":"name-a","sessionId":"native-named","timestamp":"2026-09-30T10:00:00Z","message":{"role":"user","content":"rename the widget parser"}}
+{"version":"2.1.0","type":"assistant","uuid":"name-b","parentUuid":"name-a","sessionId":"native-named","timestamp":"2026-09-30T10:00:05Z","message":{"role":"assistant","content":[{"type":"text","text":"Renamed."}]}}
+{"type":"custom-title","customTitle":"Rename the widget parser password=hunter2","sessionId":"native-named"}
+{"type":"agent-name","agentName":"Rename the widget parser","sessionId":"native-named"}
+{"type":"last-prompt","lastPrompt":"rename the widget parser","sessionId":"native-named"}
+{"type":"pr-link","sessionId":"native-named","prNumber":"213","prRepository":"example-org/widget-tools","prUrl":"https://github.com/example-org/widget-tools/pull/213","timestamp":"2026-09-30T10:05:00Z"}
+{"type":"pr-link","sessionId":"native-named","prNumber":214,"prRepository":"example-org/widget-tools","prUrl":"https://github.com/example-org/widget-tools/pull/214?token=SYNTHETIC-SECRET","timestamp":"2026-09-30T10:06:00Z"}
+{"type":"pr-link","sessionId":"native-named","prNumber":"215","prRepository":"example-org/widget tools","prUrl":"https://github.com/example-org/widget-tools/pull/215","timestamp":"2026-09-30T10:07:00Z"}
