@@ -1,0 +1,69 @@
+package cli
+
+import (
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/wangjohn/agent-archive/internal/config"
+)
+
+// Env.BackfillGOOS decides where backfill, and the collector, look for
+// Cursor's data, and which temporary directories backfill skips. On Linux
+// Cursor's database is under the XDG config home, read from the Env's
+// environment (LookupEnv), not the test process's.
+func TestBackfillEnvironmentFollowsBackfillGOOS(t *testing.T) {
+	t.Parallel()
+	userHome := t.TempDir()
+	xdg := t.TempDir()
+	for _, tc := range []struct {
+		name string
+		goos string
+		xdg  string
+		want string
+		temp []string
+	}{
+		{"darwin", "darwin", xdg, filepath.Join(userHome, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb"), []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}},
+		{"linux", "linux", "", filepath.Join(userHome, ".config", "Cursor", "User", "globalStorage", "state.vscdb"), []string{"/tmp", "/var/tmp"}},
+		{"linux with XDG_CONFIG_HOME", "linux", xdg, filepath.Join(xdg, "Cursor", "User", "globalStorage", "state.vscdb"), []string{"/tmp", "/var/tmp"}},
+	} {
+		env := testEnv(t, t.TempDir(), time.Now())
+		env.UserHomeDir = func() (string, error) { return userHome, nil }
+		env.BackfillGOOS = tc.goos
+		env.BackfillTempDirs = nil
+		env.LookupEnv = func(key string) (string, bool) {
+			if key == "XDG_CONFIG_HOME" && tc.xdg != "" {
+				return tc.xdg, true
+			}
+			return "", false
+		}
+		if got := env.cursorDatabase(); got != tc.want {
+			t.Errorf("%s: collector database %q, want %q", tc.name, got, tc.want)
+		}
+		bf := env.backfillEnvironment(userHome, config.Config{})
+		if bf.GOOS != tc.goos {
+			t.Errorf("%s: GOOS %q", tc.name, bf.GOOS)
+		}
+		if got := bf.Getenv("XDG_CONFIG_HOME"); got != tc.xdg {
+			t.Errorf("%s: XDG_CONFIG_HOME %q, want %q", tc.name, got, tc.xdg)
+		}
+		if bf.CursorDatabase == nil {
+			t.Errorf("%s: no Cursor database reader", tc.name)
+		}
+		if got := bf.TempDirs; len(got) < len(tc.temp) || !equalStrings(got[:len(tc.temp)], tc.temp) {
+			t.Errorf("%s: temporary directories %v, want %v first", tc.name, got, tc.temp)
+		}
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

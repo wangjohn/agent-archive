@@ -15,10 +15,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/archive"
+	"github.com/wangjohn/agent-archive/internal/cursorstore"
 )
 
 // SkipReason says why a found session is not imported. Every session found is
@@ -255,7 +257,11 @@ type Environment struct {
 	EvalSymlinks func(string) (string, error)
 	// FileCreated returns a file's birth time, Cursor's start time. The
 	// default reads it from the file system where it is recorded (macOS);
-	// where it is not, or it fails, the modification time is used.
+	// where it is not (Linux: the standard library exposes no birth time,
+	// and statx is not used), or it fails, the modification time is used, so
+	// a Cursor chat's start time there is when its transcript was last
+	// written, not when it began, and the order of Cursor chats that were
+	// resumed can differ from the same archive built on a Mac.
 	FileCreated func(string) (time.Time, error)
 	// CursorDatabase lists the chats in Cursor's database (composerData
 	// entries with messages, not drafts, and not subagents) and reads them.
@@ -264,10 +270,62 @@ type Environment struct {
 	CursorDatabase func(ctx context.Context) (CursorDatabaseResult, error)
 	// Workers overrides the filter worker count; zero uses defaultWorkers.
 	Workers int
+	// GOOS is the operating system whose app locations are looked in: the
+	// macOS desktop-app folders and privacy-protected folders only exist on
+	// "darwin", and Cursor keeps its data under ~/Library/Application Support
+	// there and under the XDG config home elsewhere. Empty means
+	// runtime.GOOS; only tests set it, so both branches run on any OS.
+	GOOS string
+	// Getenv reads the process environment (XDG_CONFIG_HOME, which places
+	// Cursor's data folder off macOS). Nil means os.Getenv.
+	Getenv func(string) string
 }
 
-// DefaultTempDirs are the temporary directories on macOS besides $TMPDIR.
-var DefaultTempDirs = []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
+// DefaultTempDirs are the temporary directories besides $TMPDIR on the
+// environment's operating system (see defaultTempDirs); a fresh slice.
+func (e Environment) DefaultTempDirs() []string {
+	return defaultTempDirs(e.goos())
+}
+
+// defaultTempDirs are the temporary directories besides $TMPDIR for goos.
+// macOS has /tmp (a link to /private/tmp) and the per-user folders under
+// /var/folders, both spellings of each; elsewhere /tmp and /var/tmp are the
+// shared temporary directories.
+func defaultTempDirs(goos string) []string {
+	if goos == "darwin" {
+		return []string{"/tmp", "/private/tmp", "/var/folders", "/private/var/folders"}
+	}
+	return []string{"/tmp", "/var/tmp"}
+}
+
+// goos is the operating system to answer for.
+func (e Environment) goos() string {
+	if e.GOOS != "" {
+		return e.GOOS
+	}
+	return runtime.GOOS
+}
+
+func (e Environment) getenv(key string) string {
+	if e.Getenv != nil {
+		return e.Getenv(key)
+	}
+	return os.Getenv(key)
+}
+
+// isMac reports whether the macOS-only inputs apply: the desktop apps' Mac
+// folders and the privacy-protected (TCC) folders.
+func (e Environment) isMac() bool { return e.goos() == "darwin" }
+
+// cursorAppDir is Cursor's per-user data folder under Home.
+func (e Environment) cursorAppDir() string {
+	return cursorstore.AppSupportDir(e.Home, e.getenv, e.goos())
+}
+
+// cursorStateDatabase is Cursor's state.vscdb under Home.
+func (e Environment) cursorStateDatabase() string {
+	return cursorstore.StateDatabaseFor(e.Home, e.getenv, e.goos())
+}
 
 func (e Environment) now() time.Time {
 	if e.Now != nil {
@@ -358,7 +416,7 @@ func (e Environment) tempDirs() []string {
 	if e.TempDirs != nil {
 		return e.TempDirs
 	}
-	return DefaultTempDirs
+	return defaultTempDirs(e.goos())
 }
 
 // exists reports whether path exists.

@@ -90,7 +90,8 @@ type CursorDatabaseResult struct {
 	Close func() error
 }
 
-// CursorStateDatabase is where Cursor keeps its chats under home.
+// CursorStateDatabase is where Cursor keeps its chats under home on this
+// machine (see cursorstore.AppSupportDir).
 func CursorStateDatabase(home string) string {
 	return cursorstore.StateDatabase(home)
 }
@@ -114,7 +115,13 @@ const cursorComposerQuery = `SELECT key, value FROM cursorDiskKV WHERE key >= 'c
 // the per-user temporary directory until Close. Nothing is written beside
 // the database.
 func CursorDatabaseReader(home string) func(context.Context) (CursorDatabaseResult, error) {
-	path := CursorStateDatabase(home)
+	return CursorDatabaseReaderFor(Environment{Home: home})
+}
+
+// CursorDatabaseReaderFor is CursorDatabaseReader for the state.vscdb where
+// env (its Home, GOOS and Getenv) says Cursor keeps it.
+func CursorDatabaseReaderFor(env Environment) func(context.Context) (CursorDatabaseResult, error) {
+	path := env.cursorStateDatabase()
 	return func(ctx context.Context) (CursorDatabaseResult, error) {
 		res := readCursorDatabase(ctx, path, cursorstore.Options{})
 		if err := ctx.Err(); err != nil {

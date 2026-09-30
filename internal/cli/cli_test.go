@@ -34,6 +34,9 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// Tests must not see the real environment: run inside an agent,
 		// CLAUDE_CODE_SESSION_ID would change what `handoff --latest` skips.
 		LookupEnv: func(string) (string, bool) { return "", false },
+		// Tests model a Mac (its app folders and Cursor's Library data
+		// folder), whatever system runs them.
+		BackfillGOOS: "darwin",
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},

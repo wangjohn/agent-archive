@@ -172,9 +172,14 @@ type Env struct {
 	// os.LookupEnv.
 	LookupEnv func(string) (string, bool)
 	// BackfillTempDirs are the temporary directories backfill skips. Nil
-	// means the macOS defaults plus $TMPDIR; tests set it because their
-	// files live in one.
+	// means this operating system's defaults (backfill.Environment.DefaultTempDirs) plus
+	// $TMPDIR; tests set it because their files live in one.
 	BackfillTempDirs []string
+	// BackfillGOOS is the operating system backfill and the collector look
+	// for apps of: the macOS-only backfill inputs and where Cursor keeps its
+	// data (Cursor's database included) depend on it. Empty means
+	// runtime.GOOS; tests set it so a Mac's layout is exercised on any OS.
+	BackfillGOOS string
 	// IsTerminal reports whether stdin or stdout is a terminal. backfill
 	// redraws its progress line only on one; whether a command may also ask
 	// questions there is Env.interactive, which the
@@ -303,7 +308,11 @@ func (e Env) cursorDatabase() string {
 	if err != nil {
 		return ""
 	}
-	return cursorstore.StateDatabase(home)
+	if e.BackfillGOOS == "" {
+		return cursorstore.StateDatabase(home)
+	}
+	getenv := func(key string) string { v, _ := e.lookupEnv(key); return v }
+	return cursorstore.StateDatabaseFor(home, getenv, e.BackfillGOOS)
 }
 
 func (e Env) detectHarnesses(userHome string) []string {

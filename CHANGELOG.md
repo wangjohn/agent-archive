@@ -77,6 +77,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Off macOS, Cursor's data folder is looked for where VS Code keeps its own,
+  `$XDG_CONFIG_HOME/Cursor` (default `~/.config/Cursor`), and the macOS-only
+  backfill inputs (Claude and Codex desktop app folders, the privacy-protected
+  folders, the `/Applications` probes) are skipped. On macOS nothing changes.
+  Linux capture is not supported yet.
 - **Breaking for scripts:** `show SESSION_ID` now prints a readable summary
   (title, when, app, models, activity, skills, subagents, capture gaps)
   instead of JSON. Capture gaps the archive records by design (filtered or
