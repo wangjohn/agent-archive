@@ -143,7 +143,9 @@ func spendCellOf(days []stats.Day, peak float64) spendCell {
 	case best <= 0 || peak <= 0:
 		return spendCell{}
 	}
-	level := int(math.Round(math.Min(best/peak, 1) * chartLevels))
+	// A share that is not a number is 0 (converting a NaN to an int is up to
+	// the CPU), which the minimum level then raises.
+	level := int(math.Round(clampShare(best/peak) * chartLevels))
 	return spendCell{level: min(max(level, chartMinLevel), chartLevels)}
 }
 

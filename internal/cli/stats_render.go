@@ -613,9 +613,11 @@ func clampShare(share float64) float64 {
 }
 
 // barCells is how many of width cells share (0 to 1) fills: at least one
-// for any share above zero.
+// for any share above zero. A share outside 0 to 1, or not a number, is
+// clamped: converting a NaN to an int is up to the CPU, and a negative count
+// of cells would panic.
 func barCells(share float64, width int) int {
-	share = math.Min(1, share)
+	share = clampShare(share)
 	n := int(math.Round(share * float64(width)))
 	if share > 0 && n == 0 {
 		n = 1
