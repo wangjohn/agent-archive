@@ -115,7 +115,14 @@ In Go tests, everything goes through injection:
   run `setup` itself stay in `internal/cli`.
 - `internal/scheduler/launchd` (the macOS adapter) runs launchctl only through
   the `scheduler.Runner` it is given, so its tests pass a recording Runner and
-  cannot reach launchd. `internal/scheduler/host` owns the real Runner; its
+  cannot reach launchd. It passes `schedulertest.RunConformance`, the suite
+  every scheduler adapter must (the state matrix, refusing to stop what another
+  installation owns with typed errors, an idempotent unload, `Plan`'s purity and
+  recorded output, the `Plan` to `Inspect` and refresh round trips, no
+  credential in a definition), over a fake `launchctl` that prints the
+  recordings in `internal/cli/testdata/scheduler/launchctl-print`; the
+  `schedulertest.Model`, a scheduler with a vocabulary of its own, passes it
+  too, and is what code written against the port can be tested over. `internal/scheduler/host` owns the real Runner; its
   tests run a stand-in `launchctl` script found on a temporary `PATH`.
   `TestOnlyListedPackagesRunPrograms` fails when a package outside a listed
   set imports `os/exec`, and `TestOnlyHostImportsAdapters` when one but `host`
