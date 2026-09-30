@@ -53,11 +53,18 @@ func TestStatusCountsSessionsWithCaptureGapsNotGapEntries(t *testing.T) {
 		t.Fatalf("status exit=%d output=%s", code, out.String())
 	}
 	text := out.String()
-	if !strings.Contains(text, "1 session archived") {
+	if !strings.Contains(text, "hooks on   1 session\n") {
 		t.Fatalf("app line counts gap entries as sessions:\n%s", text)
 	}
-	if want := "1 session with a capture gap (" + strconv.Itoa(len(app.CaptureGaps)) + " gaps recorded"; !strings.Contains(text, want) {
+	if want := "· 1 session has capture gaps\n"; !strings.Contains(text, want) {
 		t.Fatalf("missing %q:\n%s", want, text)
+	}
+	out.Reset()
+	if code := runStatusCommand([]string{"--verbose"}, &out, os.Stderr, env); code != 0 {
+		t.Fatalf("status --verbose exit=%d output=%s", code, out.String())
+	}
+	if want := "1 session with a capture gap (" + strconv.Itoa(len(app.CaptureGaps)) + " gaps recorded"; !strings.Contains(out.String(), want) {
+		t.Fatalf("status --verbose is missing %q:\n%s", want, out.String())
 	}
 }
 
@@ -87,8 +94,9 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 	}
 	text := func() string {
 		t.Helper()
+		// --verbose keeps when access was checked beside the last upload.
 		var out strings.Builder
-		if code := runStatusCommand(nil, &out, os.Stderr, env); code != 0 {
+		if code := runStatusCommand([]string{"--verbose"}, &out, os.Stderr, env); code != 0 {
 			t.Fatalf("status exit=%d output=%s", code, out.String())
 		}
 		return out.String()
@@ -101,9 +109,9 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 		health storageHealth
 		line   string
 	}{
-		"other configuration": {storageHealth{ConfigurationID: "other", State: "verified", CheckedAt: checked, Context: "background_collector"}, "! s3://bucket +storage settings changed since the last check\n"},
-		"no configuration":    {storageHealth{ConfigurationID: "", State: "verified", CheckedAt: checked, Context: "background_collector"}, "· s3://bucket +not checked yet\n"},
-		"failed check":        {storageHealth{ConfigurationID: configurationID(cfg), State: "authentication_failed", CheckedAt: checked, Context: "background_collector"}, "✗ s3://bucket +sign-in failed, checked 1 minute ago\n"},
+		"other configuration": {storageHealth{ConfigurationID: "other", State: "verified", CheckedAt: checked, Context: "background_collector"}, "! s3://bucket +storage settings changed since the last check · uploaded just now\n"},
+		"no configuration":    {storageHealth{ConfigurationID: "", State: "verified", CheckedAt: checked, Context: "background_collector"}, "· s3://bucket +not checked yet · uploaded just now\n"},
+		"failed check":        {storageHealth{ConfigurationID: configurationID(cfg), State: "authentication_failed", CheckedAt: checked, Context: "background_collector"}, "✗ s3://bucket +sign-in failed, checked 1 minute ago · uploaded just now\n"},
 	} {
 		write(tc.health)
 		view, err := readStatus(env)
@@ -127,7 +135,7 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 		t.Fatalf("confirmed=%v by=%q verified=%v", view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy, view.StorageVerifiedAt)
 	}
 	out := text()
-	if !regexp.MustCompile("✓ s3://bucket +reachable, checked 1 minute ago\n").MatchString(out) {
+	if !regexp.MustCompile("✓ s3://bucket +reachable, checked 1 minute ago · uploaded just now\n").MatchString(out) {
 		t.Fatalf("access line:\n%s", out)
 	}
 
@@ -140,7 +148,7 @@ func TestStatusStorageLineAndAccessConfirmation(t *testing.T) {
 	if view, err = readStatus(env); err != nil || !view.StorageVerifiedAt.Equal(cfg.StorageVerifiedAt) || !view.StorageAccessConfirmedAt.Equal(cfg.StorageVerifiedAt) || view.StorageAccessConfirmedBy != storageAccessConfirmedBySetup {
 		t.Fatalf("verified=%v confirmed=%v by=%q err=%v", view.StorageVerifiedAt, view.StorageAccessConfirmedAt, view.StorageAccessConfirmedBy, err)
 	}
-	if out := text(); !regexp.MustCompile("✓ s3://bucket +reachable, checked by setup just now\n").MatchString(out) {
+	if out := text(); !regexp.MustCompile("✓ s3://bucket +reachable, checked by setup just now · uploaded just now\n").MatchString(out) {
 		t.Fatalf("access line:\n%s", out)
 	}
 }
