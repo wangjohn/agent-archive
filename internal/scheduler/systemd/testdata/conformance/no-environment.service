@@ -1,0 +1,10 @@
+# Written by agent-archive setup; setup and setup --refresh rewrite this file.
+[Unit]
+Description=agent-archive background collector
+
+[Service]
+Type=oneshot
+ExecStart=/Users/test/bin/agent-archive _collect
+Environment=AGENT_ARCHIVE_HOME=/Users/test/plain
+StandardOutput=append:/Users/test/plain/collector.log
+StandardError=append:/Users/test/plain/collector-error.log

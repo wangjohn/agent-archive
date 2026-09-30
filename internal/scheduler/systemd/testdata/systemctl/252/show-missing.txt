@@ -1,0 +1,9 @@
+Id=@REF@.timer
+LoadState=not-found
+ActiveState=inactive
+SubState=dead
+
+Id=@REF@.service
+LoadState=not-found
+ActiveState=inactive
+SubState=dead

@@ -131,6 +131,14 @@ In Go tests, everything goes through injection:
   set imports `os/exec`, and `TestOnlyHostImportsAdapters` when one but `host`
   imports an adapter; depguard says the same in
   `.golangci.yml`.
+- `internal/scheduler/systemd` (the Linux adapter, not wired into any command
+  yet) is tested the same way: a recording or fake `Runner` and no `systemctl`.
+  It passes `schedulertest.RunConformance` for systemd 245 and 252 over a fake
+  `systemctl` that answers `show` from the fixtures in
+  `internal/scheduler/systemd/testdata/systemctl` (see the README there: they
+  are hand-built from systemd's documented output, not captured from a live
+  system, until the real-manager CI job runs the suite against one), and the
+  state map is pinned over the fixtures of systemd 239, 245 and 252.
 - `internal/stats` (the statistics engine) is a pure function of the metadata,
   time, time zone and price table it is passed, so its tests build synthetic
   `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and

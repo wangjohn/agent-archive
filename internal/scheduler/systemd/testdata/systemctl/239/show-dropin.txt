@@ -1,0 +1,12 @@
+Id=@REF@.timer
+LoadState=loaded
+ActiveState=active
+SubState=waiting
+FragmentPath=@TIMER@
+
+Id=@REF@.service
+LoadState=loaded
+ActiveState=inactive
+SubState=dead
+FragmentPath=@SERVICE@
+DropInPaths=@SERVICE@.d/override.conf

@@ -24,6 +24,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
+// ChangeTimeout bounds a load or an unload, as launchd's does: setup absorbs
+// Ctrl-C while it changes a job, so a systemctl that hangs must end on its
+// own, and the setup journal handles what was left half done.
+const ChangeTimeout = 30 * time.Second
+
+// stateTimeout bounds the questions Inspect asks together (the version, the
+// units, lingering), which only read.
+const stateTimeout = 3 * time.Second
+
 // DefaultPATH is the PATH systemd's own compiled-in default gives a service
 // that sets none: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin, with
 // /sbin:/bin after them (systemd.exec(5), $PATH; the last two are the
@@ -59,6 +68,9 @@ type Scheduler struct {
 	// units when it is set to an absolute path, and HOME, which tells whether
 	// that is the site's own home (see UnitDir).
 	Getenv func(string) string
+	// ChangeTimeout is the bound on a load and an unload; zero means the
+	// package's ChangeTimeout. A test shortens it.
+	ChangeTimeout time.Duration
 }
 
 // Name is "systemd", which the setup journal records for the jobs it made.
@@ -229,4 +241,11 @@ func (s Scheduler) Definition(site scheduler.Site, ref scheduler.Ref) scheduler.
 		}
 	}
 	return status
+}
+
+func (s Scheduler) changeTimeout() time.Duration {
+	if s.ChangeTimeout > 0 {
+		return s.ChangeTimeout
+	}
+	return ChangeTimeout
 }

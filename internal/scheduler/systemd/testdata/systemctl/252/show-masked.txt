@@ -1,0 +1,11 @@
+Id=@REF@.timer
+LoadState=masked
+ActiveState=inactive
+SubState=dead
+FragmentPath=/dev/null
+
+Id=@REF@.service
+LoadState=loaded
+ActiveState=inactive
+SubState=dead
+FragmentPath=@SERVICE@

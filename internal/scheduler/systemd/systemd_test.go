@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +139,293 @@ func TestDefinitionReadsTheUnitFilesAlone(t *testing.T) {
 	}
 }
 
+// Inspect maps what `systemctl show` says of the timer and the service to the
+// job's state, for the output of each systemd version:
+//
+//	timer active                      loaded (whatever the service's last result)
+//	service activating or active      running
+//	timer inactive, or not found      missing
+//	masked, or a unit that fails      unknown, with a Problem
+//	loaded from another unit file     another_installation
+//
+// and notes a drop-in that overrides the unit as Degraded.
+func TestInspectStateMap(t *testing.T) {
+	t.Parallel()
+	for _, shown := range []string{"239", "245", "252"} {
+		for _, tc := range []struct {
+			fixture  string
+			want     scheduler.JobState
+			problem  scheduler.ProblemKind
+			mention  string
+			degraded string
+		}{
+			{"loaded", scheduler.Loaded, "", "", ""},
+			{"running", scheduler.Running, "", "", ""},
+			{"missing", scheduler.Missing, "", "", ""},
+			{"inactive", scheduler.Missing, "", "", ""},
+			{"failed-service", scheduler.Loaded, "", "", ""},
+			{"dropin", scheduler.Loaded, "", "", "override.conf"},
+			{"another", scheduler.AnotherInstallation, scheduler.ProblemNotOwned, "/home/someone/.config/systemd/user/agent-archive-collector.timer", ""},
+			{"masked", scheduler.Unknown, scheduler.ProblemCannotTell, "systemctl --user unmask", ""},
+		} {
+			t.Run(shown+"/"+tc.fixture, func(t *testing.T) {
+				t.Parallel()
+				f := newFakeSystemctl(t, "252")
+				f.shown, f.override = shown, tc.fixture
+				s, site := Scheduler{Run: f.run}, scheduler.Site{UserHome: t.TempDir()}
+				ref := write(t, s, site)
+				f.UseSite(site)
+				got := s.Inspect(context.Background(), site, ref)
+				if got.State != tc.want {
+					t.Fatalf("state %q, want %q", got.State, tc.want)
+				}
+				if (got.Problem == nil) != (tc.problem == "") || got.Problem != nil && (got.Problem.Kind != tc.problem || got.Problem.Ref != ref || !strings.Contains(got.Problem.LoadedFrom+got.Problem.Fix, tc.mention)) {
+					t.Errorf("problem %+v, want a %q one naming %q", got.Problem, tc.problem, tc.mention)
+				}
+				if (tc.degraded == "") != (len(got.Degraded) == 0) || len(got.Degraded) > 0 && !strings.Contains(got.Degraded[0], tc.degraded) {
+					t.Errorf("degraded %q, want it to mention %q", got.Degraded, tc.degraded)
+				}
+			})
+		}
+	}
+}
+
+// A systemd older than 240 cannot append to the collector's logs: Inspect
+// says so, with the fix, and nothing is stopped for a job it cannot describe.
+func TestOldSystemdIsRefused(t *testing.T) {
+	t.Parallel()
+	f := newFakeSystemctl(t, "239")
+	s, site := Scheduler{Run: f.run}, scheduler.Site{UserHome: t.TempDir()}
+	ref := write(t, s, site)
+	f.Put(site, ref, scheduler.Loaded)
+	got := s.Inspect(context.Background(), site, ref)
+	if got.State != scheduler.Unknown || got.Problem == nil || got.Problem.Kind != scheduler.ProblemCannotTell || !strings.Contains(got.Problem.Fix, "240") || !strings.Contains(got.Problem.Fix, "239") {
+		t.Errorf("Inspect on systemd 239: %q, %+v", got.State, got.Problem)
+	}
+	var indeterminate *scheduler.IndeterminateError
+	if err := s.Unload(context.Background(), site, ref); !errors.As(err, &indeterminate) {
+		t.Errorf("Unload on systemd 239: %v", err)
+	}
+	if calls := f.Calls(); slices.ContainsFunc(calls, func(c string) bool { return strings.Contains(c, "show") || strings.Contains(c, "disable") }) {
+		t.Errorf("systemctl was asked about the job on systemd 239: %q", calls)
+	}
+}
+
+// With no user bus (an SSH session, a container), systemctl fails, and the
+// job is unknown, with a Problem whose fix says how to get a user manager;
+// with no systemctl at all it says to install systemd.
+func TestNoUserBusIsUnknownWithAFix(t *testing.T) {
+	t.Parallel()
+	site, ref := scheduler.Site{UserHome: t.TempDir()}, scheduler.Ref("agent-archive-collector")
+	for name, tc := range map[string]struct {
+		run  scheduler.Runner
+		fix  []string
+		none string
+	}{
+		"no bus": {func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if args[0] == "--version" {
+				return []byte("systemd 252 (252.22)\n"), nil
+			}
+			return []byte("Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined\n"), errors.New("exit status 1")
+		}, []string{"enable-linger", "login session"}, ""},
+		"not booted with systemd": {func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("System has not been booted with systemd as init system (PID 1). Can't operate.\n"), errors.New("exit status 1")
+		}, []string{"enable-linger"}, ""},
+		"no systemctl": {func(context.Context, string, ...string) ([]byte, error) {
+			return nil, errors.New(`exec: "systemctl": executable file not found in $PATH`)
+		}, []string{"Install systemd"}, ""},
+		"some other failure": {func(context.Context, string, ...string) ([]byte, error) {
+			return []byte("boom"), errors.New("exit status 1")
+		}, []string{"systemctl --user status"}, ""},
+	} {
+		got := Scheduler{Run: tc.run}.Inspect(context.Background(), site, ref)
+		if got.State != scheduler.Unknown || got.Problem == nil || got.Problem.Kind != scheduler.ProblemCannotTell || got.Problem.Ref != ref {
+			t.Fatalf("%s: %q, %+v", name, got.State, got.Problem)
+		}
+		for _, want := range tc.fix {
+			if !strings.Contains(got.Problem.Fix, want) {
+				t.Errorf("%s: fix %q does not mention %q", name, got.Problem.Fix, want)
+			}
+		}
+	}
+}
+
+// A job that runs works only while the user is logged in when lingering is
+// off, and Inspect says so; a job that is not running, or a loginctl that
+// cannot say, says nothing.
+func TestLingeringOffIsDegraded(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		linger  string
+		want    bool
+	}{{"loaded", "no", true}, {"running", "no", true}, {"loaded", "yes", false}, {"missing", "no", false}, {"loaded", "", false}} {
+		f := newFakeSystemctl(t, "252")
+		f.override, f.linger = tc.fixture, tc.linger
+		run := f.run
+		if tc.linger == "" { // no loginctl
+			run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+				if name == "loginctl" {
+					return nil, errors.New("not found")
+				}
+				return f.run(ctx, name, args...)
+			}
+		}
+		site := scheduler.Site{UserHome: t.TempDir()}
+		f.UseSite(site)
+		got := Scheduler{Run: run}.Inspect(context.Background(), site, "agent-archive-collector")
+		if has := len(got.Degraded) == 1 && strings.Contains(got.Degraded[0], "enable-linger"); has != tc.want || len(got.Degraded) > 1 {
+			t.Errorf("%s job, lingering %q: degraded %q, want a lingering note %v", tc.fixture, tc.linger, got.Degraded, tc.want)
+		}
+	}
+}
+
+// Load reloads the manager, which has not seen the unit files, then enables
+// the timer and starts it; a failure carries systemctl's own words.
+func TestLoadReloadsThenEnablesTheTimer(t *testing.T) {
+	t.Parallel()
+	f := newFakeSystemctl(t, "252")
+	s, site := Scheduler{Run: f.run}, scheduler.Site{UserHome: t.TempDir()}
+	ref := write(t, s, site)
+	f.UseSite(site)
+	must(t, s.Load(context.Background(), site, ref))
+	if want := []string{"systemctl --user daemon-reload", "systemctl --user enable --now " + string(ref) + ".timer"}; !slices.Equal(f.Calls(), want) {
+		t.Errorf("calls %q, want %q", f.Calls(), want)
+	}
+	must(t, os.Remove(s.timerPath(site, ref)))
+	err := s.Load(context.Background(), site, ref)
+	if err == nil || !strings.Contains(err.Error(), "systemctl enable") || !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("Load of a missing unit file: %v", err)
+	}
+	if err := s.Load(context.Background(), site, "not-a-job"); err == nil {
+		t.Error("Load accepted a ref no plan makes")
+	}
+}
+
+// Unload asks first, and stops the job only when systemd loaded it from these
+// unit files: it disables and stops the timer, stops the service, and reloads
+// the manager. It leaves another installation's job, and one it cannot
+// describe, alone, and does nothing for a job that is not loaded.
+func TestUnloadStopsOnlyItsOwnJob(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		state   scheduler.JobState
+		want    []string
+		wantErr string
+	}{
+		{scheduler.Loaded, []string{"disable --now", "stop", "daemon-reload"}, ""},
+		{scheduler.Running, []string{"disable --now", "stop", "daemon-reload"}, ""},
+		{scheduler.Missing, nil, ""},
+		{scheduler.AnotherInstallation, nil, "belongs to another installation"},
+		{scheduler.Unknown, nil, "cannot confirm"},
+	} {
+		f := newFakeSystemctl(t, "252")
+		s, site := Scheduler{Run: f.run}, scheduler.Site{UserHome: t.TempDir()}
+		ref := write(t, s, site)
+		f.Put(site, ref, tc.state)
+		err := s.Unload(context.Background(), site, ref)
+		if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Fatalf("%s: err %v, want %q", tc.state, err, tc.wantErr)
+		}
+		var changes []string
+		for _, call := range f.Calls() {
+			if verb, ok := strings.CutPrefix(call, "systemctl --user "); ok && !strings.HasPrefix(verb, "show") {
+				verb, _, _ = strings.Cut(verb, " "+string(ref))
+				changes = append(changes, verb)
+			}
+		}
+		if !slices.Equal(changes, tc.want) {
+			t.Errorf("%s: changes %q, want %q", tc.state, changes, tc.want)
+		}
+	}
+}
+
+// seenCall is what a call's context looked like: the time it had left and its
+// error.
+type seenCall struct {
+	left time.Duration
+	err  error
+	ok   bool
+}
+
+// answering is a Runner that answers as a healthy systemd whose job is loaded
+// from timer and service, records each call's context by its verb, and hangs
+// on the verb hang.
+type answering struct {
+	ref     string
+	timer   string
+	service string
+	hang    string
+	seen    map[string]seenCall
+}
+
+func (a *answering) run(ctx context.Context, _ string, args ...string) ([]byte, error) {
+	verb := args[0]
+	if verb == "--user" {
+		verb = args[1]
+	}
+	deadline, ok := ctx.Deadline()
+	if a.seen == nil {
+		a.seen = map[string]seenCall{}
+	}
+	a.seen[verb] = seenCall{time.Until(deadline), ctx.Err(), ok}
+	switch verb {
+	case a.hang:
+		<-ctx.Done()
+		return nil, ctx.Err()
+	case "--version":
+		return []byte("systemd 252 (252.22)\n"), nil
+	case "show":
+		return []byte("Id=" + a.ref + ".timer\nLoadState=loaded\nActiveState=active\nFragmentPath=" + a.timer + "\n\nId=" + a.ref + ".service\nLoadState=loaded\nActiveState=inactive\nFragmentPath=" + a.service + "\n"), nil
+	}
+	return nil, nil
+}
+
+// A load and an unload run on a bounded context of their own that the caller's
+// cancellation and deadline never reach: an interrupted setup still finishes
+// the change it started. A question is the caller's to cancel.
+func TestChangesAreBoundedAndIgnoreTheCallersCancellation(t *testing.T) {
+	t.Parallel()
+	site, ref := scheduler.Site{UserHome: "/home/u"}, scheduler.Ref("agent-archive-collector")
+	answer := func() *answering {
+		return &answering{ref: string(ref), timer: Scheduler{}.timerPath(site, ref), service: Scheduler{}.servicePath(site, ref)}
+	}
+	a := answer()
+	s := Scheduler{Run: a.run}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	cancel()
+	must(t, s.Load(ctx, site, ref))
+	must(t, s.Unload(ctx, site, ref))
+	for verb, bound := range map[string]time.Duration{"enable": ChangeTimeout, "disable": ChangeTimeout, "stop": ChangeTimeout, "daemon-reload": ChangeTimeout, "show": stateTimeout} {
+		if got := a.seen[verb]; !got.ok || got.err != nil || got.left < bound-5*time.Second || got.left > bound {
+			t.Errorf("systemctl %s: deadline %v, context error %v, %v to its deadline; want an uncancelled context bounded by %v", verb, got.ok, got.err, got.left, bound)
+		}
+	}
+	s.Inspect(ctx, site, ref)
+	if got := a.seen["--version"]; got.err == nil {
+		t.Errorf("the question in Inspect ran uncancelled with %v to its deadline", got.left)
+	}
+
+	// A systemctl that hangs ends on its own.
+	for verb, run := range map[string]func(Scheduler) error{
+		"enable":  func(s Scheduler) error { return s.Load(context.Background(), site, ref) },
+		"disable": func(s Scheduler) error { return s.Unload(context.Background(), site, ref) },
+	} {
+		a := answer()
+		a.hang = verb
+		done := make(chan error, 1)
+		go func() { done <- run(Scheduler{Run: a.run, ChangeTimeout: 20 * time.Millisecond}) }()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "systemctl "+verb) {
+				t.Errorf("%s: %v", verb, err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s hung: nothing bounds systemctl", verb)
+		}
+	}
+}
+
 // The names systemd calls the adapter's things are the ones messages use.
 func TestWordsAndNames(t *testing.T) {
 	t.Parallel()
@@ -147,6 +435,36 @@ func TestWordsAndNames(t *testing.T) {
 	}
 	if !strings.Contains(s.DefaultPATH(), "/usr/bin") || strings.HasPrefix(s.DefaultPATH(), ":") {
 		t.Errorf("DefaultPATH %q", s.DefaultPATH())
+	}
+	var _ scheduler.Scheduler = s
+}
+
+// Each unit counts on its own: a service another installation's unit files
+// define is another installation's job even under our timer, and a service
+// that is stopping is still running, so a stop reaches it, even when its timer
+// is gone.
+func TestInspectJudgesEachUnit(t *testing.T) {
+	t.Parallel()
+	site, ref := scheduler.Site{UserHome: "/home/u"}, scheduler.Ref("agent-archive-collector")
+	timer, service := Scheduler{}.timerPath(site, ref), Scheduler{}.servicePath(site, ref)
+	id := "Id=" + string(ref)
+	for name, tc := range map[string]struct {
+		show string
+		want scheduler.JobState
+	}{
+		"another service":            {id + ".timer\nLoadState=loaded\nActiveState=active\nFragmentPath=" + timer + "\n\n" + id + ".service\nLoadState=loaded\nActiveState=inactive\nFragmentPath=/home/x/.config/systemd/user/" + string(ref) + ".service\n", scheduler.AnotherInstallation},
+		"stopping service, no timer": {id + ".timer\nLoadState=not-found\nActiveState=inactive\n\n" + id + ".service\nLoadState=loaded\nActiveState=deactivating\nFragmentPath=" + service + "\n", scheduler.Running},
+		"a loaded unit with no file": {id + ".timer\nLoadState=loaded\nActiveState=active\n\n" + id + ".service\nLoadState=not-found\nActiveState=inactive\n", scheduler.Unknown},
+	} {
+		run := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if args[0] == "--version" {
+				return []byte("systemd 252 (252.22)\n"), nil
+			}
+			return []byte(tc.show), nil
+		}
+		if got := (Scheduler{Run: run}).Inspect(context.Background(), site, ref); got.State != tc.want {
+			t.Errorf("%s: state %q (%+v), want %q", name, got.State, got.Problem, tc.want)
+		}
 	}
 }
 
