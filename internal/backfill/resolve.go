@@ -203,16 +203,18 @@ func documentsInUse(env Environment, resolvedHome string, cfg config.Config) boo
 
 // workspaceFolders are the folders desktop apps start chats in, under home:
 // Claude desktop's scratch chats and Codex desktop's dated workspaces
-// (<date>/<name>). Both are Mac desktop-app locations; on any other
-// operating system there are none, and those paths are not consulted.
+// (<date>/<name>), platform.Locations' ClaudeDesktopScratch and
+// CodexDocuments. Both are Mac desktop-app locations; on any other operating
+// system there are none, and those paths are not consulted.
 func workspaceFolders(env Environment) []string {
-	if !env.isMac() {
-		return nil
+	loc := env.locations()
+	var out []string
+	for _, folder := range []string{loc.ClaudeDesktopScratch, loc.CodexDocuments} {
+		if folder != "" {
+			out = append(out, folder)
+		}
 	}
-	return []string{
-		filepath.Join(env.Home, "Library", "Application Support", "Claude", "scratch-workspaces"),
-		filepath.Join(env.Home, "Documents", "Codex"),
-	}
+	return out
 }
 
 func (r *resolver) isWorkspaceFolder(resolved string) bool {
@@ -437,9 +439,10 @@ func newCursorMatcher(env Environment, candidates []string) *cursorMatcher {
 }
 
 // cursorWorkspaceStorage is Cursor's folder of per-workspace state:
-// User/workspaceStorage in its data folder (cursorstore.AppSupportDir).
+// User/workspaceStorage in its data folder (platform.Locations), "" where
+// the environment's operating system has no known place for it.
 func cursorWorkspaceStorage(env Environment) string {
-	return filepath.Join(env.cursorAppDir(), "User", "workspaceStorage")
+	return env.locations().CursorWorkspaceStorage
 }
 
 // cursorWorkspaceFolders reads the folder of each
@@ -448,6 +451,9 @@ func cursorWorkspaceStorage(env Environment) string {
 // Linux).
 func cursorWorkspaceFolders(env Environment) []string {
 	storage := cursorWorkspaceStorage(env)
+	if storage == "" {
+		return nil
+	}
 	entries, err := readDirIfExists(env, storage)
 	if err != nil {
 		return nil

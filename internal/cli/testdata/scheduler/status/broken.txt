@@ -1,0 +1,6 @@
+background: broken
+state: Needs attention
+code: needs_attention
+next_action: agent-archive is no longer usable at @EXECUTABLE@. Run agent-archive setup --refresh from the binary's new location to point the hooks and background collector at it.
+headline: ! agent-archive can't run from where setup installed it
+screen: ✗ Background collector is broken   the program it runs is gone or can't be run

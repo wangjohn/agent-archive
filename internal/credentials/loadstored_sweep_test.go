@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // LoadStored asks what is stored, which is not what could be loaded: off
@@ -18,7 +20,7 @@ func TestLoadStoredReadsOnlyWhatWasSaved(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), CredentialsDirName)
 	reads := 0
 	env := map[string]string{EnvR2AccessKeyID: "env-id", EnvR2SecretAccessKey: "env-secret"}
-	store, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: func(name string) (string, bool) {
+	store, err := OpenDefault(OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return dir, nil }, LookupEnv: func(name string) (string, bool) {
 		reads++
 		value, ok := env[name]
 		return value, ok
@@ -188,7 +190,7 @@ func TestFileStoreRefusalMessagesAreNotPrefixedTwice(t *testing.T) {
 func TestLoadR2ConfigUsesTheEnvironmentFallbackOnLinux(t *testing.T) {
 	env := map[string]string{EnvR2AccessKeyID: "env-id", EnvR2SecretAccessKey: "env-secret"}
 	dir := filepath.Join(t.TempDir(), CredentialsDirName)
-	store, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(env)})
+	store, err := OpenDefault(OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(env)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +204,7 @@ func TestLoadR2ConfigUsesTheEnvironmentFallbackOnLinux(t *testing.T) {
 		t.Fatalf("credentials = %+v, %v", got, err)
 	}
 	// Without the variables there is nothing to load.
-	bare, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(nil)})
+	bare, err := OpenDefault(OpenOptions{OS: platform.Linux, Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(nil)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -65,6 +65,8 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 	since := fs.String("since", "", "start the window on this local day: a date (2026-09-01), RFC 3339 time, or age (7d, 12h)")
 	days := fs.Int("days", stats.DefaultDays, "the window's length in calendar days, ending today")
 	by := fs.String("by", "", "also break the window down by day, week, month, or project")
+	viewName := fs.String("view", "", "which screen to print: overview (the default), detail, projects, models, or agents")
+	detail := fs.Bool("detail", false, "print the detail screen; the same as --view detail")
 	pricesFile := fs.String("prices", "", "price the tokens from this JSON file's prices on top of the built-in table")
 	imported := fs.Bool("imported", false, "only sessions agent-archive backfill imported")
 	hookCaptured := fs.Bool("hook-captured", false, "only sessions captured by hooks as they ran")
@@ -84,6 +86,10 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 			daysSet = true
 		}
 	})
+	page, code := statsPageFromFlags(fs, *viewName, *detail, *by, *jsonOut || htmlFlags.html)
+	if code != 0 {
+		return code
+	}
 	loc := statsZone(env.now(), env)
 	now := env.now().In(loc)
 	windowDays, code := statsWindowDays(fs, *days, daysSet, *since, now)
@@ -129,8 +135,12 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		return code
 	}
 	sessions := filterListOrigin(listed.Sessions, opts.imported, opts.hookCaptured)
+	// A page lists every project and skill and lets the screen cut them, so a
+	// list of projects by spend is not the top few by tokens. The JSON and the
+	// web page keep the engine's default lists.
+	textPage := !*jsonOut && !htmlFlags.html
 	computed := stats.Compute(sessions, stats.Options{
-		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping,
+		Now: now, Days: windowDays, Location: loc, PriceTable: table, By: grouping, AllRows: textPage,
 	})
 	filters := statsFilters{Harness: opts.filter.Harness, Model: opts.filter.Model}
 	switch {
@@ -154,7 +164,7 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 	view := newStatsView(stdout, env)
 	view.filters = filters
 	if err := withPager(context.Background(), stdout, stderr, env, *noPager, func(w io.Writer) error {
-		return renderStats(w, computed, view)
+		return renderStats(w, computed, page, view)
 	}); err != nil {
 		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
 		return 1
@@ -237,6 +247,48 @@ func readStatsSessions(stdout, stderr io.Writer, env statsCommandDependencies, s
 		return reader.RecentResult{}, 1
 	}
 	return listed, 0
+}
+
+// statsPageFromFlags is the screen --view, --detail and --by ask for. --detail
+// is --view detail, and the two together are refused. --by project is the
+// projects screen, and --by day, week or month is a table under the detail
+// screen; asking for another screen with them is refused rather than
+// guessed at. --view and --detail print a screen, so they do not go with
+// --json or --html.
+func statsPageFromFlags(fs *commandFlags, viewName string, detail bool, by string, structured bool) (statsPage, int) {
+	viewSet := false
+	fs.Visit(func(f *flag.Flag) { viewSet = viewSet || f.Name == "view" })
+	if viewSet && detail {
+		return "", fs.usageError("choose one of --view and --detail")
+	}
+	if structured && (viewSet || detail) {
+		return "", fs.usageError("--view and --detail choose a screen; --json and --html print the whole document")
+	}
+	page := pageOverview
+	switch {
+	case detail:
+		page = pageDetail
+	case viewSet:
+		parsed, ok := parseStatsPage(viewName)
+		if !ok {
+			return "", fs.usageError("--view must be overview, detail, projects, models, or agents, not %q", viewName)
+		}
+		page = parsed
+	}
+	if structured || by == "" {
+		return page, 0
+	}
+	byPage := pageDetail
+	if by == string(stats.GroupProject) {
+		byPage = pageProjects
+	}
+	switch {
+	case !viewSet && !detail:
+		return byPage, 0
+	case page != byPage:
+		return "", fs.usageError("--by %s is shown on the %s screen; drop --by or use --view %s", by, byPage, byPage)
+	}
+	return page, 0
 }
 
 // statsWindowDays is the window's length in calendar days: --days, or the

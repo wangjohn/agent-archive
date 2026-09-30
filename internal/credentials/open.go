@@ -4,31 +4,43 @@ import (
 	"context"
 	"errors"
 	"os"
+
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
-// goosDarwin is the one platform with a Keychain.
-const goosDarwin = "darwin"
+// UsesKeychain reports whether system keeps R2 credentials in the Keychain
+// (macOS) rather than in a private file. Only Darwin does: an Unknown
+// system does not, and OpenDefault does not open a file store for it either.
+func UsesKeychain(system platform.OS) bool { return system == platform.Darwin }
 
-// UsesKeychain reports whether goos keeps R2 credentials in the Keychain
-// (macOS) rather than in a private file.
-func UsesKeychain(goos string) bool { return goos == goosDarwin }
-
-// StoreName is how a message names where R2 credentials are kept on goos:
-// "Keychain" on macOS, "credentials file" elsewhere. It is a noun without an
-// article, so a caller writes "the "+StoreName(goos) or capitalizes it, and
-// macOS keeps the wording it always had.
-func StoreName(goos string) string {
-	if UsesKeychain(goos) {
+// StoreName is how a message names where R2 credentials are kept on system:
+// "Keychain" on macOS, "credentials file" on Linux. It is a noun without an
+// article, so a caller writes "the "+StoreName(system) or capitalizes it, and
+// macOS keeps the wording it always had. An Unknown system claims neither:
+// "credential store".
+func StoreName(system platform.OS) string {
+	switch system {
+	case platform.Darwin:
 		return "Keychain"
+	case platform.Linux:
+		return "credentials file"
+	case platform.Unknown:
 	}
-	return "credentials file"
+	return "credential store"
 }
+
+// ErrUnsupportedPlatform means OpenDefault was asked for the credential store
+// of an operating system it does not know. It refuses rather than guess: a
+// wrong guess would put R2 secrets in the wrong place (a file where the
+// system has a keychain).
+var ErrUnsupportedPlatform = errors.New("credentials are not supported on this operating system")
 
 // OpenOptions are OpenDefault's inputs. Everything that reaches the real
 // system is injectable, so both platforms' choices are tested on any OS.
 type OpenOptions struct {
-	// GOOS is the platform to open the store for: runtime.GOOS.
-	GOOS string
+	// OS is the platform to open the store for: platform.Current in
+	// production. An Unknown one is ErrUnsupportedPlatform.
+	OS platform.OS
 	// Dir returns the folder of credential files (FileStoreDir of the data
 	// directory). It is called only off macOS, so a Mac never needs the data
 	// directory to open its Keychain.
@@ -45,7 +57,8 @@ type OpenOptions struct {
 //
 // On macOS it is the Keychain store under KeychainService, exactly as before.
 //
-// Everywhere else it is the file store in Dir(), with the environment
+// On Linux (and any system added with a file store) it is the file store in
+// Dir(), with the environment
 // (EnvStore) as a read-only fallback behind it. The fallback is part of the
 // one store rather than a separate choice because a caller cannot know which
 // one holds a key: a configuration made by setup names a reference, and a
@@ -57,7 +70,10 @@ type OpenOptions struct {
 //   - Save and Delete go to the file store alone. The environment store is
 //     held as a read-only Loader, so they cannot reach it.
 func OpenDefault(opts OpenOptions) (CredentialStore, error) {
-	if UsesKeychain(opts.GOOS) {
+	if opts.OS != platform.Darwin && opts.OS != platform.Linux {
+		return nil, ErrUnsupportedPlatform
+	}
+	if UsesKeychain(opts.OS) {
 		open := opts.NewKeychain
 		if open == nil {
 			open = openKeychainStore
