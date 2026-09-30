@@ -66,6 +66,14 @@ func (o setupOptions) skillsChoice() skillsChoice {
 	return skillsUnchanged
 }
 
+// flag is the flag that made c.
+func (c skillsChoice) flag() string {
+	if c == skillsOff {
+		return "--no-skills"
+	}
+	return "--skills"
+}
+
 // noSkills is Config.NoSkills after this run: the choice when one was made,
 // else what the saved configuration has.
 func (c skillsChoice) noSkills(saved bool) bool {

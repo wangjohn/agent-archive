@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
 // setupRunWith is setupRun for setup given args (flags), answered by input.
@@ -281,7 +283,7 @@ func TestNoSkillsFlagWhenSetupMakesNoChange(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
 	output, _ := setupRunWith(t, env, []string{"--no-skills"}, "exit\n", 0)
-	if !strings.Contains(output, "The agent skills were not changed: setup made no change this run.\n") {
+	if !strings.Contains(output, "The agent skills were not changed: setup made no change this run. To change only the skills, run agent-archive setup --yes --no-skills.\n") {
 		t.Fatalf("output:\n%s", output)
 	}
 	wantSkillFiles(t, []string{claudeSkillPath(userHome), agentsSkillPath(userHome)}, nil)
@@ -373,5 +375,180 @@ func TestSetupHelpNamesBothSkillFlags(t *testing.T) {
 		if !strings.Contains(help, want) {
 			t.Errorf("setup help lacks %q", want)
 		}
+	}
+}
+
+// Status never calls a file "out of date" while the skills are off: setup
+// removes it rather than refreshing it, so status says it is left over, and
+// a plain setup removes it.
+func TestStatusWarnsOfALeftoverSkillFileWhileSkillsAreOff(t *testing.T) {
+	t.Parallel()
+	_, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
+	claude := claudeSkillPath(userHome)
+	current := readText(t, claude)
+	older := strings.Replace(current, "Run exactly this command", "Run this command", 1)
+	if older == current {
+		t.Fatal("the skill has no wording to age")
+	}
+	setupYes(t, env, "", 0, "--yes", "--no-skills")
+	// A restored backup puts an earlier release's file back.
+	must(t, os.MkdirAll(filepath.Dir(claude), 0700))
+	must(t, os.WriteFile(claude, []byte(older), 0600))
+	view := statusJSON(t, env)
+	if _, ok := view["agent_skills_out_of_date"]; ok {
+		t.Fatalf("status calls a file out of date while the skills are off: %#v", view["agent_skills_out_of_date"])
+	}
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	if strings.Contains(out.String(), "out of date") || !strings.Contains(out.String(), "The agent skills are turned off, but the /handoff skill file at ~/.claude/skills/handoff/SKILL.md is still there. Run agent-archive setup to remove it.") {
+		t.Fatalf("status:\n%s", &out)
+	}
+	if got := readText(t, claude); got != older {
+		t.Fatal("status changed the file")
+	}
+	setupYes(t, env, "", 0, "--yes")
+	wantSkillFiles(t, nil, []string{claude})
+	out.Reset()
+	if code := Run([]string{"status"}, nil, &out, &errOut, env); code != 0 || strings.Contains(out.String(), "still there") {
+		t.Fatalf("status after setup (exit %d):\n%s", code, &out)
+	}
+}
+
+// An opt-out interrupted part way is recovered like any setup: the journal
+// puts the skill file and the configuration back, so the opt-out was never
+// made; abandoning recovery keeps the files as they are, and setup then
+// converges on what the saved configuration says.
+func TestInterruptedNoSkillsSetupRecoversAndConverges(t *testing.T) {
+	t.Parallel()
+	interrupted := func(t *testing.T) (home, userHome string, env Env, journal setupjournal.Journal) {
+		t.Helper()
+		home, userHome, env = installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
+		old := mustLoadConfig(t, home)
+		next := old
+		next.NoSkills = true
+		mergeCommittedSetupState(old, &next, nil)
+		must(t, prepareSetupConfig(home, old.InstalledExecutable, old, &next, env))
+		var err error
+		journal, err = planSetupTransaction(home, userHome, old.InstalledExecutable, old, &next, env)
+		must(t, err)
+		removals := 0
+		for _, c := range journal.Changes {
+			if c.Delete {
+				removals++
+			}
+		}
+		if removals != 2 {
+			t.Fatalf("the opt-out plans %d removals, want 2: %+v", removals, journal.Changes)
+		}
+		must(t, local.Write(setupjournal.JournalPath(home), journal))
+		// The crash came after the Claude Code file was removed.
+		must(t, os.Remove(claudeSkillPath(userHome)))
+		return home, userHome, env, journal
+	}
+	t.Run("recovery", func(t *testing.T) {
+		t.Parallel()
+		home, userHome, env, _ := interrupted(t)
+		setupYes(t, env, "", 0, "--yes")
+		wantSkillFiles(t, []string{claudeSkillPath(userHome), agentsSkillPath(userHome)}, nil)
+		if mustLoadConfig(t, home).NoSkills {
+			t.Fatal("a recovered setup recorded the opt-out")
+		}
+		if setupjournal.TransactionPending(home) {
+			t.Fatal("the journal is still there")
+		}
+	})
+	t.Run("abandoned before the configuration was written", func(t *testing.T) {
+		t.Parallel()
+		home, userHome, env, _ := interrupted(t)
+		out, _ := setupRunWith(t, env, []string{"--abandon-recovery"}, "", 0)
+		if !strings.Contains(out, "Discarded") {
+			t.Fatalf("abandon:\n%s", out)
+		}
+		wantSkillFiles(t, []string{agentsSkillPath(userHome)}, []string{claudeSkillPath(userHome)})
+		if mustLoadConfig(t, home).NoSkills {
+			t.Fatal("abandoning recovery recorded the opt-out")
+		}
+		setupYes(t, env, "", 0, "--yes")
+		wantSkillFiles(t, []string{claudeSkillPath(userHome), agentsSkillPath(userHome)}, nil)
+	})
+	t.Run("abandoned after the configuration was written", func(t *testing.T) {
+		t.Parallel()
+		home, userHome, env, journal := interrupted(t)
+		for _, c := range journal.Changes {
+			if filepath.Base(c.Path) == "config.json" {
+				must(t, os.WriteFile(c.Path, c.After, 0600))
+			}
+		}
+		if !mustLoadConfig(t, home).NoSkills {
+			t.Fatal("the fixture did not write the opt-out")
+		}
+		setupRunWith(t, env, []string{"--abandon-recovery"}, "", 0)
+		output := setupYes(t, env, "", 0, "--yes")
+		wantSkillFiles(t, nil, []string{claudeSkillPath(userHome), agentsSkillPath(userHome)})
+		if !strings.Contains(output, turnedOffLine) || !mustLoadConfig(t, home).NoSkills {
+			t.Fatalf("setup after abandoning:\n%s", output)
+		}
+	})
+}
+
+// A skill directory that is a link (the person's own skill, linked in) is
+// never removed through, and setup names it.
+func TestNoSkillsLeavesALinkedSkillDirectory(t *testing.T) {
+	t.Parallel()
+	_, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
+	own := filepath.Join(t.TempDir(), "handoff")
+	must(t, os.MkdirAll(own, 0700))
+	// The link's target holds a file that carries setup's marker line.
+	marked := readText(t, claudeSkillPath(userHome))
+	must(t, os.WriteFile(filepath.Join(own, "SKILL.md"), []byte(marked), 0600))
+	must(t, os.RemoveAll(filepath.Dir(claudeSkillPath(userHome))))
+	must(t, os.Symlink(own, filepath.Dir(claudeSkillPath(userHome))))
+	output := setupYes(t, env, "", 0, "--yes", "--no-skills")
+	if got := readText(t, filepath.Join(own, "SKILL.md")); got != marked {
+		t.Fatalf("setup changed a file behind a linked skill directory: %q", got)
+	}
+	if info, err := os.Lstat(filepath.Dir(claudeSkillPath(userHome))); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("setup removed the link: %v", err)
+	}
+	if !strings.Contains(output, "Left ~/.claude/skills/handoff/SKILL.md as it is") {
+		t.Fatalf("setup does not name the linked skill:\n%s", output)
+	}
+	wantSkillFiles(t, nil, []string{agentsSkillPath(userHome)})
+}
+
+// planAgentSkills, which a refresh will call with the saved configuration,
+// decides by the configuration alone: with NoSkills it plans only removals
+// (never a write, whatever the executable), without it, installs.
+func TestPlanAgentSkillsHonorsNoSkillsWithoutAsking(t *testing.T) {
+	t.Parallel()
+	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
+	cfg := mustLoadConfig(t, home)
+	claudeDir := filepath.Join(userHome, ".claude")
+	dataHome := env.installation(home, userHome).commandDataHome()
+	changes, kept, err := planAgentSkills(userHome, claudeDir, claudeDir, cfg, "/moved/agent-archive", dataHome)
+	must(t, err)
+	if len(changes) != 2 || len(kept) != 0 {
+		t.Fatalf("with skills on and a moved executable: changes %+v kept %v", changes, kept)
+	}
+	for _, c := range changes {
+		if c.Delete {
+			t.Fatalf("with skills on, a change deletes %s", c.Path)
+		}
+	}
+	cfg.NoSkills = true
+	must(t, os.WriteFile(agentsSkillPath(userHome), []byte("mine\n"), 0600))
+	changes, kept, err = planAgentSkills(userHome, claudeDir, claudeDir, cfg, "/moved/agent-archive", dataHome)
+	must(t, err)
+	if len(changes) != 1 || !changes[0].Delete || changes[0].Path != claudeSkillPath(userHome) {
+		t.Fatalf("with NoSkills: changes %+v", changes)
+	}
+	if len(kept) != 1 || kept[0] != agentsSkillPath(userHome) {
+		t.Fatalf("with NoSkills: kept %v", kept)
+	}
+	must(t, os.Remove(claudeSkillPath(userHome)))
+	if changes, _, err = planAgentSkills(userHome, claudeDir, claudeDir, cfg, "/moved/agent-archive", dataHome); err != nil || len(changes) != 0 {
+		t.Fatalf("with NoSkills and no owned file: %+v %v", changes, err)
 	}
 }

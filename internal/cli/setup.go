@@ -267,7 +267,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	}
 	if done {
 		if skills != skillsUnchanged {
-			terminal.Println(p.out, "The agent skills were not changed: setup made no change this run.")
+			terminal.Println(p.out, "The agent skills were not changed: setup made no change this run. To change only the skills, run "+p.style.cmd("agent-archive setup --yes "+skills.flag())+".")
 		}
 		return nil
 	}
