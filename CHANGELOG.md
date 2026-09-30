@@ -29,7 +29,9 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/handoff/SKILL.md`). It runs
   `agent-archive handoff --to <agent>`, defaulting to another agent than the
   one you are in. Setup leaves a file it did not write, uninstall removes
-  only its own, and `status --json` lists them in `agent_commands`.
+  only its own, and `status --json` lists them in `agent_skills`. After an
+  upgrade, `status` warns about a skill file an earlier release wrote and lists
+  it in `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
 - Sessions in a git repository now carry a `repo_key` in their metadata: a
   hash of the repository's `origin` address (credentials, scheme, port, and
   `.git` removed, so SSH and HTTPS clones of one repository agree), which

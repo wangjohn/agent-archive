@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/agentcommands"
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
@@ -228,8 +228,8 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	err = setupjournal.Commit(home, journal, env.launchd())
 	// A command file created and rolled back, or removed, leaves the
 	// directories written for it; they go while empty.
-	agentcommands.RemoveEmptyDirs(userHome, claudeConfigDir(env.hookFiles(userHome)))
-	agentcommands.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, old)))
+	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.hookFiles(userHome)))
+	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, old)))
 	return err
 }
 
@@ -354,9 +354,9 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 			changes = append(changes, removal)
 		}
 	}
-	// The in-agent /handoff command, for the apps chosen. Only a file setup
-	// wrote is replaced or removed (see agentcommands.PlanInstall).
-	commands, _, err := agentcommands.PlanInstall(userHome, claudeConfigDir(files), next.Harnesses, executable, env.installation(home, userHome).commandDataHome(), claudeConfigDir(previousFiles))
+	// The agent skills (/handoff), for the apps chosen. Only a file setup
+	// wrote is replaced or removed (see agentskills.PlanInstall).
+	commands, _, err := agentskills.PlanInstall(userHome, claudeConfigDir(files), next.Harnesses, executable, env.installation(home, userHome).commandDataHome(), claudeConfigDir(previousFiles))
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}

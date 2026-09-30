@@ -49,7 +49,9 @@ delete that line to keep an edited copy. A file already at that path without
 it is left alone, and setup says so. An installation with
 `AGENT_ARCHIVE_HOME` set runs the command with it, and leaves the skill of
 another installation sharing the same home folder alone.
-`agent-archive status --verbose` lists the installed files.
+`agent-archive status --verbose` lists the installed files, and `status`
+warns when one was written by an earlier release (after you upgrade
+`agent-archive`); `agent-archive setup` refreshes it.
 
 ## From a terminal
 

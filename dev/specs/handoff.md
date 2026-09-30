@@ -748,9 +748,14 @@ which hands off *that* session and opens Codex in a new terminal tab.
    command names the same `AGENT_ARCHIVE_HOME` (none for the default
    installation), which a relocated installation's skill sets as its hooks
    do. Setup replaces only such a file; uninstall removes only such a
-   file; status lists them. Any other file at that path (the person's own,
-   one they edited and unmarked, or another installation's) is left alone
-   and reported.
+   file; status lists them, and reports one whose text differs from what
+   this release renders as out of date. Any other file at that path (the
+   person's own, one they edited and unmarked, or another installation's)
+   is left alone and reported. The installer is `internal/agentskills`: it
+   installs a registry of skills, of which `handoff` is one, with its text
+   in `internal/agentskills/skills/handoff/SKILL.md.tmpl`. It was
+   `internal/agentcommands` when this package landed; the plan for the
+   registry and the other skills is [agent-skill.md](agent-skill.md).
 
 ### Shared names
 
@@ -765,7 +770,7 @@ Packages rely on these; change them only in this section first.
 | C `internal/termlaunch` | `type Spec struct { Dir string; Argv []string; Unset []string; ScriptDir string }`; `type Environment struct { GOOS string; LookupEnv func(string) (string, bool); Run func(ctx context.Context, name string, args ...string) error }`; `Open(ctx, spec, env) (where string, err error)`; `ErrNoTerminal` |
 | D `handoff_destination.go` | `chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error)`; `Env.OpenTerminal func(termlaunch.Spec) (string, error)`; `Env.Clipboard func([]byte) error` |
 | E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |
-| F `internal/agentcommands` | `Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File`; `type File struct { Harnesses []string; Path string; Content []byte }` |
+| F `internal/agentskills` (was `agentcommands`) | `Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File`; `type File struct { Skill string; Harnesses []string; Path string; Content []byte }`; `var Registry []Skill`; the rest of the shared names are in [agent-skill.md](agent-skill.md#shared-names) |
 
 Each `Env` field gets an unexported method with a default (as
 `Env.launchHandoff` does today), and callers take a small
@@ -819,7 +824,7 @@ exception pattern in `.github/workflows/test.yml`, and D removes it.
 
 Recorded when the packages merged; the code is the reference.
 
-- **`agentcommands.Files`** takes `claudeDir` (Claude Code's configuration
+- **`agentskills.Files`** (`agentcommands.Files` until the agent skills plan renamed the package) takes `claudeDir` (Claude Code's configuration
   directory, `$CLAUDE_CONFIG_DIR` when set) and `dataHome` (the
   installation's `AGENT_ARCHIVE_HOME`, empty for the default):
   `Files(userHome, claudeDir string, harnesses []string, executable,
