@@ -246,6 +246,21 @@ Check that setup includes **Codex** and the project where the session runs (`age
 
 Check that setup includes **Cursor** and the project where the Agent chat runs (`agent-archive status --verbose` shows both). Start a **new Agent chat** in that project and send its first prompt; continuing an older chat does not establish a fresh start, and `/clear` is not the Cursor path. Run `agent-archive sync` and check the Cursor Capture row. If it shows local capture but no verified archive, use the Storage and read-back details under [reading status](#reading-status). If no session was seen, check the hook state and capture diagnostics in `status --verbose`. A chat with transcripts disabled can register but has no transcript to upload; see [session eligibility](../reference/session-eligibility.md#cursor).
 
+## No picker or prompt in an agent's terminal
+
+If `list` prints a table instead of opening the browser, bare `show` or
+`handoff` says to name a session, or `setup`, `uninstall`, or `backfill`
+refuses with "Prompts are off because ...", agent-archive believes a coding
+agent is running it: `AGENT_ARCHIVE_NONINTERACTIVE` is set, or
+`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is (a terminal
+opened from inside an agent can inherit them). Nothing was changed. Check
+with `env | grep -E 'AGENT_ARCHIVE_NONINTERACTIVE|CLAUDE_CODE_SESSION_ID|CODEX_THREAD_ID|CURSOR_AGENT'`.
+To be asked anyway, run the command as
+`AGENT_ARCHIVE_NONINTERACTIVE=0 agent-archive ...`, or `unset` the variable.
+`--yes` skips a confirmation without it. `agent-archive: AGENT_ARCHIVE_NONINTERACTIVE="..."
+is not a valid setting` means the value is not one of 1/true/yes/on or
+0/false/no/off; fix or unset it.
+
 ## An interrupted setup
 
 A failed setup restores the previous configuration, hooks, and scheduler. If

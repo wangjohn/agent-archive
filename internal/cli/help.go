@@ -133,8 +133,9 @@ SESSION_ID prefix when none), relative capture time, harness, project,
 and a short SESSION_ID. On a terminal with an interactive stdin, list a
 numbered table and pick a session to show its summary, then t for its
 transcript, Enter or b to go back, or q to quit. Piped or --json output is
-never interactive. On a terminal without interactive stdin, text is paged
-through $PAGER unless --no-pager.
+never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
+is inside coding agents (see the configuration reference). On a terminal
+without interactive stdin, text is paged through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -175,7 +176,9 @@ activity counts, skills, subagents, and capture gaps. --json prints the
 metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
 several matches on a terminal open a picker. With no SESSION_ID on a
 terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit.
+its transcript, Enter or b to go back, or q to quit. Nothing is asked when
+AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give a
+SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -199,9 +202,10 @@ instructions and credentials removed, tool output trimmed, edit bodies left
 out. A session on this machine is read from its transcript now, without
 waiting for a sync; otherwise it is downloaded from the archive.
 With no selector on a terminal, pick an archived session from the same
-numbered session browser as show. Without a terminal, give a SESSION_ID,
---latest, or --file PATH. The picker lists archived sessions only; --latest
-can also find a local session that has not uploaded yet.
+numbered session browser as show. Without a terminal, or when
+AGENT_ARCHIVE_NONINTERACTIVE is on (automatic inside coding agents), give a
+SESSION_ID, --latest, or --file PATH. The picker lists archived sessions
+only; --latest can also find a local session that has not uploaded yet.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
