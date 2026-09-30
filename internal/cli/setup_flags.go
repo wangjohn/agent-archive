@@ -266,7 +266,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 // Keychain is asked. A terminal is asked for it only after the preflight
 // checks, so it returns nothing then.
 func scriptR2Secret(secret credentials.R2Credentials, p *prompter, stdin io.Reader, env Env) (string, error) {
-	if secret.AccessKeyID == "" || (env.isTerminal(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "") {
+	if secret.AccessKeyID == "" || (env.interactive(stdin) && lookupEnvTrimmed(env, envR2SecretAccessKey) == "") {
 		return "", nil
 	}
 	return readR2Secret(p, stdin, env)
@@ -525,8 +525,13 @@ func readR2Secret(p *prompter, stdin io.Reader, env Env) (string, error) {
 	if value := lookupEnvTrimmed(env, envR2SecretAccessKey); value != "" {
 		return value, nil
 	}
+	// A terminal that interaction is switched off for is never read from: a
+	// run inside an agent would wait there for a key nobody will type.
+	if reason, blocked := env.blockedByNonInteractive(stdin); blocked {
+		return "", fmt.Errorf("the R2 secret access key is needed: set %s (standard input is a terminal, which is not read because %s; %s=0 allows it)", envR2SecretAccessKey, reason, envNonInteractive)
+	}
 	label := ""
-	if env.isTerminal(stdin) {
+	if env.interactive(stdin) {
 		label = "Secret access key (hidden): "
 	}
 	value, err := p.secret(label)
