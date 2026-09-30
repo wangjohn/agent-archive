@@ -108,11 +108,14 @@ def restored():
     # The system sets PENDIN itself when line editing goes back on.
     m = termios.tcgetattr(slave)
     return m[3] & ~termios.PENDIN == before[3] and m[6][termios.VQUIT] == before[6][termios.VQUIT]
-def wait_for(text):
-    while text not in output: pump()
+def wait_for(text, start=0):
+    # Only output from start on counts, so text drawn earlier does not.
+    while output.find(text, start) < 0: pump()
+    return output.find(text, start) + len(text)
 def wait_until(check, what):
-    # The modes change as the prompt is drawn: a few seconds is plenty.
-    limit = min(deadline, time.monotonic() + 10)
+    # The modes change as the prompt is drawn: seconds, even on a loaded
+    # machine running the race detector.
+    limit = min(deadline, time.monotonic() + 30)
     while not check():
         if time.monotonic() > limit: raise RuntimeError(what, termios.tcgetattr(slave))
         pump()
@@ -121,7 +124,7 @@ def finish(code):
     assert p.returncode == code, (p.returncode, output[-800:])
 def wait_stopped():
     global output
-    limit = min(deadline, time.monotonic() + 10)
+    limit = min(deadline, time.monotonic() + 30)
     while True:
         pid, status = os.waitpid(p.pid, os.WUNTRACED | os.WNOHANG)
         if pid: break
@@ -164,9 +167,11 @@ try:
         assert output.endswith(b'\x1b[?1049l'), ('alternate screen shown while stopped', output[-200:])
         stopped = len(output)
         p.send_signal(signal.SIGCONT)
+        # Key mode goes back on before the screen is drawn again, and the
+        # list's prompt is already in the output from before the stop: wait
+        # for the alternate screen and then a new prompt after it.
         wait_until(keys_on, 'key mode not back on after continuing')
-        wait_for(b'or q to quit')
-        assert b'\x1b[?1049h' in output[stopped:], 'alternate screen not entered again'
+        wait_for(b'or q to quit', wait_for(b'\x1b[?1049h', stopped))
         os.write(master, b'q')
         finish(0)
     assert restored(), ('terminal modes not restored', hex(before[3]), hex(termios.tcgetattr(slave)[3]))
