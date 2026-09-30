@@ -330,7 +330,9 @@ it renames the package.
   It refuses (exit 1, one-line reason, nothing changed) when setup never
   completed, an interrupted setup needs recovery, the archive is
   uninstalled, another installation's hooks are in a file it would write,
-  or another installation owns the collector's launchd label. Any flag but
+  another installation owns the collector's launchd label, or it runs as
+  root in a home directory that belongs to another user (`sudo` can keep
+  `HOME`; it would leave root-owned files there). Any flag but
   `--verbose` is a usage error (exit 2). A paused archive is refreshed like
   any other, and stays paused: pausing keeps the hooks.
 - It works in `internal/cli/setup_refresh.go` from the saved configuration:
@@ -341,7 +343,9 @@ it renames the package.
   seconds for a collector pass (the collector starts one every minute)
   before refusing, and absorbs SIGINT, SIGTERM, and SIGHUP from the moment
   the journal is written until it is gone, so an interrupted installer
-  never leaves a transaction to recover. Only files whose
+  never leaves a transaction to recover; `launchctl bootstrap` and
+  `bootout` end after 30 seconds, so nothing that absorbs signals can hang.
+  Only files whose
   content would change are written, so a current installation writes and
   asks nothing.
 - The journal gained `FilesOnly` (`files_only`): a transaction of files
@@ -353,7 +357,10 @@ it renames the package.
   (stop, write, start), because launchd runs the definition it loaded, not
   the file, and a job left on a deleted binary would fail every minute. A
   job that is not loaded stays unloaded; a job whose state is unknown, or
-  another installation's, refuses.
+  another installation's, refuses. A release without the field ignores it
+  and recovers such a journal as an ordinary one: files back, a loaded
+  collector stopped and not started again until setup runs. Only a crashed
+  refresh followed by a downgrade meets that.
 - Also repairs hook drift: if `InstalledExecutable` differs from the running
   executable (the case `status` reports as "capture has stopped"), refresh
   points hooks, the LaunchAgent plist, and the skills at the running binary
@@ -366,7 +373,9 @@ it renames the package.
   command but does not fail the install; a fresh install runs nothing.
   `AGENT_ARCHIVE_HOME` is honored. As root (`sudo`, which can keep `HOME`)
   it skips the refresh and says to run it as the person, since it would
-  leave root-owned files in their app settings.
+  leave root-owned files in their app settings. A refusal names both ways
+  on: `setup --refresh` again when the reason was temporary, `setup` when
+  the archive was uninstalled or setup never finished.
 - `status`'s out-of-date skill line, its "capture has stopped" warning, and
   the next step for missing hooks say `setup --refresh`.
 - Tests: refresh replaces a stale skill and leaves a foreign one; refresh

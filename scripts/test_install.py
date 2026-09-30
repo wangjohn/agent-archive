@@ -302,7 +302,10 @@ class InstallRefreshTest(InstallScriptBase):
         self.assertTrue(target.exists())
         self.assertIn(f'✓ installed agent-archive v9.9.9 to {target}', result.stdout)
         self.assertIn('setup was interrupted and needs recovery', result.stderr)
-        self.assertIn(f'To try again, run: {target} setup --refresh', result.stderr)
+        self.assertIn('your hooks and skills were not brought up to date', result.stderr)
+        self.assertIn(f'try again with: {target} setup --refresh', result.stderr)
+        # An uninstalled or never-finished setup cannot be refreshed: name setup too.
+        self.assertIn(f'run: {target} setup\n', result.stderr)
 
     def test_a_binary_that_cannot_refresh_still_installs(self):
         # An older release has no --refresh: usage error, exit 2.

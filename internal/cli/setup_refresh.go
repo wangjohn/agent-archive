@@ -119,6 +119,9 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	if _, err = refreshableConfig(home); err != nil {
 		return plan, userHome, err
 	}
+	if problem := env.rootProblem(home, userHome); problem != "" {
+		return plan, userHome, refuse("%s", problem)
+	}
 	exe, err := env.executable()
 	if err != nil {
 		return plan, userHome, refuse("cannot find the running agent-archive: %v", err)
@@ -143,7 +146,10 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 		return plan, userHome, refuse("%s holds the collector lock; retry when it finishes", lockHolder(home))
 	}
 	defer unlock()
-	releaseHooks, err := local.NamedLock(home, "hooks.lock")
+	// A hook holds hooks.lock for milliseconds while it registers a session,
+	// and an installer that upgraded in the middle of a busy session should
+	// not fail for that.
+	releaseHooks, err := local.NamedLockWait(home, "hooks.lock", min(env.refreshCollectorWait(), 2*time.Second))
 	if err != nil {
 		return plan, userHome, refuse("a hook is finishing; retry")
 	}
@@ -169,6 +175,25 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	// A skill file removed leaves the directories written for it.
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))
 	return plan, userHome, err
+}
+
+// rootProblem is why this process, running as root, must not refresh the
+// installation in home and userHome, or "" when it may: the refresh would
+// write hook files, skill files, the LaunchAgent plist, the journal and the
+// locks as root, in a home directory that belongs to another user (sudo can
+// keep HOME), and their apps and collector could then neither read nor
+// replace them. install.sh already skips the refresh as root; this covers
+// the person who runs it by hand.
+func (e Env) rootProblem(home, userHome string) string {
+	if e.effectiveUID() != 0 {
+		return ""
+	}
+	for _, dir := range []string{userHome, home} {
+		if uid, ok := e.fileOwner(dir); ok && uid != 0 {
+			return fmt.Sprintf("this is running as root, but %s belongs to another user, so the refresh would leave root-owned files there that their apps cannot change. Run it as that user, without sudo", dir)
+		}
+	}
+	return ""
 }
 
 // refreshableConfig is the saved configuration when there is one setup

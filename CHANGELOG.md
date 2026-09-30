@@ -27,7 +27,8 @@ follow [Semantic Versioning](https://semver.org/).
   skills; if it fails, or the installer runs as root (which would leave
   root-owned files in your home directory), the install still succeeds and
   says how to run it. It waits up to ten seconds for a running collection
-  pass, and finishes once it starts writing even if you press Ctrl-C.
+  pass, and finishes once it starts writing even if you press Ctrl-C. Run as
+  root in another user's home directory, it refuses, changing nothing.
   `status` names it where it reports out-of-date skills, hooks that are
   missing, or a moved binary.
 - `agent-archive setup --no-skills` (also with `--yes`) installs no agent

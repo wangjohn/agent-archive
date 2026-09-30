@@ -134,7 +134,8 @@ existing_installation() {
 # nothing, needs no terminal, and changes only the hook files, the collector's
 # plist, and the skill files, and prints what it did. It never runs setup
 # itself, and a failed refresh never fails the install: the binary is
-# installed either way, so it says why and how to try again.
+# installed either way, so it says why, and both ways on: refresh again when
+# the reason was temporary, setup when there is nothing installed to refresh.
 refresh_installation() {
   say ""
   # Under sudo, HOME can still be the person's, and the refresh would leave
@@ -150,7 +151,9 @@ refresh_installation() {
     printf '%s\n' "$output" | sed 's/^/  /'
   else
     printf 'agent-archive install: could not refresh the hooks and skills of your existing setup: %s\n' "$output" >&2
-    printf 'The new agent-archive is installed. To try again, run: %s setup --refresh\n' "$target" >&2
+    printf 'The new agent-archive is installed, but your hooks and skills were not brought up to date.\n' >&2
+    printf 'If the reason above is temporary, try again with: %s setup --refresh\n' "$target" >&2
+    printf 'If it says to run setup (you uninstalled, or setup never finished), run: %s setup\n' "$target" >&2
   fi
 }
 

@@ -49,6 +49,13 @@ type Journal struct {
 	// launchd anything, or starts, stops, or reloads the job. Without it a
 	// commit starts the collector, and a rollback stops the one a failed
 	// commit started.
+	//
+	// A release before this field existed ignores it (encoding/json skips
+	// unknown fields) and recovers such a journal as an ordinary one: it
+	// puts the files back, but stops a loaded collector and, since WasLoaded
+	// is false here, does not start it again, so the collector stays off
+	// until setup runs. Only an interrupted refresh (a crash or SIGKILL;
+	// refresh absorbs the signals) followed by a downgrade can meet that.
 	FilesOnly bool `json:"files_only,omitempty"`
 }
 

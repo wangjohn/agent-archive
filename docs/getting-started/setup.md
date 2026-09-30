@@ -272,8 +272,10 @@ runs it for you when it finds a set-up Mac.
 - It refuses, changing nothing and exiting 1 with one line on standard
   error, when setup never finished, an interrupted setup needs recovery, the
   archive was uninstalled, another installation's hooks are in a hook file
-  it would write, another installation owns the background job, or another
-  setup is running. Any other flag except `--verbose` is a usage error
+  it would write, another installation owns the background job, another
+  setup is running, or it runs as root (`sudo`) in a home directory that
+  belongs to another user, where it would leave root-owned files. Run it as
+  yourself. Any other flag except `--verbose` is a usage error
   (exit 2).
 
 ## What setup changes on your Mac
