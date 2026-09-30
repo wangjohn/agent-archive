@@ -395,6 +395,12 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A hook that fires while a retention sweep is expiring its session no
+  longer fails with "another collector or setup is running" on a busy Mac,
+  leaving the session to expire without that turn. Retention wrote the
+  session's removal record while holding the lock the hook waits a second
+  for, and that write's disk syncs could take longer; it now writes the
+  record first and holds the lock only to recheck and forget the session.
 - **`agent-archive stats` no longer says `--json` has every row of a list it
   cut.** Under a cut list the screens said `(--json has them all)`, but plain
   `--json` keeps only the top five projects. The projects screen now says `+ N
