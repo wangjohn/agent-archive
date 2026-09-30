@@ -51,14 +51,47 @@ const (
 // as they do any other source they cannot safely filter.
 var errCursorFormatUnknown = fmt.Errorf("cursor composer format version is not known: %w", ErrUnsafeSourceFormat)
 
+// cursorChatNameKey is the key a Cursor chat's name is written under, on
+// the session record that starts a cursor-composer transcript (filter 13).
+const cursorChatNameKey = "name"
+
+// SameNativeRecord reports whether two filtered records at the same position
+// of a transcript in format are the same evidence: equal, or, for a
+// cursor-composer transcript, session records that differ only in the chat's
+// name. Cursor names a chat after its first messages, and the person can
+// rename it; the name is a label the latest one replaces, not evidence a
+// later snapshot must keep, so naming a chat is not a rewrite of it.
+func SameNativeRecord(format string, previous, candidate map[string]any) bool {
+	if reflect.DeepEqual(previous, candidate) {
+		return true
+	}
+	if format != cursorComposerFormat || previous["type"] != "session" || candidate["type"] != "session" {
+		return false
+	}
+	return reflect.DeepEqual(withoutKey(previous, cursorChatNameKey), withoutKey(candidate, cursorChatNameKey))
+}
+
+// withoutKey is a shallow copy of record without key.
+func withoutKey(record map[string]any, key string) map[string]any {
+	out := make(map[string]any, len(record))
+	for k, v := range record {
+		if k != key {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // cursorComposerConsumed are the composerData keys the filter reads for
-// structure and identity. They are not retained as fields, but nothing they
-// hold is lost either, so they are not reported as omitted. conversation is
-// reported by its own gap when it holds anything.
+// structure, identity, and the chat's name. They are not retained as fields
+// of their own, but nothing they hold is lost either, so they are not
+// reported as omitted. conversation is reported by its own gap when it holds
+// anything. name is written onto the session record (filter 13); a name that
+// is not a string is reported as omitted.
 var cursorComposerConsumed = map[string]bool{
 	"_v": true, "composerId": true, "createdAt": true,
 	"fullConversationHeadersOnly": true, "conversation": true,
-	"generatingBubbleIds": true, "status": true,
+	"generatingBubbleIds": true, "status": true, "name": true,
 }
 
 // cursorBubbleConsumed are the message keys the filter maps onto a record
@@ -150,12 +183,15 @@ func (f *cursorComposerFilter) omit(level, key string) { f.omitted.add(level + "
 // session record carrying the chat's ID and creation time, then one record
 // per message in header order:
 //
-//	{"type":"session","session_id":…,"timestamp":…}
+//	{"type":"session","session_id":…,"timestamp":…,"name":…}
 //	{"role":"user"|"assistant","id":…,"timestamp":…,"model":…,"requestId":…,
 //	 "started_at_ms":…,"completed_at_ms":…,"usage":{"input_tokens":…,"output_tokens":…},
 //	 "message":{"content":[{"type":"text","text":…},
 //	   {"type":"tool_use","id":…,"name":…,"input":{…}},
 //	   {"type":"tool_result","tool_use_id":…,"content":…,"status":…,"is_error":…}]}}
+//
+// The session record's name is the chat's own name, present only when Cursor
+// has given the chat one; it is redacted like a message's text.
 //
 // Every record then goes through the same sanitizer as a JSONL record, so
 // tool arguments, redaction, injected-instruction stripping, and the string
@@ -215,6 +251,16 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 			f.omit("chat", key)
 		}
 	}
+	// A name is text, or nothing: Cursor leaves it empty until it has named
+	// the chat. Anything else is not a name, and is reported as omitted.
+	chatName := ""
+	switch name := composer["name"].(type) {
+	case nil:
+	case string:
+		chatName = strings.TrimSpace(name)
+	default:
+		f.omit("chat", "name")
+	}
 	if conversation, present := composer["conversation"]; present && nonEmptyValue(conversation) {
 		f.addGap("cursor_inline_conversation_omitted", 0, "inline conversation entries are not read")
 	}
@@ -228,6 +274,9 @@ func (CursorAdapter) FilterComposer(c CursorComposer) (FilteredTranscript, error
 		session := map[string]any{"type": "session", "session_id": composerID}
 		if hasCreatedAt {
 			session["timestamp"] = createdAt.Format(time.RFC3339Nano)
+		}
+		if chatName != "" {
+			session[cursorChatNameKey] = chatName
 		}
 		for _, record := range append([]map[string]any{session}, messages...) {
 			if err := f.retain(record); err != nil {

@@ -946,7 +946,9 @@ snapshot is published as a replacement, and the chat carries one
 `cursor_chat_rewritten` capture gap (collector evidence, provenance
 `collector:cursor-rewrite`, no content) whose detail counts the rewrites and
 whose observation time is the last one's, so a chat Cursor rewrites often
-(late token counts are routine) does not grow a gap per rewrite.
+(late token counts are routine) does not grow a gap per rewrite. A change to
+the chat's name alone, which filter 13 keeps on the chat's first record, is
+not a rewrite: the chat is republished with its new name and no gap.
 
 **Everywhere else a transcript file was assumed.** The collector reads each
 registration through a small `sourceReader` interface (`Signature`,

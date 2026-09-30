@@ -130,9 +130,12 @@ type Env struct {
 	// AWSBuckets lists an AWS profile's buckets and reads their regions
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
-	WorkingDir func() (string, error)
-	Home       func() (string, error)
-	Now        func() time.Time
+	// AWSBucketCreator opens the client setup creates a new S3 bucket with,
+	// for profile, in region. Defaults to S3 with the profile's credentials.
+	AWSBucketCreator func(profile, region string) (BucketCreator, error)
+	WorkingDir       func() (string, error)
+	Home             func() (string, error)
+	Now              func() time.Time
 	// OpenStore builds the object store a collector pass publishes to, from
 	// this machine's configured storage destination. Defaults to
 	// openConfiguredStore, which resolves real AWS/R2 credentials.
