@@ -64,9 +64,11 @@ func NormalizeRemoteURL(raw string) string {
 	if !plausibleHost(host) {
 		return ""
 	}
+	// Cleaning a rooted path removes "." and ".." elements, so what is left
+	// is either empty or a plain owner/repo path.
 	repoPath = strings.Trim(path.Clean("/"+repoPath), "/")
 	repoPath = strings.Trim(strings.TrimSuffix(repoPath, ".git"), "/")
-	if repoPath == "" || repoPath == "." || repoPath == ".." || strings.HasPrefix(repoPath, "../") {
+	if repoPath == "" {
 		return ""
 	}
 	return host + "/" + repoPath
