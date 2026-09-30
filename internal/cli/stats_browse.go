@@ -394,7 +394,7 @@ func (b *statsBrowser) pageLines(width int) []string {
 	view := b.view
 	view.width = width
 	if s.Coverage.Sessions == 0 {
-		message := statsEmptyMessage(s, b.inputs.filters, len(b.inputs.sessions) > 0)
+		message := statsEmptyMessageWith(s, b.inputs.filters, len(b.inputs.sessions) > 0, " Press w for another window.")
 		return strings.Split(view.wrap(message), "\n")
 	}
 	return renderPage(b.page, s, view)
@@ -433,7 +433,7 @@ func (b *statsBrowser) lastRow(l statsLayout, total, maxTop int) string {
 	case b.message != "":
 		return oneRow(b.message, l.width)
 	}
-	days := b.windows[b.window]
+	days, next := b.windows[b.window], b.windows[(b.window+1)%len(b.windows)]
 	if b.mode == statsHelp {
 		row := " Any key closes the help; Up, Down, PgUp and PgDn scroll it"
 		if visibleWidth(row) > l.width {
@@ -442,18 +442,18 @@ func (b *statsBrowser) lastRow(l statsLayout, total, maxTop int) string {
 		return b.view.style.dim(oneRow(row, l.width))
 	}
 	if maxTop == 0 || l.width < statsMinWidth {
-		return statsKeyBar(b.view.style, b.page, days, l.width)
+		return statsKeyBar(b.view.style, b.page, days, next, l.width)
 	}
-	// A view too tall for the screen says where it is; the bar shortens to
-	// leave room for that.
-	position := "Top"
+	// A view too tall for the screen says where it is, and at the top that
+	// there is more below; the bar shortens to leave room for that.
+	position := "Top " + b.view.glyphs.moreBelow
 	switch {
 	case b.top >= maxTop:
 		position = "End"
 	case b.top > 0:
 		position = strconv.Itoa((b.top+l.body)*100/total) + "%"
 	}
-	bar := statsKeyBar(b.view.style, b.page, days, l.width-len(position)-1)
-	room := l.width - visibleWidth(bar) - len(position)
+	bar := statsKeyBar(b.view.style, b.page, days, next, l.width-visibleWidth(position)-1)
+	room := l.width - visibleWidth(bar) - visibleWidth(position)
 	return bar + strings.Repeat(" ", room) + b.view.style.dim(position)
 }

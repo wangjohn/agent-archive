@@ -279,11 +279,17 @@ func statsFiltersOf(opts listOptions) statsFilters {
 }
 
 // statsScreenWanted is whether stats opens the interactive screen: stdin and
-// stdout are terminals and interaction is on (Env.interactive), and no flag
-// asks for a printed page (printed is whether --by, --json, --html,
-// --no-pager or --detail was given; --view is looked at here).
+// stdout are terminals and interaction is on (Env.interactive), the terminal
+// is not a dumb one (which cannot switch screens or place the cursor, so the
+// escape sequences would print as text), and no flag asks for a printed page
+// (printed is whether --by, --json, --html, --no-pager or --detail was given;
+// --view is looked at here).
 func statsScreenWanted(fs *commandFlags, env statsCommandDependencies, stdin io.Reader, stdout io.Writer, printed bool) bool {
-	return !printed && !viewGiven(fs) && env.interactive(stdin) && env.interactive(stdout)
+	if printed || viewGiven(fs) || !env.interactive(stdin) || !env.interactive(stdout) {
+		return false
+	}
+	term, _ := env.lookupEnv("TERM")
+	return term != "dumb"
 }
 
 // viewGiven is whether --view was given, whatever its value.
@@ -418,10 +424,6 @@ func statsPriceTable(fs *commandFlags, path string) (stats.PriceTable, int) {
 // statsEmptyMessage says why there is nothing to show, and what to try.
 // sawSessions is whether any session (of the previous period, say) was read.
 func statsEmptyMessage(s stats.Stats, filters statsFilters, sawSessions bool) string {
-	span := fmt.Sprintf("in the last %d days (%s to %s)", s.Window.Days, s.Window.FirstDay, s.Window.LastDay)
-	if s.Window.Days == 1 {
-		span = fmt.Sprintf("today (%s)", s.Window.LastDay)
-	}
 	longer := ""
 	switch {
 	case s.Window.Days < 90:
@@ -429,16 +431,26 @@ func statsEmptyMessage(s stats.Stats, filters statsFilters, sawSessions bool) st
 	case s.Window.Days < 365:
 		longer = " Try a longer window, for example agent-archive stats --days 365."
 	}
+	return statsEmptyMessageWith(s, filters, sawSessions, longer)
+}
+
+// statsEmptyMessageWith is statsEmptyMessage ending in advice: the screen
+// tells the person to press w, not to run the command again.
+func statsEmptyMessageWith(s stats.Stats, filters statsFilters, sawSessions bool, advice string) string {
+	span := fmt.Sprintf("in the last %d days (%s to %s)", s.Window.Days, s.Window.FirstDay, s.Window.LastDay)
+	if s.Window.Days == 1 {
+		span = fmt.Sprintf("today (%s)", s.Window.LastDay)
+	}
 	switch {
 	case filters.Model != "":
 		// The screen names models by family ("opus"); the filter is exact.
-		return "No archived sessions match these filters " + span + ". --model takes a full model id (for example claude-opus-5), not a family name like opus." + longer
+		return "No archived sessions match these filters " + span + ". --model takes a full model id (for example claude-opus-5), not a family name like opus." + advice
 	case filters != statsFilters{}:
-		return "No archived sessions match these filters " + span + "." + longer
+		return "No archived sessions match these filters " + span + "." + advice
 	case sawSessions:
-		return "No archived sessions were captured " + span + "." + longer
+		return "No archived sessions were captured " + span + "." + advice
 	}
-	return "No archived sessions " + span + ". If you have just set up, sessions appear once an app session is captured (agent-archive status shows capture)." + longer
+	return "No archived sessions " + span + ". If you have just set up, sessions appear once an app session is captured (agent-archive status shows capture)." + advice
 }
 
 // statsZone is the time zone days, weeks and months are counted in: the

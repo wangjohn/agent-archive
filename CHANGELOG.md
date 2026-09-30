@@ -15,7 +15,8 @@ follow [Semantic Versioning](https://semver.org/).
   PgUp/PgDn, space, Home/End and the mouse wheel scroll, `?` lists the keys,
   `h` saves the redacted page as HTML (it asks for a file name and never
   replaces a file) and `q`, Esc or Ctrl-C quit, leaving the terminal as it
-  was. It opens only when standard input and output are terminals and
+  was. The bar names the window `w` moves to next. It opens only when
+  standard input and output are terminals (not a dumb one) and
   `AGENT_ARCHIVE_NONINTERACTIVE` is off, and not with `--view`, `--detail`,
   `--by`, `--no-pager`, `--json` or `--html`; those print as before. See the
   [stats guide](docs/guides/stats.md#the-interactive-screen).

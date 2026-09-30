@@ -61,17 +61,20 @@ type statsGlyphs struct {
 	spark [8]string
 	// sparkUnknown marks a day whose spend is unknown.
 	sparkUnknown string
-	bullet       string
-	up           string
-	down         string
-	sep          string
-	ellipsis     string
+	// moreBelow marks a screen with more below it, in the key bar.
+	moreBelow string
+	bullet    string
+	up        string
+	down      string
+	sep       string
+	ellipsis  string
 }
 
 var unicodeGlyphs = statsGlyphs{
 	block:        "█",
 	spark:        [8]string{"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"},
 	sparkUnknown: "·",
+	moreBelow:    "↓",
 	bullet:       "●",
 	up:           "▲",
 	down:         "▼",
@@ -83,6 +86,7 @@ var asciiGlyphs = statsGlyphs{
 	block:        "#",
 	spark:        [8]string{"_", ".", ":", "-", "=", "+", "*", "#"},
 	sparkUnknown: "?",
+	moreBelow:    "v",
 	bullet:       "*",
 	up:           "+",
 	down:         "-",

@@ -159,7 +159,7 @@ try:
     if mode == 'keys':
         os.write(master, b'd'); n = wait_frame('agent-archive stats · detail · last 30 days', n)
         os.write(master, b'w'); n = wait_frame('last 90 days', n)
-        assert 'w window 90d' in frames()[-1], frames()[-1]
+        assert 'w window 90d>7d' in frames()[-1], frames()[-1]
         os.write(master, b'p'); n = wait_frame('projects', n)
         os.write(master, b'?'); n = wait_frame('agent-archive stats: keys', n, 'closes the help')
         os.write(master, b'x'); n = wait_frame('q quit', n)

@@ -24,6 +24,7 @@ func TestStatsInteractiveOnlyWhereItShould(t *testing.T) {
 		stdin          bool
 		stdout         bool
 		nonInteractive string
+		term           string
 		// same is whether the output is the plain overview.
 		same bool
 	}{
@@ -32,6 +33,7 @@ func TestStatsInteractiveOnlyWhereItShould(t *testing.T) {
 		{name: "neither", same: true},
 		{name: "NONINTERACTIVE=1", stdin: true, stdout: true, nonInteractive: "1", same: true},
 		{name: "NONINTERACTIVE=true", stdin: true, stdout: true, nonInteractive: "true", same: true},
+		{name: "TERM=dumb", stdin: true, stdout: true, term: "dumb"},
 		{name: "--no-pager", args: []string{"--no-pager"}, stdin: true, stdout: true, same: true},
 		{name: "--view overview", args: []string{"--view", "overview"}, stdin: true, stdout: true, same: true},
 		{name: "--view detail", args: []string{"--view", "detail"}, stdin: true, stdout: true},
@@ -52,10 +54,13 @@ func TestStatsInteractiveOnlyWhereItShould(t *testing.T) {
 					}
 					return tc.stdout && stdout(stream)
 				}
-				if tc.nonInteractive != "" {
+				if tc.nonInteractive != "" || tc.term != "" {
 					e.LookupEnv = func(name string) (string, bool) {
-						if name == envNonInteractive {
+						switch {
+						case name == envNonInteractive && tc.nonInteractive != "":
 							return tc.nonInteractive, true
+						case name == "TERM" && tc.term != "":
+							return tc.term, true
 						}
 						return "", false
 					}

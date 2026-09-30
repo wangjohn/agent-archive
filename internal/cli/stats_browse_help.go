@@ -44,11 +44,12 @@ func (b *statsBrowser) helpLines(width int) []string {
 	entry("m", "models: every model family, priced or not")
 	entry("a", "agents: each agent side by side")
 	heading("Window")
-	entry("w", "cycle the window: "+strings.Join(windows, ", ")+". The numbers are counted again from what was already read, so it is instant.")
+	entry("w", "cycle the window: "+strings.Join(windows, ", ")+" (the bar shows the next one). The numbers are counted again from what was already read, so it is instant.")
 	heading("Scroll")
 	entry("Up Down j k", "one line; the mouse wheel does the same")
 	entry("PgUp PgDn", "one screen; space pages down too")
 	entry("Home End", "the top, the bottom")
+	entry("", "A screen taller than the terminal shows where you are on the last row: Top with an arrow when there is more below, a percentage, End.")
 	heading("Other")
 	entry("h", "save this window as a redacted web page: asks for a file name, and never replaces a file")
 	entry("?", "this help; any key but a scroll key closes it")
@@ -90,27 +91,31 @@ func (b *statsBrowser) savePrompt(width int) string {
 	if room < 1 {
 		return truncateVisible(question, width)
 	}
-	return b.view.style.bold(question) + tailVisible(b.typed, room)
+	return b.view.style.bold(question) + tailVisible(b.typed, room, b.view.glyphs.ellipsis)
 }
 
 // statsMinTypedRoom is the columns the save prompt keeps for the name being
 // typed before it takes a shorter question.
 const statsMinTypedRoom = 12
 
-// tailVisible is the end of text that fits limit columns, with "…" where it
-// is cut at the start.
-func tailVisible(text string, limit int) string {
+// tailVisible is the end of text that fits limit columns, with the ellipsis
+// where it is cut at the start.
+func tailVisible(text string, limit int, ellipsis string) string {
 	if visibleWidth(text) <= limit {
 		return text
+	}
+	room := limit - visibleWidth(ellipsis)
+	if room <= 0 {
+		return truncateVisible(ellipsis, limit)
 	}
 	runes := []rune(text)
 	used := 0
 	i := len(runes)
-	for i > 0 && used+runeWidth(runes[i-1]) <= limit-1 {
+	for i > 0 && used+runeWidth(runes[i-1]) <= room {
 		i--
 		used += runeWidth(runes[i])
 	}
-	return "…" + string(runes[i:])
+	return ellipsis + string(runes[i:])
 }
 
 // defaultHTMLName is the file name h saves to when none is typed: today's
@@ -169,7 +174,7 @@ func (b *statsBrowser) savedMessage(path string) string {
 	const prefix, suffix = "Saved ", " (names replaced)"
 	width := b.layout().width
 	if room := width - len(prefix) - len(suffix); room >= statsMinTypedRoom {
-		return prefix + tailVisible(path, room) + suffix
+		return prefix + tailVisible(path, room, b.view.glyphs.ellipsis) + suffix
 	}
-	return prefix + tailVisible(path, max(width-len(prefix), 1))
+	return prefix + tailVisible(path, max(width-len(prefix), 1), b.view.glyphs.ellipsis)
 }

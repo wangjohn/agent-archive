@@ -308,16 +308,17 @@ screen, like the `list` browser, so quitting leaves your scrollback as it was.
 | Key | What it does |
 | --- | --- |
 | `o` `d` `p` `m` `a` | Switch to the overview, detail, projects, models or agents view. Each is exactly the screen `--view` prints. |
-| `w` | Cycle the window: 7 days, 30 days, 90 days, and back. The numbers are counted again from the sessions already read, so it is instant and nothing is downloaded. The view stays; the title says `last 90 days` and the bar shows `w window 90d`. |
-| Up, Down, `j`, `k` | Scroll a line. The mouse wheel does the same, as in the session browser. |
+| `w` | Cycle the window: 7 days, 30 days, 90 days, and back. The numbers are counted again from the sessions already read, so it is instant and nothing is downloaded. The view stays; the title says `last 90 days`, and the bar always names the window `w` goes to next (`w window 30d>90d`, shortened to `w >90d` on a narrow terminal). |
+| Up, Down, `j`, `k` | Scroll a line. The mouse wheel does the same where the terminal sends it as arrow keys on the alternate screen, as it does for the session browser; agent-archive does not turn on mouse reporting, so selecting text with the mouse still works. |
 | PgUp, PgDn, space | Scroll a screen. |
 | Home, End | Jump to the top or the bottom. |
 | `h` | Save the window on show as a web page (see [below](#share-it-as-a-web-page)). |
 | `?` | List the keys; any key that is not a scroll key closes the list. |
 | `q`, Esc, Ctrl-C | Quit. |
 
-A view taller than the terminal is cut to fit and scrolls; the bar shows `Top`,
-a percentage or `End` where it can. On a narrow terminal the bar shortens its
+A view taller than the terminal is cut to fit and scrolls (the overview needs
+about 32 rows, so it does on a 24-row terminal); the bar shows `Top ↓` (more
+below), a percentage or `End` where it can. On a narrow terminal the bar shortens its
 labels and then drops keys (`q` last) rather than wrap. Resizing the window
 redraws it. Whatever way it ends, including Ctrl-C, `SIGTERM`, `SIGHUP` and
 Ctrl-Z, the terminal gets its echo, cursor and screen back.
@@ -325,7 +326,10 @@ Ctrl-Z, the terminal gets its echo, cursor and screen back.
 `--days` and `--since` set the window the screen starts in: 7, 30 and 90
 days are the usual ones, and any other window (say `--days 14`) is added to
 the cycle in order, so `w` goes 7, 14, 30, 90. `--harness`, `--model`,
-`--imported` and `--hook-captured` apply. A window with nothing in it says so
+`--imported` and `--hook-captured` apply. "Today" and the windows are counted
+from when the screen opened and are not refreshed: a screen left open past
+midnight, or while new sessions are captured, keeps showing what it read; quit
+and run it again to refresh. A window with nothing in it says so
 and `w` moves on. To read once for every window, the screen fetches the longest
 window, the same length again before it (for the change from the prior
 period) and the six months of the month rank; a plain `stats --days 7` still
@@ -343,7 +347,7 @@ there and is printed again when you quit.
 
 The screen opens only when standard input and output are both terminals,
 interaction is on (`AGENT_ARCHIVE_NONINTERACTIVE` is not set, as it is inside
-coding agents), and none of `--view`, `--detail`, `--by`, `--no-pager`,
+coding agents), `TERM` is not `dumb`, and none of `--view`, `--detail`, `--by`, `--no-pager`,
 `--json` or `--html` is given. Everything else prints as described above,
 unchanged. `--no-pager` is the way to get the printed screen on a terminal.
 

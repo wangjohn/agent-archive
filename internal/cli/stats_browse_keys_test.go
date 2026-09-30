@@ -59,7 +59,7 @@ func TestStatsScreenScrolls(t *testing.T) {
 		var bar func(string) bool
 		switch top {
 		case 0:
-			bar = barHas("q quit", "Top")
+			bar = barHas("q quit", "Top ↓")
 		case maxTop:
 			bar = barHas("q quit", "End")
 		default:
@@ -163,7 +163,7 @@ func TestStatsKeyBarFitsEveryWidth(t *testing.T) {
 		style := textStyle{color: color}
 		for _, page := range statsPages {
 			for width := 1; width <= 140; width++ {
-				bar := statsKeyBar(style, page, 30, width)
+				bar := statsKeyBar(style, page, 30, 90, width)
 				if w := visibleWidth(bar); w > width {
 					t.Fatalf("width %d: the bar is %d columns: %q", width, w, bar)
 				}
@@ -174,8 +174,8 @@ func TestStatsKeyBarFitsEveryWidth(t *testing.T) {
 				if width >= 6 && !strings.Contains(plain, "q") {
 					t.Errorf("width %d: no q in %q", width, plain)
 				}
-				if width >= 60 && !strings.Contains(plain, "30d") {
-					t.Errorf("width %d: no window in %q", width, plain)
+				if width >= 60 && !strings.Contains(plain, ">90d") {
+					t.Errorf("width %d: the window key does not say where it goes in %q", width, plain)
 				}
 				if width >= 60 && !strings.Contains(plain, "? help") {
 					t.Errorf("width %d: no help in %q", width, plain)
@@ -183,13 +183,13 @@ func TestStatsKeyBarFitsEveryWidth(t *testing.T) {
 			}
 		}
 	}
-	whole := ansiEscape.ReplaceAllString(statsKeyBar(textStyle{}, pageDetail, 90, 200), "")
-	if whole != " o overview  [d detail]  p projects  m models  a agents  w window 90d  h html  ? help  q quit" {
+	whole := ansiEscape.ReplaceAllString(statsKeyBar(textStyle{}, pageDetail, 90, 7, 200), "")
+	if whole != " o overview  [d detail]  p projects  m models  a agents  w window 90d>7d  h html  ? help  q quit" {
 		t.Errorf("the full bar is %q", whole)
 	}
 	// The active view is in reverse video with color, and the bar is not
 	// otherwise colored.
-	colored := statsKeyBar(textStyle{color: true}, pageModels, 30, 200)
+	colored := statsKeyBar(textStyle{color: true}, pageModels, 30, 90, 200)
 	if !strings.Contains(colored, "\x1b[7mm models\x1b[0m") || strings.Count(colored, "\x1b[7m") != 1 {
 		t.Errorf("the active view is not in reverse video: %q", colored)
 	}

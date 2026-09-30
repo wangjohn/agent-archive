@@ -25,7 +25,7 @@ func TestStatsScreenViewKeys(t *testing.T) {
 	}
 	for i, page := range pages {
 		lines := run.expectedLines(page, 30, 100)
-		checkFrame(t, run.frames[i], lines, 0, 100, 200, barHas(marks[page], "w window 30d", "q quit"))
+		checkFrame(t, run.frames[i], lines, 0, 100, 200, barHas(marks[page], "w window 30d>90d", "q quit"))
 		if !strings.Contains(strings.Join(run.frames[i], "\n"), "agent-archive stats") {
 			t.Errorf("frame %d has no title", i)
 		}
@@ -58,7 +58,7 @@ func TestStatsScreenWindowCycles(t *testing.T) {
 		t.Fatalf("%d frames", len(run.frames))
 	}
 	for i, days := range windows {
-		bar := barHas("w window " + itoa(days) + "d")
+		bar := barHas("w window " + itoa(days) + "d>" + itoa(map[int]int{30: 90, 90: 7, 7: 30}[days]) + "d")
 		checkFrame(t, run.frames[i], run.expectedLines(pages[i], days, 100), 0, 100, 200, bar)
 		if i > 0 && !strings.Contains(run.frames[i][0], "last "+itoa(days)+" days") {
 			t.Errorf("frame %d title is %q, want last %d days", i, run.frames[i][0], days)
@@ -103,7 +103,7 @@ func TestStatsScreenCustomWindow(t *testing.T) {
 	t.Parallel()
 	run := runScreen(t, screenOptions{width: 100, height: 200, days: 14}, "w", "w", "w", "w", "q")
 	for i, days := range []int{14, 30, 90, 7, 14} {
-		checkFrame(t, run.frames[i], run.expectedLines(pageOverview, days, 100), 0, 100, 200, barHas("w window "+itoa(days)+"d"))
+		checkFrame(t, run.frames[i], run.expectedLines(pageOverview, days, 100), 0, 100, 200, barHas("w window "+itoa(days)+"d>"+itoa(map[int]int{7: 14, 14: 30, 30: 90, 90: 7}[days])+"d"))
 	}
 }
 
