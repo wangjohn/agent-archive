@@ -126,7 +126,7 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 // file or its folder, on Load, Save or Delete), it is the same set of errors:
 // ErrInsecurePermissions, ErrUnavailable, and ErrCredentialFileUnreadable.
 func insecureError(path, problem, fix string) error {
-	return alsoUnreadable{fmt.Errorf("%w: %s %s; %s", ErrInsecurePermissions, path, problem, fix)}
+	return insecurePermissionsError{fmt.Errorf("%w: %s %s; %s", ErrInsecurePermissions, path, problem, fix)}
 }
 
 // checkInfo is the test every folder and file passes before it is trusted:
@@ -345,13 +345,13 @@ func (s *FileStore) unreadable(err error) error {
 	return fmt.Errorf("%w: %w", ErrCredentialFileUnreadable, err)
 }
 
-// alsoUnreadable is an error that keeps its own message and is also an
+// insecurePermissionsError is an error that keeps its own message and is also an
 // ErrCredentialFileUnreadable.
-type alsoUnreadable struct{ error }
+type insecurePermissionsError struct{ error }
 
-func (e alsoUnreadable) Is(target error) bool { return target == ErrCredentialFileUnreadable }
+func (e insecurePermissionsError) Is(target error) bool { return target == ErrCredentialFileUnreadable }
 
-func (e alsoUnreadable) Unwrap() error { return e.error }
+func (e insecurePermissionsError) Unwrap() error { return e.error }
 
 // Delete removes the file under reference; an absent file is not an error.
 // It does not follow a symbolic link, and refuses a folder that is not this

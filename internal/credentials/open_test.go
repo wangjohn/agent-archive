@@ -13,9 +13,11 @@ import (
 type keychainProbe struct{}
 
 func (*keychainProbe) Save(context.Context, string, R2Credentials) error { return nil }
+
 func (*keychainProbe) Load(context.Context, string) (R2Credentials, error) {
 	return R2Credentials{}, ErrKeychainItemNotFound
 }
+
 func (*keychainProbe) Delete(context.Context, string) error { return nil }
 
 func TestStoreNameAndUsesKeychain(t *testing.T) {

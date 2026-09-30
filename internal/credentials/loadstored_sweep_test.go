@@ -240,13 +240,13 @@ func TestFileStoreSaveDoesNotSweepAFolderItRefuses(t *testing.T) {
 		t.Errorf("Save swept a folder it refused: %v", err)
 	}
 
-	real := filepath.Join(t.TempDir(), "real")
-	if err := os.Mkdir(real, 0o700); err != nil {
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	staleBehindLink := plant(real)
+	staleBehindLink := plant(target)
 	link := filepath.Join(t.TempDir(), CredentialsDirName)
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("no symbolic links: %v", err)
 	}
 	linked, err := NewFileStore(link)

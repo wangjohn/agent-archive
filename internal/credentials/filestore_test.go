@@ -263,12 +263,12 @@ func TestFileStoreRefusesASymbolicLink(t *testing.T) {
 }
 
 func TestFileStoreRefusesASymbolicLinkFolder(t *testing.T) {
-	real := filepath.Join(t.TempDir(), "real")
-	if err := os.Mkdir(real, 0o700); err != nil {
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(t.TempDir(), CredentialsDirName)
-	if err := os.Symlink(real, dir); err != nil {
+	if err := os.Symlink(target, dir); err != nil {
 		t.Skipf("no symbolic links: %v", err)
 	}
 	store, err := NewFileStore(dir)
@@ -287,7 +287,7 @@ func TestFileStoreRefusesASymbolicLinkFolder(t *testing.T) {
 		}
 		assertNoSecret(t, name, err)
 	}
-	if names := entries(t, real); len(names) != 0 {
+	if names := entries(t, target); len(names) != 0 {
 		t.Fatalf("something was written through the linked folder: %v", names)
 	}
 }
@@ -400,7 +400,10 @@ func TestFileStoreSaveFailureLeavesNoTemporaryFile(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("target is a folder", func(t *testing.T) {
-		store, dir := savedFileStore(t)
+		store, dir := newTestFileStore(t)
+		if err := store.Save(ctx, testRef, testCredentials); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.Mkdir(filepath.Join(dir, "blocked.json"), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -419,7 +422,10 @@ func TestFileStoreSaveFailureLeavesNoTemporaryFile(t *testing.T) {
 		if os.Geteuid() == 0 {
 			t.Skip("root writes to a read-only folder")
 		}
-		store, dir := savedFileStore(t)
+		store, dir := newTestFileStore(t)
+		if err := store.Save(ctx, testRef, testCredentials); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.Chmod(dir, 0o500); err != nil {
 			t.Fatal(err)
 		}
@@ -524,7 +530,7 @@ func TestFileStoreDeleteIsIdempotent(t *testing.T) {
 	if err := store.Save(ctx, "keep", testCredentials); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := store.Delete(ctx, testRef); err != nil {
 			t.Fatalf("Delete #%d = %v", i+1, err)
 		}
