@@ -55,13 +55,11 @@ type nestedFolders struct {
 }
 
 // privacyProtectedFolders are the folders whose contents macOS shows a
-// privacy prompt (TCC) for before an app reads them, for home: the home
-// folder's Desktop, Documents, Downloads and Library; iCloud Drive (Library/
-// Mobile Documents) and other apps' data (Library/Containers and Library/
-// Group Containers), locations of their own inside Library; and the other
-// volumes: removable and network ones under /Volumes, and the same data
-// reached through /System/Volumes, /Network or /net. Both home as given and
-// with its symlinks resolved are covered.
+// privacy prompt (TCC) for before an app reads them, for the environment's
+// Home (platform.Locations.ProtectedFolders): the home folder's Desktop,
+// Documents, Downloads and Library, iCloud Drive and other apps' data inside
+// Library, and the other volumes. Both home as given and with its symlinks
+// resolved are covered.
 //
 // Resolution never makes a folder above home a project (above_home), and
 // home itself is not looked in, so today only a folder added inside Library
@@ -71,16 +69,7 @@ type nestedFolders struct {
 // no folder is kept out unread (a ~/Documents on Linux is an ordinary
 // folder).
 func privacyProtectedFolders(env Environment) []string {
-	if !env.isMac() {
-		return nil
-	}
-	var out []string
-	for _, home := range uniquePaths(filepath.Clean(env.Home), env.resolved(env.Home)) {
-		for _, name := range []string{"Desktop", "Documents", "Downloads", "Library", filepath.Join("Library", "Mobile Documents"), filepath.Join("Library", "Containers"), filepath.Join("Library", "Group Containers")} {
-			out = append(out, filepath.Join(home, name))
-		}
-	}
-	return append(out, "/Volumes", "/System/Volumes", "/Network", "/net")
+	return env.locations().ProtectedFolders()
 }
 
 // protectedOutside reports whether path is in a privacy-protected folder

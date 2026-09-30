@@ -20,8 +20,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
+
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // ErrNoTerminal reports that there is no terminal Open knows how to open a
@@ -46,7 +47,10 @@ type Spec struct {
 
 // Environment is what Open reads and runs; tests replace it.
 type Environment struct {
-	GOOS      string
+	// GOOS is the operating system: only macOS has terminals to drive with
+	// AppleScript, so any other (an Unknown one included) opens only a tmux
+	// window, and otherwise reports ErrNoTerminal.
+	GOOS      platform.OS
 	LookupEnv func(string) (string, bool)
 	Run       func(ctx context.Context, name string, args ...string) error
 }
@@ -54,7 +58,7 @@ type Environment struct {
 // DefaultEnvironment is this process's operating system and environment,
 // running commands for real.
 func DefaultEnvironment() Environment {
-	return Environment{GOOS: runtime.GOOS, LookupEnv: os.LookupEnv, Run: run}
+	return Environment{GOOS: platform.Current(), LookupEnv: os.LookupEnv, Run: run}
 }
 
 func run(ctx context.Context, name string, args ...string) error {
@@ -79,7 +83,7 @@ func Open(ctx context.Context, spec Spec, env Environment) (where string, err er
 	if v, ok := env.LookupEnv("TMUX"); ok && v != "" {
 		tmux = true
 	}
-	if !tmux && env.GOOS != "darwin" {
+	if !tmux && env.GOOS != platform.Darwin {
 		return "", fmt.Errorf("%w; run it by hand:\n  %s", ErrNoTerminal, handCommand(spec))
 	}
 	path, err := writeScript(spec)

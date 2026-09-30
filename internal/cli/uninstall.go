@@ -262,7 +262,7 @@ func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, rele
 	if problem != "" {
 		// It is deleted with the rest; only the Keychain items it may
 		// name are out of reach.
-		if note := unreadableDraftUninstallNote(credentialGOOS, draftPath(home), problem); note != "" {
+		if note := unreadableDraftUninstallNote(credentialOS, draftPath(home), problem); note != "" {
 			terminal.Println(out, note)
 		}
 	}
@@ -305,7 +305,7 @@ func purgeLocalData(home string, cfg config.Config, out io.Writer, env Env, rele
 		// so they are printed here on purpose (see the PR A3 ledger
 		// entry). The recovery is uninstall-specific: there is no
 		// configuration left to sync or re-run setup against.
-		if problem := undeletedCredentialsProblem(credentialGOOS, home, undeleted, keychainErr, folder.afterPurge(home)); problem != "" {
+		if problem := undeletedCredentialsProblem(credentialOS, home, undeleted, keychainErr, folder.afterPurge(home)); problem != "" {
 			problems = append(problems, problem)
 		}
 	}

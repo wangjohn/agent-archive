@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wangjohn/agent-archive/internal/platform"
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
@@ -42,7 +43,7 @@ type call struct {
 }
 
 // fakeEnv records every command and fails those failing names.
-func fakeEnv(goos string, vars map[string]string, failing string) (Environment, *[]call) {
+func fakeEnv(goos platform.OS, vars map[string]string, failing string) (Environment, *[]call) {
 	var calls []call
 	return Environment{
 		GOOS: goos,
@@ -92,7 +93,7 @@ func osascript(lines []string, argv ...string) call {
 func TestOpenPicksTheTerminal(t *testing.T) {
 	tests := []struct {
 		name    string
-		goos    string
+		goos    platform.OS
 		vars    map[string]string
 		failing string
 		where   string
@@ -100,7 +101,7 @@ func TestOpenPicksTheTerminal(t *testing.T) {
 	}{
 		{
 			name:  "tmux",
-			goos:  "linux",
+			goos:  platform.Linux,
 			vars:  map[string]string{"TMUX": "/tmp/tmux-501/default,1,0", "TERM_PROGRAM": "iTerm.app"},
 			where: "a new tmux window",
 			calls: func(script, _ string) []call {
@@ -109,21 +110,21 @@ func TestOpenPicksTheTerminal(t *testing.T) {
 		},
 		{
 			name:  "iTerm2",
-			goos:  "darwin",
+			goos:  platform.Darwin,
 			vars:  map[string]string{"TERM_PROGRAM": "iTerm.app"},
 			where: "a new iTerm2 tab",
 			calls: func(script, _ string) []call { return []call{osascript(iTermScript, script)} },
 		},
 		{
 			name:  "Ghostty",
-			goos:  "darwin",
+			goos:  platform.Darwin,
 			vars:  map[string]string{"TERM_PROGRAM": "ghostty"},
 			where: "a new Ghostty tab",
 			calls: func(script, dir string) []call { return []call{osascript(ghosttyScript, script, dir)} },
 		},
 		{
 			name:    "Ghostty before 1.3 falls back to Terminal.app",
-			goos:    "darwin",
+			goos:    platform.Darwin,
 			vars:    map[string]string{"TERM_PROGRAM": "ghostty"},
 			failing: "Ghostty",
 			where:   "a new Terminal window",
@@ -133,14 +134,14 @@ func TestOpenPicksTheTerminal(t *testing.T) {
 		},
 		{
 			name:  "Terminal.app",
-			goos:  "darwin",
+			goos:  platform.Darwin,
 			vars:  map[string]string{"TERM_PROGRAM": "Apple_Terminal"},
 			where: "a new Terminal window",
 			calls: func(script, _ string) []call { return []call{osascript(terminalScript, script)} },
 		},
 		{
 			name:  "an unknown terminal on macOS",
-			goos:  "darwin",
+			goos:  platform.Darwin,
 			vars:  map[string]string{"TERM_PROGRAM": "vscode", "TMUX": ""},
 			where: "a new Terminal window",
 			calls: func(script, _ string) []call { return []call{osascript(terminalScript, script)} },
@@ -177,7 +178,7 @@ func TestAppleScriptSource(t *testing.T) {
 
 func TestOpenRemovesTheScriptWhenTheTerminalFails(t *testing.T) {
 	spec := testSpec(t)
-	env, _ := fakeEnv("darwin", map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, "Terminal")
+	env, _ := fakeEnv(platform.Darwin, map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, "Terminal")
 	if _, err := Open(context.Background(), spec, env); err == nil {
 		t.Fatal("Open succeeded, want the osascript error")
 	}
@@ -188,7 +189,7 @@ func TestOpenRemovesTheScriptWhenTheTerminalFails(t *testing.T) {
 
 func TestOpenWithoutATerminal(t *testing.T) {
 	spec := testSpec(t)
-	env, calls := fakeEnv("linux", map[string]string{"TERM_PROGRAM": "iTerm.app"}, "")
+	env, calls := fakeEnv(platform.Linux, map[string]string{"TERM_PROGRAM": "iTerm.app"}, "")
 	_, err := Open(context.Background(), spec, env)
 	if !errors.Is(err, ErrNoTerminal) {
 		t.Fatalf("err = %v, want ErrNoTerminal", err)
@@ -220,7 +221,7 @@ func TestOpenRejectsUnsafeSpecs(t *testing.T) {
 	}
 	for name, spec := range tests {
 		t.Run(name, func(t *testing.T) {
-			env, calls := fakeEnv("darwin", map[string]string{"TMUX": "x"}, "")
+			env, calls := fakeEnv(platform.Darwin, map[string]string{"TMUX": "x"}, "")
 			if _, err := Open(context.Background(), spec, env); err == nil {
 				t.Fatal("Open accepted the spec")
 			}
@@ -247,7 +248,7 @@ func TestOpenRefusesAScriptDirectoryOthersCanWrite(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			spec := testSpec(t)
 			spec.ScriptDir = dir
-			env, calls := fakeEnv("darwin", map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, "")
+			env, calls := fakeEnv(platform.Darwin, map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, "")
 			if _, err := Open(context.Background(), spec, env); err == nil {
 				t.Fatal("Open accepted the script directory")
 			}

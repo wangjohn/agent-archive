@@ -12,6 +12,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/platform"
 )
 
 // PR #53 second review: the look inside an added plain folder must not make
@@ -21,7 +22,7 @@ import (
 // and other apps' containers as locations of their own inside Library.
 func TestProtectedOutside(t *testing.T) {
 	t.Parallel()
-	protected := privacyProtectedFolders(Environment{Home: "/Users/me", GOOS: "darwin", EvalSymlinks: func(p string) (string, error) { return p, nil }})
+	protected := privacyProtectedFolders(Environment{Home: "/Users/me", OS: platform.Darwin, EvalSymlinks: func(p string) (string, error) { return p, nil }})
 	for _, tc := range []struct {
 		path string
 		root string

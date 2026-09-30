@@ -178,7 +178,7 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 			return discard(err)
 		}
 	} else if cfg.Storage.Provider == credentials.ProviderR2 && !storedCredentialReadable(env, cfg.Storage.R2CredentialRef) {
-		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialGOOS))
+		return fmt.Errorf("the stored R2 key can't be read from the %s; pass --r2-access-key-id and the secret (see agent-archive setup --help)", credentials.StoreName(credentialOS))
 	}
 
 	accessErr := runStorageCheck(p, &cfg, env)
@@ -304,7 +304,7 @@ func answersError(errs []error) error {
 func stageR2Key(home string, cfg *config.Config, draft *setupDraft, secret credentials.R2Credentials, env Env) error {
 	keychain, err := env.credentialStore()
 	if err != nil {
-		return openCredentialStoreError(credentialGOOS, err)
+		return openCredentialStoreError(credentialOS, err)
 	}
 	id, err := local.ID()
 	if err != nil {
