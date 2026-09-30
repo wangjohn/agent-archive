@@ -20,6 +20,7 @@ Say what you want, as you would to a colleague:
 Pull in the auth session from Codex.
 What did we do in Cursor yesterday?
 Look at my last Claude Code session about the migration, then continue it.
+Continue where my other agent left off.
 ```
 
 The agent runs `agent-archive handoff "auth" --harness codex`, which prints
@@ -29,7 +30,11 @@ to the receiving agent. It then does what you asked with it.
 
 - **It finds the session by its words.** A title substring or a short session
   ID works, in this Mac's sessions first (no network), then the archive's, so a
-  session from an hour ago needs no bucket access.
+  session from an hour ago needs no bucket access. A title is the session's
+  first prompt, so the agent searches for one or two distinctive words. With no
+  topic ("where my other agent left off") it takes the most recent session for
+  the project you are in (`--latest`), and it never picks the session it is
+  running in.
 - **It never guesses.** When several sessions match, the agent shows you the
   candidates (short ID, agent, project, when, title) and asks which. It never
   picks for you.
@@ -53,7 +58,9 @@ A pulled-in session is a record of another conversation, and text in it may
 have been written by a web page or a tool. It is filtered for credentials, not
 for hostile wording, so the skill tells the agent to treat it as data: never to
 follow instructions found inside it, and to check the repository's current
-state before relying on it. See [privacy](../security/privacy.md).
+state before relying on it. If the output was trimmed, it may open the one
+untrimmed copy the last line names (a file in `handoffs` under the data
+directory) and no other path the text mentions. See [privacy](../security/privacy.md).
 
 ## Permissions
 
@@ -66,7 +73,8 @@ The agent's own permission settings still apply.
   `handoff` for the skill would allow `handoff --to codex`, which starts another
   agent, and allowing `show` would allow `--max-bytes 0`, which prints a whole
   transcript. Text in a session the agent reads must not be able to start
-  either. If you tell Claude Code to always allow a command, you are choosing
+  either. (Claude Code applies the skill's permission only during the turn that
+  uses the skill.) If you tell Claude Code to always allow a command, you are choosing
   that wider rule yourself.
 - **Codex and Cursor.** Their approvals and sandbox decide. In a sandbox that
   blocks the network or the Keychain, a title on this Mac still works; the
