@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
 )
 
 // API is what guided setup asks of Cloudflare. Client is the real
@@ -23,9 +22,6 @@ type API interface {
 	CreateToken(ctx context.Context, account string, spec TokenSpec) (Token, error)
 	// DeleteToken revokes an account-owned API token.
 	DeleteToken(ctx context.Context, account, id string) error
-	// ExpireObjectsAfter replaces the bucket's lifecycle rules with one
-	// that deletes every object once it is age old.
-	ExpireObjectsAfter(ctx context.Context, account string, bucket BucketRef, age time.Duration) error
 	// ManagedDomain reports whether the bucket's public r2.dev URL is on.
 	ManagedDomain(ctx context.Context, account string, bucket BucketRef) (ManagedDomain, error)
 	// CustomDomains lists the custom domains attached to the bucket.
@@ -186,25 +182,6 @@ func (c *Client) CreateToken(ctx context.Context, account string, spec TokenSpec
 // DeleteToken revokes the token.
 func (c *Client) DeleteToken(ctx context.Context, account, id string) error {
 	_, err := c.do(ctx, call{op: "revoke API token", method: http.MethodDelete, path: accountPath(account) + "/tokens/" + url.PathEscape(id)}, nil)
-	return err
-}
-
-// retentionRuleID names the lifecycle rule setup writes.
-const retentionRuleID = "agent-archive-retention"
-
-// ExpireObjectsAfter writes the bucket's one lifecycle rule. The call
-// replaces every rule the bucket has, so callers use it only on a bucket
-// they just created.
-func (c *Client) ExpireObjectsAfter(ctx context.Context, account string, bucket BucketRef, age time.Duration) error {
-	body := map[string]any{"rules": []map[string]any{{
-		"id":         retentionRuleID,
-		"enabled":    true,
-		"conditions": map[string]string{"prefix": ""},
-		"deleteObjectsTransition": map[string]any{
-			"condition": map[string]any{"type": "Age", "maxAge": int64(age / time.Second)},
-		},
-	}}}
-	_, err := c.do(ctx, call{op: "set bucket lifecycle", method: http.MethodPut, path: bucketPath(account, bucket.Name) + "/lifecycle", header: jurisdictionHeader(bucket.Jurisdiction), body: body}, nil)
 	return err
 }
 

@@ -152,7 +152,10 @@ func TestClientPermissionGroupPagingStopsOnRepeats(t *testing.T) {
 func TestClientCreatesATokenWithOneAllowPolicyAndNoExpiry(t *testing.T) {
 	t.Parallel()
 	client, srv, _ := newClient(t)
-	resource := cloudflare.BucketResource(cloudflaretest.AccountID, cloudflare.BucketRef{Name: "b-1"})
+	resource, err := cloudflare.BucketResource(cloudflaretest.AccountID, cloudflare.BucketRef{Name: "b-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	token, err := client.CreateToken(context.Background(), cloudflaretest.AccountID, cloudflare.TokenSpec{
 		Name:     "agent-archive b-1 abc123",
 		Policies: []cloudflare.Policy{{PermissionGroupIDs: []string{"gid"}, Resources: map[string]string{resource: "*"}}},
@@ -199,9 +202,17 @@ func TestTokenValueIsHiddenFromFormatting(t *testing.T) {
 
 func TestBucketResourceUsesTheJurisdiction(t *testing.T) {
 	t.Parallel()
-	got := cloudflare.BucketResource("acct", cloudflare.BucketRef{Name: "bkt", Jurisdiction: "eu"})
-	if got != "com.cloudflare.edge.r2.bucket.acct_eu_bkt" {
-		t.Fatalf("resource %q", got)
+	got, err := cloudflare.BucketResource("acct", cloudflare.BucketRef{Name: "bkt", Jurisdiction: "eu"})
+	if err != nil || got != "com.cloudflare.edge.r2.bucket.acct_eu_bkt" {
+		t.Fatalf("resource %q, %v", got, err)
+	}
+	for _, tc := range []struct {
+		account string
+		bucket  string
+	}{{"", "bkt"}, {"acct", ""}, {"", ""}} {
+		if got, err := cloudflare.BucketResource(tc.account, cloudflare.BucketRef{Name: tc.bucket}); err == nil {
+			t.Errorf("account %q, bucket %q gave resource %q", tc.account, tc.bucket, got)
+		}
 	}
 	if got := cloudflare.Endpoint("acct", "eu"); got != "https://acct.eu.r2.cloudflarestorage.com" {
 		t.Fatalf("endpoint %q", got)
@@ -242,45 +253,6 @@ func TestClientRevokesAToken(t *testing.T) {
 	}
 	if err := client.DeleteToken(context.Background(), cloudflaretest.AccountID, token.ID); !apiError(t, err).NotFound() {
 		t.Fatalf("second revoke: %v", err)
-	}
-}
-
-func TestClientSetsOneDeleteAfterAgeRule(t *testing.T) {
-	t.Parallel()
-	client, srv, _ := newClient(t)
-	srv.Buckets["life-bucket"] = "eu"
-	ref := cloudflare.BucketRef{Name: "life-bucket", Jurisdiction: "eu"}
-	if err := client.ExpireObjectsAfter(context.Background(), cloudflaretest.AccountID, ref, 90*24*time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	req := srv.Requests()[0]
-	if req.Method != http.MethodPut || req.Jurisdiction != "eu" {
-		t.Fatalf("request %+v", req)
-	}
-	var body struct {
-		Rules []struct {
-			ID         string `json:"id"`
-			Enabled    bool   `json:"enabled"`
-			Conditions struct {
-				Prefix string `json:"prefix"`
-			} `json:"conditions"`
-			Delete struct {
-				Condition struct {
-					Type   string `json:"type"`
-					MaxAge int64  `json:"maxAge"`
-				} `json:"condition"`
-			} `json:"deleteObjectsTransition"`
-		} `json:"rules"`
-	}
-	if err := json.Unmarshal([]byte(req.Body), &body); err != nil || len(body.Rules) != 1 {
-		t.Fatalf("body %s (%v)", req.Body, err)
-	}
-	r := body.Rules[0]
-	if !r.Enabled || r.ID == "" || r.Conditions.Prefix != "" || r.Delete.Condition.Type != "Age" || r.Delete.Condition.MaxAge != 90*24*3600 {
-		t.Fatalf("rule %+v", r)
-	}
-	if !strings.Contains(req.Body, `"prefix":""`) {
-		t.Fatalf("rule has no explicit empty prefix: %s", req.Body)
 	}
 }
 
@@ -526,7 +498,7 @@ func TestValidateBucketName(t *testing.T) {
 
 func TestJurisdictionsAndHintsAreThoseCloudflareDocuments(t *testing.T) {
 	t.Parallel()
-	for _, j := range []string{"eu", "us", "fedramp", "fedramp-high"} {
+	for _, j := range []string{"eu", "us", "fedramp"} {
 		if !cloudflare.ValidJurisdiction(j) {
 			t.Errorf("jurisdiction %q rejected", j)
 		}
@@ -536,7 +508,54 @@ func TestJurisdictionsAndHintsAreThoseCloudflareDocuments(t *testing.T) {
 			t.Errorf("hint %q rejected", h)
 		}
 	}
-	if cloudflare.ValidJurisdiction("default") || cloudflare.ValidJurisdiction("") || cloudflare.ValidLocationHint("mars") {
-		t.Fatal("an invalid value was accepted")
+	// fedramp-high is documented only for the create header, so it is not
+	// offered until its resource string and endpoint are confirmed live.
+	for _, bad := range []string{"default", "", "fedramp-high", "EU"} {
+		if cloudflare.ValidJurisdiction(bad) {
+			t.Errorf("jurisdiction %q accepted", bad)
+		}
+	}
+	if cloudflare.ValidLocationHint("mars") {
+		t.Fatal("an invalid hint was accepted")
+	}
+}
+
+func TestS3CredentialsHideTheSecretFromFormatting(t *testing.T) {
+	t.Parallel()
+	creds := cloudflare.S3Credentials{AccessKeyID: "the-id", SecretAccessKey: "SECRET-HASH"}
+	for _, text := range []string{creds.String(), fmt.Sprintf("%v", creds), fmt.Sprintf("%+v", creds), fmt.Sprintf("%#v", creds), fmt.Sprintf("%v", &creds)} {
+		if strings.Contains(text, "SECRET-HASH") {
+			t.Fatalf("formatting shows the secret: %s", text)
+		}
+	}
+}
+
+// An answer larger than the cap is cut off, so a valid document that only
+// starts after the cap is never read.
+func TestClientReadsAtMostAMegabyteOfAnAnswer(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat(" ", 2<<20)))
+		_, _ = w.Write([]byte(`{"success":true,"result":[{"id":"a","name":"n"}]}`))
+	}))
+	defer srv.Close()
+	client := cloudflare.New("tok", cloudflare.Options{BaseURL: srv.URL})
+	accounts, err := client.Accounts(context.Background())
+	if err == nil || len(accounts) != 0 {
+		t.Fatalf("accounts %+v, %v", accounts, err)
+	}
+}
+
+func TestClientAnswersItCannotReadSayWhy(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>hello</html>"))
+	}))
+	defer srv.Close()
+	client := cloudflare.New("tok", cloudflare.Options{BaseURL: srv.URL})
+	_, err := client.Accounts(context.Background())
+	apiErr := apiError(t, err)
+	if apiErr.Status != http.StatusOK || apiErr.Err == nil || !strings.Contains(err.Error(), "could not be read as JSON") {
+		t.Fatalf("error %+v", apiErr)
 	}
 }

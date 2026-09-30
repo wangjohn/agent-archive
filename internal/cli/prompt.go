@@ -32,9 +32,10 @@ type prompter struct {
 	// reviewHint, when set, is a line the setup review repeats: where to
 	// change what an answer chose for the person.
 	reviewHint string
-	// storageRetentionDays is the retention setup will save, for the storage
-	// questions: guided bucket creation offers to enforce it at the bucket.
-	storageRetentionDays int
+	// guided is a guided bucket creation whose key setup has yet to stage;
+	// created is what the last one left in the person's Cloudflare account.
+	guided  *r2Handoff
+	created *r2Created
 }
 
 // step prints a wizard step heading, set apart from the prompts above it.

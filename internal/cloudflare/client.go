@@ -294,11 +294,11 @@ func (c *Client) once(ctx context.Context, cl call, payload []byte, out any) (en
 		return env, apiErr
 	}
 	if decodeErr != nil {
-		return env, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer was not the JSON Cloudflare documents")}
+		return env, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer could not be read as JSON")}
 	}
 	if out != nil && len(env.Result) > 0 {
 		if err := json.Unmarshal(env.Result, out); err != nil {
-			return env, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer did not have the documented shape")}
+			return env, &Error{Op: cl.op, Status: resp.StatusCode, Err: errors.New("the answer did not have the expected fields")}
 		}
 	}
 	return env, nil

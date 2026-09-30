@@ -271,7 +271,10 @@ is tested against a fake Cloudflare (`internal/cloudflare/cloudflaretest`). Its
 request and response shapes come from Cloudflare's API reference, read on
 2026-09-29, and the fake cannot confirm the points the documentation leaves
 open. **None of the items below has been run against a real account: the
-feature must not ship in a release until each is checked.** Use a scratch
+feature stays experimental, hidden behind `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`
+(`experimentalR2Create` in `internal/cli/setup_r2_create.go`), until each is
+checked.** Remove the gate (that function and its one use in `storageMenuFor`,
+and the switch's mentions in the docs and CHANGELOG) once every box is ticked. Use a scratch
 Cloudflare account (never one with real archives), and the sandbox recipe
 below, so nothing touches your real Mac; create the bootstrap token with
 exactly the two permissions setup prints, then run `agent-archive setup` and
@@ -309,18 +312,27 @@ open-source acceptance record.
 - [ ] **Bucket name collision.** Creating a name that is taken returns what
       `cloudflare.Error.AlreadyExists` expects (HTTP 409, or a message saying
       it already exists), and the retry with a new name works.
-- [ ] **Jurisdiction.** A bucket created with the `eu` jurisdiction, and its
-      token resource string `..._eu_<bucket>`, pass the storage check at
-      `<account>.eu.r2.cloudflarestorage.com`, and the saved endpoint works
-      after setup finishes.
+- [ ] **Jurisdictions.** For each of `eu`, `us`, and `fedramp` (the ones setup
+      offers): a bucket created with the jurisdiction, and its token resource
+      string `..._<jurisdiction>_<bucket>`, pass the storage check at
+      `<account>.<jurisdiction>.r2.cloudflarestorage.com`, and the saved
+      endpoint works after setup finishes. `fedramp-high` is documented only
+      for the create header, so setup does not offer it; add it only once its
+      resource string and endpoint are confirmed.
 - [ ] **Non-administrator member.** Token creation by a member who lacks a
       permission is refused with a 403 that the message covers.
-- [ ] **Lifecycle rule.** The rule setup writes (empty prefix, delete after
-      the retention days) shows in the dashboard and is accepted with the
-      request body used.
 - [ ] **Permission group listing.** The lookup by name returns the
-      bucket-item-write group with `is_selectable`, and the paging parameter
-      is accepted (or ignored harmlessly).
+      bucket-item-write group with `is_selectable`, the paging parameter is
+      accepted (or ignored harmlessly), and the `name` filter matches the
+      exact name (setup also compares names itself, so a fuzzy filter is
+      harmless, an over-strict one is not).
+- [ ] **R2 not enabled.** On an account where R2 is not enabled (or needs a
+      payment method), what bucket creation returns. Setup maps a 403 to "needs
+      Workers R2 Storage Write" and adds a hint to enable R2; confirm the
+      status and message, and give that case its own text if it is not a 403.
+- [ ] **Public-access response shape.** `GET .../domains/managed` returns
+      `result.enabled` (Cloudflare's reference page for it was unavailable when
+      this was written; the shape comes from its summary).
 - [ ] **Rate limits.** A 429 carries `Retry-After` in whole seconds, as the
       client reads it.
 - [ ] **Orphan token name.** The name printed before creation is the name the

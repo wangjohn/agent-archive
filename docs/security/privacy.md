@@ -427,7 +427,8 @@ For R2, setup stores S3-compatible object credentials, not a Cloudflare manageme
 
 ### Guided R2 bucket creation
 
-When setup creates an R2 bucket for you, you paste a Cloudflare API token with
+This is experimental, and offered only when `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1`
+is set. When setup creates an R2 bucket for you, you paste a Cloudflare API token with
 two permissions (Workers R2 Storage Write, and Account API Tokens Write). That
 **bootstrap token** can create buckets, and create and revoke API tokens, in
 your Cloudflare account, so it is far more powerful than the key the archive
@@ -445,9 +446,12 @@ uses. Setup treats it accordingly:
   in the one new bucket. The two are never used for each other's endpoint: the
   archive's key never goes to the management API.
 - You can delete the bootstrap token in the dashboard as soon as setup ends.
-- Setup uses the token to change only what it just created: the new bucket, a
-  token for it, and, only if you say yes, the bucket's lifecycle rule (which
-  replaces the bucket's rules, safe only because the bucket is new).
+- Setup uses the token to change only what it just created: the new bucket
+  and a token for it (which it revokes again if the key fails its check or
+  can't be stored). It sets no lifecycle rule.
+- If Ctrl-C stops setup while it creates the key, setup revokes that token
+  before it exits. The token stays in memory after the key passes its check,
+  only until setup has stored the key.
 
 **What "checked at setup" means.** With the bootstrap token, setup reads two
 things about the new bucket once: whether its public `r2.dev` URL is on, and

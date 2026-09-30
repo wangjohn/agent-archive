@@ -13,8 +13,7 @@ import (
 // bootstrap token needs the first two; the token setup creates carries the
 // third, on one bucket.
 const (
-	// PermissionR2Write lets the bootstrap token create buckets and set
-	// their lifecycle rules.
+	// PermissionR2Write lets the bootstrap token create buckets.
 	PermissionR2Write = "Workers R2 Storage Write"
 	// PermissionTokensWrite lets the bootstrap token create, and revoke,
 	// the bucket-scoped token.
@@ -30,9 +29,11 @@ const (
 // this page rather than guess a deep link.
 const TokenDocsURL = "https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/" //nolint:gosec // G101: a documentation link, not a credential
 
-// Jurisdictions are the data-residency jurisdictions a bucket can be created
-// in, besides the default of none.
-var Jurisdictions = []string{"eu", "us", "fedramp", "fedramp-high"}
+// Jurisdictions are the data-residency jurisdictions setup offers, besides the
+// default of none: the ones Cloudflare's token documentation lists for the
+// resource string. (The create-bucket header also documents "fedramp-high";
+// it is left out until its resource string and endpoint are confirmed live.)
+var Jurisdictions = []string{"eu", "us", "fedramp"}
 
 // LocationHints are the region hints a bucket can be created with.
 var LocationHints = []string{"apac", "eeur", "enam", "weur", "wnam", "oc"}
@@ -69,12 +70,16 @@ func Endpoint(account, jurisdiction string) string {
 // BucketResource is the token-policy resource string for one bucket:
 // com.cloudflare.edge.r2.bucket.<account>_<jurisdiction>_<bucket>, where the
 // jurisdiction is "default" for a bucket in none.
-func BucketResource(account string, bucket BucketRef) string {
+func BucketResource(account string, bucket BucketRef) (string, error) {
+	if account == "" || bucket.Name == "" {
+		// An empty part would scope the token to some other resource string.
+		return "", errors.New("a token resource needs an account and a bucket name")
+	}
 	jurisdiction := bucket.Jurisdiction
 	if jurisdiction == "" {
 		jurisdiction = "default"
 	}
-	return fmt.Sprintf("com.cloudflare.edge.r2.bucket.%s_%s_%s", account, jurisdiction, bucket.Name)
+	return fmt.Sprintf("com.cloudflare.edge.r2.bucket.%s_%s_%s", account, jurisdiction, bucket.Name), nil
 }
 
 // SelectPermissionGroup returns the ID of the selectable group called name.
@@ -103,6 +108,12 @@ type S3Credentials struct {
 	AccessKeyID     string
 	SecretAccessKey string
 }
+
+// String describes the credentials without the secret.
+func (c S3Credentials) String() string { return "S3 key " + c.AccessKeyID }
+
+// GoString is String for %#v.
+func (c S3Credentials) GoString() string { return c.String() }
 
 // DeriveS3Credentials turns a created token into the S3 key pair R2's
 // endpoint accepts: the Access Key ID is the token's ID, and the Secret

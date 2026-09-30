@@ -84,17 +84,18 @@ captured. If you finish with no project included, setup asks again.
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
-- **Create a new R2 bucket for me:** setup makes the bucket and a key for
-  it from one Cloudflare API token you paste (or set as
-  `CLOUDFLARE_API_TOKEN`, with `CLOUDFLARE_ACCOUNT_ID`). It prints the token's
-  permissions first, then asks for the bucket name, an optional data
-  location, and whether Cloudflare should also delete objects after your
-  retention period. It is offered only in this interactive setup, never by
-  `setup --yes`. The [bucket guide](bucket.md#let-setup-create-it) has the
-  steps, and [privacy](../security/privacy.md#guided-r2-bucket-creation)
-  what happens to the token. If something fails, setup says what to fix, and
-  you can try again with the same bucket, choose another storage option, or
-  stop.
+- **Cloudflare R2: create a new bucket for me** (experimental, and hidden
+  unless `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` is set in the shell that
+  runs setup): setup makes a new bucket and a key for it from one Cloudflare
+  API token you paste (or set as `CLOUDFLARE_API_TOKEN`, with
+  `CLOUDFLARE_ACCOUNT_ID`). It prints the token's permissions first, then asks
+  for the bucket name and an optional data location. It is offered only in
+  this interactive setup, never by `setup --yes`. The [bucket
+  guide](bucket.md#let-setup-create-it-experimental) has the steps, and
+  [privacy](../security/privacy.md#guided-r2-bucket-creation) what happens to
+  the token. If something fails, setup says what to fix, and you can try
+  again with the same bucket, choose another storage option, or stop. A
+  Ctrl-C while it creates the key stops it and revokes that key's token.
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the

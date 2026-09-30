@@ -1,6 +1,6 @@
 // Package cloudflaretest is a fake of the part of Cloudflare's API that
 // package cloudflare and guided R2 setup use, for tests. It keeps buckets,
-// tokens, and lifecycle rules in memory, checks the bearer token, records
+// and tokens in memory, checks the bearer token, records
 // every request, and can be told to fail any call. Test code only: depguard
 // keeps it out of production code.
 package cloudflaretest
@@ -57,6 +57,12 @@ type Failure struct {
 	Code    int
 	// RetryAfter, when set, is sent as the Retry-After header.
 	RetryAfter string
+	// AfterWork makes the call do its work before it fails, as when an
+	// answer is lost on the way back.
+	AfterWork bool
+	// RawBody, when set, is sent as the whole body of the answer instead of
+	// an error document, with Status.
+	RawBody string
 	// Times is how many calls fail; zero means every call.
 	Times int
 }
@@ -71,7 +77,6 @@ const (
 	RoutePermissionGroups Route = "GET permission_groups"
 	RouteCreateToken      Route = "POST tokens"
 	RouteDeleteToken      Route = "DELETE token"
-	RouteLifecycle        Route = "PUT lifecycle"
 	RouteManagedDomain    Route = "GET managed"
 	RouteCustomDomains    Route = "GET custom"
 )
@@ -96,12 +101,11 @@ type Server struct {
 	// ValuePrefix starts the value of every token the fake issues.
 	ValuePrefix string
 
-	mu        sync.Mutex
-	tokens    []Issued
-	revoked   map[string]bool
-	lifecycle map[string]map[string]any
-	requests  []Request
-	failures  map[Route][]Failure
+	mu       sync.Mutex
+	tokens   []Issued
+	revoked  map[string]bool
+	requests []Request
+	failures map[Route][]Failure
 }
 
 // AccountID is the account the fake lists by default.
@@ -121,7 +125,6 @@ func New(tb testing.TB, token string) *Server {
 		Buckets:     map[string]string{},
 		ValuePrefix: "issued-token-value",
 		revoked:     map[string]bool{},
-		lifecycle:   map[string]map[string]any{},
 		failures:    map[Route][]Failure{},
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
@@ -174,13 +177,6 @@ func (s *Server) Live() []Issued {
 	return live
 }
 
-// Lifecycle returns the last lifecycle body put on bucket, or nil.
-func (s *Server) Lifecycle(bucket string) map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.lifecycle[bucket]
-}
-
 // routeTable maps a method and a path pattern to a route name; "*" matches
 // one path segment.
 var routeTable = []struct {
@@ -193,7 +189,6 @@ var routeTable = []struct {
 	{http.MethodGet, "accounts/*/tokens/permission_groups", RoutePermissionGroups},
 	{http.MethodPost, "accounts/*/tokens", RouteCreateToken},
 	{http.MethodDelete, "accounts/*/tokens/*", RouteDeleteToken},
-	{http.MethodPut, "accounts/*/r2/buckets/*/lifecycle", RouteLifecycle},
 	{http.MethodGet, "accounts/*/r2/buckets/*/domains/managed", RouteManagedDomain},
 	{http.MethodGet, "accounts/*/r2/buckets/*/domains/custom", RouteCustomDomains},
 }
@@ -235,13 +230,27 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f, ok := s.nextFailure(name); ok {
+		if f.AfterWork {
+			s.work(httptest.NewRecorder(), r, name, parts, body)
+		}
 		message := f.Message
 		if message == "" {
 			message = "injected failure"
 		}
+		if f.RawBody != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(f.Status)
+			_, _ = w.Write([]byte(f.RawBody))
+			return
+		}
 		writeError(w, f.Status, f.Code, message, f.RetryAfter)
 		return
 	}
+	s.work(w, r, name, parts, body)
+}
+
+// work does what route name asks, and writes the answer.
+func (s *Server) work(w http.ResponseWriter, r *http.Request, name Route, parts []string, body []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	account := ""
@@ -279,19 +288,6 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		s.revoked[id] = true
 		writeResult(w, map[string]string{"id": id}, 0)
-	case RouteLifecycle:
-		bucket := parts[4]
-		if _, ok := s.Buckets[bucket]; !ok {
-			writeError(w, http.StatusNotFound, 10006, "The specified bucket does not exist.", "")
-			return
-		}
-		var parsed map[string]any
-		if err := json.Unmarshal(body, &parsed); err != nil {
-			writeError(w, http.StatusBadRequest, 10001, "bad body", "")
-			return
-		}
-		s.lifecycle[bucket] = parsed
-		writeResult(w, map[string]any{}, 0)
 	case RouteManagedDomain:
 		writeResult(w, map[string]any{"bucketId": "id", "domain": "pub-x.r2.dev", "enabled": s.ManagedEnabled}, 0)
 	case RouteCustomDomains:

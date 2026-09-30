@@ -8,16 +8,19 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `setup` can create a Cloudflare R2 bucket for you: choose **Create a new R2
-  bucket for me** at the storage question and paste one Cloudflare API token
+- **Experimental:** `setup` can create a Cloudflare R2 bucket for you. Set
+  `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to see **Cloudflare R2: create a new
+  bucket for me** at the storage question, then paste one Cloudflare API token
   (Workers R2 Storage Write and Account API Tokens Write, or set
-  `CLOUDFLARE_API_TOKEN`). Setup creates a private bucket and a key that can
-  read and write only that bucket, checks it, and keeps the key in the
-  Keychain. The token you pasted is used during setup and then dropped, never
-  saved. It can also set the bucket to delete objects after your retention
-  period, and reports whether the bucket's public `r2.dev` URL is on. Not
-  available with `setup --yes`. See [creating a
-  bucket](docs/getting-started/bucket.md#let-setup-create-it).
+  `CLOUDFLARE_API_TOKEN`). Setup creates a new bucket (Cloudflare buckets have
+  no public access by default) and a key that can read and write only that
+  bucket, checks it, and keeps the key in the Keychain. The token you pasted
+  is used during setup and then dropped, never saved, and setup revokes the
+  new key's token if it fails its check or can't be stored. It also reports
+  whether the bucket's public `r2.dev` URL is on. Not available with
+  `setup --yes`. It has not yet been run against every kind of Cloudflare
+  account, which is why it is behind the switch. See [creating a
+  bucket](docs/getting-started/bucket.md#let-setup-create-it-experimental).
 - Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,
   `counts.tool_errors` (tool results the app flagged as errors; not known
   for Codex), `model_tokens` (token counts split by model, so a session that
