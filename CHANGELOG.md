@@ -358,6 +358,25 @@ follow [Semantic Versioning](https://semver.org/).
   `ripgrep_raw_search`, and `glob_file_search` tools, so edits in chats
   imported from Cursor's database are listed and counted in
   `counts.files_touched`.
+- A first `setup` run inside a Git project, with apps found, asks one
+  question for the apps and that project ("Archive Codex and Claude Code
+  sessions in ~/src/app?") instead of two; the review still lets you add
+  projects, drop apps, or change how long sessions are kept, and setup says
+  how many other projects your apps have sessions in. Answer no to choose
+  them one at a time as before. Setup no longer pre-selects a repository that
+  is your home folder or holds it, or that is a temporary folder (`/tmp`,
+  `/private/tmp`, `/var/folders`, `$TMPDIR`) or holds one: it says so and
+  asks for the projects instead. A repository inside a temporary folder is
+  still offered.
+- `setup` offers to import past sessions after it has said how to check that
+  capture works, not before, and `setup` ends with the command for another
+  Mac after that offer. `setup --yes` is unchanged.
+- The storage instructions in `setup` are now two lines and a link to the
+  bucket guide, instead of the full steps.
+- `setup` checks a new storage key or profile with one small listing before
+  it writes its test file, so a wrong account ID, key, or profile fails at
+  once with the usual explanation. The full write, read, and delete check
+  still decides that storage works.
 
 ### Fixed
 
