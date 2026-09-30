@@ -87,7 +87,7 @@ func setupTestEnv(t *testing.T, home, userHome string, keychain *fakeKeychain, n
 	env.JobState = func(string) string { return state }
 	env.LoadLaunchAgent = func(string) error { state = "loaded"; return nil }
 	env.UnloadLaunchAgent = func(string) error { state = "missing"; return nil }
-	env.Keychain = func() (credentials.CredentialStore, error) { return keychain, nil }
+	env.Credentials = func() (credentials.CredentialStore, error) { return keychain, nil }
 	// setup and uninstall need a terminal; the scripted answers stand in
 	// for one. Output buffers are still not terminals.
 	env.IsTerminal = func(stream any) bool { _, ok := stream.(*strings.Reader); return ok }

@@ -414,7 +414,7 @@ var (
 	_ ObjectStatter = (*S3Store)(nil)
 )
 
-// NewConfiguredStore resolves the selected profile or Keychain reference and
+// NewConfiguredStore resolves the selected profile or credential store reference and
 // builds the common S3 client used for both providers. It is deliberately
 // small so CLI setup can perform its synthetic round trip without knowing SDK
 // credential details.

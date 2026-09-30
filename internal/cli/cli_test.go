@@ -34,6 +34,9 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// Tests must not see the real environment: run inside an agent,
 		// CLAUDE_CODE_SESSION_ID would change what `handoff --latest` skips.
 		LookupEnv: func(string) (string, bool) { return "", false },
+		// Tests model a Mac (its app folders and Cursor's Library data
+		// folder), whatever system runs them.
+		BackfillGOOS: "darwin",
 		OpenStore: func(config.Config) (storage.ObjectStore, error) {
 			return storagetest.NewMemoryStore(), nil
 		},
@@ -49,8 +52,8 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 			t.Errorf("unexpected LaunchAgent unload of %s: set Env.UnloadLaunchAgent", plist)
 			return errors.New("no launchd in this test")
 		},
-		Keychain: func() (credentials.CredentialStore, error) {
-			return nil, errors.New("no Keychain in this test: set Env.Keychain")
+		Credentials: func() (credentials.CredentialStore, error) {
+			return nil, errors.New("no credential store in this test: set Env.Credentials")
 		},
 		Executable: func() (string, error) {
 			return "", errors.New("no executable in this test: set Env.Executable")

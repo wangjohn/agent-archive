@@ -107,28 +107,36 @@ func TestCurrentProjectRefusalNamesTheFolder(t *testing.T) {
 	}
 }
 
-// Setup's temporary folders are backfill's: the defaults and $TMPDIR, from
-// one list, so a repository at /tmp/x or /private/tmp/x is treated alike on
-// macOS and Linux.
+// Setup's temporary folders are backfill's: the operating system's defaults
+// and $TMPDIR, from one list, so a repository at /tmp/x is treated alike by
+// both, on macOS and on Linux.
 func TestSetupAndBackfillShareOneTempFolderList(t *testing.T) {
 	t.Parallel()
-	env := Env{LookupEnv: func(key string) (string, bool) { return "/scratch/tmp", key == "TMPDIR" }}
-	temps := env.backfillTempDirs()
-	for _, want := range append(append([]string(nil), backfill.DefaultTempDirs...), "/scratch/tmp") {
-		if !slices.Contains(temps, want) {
-			t.Fatalf("temporary folders %v lack %s", temps, want)
-		}
-	}
-	if got := env.backfillEnvironment("/Users/alex", config.Config{}).TempDirs; !slices.Equal(got, temps) {
-		t.Fatalf("backfill's list %v differs from setup's %v", got, temps)
-	}
-	for _, dir := range []string{"/tmp", "/private/tmp", "/scratch/tmp"} {
-		if broadFolder(dir, "/Users/alex", temps) == "" {
-			t.Errorf("%s is not refused as a temporary folder", dir)
-		}
-	}
-	if broadFolder("/tmp/x", "/Users/alex", temps) != "" {
-		t.Error("a repository inside a temporary folder was refused")
+	for goos, refused := range map[string][]string{
+		"darwin": {"/tmp", "/private/tmp", "/scratch/tmp"},
+		"linux":  {"/tmp", "/var/tmp", "/scratch/tmp"},
+	} {
+		t.Run(goos, func(t *testing.T) {
+			t.Parallel()
+			env := Env{BackfillGOOS: goos, LookupEnv: func(key string) (string, bool) { return "/scratch/tmp", key == "TMPDIR" }}
+			temps := env.backfillTempDirs()
+			for _, want := range append(backfill.Environment{GOOS: goos}.DefaultTempDirs(), "/scratch/tmp") {
+				if !slices.Contains(temps, want) {
+					t.Fatalf("temporary folders %v lack %s", temps, want)
+				}
+			}
+			if got := env.backfillEnvironment("/Users/alex", config.Config{}).TempDirs; !slices.Equal(got, temps) {
+				t.Fatalf("backfill's list %v differs from setup's %v", got, temps)
+			}
+			for _, dir := range refused {
+				if broadFolder(dir, "/Users/alex", temps) == "" {
+					t.Errorf("%s is not refused as a temporary folder", dir)
+				}
+			}
+			if broadFolder("/tmp/x", "/Users/alex", temps) != "" {
+				t.Error("a repository inside a temporary folder was refused")
+			}
+		})
 	}
 }
 
@@ -358,5 +366,35 @@ func TestChooseCaptureClearsTheReviewHint(t *testing.T) {
 	must(t, chooseCapture(p, &cfg, userHome, env, nil))
 	if p.reviewHint != "" {
 		t.Fatalf("hint kept: %q", p.reviewHint)
+	}
+}
+
+// Where prompts are off (an agent's shell, or AGENT_ARCHIVE_NONINTERACTIVE),
+// a first setup in a repository refuses before it asks the combined
+// question or reads the apps' history, and changes nothing.
+func TestSetupFirstRunAsksNothingWhereInteractionIsOff(t *testing.T) {
+	t.Parallel()
+	for name, vars := range map[string]map[string]string{
+		"agent shell": agentShell("CODEX_THREAD_ID"),
+		"switch":      {envNonInteractive: "1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newScreenFixture(t)
+			f.withApps(t, "claude")
+			f.inWebApp(t)
+			out, errOut, code := ttyRun(t, withEnvironment(f.env, vars), "\n\n\n", "setup")
+			if code != 1 || !strings.Contains(errOut, "Nothing was changed") {
+				t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
+			}
+			for _, text := range []string{"Archive Claude Code sessions in", "Looking for your other projects"} {
+				if strings.Contains(out+errOut, text) {
+					t.Fatalf("asked %q:\n%s%s", text, out, errOut)
+				}
+			}
+			if _, found, err := config.Load(f.home); err != nil || found {
+				t.Fatalf("setup saved a configuration: %v %v", found, err)
+			}
+		})
 	}
 }

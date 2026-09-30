@@ -376,7 +376,7 @@ func TestSetupYesListsEveryMissingAnswer(t *testing.T) {
 			env := setupTestEnv(t, home, userHome, kc, time.Now())
 			env.DetectHarnesses = func(string) []string { return nil }
 			env.JobState = func(string) string { t.Error("launchctl was asked"); return "missing" }
-			env.Keychain = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
+			env.Credentials = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
 			env.IsTerminal = func(any) bool { return false }
 			var out, errOut bytes.Buffer
 			if code := Run(append([]string{"setup"}, tc.args...), unreadable{t}, &out, &errOut, env); code != 1 {
@@ -421,7 +421,7 @@ func TestSetupYesReportsMissingR2SecretBeforePreflight(t *testing.T) {
 	kc := newFakeKeychain()
 	env := setupTestEnv(t, t.TempDir(), t.TempDir(), kc, time.Now())
 	env.JobState = func(string) string { t.Error("launchctl was asked"); return "missing" }
-	env.Keychain = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
+	env.Credentials = func() (credentials.CredentialStore, error) { t.Error("the Keychain was opened"); return kc, nil }
 	output := setupYes(t, env, "", 1, "--yes", "--provider", "r2", "--r2-account", testR2Account, "--bucket", "b", "--r2-access-key-id", "id", "--project", t.TempDir(), "--apps", "codex")
 	if !strings.Contains(output, "Setup incomplete: the R2 secret access key is needed") {
 		t.Fatalf("output:\n%s", output)
