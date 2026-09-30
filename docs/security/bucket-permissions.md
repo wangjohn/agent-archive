@@ -83,6 +83,34 @@ A bucket that uses customer-managed KMS keys also needs `kms:Encrypt`,
 `kms:Decrypt`, and `kms:GenerateDataKey` on that key. The actual error is
 reported rather than asking for broad permissions up front.
 
+### Creating a bucket (setup time only)
+
+The policy above is what runs day to day, and it deliberately cannot create
+buckets or change Block Public Access. If you let `agent-archive setup`
+[create the bucket](../getting-started/bucket.md#let-setup-create-it), setup
+uses the profile you chose, once, with these extra permissions:
+
+| Permission | Used for |
+| --- | --- |
+| `s3:CreateBucket` | Creating the bucket. |
+| `s3:PutBucketPublicAccessBlock` | Turning on all four Block Public Access settings. |
+| `s3:DeleteBucket` | Deleting the still-empty bucket only if you ask to after Block Public Access could not be turned on. |
+| `s3:GetBucketPublicAccessBlock` | Reading the settings back (also in the runtime policy). |
+
+Setup does not set a bucket policy, ACLs, a lifecycle rule, or default
+encryption (S3 already encrypts new buckets with SSE-S3), and it never
+creates IAM users or access keys. It does not keep a separate credential for
+creation: the profile that created the bucket is the one it saves, so attach
+the policy above to a separate identity and choose that profile for storage
+when you can.
+
+Setup sets no lifecycle rule on purpose. A rule expires objects one by one
+by their own age, while agent-archive's retention deletes a whole session
+together and never a source snapshot a live metadata file still points to,
+and a rule set to today's retention would go on deleting after you raise it
+in setup. If you want one as a backstop, see [a lifecycle rule as a
+backstop](../getting-started/uninstall.md#a-lifecycle-rule-as-a-backstop).
+
 ## Cloudflare R2
 
 Create an R2 API token with **Object Read & Write** permission, scoped to the

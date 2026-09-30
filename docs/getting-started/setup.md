@@ -7,9 +7,10 @@ agent-archive setup
 ```
 
 Setup has three steps: choose apps and projects, connect storage, then review
-and start. You need an existing private Cloudflare R2 or Amazon S3 bucket
-([create one](bucket.md); [bucket permissions](../security/bucket-permissions.md)
-has the least access it needs). Run it from inside a project you want
+and start. You need a private Cloudflare R2 or Amazon S3 bucket: an existing
+one ([create one](bucket.md); [bucket permissions](../security/bucket-permissions.md)
+has the least access it needs), or, for S3, one setup creates for you in
+your own AWS account. Run it from inside a project you want
 archived, so setup can offer it, or from anywhere: setup then offers the
 projects your apps have sessions in. Choose "Show setup instructions" at the
 storage prompt for a link to the [bucket guide](bucket.md). Setup asks questions, so it needs a terminal: without one it
@@ -106,6 +107,32 @@ already have a profile with credentials, and R2 otherwise.
   the profile names one. A typed region must look like one, such as
   `us-east-1`. These lookups use the profile's credentials only inside the
   AWS SDK; setup never prints or saves them.
+
+  **Create a new S3 bucket.** Choose "Amazon S3: create a new private bucket
+  for me" at the storage question (or type `new` where setup says the
+  profile can see no buckets). After the profile, setup asks for the region
+  (the profile's, unless you type another) and a name, suggesting
+  `agent-archive-` and eight random characters, since bucket names are
+  shared by everyone on AWS. A suggested name that turns out to be taken is
+  replaced once by another random one; a name you typed is asked for again.
+  Setup then creates the bucket, turns on all four Block Public Access
+  settings, and reads them back, showing "Checked: Block Public Access is
+  on". It sets no lifecycle rule and no bucket policy, and it never creates
+  IAM users or access keys.
+
+  Creating a bucket needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`, which the [runtime
+  policy](../security/bucket-permissions.md) deliberately does not grant, so
+  use a profile that has them for this step. If the profile is refused,
+  setup says which permissions are missing and goes on to pick an existing
+  bucket. If the bucket was created but Block Public Access could not be
+  turned on, setup does not use it: it offers to try again, to delete the
+  empty bucket, or to stop. When it succeeds, setup prints the runtime
+  policy for the new bucket and recommends attaching it to a separate IAM
+  identity and choosing that profile for storage, because the profile that
+  created the bucket is what setup saves and it is usually far broader than
+  archiving needs. Guided creation is interactive only; `setup --yes` still
+  takes an existing bucket.
 
 Setup checks the connection in two steps. First it lists at most one object
 under `.setup-test/`, which writes nothing, so a wrong account ID, key, or

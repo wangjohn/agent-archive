@@ -31,6 +31,23 @@ The secret is kept in the macOS Keychain.
 
 ## Amazon S3
 
+### Let setup create it
+
+If you have an AWS profile that may create buckets, `agent-archive setup`
+can do the console steps: choose **Amazon S3: create a new private bucket
+for me**, pick the profile, and confirm the region and name. Setup creates
+the bucket, turns on all four **Block Public Access** settings, checks them,
+and prints the [least-privilege
+policy](../security/bucket-permissions.md#amazon-s3) for the new bucket. The
+profile needs `s3:CreateBucket` and `s3:PutBucketPublicAccessBlock` (see
+[creating a bucket](../security/bucket-permissions.md#creating-a-bucket-setup-time-only));
+without them setup says so and lets you pick an existing bucket. Setup never
+creates IAM users or keys, so it saves the profile you used. Create a
+separate IAM user or role with the printed policy, save it as its own
+profile, and run `agent-archive setup` again to switch to it.
+
+### By hand
+
 1. Create a bucket in the S3 console. Keep **Block all public access** on
    (the default).
 2. Create an IAM user (or role) with the
@@ -38,7 +55,7 @@ The secret is kept in the macOS Keychain.
    that bucket, and an access key for it.
 3. Save the key as an AWS profile: `aws configure --profile agent-archive`.
 
-Then run `agent-archive setup`, choose `s3`, and pick that profile.
+Then run `agent-archive setup`, choose **Amazon S3**, and pick that profile.
 
 ## One key per Mac
 

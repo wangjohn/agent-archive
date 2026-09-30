@@ -1070,9 +1070,10 @@ func storageMenuOptions() []option {
 }
 
 // guidedStorageOptions is where the "Create a new bucket for me" choices go
-// once guided bucket creation exists (dev/proposals/portable-handoff-and-onboarding.md,
-// Part 2). Until then the menu offers only existing buckets.
-func guidedStorageOptions() []option { return nil }
+// (dev/proposals/portable-handoff-and-onboarding.md, Part 2).
+func guidedStorageOptions() []option {
+	return []option{{storageChoiceS3New, "Amazon S3: create a new private bucket for me"}}
+}
 
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
@@ -1087,10 +1088,15 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	for err == nil && choice == "help" {
 		terminal.Println(p.out, "Create a private bucket first (public access off), with a key or AWS profile that can read and write only it.")
 		terminal.Println(p.out, "Step by step, for Cloudflare R2 and Amazon S3: "+bucketDocURL)
+		terminal.Println(p.out, "With an AWS profile that may create buckets, setup can also create a private Amazon S3 bucket for you.")
 		choice, err = p.menu("Where should sessions be stored?", defaultProvider, providers...)
 	}
 	if err != nil {
 		return cfg, secret, false, err
+	}
+	createS3 := choice == storageChoiceS3New
+	if createS3 {
+		choice = credentials.ProviderS3
 	}
 	if cfg.Provider != choice {
 		cfg = credentials.Config{Provider: choice}
@@ -1133,7 +1139,7 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 				}
 			}
 		}
-	} else if err = promptS3Location(p, &cfg, env, failedRegion); err != nil {
+	} else if err = promptS3Bucket(p, &cfg, env, failedRegion, createS3); err != nil {
 		return cfg, secret, false, err
 	}
 	cfg.Prefix = firstNonEmpty(cfg.Prefix, defaultPrefix)

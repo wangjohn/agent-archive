@@ -8,6 +8,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
+  new private bucket for me" at the storage question. It creates the bucket
+  in your own AWS account with the profile you pick (region and name are
+  asked, the name suggested as `agent-archive-` and random characters),
+  turns on all four Block Public Access settings, and reads them back, then
+  prints the least-privilege policy for the new bucket and recommends a
+  separate runtime profile. The profile needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`; without them setup says so and lets you
+  pick an existing bucket. If Block Public Access can't be turned on, setup
+  offers to retry or delete the empty bucket and never uploads to it.
+  Setup does not create IAM users or keys, and sets no lifecycle rule. The
+  manual steps in the bucket guide still work.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.

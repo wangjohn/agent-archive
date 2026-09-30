@@ -87,7 +87,7 @@ func TestStorageProviderDefaultSkipsDiscoveryWhenProviderSaved(t *testing.T) {
 	if called {
 		t.Fatal("AWS profile discovery ran although a provider was saved")
 	}
-	if !strings.Contains(out.String(), "Enter 1-3 [2]: ") {
+	if !strings.Contains(out.String(), "Enter 1-4 [2]: ") {
 		t.Fatalf("output %q, want the saved S3 as default", &out)
 	}
 }
@@ -201,7 +201,7 @@ func TestStorageProviderDefaultFollowsAWSProfiles(t *testing.T) {
 		var out bytes.Buffer
 		// The reader ends after the provider question, so setup stops there.
 		_, _, _, err := promptStorage(newPrompter(strings.NewReader(""), &out), credentials.Config{Provider: tc.existing}, env, "")
-		if err == nil || !strings.Contains(out.String(), "Enter 1-3 "+tc.want) {
+		if err == nil || !strings.Contains(out.String(), "Enter 1-4 "+tc.want) {
 			t.Errorf("%s: err=%v output %q, want default %q", tc.name, err, &out, tc.want)
 		}
 	}
@@ -351,7 +351,7 @@ func TestS3LocationFallsBackToTyping(t *testing.T) {
 		{
 			"no buckets", fakeBuckets{regions: map[string]string{"typed": "us-west-2"}},
 			"\ntyped\n", "us-west-2",
-			[]string{"Profile work can't see any buckets. Type the bucket name.\nBucket name: "},
+			[]string{"Profile work can't see any buckets. Type the bucket name, or new to create a private one.\nBucket name:"},
 		},
 		{
 			"region denied, profile's used", fakeBuckets{names: []string{"typed"}, regionErr: errAccessDenied},
@@ -606,7 +606,7 @@ func TestStorageDefaultsFollowAWSProfileVariable(t *testing.T) {
 	if err == nil {
 		t.Fatal("setup went past the bucket question")
 	}
-	want := "Enter 1-3 [2]: Which AWS profile has access to the bucket?\n  1) bare (no credentials configured)\nEnter 1-1, or another profile name [1]: "
+	want := "Enter 1-4 [2]: Which AWS profile has access to the bucket?\n  1) bare (no credentials configured)\nEnter 1-1, or another profile name [1]: "
 	if !strings.Contains(out.String(), want) {
 		t.Fatalf("output %q, want %q", &out, want)
 	}
