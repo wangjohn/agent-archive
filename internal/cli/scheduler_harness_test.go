@@ -23,9 +23,10 @@ import (
 // only public behavior: the launchctl argument vectors (through the
 // runLaunchctl seam, stubLaunchctl), the files on disk, the journal as JSON,
 // and what the commands print. This file is the only one of them that names
-// the code under test's internals (Env's launchd fields, installation,
-// hooks' labels and plists, setupjournal); a PR that moves those edits this
-// file and no other.
+// the code under test's internals (installation, hooks' labels and plists,
+// setupjournal; Env's launchd fields through launchdAnswering, which the
+// status characterization shares); a PR that moves those edits this file
+// (or launchdAnswering) and no other.
 //
 // schedRun is one installation on a fake Mac whose launchd is modeled here:
 // it records every launchctl call with the state of the files that matter at
@@ -74,14 +75,15 @@ func newSchedRun(t *testing.T, defaultInstall bool) *schedRun {
 	}
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	env.AccountHome = func() (string, error) { return account, nil }
-	// launchd is reached only through launchctl, which stubLaunchctl models.
-	env.JobState, env.LoadLaunchAgent, env.UnloadLaunchAgent = nil, nil, nil
 	exe, err := env.executable()
 	must(t, err)
 	r := &schedRun{t: t, env: env, home: home, userHome: userHome, account: account, project: project, isDefault: defaultInstall, exe: exe,
 		loaded: map[string]string{}, answers: map[string][]launchdAnswer{}, failOne: map[string]bool{}, failBootout: map[string]bool{},
 		uid: fmt.Sprintf("gui/%d", os.Getuid())}
-	stubLaunchctl(t, r.launchctl)
+	// launchd is reached only through launchctl, which r.launchctl models;
+	// launchdAnswering (scheduler_jobstate_internal_test.go) is the one place
+	// the tests clear the Env's scheduler stand-ins.
+	r.env = launchdAnswering(t, env, r.launchctl)
 	r.probe("journal", r.journalPath(), nil)
 	return r
 }
@@ -230,6 +232,15 @@ func (r *schedRun) running(plist string) bool { return r.loaded[plistLabel(plist
 // made a bootstrap fail once, or made a bootout fail. Like launchd, it refuses
 // to bootstrap a label it already runs, from any plist: a test cannot record
 // a restart that a Mac would not do.
+//
+// Its failure texts are the ones the rest of this package's tests use
+// ("Bootstrap failed: 5: Input/output error"), not a recording: the real
+// launchctl ends them with a newline (and may add a line), and its code and
+// words differ by cause (a bootout of a label it does not run is not an
+// input/output error). The goldens that quote them pin how the CLI wraps
+// what launchctl said, not launchctl's own words; had the stand-in kept the
+// newline, a later PR that trims launchctl's output would change them for a
+// reason that is not the CLI's behavior.
 func (r *schedRun) launchctl(args ...string) ([]byte, error) {
 	r.lines = append(r.lines, strings.Join(args, " ")+"  |  "+r.state())
 	switch {
@@ -271,9 +282,10 @@ func (r *schedRun) launchctl(args ...string) ([]byte, error) {
 }
 
 // labelTaken reports whether launchd runs label, as the test scripted its
-// prints or as the fake loaded it.
+// prints or, when it scripted none or only that launchctl cannot answer
+// (which says nothing of what launchd runs), as the fake loaded it.
 func (r *schedRun) labelTaken(label string) bool {
-	if scripted := r.answers[label]; len(scripted) > 0 {
+	if scripted := r.answers[label]; len(scripted) > 0 && scripted[0] != answerUnknown {
 		return scripted[0] == answerLoaded || scripted[0] == answerAnotherInstallation
 	}
 	_, ok := r.loaded[label]

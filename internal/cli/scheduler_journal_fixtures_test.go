@@ -139,15 +139,6 @@ func (r *schedRun) crashingSetup(extra ...string) {
 	r.setup(extra...)
 }
 
-// canonical is path with its symbolic links resolved (/var is /private/var
-// on a Mac), as the code records some paths.
-func canonical(t *testing.T, path string) string {
-	t.Helper()
-	resolved, err := filepath.EvalSymlinks(path)
-	must(t, err)
-	return resolved
-}
-
 // TestWriteInterruptedSetupFixtures writes the journals in
 // testdata/scheduler/journals/, and only when it is asked to:
 //
