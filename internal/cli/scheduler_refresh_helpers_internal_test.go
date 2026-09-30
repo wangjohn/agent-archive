@@ -114,6 +114,8 @@ func (l *argvLaunchd) run(ctx context.Context, args ...string) ([]byte, error) {
 			return []byte("launchctl: something went wrong"), errors.New("exit status 1")
 		case modeMissing:
 		}
+		// The code and words vary by macOS release (3, No such process, on
+		// some); only that it fails is launchd's, and no test reads them.
 		return []byte("Boot-out failed: 113: Could not find specified service"), errors.New("exit status 113")
 	case len(args) == 3 && args[0] == "bootstrap" && args[1] == domain && launchLabel(args[2]) == l.label:
 		_, statErr := os.Stat(args[2])

@@ -20,10 +20,11 @@ import (
 // plist, settings.
 //
 // The golden is the journal setup-transaction.json holds, as text: each
-// change's bytes decoded and the paths as tokens. A skill file's text, and
-// the settings other than the executable's path, are left out; the skills
-// have goldens of their own. The keys of the JSON itself are pinned in
-// internal/setupjournal (TestJournalFormatIsPinned).
+// change's bytes decoded and the paths as tokens. A hook file's text, a
+// skill file's, and the settings other than the executable's path, are left
+// out; the hooks and skills have goldens of their own, and a hook file's
+// change is checked to be only the executable's path. The keys of the JSON
+// itself are pinned in internal/setupjournal (TestJournalFormatIsPinned).
 func TestRefreshJournalIsFilesOnlyUnlessALoadedJobRestarts(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -55,6 +56,11 @@ func TestRefreshJournalIsFilesOnlyUnlessALoadedJobRestarts(t *testing.T) {
 			for _, c := range plan.journal.Changes {
 				before, after := string(c.Before), string(c.After)
 				switch filepath.Base(c.Path) {
+				case "hooks.json", "settings.json":
+					if !strings.Contains(before, r.oldExe) || after != strings.ReplaceAll(before, r.oldExe, r.newExe) {
+						t.Errorf("%s changes more than the executable's path:\n-- before\n%s-- after\n%s", c.Path, before, after)
+					}
+					before, after = "(hook file naming @OLD_EXE@)\n", "(hook file naming @EXE@)\n"
 				case "SKILL.md":
 					before, after = "(skill file)\n", "(skill file)\n"
 				case "config.json":
