@@ -123,7 +123,19 @@ type handoffCommandDependencies interface {
 	handoffOptionsDependencies
 	handoffTargetDependencies
 	sessionBrowseDependencies
+	handoffLaunchDependencies
+}
+
+type launchSpecDependencies interface {
+	lookPath(string) (string, error)
+	environ() []string
+}
+
+type handoffLaunchDependencies interface {
+	launchSpecDependencies
 	executable() (string, error)
 	tempDir() string
-	launchHandoff(string, string, string, io.Reader, io.Writer, io.Writer) error
+	workingDir() (string, error)
+	now() time.Time
+	launchHandoff(launchSpec, io.Reader, io.Writer, io.Writer) error
 }

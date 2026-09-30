@@ -209,9 +209,16 @@ type Env struct {
 	// when it cannot be told. Defaults to running `program --version` once
 	// per process and program.
 	LessVersion func(program string) (version int, known bool)
-	// LaunchHandoff runs a local coding-agent CLI with a short prompt naming
-	// the private handoff file. Tests replace it to avoid starting an agent.
-	LaunchHandoff func(name, cwd, prompt string, stdin io.Reader, stdout, stderr io.Writer) error
+	// LaunchHandoff runs a destination agent attached to this terminal and
+	// waits for it to exit. Defaults to running spec.Binary with spec.Args
+	// in spec.Dir with spec.Env. Tests replace it to avoid starting an agent.
+	LaunchHandoff func(spec launchSpec, stdin io.Reader, stdout, stderr io.Writer) error
+	// LookPath finds a destination agent's executable. Defaults to
+	// exec.LookPath.
+	LookPath func(string) (string, error)
+	// Environ is the process environment a launched agent starts from,
+	// less the calling agent's session variables. Defaults to os.Environ.
+	Environ func() []string
 	// Interrupts delivers the signals that stop backfill while it plans,
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
