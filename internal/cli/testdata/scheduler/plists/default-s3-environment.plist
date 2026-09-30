@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.agent-archive.collector</string>
+<key>ProgramArguments</key><array><string>@EXECUTABLE@</string><string>_collect</string></array>
+<key>EnvironmentVariables</key><dict><key>AGENT_ARCHIVE_HOME</key><string>@DATA_HOME@</string><key>AWS_CONFIG_FILE</key><string>@AWS_DIR@/aws config</string><key>AWS_ENDPOINT_URL_S3</key><string>https://s3.internal.example</string><key>AWS_SHARED_CREDENTIALS_FILE</key><string>@AWS_DIR@/aws credentials</string><key>HTTPS_PROXY</key><string>http://proxy.internal.example:3128</string><key>PATH</key><string>@BIN_DIR@:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+<key>RunAtLoad</key><true/><key>StartInterval</key><integer>60</integer>
+<key>ProcessType</key><string>Background</string>
+<key>StandardOutPath</key><string>@DATA_HOME@/collector.log</string>
+<key>StandardErrorPath</key><string>@DATA_HOME@/collector-error.log</string>
+</dict></plist>
