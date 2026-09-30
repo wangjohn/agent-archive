@@ -101,9 +101,7 @@ jobs:
       # counter other packages' cost tests read, and the terminal UI layer in
       # internal/cli/ui.go, whose parts the onboarding screens adopt one PR at
       # a time (they are listed by name: remove each as it gains a caller,
-      # and the exception once none is left). internal/stats is the statistics
-      # engine, merged ahead of the `stats` command that calls it: remove its
-      # exception in the pull request that adds the command.
+      # and the exception once none is left).
       - name: No unreachable production code
         run: |
           go run golang.org/x/tools/cmd/deadcode@v0.50.0 ./... > "$RUNNER_TEMP/deadcode.txt"
