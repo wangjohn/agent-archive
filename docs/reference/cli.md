@@ -700,7 +700,8 @@ Nothing is uploaded or written.
   --file PATH                Export one transcript; needs --harness
   --harness NAME             The app: for --file, for a path outside the apps'
                              folders, or a session under two apps
-  --workers N                Export N sessions at once (default: CPUs, up to 8)
+  --workers N                Export N sessions at once (default 0: the number
+                             of CPUs, up to 8)
   --max-bytes N              Cut each record's longest texts to fit N bytes
                              (default 120000; 0 for no limit)
 ```
@@ -716,7 +717,7 @@ Nothing is uploaded or written.
 | `--scan` | no value | — |
 | `--since` | a value | — |
 | `--until` | a value | — |
-| `--workers` | a value | `4` |
+| `--workers` | a value | `0` |
 
 ## agent-archive uninstall
 

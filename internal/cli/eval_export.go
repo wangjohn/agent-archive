@@ -153,7 +153,9 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 	fs.Var(&projects, "project", "with --scan, only sessions in this project directory; repeatable")
 	since := fs.String("since", "", "with --scan, only sessions started on or after this local date, time, or age")
 	until := fs.String("until", "", "with --scan, only sessions started on or before this local date, time, or age")
-	workers := fs.Int("workers", min(runtime.NumCPU(), maxEvalWorkers), "export this many sessions at once; records are then written as each finishes")
+	// 0 is resolved here, not in the flag's default, so help and the CLI
+	// reference are the same on every machine.
+	workers := fs.Int("workers", 0, "export this many sessions at once, records written as each finishes (0: the number of CPUs, up to 8)")
 	var ids []string
 	rest := args
 	for {
@@ -167,6 +169,9 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 		rest = fs.Args()[1:]
 	}
 	opts := evalExportOptions{ids: ids, idsFrom: *idsFrom != "", file: *file, scan: *scan, maxBytes: *maxBytes, workers: *workers}
+	if opts.workers == 0 {
+		opts.workers = min(runtime.NumCPU(), maxEvalWorkers)
+	}
 	sources := 0
 	for _, set := range []bool{len(ids) > 0 || opts.idsFrom, opts.file != "", opts.scan} {
 		if set {
@@ -186,8 +191,8 @@ func evalExportOptionsFromArgs(args []string, stderr io.Writer, env Env) (evalEx
 		return evalExportOptions{}, fs.usageError("--project, --since, and --until apply only to --scan")
 	case *maxBytes < 0:
 		return evalExportOptions{}, fs.usageError("--max-bytes must be 0 or more")
-	case *workers < 1:
-		return evalExportOptions{}, fs.usageError("--workers must be 1 or more")
+	case *workers < 0:
+		return evalExportOptions{}, fs.usageError("--workers must be 0 (automatic) or more")
 	}
 	canonical, ok := harnessFlag(*harness)
 	if !ok {

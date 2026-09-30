@@ -150,7 +150,7 @@ func TestEvalExportReadsIDsAndPathsFromStdin(t *testing.T) {
 	if code != 1 || !strings.Contains(errOut, "Not set up") {
 		t.Errorf("archive ID without setup: exit %d, %q", code, errOut)
 	}
-	for _, args := range [][]string{{"--ids-from", "ids.txt"}, {"--ids-from", "-", strings.Repeat("a", 32)}, {"--scan", "--file", known}, {"--workers", "0", "--scan"}} {
+	for _, args := range [][]string{{"--ids-from", "ids.txt"}, {"--ids-from", "-", strings.Repeat("a", 32)}, {"--scan", "--file", known}, {"--workers", "-1", "--scan"}} {
 		if _, errOut, code := f.evalLines(t, "", args...); code != 2 || errOut == "" {
 			t.Errorf("%v: exit %d, %q", args, code, errOut)
 		}
