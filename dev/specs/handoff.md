@@ -48,7 +48,9 @@ context budget.
   file. That format is private, versioned per app, and fragile to forge.
   The receiving agent starts a new session with the handoff as context.
 - Moving or inspecting workspace state. Uncommitted changes stay on the
-  source machine, and v1 does not run `git` (see
+  source machine. Reading the current directory's `origin` and branch runs
+  `git` through a bounded helper (`internal/gitremote`, 500 ms, best effort);
+  nothing else about the workspace is inspected (see
   [Workspace section](#workspace-section)).
 - Summarizing with an LLM. The output is deterministic rendering; the
   receiving agent does its own summarizing.
@@ -173,41 +175,63 @@ the metadata sidecar; R1 records it).
   several repositories has none, so it matches nothing by repository (the
   path rule's "a root inside the directory does not count" holds). Any
   failure is no key, and then matching is exactly the path rule.
-- **Ranking is recency alone, path matches included.** Both kinds of
-  candidate are ordered together (local by activity, archive by
-  `CapturedAt`); a path match is not preferred over a newer repository
-  match, and a path match is accepted even when the two keys differ (the
-  remote was changed since). This machine's sessions are still tried before
-  the archive's, as before, so a stale local session hides a newer one from
-  another computer; `--source archive` skips the local ones.
+- **Path matches outrank repository matches.** The search order is this
+  machine's path matches (most recently active first), the archive's path
+  matches (most recently captured first), this machine's repository-only
+  matches, then the archive's. A repository-only candidate is considered
+  only when no path match exists anywhere, so a repository-only match can
+  never displace a working `--latest`: a bucket writer must not be able to
+  turn one into a question or a refusal. A registration or sidecar that
+  matches by path is a path match even when its key matches too. A path
+  match is accepted even when the two keys differ (the remote was changed
+  since). This machine's sessions are still tried before the archive's
+  within each kind, so a stale local session hides a newer one from another
+  computer; `--source archive` skips the local ones. The Cursor fallback
+  (`--to` inside Cursor, which sets `--latest --harness cursor`) goes through
+  the same search, so an unrelated newer clone's session cannot displace the
+  calling chat's own.
 - **Forks.** Only `origin` is read. A fork's `origin` is the fork, which
   differs from upstream's, so the two do not match.
-- **The key is a convenience, not proof of identity, and a repository-only
+- **The key is a convenience, not authentication, and a repository-only
   match must be accepted by a person.** A directory's key comes from
   `.git/config`, which whoever wrote the repository controls, and a
   session's key from a sidecar anyone with write access to the bucket can
-  label. So a repository that names another repository's origin can make
-  `--latest` choose that repository's session. A path match cannot be
-  steered that way. Therefore, when the chosen session matched by
-  repository and not by path (`handoffTarget.byRepo`):
-  - stderr says `handoff: matched by repository (remote origin), not by
-    path`, then the session's machine (this or another), project name,
-    branch, start time, and first prompt (`describeRepoMatch`);
-  - on a terminal (both stdin and stdout, with
-    `AGENT_ARCHIVE_NONINTERACTIVE` off) it asks `Hand off this session?`,
-    default No, before anything is printed or launched (`gateRepoMatch`);
-  - where it cannot ask (a pipe, or a coding agent's shell) it refuses with
-    exit 1, shows the match without the branch or first prompt (the reader
-    may be an agent a repository is steering), and prints the command that
-    hands off that session by its ID, with the `--harness`, `--to`, and
-    `--worktree` already given. An explicit ID is never gated: naming a
-    session is the person's own choice.
-  The picker never matches by key (it lists every session), so it is not
-  gated. See the threat model in `docs/security/privacy.md`.
+  label; the key is also a hash of a guessable public URL. So a repository
+  that names another repository's origin, or a planted session, can make
+  `--latest` reach a session that matched only by repository. A path match
+  cannot be steered that way. When the search reaches a repository-only
+  match, `handoffResolver.acceptRepoMatch` puts it to a gate
+  (`newRepoMatchGate`), **before any of the session's source is read**: an
+  archived session is judged from its sidecar alone, so a hostile bucket
+  cannot make every `--latest` download a large bundle first. The
+  `handoff: using ...` line is printed only after the gate passes.
+  - On a terminal (both stdin and stdout, with `AGENT_ARCHIVE_NONINTERACTIVE`
+    off) stderr says `handoff: matched by repository (remote origin), not by
+    path`, then the machine (this or another), the project name, the start
+    time and the first prompt (the sidecar's `title`, or the transcript's for
+    a session on this machine), each of the session's own words shown through
+    `archive.DisplayLine` and cut to 60 columns, and asks `Hand off this
+    session?`, default No. Nothing is printed to stdout, launched, or read
+    from the source before a yes.
+  - Where it cannot ask (a pipe, or a coding agent's shell) it exits 1. It
+    prints only the machine, the start time (both ours) and the command that
+    hands off that session by its ID (with the `--harness`, `--to`, and
+    `--worktree` given), worded for the person: `Ask the user whether to use
+    it; they can run: ...`. No free text from the sidecar or the transcript
+    is printed there, since an agent reads it.
+  - **That refusal is a speed bump, not a barrier.** It stops a steered agent
+    from using the session by accident. An agent can still run the printed
+    command, name a session ID itself, or set `AGENT_ARCHIVE_NONINTERACTIVE=0`.
+  - An explicit ID is never gated: naming a session is the person's own
+    choice. The picker never matches by key (it lists every session), so it
+    is not gated. See the threat model in `docs/security/privacy.md`.
 - **Branch.** Nothing is filtered by branch. When the session's recorded
-  branch differs from the current checkout's, stderr says `handoff: session
-  was on `feature/x`; you are on `main``, and the handoff's workspace section
-  says so too.
+  branch differs from the current checkout's (`git branch --show-current`,
+  through `gitremote.Branch`; empty when detached), stderr says `handoff:
+  session was on `feature/x`; you are on `main``, and the handoff's
+  workspace section says so too. Under `--worktree` the agent starts in a new
+  worktree, not in this directory, so nothing about this checkout is
+  compared or said.
 - **Where the session ran.** The handoff's workspace section adds `The
   recorded directory differs from your current checkout…` when the
   transcript's recorded working directory neither equals, contains, nor lies
@@ -561,7 +585,12 @@ adapter 0.6.0 / parser 0.9.0 (C4 took filter 5 / parser 0.8.0 first).
   stderr, asked about on a terminal (default No), and refused, printing the
   explicit command, where nothing can be asked; an explicit ID is never
   gated; a session from another machine launches with retrieval hints that
-  read the archive; the branch difference line; the no-match text.
+  read the archive; the branch difference line; the no-match text; a path
+  match outranks a newer repository-only one (archive, this machine, Cursor
+  fallback); the refusal prints no text from the sidecar or the transcript
+  and the question shows it plain and capped (hostile fixtures: an
+  instruction sentence, zero-width and tag characters, escapes, 20 KB); no
+  source is read before the answer.
 - **Privacy**: planted `sk-`, `AKIA`, and PEM values in a local transcript
   are redacted in output; `--output` mode is `0600`; overwrite refused
   without `--force`.

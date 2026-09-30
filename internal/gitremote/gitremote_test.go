@@ -239,7 +239,7 @@ func TestBranchAsksGitForTheBranchInTheDirectory(t *testing.T) {
 	if got := Branch(t.Context(), dir, fake.run); got != "feature/x" {
 		t.Fatalf("Branch = %q", got)
 	}
-	want := []string{"-C", dir, "symbolic-ref", "--short", "--quiet", "HEAD"}
+	want := []string{"-C", dir, "branch", "--show-current"}
 	if len(fake.calls) != 1 || !slices.Equal(fake.calls[0], want) || fake.dirs[0] != dir {
 		t.Errorf("git ran as %v in %v, want %v in %s", fake.calls, fake.dirs, want, dir)
 	}
@@ -249,10 +249,10 @@ func TestBranchIsEmptyWhenGitCannotAnswer(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	for name, fake := range map[string]*fakeRunner{
-		"git is not installed": {err: exec.ErrNotFound},
-		"detached HEAD":        {err: errors.New("exit status 1")},
-		"not a repository":     {err: errors.New("exit status 128")},
-		"empty output":         {},
+		"git is not installed":         {err: exec.ErrNotFound},
+		"git too old for the flag":     {err: errors.New("exit status 129")},
+		"not a repository":             {err: errors.New("exit status 128")},
+		"detached HEAD prints nothing": {},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -275,10 +275,15 @@ func TestBranchIsEmptyWhenGitCannotAnswer(t *testing.T) {
 func TestExecRunnerReadsTheBranchOfARepositoryAndOfASubdirectory(t *testing.T) {
 	git := gitOrSkip(t)
 	root := initRepo(t, git, "")
-	cmd := exec.CommandContext(t.Context(), git, "-C", root, "symbolic-ref", "HEAD", "refs/heads/topic/one")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git symbolic-ref: %v\n%s", err, out)
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), git, append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@example.test"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
 	}
+	// An unborn branch has its name before any commit.
+	runGit("symbolic-ref", "HEAD", "refs/heads/topic/one")
 	sub := filepath.Join(root, "pkg")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -287,6 +292,18 @@ func TestExecRunnerReadsTheBranchOfARepositoryAndOfASubdirectory(t *testing.T) {
 		if got := Branch(t.Context(), dir, nil); got != "topic/one" {
 			t.Errorf("Branch(%s) = %q", dir, got)
 		}
+	}
+	// A tag of the same name must not turn the branch into heads/foo.
+	runGit("commit", "-q", "--allow-empty", "-m", "first")
+	runGit("checkout", "-q", "-b", "foo")
+	runGit("tag", "foo")
+	if got := Branch(t.Context(), root, nil); got != "foo" {
+		t.Errorf("Branch with a tag of the same name = %q, want foo", got)
+	}
+	// Detached HEAD has no branch.
+	runGit("checkout", "-q", "--detach")
+	if got := Branch(t.Context(), root, nil); got != "" {
+		t.Errorf("Branch of a detached HEAD = %q, want empty", got)
 	}
 	if got := Branch(t.Context(), t.TempDir(), nil); got != "" {
 		t.Errorf("Branch of a plain directory = %q", got)

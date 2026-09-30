@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -393,8 +394,37 @@ func displayValue(v reflect.Value) reflect.Value {
 // or a table cell: displayText's normalization (no escape sequences or other
 // controls), then every run of whitespace, newlines and tabs included, as one
 // space. Use it for any string read from the bucket that the CLI prints.
+//
+// It also removes invisible format characters (Unicode category Cf: zero-width
+// spaces and joiners, the byte-order mark, soft hyphens, the Arabic letter
+// mark) and the tag characters U+E0000 to U+E007F, which show nothing on a
+// terminal but can carry text a model reads. That costs a joined emoji its
+// joiners (it shows as its parts) and a Persian word its non-joiner, which is
+// why displayText, which shapes a handoff's own content, leaves them.
+//
+// It does not cap length: a caller that shows a string in a fixed space cuts
+// it after this, so what is cut is what would have been shown.
 func DisplayLine(text string) string {
-	return oneLine(displayText(text))
+	return oneLine(stripInvisible(displayText(text)))
+}
+
+// stripInvisible removes the characters DisplayLine documents as invisible.
+func stripInvisible(s string) string {
+	if !strings.ContainsFunc(s, isInvisibleFormat) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if isInvisibleFormat(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// isInvisibleFormat reports whether r is a format character or a tag
+// character: no glyph of its own.
+func isInvisibleFormat(r rune) bool {
+	return unicode.Is(unicode.Cf, r) || (r >= 0xE0000 && r <= 0xE007F)
 }
 
 // DisplayJSON returns JSON text (from encoding/json) safe to print to a

@@ -82,13 +82,14 @@ func (l *launches) watch(env *Env) {
 
 func (l *launches) count() int { return len(l.specs) + l.windows }
 
-func TestArchiveHandoffCandidatesMatchByRepositoryOrPath(t *testing.T) {
+func TestArchiveHandoffCandidatesSplitByPathAndRepository(t *testing.T) {
 	t.Parallel()
 	key, other := archive.RepoKey(widgetOrigin), archive.RepoKey("https://example.test/acme/other.git")
 	sessions := []archive.Metadata{
 		{SessionID: "machine-b-same-repo", ProjectID: "project-b", RepoKey: key},
 		{SessionID: "machine-a-same-repo", ProjectID: "project-a", RepoKey: key},
 		{SessionID: "same-path-other-key", ProjectID: "project-here", RepoKey: other},
+		{SessionID: "same-path-same-key", ProjectID: "project-here", RepoKey: key},
 		{SessionID: "same-path-no-key", ProjectID: "project-here"},
 		{SessionID: "unrelated", ProjectID: "project-z", RepoKey: other},
 		{SessionID: "no-key-elsewhere", ProjectID: "project-y"},
@@ -101,19 +102,26 @@ func TestArchiveHandoffCandidatesMatchByRepositoryOrPath(t *testing.T) {
 		return strings.Join(out, ",")
 	}
 	here := map[string]bool{"project-here": true}
-	// Two machines' project IDs, one key: both match, in the order given.
-	// A path match stays a match whatever its key, and a path never matches
-	// through a key it lacks.
-	if got := ids(archiveHandoffCandidates(sessions, here, key, nil)); got != "machine-b-same-repo,machine-a-same-repo,same-path-other-key,same-path-no-key" {
-		t.Errorf("with a key: %s", got)
+	// Two machines' project IDs, one key: both match by repository, in the
+	// order given. A path match stays a path match whatever its key (also
+	// when the key is the current one: it is never repository-only), and a
+	// path never matches through a key it lacks.
+	byPath, byRepo := archiveHandoffCandidates(sessions, here, key, nil)
+	if got := ids(byPath); got != "same-path-other-key,same-path-same-key,same-path-no-key" {
+		t.Errorf("by path with a key: %s", got)
+	}
+	if got := ids(byRepo); got != "machine-b-same-repo,machine-a-same-repo" {
+		t.Errorf("by repository: %s", got)
 	}
 	// No key: exactly the project-ID rule.
-	if got := ids(archiveHandoffCandidates(sessions, here, "", nil)); got != "same-path-other-key,same-path-no-key" {
-		t.Errorf("without a key: %s", got)
+	byPath, byRepo = archiveHandoffCandidates(sessions, here, "", nil)
+	if got := ids(byPath); got != "same-path-other-key,same-path-same-key,same-path-no-key" || len(byRepo) != 0 {
+		t.Errorf("without a key: path %s, repository %v", got, ids(byRepo))
 	}
 	// A session without a key never matches an empty key.
-	if got := ids(archiveHandoffCandidates(sessions, map[string]bool{}, "", nil)); got != "" {
-		t.Errorf("no path and no key matched %s", got)
+	byPath, byRepo = archiveHandoffCandidates(sessions, map[string]bool{}, "", nil)
+	if len(byPath) != 0 || len(byRepo) != 0 {
+		t.Errorf("no path and no key matched %s and %s", ids(byPath), ids(byRepo))
 	}
 }
 
@@ -133,14 +141,18 @@ func TestHandoffLatestFindsAnotherMachinesSessionByRepository(t *testing.T) {
 		"handoff: using claude session " + f.id,
 		"(another machine)",
 		"handoff: matched by repository (remote origin), not by path",
-		"another machine · project " + filepath.Base(f.project) + " · branch fix/widget-test · started 2026-01-02 00:00 UTC",
-		"first prompt: Fix the flaky widget test.",
+		"another machine · project " + filepath.Base(f.project) + " · started 2026-01-02 01:00 UTC · first prompt: Fix the flaky widget test.",
 		"Hand off this session? [y/N]",
 		"handoff: session was on `fix/widget-test`; you are on `main`",
 	} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr missing %q:\n%s", want, errOut)
 		}
+	}
+	// "using" reads as the outcome of the question, not as a claim made
+	// before it.
+	if matched, asked, using := strings.Index(errOut, "matched by repository"), strings.Index(errOut, "Hand off this session?"), strings.Index(errOut, "handoff: using"); !(matched < asked && asked < using) {
+		t.Errorf("stderr is out of order (matched %d, asked %d, using %d):\n%s", matched, asked, using, errOut)
 	}
 	for _, want := range []string{"source: archive", "Next I will inject a fake clock.",
 		"The recorded directory differs from your current checkout", "Your current checkout is on branch `main`, not the recorded one."} {
@@ -221,15 +233,16 @@ func TestHandoffRepositoryMatchRefusesWithoutATerminal(t *testing.T) {
 				t.Fatalf("code=%d launches=%d stdout=%q stderr=%s", code, l.count(), out.String(), errOut.String())
 			}
 			stderr := errOut.String()
-			for _, want := range []string{"matched by repository (remote origin), not by path", "another machine · project ", "started 2026-01-02 00:00 UTC",
-				"run `agent-archive handoff " + f.id + tc.command + "`"} {
+			for _, want := range []string{"matched by repository (remote origin), not by path", "another machine · started 2026-01-02 01:00 UTC",
+				"run: agent-archive handoff " + f.id + tc.command + "\n"} {
 				if !strings.Contains(stderr, want) {
 					t.Errorf("stderr missing %q:\n%s", want, stderr)
 				}
 			}
-			// What the session said is not shown to a reader that cannot be
-			// asked, and neither is where it was.
-			for _, leaked := range []string{"Fix the flaky", "fix/widget-test", "first prompt"} {
+			// Nothing of what the session or the archive says about itself is
+			// shown to a reader that cannot be asked, and nothing that says
+			// "using": the session is not used.
+			for _, leaked := range []string{"Fix the flaky", "fix/widget-test", "first prompt", "project ", filepath.Base(f.project), "handoff: using"} {
 				if strings.Contains(stderr, leaked) {
 					t.Errorf("stderr shows %q without a person to ask:\n%s", leaked, stderr)
 				}

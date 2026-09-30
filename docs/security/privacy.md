@@ -41,21 +41,30 @@ of the filter is in the [filter changelog](../../dev/specs/privacy-filter-change
   [what is uploaded](#what-is-uploaded)), a hash of the `origin` remote in
   the directory's git configuration. Anyone who wrote a repository you clone
   controls that configuration, and anyone who can write to your prefix can
-  put any key on a session, so a hostile repository can declare
+  put any key on a session (the key is also a hash of a guessable public
+  URL), so a hostile repository can declare
   `origin = https://github.com/you/private` and make `--latest` in its
   directory choose your session of that repository, whose text a coding agent
   started there would then read. The key is a convenience for finding your
-  own work, not authentication. What limits the damage: the match is
-  recognized as one made by repository and not by path, and `handoff` then
-  names the session on stderr (machine, project, branch, start time, first
-  prompt) and, on a terminal, asks before printing or launching, default No;
-  where it cannot ask (a pipe, or an agent's shell) it refuses, shows only
-  the machine, project, and start time, and prints the command that selects
-  the session by ID. A path match, an explicit session ID, and the picker are
-  never questioned, because nothing there is chosen by a key. This does not
-  protect against someone who can write to your prefix, who can plant
-  sessions outright (see the previous point), and nothing stops you from
-  answering yes.
+  own work, not authentication. What limits the damage:
+  - A session that matched only by key never displaces one that matched by
+    path, so this cannot turn a working `--latest` into something else.
+  - `handoff` puts a key-only match to a check before reading any of the
+    session's source. On a terminal it names the session (this or another
+    Mac, project, start time, first prompt, each cut short) and asks, default
+    No. Where it cannot ask (a pipe, or an agent's shell) it refuses, shows
+    only the machine and the start time, and prints the command that selects
+    the session by ID, worded for the person. It prints no text from the
+    session or the archive there, since an agent reads it.
+  - That refusal is a speed bump, not a barrier. It stops a steered agent
+    from using such a session by accident; an agent can still name the
+    session ID itself, run the command it printed, or set
+    `AGENT_ARCHIVE_NONINTERACTIVE=0`.
+  - A path match, an explicit session ID, and the picker are never
+    questioned, because nothing there is chosen by a key.
+  This does not protect against someone who can write to your prefix, who can
+  plant sessions outright (see the previous point), and nothing stops you
+  from answering yes.
 - **The recorded agent runs as you.** The coding agent whose session is
   being archived runs with your account's permissions. It can read and
   change agent-archive's local state and configuration, the apps' hook

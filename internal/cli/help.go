@@ -297,12 +297,13 @@ picker on them; without one, or inside a coding agent, they are listed on
 stderr and the command exits 1, never guessing. A title skips the agent
 session running the command, unless --to is given.
   --latest              The most recent session for the project: one that ran
-                        at this path, or in another checkout of the same
-                        repository (its remote origin), such as on another
-                        Mac. A match by repository alone is named on stderr
-                        and, on a terminal, asked about (default no); with no
-                        terminal it is refused and the SESSION_ID command
-                        printed, since a repository chooses its own origin
+                        at this path, else one from another checkout of the
+                        same repository (its remote origin), such as on
+                        another Mac. A match by repository alone is named
+                        before anything is read and, on a terminal, asked
+                        about (default no); with no terminal it is refused
+                        and the SESSION_ID command printed, since a
+                        repository chooses its own origin
   --project DIR         Project for --latest, and where the agent starts
                         (default: current directory)
   --harness NAME        claude, codex, or cursor

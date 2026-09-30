@@ -29,7 +29,7 @@ func TestArchiveHandoffCandidatesPreservesOrderAndSkipsEmptySessions(t *testing.
 		{SessionID: "unknown-count", ProjectID: "project"},
 		{SessionID: "one-turn", ProjectID: "project", Counts: archive.Counts{Turns: &one}},
 	}
-	got := archiveHandoffCandidates(sessions, map[string]bool{"project": true}, "", map[string]bool{"running": true})
+	got, _ := archiveHandoffCandidates(sessions, map[string]bool{"project": true}, "", map[string]bool{"running": true})
 	if len(got) != 2 || got[0].SessionID != "unknown-count" || got[1].SessionID != "one-turn" {
 		t.Fatalf("candidates = %#v", got)
 	}

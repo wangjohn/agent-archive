@@ -257,12 +257,14 @@ follow [Semantic Versioning](https://semver.org/).
   directory by path or by repository (the `origin` remote, so SSH and HTTPS
   clones agree), from a subdirectory of the repository too; a directory
   without an `origin` matches by path only, as before, and a fork's `origin`
-  is the fork's. A repository chooses its own `origin`, so when `--latest`
-  picks a session by repository and not by path it names it on stderr
-  (machine, project, branch, start time, first prompt) and, on a terminal,
-  asks before going on (default no); where nothing can be asked (a pipe, or
-  inside a coding agent) it refuses and prints the `handoff SESSION_ID`
-  command that uses the session. Path matches, explicit session IDs, and the
+  is the fork's. A session that ran at the same path always comes first. A
+  repository chooses its own `origin`, so when `--latest` can only find a
+  session by repository it says so before reading any of it (machine, project,
+  start time, first prompt) and, on a terminal, asks before going on (default
+  no); where nothing can be asked (a pipe, or inside a coding agent) it
+  refuses, printing only the machine and start time and the `handoff
+  SESSION_ID` command for you to run. That refusal slows a steered agent; it
+  does not stop one that runs the command. Path matches, explicit session IDs, and the
   picker behave as before. `--to` launches an archived session from another
   computer the same way, and the handoff tells the agent the session was on
   another branch or in another directory when it was. When nothing matches,

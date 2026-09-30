@@ -303,11 +303,12 @@ repository with an `origin` records a hash of it (see
 session from your other Mac is found even when the repository is at a
 different path there, and whether it was cloned over SSH or HTTPS.
 Running in a subdirectory of the repository works; running from a folder that
-holds several repositories matches none of them. Sessions rank by how recently
-they were active, with no preference for a path match, but this Mac's
-own sessions are tried before the archive's: to take the newest session from
-another Mac when this one has an older one for the repository, add
-`--source archive`.
+holds several repositories matches none of them. A session that ran at this path always comes before one found only by
+repository: this Mac's sessions for the path, then the archive's, and only
+when there are none does a repository match count. Within each kind the most
+recently active session wins, and this Mac's own sessions are tried before
+the archive's. So to take the newest session from another Mac when this one
+has an older one at the same path, add `--source archive`.
 
 - **A fork's `origin` is the fork.** It is not the repository it was forked
   from, so a clone of the fork and a clone of the upstream do not match each
@@ -329,14 +330,22 @@ another Mac when this one has an older one for the repository, add
 
 A repository can name any origin, and so can anyone who can write to the
 archive, so the key is a convenience and not proof that a session is yours.
-When `--latest` picks a session by repository and not by path, `handoff`
-therefore says so and names it (this or another Mac, project, branch, start
-time, first prompt), and on a terminal asks before going on; the answer
-defaults to no. Where it cannot ask (a pipe, or an agent's shell, which has
-prompts off), it does not use the session: it prints the command that does,
-`agent-archive handoff SESSION_ID`, and exits 1. Naming a session yourself,
-or picking one in the picker, is never questioned. The reasons are in the
-[threat model](../security/privacy.md#threat-model).
+When `--latest` reaches a session by repository and not by path, `handoff`
+therefore stops before reading any of it. On a terminal it names the session
+(this or another Mac, project, start time, first prompt, each cut short) and
+asks; the answer defaults to no, and nothing is printed or launched until you
+say yes. Where it cannot ask (a pipe, or an agent's shell, which has prompts
+off) it does not use the session: it says which machine and when it started
+and prints the command that does, `agent-archive handoff SESSION_ID`, and
+exits 1. That refusal is a speed bump for an agent that has been steered, not
+a barrier: it can still run the command or name a session ID, so check what
+an agent is doing with a session from another computer. Naming a session
+yourself, or picking one in the picker, is never questioned. The reasons are
+in the [threat model](../security/privacy.md#threat-model).
+
+The notes about branch and directory are made for the checkout `handoff`
+runs in. They are left out with `--worktree`, since the agent then starts in
+a new worktree, and they stay in a handoff you print or pipe.
 
 Uncommitted changes stay on the machine that made them, so push a branch
 before continuing elsewhere.

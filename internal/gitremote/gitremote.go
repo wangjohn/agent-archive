@@ -61,10 +61,11 @@ func OriginURL(ctx context.Context, root string, run Runner) string {
 	return strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 }
 
-// Branch returns the branch checked out in dir, as `symbolic-ref --short`
-// reports it, or "" when HEAD is detached, dir is not in a repository, or git
-// cannot be asked within Timeout. run is nil for ExecRunner. It reads a name
-// and changes nothing.
+// Branch returns the branch checked out in dir, as `branch --show-current`
+// reports it (the bare name, also when a tag has the same name, and the name
+// of a branch with no commits yet), or "" when HEAD is detached, dir is not in
+// a repository, git is older than 2.22, or git cannot be asked within
+// Timeout. run is nil for ExecRunner. It reads a name and changes nothing.
 func Branch(ctx context.Context, dir string, run Runner) string {
 	if dir == "" || !filepath.IsAbs(dir) {
 		return ""
@@ -74,7 +75,7 @@ func Branch(ctx context.Context, dir string, run Runner) string {
 	}
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	out, err := run(ctx, dir, "-C", dir, "symbolic-ref", "--short", "--quiet", "HEAD")
+	out, err := run(ctx, dir, "-C", dir, "branch", "--show-current")
 	if err != nil || ctx.Err() != nil {
 		return ""
 	}

@@ -322,6 +322,12 @@ IDs, or content, but project folders are absolute paths: `projects[].root`,
 `projects[].kept_out`, `projects[].kept_out_unchecked`, and `filters.projects`. `storage_checked` is always
 `false`, because a dry run writes nothing and the storage check writes a test
 object; only an import checks storage, before it asks.
-`handoff --format json` prints the handoff document. Both follow the same
-add-only rule but are not yet versioned documents; prefer the text output for
-anything a person reads.
+`handoff --format json` prints the handoff document. Its `workspace` object
+holds `directory` and `branch` as the transcript recorded them and, when the
+command knew the checkout the handoff is for (not with `--worktree` or
+`--file`), two more, both omitted when not true: `elsewhere` (`true` when the
+recorded directory is neither that checkout nor a directory containing it or
+inside it) and `current_branch` (the branch that checkout is on, when it
+differs from the recorded one). Both commands follow the same add-only rule
+but are not yet versioned documents; prefer the text output for anything a
+person reads.
