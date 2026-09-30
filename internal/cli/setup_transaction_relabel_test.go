@@ -70,7 +70,7 @@ func (l *fakeLaunchd) bootouts() []string {
 func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	env.JobState, env.LoadLaunchAgent, env.UnloadLaunchAgent = nil, nil, nil
+	env.Scheduler = nil
 	agents := filepath.Join(userHome, "Library", "LaunchAgents")
 	write := func(label, dataHome string) string {
 		t.Helper()
@@ -155,7 +155,7 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 func TestFailedSetupRestoresEveryRetiredJob(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	env.JobState, env.LoadLaunchAgent, env.UnloadLaunchAgent = nil, nil, nil
+	env.Scheduler = nil
 	agents := filepath.Join(userHome, "Library", "LaunchAgents")
 	plists := map[string][]byte{}
 	var paths []string

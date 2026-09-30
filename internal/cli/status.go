@@ -921,7 +921,7 @@ type statusBackground struct {
 // the LaunchAgent actually runs.
 func readBackground(view *statusView, cfg config.Config, home, userHome string, env Env) statusBackground {
 	plist := env.installation(home, userHome).installedCollectorPlist()
-	view.Background = env.jobState(plist)
+	view.Background = env.jobState(userHome, plist)
 	// launchd reports a job whose program is gone as loaded (it only fails
 	// when it fires), so read the program the LaunchAgent actually runs.
 	backgroundProgram, backgroundProblem := "", ""

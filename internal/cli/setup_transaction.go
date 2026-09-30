@@ -225,7 +225,7 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	if err != nil {
 		return err
 	}
-	err = setupjournal.Commit(home, journal, env.launchd())
+	err = setupjournal.Commit(home, journal, env.launchd(userHome))
 	// A command file created and rolled back, or removed, leaves the
 	// directories written for it; they go while empty.
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.hookFiles(userHome)))
@@ -401,7 +401,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 		return setupjournal.Journal{}, err
 	}
 	changes = append(changes, change)
-	job := env.jobState(plistPath)
+	job := env.jobState(userHome, plistPath)
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job == "unknown" {
@@ -414,11 +414,11 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	// default installation: a test installation must not change it.
 	var legacy *setupjournal.LegacyJob
 	if env.installation(home, userHome).isDefault() {
-		if legacy, err = setupjournal.PlanLegacyMigration(userHome, env.launchd()); err != nil {
+		if legacy, err = setupjournal.PlanLegacyMigration(userHome, env.launchd(userHome)); err != nil {
 			return setupjournal.Journal{}, err
 		}
 	}
-	relabeled, err := setupjournal.PlanRelabel(env.installation(home, userHome).previousCollectorPlists(), env.launchd())
+	relabeled, err := setupjournal.PlanRelabel(env.installation(home, userHome).previousCollectorPlists(), env.launchd(userHome))
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
@@ -507,8 +507,8 @@ func abandonRecovery(out io.Writer, env Env) error {
 	return nil
 }
 
-func recoverSetup(home string, env Env) error {
-	return setupjournal.Recover(home, env.launchd(), func() (func(), error) { return lockCollector(home, "setup", env.now()) })
+func recoverSetup(home, userHome string, env Env) error {
+	return setupjournal.Recover(home, env.launchd(userHome), func() (func(), error) { return lockCollector(home, "setup", env.now()) })
 }
 
 func withoutBucketPrivacy(cfg config.Config) config.Config {

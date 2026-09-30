@@ -172,7 +172,7 @@ func TestFailedSetupTakesBackTheHandoffSkill(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	env.LoadLaunchAgent = func(string) error { return errors.New("bootstrap failed") }
+	fakeSched(env).beforeLoad = func(schedulerRef) error { return errors.New("bootstrap failed") }
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 1)
 	for _, dir := range []string{filepath.Join(userHome, ".claude", "skills"), filepath.Join(userHome, ".agents")} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
@@ -295,13 +295,12 @@ func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 	must(t, os.WriteFile(path, []byte(older), 0644))
 	must(t, os.Chmod(path, 0644))
 	var written string
-	originalLoad := env.LoadLaunchAgent
-	env.LoadLaunchAgent = func(p string) error {
+	fakeSched(env).beforeLoad = func(schedulerRef) error {
 		if written == "" {
 			written = readText(t, path)
 			return errors.New("bootstrap failed")
 		}
-		return originalLoad(p)
+		return nil
 	}
 	setupRun(t, env, "retention\n120\ny\n", 1)
 	if written == older || written == "" {

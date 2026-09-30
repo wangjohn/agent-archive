@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -12,17 +13,18 @@ import (
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
-// loadLaunchAgent bootstraps the plist into this user's GUI session and
-// reports launchctl's own output when that fails. launchctl is stubbed: no
-// test here reaches launchd.
+// launchdScheduler.load bootstraps the job's plist into this user's GUI
+// session and reports launchctl's own output when that fails. launchctl is
+// stubbed: no test here reaches launchd.
 func TestLoadLaunchAgentBootstrapsThePlist(t *testing.T) {
-	plist := filepath.Join(t.TempDir(), "com.agent-archive.collector.abc.plist")
+	site, ref := schedulerSite{t.TempDir()}, schedulerRef("com.agent-archive.collector.abc")
+	plist := site.launchAgent(ref)
 	var calls [][]string
 	stubLaunchctl(t, func(args ...string) ([]byte, error) {
 		calls = append(calls, args)
 		return nil, nil
 	})
-	if err := loadLaunchAgent(plist); err != nil {
+	if err := (launchdScheduler{}).load(context.Background(), site, ref); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plist}
@@ -33,17 +35,19 @@ func TestLoadLaunchAgentBootstrapsThePlist(t *testing.T) {
 	stubLaunchctl(t, func(...string) ([]byte, error) {
 		return []byte("Bootstrap failed: 5: Input/output error"), errors.New("exit status 5")
 	})
-	err := loadLaunchAgent(plist)
+	err := (launchdScheduler{}).load(context.Background(), site, ref)
 	if err == nil || !strings.Contains(err.Error(), "launchctl bootstrap") || !strings.Contains(err.Error(), "Input/output error") {
 		t.Fatalf("err %v, want launchctl's output", err)
 	}
 }
 
-// unloadLaunchAgent boots out a job only once launchctl print shows it was
-// loaded from this very plist, by its service target; a job loaded from any
-// other plist, or one launchctl cannot describe, is left alone and reported.
+// launchdScheduler.unload boots out a job only once launchctl print shows it
+// was loaded from this very plist, by its service target; a job loaded from
+// any other plist, or one launchctl cannot describe, is left alone and reported.
 func TestUnloadLaunchAgentBootsOutOnlyItsOwnJob(t *testing.T) {
-	plist := filepath.Join(t.TempDir(), "com.agent-archive.collector.abc.plist")
+	site, ref := schedulerSite{t.TempDir()}, schedulerRef("com.agent-archive.collector.abc")
+	plist := site.launchAgent(ref)
+	must(t, os.MkdirAll(filepath.Dir(plist), 0o700))
 	if err := os.WriteFile(plist, []byte("<plist/>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +78,7 @@ func TestUnloadLaunchAgentBootsOutOnlyItsOwnJob(t *testing.T) {
 				}
 				return []byte("bootout output"), tc.bootErr
 			})
-			err := unloadLaunchAgent(plist)
+			err := (launchdScheduler{}).unload(context.Background(), site, ref)
 			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("err %v, want %q", err, tc.wantErr)
 			}

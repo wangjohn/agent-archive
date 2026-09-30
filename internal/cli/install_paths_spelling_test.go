@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -147,16 +148,13 @@ func TestSetupRetiresTheJobOfAnotherCaseSpelling(t *testing.T) {
 	if got := env.installation(home, userHome).previousCollectorPlists(); len(got) != 1 || got[0] != old {
 		t.Fatalf("previousCollectorPlists = %q, want %q", got, old)
 	}
-	states := map[string]string{old: "loaded"}
-	var unloaded []string
-	env.JobState = func(p string) string { return states[p] }
-	env.LoadLaunchAgent = func(p string) error { states[p] = "loaded"; return nil }
-	env.UnloadLaunchAgent = func(p string) error { unloaded = append(unloaded, p); states[p] = "missing"; return nil }
+	sched := fakeSched(env).set(jobRef(old), "loaded")
 	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()), 0)
-	if _, err := os.Stat(old); !os.IsNotExist(err) || len(unloaded) != 1 || unloaded[0] != old {
+	_, err = os.Stat(old)
+	if unloaded := sched.unloaded(); !os.IsNotExist(err) || !slices.Equal(unloaded, []schedulerRef{jobRef(old)}) {
 		t.Fatalf("the other spelling's job was not retired: unloaded %v, stat %v", unloaded, err)
 	}
-	if states[env.installation(home, userHome).collectorPlist()] != "loaded" {
+	if sched.state(jobRef(env.installation(home, userHome).collectorPlist())) != "loaded" {
 		t.Fatal("the collector was not loaded under the directory's label")
 	}
 }

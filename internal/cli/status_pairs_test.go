@@ -259,7 +259,7 @@ func pairStatusEnv(t *testing.T, home, userHome string, now time.Time, apps ...s
 	}
 	env.UserHomeDir = func() (string, error) { return userHome, nil }
 	env.Executable = func() (string, error) { return executable, nil }
-	env.JobState = func(string) string { return "running" }
+	env.Scheduler = newFakeScheduler(t, "running")
 	return env
 }
 

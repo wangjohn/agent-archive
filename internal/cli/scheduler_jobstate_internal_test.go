@@ -10,8 +10,9 @@ import (
 
 // Characterization of the macOS scheduler (PR 5a-0), the part that names code
 // a later PR moves or removes: parseJobState moves into the launchd adapter,
-// and Env.JobState, LoadLaunchAgent and UnloadLaunchAgent give way to the
-// scheduler seam (5a-1). This file moves or changes with them, mechanically;
+// and Env.Scheduler (the seam 5a-1 put in place of Env.JobState,
+// LoadLaunchAgent and UnloadLaunchAgent) gives way to the port. This file
+// moves or changes with them, mechanically;
 // scheduler_jobstate_test.go pins the same answers through status and names
 // none of it.
 
@@ -49,12 +50,12 @@ func TestParseJobStateOverRecordedOutput(t *testing.T) {
 }
 
 // launchdAnswering is env asking launchd the way the program does, through
-// launchctl, with run answering for launchctl: the Env's scheduler stand-ins
-// (which setupTestEnv sets) are cleared, so status reaches the code that runs
+// launchctl, with run answering for launchctl: the Env's scheduler stand-in
+// (which setupTestEnv sets) is cleared, so status reaches the code that runs
 // launchctl print and reads its output.
 func launchdAnswering(t *testing.T, env Env, run func(args ...string) ([]byte, error)) Env {
 	t.Helper()
-	env.JobState, env.LoadLaunchAgent, env.UnloadLaunchAgent = nil, nil, nil
+	env.Scheduler = nil
 	stubLaunchctl(t, run)
 	return env
 }

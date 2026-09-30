@@ -237,7 +237,7 @@ func TestFailedSetupTakesBackTheRemovalOfSkills(t *testing.T) {
 	t.Parallel()
 	home, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
 	before := map[string]string{claudeSkillPath(userHome): readText(t, claudeSkillPath(userHome)), agentsSkillPath(userHome): readText(t, agentsSkillPath(userHome))}
-	env.LoadLaunchAgent = func(string) error { return errors.New("bootstrap failed") }
+	fakeSched(env).beforeLoad = func(schedulerRef) error { return errors.New("bootstrap failed") }
 	setupRunWith(t, env, []string{"--no-skills"}, "retention\n120\ny\n", 1)
 	for path, want := range before {
 		if got := readText(t, path); got != want {

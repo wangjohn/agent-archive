@@ -88,7 +88,7 @@ func isolateProcessForTesting() func() {
 		must(os.Unsetenv(name))
 	}
 	runLaunchctl = func(_ context.Context, args ...string) ([]byte, error) {
-		panic(fmt.Sprintf("a test reached the real launchctl %q: set Env.JobState, Env.LoadLaunchAgent and Env.UnloadLaunchAgent (testEnv does), or call stubLaunchctl", args))
+		panic(fmt.Sprintf("a test reached the real launchctl %q: set Env.Scheduler (testEnv does), or call stubLaunchctl", args))
 	}
 	realOpenCredentialStore = openCredentialStore
 	openCredentialStore = func() (credentials.CredentialStore, error) {
@@ -119,8 +119,11 @@ func TestIsolationFailsClosed(t *testing.T) {
 		}()
 		f()
 	}
-	panics("launchctl print", func() { launchdJobState("/nonexistent/com.agent-archive.collector.plist") })
-	panics("launchctl bootstrap", func() { _ = loadLaunchAgent("/nonexistent/x.plist") })
+	// A bare Env{} reaches launchd through launchdScheduler and runLaunchctl.
+	site, ref := schedulerSite{"/nonexistent"}, schedulerRef("com.agent-archive.collector")
+	panics("launchctl print", func() { Env{}.scheduler().jobState(context.Background(), site, ref) })
+	panics("launchctl bootstrap", func() { _ = Env{}.scheduler().load(context.Background(), site, ref) })
+	panics("launchctl bootout", func() { _ = Env{}.scheduler().unload(context.Background(), site, ref) })
 	panics("Env{}.credentialStore", func() { _, _ = Env{}.credentialStore() })
 	panics("less --version", func() { _, _ = Env{}.lessVersion("less") })
 	panics("R2 store", func() {
@@ -149,7 +152,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 	if _, err := env.executable(); err == nil {
 		t.Error("testEnv's Executable must fail unless a test sets one")
 	}
-	if got := env.jobState("/nonexistent.plist"); got != "missing" {
+	if got := env.jobState("/nonexistent", "/nonexistent/x.plist"); got != "missing" {
 		t.Errorf("testEnv job state = %q", got)
 	}
 }

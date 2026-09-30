@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +31,7 @@ func TestRefreshRefusesAsRootInAnotherUsersHome(t *testing.T) {
 			f.env.EffectiveUID = func() int { return tc.euid }
 			f.env.FileOwner = tc.owner
 			before, homeBefore := tree(t, f.userHome), tree(t, f.home)
-			f.launchd.calls = nil
+			f.launchd.forget()
 			code, stdout, stderr := refreshRun(t, f.env)
 			if !tc.refused {
 				if code != 0 {
@@ -63,7 +62,9 @@ func TestLaunchctlChangesAreBounded(t *testing.T) {
 	previous := launchctlChangeTimeout
 	launchctlChangeTimeout = 20 * time.Millisecond
 	t.Cleanup(func() { launchctlChangeTimeout = previous })
-	plist := filepath.Join(t.TempDir(), "com.example.collector.plist")
+	site := schedulerSite{t.TempDir()}
+	ref := schedulerRef("com.example.collector")
+	plist := site.launchAgent(ref)
 	stubLaunchctlContext(t, func(ctx context.Context, args ...string) ([]byte, error) {
 		if args[0] == "print" {
 			return []byte("path = " + plist + "\nstate = running\n"), nil
@@ -71,9 +72,9 @@ func TestLaunchctlChangesAreBounded(t *testing.T) {
 		<-ctx.Done() // a hung bootstrap or bootout
 		return nil, ctx.Err()
 	})
-	for name, run := range map[string]func(string) error{"bootstrap": loadLaunchAgent, "bootout": unloadLaunchAgent} {
+	for name, run := range map[string]func(context.Context, schedulerSite, schedulerRef) error{"bootstrap": launchdScheduler{}.load, "bootout": launchdScheduler{}.unload} {
 		done := make(chan error, 1)
-		go func() { done <- run(plist) }()
+		go func() { done <- run(context.Background(), site, ref) }()
 		select {
 		case err := <-done:
 			if err == nil || !strings.Contains(err.Error(), "launchctl "+name) {

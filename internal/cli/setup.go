@@ -215,7 +215,7 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	if err != nil {
 		return err
 	}
-	if err = recoverSetup(home, env); err != nil {
+	if err = recoverSetup(home, userHome, env); err != nil {
 		return err
 	}
 	existing, found, err := config.Load(home)

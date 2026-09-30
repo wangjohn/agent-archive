@@ -47,7 +47,7 @@ func TestSetupFailureBeforeCommitRecoversFreshInstall(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	env.LoadLaunchAgent = func(string) error { return errors.New("bootstrap failed") }
+	fakeSched(env).beforeLoad = func(schedulerRef) error { return errors.New("bootstrap failed") }
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, false, false, project), 1)
 	if _, found, _ := config.Load(home); found {
 		t.Fatal("failed fresh setup left active config")

@@ -171,7 +171,7 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	// Registering for the signals absorbs them until Commit returns.
 	_, stopSignals := env.interrupts()
 	defer stopSignals()
-	err = setupjournal.Commit(home, plan.journal, env.launchd())
+	err = setupjournal.Commit(home, plan.journal, env.launchd(userHome))
 	// A skill file removed leaves the directories written for it.
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))
 	return plan, userHome, err
@@ -281,7 +281,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	// since launchd runs the definition it loaded, not the file.
 	plan.journal = setupjournal.Journal{Changes: changes, Plist: in.collectorPlist(), FilesOnly: true}
 	if plan.plist {
-		if err := planJobRestart(&plan, env); err != nil {
+		if err := planJobRestart(&plan, userHome, env); err != nil {
 			return plan, err
 		}
 	}
@@ -293,9 +293,9 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 // new plist (the ordinary setup transaction), and a job that is not loaded
 // stays that way. A state it cannot read, or a job of another installation
 // under this label, refuses, as setup does.
-func planJobRestart(plan *refreshPlan, env Env) error {
+func planJobRestart(plan *refreshPlan, userHome string, env Env) error {
 	plist := plan.journal.Plist
-	job := env.jobState(plist)
+	job := env.jobState(userHome, plist)
 	switch {
 	case job == "unknown":
 		return refuse("cannot determine the background job's state; restore access to launchctl and retry")

@@ -83,10 +83,7 @@ func setupTestEnv(t *testing.T, home, userHome string, keychain *fakeKeychain, n
 	env.Executable = func() (string, error) { return executable, nil }
 	env.DetectHarnesses = func(string) []string { return nil }
 	env.DiscoverApplications = func(string) map[string]applicationDiscovery { return map[string]applicationDiscovery{} }
-	state := "missing"
-	env.JobState = func(string) string { return state }
-	env.LoadLaunchAgent = func(string) error { state = "loaded"; return nil }
-	env.UnloadLaunchAgent = func(string) error { state = "missing"; return nil }
+	env.Scheduler = newFakeScheduler(t, "missing")
 	env.Credentials = func() (credentials.CredentialStore, error) { return keychain, nil }
 	// setup and uninstall need a terminal; the scripted answers stand in
 	// for one. Output buffers are still not terminals.
@@ -279,14 +276,13 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 		b, _ := os.ReadFile(p)
 		before[p] = string(b)
 	}
-	originalLoad := env.LoadLaunchAgent
 	calls := 0
-	env.LoadLaunchAgent = func(p string) error {
+	fakeSched(env).beforeLoad = func(schedulerRef) error {
 		calls++
 		if calls == 1 {
 			return errors.New("cannot load new job")
 		}
-		return originalLoad(p)
+		return nil
 	}
 	output := setupRun(t, env, "retention\n120\ny\n", 1)
 	if !strings.Contains(output, "restored") {
@@ -305,8 +301,8 @@ func TestSetupSchedulerFailureRestoresExistingFiles(t *testing.T) {
 
 func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	t.Parallel()
-	home := t.TempDir()
-	env := setupTestEnv(t, home, t.TempDir(), newFakeKeychain(), time.Now())
+	home, userHome := t.TempDir(), t.TempDir()
+	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	path := filepath.Join(home, "config.json")
 	c := hooks.Change{Path: path, Before: []byte("before"), After: []byte("after"), Existed: true, Mode: 0600}
 	journal := setupjournal.Journal{Changes: []hooks.Change{c}, Plist: "/synthetic/job"}
@@ -319,7 +315,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	if err := os.WriteFile(path, []byte("user edit"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverSetup(home, env); err == nil {
+	if err := recoverSetup(home, userHome, env); err == nil {
 		t.Fatal("must refuse concurrent edit")
 	}
 	b, _ := os.ReadFile(path)
@@ -329,7 +325,7 @@ func TestSetupCrashRecoveryPreservesConcurrentEdits(t *testing.T) {
 	if err := os.WriteFile(path, []byte("after"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverSetup(home, env); err != nil {
+	if err := recoverSetup(home, userHome, env); err != nil {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(path)

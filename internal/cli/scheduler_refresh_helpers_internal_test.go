@@ -20,8 +20,7 @@ import (
 
 // The characterization tests of setup --refresh's scheduler paths reach
 // launchd only through runLaunchctl, the one seam every scheduler
-// implementation keeps, so they need no Env.JobState, LoadLaunchAgent, or
-// UnloadLaunchAgent stand-ins. They replace a package variable and so do not
+// implementation keeps, so they need no Env.Scheduler stand-in. They replace a package variable and so do not
 // run in parallel.
 
 // defaultCollectorLabel is the label of the account's default installation's
@@ -187,7 +186,7 @@ func newRefreshInstall(t *testing.T, defaultInstall, upgrade bool, mode launchdM
 	if upgrade {
 		r.newExe = upgradedTo(t, &r.env)
 	}
-	r.env.JobState, r.env.LoadLaunchAgent, r.env.UnloadLaunchAgent = nil, nil, nil
+	r.env.Scheduler = nil
 	r.plist = r.env.installation(home, userHome).collectorPlist()
 	r.launchd = stubArgvLaunchd(t, r.plist, mode)
 	return r

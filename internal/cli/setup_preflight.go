@@ -115,7 +115,7 @@ type preflightScope struct {
 type preflightDependencies interface {
 	hookFiles(userHome string) hooks.Files
 	installation(home, userHome string) installation
-	jobState(plist string) string
+	jobState(userHome, plist string) string
 	credentialStore() (credentials.CredentialStore, error)
 }
 
@@ -139,7 +139,7 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 
 	plist := env.installation(home, userHome).collectorPlist()
 	job := preflightCheck{Label: "Background job", Detail: "launchctl responds", OK: true}
-	switch env.jobState(plist) {
+	switch env.jobState(userHome, plist) {
 	case "unknown":
 		job.OK = false
 		job.Detail = "launchctl did not say whether the " + launchLabel(plist) + " job is loaded, and setup loads it only when it can tell"
