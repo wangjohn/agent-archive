@@ -158,7 +158,7 @@ func TestParserV06CountsCodexPromptsToolCallsAndTokens(t *testing.T) {
 	countIs(t, "output tokens", metadata.Counts.OutputTokens, 90)
 	countIs(t, "cache read tokens", metadata.Counts.CacheReadTokens, 512)
 	if metadata.Counts.CacheWriteTokens != nil {
-		t.Errorf("Codex exposes no cache-write accounting, got %d", *metadata.Counts.CacheWriteTokens)
+		t.Errorf("this Codex fixture reports no cache-write accounting, got %d", *metadata.Counts.CacheWriteTokens)
 	}
 	call := view.ToolCalls[0]
 	if call.CallID != "call_synthetic_1" || call.Name != "shell" {

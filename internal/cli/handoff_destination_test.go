@@ -69,7 +69,7 @@ func TestInstalledDestinationsFollowLookPath(t *testing.T) {
 	t.Parallel()
 	env := testEnv(t, t.TempDir(), time.Now())
 	env.LookPath = func(name string) (string, error) {
-		if name == "cursor-agent" || name == "codex" {
+		if slices.Contains([]string{"cursor-agent", "codex"}, name) {
 			return "/opt/bin/" + name, nil
 		}
 		return "", errors.New("not found")
@@ -128,6 +128,13 @@ func TestChooseDestinationListsTheDefaultFirst(t *testing.T) {
 	}
 	if !strings.HasSuffix(out.String(), "  q) quit\nEnter p, c, w, or q [p]: ") || strings.Contains(out.String(), "1)") {
 		t.Fatalf("prompt with no agent installed:\n%s", out.String())
+	}
+	out.Reset()
+	if _, err := chooseDestination(newPrompter(strings.NewReader("q\n"), &out), []handoffDestination{handoffDestinationClaude}, handoffDestinationClaude); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(out.String(), "\nEnter 1, p, c, w, or q [1]: ") {
+		t.Fatalf("prompt with one agent installed:\n%s", out.String())
 	}
 }
 
@@ -428,9 +435,10 @@ func TestHandoffToOffATerminalOpensANewWindow(t *testing.T) {
 func TestHandoffToTerminalCombinations(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name          string
-		stdin, stdout bool
-		here          bool
+		name   string
+		stdin  bool
+		stdout bool
+		here   bool
 	}{
 		{"both terminals", true, true, true},
 		{"stdout piped", true, false, false},
@@ -551,6 +559,7 @@ func TestHandoffHereAndNewWindowFlags(t *testing.T) {
 		run := runHandoff
 		if tc.terminal {
 			run = func(t *testing.T, env Env, args ...string) (string, string, int) {
+				t.Helper()
 				return runPicker(t, env, "", args...)
 			}
 		}

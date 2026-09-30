@@ -67,12 +67,42 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	if !ok {
 		return handoffOptions{}, false
 	}
-	usageError := func(message string) (handoffOptions, bool) {
+	opts := handoffOptions{sessionID: sessionID, project: *project, harness: *harness,
+		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
+		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, here: *here, newWindow: *newWindow, agentArgs: agentArgs,
+		worktree: *worktree, branch: *branch}
+	if message := validateHandoffOptions(&opts, interactive); message != "" {
 		fs.usageError("%s", message)
 		return handoffOptions{}, false
 	}
+	return opts, true
+}
+
+// validateHandoffOptions returns the usage error for opts, or "" when they
+// are valid, in which case opts.harness is now the canonical harness name.
+func validateHandoffOptions(opts *handoffOptions, interactive bool) string {
+	if message := validateHandoffFlagCombinations(*opts, interactive); message != "" {
+		return message
+	}
+	if message := validateHandoffLaunchOptions(opts.to, opts.output, opts.format, opts.noPreamble); message != "" {
+		return message
+	}
+	if message := validateHandoffWindowOptions(*opts, interactive); message != "" {
+		return message
+	}
+	canonical, ok := harnessFlag(opts.harness)
+	if !ok {
+		return harnessFlagError(opts.harness)
+	}
+	opts.harness = canonical
+	return validateHandoffSourceOptions(*opts)
+}
+
+// validateHandoffFlagCombinations checks which session is selected and the
+// flags that apply only alongside another.
+func validateHandoffFlagCombinations(opts handoffOptions, interactive bool) string {
 	selectors := 0
-	for _, set := range []bool{sessionID != "", *latest, *file != ""} {
+	for _, set := range []bool{opts.sessionID != "", opts.latest, opts.file != ""} {
 		if set {
 			selectors++
 		}
@@ -80,60 +110,48 @@ func parseHandoffOptions(args []string, stderr io.Writer, env handoffOptionsDepe
 	switch {
 	// With --to the command decides after parsing: the calling agent's own
 	// session, else the picker on a terminal (runHandoffCommand).
-	case selectors == 0 && !interactive && *to == "":
-		return usageError(noSelectorMessage)
+	case selectors == 0 && !interactive && opts.to == "":
+		return noSelectorMessage
 	case selectors > 1:
-		return usageError("a session ID, --latest, and --file are mutually exclusive")
-	case *file != "" && *harness == "":
-		return usageError("--file requires --harness (claude, codex, or cursor)")
-	case *project != "" && !*latest:
-		return usageError("--project applies only to --latest")
-	case *force && *output == "":
-		return usageError("--force applies only to --output")
-	case *maxBytes < 0:
-		return usageError("--max-bytes must be 0 or more")
-	case len(agentArgs) > 0 && *to == "":
-		return usageError("arguments after -- go to the launched agent; name it with --to")
-	case *worktree && *to == "" && !offersDestinations(handoffOptions{output: *output, format: *format, noPreamble: *noPreamble}, interactive):
-		return usageError("--worktree applies to a launched agent: name it with --to, or choose one on a terminal")
-	case *branch != "" && !*worktree:
-		return usageError("--branch applies only to --worktree")
-	}
-	if message := validateHandoffLaunchOptions(*to, *output, *format, *noPreamble); message != "" {
-		return usageError(message)
-	}
-	if message := validateHandoffWindowOptions(handoffOptions{to: *to, output: *output, format: *format, noPreamble: *noPreamble, here: *here, newWindow: *newWindow}, interactive); message != "" {
-		return usageError(message)
-	}
-	canonical, ok := harnessFlag(*harness)
-	if !ok {
-		return usageError(harnessFlagError(*harness))
-	}
-	*harness = canonical
-	switch *source {
-	case "auto", "local", "archive":
+		return "a session ID, --latest, and --file are mutually exclusive"
+	case opts.file != "" && opts.harness == "":
+		return "--file requires --harness (claude, codex, or cursor)"
+	case opts.project != "" && !opts.latest:
+		return "--project applies only to --latest"
+	case opts.force && opts.output == "":
+		return "--force applies only to --output"
+	case opts.maxBytes < 0:
+		return "--max-bytes must be 0 or more"
+	case len(opts.agentArgs) > 0 && opts.to == "":
+		return "arguments after -- go to the launched agent; name it with --to"
+	case opts.worktree && opts.to == "" && !offersDestinations(opts, interactive):
+		return "--worktree applies to a launched agent: name it with --to, or choose one on a terminal"
+	case opts.branch != "" && !opts.worktree:
+		return "--branch applies only to --worktree"
 	default:
-		return usageError(fmt.Sprintf("--source must be auto, local, or archive, not %q", *source))
+		return ""
 	}
-	switch *format {
-	case "markdown", "json":
-	default:
-		return usageError(fmt.Sprintf("--format must be markdown or json, not %q", *format))
+}
+
+// validateHandoffSourceOptions checks --source, --format, and the session ID.
+func validateHandoffSourceOptions(opts handoffOptions) string {
+	if !slices.Contains([]string{"auto", "local", "archive"}, opts.source) {
+		return fmt.Sprintf("--source must be auto, local, or archive, not %q", opts.source)
 	}
-	if *file != "" && *source == "archive" {
-		return usageError("--file reads a local transcript; --source archive does not apply")
+	if !slices.Contains([]string{"markdown", "json"}, opts.format) {
+		return fmt.Sprintf("--format must be markdown or json, not %q", opts.format)
+	}
+	if opts.file != "" && opts.source == "archive" {
+		return "--file reads a local transcript; --source archive does not apply"
 	}
 	// The ID names local files and bucket keys; only the characters archive
 	// session IDs are made of are accepted, so it cannot reach outside them.
-	if sessionID != "" {
-		if _, err := archive.MetadataObjectKey("claude", sessionID); err != nil {
-			return usageError(fmt.Sprintf("%q is not an archive session ID (see `agent-archive list`)", sessionID))
+	if opts.sessionID != "" {
+		if _, err := archive.MetadataObjectKey("claude", opts.sessionID); err != nil {
+			return fmt.Sprintf("%q is not an archive session ID (see `agent-archive list`)", opts.sessionID)
 		}
 	}
-	return handoffOptions{sessionID: sessionID, project: *project, harness: canonical,
-		file: *file, source: *source, maxBytes: *maxBytes, format: *format, to: *to,
-		output: *output, latest: *latest, force: *force, noPreamble: *noPreamble, here: *here, newWindow: *newWindow, agentArgs: agentArgs,
-		worktree: *worktree, branch: *branch}, true
+	return ""
 }
 
 // noSelectorMessage is the usage error for a handoff with nothing selected

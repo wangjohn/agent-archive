@@ -199,7 +199,7 @@ func TestStatusTextDoesNotCallPartialReadBackVerified(t *testing.T) {
 	publishPairSession(t, home, store, remote, cfg, now, "codex-b", projectB, false)
 	env := pairStatusEnv(t, home, userHome, now, "codex")
 	var out strings.Builder
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 {
+	if code := runStatusCommand([]string{"--verbose"}, &out, &out, env); code != 0 {
 		t.Fatalf("status exit %d: %s", code, out.String())
 	}
 	if text := out.String(); strings.Contains(text, "archived, verified") || !strings.Contains(text, "uploaded, read-back pending (1 of 2 projects verified)") {
@@ -209,7 +209,7 @@ func TestStatusTextDoesNotCallPartialReadBackVerified(t *testing.T) {
 		t.Fatalf("verify summary=%#v err=%v", summary, err)
 	}
 	out.Reset()
-	if code := runStatusCommand(nil, &out, &out, env); code != 0 || !strings.Contains(out.String(), "2 sessions archived, verified just now") {
+	if code := runStatusCommand([]string{"--verbose"}, &out, &out, env); code != 0 || !strings.Contains(out.String(), "2 sessions archived, verified just now") {
 		t.Fatalf("complete read-back not reported as verified (exit %d):\n%s", code, out.String())
 	}
 }
