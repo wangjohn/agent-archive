@@ -483,12 +483,12 @@ func TestHandoffToTerminalCombinations(t *testing.T) {
 // Inside an agent the agent's shell may be a pseudo-terminal, but
 // interaction is off there: --to opens a new window instead of taking over
 // that terminal, nothing asks "Continue in:", and --here is refused naming
-// the switch.
+// the switch. Each agent's variable does this, and so does the switch alone;
+// a value the switch does not accept is reported and nothing is launched.
 func TestHandoffInAnAgentOpensANewWindow(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, false)
 	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "not-registered"})
 	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("ran in the agent's terminal")
 		return nil
@@ -498,16 +498,28 @@ func TestHandoffInAnAgentOpensANewWindow(t *testing.T) {
 		opened++
 		return "a new tmux window", nil
 	}
-	out, errOut, code := runPicker(t, f.env, "1\n", f.id, "--to", "codex")
-	if code != 0 || opened != 1 || out != "" || !strings.Contains(errOut, "opened codex in a new tmux window") {
-		t.Fatalf("--to: code=%d opened=%d stdout=%q stderr=%s", code, opened, out, errOut)
+	switches := []map[string]string{{envNonInteractive: "1"}}
+	for _, key := range agentVariables {
+		switches = append(switches, map[string]string{key: "not-registered"})
 	}
-	out, errOut, code = runPicker(t, f.env, "1\n", f.id)
-	if code != 0 || opened != 1 || strings.Contains(out, "Continue in") || !strings.Contains(out, "## Where it left off") {
-		t.Fatalf("no --to: code=%d opened=%d stderr=%s\n%s", code, opened, errOut, out)
+	for _, vars := range switches {
+		f.env.LookupEnv = agentEnv(vars)
+		opened = 0
+		out, errOut, code := runPicker(t, f.env, "1\n", f.id, "--to", "codex")
+		if code != 0 || opened != 1 || out != "" || !strings.Contains(errOut, "opened codex in a new tmux window") {
+			t.Fatalf("%v --to: code=%d opened=%d stdout=%q stderr=%s", vars, code, opened, out, errOut)
+		}
+		out, errOut, code = runPicker(t, f.env, "1\n", f.id)
+		if code != 0 || opened != 1 || strings.Contains(out, "Continue in") || !strings.Contains(out, "## Where it left off") {
+			t.Fatalf("%v no --to: code=%d opened=%d stderr=%s\n%s", vars, code, opened, errOut, out)
+		}
+		if _, errOut, code := runPicker(t, f.env, "", f.id, "--to", "codex", "--here"); code != 2 || opened != 1 || !strings.Contains(errOut, envNonInteractive) {
+			t.Fatalf("%v --here: code=%d stderr=%s", vars, code, errOut)
+		}
 	}
-	if _, errOut, code := runPicker(t, f.env, "", f.id, "--to", "codex", "--here"); code != 2 || !strings.Contains(errOut, envNonInteractive) {
-		t.Fatalf("--here: code=%d stderr=%s", code, errOut)
+	f.env.LookupEnv = agentEnv(map[string]string{envNonInteractive: "ture"})
+	if out, errOut, code := runPicker(t, f.env, "1\n", f.id, "--to", "codex"); code != 2 || opened != 1 || out != "" || !strings.Contains(errOut, `AGENT_ARCHIVE_NONINTERACTIVE="ture"`) {
+		t.Fatalf("invalid switch: code=%d opened=%d stdout=%q stderr=%s", code, opened, out, errOut)
 	}
 	// AGENT_ARCHIVE_NONINTERACTIVE=0 gives the terminal back.
 	launched := 0
