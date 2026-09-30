@@ -578,8 +578,9 @@ func (s *sweeper) forget(reg archive.SessionRegistration, deferForWork bool, int
 // whole-session expiry past the retention window: after deleting the session
 // from the current bucket, for a session that never published, and for one
 // published to a previous destination. ForgetIdleSession writes the record
-// under the request lock, so a session a hook kept alive gets none, and a
-// failed write keeps the session registered for the next sweep to retry.
+// before it forgets anything, so a failed write keeps the session registered
+// for the next sweep to retry, and takes it back from a session a hook kept
+// alive.
 func forgetExpired(local *state.Store, reg archive.SessionRegistration, deferForWork bool, now time.Time) (bool, error) {
 	return local.ForgetIdleSession(reg.ArchiveSessionID, reg.NativeSessionID, deferForWork, &state.RemovalRecord{
 		Harness: reg.Harness.Name, Reason: state.RemovalReasonRetention, At: now,

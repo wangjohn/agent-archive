@@ -25,6 +25,25 @@ including any an earlier release left at `~/.claude/settings.json` or
 so one that is not valid JSON is reported and left as it is rather than
 blocking uninstall.
 
+## When the background scheduler cannot be reached
+
+Uninstall stops the background collector through the scheduler that runs it.
+When that scheduler cannot say whether the job is loaded (it is not reachable
+from this session, or a unit is masked), uninstall stops before it changes
+anything, says what is wrong and what to do about it, and prints the command
+that stops the job by hand from a session that can reach the scheduler.
+
+```sh
+agent-archive uninstall --skip-scheduler
+```
+
+goes on anyway. It tries to stop the job, then removes the job's definition,
+the hooks and the skill files as usual, prints the same command for stopping
+the job by hand, and ends by saying the collector was **not verified stopped**.
+Deleting a definition does not stop a job that is already loaded, so run that
+command from a session that can reach the scheduler if the job may still be
+running. The job of another installation is left as it is either way.
+
 ## Delete local data too
 
 ```sh
