@@ -897,9 +897,13 @@ func chooseCapture(p *prompter, cfg *config.Config, userHome string, env Env, kn
 	detected := env.detectHarnesses(userHome)
 	// In a Git repository with no projects yet, the repository heads the
 	// recent-projects list, already included.
+	p.reviewHint = ""
 	current := ""
 	if len(cfg.Archive.Projects) == 0 {
-		current = currentProject(env, userHome)
+		var refused string
+		if current, refused = currentProject(env, userHome); refused != "" {
+			terminal.Println(p.out, p.style.dim(refused))
+		}
 	}
 	if done, e := offerFirstCapture(p, cfg, detected, current, userHome, known); e != nil || done {
 		return e
@@ -964,8 +968,14 @@ func offerFirstCapture(p *prompter, cfg *config.Config, detected []string, curre
 	cfg.Archive.Projects = []archive.ProjectActivation{{ProjectID: archive.ProjectID(current), Root: current, Included: true}}
 	hint := "Edit a setting adds projects, drops apps, and changes how long sessions are kept."
 	if known != nil {
+		// The scan reads the apps' history, which can take a while on a slow
+		// disk: say so, as for the check of installed applications. Its
+		// result, empty when it fails, is kept for the rest of setup.
+		stop := startAnnouncedActivity(p.out, "Looking for your other projects...")
+		found := known(*cfg)
+		stop()
 		others := 0
-		for _, project := range foldInto(known(*cfg), current) {
+		for _, project := range foldInto(found, current) {
 			if project.Root != current {
 				others++
 			}
@@ -980,41 +990,60 @@ func offerFirstCapture(p *prompter, cfg *config.Config, detected []string, curre
 }
 
 // currentProject is the Git repository setup was run from, which heads the
-// project list already included, or "" when there is none. A folder too
-// broad to archive on one Enter is no project: the home folder, a folder that
-// holds it, or the temporary folder or anything in it, which a dotfiles
-// checkout or a stray .git there can make a repository. Setup then asks for
-// the projects, and pre-selects none.
-func currentProject(env Env, userHome string) string {
+// project list already included, or "" when there is none. A repository too
+// broad to archive on one Enter is no project, and refused says why, as one
+// line to print: it is the home folder or a folder that holds it (a dotfiles
+// checkout, or a stray .git above it), or a temporary folder or a folder that
+// holds one. Setup then asks for the projects and pre-selects none. A
+// repository inside a temporary folder is an ordinary project, as backfill
+// treats it: only the folder itself is too broad.
+func currentProject(env Env, userHome string) (current, refused string) {
 	dir, err := os.Getwd()
 	if env.WorkingDir != nil {
 		dir, err = env.WorkingDir()
 	}
 	if err != nil {
-		return ""
+		return "", ""
 	}
-	current := suggestedProject(dir)
-	if current == "" || broadFolder(current, userHome, env.tempDir()) {
-		return ""
+	repo := suggestedProject(dir)
+	if repo == "" {
+		return "", ""
 	}
-	return current
+	if reason := broadFolder(repo, userHome, env.backfillTempDirs()); reason != "" {
+		return "", "Not offering " + displayPath(repo, local.CanonicalPath(userHome)) + " as a project: " + reason + ". Enter the projects you want."
+	}
+	return repo, ""
 }
 
-// broadFolder reports whether archiving dir on the strength of one Enter
-// would take in too much: the home folder, a folder that holds it, or the
-// temporary folder or anything in it. Setup then asks for the projects
-// instead. Each folder is compared with its symlinks resolved, as project
-// roots are saved.
-func broadFolder(dir, userHome, tempDir string) bool {
-	resolve := func(path string) string {
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			return resolved
+// broadFolder says why archiving dir on the strength of one Enter would take
+// in too much, or returns "": dir is the home folder or holds it, or is one
+// of the temporary folders (the ones backfill skips, see backfillTempDirs)
+// or holds one. Folders are compared by CanonicalPath, which resolves
+// symlinks and, on a case-insensitive volume, spells each folder as its
+// directory lists it, as a project root is saved.
+func broadFolder(dir, userHome string, temps []string) string {
+	dir = local.CanonicalPath(dir)
+	if home := local.CanonicalPath(userHome); userHome != "" {
+		switch {
+		case dir == home:
+			return "it is your home folder"
+		case local.PathWithin(home, dir):
+			return "it holds your home folder"
 		}
-		return path
 	}
-	dir = resolve(dir)
-	userHome, tempDir = resolve(userHome), resolve(tempDir)
-	return local.PathWithin(userHome, dir) || local.PathWithin(dir, tempDir)
+	for _, temp := range temps {
+		if temp = strings.TrimSpace(temp); temp == "" {
+			continue
+		}
+		temp = local.CanonicalPath(temp)
+		switch {
+		case dir == temp:
+			return "it is a temporary folder"
+		case local.PathWithin(temp, dir):
+			return "it holds a temporary folder"
+		}
+	}
+	return ""
 }
 
 // foldInto merges the listed projects inside root, such as a repository
@@ -1734,22 +1763,26 @@ func lastUsed(at, now time.Time) string {
 // first (backfill.KnownProjects). A scan reads every transcript's first
 // records, so it is kept for the rest of the run and repeated only for
 // another set of projects, which changes how sessions resolve. It is only an
-// offer, so a failure or a slow disk leaves the list empty.
+// offer, so a failure or a slow disk leaves the list empty, and that is kept
+// too.
 func knownProjectsOnce(env Env, userHome string) func(config.Config) []backfill.KnownProject {
 	var scannedFor string
 	var projects []backfill.KnownProject
+	scanned := false
 	return func(cfg config.Config) []backfill.KnownProject {
 		key, _ := json.Marshal(cfg.Archive.Projects)
-		if projects != nil && string(key) == scannedFor {
+		if scanned && string(key) == scannedFor {
 			return projects
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		found, err := backfill.KnownProjects(ctx, env.backfillEnvironment(userHome, cfg), cfg)
 		if err != nil {
-			return nil
+			// A failed or timed-out scan is kept as empty, so a later
+			// question does not wait for another.
+			found = nil
 		}
-		scannedFor, projects = string(key), found
+		scanned, scannedFor, projects = true, string(key), found
 		return projects
 	}
 }

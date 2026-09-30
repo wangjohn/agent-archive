@@ -10,6 +10,7 @@ You’ll need a private Cloudflare R2 or Amazon S3 bucket. Setup instructions ar
 
 \e[1mArchive Codex, Claude Code, and Cursor sessions in ~/src/web-app?\e[0m [\e[1mY\e[0m/n] › 
 
+Looking for your other projects...
 On the review screen: Edit a setting adds projects, drops apps, and changes how long sessions are kept.
 
 \e[1mStep 2 of 3 · Connect storage\e[0m

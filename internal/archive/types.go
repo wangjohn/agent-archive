@@ -519,11 +519,62 @@ type Counts struct {
 	// under the workspace root and the same path relative to it count once.
 	// It is known wherever tool_calls is, from parser 0.13.0 on. Only the
 	// count is published, never a path.
-	FilesTouched     *int `json:"files_touched,omitempty"`
+	FilesTouched *int `json:"files_touched,omitempty"`
+	// ToolErrors counts the tool results the harness marked as errors
+	// (is_error true), out of ToolResults. It is known from parser 0.14.0,
+	// where tool_results is, for the harnesses that write the flag (Claude
+	// Code and Cursor). Codex writes no such flag, so its count is unknown,
+	// not zero.
+	ToolErrors *int `json:"tool_errors,omitempty"`
+	// The token counts keep each harness's own meaning. Claude Code's
+	// InputTokens excludes what was read from or written to the prompt cache;
+	// Codex's InputTokens includes its cached input, which CacheReadTokens
+	// repeats. ReasoningTokens (from parser 0.14.0: Claude Code's
+	// output_tokens_details.thinking_tokens, Codex's reasoning_output_tokens)
+	// is the part of OutputTokens spent on reasoning, not an addition to it.
 	InputTokens      *int `json:"input_tokens,omitempty"`
 	OutputTokens     *int `json:"output_tokens,omitempty"`
 	CacheReadTokens  *int `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens *int `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  *int `json:"reasoning_tokens,omitempty"`
+}
+
+// UnknownModel is the ModelTokens.Model of token accounting no model name
+// could be attached to: a record carrying usage that names no model, and
+// follows no Codex turn_context that does. (A placeholder model such as
+// Claude Code's "<synthetic>" produced no usage, and its records are not
+// counted at all.)
+const UnknownModel = "unknown"
+
+// MaxModelTokens is the most entries Metadata.ModelTokens holds, and
+// OtherModels is the ModelTokens.Model that the models beyond it are added
+// together under, so the split still sums to the session's counts. The schema's
+// model_tokens maxItems matches MaxModelTokens. A session names a handful of
+// models, so only a hostile transcript reaches it.
+const (
+	MaxModelTokens = 32
+	OtherModels    = "other"
+)
+
+// maxModelNameRunes is the longest ModelTokens.Model, ellipsis included; the
+// schema's maxLength matches it.
+const maxModelNameRunes = 128
+
+// ModelTokens is the token accounting attributed to one model, with the
+// meaning Counts gives each field. Model is the model id a ModelSummary
+// carries (gen_ai.request.model, or gen_ai.response.model when a record names
+// only that), cut to maxModelNameRunes, or UnknownModel when a record
+// carrying usage names no model. Beyond MaxModelTokens models the
+// least-used are added together under OtherModels. A field is nil when no
+// record of the model reported it. Below 2^53 tokens, each Counts token field
+// is the sum of that field over Metadata.ModelTokens.
+type ModelTokens struct {
+	Model            string `json:"model"`
+	InputTokens      *int   `json:"input_tokens,omitempty"`
+	OutputTokens     *int   `json:"output_tokens,omitempty"`
+	CacheReadTokens  *int   `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens *int   `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  *int   `json:"reasoning_tokens,omitempty"`
 }
 
 // ModelSummary is one model a session used, as OpenTelemetry GenAI attributes
@@ -600,7 +651,15 @@ type Metadata struct {
 	// harness's own, MCP tools included, redacted and length-bounded (see
 	// metadataToolName). Omitted when no named tool call was observed or the
 	// counts are unknown; counts.tool_calls tells the two apart.
-	ToolsUsed       []ToolUsage              `json:"tools_used,omitempty"`
+	ToolsUsed []ToolUsage `json:"tools_used,omitempty"`
+	// ModelTokens splits the session's token counts by model, sorted by
+	// model id. Omitted when the harness exposed no token accounting.
+	ModelTokens []ModelTokens `json:"model_tokens,omitempty"`
+	// MCPCalls counts the session's MCP tool calls by server (the server in
+	// an mcp__<server>__<tool> name), by count descending and then name
+	// ascending, at most MaxMCPCalls of them. Omitted when no MCP call was
+	// observed or the counts are unknown.
+	MCPCalls        []ToolUsage              `json:"mcp_calls,omitempty"`
 	CaptureGaps     []CaptureGap             `json:"capture_gaps,omitempty"`
 	SourceBundle    SourceReference          `json:"source_bundle"`
 	ParentSessionID string                   `json:"parent_session_id,omitempty"`

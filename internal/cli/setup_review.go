@@ -446,6 +446,9 @@ func offerStopImported(p *prompter, draft *setupDraft, committed config.Config) 
 // editSetupReview asks which setting to change and asks for it again.
 // known, when not nil, lists the projects the apps' history mentions.
 func editSetupReview(p *prompter, draft *setupDraft, userHome string, backfilled map[string]bool, known func(config.Config) []backfill.KnownProject) error {
+	// Whoever opens the edit menu has found it; the hint about it would be
+	// stale beside what they change.
+	p.reviewHint = ""
 	choices := []option{
 		{"apps", "Apps to include"},
 		{"projects", "Projects to include"},

@@ -93,8 +93,10 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   the app and its version, the app's own session ID, capture times and the
   session's last record time, counts (including how many distinct files were
   edited, never which), models, skills used, the names of the ten most-called
-  tools (MCP tool names included) with their call counts, and the capture gaps the filter recorded (the names
-  of omitted fields, never their values).
+  tools (MCP tool names included) with their call counts, the MCP servers
+  called and how often, token counts (in total and per model), and the
+  capture gaps the filter recorded (the names of omitted fields, never their
+  values).
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).
