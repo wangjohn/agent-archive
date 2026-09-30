@@ -208,9 +208,9 @@ func TestStatsJSONIsAVersionedDocument(t *testing.T) {
 	}
 	slices.Sort(keys)
 	want := []string{
-		"agents", "composition", "coverage", "daily", "filters", "generated_at", "groups", "highlights", "mcp",
-		"models", "overview", "peak", "prices", "projects", "schema_version", "skills", "subagents",
-		"total_projects", "window",
+		"agents", "composition", "coverage", "daily", "display_skills", "filters", "generated_at", "groups", "heads_up",
+		"highlights", "mcp", "models", "overview", "peak", "peak_spend", "prices", "projects", "schema_version",
+		"skills", "subagents", "total_display_skills", "total_projects", "total_skills", "window",
 	}
 	if !slices.Equal(keys, want) {
 		t.Fatalf("top-level keys = %v\nwant %v", keys, want)
