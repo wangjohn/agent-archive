@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 
@@ -72,9 +71,9 @@ func TestStatsScreensAgreeWithJSON(t *testing.T) {
 				}
 			}
 			mustSay("the overview", overview,
-				count(int64(math.Round(*o.Sessions.Value)), "session"))
+				count(roundInt(*o.Sessions.Value), "session"))
 			if o.Tokens.Value != nil {
-				mustSay("the overview", overview, statsfmt.TokenCount(int64(math.Round(*o.Tokens.Value)))+" tokens")
+				mustSay("the overview", overview, statsfmt.TokenCount(roundInt(*o.Tokens.Value))+" tokens")
 			} else {
 				mustSay("the overview", overview, "tokens unknown")
 			}
@@ -99,7 +98,7 @@ func TestStatsScreensAgreeWithJSON(t *testing.T) {
 			}
 			// Every headline number is on the detail screen too, with the
 			// previous period's.
-			mustSay("the detail screen", detail, "Sessions", fmt.Sprintf("%d of %d", int(math.Round(*o.ActiveDays.Value)), o.DaysInWindow))
+			mustSay("the detail screen", detail, "Sessions", fmt.Sprintf("%d of %d", roundInt(*o.ActiveDays.Value), o.DaysInWindow))
 			if c := doc.Composition; c != nil && c.Total > 0 {
 				mustSay("the detail screen", detail,
 					"Cache read "+statsfmt.Percent(c.CacheRead.Share)+" "+statsfmt.TokenCount(c.CacheRead.Tokens),
