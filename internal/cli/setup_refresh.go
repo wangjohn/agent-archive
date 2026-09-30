@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -319,19 +320,19 @@ func refreshPlist(plistPath, home, exe string) (change hooks.Change, changed boo
 	if err != nil {
 		return change, false, err
 	}
-	program, err := hooks.LaunchAgentProgram(current)
+	program, err := launchd.LaunchAgentProgram(current)
 	if err != nil {
 		return change, false, fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", plistPath, err)
 	}
 	if program == exe {
 		return change, false, nil
 	}
-	environment, err := hooks.LaunchAgentEnvironment(current)
+	environment, err := launchd.LaunchAgentEnvironment(current)
 	if err != nil {
 		return change, false, fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", plistPath, err)
 	}
 	delete(environment, "AGENT_ARCHIVE_HOME")
-	plist, err := hooks.LaunchAgent(exe, home, launchLabel(plistPath), environment)
+	plist, err := launchd.LaunchAgent(exe, home, launchLabel(plistPath), environment)
 	if err != nil {
 		return change, false, err
 	}

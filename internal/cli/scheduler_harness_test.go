@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -119,11 +120,11 @@ func (r *schedRun) hooksInstalled() bool {
 
 // earlierLabel is the label an earlier release gave this data directory when
 // it was spelled spelling (releases before labels were canonical).
-func earlierLabel(spelling string) string { return hooks.CollectorLabel(spelling, "") }
+func earlierLabel(spelling string) string { return launchd.CollectorLabel(spelling, "") }
 
 // defaultLabel is the label every installation had before labels were per
 // directory, and the default installation's still.
-const defaultLabel = hooks.LaunchLabel
+const defaultLabel = launchd.LaunchLabel
 
 // prototypeLabel is the prototype's upload job, which the default
 // installation retires.
@@ -134,7 +135,7 @@ const prototypeLabel = setupjournal.LegacyLaunchLabel
 func (r *schedRun) earlierCollector(label string, loaded bool) {
 	r.t.Helper()
 	path := r.agents(label)
-	plist, err := hooks.LaunchAgent("/opt/old/agent-archive", r.home, label, nil)
+	plist, err := launchd.LaunchAgent("/opt/old/agent-archive", r.home, label, nil)
 	must(r.t, err)
 	writeFile(r.t, path, plist)
 	if loaded {

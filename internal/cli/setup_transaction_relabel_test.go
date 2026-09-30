@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -75,32 +75,32 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 	write := func(label, dataHome string) string {
 		t.Helper()
 		path := filepath.Join(agents, label+".plist")
-		plist, err := hooks.LaunchAgent("/opt/old/agent-archive", dataHome, label, nil)
+		plist, err := launchd.LaunchAgent("/opt/old/agent-archive", dataHome, label, nil)
 		must(t, err)
 		must(t, local.WriteBytes(path, plist))
 		return path
 	}
 	elsewhere := t.TempDir()
-	loadedA := write(hooks.CollectorLabel("/old/spelling/a", ""), home)
-	unloadedB := write(hooks.CollectorLabel("/old/spelling/b", ""), home)
+	loadedA := write(launchd.CollectorLabel("/old/spelling/a", ""), home)
+	unloadedB := write(launchd.CollectorLabel("/old/spelling/b", ""), home)
 	// This directory's plist under the default label, but launchd runs the
 	// default label from the real account's plist.
-	realDefault := write(hooks.LaunchLabel, home)
-	otherDirectory := write(hooks.CollectorLabel(elsewhere, ""), elsewhere)
-	notOurs := write(hooks.LaunchLabel+".backup", home)
-	launchd := &fakeLaunchd{loaded: map[string]string{
+	realDefault := write(launchd.LaunchLabel, home)
+	otherDirectory := write(launchd.CollectorLabel(elsewhere, ""), elsewhere)
+	notOurs := write(launchd.LaunchLabel+".backup", home)
+	mac := &fakeLaunchd{loaded: map[string]string{
 		launchLabel(loadedA):        loadedA,
-		hooks.LaunchLabel:           "/Users/real/Library/LaunchAgents/" + hooks.LaunchLabel + ".plist",
+		launchd.LaunchLabel:         "/Users/real/Library/LaunchAgents/" + launchd.LaunchLabel + ".plist",
 		launchLabel(otherDirectory): otherDirectory,
 	}}
-	stubLaunchctl(t, launchd.run)
+	stubLaunchctl(t, mac.run)
 	own := env.installation(home, userHome).collectorPlist()
 
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"setup"}, strings.NewReader(s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir())), &out, &errOut, env); code != 0 {
 		t.Fatalf("setup: exit %d\n%s", code, &errOut)
 	}
-	if got := launchd.bootouts(); !slices.Equal(got, []string{launchLabel(loadedA)}) {
+	if got := mac.bootouts(); !slices.Equal(got, []string{launchLabel(loadedA)}) {
 		t.Fatalf("setup booted out %v, want only %s", got, launchLabel(loadedA))
 	}
 	for _, gone := range []string{loadedA, unloadedB} {
@@ -113,22 +113,22 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 			t.Errorf("%s: %v", kept, err)
 		}
 	}
-	if launchd.loaded[launchLabel(own)] != own {
+	if mac.loaded[launchLabel(own)] != own {
 		t.Fatal("the collector was not loaded under the directory's own label")
 	}
 
 	// Two more jobs from earlier spellings appear; uninstall stops and
 	// removes them with its own, and nothing else.
-	loadedC := write(hooks.CollectorLabel("/old/spelling/c", ""), home)
-	unloadedD := write(hooks.CollectorLabel("/old/spelling/d", ""), home)
-	launchd.loaded[launchLabel(loadedC)] = loadedC
-	launchd.calls = nil
+	loadedC := write(launchd.CollectorLabel("/old/spelling/c", ""), home)
+	unloadedD := write(launchd.CollectorLabel("/old/spelling/d", ""), home)
+	mac.loaded[launchLabel(loadedC)] = loadedC
+	mac.calls = nil
 	out.Reset()
 	errOut.Reset()
 	if code := Run([]string{"uninstall", "--yes"}, nil, &out, &errOut, env); code != 0 {
 		t.Fatalf("uninstall: exit %d\n%s", code, &errOut)
 	}
-	got := launchd.bootouts()
+	got := mac.bootouts()
 	slices.Sort(got)
 	want := []string{launchLabel(own), launchLabel(loadedC)}
 	slices.Sort(want)
@@ -160,26 +160,26 @@ func TestFailedSetupRestoresEveryRetiredJob(t *testing.T) {
 	plists := map[string][]byte{}
 	var paths []string
 	for i := range 3 {
-		label := hooks.CollectorLabel(fmt.Sprintf("/old/spelling/%d", i), "")
+		label := launchd.CollectorLabel(fmt.Sprintf("/old/spelling/%d", i), "")
 		path := filepath.Join(agents, label+".plist")
-		plist, err := hooks.LaunchAgent("/opt/old/agent-archive", home, label, nil)
+		plist, err := launchd.LaunchAgent("/opt/old/agent-archive", home, label, nil)
 		must(t, err)
 		must(t, local.WriteBytes(path, plist))
 		plists[path] = plist
 		paths = append(paths, path)
 	}
 	own := env.installation(home, userHome).collectorPlist()
-	launchd := &fakeLaunchd{failLoading: own, loaded: map[string]string{
+	mac := &fakeLaunchd{failLoading: own, loaded: map[string]string{
 		launchLabel(paths[0]): paths[0],
 		launchLabel(paths[2]): paths[2],
 	}}
-	stubLaunchctl(t, launchd.run)
+	stubLaunchctl(t, mac.run)
 	var out, errOut bytes.Buffer
 	if code := Run([]string{"setup"}, strings.NewReader(s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir())), &out, &errOut, env); code == 0 {
 		t.Fatal("setup succeeded although the collector could not start")
 	}
-	if len(launchd.bootouts()) != 2 {
-		t.Fatalf("booted out %v; the test no longer retires the running jobs", launchd.bootouts())
+	if len(mac.bootouts()) != 2 {
+		t.Fatalf("booted out %v; the test no longer retires the running jobs", mac.bootouts())
 	}
 	for path, before := range plists {
 		if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, before) {
@@ -187,11 +187,11 @@ func TestFailedSetupRestoresEveryRetiredJob(t *testing.T) {
 		}
 	}
 	for _, path := range []string{paths[0], paths[2]} {
-		if launchd.loaded[launchLabel(path)] != path {
+		if mac.loaded[launchLabel(path)] != path {
 			t.Errorf("%s was running and was not restarted", path)
 		}
 	}
-	if _, running := launchd.loaded[launchLabel(paths[1])]; running {
+	if _, running := mac.loaded[launchLabel(paths[1])]; running {
 		t.Errorf("%s was not running and was started", paths[1])
 	}
 	if setupjournal.TransactionPending(home) {

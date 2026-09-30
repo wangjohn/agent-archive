@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/config"
-	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // installedWithBinary runs setup for Codex and Claude and returns the data
@@ -167,7 +167,7 @@ func TestBackgroundAloneBrokenWhenTheLaunchAgentRunsAMissingFile(t *testing.T) {
 	t.Parallel()
 	home, userHome, env, _ := installedWithBinary(t)
 	stale := filepath.Join(t.TempDir(), "old", "agent-archive")
-	plist, err := hooks.LaunchAgent(stale, home, launchLabel(env.installation(home, userHome).collectorPlist()), nil)
+	plist, err := launchd.LaunchAgent(stale, home, launchLabel(env.installation(home, userHome).collectorPlist()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

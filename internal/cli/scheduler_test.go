@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -22,9 +23,9 @@ func TestLaunchdSchedulerFindsEveryPlistFromRefAndSite(t *testing.T) {
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	in := env.installation(home, userHome)
-	oldLabel := hooks.CollectorLabel(home+"-earlier", "")
+	oldLabel := launchd.CollectorLabel(home+"-earlier", "")
 	earlier := filepath.Join(userHome, "Library", "LaunchAgents", oldLabel+".plist")
-	data, err := hooks.LaunchAgent("/opt/old/agent-archive", home, oldLabel, nil)
+	data, err := launchd.LaunchAgent("/opt/old/agent-archive", home, oldLabel, nil)
 	must(t, err)
 	must(t, local.WriteBytes(earlier, data))
 	if got := in.previousCollectorPlists(); !slices.Equal(got, []string{earlier}) {
@@ -47,7 +48,7 @@ func TestLaunchdSchedulerFindsEveryPlistFromRefAndSite(t *testing.T) {
 // installation's job, or none).
 func TestRecoveryAddressesTheJournalsPlistNotTheCurrentHomes(t *testing.T) {
 	home, sandbox, account := t.TempDir(), t.TempDir(), t.TempDir()
-	label := hooks.CollectorLabel(home, "")
+	label := launchd.CollectorLabel(home, "")
 	plist := filepath.Join(sandbox, "Library", "LaunchAgents", label+".plist")
 	must(t, local.WriteBytes(plist, []byte("new")))
 	must(t, local.WriteBytes(filepath.Join(account, "Library", "LaunchAgents", label+".plist"), []byte("real")))
@@ -149,7 +150,7 @@ func TestEveryJournaledPlistIsOneJobAtOneSite(t *testing.T) {
 		sched := &siteRecorder{fakeScheduler: newFakeScheduler(t, "loaded")}
 		env := Env{Scheduler: sched, AccountHome: func() (string, error) { return "/Users/account", nil }}
 		in := env.installation("/Users/me/archive", userHome)
-		earlier := filepath.Join(userHome, "Library", "LaunchAgents", hooks.CollectorLabel("/Users/me/Archive", "")+".plist")
+		earlier := filepath.Join(userHome, "Library", "LaunchAgents", launchd.CollectorLabel("/Users/me/Archive", "")+".plist")
 		prototype := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
 		for _, plist := range []string{in.collectorPlist(), earlier, prototype} {
 			sched.sites = nil

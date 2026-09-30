@@ -17,6 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -383,7 +384,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	plistPath := env.installation(home, userHome).collectorPlist()
 	// The collector gets the AWS files and PATH this storage was just
 	// verified with; launchd would otherwise start it with none of them.
-	plist, err := hooks.LaunchAgent(executable, home, launchLabel(plistPath), env.collectorEnvironment(next.Storage))
+	plist, err := launchd.LaunchAgent(executable, home, launchLabel(plistPath), env.collectorEnvironment(next.Storage))
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}

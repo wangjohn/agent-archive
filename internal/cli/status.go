@@ -27,6 +27,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -928,12 +929,12 @@ func readBackground(view *statusView, cfg config.Config, home, userHome string, 
 	var environmentProblems []string
 	if cfg.Archive.Enabled {
 		if data, err := os.ReadFile(plist); err == nil {
-			if program, err := hooks.LaunchAgentProgram(data); err == nil {
+			if program, err := launchd.LaunchAgentProgram(data); err == nil {
 				backgroundProgram, backgroundProblem = program, executableProblem(program)
 			}
 			// The collector has only the environment its plist sets, which
 			// may no longer match the files and programs the profile needs.
-			if environment, err := hooks.LaunchAgentEnvironment(data); err == nil {
+			if environment, err := launchd.LaunchAgentEnvironment(data); err == nil {
 				environmentProblems = collectorEnvironmentProblems(cfg.Storage, environment, userHome)
 				view.Warnings = append(view.Warnings, environmentProblems...)
 				if drift := env.awsFilesDrift(cfg.Storage, environment, userHome); drift != "" {

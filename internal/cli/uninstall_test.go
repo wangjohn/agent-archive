@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // installedFixture runs a real S3 setup into fresh temp homes so uninstall
@@ -222,7 +223,7 @@ func TestUninstallRemovesLeftoversWithoutAConfig(t *testing.T) {
 	if err := hooks.Apply(changes); err != nil {
 		t.Fatal(err)
 	}
-	plist, err := hooks.LaunchAgent(executable, home, launchLabel(env.installation(home, userHome).collectorPlist()), nil)
+	plist, err := launchd.LaunchAgent(executable, home, launchLabel(env.installation(home, userHome).collectorPlist()), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
