@@ -346,20 +346,36 @@ paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
   --json                         Print a versioned document ({"schema_version":
                                  1, ...}) of the numbers: unknown is null,
                                  never 0. Usage errors print no JSON.
+  --html                         Write one self-contained web page (inline
+                                 styles and SVG; no script, no requests, works
+                                 in light and dark and prints) to stdout, or
+                                 to --output. Counts and names only. Not with
+                                 --json
+  --output FILE                  With --html, write the page to FILE (mode
+                                 0600) instead of stdout
+  --force                        With --output, replace FILE if it exists
+  --include-project-names        With --html, name the real projects; by
+                                 default the page says project A, project B,
+                                 ... so it can be shared
 Example: agent-archive stats --since 2026-09-01 --by project
+Example: agent-archive stats --html --output stats.html
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--by` | a value | — |
 | `--days` | a value | `30` |
+| `--force` | no value | — |
 | `--harness` | a value | — |
 | `--hook-captured` | no value | — |
+| `--html` | no value | — |
 | `--imported` | no value | — |
+| `--include-project-names` | no value | — |
 | `--json` | no value | — |
 | `--model` | a value | — |
 | `--no-cache` | no value | — |
 | `--no-pager` | no value | — |
+| `--output` | a value | — |
 | `--prices` | a value | — |
 | `--since` | a value | — |
 

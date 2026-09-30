@@ -116,6 +116,17 @@ In Go tests, everything goes through injection:
   prices are `internal/stats/prices.json`, dated and versioned; update the
   file (and its `as_of` and `version`) from the pages in its `sources` when
   list prices change.
+- `internal/statshtml` (the `stats --html` page) is a pure function of the
+  `stats.Stats` it is passed, so its tests compute stats from synthetic
+  metadata and need no isolation. Every page a test renders goes through
+  `checkPage`: strict XML parsing, an allowlist of elements, no script, event
+  handler, link or other request, unique ids, and a stylesheet that fetches
+  nothing. `TestHostileNamesAreInertText` renders names built to break out
+  of markup and `TestPaletteContrast` checks the colors' WCAG contrast in both
+  themes from the stylesheet itself. The page goldens are in
+  `internal/statshtml/testdata/` (`go test ./internal/statshtml -update`);
+  look at a changed page in a browser, light and dark and at phone width,
+  before accepting a diff.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in

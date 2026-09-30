@@ -67,8 +67,12 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 	noCache := fs.Bool("no-cache", false, "download every metadata sidecar instead of reusing unchanged ones from the local metadata cache")
 	noPager := fs.Bool("no-pager", false, "print directly to the terminal; do not page through $PAGER")
 	jsonOut := fs.Bool("json", false, "print a versioned JSON document of the numbers")
+	htmlFlags := addStatsHTMLFlags(fs)
 	if !fs.parseFlagsOnly(args) {
 		return 2
+	}
+	if code := htmlFlags.validate(fs, *jsonOut, env.isTerminal(stdout)); code != 0 {
+		return code
 	}
 	daysSet := false
 	fs.Visit(func(f *flag.Flag) {
@@ -116,7 +120,7 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		return 1
 	}
 	stopReading := func() {}
-	if !*jsonOut {
+	if !*jsonOut && !htmlFlags.toStdout() {
 		stopReading = startActivity(stdout, "Reading sessions…")
 	}
 	listed, err := reader.ListRecent(context.Background(), store, archiveSessionsPrefix, opts.filter, 0,
@@ -141,6 +145,9 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		return printJSON(stdout, stderr, statsDocument{
 			Version: statsSchemaVersion, GeneratedAt: now, Filters: filters, Stats: computed,
 		})
+	}
+	if htmlFlags.html {
+		return htmlFlags.write(stdout, stderr, computed, filters, now, statsEmptyMessage(computed, filters, len(sessions) > 0))
 	}
 	if computed.Coverage.Sessions == 0 {
 		terminal.Println(stdout, newStatsView(stdout, env).wrap(statsEmptyMessage(computed, filters, len(sessions) > 0)))

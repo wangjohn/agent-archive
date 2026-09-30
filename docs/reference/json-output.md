@@ -121,6 +121,9 @@ is unchanged, and it prints a deprecation note on stderr.
 }
 ```
 
+(`stats --html` writes a web page for people; it is not a format to parse.
+Use `--json` in scripts.)
+
 `stats` prints how you use your agents over a window of calendar days ending
 today, with the period of the same length before it beside it, from session
 metadata only. The document is the statistics engine's result with its fields
