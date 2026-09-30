@@ -241,7 +241,9 @@ func agentEnv(values map[string]string) func(string) (string, bool) {
 }
 
 // Run by an agent, --to with no selector hands off that agent's session,
-// even when another session is newer.
+// even when another session is newer, and whether or not the agent's shell is
+// a terminal: taking the caller's own session asks nothing, so it works while
+// the agent variable has switched prompts off.
 func TestHandoffToUsesTheCallingSession(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
@@ -261,6 +263,11 @@ func TestHandoffToUsesTheCallingSession(t *testing.T) {
 		_, errOut, code := runHandoff(t, env, "--to", "cursor")
 		if code != 0 || !strings.Contains(errOut, "runs in, "+tc.want) || !strings.Contains(*document, tc.prompt) {
 			t.Fatalf("%s: code=%d stderr=%s\n%s", tc.variable, code, errOut, *document)
+		}
+		*document = ""
+		out, errOut, code := runPicker(t, env, "q\n", "--to", "cursor")
+		if code != 0 || strings.Contains(out, "to hand off") || !strings.Contains(errOut, "runs in, "+tc.want) || !strings.Contains(*document, tc.prompt) {
+			t.Fatalf("%s on a terminal: code=%d stderr=%s\n%s", tc.variable, code, errOut, out)
 		}
 	}
 }
@@ -315,6 +322,13 @@ func TestHandoffToWithoutSelectorPicksOnATerminal(t *testing.T) {
 	out, errOut, code = runHandoff(t, f.env, "--to", "claude")
 	if code != 2 || out != "" || *document != "" || !strings.Contains(errOut, noCurrentSessionMessage) {
 		t.Fatalf("off a terminal: code=%d stderr=%s", code, errOut)
+	}
+	// An agent whose session is not registered here gets no picker either,
+	// even on a terminal: its variable switches prompts off.
+	f.env.LookupEnv = agentEnv(map[string]string{"CLAUDE_CODE_SESSION_ID": "unregistered"})
+	out, errOut, code = runPicker(t, f.env, "1\n", "--to", "claude")
+	if code != 2 || strings.Contains(out, "to hand off") || *document != "" || !strings.Contains(errOut, noCurrentSessionMessage) {
+		t.Fatalf("in an agent: code=%d stderr=%s\n%s", code, errOut, out)
 	}
 }
 

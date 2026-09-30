@@ -175,9 +175,11 @@ type Env struct {
 	// means the macOS defaults plus $TMPDIR; tests set it because their
 	// files live in one.
 	BackfillTempDirs []string
-	// IsTerminal reports whether stdin or stdout is an interactive
-	// terminal. backfill asks for confirmation only on one, and redraws its
-	// progress line only on one. Defaults to checking the file descriptor.
+	// IsTerminal reports whether stdin or stdout is a terminal. backfill
+	// redraws its progress line only on one; whether a command may also ask
+	// questions there is Env.interactive, which the
+	// AGENT_ARCHIVE_NONINTERACTIVE switch can turn off. Defaults to checking
+	// the file descriptor.
 	IsTerminal func(any) bool
 	// RunPager runs a pager command with stdin as its input and stdout/
 	// stderr as its output, until it exits or ctx is cancelled. list and
@@ -409,6 +411,9 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		stdin = strings.NewReader("")
 	}
 	if len(args) == 0 {
+		if !nonInteractiveSettingUsable(args, stderr, env) {
+			return 2
+		}
 		if browseInteractive(env, stdin, stdout) && !notSetUp(env) {
 			return runListCommand(nil, stdin, stdout, stderr, env)
 		}
@@ -421,6 +426,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 	}
 	if handled, code := commandPreflight(args, stdout, stderr); handled {
 		return code
+	}
+	// After the preflight, which answers `list --help` and its kind without
+	// touching the environment, so the setting can still be looked up.
+	if !nonInteractiveSettingUsable(args, stderr, env) {
+		return 2
 	}
 
 	switch args[0] {
