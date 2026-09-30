@@ -139,6 +139,40 @@ func TestEnvLaunchdRefusesAPlistNoRefAndSiteName(t *testing.T) {
 	}
 }
 
+// A setup plans with the user home (Env.jobState) and commits and recovers
+// with the plist its journal records (envLaunchd), so both must name every
+// plist a release journals as the same job at the same site, however $HOME
+// is spelled; the refusal above never reaches one of them.
+func TestEveryJournaledPlistIsOneJobAtOneSite(t *testing.T) {
+	t.Parallel()
+	for _, userHome := range []string{"/Users/me", "/Users/me/", "/Users/me//", "/Users/./me/../me", "/", "me", "./me/", "."} {
+		sched := &siteRecorder{fakeScheduler: newFakeScheduler(t, "loaded")}
+		env := Env{Scheduler: sched, AccountHome: func() (string, error) { return "/Users/account", nil }}
+		in := env.installation("/Users/me/archive", userHome)
+		earlier := filepath.Join(userHome, "Library", "LaunchAgents", hooks.CollectorLabel("/Users/me/Archive", "")+".plist")
+		prototype := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
+		for _, plist := range []string{in.collectorPlist(), earlier, prototype} {
+			sched.sites = nil
+			sched.forget()
+			if got := env.jobState(userHome, plist); got != "loaded" {
+				t.Errorf("$HOME %q: jobState(%s) = %q", userHome, plist, got)
+			}
+			if got := env.launchd().JobState(plist); got != "loaded" {
+				t.Errorf("$HOME %q: the journal's JobState(%s) = %q", userHome, plist, got)
+			}
+			must(t, env.unloadJob(userHome, plist))
+			must(t, env.launchd().Unload(plist))
+			ref := string(jobRef(plist))
+			if want := []string{"state " + ref, "state " + ref, "unload " + ref, "unload " + ref}; !slices.Equal(sched.all(), want) {
+				t.Errorf("$HOME %q: scheduler calls %q, want %q", userHome, sched.all(), want)
+			}
+			if !slices.Equal(sched.sites, slices.Repeat(sched.sites[:1], len(sched.sites))) {
+				t.Errorf("$HOME %q: %s is addressed at sites %q", userHome, plist, sched.sites)
+			}
+		}
+	}
+}
+
 // siteRecorder is a fakeScheduler that also records the user home of each
 // call's site, in order.
 type siteRecorder struct {
@@ -204,5 +238,12 @@ func TestLaunchdSchedulerChangesIgnoreTheCallersCancellation(t *testing.T) {
 		if !ok || got.err != nil || got.left < tc.min || got.left > tc.max {
 			t.Errorf("launchctl %s: ran %v, context error %v, %v to its deadline; want it run, uncancelled, with between %v and %v", tc.verb, ok, got.err, got.left, tc.min, tc.max)
 		}
+	}
+
+	// Asking changes nothing, so a question alone is the caller's to cancel.
+	delete(calls, "print")
+	launchdScheduler{}.jobState(ctx, site, ref)
+	if got := calls["print"]; got.err == nil {
+		t.Errorf("launchctl print for jobState ran uncancelled with %v to its deadline", got.left)
 	}
 }

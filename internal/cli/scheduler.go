@@ -77,15 +77,21 @@ func (e Env) scheduler() scheduler {
 	return launchdScheduler{}
 }
 
+// userSite is the site of the user home userHome, spelled as plistJob spells
+// the site of a plist in it (cleaned: $HOME may end in a separator), so a
+// setup that plans with one and commits with the other names its job at one
+// site.
+func userSite(userHome string) schedulerSite { return schedulerSite{filepath.Clean(userHome)} }
+
 // jobState is the state of the job plist defines, for callers that hold the
 // plist's path.
 func (e Env) jobState(userHome, plist string) string {
-	return e.scheduler().jobState(context.Background(), schedulerSite{userHome}, jobRef(plist))
+	return e.scheduler().jobState(context.Background(), userSite(userHome), jobRef(plist))
 }
 
 // unloadJob stops the job plist defines (see scheduler.unload).
 func (e Env) unloadJob(userHome, plist string) error {
-	return e.scheduler().unload(context.Background(), schedulerSite{userHome}, jobRef(plist))
+	return e.scheduler().unload(context.Background(), userSite(userHome), jobRef(plist))
 }
 
 // launchd is e's scheduler as internal/setupjournal drives it: the same one
@@ -104,8 +110,10 @@ type envLaunchd struct{ scheduler scheduler }
 
 // plistJob is the site and ref of the job plist defines: plist is
 // <user home>/Library/LaunchAgents/<label>.plist, as every plist setup
-// records is. Any other path names no job the scheduler can be asked about,
-// and is refused rather than taken for another plist.
+// records is (each release has built them with filepath.Join, which this
+// gives back whatever $HOME's spelling). Any other path names no job the
+// scheduler can be asked about, and is refused rather than taken for another
+// plist.
 func plistJob(plist string) (schedulerSite, schedulerRef, error) {
 	site, ref := schedulerSite{filepath.Dir(filepath.Dir(filepath.Dir(plist)))}, jobRef(plist)
 	if site.launchAgent(ref) != plist {
