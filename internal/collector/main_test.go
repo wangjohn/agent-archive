@@ -11,7 +11,13 @@ import (
 // TestMain keeps every sweep of leftover Cursor database copies (each
 // collector pass runs one) in a temporary folder of the test run's own,
 // never the user's real snapshot folder.
+//
+// It also unsets XDG_CONFIG_HOME, which places Cursor's database on Linux,
+// so no test is sent to the developer's real Cursor data.
 func TestMain(m *testing.M) {
+	if err := os.Unsetenv("XDG_CONFIG_HOME"); err != nil {
+		panic(err)
+	}
 	dir, err := os.MkdirTemp("", "collector-snapshots-")
 	if err != nil {
 		panic(err)

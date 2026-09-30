@@ -303,7 +303,7 @@ func TestStatsRejectsBadFlags(t *testing.T) {
 		{[]string{"--prices", filepath.Join(dir, "missing.json")}, "--prices:"},
 		{[]string{"--prices", notPrices}, "--prices:"},
 		{[]string{"extra"}, `unexpected argument "extra"`},
-		{[]string{"--html"}, "unknown flag --html"},
+		{[]string{"--pdf"}, "unknown flag --pdf"},
 	} {
 		out, errOut, code := runStats(t, env, 0, append([]string{"--json"}, tc.args...)...)
 		if code != 2 || out != "" || !strings.Contains(errOut, tc.want) || !strings.Contains(errOut, "run agent-archive stats --help") {
@@ -613,7 +613,7 @@ func TestStatsPagesOnATerminal(t *testing.T) {
 	publishStatsFixture(t, mem)
 	var pagerInput string
 	env.IsTerminal = func(any) bool { return true }
-	env.RunPager = func(_ context.Context, command string, stdin io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, command string, _ []string, stdin io.Reader, _, _ io.Writer) error {
 		data, err := io.ReadAll(stdin)
 		pagerInput = string(data)
 		return err

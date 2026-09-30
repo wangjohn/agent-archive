@@ -31,7 +31,7 @@ func discardDraft(home string, draft setupDraft, active config.Config, env Env) 
 		if ref == active.Storage.R2CredentialRef {
 			continue
 		}
-		kc, err := env.keychain()
+		kc, err := env.credentialStore()
 		if err != nil {
 			return err
 		}

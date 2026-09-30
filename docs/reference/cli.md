@@ -133,7 +133,7 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 Guide: [Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md).
 
 ```text
-Usage: agent-archive status [APP] [--verbose] [--json]
+Usage: agent-archive status [APP] [--verbose] [--json] [--no-pager]
 
 Show local capture evidence, background health, and a next step.
 No conversations are printed and no cloud request is made.
@@ -144,6 +144,7 @@ session and a table of its projects.
 --verbose adds each project's progress, skill evidence, imports and
 every error, then a Details section with the codes, exact times, full
 paths and raw errors behind each line.
+On a terminal, status is paged through $PAGER unless --no-pager.
 --json prints the same status as a versioned JSON document. In it,
 storage_verified_at is when setup's storage check last passed, and
 storage_access_confirmed_at is the latest confirmation of access (by
@@ -156,6 +157,7 @@ Example: agent-archive status --json
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--json` | no value | — |
+| `--no-pager` | no value | — |
 | `--verbose` | no value | — |
 
 ## agent-archive sync
@@ -283,9 +285,11 @@ activity counts, skills, subagents, and capture gaps. --json prints the
 metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
 several matches on a terminal open a picker. With no SESSION_ID on a
 terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit. Nothing is asked when
-AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give a
-SESSION_ID.
+its transcript, Enter or b to go back, or q to quit. On a terminal, the
+summary and transcript are paged; in the default less, scroll with the mouse
+wheel, arrows, or space, search with /, and quit with q. Nothing is asked
+when AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give
+a SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -300,8 +304,8 @@ SESSION_ID.
                         session extends with origin, imported_at, and
                         started_at_source; with --transcript, then the
                         normalized conversation
-  --no-pager            Print a transcript directly; do not page through
-                        $PAGER
+  --no-pager            Print the summary or transcript directly; do not
+                        page through $PAGER
   --normalized          Deprecated: the same as --transcript --json
 Example: agent-archive show SESSION_ID --transcript
 ```
@@ -354,20 +358,39 @@ paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
   --json                         Print a versioned document ({"schema_version":
                                  1, ...}) of the numbers: unknown is null,
                                  never 0. Usage errors print no JSON.
+  --html                         Write one self-contained web page (inline
+                                 styles and SVG; no script, no requests, works
+                                 in light and dark and prints) to stdout, or
+                                 to --output. Counts and names only. Not with
+                                 --json
+  --output FILE                  With --html, write the page to FILE (mode
+                                 0600, replaced in one step) instead of stdout
+  --force                        With --output, replace FILE if it is an
+                                 ordinary file that exists
+  --include-names                With --html, name the real projects, skills,
+                                 MCP servers and models the built-in price
+                                 table does not list; by default the page
+                                 says project A, skill A, MCP server A,
+                                 model A, ... so it can be shared
 Example: agent-archive stats --since 2026-09-01 --by project
+Example: agent-archive stats --html --output stats.html
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--by` | a value | — |
 | `--days` | a value | `30` |
+| `--force` | no value | — |
 | `--harness` | a value | — |
 | `--hook-captured` | no value | — |
+| `--html` | no value | — |
 | `--imported` | no value | — |
+| `--include-names` | no value | — |
 | `--json` | no value | — |
 | `--model` | a value | — |
 | `--no-cache` | no value | — |
 | `--no-pager` | no value | — |
+| `--output` | a value | — |
 | `--prices` | a value | — |
 | `--since` | a value | — |
 
@@ -492,11 +515,10 @@ prints conversation content, filtered as it is for the archive: injected
 instructions and credentials removed, tool output trimmed, edit bodies left
 out. A session on this machine is read from its transcript now, without
 waiting for a sync; otherwise it is downloaded from the archive.
-With no selector on a terminal, pick an archived session from the same
-numbered session browser as show. Without a terminal, or when
-AGENT_ARCHIVE_NONINTERACTIVE is on (automatic inside coding agents), give a
-SESSION_ID, --latest, or --file PATH. The picker lists archived sessions
-only; --latest can also find a local session that has not uploaded yet.
+With no selector on a terminal, pick a session from a numbered list of this
+Mac's sessions (including ones not yet uploaded) and archived ones, newest
+first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
+(automatic inside coding agents), give a SESSION_ID, --latest, or --file PATH.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -517,8 +539,10 @@ only; --latest can also find a local session that has not uploaded yet.
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
   --to NAME             Launch local claude, codex, or cursor with the handoff
-                        in a private temporary file. Reads only a local session;
-                        requires the target CLI installed on this Mac
+                        in a private temporary file; requires the target CLI
+                        installed on this Mac. With no selector, hands off
+                        the Claude Code, Codex, or Cursor session it runs in,
+                        or picks one on a terminal
 Example: agent-archive handoff
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
@@ -566,7 +590,7 @@ Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
 
 ```text
 Usage: agent-archive purge plan [--mode unreferenced|old-filter]
-       [--before-filter VERSION]
+       [--before-filter VERSION] [--no-pager]
        agent-archive purge apply PLAN [--yes]
 
 Create a private five-minute deletion plan, then review its exact keys.
@@ -599,17 +623,19 @@ Guide: [Privacy cleanup](../security/privacy.md#after-a-filter-upgrade).
 
 ```text
 Usage: agent-archive purge plan [--mode unreferenced|old-filter]
-       [--before-filter VERSION]
+       [--before-filter VERSION] [--no-pager]
 
 Read metadata and list source objects without deleting anything. Old-filter
 mode selects only unreferenced sources whose filter version is below VERSION;
-both modes report still-current older-filter sessions separately.
+both modes report still-current older-filter sessions separately. On a
+terminal, the plan is paged through $PAGER unless --no-pager.
 ```
 
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--before-filter` | a value | — |
 | `--mode` | a value | `unreferenced` |
+| `--no-pager` | no value | — |
 
 ## agent-archive version
 
