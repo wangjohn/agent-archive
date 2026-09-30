@@ -273,7 +273,11 @@ func setup(stdin io.Reader, out, errOut io.Writer, env Env, verbose bool, skills
 	}
 	// The committed setting and this run's flag decide, never a saved draft's.
 	draft.Config.NoSkills = skills.noSkills(existing.NoSkills)
-	return runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
+	err = runSetupDraft(p, draft, home, userHome, exe, env, existing, installed, reviewed, discoveries, discoveredAt, errOut, known, verbose)
+	// However setup ended, a bucket it created and did not keep is not left
+	// without a word.
+	noteUnusedCreatedBuckets(p, home)
+	return err
 }
 
 func runSetupDraft(p *prompter, draft setupDraft, home, userHome, exe string, env Env, existing config.Config, installed bool, reviewed, discoveries map[string]applicationDiscovery, discoveredAt time.Time, errOut io.Writer, known func(config.Config) []backfill.KnownProject, verbose bool) error {

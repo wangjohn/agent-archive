@@ -117,8 +117,7 @@ already have a profile with credentials, and R2 otherwise.
   AWS SDK; setup never prints or saves them.
 
   **Create a new S3 bucket.** Choose "Amazon S3: create a new bucket for
-  me" at the storage question (or type `new` where setup says the
-  profile can see no buckets). After the profile, setup asks for the region
+  me" at the storage question. After the profile, setup asks for the region
   (the profile's, unless you type another) and a name, suggesting
   `agent-archive-` and eight random characters, since bucket names are
   shared by everyone on AWS. A suggested name that turns out to be in use
@@ -142,12 +141,18 @@ already have a profile with credentials, and R2 otherwise.
   the S3 console; it deletes nothing in that case. If the bucket was created
   but Block Public Access could not be turned on, setup does not use it: it
   offers to try again, to delete the empty bucket (after you type its name),
-  or to stop. When it succeeds, setup prints the runtime
-  policy for the new bucket and recommends attaching it to a separate IAM
-  identity and choosing that profile for storage, because the profile that
-  created the bucket is what setup saves and it is usually far broader than
-  archiving needs. Guided creation is interactive only; `setup --yes` still
-  takes an existing bucket.
+  or to stop. When it succeeds, setup prints the runtime policy for the new
+  bucket (not for a folder name with characters other than letters, digits
+  and `. _ - /`; it says so and points at the guide) and asks which AWS
+  profile archiving should use. The profile that created the bucket is the
+  default, and it is usually far broader than archiving needs: attach the
+  policy to a separate IAM identity, save it as its own profile, and choose
+  that profile here to archive with less. The usual storage check then
+  verifies whichever you chose. If you choose storage again later in the same
+  run, setup offers the bucket it already created instead of making another,
+  and if setup ends without using a bucket it created, it says so and that
+  the bucket is empty, so you can delete it. Guided creation is interactive
+  only; `setup --yes` still takes an existing bucket.
 
 Setup checks the connection in two steps. First it lists at most one object
 under `.setup-test/`, which writes nothing, so a wrong account ID, key, or

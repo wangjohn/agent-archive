@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -28,14 +29,18 @@ import (
 // storageChoiceS3New is the storage menu's key for creating an S3 bucket.
 const storageChoiceS3New = "s3-new"
 
-// newBucketWord, typed where setup asks for a bucket name of a profile that
-// can see none, asks for a new bucket instead. No real bucket can have it: a
-// name this short is long taken.
-const newBucketWord = "new"
-
-// errWantsNewBucket is promptBucket's answer when the person typed
-// newBucketWord.
-var errWantsNewBucket = errors.New("a new bucket was asked for")
+// createdS3Bucket is a bucket this setup run created, kept in memory for the
+// run so that setup can offer it again instead of creating a second one,
+// and say at the end that it is there.
+type createdS3Bucket struct {
+	name   string
+	region string
+	// profile created it; archiveProfile is the one chosen to archive with.
+	profile        string
+	archiveProfile string
+	// secured is set once Block Public Access is on and read back.
+	secured bool
+}
 
 // BucketCreator creates and secures a bucket in one AWS profile's account.
 // It holds the profile's credentials only inside the SDK client.
@@ -49,7 +54,8 @@ type BucketCreator interface {
 	DeleteBucket(ctx context.Context, bucket string) error
 	// ReadBlockPublicAccess reads the bucket's Block Public Access settings
 	// back: allOn says whether all four are on, and the error is why they
-	// could not be read.
+	// could not be read. (InspectPrivacy cannot say a refused read from an
+	// empty one.)
 	ReadBlockPublicAccess(ctx context.Context, bucket string) (allOn bool, err error)
 	// InspectPrivacy reads the bucket's public access controls back.
 	InspectPrivacy(ctx context.Context, bucket string) storage.PrivacyReport
@@ -108,6 +114,9 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 		terminal.Printf(p.out, "Profile %s has no credentials configured, so it can't create a bucket. Pick an existing bucket instead.\n", profile)
 		return false, nil
 	}
+	if used, err := offerCreatedBucket(p, cfg); err != nil || used {
+		return used, err
+	}
 	terminal.Printf(p.out, "Setup will create a bucket in the AWS account of profile %s, using that profile now, and turn on Block Public Access for it.\n", profile)
 	terminal.Println(p.out, "That needs permission to create buckets and set Block Public Access, which day-to-day archiving does not.")
 	region, err := promptRegion(p, "Region for the new bucket (for example us-east-1)", firstNonEmpty(cfg.Region, profileRegion))
@@ -127,12 +136,91 @@ func createS3Bucket(p *prompter, cfg *credentials.Config, env Env, profileRegion
 	if err != nil || !created {
 		return false, err
 	}
+	p.createdBuckets = append(p.createdBuckets, createdS3Bucket{name: name, region: region, profile: profile})
 	if secured, err := secureNewBucket(p, creator, name, profile); err != nil || !secured {
 		return false, err
 	}
-	cfg.Bucket, cfg.Region = name, region
+	rememberSecuredBucket(p, name)
 	printRuntimePolicyAdvice(p, name, firstNonEmpty(cfg.Prefix, defaultPrefix))
+	// The profile that created the bucket is what setup would save, and it can
+	// do far more than archiving needs: ask which profile archiving should use.
+	terminal.Println(p.out, p.style.hang("", "Setup saves the profile you used to create the bucket unless you choose another now. To use a narrower one, attach the policy above to it first."))
+	if _, _, err := chooseS3Profile(p, cfg, env); err != nil {
+		return false, err
+	}
+	cfg.Bucket, cfg.Region = name, region
+	setArchiveProfile(p, name, cfg.AWSProfile)
 	return true, nil
+}
+
+// offerCreatedBucket offers a bucket this run already created and secured
+// with the profile in cfg (or the one chosen to archive with) instead of
+// creating another, and records it in cfg when it is taken.
+func offerCreatedBucket(p *prompter, cfg *credentials.Config) (bool, error) {
+	for _, b := range p.createdBuckets {
+		if !b.secured || (cfg.AWSProfile != b.profile && cfg.AWSProfile != b.archiveProfile) {
+			continue
+		}
+		terminal.Printf(p.out, "Setup already created bucket %s in %s in this run; it is empty.\n", b.name, b.region)
+		use, err := p.yesNo("Use it instead of creating another bucket?", true)
+		if err != nil {
+			return false, err
+		}
+		if use {
+			cfg.Bucket, cfg.Region = b.name, b.region
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func rememberSecuredBucket(p *prompter, name string) {
+	for i := range p.createdBuckets {
+		if p.createdBuckets[i].name == name {
+			p.createdBuckets[i].secured = true
+		}
+	}
+}
+
+func setArchiveProfile(p *prompter, name, profile string) {
+	for i := range p.createdBuckets {
+		if p.createdBuckets[i].name == name {
+			p.createdBuckets[i].archiveProfile = profile
+		}
+	}
+}
+
+func forgetCreatedBucket(p *prompter, name string) {
+	kept := p.createdBuckets[:0]
+	for _, b := range p.createdBuckets {
+		if b.name != name {
+			kept = append(kept, b)
+		}
+	}
+	p.createdBuckets = kept
+}
+
+// noteUnusedCreatedBuckets says, once setup is over, which buckets it created
+// that the saved configuration does not use, so none is left behind without
+// the person knowing. A bucket that is in use is not mentioned.
+func noteUnusedCreatedBuckets(p *prompter, home string) {
+	if len(p.createdBuckets) == 0 {
+		return
+	}
+	active := ""
+	if cfg, found, err := config.Load(home); err == nil && found && cfg.Storage.Provider == credentials.ProviderS3 {
+		active = cfg.Storage.Bucket
+	}
+	for _, b := range p.createdBuckets {
+		if b.name == active {
+			continue
+		}
+		note := "Setup created bucket " + b.name + " in " + b.region + "; it is empty. Delete it in the S3 console if you don't want it."
+		if !b.secured {
+			note += " Block Public Access is not on for it."
+		}
+		terminal.Println(p.out, note)
+	}
 }
 
 // standardRegion matches the region names of the standard AWS partition: a
@@ -231,6 +319,14 @@ func noteCreateFailure(p *prompter, profile, name string, err error) {
 	const fallback = " For now, pick an existing bucket instead."
 	d := storage.Diagnose(err)
 	switch {
+	case storage.IsCredentialsCheck(err):
+		// Not a refusal to create: the check that the credentials work failed.
+		if d.Cause == storage.CauseNoCredentials {
+			terminal.Println(p.out, "Couldn't check the credentials of profile "+profile+" with AWS. "+d.Explanation)
+			terminal.Println(p.out, strings.ReplaceAll(d.Fix, "<profile>", profile)+fallback)
+		} else {
+			terminal.Println(p.out, "Couldn't check the credentials of profile "+profile+" with AWS ("+discoveryReason(err)+"). Check that they are current, then run setup again."+fallback)
+		}
 	case errors.Is(err, storage.ErrBucketMayExist):
 		terminal.Printf(p.out, "S3 didn't answer clearly, so the bucket %s may have been created. Check the S3 console for it, and delete it there if you don't want it; setup won't touch it.%s\n", name, fallback)
 	case errors.Is(err, storage.ErrTooManyBuckets):
@@ -332,6 +428,19 @@ const bucketSettleAttempts = 3
 // tests do not wait.
 var bucketSettleDelay = time.Second
 
+// settle calls try until it reports it is finished, at most
+// bucketSettleAttempts times, bucketSettleDelay apart.
+func settle(try func() (finished bool)) {
+	for attempt := range bucketSettleAttempts {
+		if attempt > 0 {
+			time.Sleep(bucketSettleDelay)
+		}
+		if try() {
+			return
+		}
+	}
+}
+
 // blockPublicAccess turns Block Public Access on for bucket and reads it
 // back, and returns why not when it could not, or "" on success. A
 // read-back the profile may not make (no s3:GetBucketPublicAccessBlock) is a
@@ -341,28 +450,34 @@ func blockPublicAccess(p *prompter, creator BucketCreator, bucket string) string
 	ctx, cancel := context.WithTimeout(context.Background(), 2*bucketCreateTimeout)
 	defer cancel()
 	var err error
-	for attempt := range bucketSettleAttempts {
-		if attempt > 0 {
-			time.Sleep(bucketSettleDelay)
-		}
+	settle(func() bool {
 		err = creator.BlockPublicAccess(ctx, bucket)
-		if err == nil || storage.Diagnose(err).Cause != storage.CauseNoSuchBucket {
-			break
-		}
-	}
+		return err == nil || storage.Diagnose(err).Cause != storage.CauseNoSuchBucket
+	})
 	if err != nil {
 		if storage.Diagnose(err).Cause == storage.CauseAccessDenied {
 			return "setup couldn't turn on Block Public Access: the profile needs s3:PutBucketPublicAccessBlock, and an organization policy can also forbid it."
 		}
 		return "setup couldn't turn on Block Public Access (" + discoveryReason(err) + ")."
 	}
-	allOn, readErr := readBackBlockPublicAccess(ctx, creator, bucket)
+	// The settings are read once, by the call that can tell a refused read from
+	// an empty one, and retried only for the latter. With all four on the
+	// bucket is verified private (that is InspectPrivacy's own rule, so it is
+	// not asked again); otherwise InspectPrivacy looks for a public policy or
+	// ACL, which is a failure.
+	var allOn bool
+	var readErr error
+	settle(func() bool {
+		allOn, readErr = creator.ReadBlockPublicAccess(ctx, bucket)
+		return readErr == nil || storage.Diagnose(readErr).Cause == storage.CauseAccessDenied
+	})
 	if readErr == nil && !allOn {
 		return "Block Public Access reads back with a setting still off."
 	}
-	report := creator.InspectPrivacy(ctx, bucket)
-	if report.State == "public_or_risky" {
-		return "it still looks public after Block Public Access was turned on (" + privacyReasonText(report.Reason) + ")."
+	if readErr != nil {
+		if report := creator.InspectPrivacy(ctx, bucket); report.State == "public_or_risky" {
+			return "it still looks public after Block Public Access was turned on (" + privacyReasonText(report.Reason) + ")."
+		}
 	}
 	switch {
 	case readErr == nil:
@@ -373,21 +488,6 @@ func blockPublicAccess(p *prompter, creator BucketCreator, bucket string) string
 		p.warn("Block Public Access was turned on, but setup couldn't read it back to confirm (" + discoveryReason(readErr) + "). Setup checks again at the review.")
 	}
 	return ""
-}
-
-// readBackBlockPublicAccess reads the bucket's Block Public Access settings,
-// trying again a few times when the answer could be a bucket S3 does not
-// show yet, but not when the profile is simply not allowed to read them.
-func readBackBlockPublicAccess(ctx context.Context, creator BucketCreator, bucket string) (allOn bool, err error) {
-	for attempt := range bucketSettleAttempts {
-		if attempt > 0 {
-			time.Sleep(bucketSettleDelay)
-		}
-		if allOn, err = creator.ReadBlockPublicAccess(ctx, bucket); err == nil || storage.Diagnose(err).Cause == storage.CauseAccessDenied {
-			break
-		}
-	}
-	return allOn, err
 }
 
 // deleteNewBucket deletes the empty bucket this run created. When S3 refuses,
@@ -401,6 +501,7 @@ func deleteNewBucket(p *prompter, creator BucketCreator, bucket, profile string)
 		terminal.Printf(p.out, "  aws s3api delete-bucket --bucket %s --profile %s\n", bucket, profile)
 		return
 	}
+	forgetCreatedBucket(p, bucket)
 	terminal.Printf(p.out, "Deleted bucket %s.\n", bucket)
 }
 
@@ -496,6 +597,19 @@ func runtimePolicy(bucket, prefix string) string {
 	).Replace(runtimePolicyTemplate)
 }
 
+// policyPrefix is what setup will put into a policy as the folder: letters,
+// digits and . _ - / only. Nothing that is special in an IAM policy or in
+// JSON (a quote, *, ?, $, whitespace, a control character) is substituted into
+// the template.
+var policyPrefix = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+
+// policyPrefixOK reports whether prefix, without its slashes at the ends, is
+// something setup will put into a policy.
+func policyPrefixOK(prefix string) bool {
+	trimmed := strings.Trim(prefix, "/")
+	return trimmed != "" && policyPrefix.MatchString(trimmed)
+}
+
 // printRuntimePolicyAdvice prints the least-privilege policy for the new
 // bucket and recommends a separate runtime profile, since the profile used
 // to create the bucket is usually much broader than archiving needs and is
@@ -503,7 +617,13 @@ func runtimePolicy(bucket, prefix string) string {
 func printRuntimePolicyAdvice(p *prompter, bucket, prefix string) {
 	terminal.Println(p.out, "")
 	terminal.Println(p.out, p.style.bold("Recommended: archive with a narrower profile"))
-	terminal.Println(p.out, p.style.hang("", "Setup will save the profile you just used, which can do far more than archiving needs. Attach this policy to a separate IAM user or role, save its access key as its own AWS profile, then run setup again and choose that profile for storage:"))
+	if !policyPrefixOK(prefix) {
+		terminal.Println(p.out, p.style.hang("", "The folder name "+fmt.Sprintf("%q", prefix)+" has characters setup won't put into a policy (only letters, digits and . _ - / are used), so it doesn't print one. Write the policy yourself from the bucket permissions guide, for bucket "+bucket+":"))
+		terminal.Println(p.out, "https://github.com/wangjohn/agent-archive/blob/main/docs/security/bucket-permissions.md")
+		terminal.Println(p.out, "")
+		return
+	}
+	terminal.Println(p.out, p.style.hang("", "The profile you just used can do far more than archiving needs. Attach this policy to a separate IAM user or role, and save its access key as its own AWS profile:"))
 	terminal.Println(p.out, "")
 	terminal.Println(p.out, runtimePolicy(bucket, prefix))
 	terminal.Println(p.out, "")

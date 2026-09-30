@@ -114,9 +114,9 @@ its name first, and S3 refuses to delete a bucket that holds objects.
 Setup does not set a bucket policy, ACLs, a lifecycle rule, or default
 encryption (S3 already encrypts new buckets with SSE-S3), and it never
 creates IAM users or access keys. It does not keep a separate credential for
-creation: the profile that created the bucket is the one it saves, so attach
-the policy above to a separate identity and choose that profile for storage
-when you can.
+creation: it asks which profile archiving should use, defaulting to the one
+that created the bucket, so attach the policy above to a separate identity
+and choose that profile when you can.
 
 Setup sets no lifecycle rule on purpose. A rule expires objects one by one
 by their own age, while agent-archive's retention deletes a whole session

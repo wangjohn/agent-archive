@@ -95,7 +95,8 @@ func (a *BucketAdmin) CreateBucket(ctx context.Context, name, region string) err
 }
 
 // checkNameFree returns nil when no bucket has the name, ErrBucketNameTaken
-// when one does, and the error itself when the answer is unclear.
+// when one does (or when a 403 or 301 cannot be told from that, see
+// checkCredentials), and the error itself when the answer is unclear.
 func (a *BucketAdmin) checkNameFree(ctx context.Context, name string) error {
 	_, err := a.client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(name)})
 	switch {
@@ -113,16 +114,32 @@ func (a *BucketAdmin) checkNameFree(ctx context.Context, name string) error {
 }
 
 // credentialsCheckError is a failed credentials check: the client's
-// credentials are refused, expired, missing, or could not be checked.
+// credentials are refused, expired or missing.
 type credentialsCheckError struct{ err error }
 
 func (e *credentialsCheckError) Error() string { return "storage: check credentials: " + e.err.Error() }
 
 func (e *credentialsCheckError) Unwrap() error { return e.err }
 
+// NewCredentialsCheckError marks err as the failure of a check that the
+// credentials work, so that callers explain it as one (see
+// IsCredentialsCheck) and Diagnose names the credentials.
+func NewCredentialsCheckError(err error) error { return &credentialsCheckError{err: err} }
+
+// IsCredentialsCheck reports whether err is a failed check that the
+// credentials work, as opposed to a refusal of the operation itself.
+func IsCredentialsCheck(err error) bool {
+	var check *credentialsCheckError
+	return errors.As(err, &check)
+}
+
 // checkCredentials asks STS who the client's credentials belong to, a call
-// that needs no permission, so it fails only when the credentials do not
-// work. The STS client comes from the same AWS configuration as the S3 one,
+// that needs no permission, and returns an error only when STS (or the
+// lack of credentials) shows that the credentials do not work (see
+// credentialFailure). Any other outcome is inconclusive and returns nil: an
+// STS that cannot be reached, a proxy that answers 403, a server error, an
+// answer setup does not recognize. The caller then keeps to the hedged
+// reading of its 403. The STS client comes from the same AWS configuration as the S3 one,
 // so it takes the configuration's global endpoint override (AWS_ENDPOINT_URL
 // or a profile's endpoint_url), a service-specific one for STS
 // (AWS_ENDPOINT_URL_STS), and the FIPS and dual-stack settings, and never an
@@ -134,10 +151,46 @@ func (a *BucketAdmin) checkCredentials(ctx context.Context) error {
 		o.Logger = logging.Nop{}
 		o.Retryer = aws.NopRetryer{}
 	})
-	if _, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{}); err != nil {
-		return &credentialsCheckError{err: err}
+	if _, err := client.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{}); err != nil && credentialFailure(err) {
+		return NewCredentialsCheckError(err)
 	}
 	return nil
+}
+
+// credentialFailure reports whether err from STS's GetCallerIdentity says the
+// credentials themselves are unusable: STS refused them (an unknown key, a bad
+// signature, an expired token), or none could be had for the request (no
+// profile or keys, an expired sign-in, a credential process or role that
+// failed). A network failure, a timeout, a server error, or an answer of any
+// other kind is not.
+func credentialFailure(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId", "SignatureDoesNotMatch", "InvalidAccessKeyId", "InvalidToken":
+			return true
+		}
+	}
+	if isNetworkError(err) {
+		return false
+	}
+	// Fetching credentials for the request failed in a call of its own
+	// (an AssumeRole, an SSO token): an operation error inside the operation
+	// error of the request.
+	var op *smithy.OperationError
+	if errors.As(err, &op) {
+		var inner *smithy.OperationError
+		if errors.As(op.Unwrap(), &inner) {
+			return true
+		}
+	}
+	var response *smithyhttp.ResponseError
+	if errors.As(err, &response) && response.Response != nil {
+		// STS answered, with something that is not a refusal of the keys.
+		return false
+	}
+	_, noCredentials := diagnoseCredentials(err)
+	return noCredentials
 }
 
 // diagnoseCredentialsCheck explains a failed credentials check in the terms

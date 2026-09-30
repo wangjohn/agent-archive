@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/smithy-go"
 )
 
 // bucketCall is one request the fake S3 server received.
@@ -236,12 +237,13 @@ func TestCreateBucketUnexpectedNameCheckAnswerStopsBeforeCreating(t *testing.T) 
 	}
 }
 
-// A credentials check that got a server error is not retried: one attempt.
+// A credentials check that got a server error is not retried: one attempt,
+// and its answer is inconclusive, so the name reads as in use.
 func TestCreateBucketCredentialsCheckMakesOneAttempt(t *testing.T) {
 	t.Parallel()
 	requests, err := createWith(t, "us-east-1", bucketAnswers{head: status(http.StatusForbidden), sts: status(http.StatusInternalServerError)})
-	if err == nil || errors.Is(err, ErrBucketNameTaken) {
-		t.Fatalf("err = %v, want the credentials check's failure", err)
+	if !errors.Is(err, ErrBucketNameTaken) {
+		t.Fatalf("err = %v, want ErrBucketNameTaken", err)
 	}
 	posts := 0
 	for _, request := range requests {
@@ -251,6 +253,52 @@ func TestCreateBucketCredentialsCheckMakesOneAttempt(t *testing.T) {
 	}
 	if posts != 1 {
 		t.Fatalf("%d STS requests, want 1: %q", posts, requests)
+	}
+}
+
+// Only a credential-class answer from STS is a credentials failure. An STS
+// that cannot be reached, a proxy's own 403, a server error, or an answer
+// that is not about the keys leaves the 403 to the name check: in use.
+func TestCreateBucketInconclusiveCredentialsCheckReadsAsInUse(t *testing.T) {
+	t.Parallel()
+	s3Server := httptest.NewServer(&bucketRecorder{reply: bucketAnswers{head: status(http.StatusForbidden)}.reply})
+	defer s3Server.Close()
+	unreachable := httptest.NewServer(http.NotFoundHandler())
+	unreachableURL := unreachable.URL
+	unreachable.Close()
+	for _, tc := range []struct {
+		name string
+		sts  string
+		ans  func(http.ResponseWriter)
+	}{
+		{"STS unreachable", unreachableURL, nil},
+		{"proxy answers AccessDenied", "", apiError(http.StatusForbidden, "AccessDenied")},
+		{"STS server error", "", status(http.StatusServiceUnavailable)},
+		{"unrecognized STS answer", "", apiError(http.StatusBadRequest, "SomethingNew")},
+	} {
+		endpoint := tc.sts
+		if tc.ans != nil {
+			sts := httptest.NewServer(&bucketRecorder{reply: bucketAnswers{sts: tc.ans}.reply})
+			defer sts.Close()
+			endpoint = sts.URL
+		}
+		cfg := aws.Config{
+			Region:       "us-east-1",
+			Credentials:  awscredentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "secret", ""),
+			BaseEndpoint: aws.String(endpoint),
+		}
+		err := NewBucketAdmin(NewClient(cfg, s3Server.URL, true, 1), cfg).CreateBucket(context.Background(), "agent-archive-1", "us-east-1")
+		if !errors.Is(err, ErrBucketNameTaken) || IsCredentialsCheck(err) {
+			t.Errorf("%s: err = %v, want ErrBucketNameTaken and no credentials failure", tc.name, err)
+		}
+	}
+}
+
+func TestIsCredentialsCheck(t *testing.T) {
+	t.Parallel()
+	wrapped := NewCredentialsCheckError(&smithy.GenericAPIError{Code: "AccessDenied", Message: "synthetic"})
+	if !IsCredentialsCheck(wrapped) || !IsCredentialsCheck(fmt.Errorf("outer: %w", wrapped)) || IsCredentialsCheck(errors.New("other")) {
+		t.Fatal("IsCredentialsCheck does not follow the wrapped error")
 	}
 }
 

@@ -309,19 +309,7 @@ func promptS3ExistingBucket(p *prompter, cfg *credentials.Config, env Env, faile
 		noteListFailure(p, profile, err)
 	}
 	var listErr error
-	saved := cfg.Bucket
-	for {
-		cfg.Bucket, listErr, err = promptBucket(p, finder, profile, saved)
-		if !errors.Is(err, errWantsNewBucket) {
-			break
-		}
-		// Asked for where a profile that can see no buckets is asked for a
-		// name. When creating fails, setup asks for the name again.
-		if created, e := createS3Bucket(p, cfg, env, profileRegion, noCredentials); e != nil || created {
-			return e
-		}
-	}
-	if err != nil {
+	if cfg.Bucket, listErr, err = promptBucket(p, finder, profile, cfg.Bucket); err != nil {
 		return err
 	}
 	// Without working credentials or a network, the region lookup would run
@@ -376,11 +364,8 @@ func promptBucket(p *prompter, finder BucketFinder, profile, saved string) (buck
 		return bucket, listErr, err
 	}
 	if len(names) == 0 {
-		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name, or %s to create one.\n", profile, newBucketWord)
+		terminal.Printf(p.out, "Profile %s can't see any buckets. Type the bucket name; to create one instead, choose \"Amazon S3: create a new bucket for me\" at the storage question.\n", profile)
 		bucket, err = p.required("Bucket name", saved)
-		if err == nil && bucket == newBucketWord {
-			return "", nil, errWantsNewBucket
-		}
 		return bucket, nil, err
 	}
 	def := saved

@@ -351,7 +351,7 @@ func TestS3LocationFallsBackToTyping(t *testing.T) {
 		{
 			"no buckets", fakeBuckets{regions: map[string]string{"typed": "us-west-2"}},
 			"\ntyped\n", "us-west-2",
-			[]string{"Profile work can't see any buckets. Type the bucket name, or new to create one.\nBucket name:"},
+			[]string{"Profile work can't see any buckets. Type the bucket name; to create one instead, choose \"Amazon S3: create a new bucket for me\" at the storage question.\nBucket name:"},
 		},
 		{
 			"region denied, profile's used", fakeBuckets{names: []string{"typed"}, regionErr: errAccessDenied},
