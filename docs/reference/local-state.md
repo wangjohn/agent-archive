@@ -23,8 +23,11 @@ S3 credentials stay in your AWS profile.
   index, subagent candidates, removal records, refresh-skips, and
   `status.json`. Its `Store` holds the rules for each file and the
   per-session locks (`request-locks/`) that keep a hook and the collector
-  from interleaving; `state.OwnedEntries()` lists every top-level entry it can
-  create. It never reads transcripts or talks to storage.
+  from interleaving. A hook waits only a second for one, so writers sync to
+  disk outside it: a writer syncs its temporary file first and holds the lock
+  only to check and rename, unless other writers overtook it on every earlier
+  attempt. `state.OwnedEntries()` lists every
+  top-level entry it can create. It never reads transcripts or talks to storage.
 - **`internal/config`** owns `config.json`; **`internal/cli`** owns setup's
   files, logs, diagnostics, the collector-lock record, and `handoffs/`;
   **`internal/backfill`** owns `imports/`; **`internal/reader`** owns

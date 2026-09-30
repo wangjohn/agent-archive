@@ -232,8 +232,14 @@ func (s *Store) removeSubagentCandidatesWithoutWaiting(id string) (busy bool, er
 
 // subagentCandidatesForSession lists the candidates naming id as the
 // subagent or its parent.
+//
+// Its callers hold the session's request lock, which hooks wait only a
+// second for, so the scan does not wait for the lock of a candidate that
+// does not decode: a held one is left for a later scan to move aside, and
+// when it is the session's own the forget fails, for the next attempt to
+// retry.
 func (s *Store) subagentCandidatesForSession(id string) ([]string, error) {
-	candidates, issues, err := s.ScanSubagentCandidates()
+	candidates, issues, err := s.scanSubagentCandidates(0)
 	if err != nil {
 		return nil, err
 	}

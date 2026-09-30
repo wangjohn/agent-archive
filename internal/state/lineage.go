@@ -285,7 +285,9 @@ func (s *Store) OrphanChangedAt(archiveSessionID string) time.Time {
 // ForgetOrphan forgets an orphaned session's local state (see
 // OrphanedSessions), under its request lock, unless a registration for it has
 // appeared meanwhile: a hook registering the native session again reuses its
-// archive ID. forgotten reports whether it did.
+// archive ID. forgotten reports whether it did. Like ForgetIdleSession, it
+// does not wait for a subagent candidate's lock under the request lock: a
+// held one fails the attempt with ErrBusy, for the next sweep to retry.
 func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error) {
 	if !safeFileComponent(archiveSessionID) {
 		return false, errors.New("archive session ID is not a safe file name component")
@@ -298,7 +300,14 @@ func (s *Store) ForgetOrphan(archiveSessionID string) (forgotten bool, err error
 	if _, err := os.Lstat(s.registrationPath(archiveSessionID)); !errors.Is(err, os.ErrNotExist) {
 		return false, err
 	}
-	if err := s.ForgetSession(archiveSessionID, ""); err != nil {
+	busy, err := s.removeSubagentCandidatesWithoutWaiting(archiveSessionID)
+	switch {
+	case err != nil:
+		return false, err
+	case busy:
+		return false, fmt.Errorf("forget session %q: a subagent of it is being recorded: %w", archiveSessionID, local.ErrBusy)
+	}
+	if err := s.forgetSession(archiveSessionID, "", false); err != nil {
 		return false, err
 	}
 	return true, nil
