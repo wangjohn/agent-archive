@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -115,16 +116,14 @@ func TestSessionLabelsPullRequestsAreCapped(t *testing.T) {
 func TestSessionLabelsSkipsMalformedPullRequestLinks(t *testing.T) {
 	t.Parallel()
 	bundle := claudeLabelLines(t)
-	for _, record := range []map[string]any{
+	bundle.NativeRecords = append(bundle.NativeRecords, []map[string]any{
 		{"type": "pr-link", "prNumber": float64(1), "prRepository": "no-slash"},
 		{"type": "pr-link", "prNumber": float64(0), "prRepository": "example-org/widget-tools"},
 		{"type": "pr-link", "prNumber": 1.5, "prRepository": "example-org/widget-tools"},
 		{"type": "pr-link", "prRepository": "example-org/widget-tools"},
 		{"type": "pr-link", "prNumber": float64(7), "prRepository": "example-org/widget-tools", "prUrl": "https://evil.test/x"},
 		{"type": "pr-link", "prNumber": 8, "prRepository": "example-org/widget-tools"},
-	} {
-		bundle.NativeRecords = append(bundle.NativeRecords, record)
-	}
+	}...)
 	want := []PullRequestLink{
 		{Repository: "example-org/widget-tools", Number: 7},
 		{Repository: "example-org/widget-tools", Number: 8},
@@ -137,7 +136,9 @@ func TestSessionLabelsSkipsMalformedPullRequestLinks(t *testing.T) {
 func TestSessionLabelsBranch(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name, branch, want string
+		name   string
+		branch string
+		want   string
 	}{
 		{"a branch", "fix/oauth-callback", "fix/oauth-callback"},
 		{"a detached checkout", "HEAD", ""},
@@ -252,7 +253,7 @@ func TestDisplayTitleFallsBackToTitle(t *testing.T) {
 func TestLatestPRPrefersLinksThenGitActivity(t *testing.T) {
 	t.Parallel()
 	created := func(repository string, number int) GitEvent {
-		return GitEvent{Kind: GitEventPRCreated, Source: GitEventSourceShell, Repository: repository, PRNumber: number, URL: "https://github.com/" + repository + "/pull/" + fmt.Sprint(number)}
+		return GitEvent{Kind: GitEventPRCreated, Source: GitEventSourceShell, Repository: repository, PRNumber: number, URL: "https://github.com/" + repository + "/pull/" + strconv.Itoa(number)}
 	}
 	m := Metadata{GitActivity: []GitEvent{
 		created("example-org/widget-tools", 10),
