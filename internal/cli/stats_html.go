@@ -109,12 +109,7 @@ func (f *statsHTMLFlags) toStdout() bool { return f.html && f.output == "" }
 // (with a note on stderr, as handoff does). The page is rendered before
 // anything is created, so a failure leaves no file behind.
 func (f *statsHTMLFlags) write(stdout, stderr io.Writer, computed stats.Stats, filters statsFilters, now time.Time, emptyMessage string) int {
-	page, err := statshtml.Render(computed, statshtml.Options{
-		GeneratedAt:  now,
-		IncludeNames: f.includeNames,
-		Filters:      statshtml.Filters{Harness: filters.Harness, Model: filters.Model, Origin: filters.Origin},
-		EmptyMessage: emptyMessage,
-	})
+	page, err := renderStatsHTML(computed, filters, now, f.includeNames, emptyMessage)
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: stats: %v\n", err)
 		return 1
@@ -134,6 +129,17 @@ func (f *statsHTMLFlags) write(stdout, stderr io.Writer, computed stats.Stats, f
 	}
 	terminal.Printf(stderr, "stats: wrote %s (%d bytes); open it in a browser\n", f.output, len(page))
 	return 0
+}
+
+// renderStatsHTML is the web page for computed: --html's, and the one the
+// interactive screen's h saves.
+func renderStatsHTML(computed stats.Stats, filters statsFilters, now time.Time, includeNames bool, emptyMessage string) ([]byte, error) {
+	return statshtml.Render(computed, statshtml.Options{
+		GeneratedAt:  now,
+		IncludeNames: includeNames,
+		Filters:      statshtml.Filters{Harness: filters.Harness, Model: filters.Model, Origin: filters.Origin},
+		EmptyMessage: emptyMessage,
+	})
 }
 
 // writeStatsHTMLFile writes the page to path with mode 0600, whatever the
