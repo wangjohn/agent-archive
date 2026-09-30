@@ -65,8 +65,12 @@ const (
 	// capture-diagnostics.json: each hook-side record and setup's prune.
 	DiagnosticsLockName = "diagnostics.lock"
 	// pruneDiagnosticsWait is setup's wait. Holders keep the lock for one
-	// small file write, so this only has to outlast a burst of hooks.
-	pruneDiagnosticsWait = 2 * time.Second
+	// small file write, but that write syncs to disk, and on a busy Mac one
+	// sync can take several seconds (7.8s measured under two concurrent
+	// `go test -race ./...` runs), so a 2s wait lost to a single hook.
+	// Setup runs on no hook's budget; this bound only keeps a wedged holder
+	// from hanging it.
+	pruneDiagnosticsWait = 30 * time.Second
 )
 
 // hookDiagnosticsWait bounds how long a hook waits for diagnostics.lock. A
