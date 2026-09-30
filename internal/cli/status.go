@@ -27,7 +27,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
@@ -906,48 +906,49 @@ func readInstalledApps(view *statusView, cfg config.Config, home, userHome strin
 	return binaryProblem
 }
 
-// statusBackground is the background collector as status found it: its
-// LaunchAgent's plist, and the program the LaunchAgent runs when that
+// statusBackground is the background collector as status found it: its job,
+// the words its scheduler goes by, and the program the job runs when that
 // program is no longer usable (problem says why; both "" otherwise).
-// environmentProblems say why the environment the LaunchAgent sets cannot
-// load the configured S3 profile.
+// environmentProblems say why the environment the job sets cannot load the
+// configured S3 profile.
 type statusBackground struct {
-	plist               string
+	ref                 scheduler.Ref
+	words               scheduler.Words
 	program             string
 	problem             string
 	environmentProblems []string
 }
 
-// readBackground reads the background collector's launchd state, and what
-// the LaunchAgent actually runs.
+// readBackground reads the background collector's scheduler state, and what
+// its definition actually runs.
 func readBackground(view *statusView, cfg config.Config, home, userHome string, env Env) statusBackground {
-	plist := env.installation(home, userHome).installedCollectorPlist()
-	view.Background = env.jobState(userHome, plist)
+	in := env.installation(home, userHome)
+	ref, words := jobRef(in.installedCollectorPlist()), in.definer().Words()
+	job := env.jobStatus(userHome, ref)
+	view.Background = string(job.State)
 	// launchd reports a job whose program is gone as loaded (it only fails
-	// when it fires), so read the program the LaunchAgent actually runs.
+	// when it fires), so read the program the definition actually runs.
 	backgroundProgram, backgroundProblem := "", ""
 	var environmentProblems []string
 	if cfg.Archive.Enabled {
-		if data, err := os.ReadFile(plist); err == nil {
-			if program, err := launchd.LaunchAgentProgram(data); err == nil {
-				backgroundProgram, backgroundProblem = program, executableProblem(program)
-			}
-			// The collector has only the environment its plist sets, which
-			// may no longer match the files and programs the profile needs.
-			if environment, err := launchd.LaunchAgentEnvironment(data); err == nil {
-				environmentProblems = collectorEnvironmentProblems(cfg.Storage, environment, userHome)
-				view.Warnings = append(view.Warnings, environmentProblems...)
-				if drift := env.awsFilesDrift(cfg.Storage, environment, userHome); drift != "" {
-					view.Warnings = append(view.Warnings, drift)
-				}
+		if job.Program != "" {
+			backgroundProgram, backgroundProblem = job.Program, executableProblem(job.Program)
+		}
+		// The collector has only the environment its definition sets, which
+		// may no longer match the files and programs the profile needs.
+		if job.Env != nil {
+			environmentProblems = collectorEnvironmentProblems(cfg.Storage, job.Env, userHome, in.definer().DefaultPATH())
+			view.Warnings = append(view.Warnings, environmentProblems...)
+			if drift := env.awsFilesDrift(cfg.Storage, job.Env, userHome); drift != "" {
+				view.Warnings = append(view.Warnings, drift)
 			}
 		}
 	}
 	if backgroundProblem != "" {
 		view.Background = backgroundBroken
-		view.Warnings = append(view.Warnings, fmt.Sprintf("The background collector's LaunchAgent runs %s, which is %s, so scheduled collection has stopped.", backgroundProgram, backgroundProblem))
+		view.Warnings = append(view.Warnings, fmt.Sprintf("The background collector's %s runs %s, which is %s, so scheduled collection has stopped.", words.Job, backgroundProgram, backgroundProblem))
 	}
-	return statusBackground{plist: plist, program: backgroundProgram, problem: backgroundProblem, environmentProblems: environmentProblems}
+	return statusBackground{ref: ref, words: words, program: backgroundProgram, problem: backgroundProblem, environmentProblems: environmentProblems}
 }
 
 // scanStaleAfter is how old the last scan may be before status says
@@ -971,7 +972,7 @@ func chooseNextStep(view *statusView, cfg config.Config, home string, env Env, b
 		view.Next = "Run agent-archive setup and include at least one project."
 	}
 	chooseCaptureStep(view)
-	chooseInstallationStep(view, background.plist)
+	chooseInstallationStep(view, background)
 	if !view.Collector.LastScanAt.IsZero() && env.now().Sub(view.Collector.LastScanAt) > scanStaleAfter {
 		view.State = "Needs attention"
 		view.problem = "No scan in over 5 minutes"
@@ -1082,7 +1083,7 @@ func chooseCaptureStep(view *statusView) {
 
 // chooseInstallationStep points at hooks that are not installed, then at a
 // background collector that is not loaded (plist is its LaunchAgent).
-func chooseInstallationStep(view *statusView, plist string) {
+func chooseInstallationStep(view *statusView, background statusBackground) {
 	for _, app := range view.Apps {
 		if app.Hooks != "installed" {
 			view.State = "Needs attention"
@@ -1114,7 +1115,7 @@ func chooseInstallationStep(view *statusView, plist string) {
 		if view.Background == setupjournal.JobAnotherInstallation {
 			// setup refuses to replace that job, so it is not the way out.
 			view.problem = "Another installation's collector has this installation's label"
-			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's launchd label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", launchd.Label(plist))
+			view.Next = fmt.Sprintf("Another agent-archive installation's collector runs under this installation's %s label (%s), and setup will not replace it. Set AGENT_ARCHIVE_HOME to a data directory of this installation's own, or uninstall the other installation.", background.words.Manager, background.ref)
 		}
 	}
 }

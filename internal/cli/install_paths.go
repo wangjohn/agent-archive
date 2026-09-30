@@ -9,6 +9,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
@@ -20,10 +21,13 @@ type installation struct {
 	// accountHome is the account's own home directory from the user
 	// database, which a sandbox that only overrides $HOME does not change.
 	accountHome string
+	// definer is the scheduler that names this installation's job, made when
+	// asked (making one runs nothing, but most callers never need it).
+	definer func() scheduler.Definer
 }
 
 func (e Env) installation(home, userHome string) installation {
-	return installation{home: home, userHome: userHome, accountHome: e.accountHome()}
+	return installation{home: home, userHome: userHome, accountHome: e.accountHome(), definer: func() scheduler.Definer { return e.scheduler() }}
 }
 
 // defaultDataHome is the data directory of the account's own default
@@ -118,20 +122,24 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
-// label is the background collector's launchd label (see
-// launchd.CollectorLabel): the default label only for the default
-// installation.
-func (in installation) label() string {
-	if in.isDefault() {
-		return launchd.LaunchLabel
-	}
-	return launchd.CollectorLabel(local.CanonicalPath(in.home), "")
+// schedulerInstallation is the identity the scheduler derives this
+// installation's job from.
+func (in installation) schedulerInstallation() scheduler.Installation {
+	return scheduler.Installation{DataHome: local.CanonicalPath(in.home), Default: in.isDefault()}
 }
+
+// ref is the background collector's job: the scheduler names it from the
+// installation (launchd's label is the default one only for the default
+// installation).
+func (in installation) ref() scheduler.Ref { return in.definer().Ref(in.schedulerInstallation()) }
+
+// label is the job's ref as text.
+func (in installation) label() string { return string(in.ref()) }
 
 // collectorPlist is the LaunchAgent path of the background collector; its
 // file name is its label.
 func (in installation) collectorPlist() string {
-	return filepath.Join(in.userHome, "Library", "LaunchAgents", in.label()+".plist")
+	return launchd.PlistPath(scheduler.Site{UserHome: in.userHome}, in.ref())
 }
 
 // previousCollectorPlists are the LaunchAgents earlier releases installed
