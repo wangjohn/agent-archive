@@ -21,22 +21,18 @@ const rangeSidecars = 200
 const rangeConcurrency = 16
 
 // listObjects lists everything under listPrefix. When the store can list key
-// ranges and the metadata cache knows enough of the archive to split it, the
+// ranges and the keys known from the metadata cache are enough to split it, the
 // listing is cut into contiguous ranges listed concurrently (planRanges,
 // listRanges); otherwise it is the store's single sequential List. Both
 // return the same objects in the same key order.
-func listObjects(ctx context.Context, store storage.ObjectStore, listPrefix string, cache *MetadataCache) ([]storage.Object, error) {
+func listObjects(ctx context.Context, store storage.ObjectStore, listPrefix string, known []string) ([]storage.Object, error) {
 	span := trace.Start("list objects")
 	defer span.End()
 	ranger, ok := store.(storage.RangeLister)
 	if !ok {
 		return store.List(ctx, listPrefix)
 	}
-	plan := span.Child("plan ranges")
-	known := cache.keys(listPrefix)
 	bounds := planRanges(known)
-	plan.Count("cached sidecars", len(known))
-	plan.End()
 	if len(bounds) == 0 {
 		return store.List(ctx, listPrefix)
 	}

@@ -146,22 +146,30 @@ func (s *MemoryStore) ListPage(ctx context.Context, prefix, continuation string,
 
 // ListRange returns the objects under prefix, with the same prefix rule as
 // List, whose keys are greater than after and at most through (either bound
-// empty means unbounded), sorted by key. It reads the map directly, so a test
-// wrapper that overrides List (to count or rewrite listings) must override
-// ListRange too: a reader lists in ranges once its metadata cache knows a few
-// hundred sidecars.
+// empty means unbounded), sorted by key. It sorts only the keys in range, so
+// many ranges over a large store cost about one sort of it. It reads the map
+// directly, so a test wrapper that overrides List (to count or rewrite
+// listings) must override ListRange too: a reader lists in ranges once its
+// metadata cache knows a few hundred sidecars.
 func (s *MemoryStore) ListRange(ctx context.Context, prefix, after, through string) ([]storage.Object, error) {
-	objects, err := s.List(ctx, prefix)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	out := objects[:0]
-	for _, object := range objects {
-		if object.Key > after && (through == "" || object.Key <= through) {
-			out = append(out, object)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var keys []string
+	for key := range s.objects {
+		if (len(prefix) == 0 || hasPrefixKey(key, prefix)) && key > after && (through == "" || key <= through) {
+			keys = append(keys, key)
 		}
 	}
-	return out, nil
+	sort.Strings(keys)
+	objects := make([]storage.Object, 0, len(keys))
+	for _, key := range keys {
+		obj := s.objects[key]
+		objects = append(objects, storage.Object{Key: key, Size: int64(len(obj.data)), ETag: obj.etag, LastModified: obj.when})
+	}
+	return objects, nil
 }
 
 // Delete removes the object at key; a missing object is not an error.

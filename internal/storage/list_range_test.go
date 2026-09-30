@@ -117,11 +117,12 @@ func TestS3StoreListRangeStartsAfterAndStopsPastThrough(t *testing.T) {
 	if !slices.Equal(objectKeys(got), want) {
 		t.Fatalf("ListRange = %v, want %v", objectKeys(got), want)
 	}
-	// The first request starts after the full bucket key; the second page
-	// (k06, k07, k08) passes through, so no third request is made.
+	// The first request starts after the full bucket key; the second carries
+	// only the continuation token; that page (k06, k07, k08) passes
+	// through, so no third request is made.
 	requests := fake.requestLog()
-	if len(requests) != 2 || requests[0] != "agent-archive/sessions/claude/k02|" {
-		t.Fatalf("requests = %v, want start-after on the first and paging to stop after the second", requests)
+	if len(requests) != 2 || requests[0] != "agent-archive/sessions/claude/k02|" || requests[1] != "|agent-archive/sessions/claude/k05" {
+		t.Fatalf("requests = %v, want start-after on the first only and paging to stop after the second", requests)
 	}
 }
 
