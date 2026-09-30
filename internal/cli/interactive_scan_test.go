@@ -99,6 +99,8 @@ var inputReads = classifiedCalls{
 	// Files, not standard input.
 	"setup_aws.go": {"bufio.NewScanner": 1},
 	"feedback.go":  {"io.ReadAll": 1},
+	// stats --prices: a file the person names, read in full, bounded.
+	"stats.go": {"io.ReadAll": 1},
 }
 
 // terminalImports are packages whose only use here is to ask about, or

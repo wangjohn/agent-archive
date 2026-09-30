@@ -164,6 +164,12 @@ func TestParsePriceTable(t *testing.T) {
 		"duplicate id":     `{"version":"v","as_of":"2026-09-01","models":[{"id":"a","input_per_mtok":1,"output_per_mtok":1,"cache_read_per_mtok":1,"cache_write_per_mtok":1},{"id":"A[1m]","input_per_mtok":1,"output_per_mtok":1,"cache_read_per_mtok":1,"cache_write_per_mtok":1}]}`,
 		"empty id":         `{"version":"v","as_of":"2026-09-01","models":[{"id":" ","input_per_mtok":1,"output_per_mtok":1,"cache_read_per_mtok":1,"cache_write_per_mtok":1}]}`,
 		"trailing garbage": validTable + `{}`,
+		// A currency and a version are printed on the screen: a code, and a label.
+		"long currency":     strings.Replace(validTable, `"as_of"`, `"currency":"ABCDEFGHIJ","as_of"`, 1),
+		"currency symbol":   strings.Replace(validTable, `"as_of"`, `"currency":"$","as_of"`, 1),
+		"digits in code":    strings.Replace(validTable, `"as_of"`, `"currency":"U5D","as_of"`, 1),
+		"control in code":   strings.Replace(validTable, `"as_of"`, `"currency":"U\u001bD","as_of"`, 1),
+		"very long version": strings.Replace(validTable, `custom-1`, strings.Repeat("v", 65), 1),
 	} {
 		if _, err := ParsePriceTable([]byte(doc)); err == nil {
 			t.Errorf("%s: accepted", name)
