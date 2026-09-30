@@ -1220,8 +1220,9 @@ func TestGuidedR2SitsBeforeTheInstructions(t *testing.T) {
 // signalStub stands in for Env.Interrupts and counts how many signal
 // handlers are installed and removed.
 type signalStub struct {
-	ch            chan os.Signal
-	starts, stops atomic.Int32
+	ch     chan os.Signal
+	starts atomic.Int32
+	stops  atomic.Int32
 }
 
 func newSignalStub() *signalStub { return &signalStub{ch: make(chan os.Signal, 4)} }
