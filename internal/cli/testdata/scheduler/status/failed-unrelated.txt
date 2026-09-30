@@ -1,0 +1,5 @@
+background: unknown
+state: Needs attention
+code: needs_attention
+next_action: Run agent-archive setup to restore the background collector.
+screen: ! Background collector state unknown   launchctl couldn't say

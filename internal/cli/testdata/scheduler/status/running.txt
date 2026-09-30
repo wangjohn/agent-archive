@@ -1,0 +1,5 @@
+background: running
+state: Waiting for capture
+code: awaiting_capture
+next_action: Review hook approval in Claude Code, then start a new session in @PROJECT@.
+screen: ✓ Background collector on       no scan yet
