@@ -83,6 +83,19 @@ follow [Semantic Versioning](https://semver.org/).
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
   summary viewed stays in scrollback. Bare `show` now keeps browsing like
   `list` instead of exiting after one pick.
+- The session browser and the session pickers (`list`, bare `show`,
+  `handoff`, `show --json` without an ID, an ambiguous `show QUERY`) fit the
+  window. The browser reads keys as you press them, without Enter: the
+  mouse wheel, the arrows, PgUp and PgDn (or space, `n`, `p`), and Home and
+  End scroll the list and a long summary at once, with a status line saying
+  where you are (Top, a percentage, Bottom) and, in the summary, how many
+  lines are above and below. Type a row number or short ID and press Enter
+  to open it; in the summary, `t`, `m` (the whole summary in the pager),
+  `b`, and `q` act on their own key, and Enter or Backspace go back
+  to the list. The wheel's arrows are no longer echoed into the prompt as
+  `^[[A`. The other pickers still read a line and show a list taller than
+  the terminal a page at a time (`n` and `p` move; any row number or short
+  ID still works).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never

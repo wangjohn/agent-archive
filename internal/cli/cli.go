@@ -100,6 +100,11 @@ type Env struct {
 	// exitProcess, set only by tests, replaces os.Exit where the session
 	// browser exits on a signal.
 	exitProcess func(int)
+	// openKeys, set only by tests, stands in for stdin read a key at a time
+	// on the session browser's screens (see keyTerminal), or reports that
+	// keys cannot be read, which keeps the browser reading lines. Defaults
+	// to stdin itself when it is a terminal.
+	openKeys func(stdin io.Reader) (keyTerminal, bool)
 	// backfillCheckpoint, set only by tests, is called inside the
 	// configuration commit between writing the batch file and saving the
 	// configuration ("batch saved"), after the commit ("committed"), after
@@ -188,6 +193,11 @@ type Env struct {
 	// AGENT_ARCHIVE_NONINTERACTIVE switch can turn off. Defaults to checking
 	// the file descriptor.
 	IsTerminal func(any) bool
+	// TerminalSize reports the columns and rows of the terminal out writes
+	// to, and ok=false when out is not a terminal or its size is unknown.
+	// The session browser and pickers read it before each redraw to fit
+	// the window. Defaults to asking the terminal.
+	TerminalSize func(out io.Writer) (width, height int, ok bool)
 	// RunPager runs a pager command with environment ("NAME=value") added
 	// to the process's own, stdin as its input and stdout/stderr as its
 	// output, until it exits or ctx is cancelled. list, show, status, and
