@@ -175,11 +175,14 @@ func foldExtraModels(byModel map[string]*TokenUsage) {
 	if len(byModel) <= MaxModelTokens {
 		return
 	}
+	// A model's weight is its tokens, reasoning excluded (it is inside
+	// Output). Each count is at most maxTokenCount, so four of them cannot
+	// overflow an int.
 	weight := func(u *TokenUsage) int {
 		sum := 0
 		for _, count := range []*int{u.Input, u.Output, u.CacheRead, u.CacheWrite} {
 			if count != nil {
-				sum = min(sum+*count, maxTokenCount)
+				sum += *count
 			}
 		}
 		return sum
