@@ -27,12 +27,19 @@ follow [Semantic Versioning](https://semver.org/).
   counted by server). Codex's `cache_write_input_tokens` now fills
   `counts.cache_write_tokens`. Existing sessions gain the new fields on the
   next metadata refresh; nothing is re-uploaded but the metadata.
+- `AGENT_ARCHIVE_NONINTERACTIVE=1` stops agent-archive from asking anything:
+  no session picker or browser, no pager, no confirmation prompt (`purge
+  apply` needs `--yes`), even on a terminal. It is on by itself when `CLAUDE_CODE_SESSION_ID`,
+  `CODEX_THREAD_ID`, or `CURSOR_AGENT` is set, so a coding agent whose shell is
+  a pseudo-terminal never hangs on a prompt; `AGENT_ARCHIVE_NONINTERACTIVE=0`
+  turns it off, and a refusal caused by it says so.
 - On a terminal, `handoff` asks where to continue once the session is
   chosen: an installed agent (default: `handoff.default_to` in `config.json`,
   else another agent than the session's), print (paged when long), copy to
   the clipboard, or write to a file. Pipes, `--output`, `--format json`, and
   `--no-preamble` print as before, so `codex "$(agent-archive handoff
-  --latest)"` still works.
+  --latest)"` still works, and so does a run inside an agent, where
+  `handoff` never asks anything.
 - `handoff --to claude|codex|cursor` starts that agent without asking, with
   the filtered session record, local or archived. With no session named, run
   inside Claude Code, Codex, or Cursor, it hands off that agent's own
@@ -44,8 +51,9 @@ follow [Semantic Versioning](https://semver.org/).
   Cursor get the checkout with `--cd` and `--workspace`. Cursor's `agent`
   CLI is tried before `cursor-agent`. The launched agent does not inherit
   the calling agent's session variables.
-- On a terminal the agent runs there. Without one, as when an agent runs
-  `handoff --to`, it opens in a new tmux window, iTerm2 or Ghostty tab, or
+- On a terminal the agent runs there. Without one, or inside an agent (or
+  with `AGENT_ARCHIVE_NONINTERACTIVE=1`) even when its shell is a
+  pseudo-terminal, it opens in a new tmux window, iTerm2 or Ghostty tab, or
   Terminal window, and `handoff` returns; `--here` and `--new-window` choose
   explicitly. Where no window can be opened it prints the command to run
   instead.

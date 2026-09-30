@@ -28,7 +28,10 @@ agent than the one you are in: Codex from Claude Code, Claude Code from Codex
 or Cursor.
 
 The skill runs `agent-archive handoff --to <agent>`, which opens the agent in
-a new tab or window (see [what happens](#what-happens)) and returns at once. The agent you are in reports where it opened:
+a new tab or window (see [what happens](#what-happens)) and returns at once.
+Inside an agent `handoff` never prompts, even when the agent's shell is a
+pseudo-terminal, so it cannot hang there. The agent you are in reports where
+it opened:
 
 ```text
 handoff: opened codex in a new iTerm2 tab
@@ -93,8 +96,12 @@ agent-archive handoff SESSION_ID --to cursor
 ```
 
 `handoff` asks where to continue only on a terminal, and not with `--to`,
-`--output`, `--format json`, or `--no-preamble`. See
-[scripting and other outputs](#scripting-and-other-outputs).
+`--output`, `--format json`, or `--no-preamble`. Inside Claude Code, Codex,
+or Cursor (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is
+set), or with `AGENT_ARCHIVE_NONINTERACTIVE=1`, it never asks anything, even
+on a terminal; `AGENT_ARCHIVE_NONINTERACTIVE=0` turns asking back on. See
+[scripting and other outputs](#scripting-and-other-outputs) and
+[configuration](../reference/configuration.md#environment-variables).
 
 ## What happens
 
@@ -114,12 +121,14 @@ agent-archive handoff SESSION_ID --to cursor
    how to get more context (see
    [what the receiving agent is told](#what-the-receiving-agent-is-told)).
 4. **It opens here or in a new tab.** On a terminal, the agent runs there and
-   `handoff` returns when it exits. Anywhere else, as when an agent runs
-   `handoff --to` for you, it opens without asking in a new tmux window when
-   `$TMUX` is set, else a new iTerm2 or Ghostty tab (by `$TERM_PROGRAM`),
-   else a new Terminal window, and `handoff` returns at once. `--here` forces
-   this terminal (and fails without one); `--new-window` opens a new window
-   or tab even from a terminal. When the agent exits with an error there, the
+   `handoff` returns when it exits. Anywhere else, including inside an agent
+   (or with `AGENT_ARCHIVE_NONINTERACTIVE=1`) even when its shell is a
+   pseudo-terminal, as when an agent runs `handoff --to` for you, it opens
+   without asking in a new tmux window when `$TMUX` is set, else a new
+   iTerm2 or Ghostty tab (by `$TERM_PROGRAM`), else a new Terminal window,
+   and `handoff` returns at once. `--here` forces this terminal (and fails
+   without one, or inside an agent); `--new-window` opens a new window or
+   tab even from a terminal. When the agent exits with an error there, the
    window waits for Enter so you can read it. When no window can be opened
    (not macOS and not inside tmux), `handoff` exits 1 and prints the command
    to paste into a terminal; it never runs the agent without one.
@@ -198,8 +207,9 @@ The source session was active just now; continue in the same checkout? [y/N/w]
 ```
 
 `y` continues, `N` (the default) cancels with nothing launched, and `w`
-creates a worktree as `--worktree` does. Without a terminal, `handoff` prints
-a warning and continues. When an agent hands off its own session with
+creates a worktree as `--worktree` does. Without a terminal, or inside an
+agent (or with `AGENT_ARCHIVE_NONINTERACTIVE=1`), `handoff` prints a warning
+and continues. When an agent hands off its own session with
 `--to`, as `/handoff` does, it is active by definition; a note is printed
 and nothing is asked.
 
@@ -213,14 +223,20 @@ left out, and `--harness` narrows the list. When the archive cannot be read
 (offline, say), the picker lists this Mac's sessions and says why archived
 ones are missing. Quit with `q` without producing a handoff. In a script or
 pipeline, pass a session ID, `--latest`, or `--file`.
+The picker never opens when a coding agent runs the command, even in a
+pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
+`CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns
+prompts off, and `handoff` without a selector is a usage error (exit 2)
+instead. `AGENT_ARCHIVE_NONINTERACTIVE=0` turns them back on; see
+[configuration](../reference/configuration.md#environment-variables).
 
 With `--to` and no selector, run from inside an agent, `handoff` hands off
 the session it is running in without asking: the one Claude Code names in
 `CLAUDE_CODE_SESSION_ID` or Codex in `CODEX_THREAD_ID`. Cursor names no
 session, so inside Cursor (`CURSOR_AGENT` is set) it takes the newest Cursor
 session for the current directory, as `--latest --harness cursor` would.
-Otherwise a terminal gets the picker, and anything else is told to name a
-session.
+That is not a prompt, so it works while prompts are off. Otherwise a terminal
+gets the picker, and anything else is told to name a session.
 
 A session registered on this Mac is read from its transcript as it is now, so
 a handoff right after you stop needs no sync and works while collection is

@@ -80,7 +80,7 @@ func isLess(command string) bool {
 // AGENT_ARCHIVE_PAGER or PAGER, or the value "cat", disables paging, as does
 // --no-pager or a non-terminal stdout.
 func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) (command string, page bool) {
-	if noPager || !env.isTerminal(stdout) {
+	if noPager || !env.interactive(stdout) {
 		return "", false
 	}
 	if value, set := env.lookupEnv("AGENT_ARCHIVE_PAGER"); set {

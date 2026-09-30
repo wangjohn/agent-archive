@@ -25,12 +25,12 @@ import (
 const activeSourceWindow = 2 * time.Minute
 
 // worktreeDependencies is what choosing the launch directory uses: the
-// source's registration and clock for the active check, a terminal to ask
-// on, and git for --worktree.
+// source's registration and clock for the active check, whether it may ask
+// (env.interactive), and git for --worktree.
 type worktreeDependencies interface {
 	readHome() (string, error)
 	now() time.Time
-	isTerminal(any) bool
+	interactive(any) bool
 	lookupEnv(string) (string, bool)
 	runGit(ctx context.Context, dir string, args ...string) ([]byte, error)
 }
@@ -41,7 +41,7 @@ var errHandoffCanceled = errors.New("canceled; nothing was launched")
 // prepareLaunchDir returns the directory the agent starts in: dir, or with
 // --worktree (or the answer w to the active-source question) the matching
 // directory of a new git worktree beside dir's checkout. stdin is only
-// checked for a terminal; the answer is read from answers, which a command
+// checked for whether it may be asked on; the answer is read from answers, which a command
 // asking several questions shares between them (a *bufio.Reader of the
 // default size is used as is, so typed-ahead answers are not lost).
 func prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (string, error) {
@@ -56,9 +56,10 @@ func prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target hand
 }
 
 // checkActiveSource looks for a source session another agent may still be
-// working in, in the checkout the launch would share with it. On a terminal
-// it asks whether to continue there, cancel, or use a worktree instead;
-// elsewhere it warns and continues.
+// working in, in the checkout the launch would share with it. When it may
+// ask (a terminal, with AGENT_ARCHIVE_NONINTERACTIVE off) it asks whether to
+// continue there, cancel, or use a worktree instead; otherwise, as inside an
+// agent, it warns and continues.
 func checkActiveSource(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (useWorktree bool, err error) {
 	// Only this machine's own sessions have a checkout here to share.
 	if target.source != "local" || target.lastActivityAt.IsZero() {
@@ -79,7 +80,7 @@ func checkActiveSource(env worktreeDependencies, opts handoffOptions, target han
 		terminal.Println(stderr, "handoff: note: the session being handed off is the agent running this command, in the same checkout; both can edit its files until one stops (--worktree gives the new agent its own checkout)")
 		return false, nil
 	}
-	if !env.isTerminal(stdin) || !env.isTerminal(stderr) {
+	if !env.interactive(stdin) || !env.interactive(stderr) {
 		terminal.Printf(stderr, "handoff: warning: the source session was active %s in this checkout; both agents can edit its files (--worktree gives the new agent its own checkout)\n", age)
 		return false, nil
 	}

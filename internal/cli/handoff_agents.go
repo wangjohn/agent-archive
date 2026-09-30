@@ -49,7 +49,7 @@ var handoffSessionEnv = func() []string {
 		"CODEX_SANDBOX_NETWORK_DISABLED",
 		"CODEX_PERMISSION_PROFILE",
 		"CODEX_VERSION",
-		"CURSOR_AGENT",
+		cursorAgentEnv,
 	}
 	for _, v := range currentSessionEnv {
 		if !slices.Contains(names, v.key) {
