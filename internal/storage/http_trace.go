@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/wangjohn/agent-archive/internal/trace"
@@ -42,21 +43,23 @@ func operation(request *http.Request) string {
 
 type tracedBody struct {
 	io.ReadCloser
-	span  *trace.Span
-	once  sync.Once
-	bytes int
+	span *trace.Span
+	once sync.Once
+	// bytes is atomic: the SDK may close a body from another goroutine
+	// while a Read is still running, when a request is cancelled.
+	bytes atomic.Int64
 }
 
 func (b *tracedBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
-	b.bytes += n
+	b.bytes.Add(int64(n))
 	return n, err
 }
 
 func (b *tracedBody) Close() error {
 	err := b.ReadCloser.Close()
 	b.once.Do(func() {
-		b.span.Count("bytes", b.bytes)
+		b.span.Count("bytes", int(b.bytes.Load()))
 		b.span.End()
 	})
 	return err

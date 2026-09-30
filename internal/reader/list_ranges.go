@@ -21,8 +21,8 @@ const rangeSidecars = 200
 const rangeConcurrency = 16
 
 // listObjects lists everything under listPrefix. When the store can list key
-// ranges and the keys known from the metadata cache are enough to split it, the
-// listing is cut into contiguous ranges listed concurrently (planRanges,
+// ranges and the keys known from the metadata cache are enough to split it,
+// the listing is cut into contiguous ranges listed concurrently (planRanges,
 // listRanges); otherwise it is the store's single sequential List. Both
 // return the same objects in the same key order.
 func listObjects(ctx context.Context, store storage.ObjectStore, listPrefix string, known []string) ([]storage.Object, error) {
@@ -63,10 +63,10 @@ func planRanges(known []string) []string {
 
 // listRanges lists the ranges bounds make, each a trace child of span, with
 // at most rangeConcurrency in flight, and joins them in range order, so the
-// result is in key order like a single listing. The first range to fail cancels the rest, and its error is
-// the one returned: errors that arrive after it, whatever they wrap, may be
-// only the echo of that cancellation. It returns only after every range it
-// started has finished.
+// result is in key order like a single listing. The first range to fail
+// cancels the rest, and its error is the one returned: errors that arrive
+// after it, whatever they wrap, may be only the echo of that cancellation.
+// It returns only after every range it started has finished.
 func listRanges(ctx context.Context, store storage.RangeLister, prefix string, bounds []string, span *trace.Span) ([]storage.Object, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

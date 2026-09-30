@@ -290,8 +290,9 @@ func readSidecars(ctx context.Context, store storage.ObjectStore, objects []stor
 }
 
 // readListedSidecar serves an unchanged sidecar from the cache and otherwise
-// downloads it, saying which it did. Only a sidecar which decoded and validated is cached, and a
-// cache entry which no longer decodes is treated as a miss.
+// downloads it, saying which it did. Only a sidecar which decoded and
+// validated is cached, and a cache entry which no longer decodes is treated
+// as a miss.
 func readListedSidecar(ctx context.Context, store storage.ObjectStore, object storage.Object, cache *MetadataCache) (metadata archive.Metadata, fromCache bool, err error) {
 	if data, ok := cache.get(object.Key, object.ETag); ok {
 		if metadata, err := decodeMetadata(object.Key, data); err == nil {

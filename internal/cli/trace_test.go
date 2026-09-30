@@ -2,6 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -76,6 +80,72 @@ func TestTraceOnlyKnownCommands(t *testing.T) {
 		Run(args, nil, &out, &errOut, withTrace(env, "1"))
 		if strings.Contains(errOut.String(), "agent-archive trace") {
 			t.Fatalf("%v traced:\n%s", args, errOut.String())
+		}
+	}
+}
+
+// tracedCommands must name exactly the user-facing commands Run dispatches
+// (every case but the internal "_" ones, help and version), so a new
+// command can't be silently left untraced. Read from Run's own switch.
+func TestTracedCommandsMatchRunsSwitch(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "cli.go", nil, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatched := map[string]bool{}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "Run" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			clause, ok := n.(*ast.CaseClause)
+			if !ok {
+				return true
+			}
+			for _, expr := range clause.List {
+				if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					name, _ := strconv.Unquote(lit.Value)
+					if !strings.HasPrefix(name, "_") && !strings.HasPrefix(name, "-") && name != "help" && name != "version" {
+						dispatched[name] = true
+					}
+				}
+			}
+			return true
+		})
+	}
+	if len(dispatched) == 0 {
+		t.Fatal("found no command cases in Run")
+	}
+	for name := range dispatched {
+		if !tracedCommands[name] {
+			t.Errorf("Run dispatches %q but tracedCommands lacks it", name)
+		}
+	}
+	for name := range tracedCommands {
+		if !dispatched[name] {
+			t.Errorf("tracedCommands has %q, which Run does not dispatch", name)
+		}
+	}
+}
+
+// A handoff that launches an agent in this terminal writes its trace first,
+// once, and the agent does not inherit the switch.
+func TestTraceFinishesBeforeALaunchedAgent(t *testing.T) {
+	var errOut bytes.Buffer
+	finish := startTrace("handoff", &errOut, withTrace(Env{}, "1"))
+	finishTraceNow()
+	written := errOut.String()
+	if !strings.Contains(written, "agent-archive trace") {
+		t.Fatalf("finishTraceNow wrote nothing:\n%s", written)
+	}
+	finish()
+	if errOut.String() != written {
+		t.Fatalf("the command's own finish wrote the trace again:\n%s", errOut.String())
+	}
+	for _, kv := range childEnv([]string{envTrace + "=1", "HOME=/h"}) {
+		if strings.HasPrefix(kv, envTrace+"=") {
+			t.Fatalf("a launched agent inherits %s", kv)
 		}
 	}
 }

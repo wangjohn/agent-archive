@@ -124,12 +124,13 @@ func buildLaunchSpec(dest handoffDestination, prompt, handoffFile, dir string, e
 	return launchSpec{Destination: dest, Binary: binary, Args: args, Dir: dir, Env: childEnv(env.environ()), HandoffFile: handoffFile}, nil
 }
 
-// childEnv is environ without handoffSessionEnv.
+// childEnv is environ without handoffSessionEnv, and without envTrace: the
+// trace was of the handoff, not of the agent's own agent-archive commands.
 func childEnv(environ []string) []string {
 	out := make([]string, 0, len(environ))
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")
-		if !slices.Contains(handoffSessionEnv, name) {
+		if !slices.Contains(handoffSessionEnv, name) && name != envTrace {
 			out = append(out, kv)
 		}
 	}

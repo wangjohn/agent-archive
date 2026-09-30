@@ -2,6 +2,8 @@ package cli
 
 import (
 	"io"
+	"sync"
+	"sync/atomic"
 
 	"github.com/wangjohn/agent-archive/internal/trace"
 )
@@ -30,9 +32,24 @@ func startTrace(command string, stderr io.Writer, env Env) (finish func()) {
 	}
 	disable := trace.Enable()
 	root := trace.Start(command)
-	return func() {
+	finish = sync.OnceFunc(func() {
 		root.End()
 		trace.Write(stderr)
 		disable()
+	})
+	runningTrace.Store(&finish)
+	return finish
+}
+
+// runningTrace is the finish function of the trace being recorded, if any.
+var runningTrace atomic.Pointer[func()]
+
+// finishTraceNow writes the running command's trace at once, before an agent
+// launched in this terminal takes it over: the trace then times the command,
+// not the agent's session, and prints before the agent's screen rather than
+// after it exits. The command's own deferred finish then does nothing.
+func finishTraceNow() {
+	if finish := runningTrace.Swap(nil); finish != nil {
+		(*finish)()
 	}
 }
