@@ -70,6 +70,17 @@ func problemOf(status scheduler.Status) scheduler.Problem {
 	return *status.Problem
 }
 
+// unknownJobMessage says that a command cannot go on because the scheduler
+// cannot say what state the job is in. An adapter that says what is wrong (its
+// Problem's Reason) has it said, with its next step; otherwise it is the
+// words it always was, which name the tool to restore access to.
+func unknownJobMessage(words scheduler.Words, problem scheduler.Problem) string {
+	if problem.Reason == "" {
+		return fmt.Sprintf("cannot determine the background job's state; restore access to %s and retry", words.Tool)
+	}
+	return fmt.Sprintf("cannot determine the background job's state: %s. %s, then retry", problem.Reason, problem.Fix)
+}
+
 // jobActive is whether a job is loaded, whether or not it is running now.
 func jobActive(state scheduler.JobState) bool { return state.Active() }
 
@@ -120,7 +131,7 @@ func (e Env) recordedBackend() string {
 func (e Env) namedScheduler(name string) scheduler.Scheduler {
 	s, err := newScheduler(name)
 	if err != nil {
-		return host.Unavailable(name, err.Error())
+		return host.Unavailable(name, err.Error(), "Run agent-archive setup on this system to schedule the collector with its own scheduler")
 	}
 	return s
 }

@@ -74,7 +74,7 @@ func (Scheduler) Name() string { return "systemd" }
 
 // Words are systemd's nouns.
 func (Scheduler) Words() scheduler.Words {
-	return scheduler.Words{Manager: "systemd", Job: "user timer", Definition: "unit file", Tool: "systemctl"}
+	return scheduler.Words{Manager: "systemd", Job: "user timer", Definition: "unit file", Tool: "systemctl", Name: "unit name"}
 }
 
 // DefaultPATH is the PATH systemd gives a service that sets none.

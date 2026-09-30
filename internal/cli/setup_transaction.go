@@ -411,7 +411,7 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job.State == scheduler.Unknown {
-		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to %s and retry", in.sched().Words().Tool)
+		return setupjournal.Journal{}, errors.New(unknownJobMessage(in.sched().Words(), problemOf(job)))
 	}
 	if job.State == scheduler.AnotherInstallation {
 		problem, words := problemOf(job), in.sched().Words()

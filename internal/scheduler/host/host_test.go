@@ -88,7 +88,7 @@ func TestNewRefusesSystemsWithoutAScheduler(t *testing.T) {
 			t.Errorf("%q: Name() = %q, want none", system, s.Name())
 		}
 		got := s.Inspect(context.Background(), site, ref)
-		if got.State != scheduler.Unknown || got.Problem == nil || got.Problem.Kind != scheduler.ProblemCannotTell || got.Problem.Fix == "" {
+		if got.State != scheduler.Unknown || got.Problem == nil || got.Problem.Kind != scheduler.ProblemCannotTell || got.Problem.Reason == "" || got.Problem.Fix == "" {
 			t.Errorf("%q: Inspect = %+v, want unknown with a problem that says what to do", system, got)
 		}
 		if _, err := s.Plan(site, scheduler.Installation{DataHome: "/tmp/data", Default: true}, scheduler.JobSpec{}); err == nil {
@@ -177,13 +177,13 @@ func TestRecordedLeavesOutLaunchd(t *testing.T) {
 // configuration may have recorded, and the reason as the fix.
 func TestUnavailableNamesItself(t *testing.T) {
 	t.Parallel()
-	s := Unavailable("cron", "the cron scheduler is not available on this system (linux)")
+	s := Unavailable("cron", "the cron scheduler is not available on this system (linux)", "Run agent-archive setup here")
 	if s.Name() != "cron" {
 		t.Errorf("Name() = %q, want cron", s.Name())
 	}
 	status := s.Inspect(context.Background(), scheduler.Site{}, "agent-archive-collector")
-	if status.Problem == nil || !strings.Contains(status.Problem.Fix, "cron scheduler is not available") {
-		t.Errorf("Inspect = %+v, want the reason as the fix", status)
+	if status.Problem == nil || !strings.Contains(status.Problem.Reason, "cron scheduler is not available") || status.Problem.Fix != "Run agent-archive setup here" {
+		t.Errorf("Inspect = %+v, want the reason and the fix", status)
 	}
 }
 
