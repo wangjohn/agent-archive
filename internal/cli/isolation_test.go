@@ -90,10 +90,13 @@ func isolateProcessForTesting() func() {
 	for _, name := range append([]string{"AGENT_ARCHIVE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_PROFILE", "XDG_CONFIG_HOME", envNonInteractive}, agentShellEnv()...) {
 		must(os.Unsetenv(name))
 	}
-	newScheduler = func() scheduler.Scheduler {
+	newScheduler = func(backend string) (scheduler.Scheduler, error) {
+		if backend != "" && backend != "launchd" {
+			return nil, fmt.Errorf("a test asked for the %s scheduler: set Env.Scheduler (testEnv does)", backend)
+		}
 		return launchd.Scheduler{Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			panic(fmt.Sprintf("a test reached the real %s %q: set Env.Scheduler (testEnv does), or call stubLaunchctl", name, args))
-		}}
+		}}, nil
 	}
 	realOpenCredentialStore = openCredentialStore
 	openCredentialStore = func() (credentials.CredentialStore, error) {
@@ -103,6 +106,9 @@ func isolateProcessForTesting() func() {
 	credentialOS = platform.Darwin
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
+	}
+	openAWSBucketCreator = func(string, string) (BucketCreator, error) {
+		return nil, errors.New("no AWS in this test: set Env.AWSBucketCreator")
 	}
 	detectLessVersion = func(string) (int, bool) {
 		panic("a test reached the real less: set Env.LessVersion (testEnv does)")
@@ -129,6 +135,35 @@ func TestIsolationFailsClosed(t *testing.T) {
 	panics("launchctl print", func() { Env{}.scheduler().Inspect(context.Background(), site, ref) })
 	panics("launchctl bootstrap", func() { _ = Env{}.scheduler().Load(context.Background(), site, ref) })
 	panics("launchctl bootout", func() { _ = Env{}.scheduler().Unload(context.Background(), site, ref) })
+	// So does every backend name a configuration or a journal records:
+	// launchd's, and "" (this system's own), stop the test, and any other is
+	// refused before a scheduler exists, so a configuration that names it gets
+	// one that runs nothing.
+	for _, name := range []string{"", "launchd"} {
+		s, err := newScheduler(name)
+		if err != nil {
+			t.Fatalf("newScheduler(%q): %v", name, err)
+		}
+		panics("launchctl print for "+name, func() { s.Inspect(context.Background(), site, ref) })
+		panics("launchctl bootstrap for "+name, func() { _ = s.Load(context.Background(), site, ref) })
+		panics("launchctl bootout for "+name, func() { _ = s.Unload(context.Background(), site, ref) })
+	}
+	for _, name := range []string{"systemd", "none", "cron"} {
+		if s, err := newScheduler(name); err == nil {
+			t.Errorf("newScheduler(%q) = %s, want a refusal", name, s.Name())
+		}
+		dataHome := t.TempDir()
+		if err := config.Save(dataHome, config.Config{BackgroundBackend: name}); err != nil {
+			t.Fatal(err)
+		}
+		s := Env{Home: func() (string, error) { return dataHome, nil }}.scheduler()
+		if got := s.Inspect(context.Background(), site, ref); s.Name() != name || got.State != scheduler.Unknown {
+			t.Errorf("a configuration recording %s: scheduler %s says %q", name, s.Name(), got.State)
+		}
+		if s.Load(context.Background(), site, ref) == nil || s.Unload(context.Background(), site, ref) == nil {
+			t.Errorf("a configuration recording %s: its scheduler changed a job", name)
+		}
+	}
 	panics("Env{}.credentialStore", func() { _, _ = Env{}.credentialStore() })
 	panics("less --version", func() { _, _ = Env{}.lessVersion("less") })
 	panics("R2 store", func() {
@@ -136,6 +171,9 @@ func TestIsolationFailsClosed(t *testing.T) {
 	})
 	if _, err := (Env{}).awsBuckets("default", "us-east-1"); err == nil {
 		t.Error("Env{}.awsBuckets reached AWS instead of failing")
+	}
+	if _, err := (Env{}).awsBucketCreator("default", "us-east-1"); err == nil {
+		t.Error("Env{}.awsBucketCreator reached AWS instead of failing")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -197,13 +235,16 @@ func stubLaunchctl(t *testing.T, run func(args ...string) ([]byte, error)) {
 func stubLaunchctlContext(t *testing.T, run func(ctx context.Context, args ...string) ([]byte, error)) {
 	t.Helper()
 	previous := newScheduler
-	newScheduler = func() scheduler.Scheduler {
+	newScheduler = func(backend string) (scheduler.Scheduler, error) {
+		if backend != "" && backend != "launchd" {
+			return nil, fmt.Errorf("a test asked for the %s scheduler: stubLaunchctl stands in for launchd alone", backend)
+		}
 		return launchd.Scheduler{ChangeTimeout: launchctlChangeTimeout, Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
 			if name != "launchctl" {
 				t.Errorf("the scheduler ran %q, not launchctl", name)
 			}
 			return run(ctx, args...)
-		}}
+		}}, nil
 	}
 	t.Cleanup(func() { newScheduler = previous })
 }

@@ -40,8 +40,10 @@ const (
 	// starts a section, hides the rest of the transcript, or un-hides a
 	// hidden one; and a quoted credential value takes along whatever a shell
 	// would glue onto it after the closing quote (`PASSWORD="abc"secret`).
-	// See dev/specs/privacy-filter.md.
-	FilterVersion = "12"
+	// Filter 13 keeps the name a session was given (Claude Code's
+	// custom-title and pr-link records, Cursor's chat name). See
+	// dev/specs/privacy-filter.md.
+	FilterVersion = "13"
 	// OpenTelemetryGenAIRevision pins the upstream definitions used by the
 	// three gen_ai.* attributes emitted by BuildMetadata. The archive is not
 	// an OTLP payload; all agent_archive.* attributes are local extensions.

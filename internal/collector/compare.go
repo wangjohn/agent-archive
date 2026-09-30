@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
-	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -151,6 +150,8 @@ func withoutLinkedSessionEvidence(in []archive.SupplementalEvidence) []archive.S
 
 // nativeEvidenceExtends reports whether candidate carries everything previous
 // did, record for record, so replacing previous loses no retained evidence.
+// A Cursor chat's name is not such evidence: a chat Cursor names or the
+// person renames still extends its earlier snapshot (archive.SameNativeRecord).
 // It compares filtered output, so it is only meaningful when both were
 // filtered the same way: a new filter or adapter version legitimately changes
 // what earlier records look like, and must not read as a rewrite. A rewrite
@@ -163,7 +164,7 @@ func nativeEvidenceExtends(previous, candidate archive.SourceBundle) bool {
 		return false
 	}
 	for i := range previous.NativeRecords {
-		if !reflect.DeepEqual(previous.NativeRecords[i], candidate.NativeRecords[i]) {
+		if !archive.SameNativeRecord(previous.Capture.SourceFormat, previous.NativeRecords[i], candidate.NativeRecords[i]) {
 			return false
 		}
 	}

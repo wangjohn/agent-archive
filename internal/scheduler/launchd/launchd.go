@@ -50,7 +50,7 @@ func (Scheduler) Name() string { return "launchd" }
 
 // Words are launchd's nouns.
 func (Scheduler) Words() scheduler.Words {
-	return scheduler.Words{Manager: "launchd", Job: "LaunchAgent", Definition: "plist", Tool: "launchctl"}
+	return scheduler.Words{Manager: "launchd", Job: "LaunchAgent", Definition: "plist", Tool: "launchctl", Name: "label"}
 }
 
 // DefaultPATH is the PATH launchd gives a job whose plist sets none.

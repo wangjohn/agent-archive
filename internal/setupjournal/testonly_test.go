@@ -41,7 +41,7 @@ type plistScheduler struct{ l Launchd }
 func (plistScheduler) Name() string { return "launchd" }
 
 func (plistScheduler) Words() scheduler.Words {
-	return scheduler.Words{Manager: "launchd", Job: "LaunchAgent", Definition: "plist", Tool: "launchctl"}
+	return scheduler.Words{Manager: "launchd", Job: "LaunchAgent", Definition: "plist", Tool: "launchctl", Name: "label"}
 }
 
 func (plistScheduler) Ref(scheduler.Installation) scheduler.Ref { panic("unused") }
