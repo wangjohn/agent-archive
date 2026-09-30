@@ -293,9 +293,10 @@ follow [Semantic Versioning](https://semver.org/).
   pipes are plain; bars have no shaded track). The rest moved behind
   `--detail` (`--view detail`): streaks, the busiest day, the favorite model,
   the tool error rate, the token breakdown, the agents table and the notes on
-  what the numbers rest on. `--view projects`, `models` and `agents` list every
-  project, model family and agent. `--by project` is now `--view projects`, and
-  `--by day`, `week` and `month` add their table to the detail screen. It fits
+  what the numbers rest on. `--view projects`, `models` and `agents` list the
+  projects and model families (up to 500 each, then `+ N more`) and every
+  agent. `--by project` is now `--view projects`, and `--by day`, `week` and
+  `month` add their table to the detail screen. It fits
   terminals down to 40 columns. `--json` and `--html` are unchanged.
 
 - **`stats --json` and `--html` rank projects by spend, not tokens.** The

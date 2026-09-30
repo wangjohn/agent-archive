@@ -251,7 +251,8 @@ and MCP servers are cut at 40 in the detail screen and at a few in the
 overview, and say `+ 3 more (all in --json --all)`. The tables of the detail
 screen for `--by day`, `--by week` and `--by month` keep the newest 60 rows,
 and say `12 earlier rows not shown (all in --json --by day)`. Add the options
-a hint names to the command you ran, so the window and filters stay the same. On the
+a hint names to the command you ran, so the window and filters stay the same
+(and drop `--view` and `--detail`, which `--json` does not take). On the
 interactive screen, which takes no command, the line says to quit first and
 names the window on show: `+ 40 more (quit, then run agent-archive stats
 --days 90 --json --all)`, with `, with the same filters` when the screen was
