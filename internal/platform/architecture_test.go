@@ -41,7 +41,9 @@ func TestPlatformImportBoundary(t *testing.T) {
 }
 
 // runtimeGOOSUses lists where src (a Go file's text) reads runtime.GOOS,
-// through whatever name it imports runtime under, or with a dot import.
+// through whatever name it imports runtime under, or with a dot import. An
+// import of go/build counts as a read too: build.Default.GOOS is the host's
+// runtime.GOOS under another name, and nothing outside tests needs go/build.
 func runtimeGOOSUses(t *testing.T, name string, src any) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -53,7 +55,11 @@ func runtimeGOOSUses(t *testing.T, name string, src any) []string {
 	// A file may import runtime more than once, under different names.
 	names := map[string]bool{}
 	for _, spec := range file.Imports {
-		if path, _ := strconv.Unquote(spec.Path.Value); path != "runtime" {
+		path, _ := strconv.Unquote(spec.Path.Value)
+		if path == "go/build" && (spec.Name == nil || spec.Name.Name != "_") {
+			uses = append(uses, fset.Position(spec.Pos()).String()+": imports go/build, whose build.Default.GOOS is runtime.GOOS")
+		}
+		if path != "runtime" {
 			continue
 		}
 		local := "runtime"
@@ -157,6 +163,10 @@ func TestRuntimeGOOSScanFindsEverySpelling(t *testing.T) {
 		{"another package's GOOS", "package p\nimport \"other\"\nvar x = other.GOOS\n", 0},
 		{"a local variable named runtime", "package p\nvar runtime struct{ GOOS string }\nvar x = runtime.GOOS\n", 0},
 		{"no imports", "package p\nvar x = 1\n", 0},
+		{"go/build", "package p\nimport \"go/build\"\nvar x = build.Default.GOOS\n", 1},
+		{"go/build renamed, context copied", "package p\nimport gb \"go/build\"\nvar ctx = gb.Default\nvar x = ctx.GOOS\n", 1},
+		{"go/build blank import", "package p\nimport _ \"go/build\"\n", 0},
+		{"cgo file", "package p\n\n// #include <stdlib.h>\nimport \"C\"\nimport \"runtime\"\nvar x = runtime.GOOS\n", 1},
 	} {
 		if got := runtimeGOOSUses(t, tc.name+".go", tc.src); len(got) != tc.want {
 			t.Errorf("%s: %d uses %v, want %d", tc.name, len(got), got, tc.want)
