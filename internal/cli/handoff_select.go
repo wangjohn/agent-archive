@@ -139,7 +139,7 @@ func selectHandoffSession(env handoffSelectDependencies, home string, opts hando
 	}
 	format := listFormatOptions{Now: env.now(), Projects: projectLabels(cfg), Style: styleFor(stdout), GroupByProject: true, Numbered: true,
 		NarrowHint: "Narrow with --harness, or name a session: agent-archive handoff SESSION_ID."}
-	row, selected, err := pickBrowseRow(newPrompter(stdin, stdout), stdout, formatHandoffRows(rows, format), total, truncated, format, "hand off")
+	row, selected, err := pickBrowseRow(env, newPrompter(stdin, stdout), stdout, formatHandoffRows(rows, format), total, truncated, format, "hand off")
 	if err != nil {
 		terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 		return "", "", false, 1
