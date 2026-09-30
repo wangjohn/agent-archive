@@ -369,11 +369,17 @@ func TestRealUserManagerConformance(t *testing.T) {
 }
 
 // The adapter's Runner (host.Exec) gives systemctl the environment it needs:
-// with the colors the user's terminal asks for, `systemctl --version` still
-// parses, and the adapter reads the real version.
+// with the colors the user's environment forces (SYSTEMD_COLORS=true colors
+// even a pipe's output, and the version line starts with an escape sequence, so
+// the adapter would not read it), `systemctl --version` still starts "systemd ",
+// and the adapter asks about the job as usual.
 func TestRealSystemctlVersionParsesWhateverTheTerminalSays(t *testing.T) {
 	home := realHome(t)
 	t.Setenv("SYSTEMD_COLORS", "true")
+	out, err := host.Exec(context.Background(), "systemctl", "--version")
+	if err != nil || !strings.HasPrefix(string(out), "systemd ") {
+		t.Fatalf("systemctl --version through the real Runner: %v: %q, want a line that starts \"systemd \"", err, out)
+	}
 	m := newRealManager(t, home)
 	site := scheduler.Site{UserHome: home}
 	status := m.sched.Inspect(context.Background(), site, "agent-archive-collector")
