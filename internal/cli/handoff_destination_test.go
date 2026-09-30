@@ -265,7 +265,25 @@ func TestHandoffPromptWritesTheDefaultInTheProject(t *testing.T) {
 	}
 }
 
-// ~/ is the home directory, as a shell would read it.
+// q cancels even at the first prompt instead of writing a file named q, and
+// a directory is refused before asking to replace it.
+func TestHandoffPromptWriteCancelsAndRefusesADirectory(t *testing.T) {
+	t.Parallel()
+	f := newHandoffFixture(t, false)
+	dir := t.TempDir()
+	f.env.WorkingDir = func() (string, error) { return dir, nil }
+	out, errOut, code := runPicker(t, f.env, "w\nq\n", f.id)
+	if entries, _ := os.ReadDir(dir); code != 0 || len(entries) != 0 || strings.Contains(errOut, "wrote") {
+		t.Fatalf("q: code=%d entries=%v stderr=%s\n%s", code, entries, errOut, out)
+	}
+	out, errOut, code = runPicker(t, f.env, "w\n"+dir+"\n\n", f.id)
+	if code != 0 || !strings.Contains(errOut, dir+" is a directory") || strings.Contains(out, "Replace it?") {
+		t.Fatalf("directory: code=%d stderr=%s\n%s", code, errOut, out)
+	}
+}
+
+// ~/ is the home directory, as a shell would read it; ~user is not
+// expanded, so it is a relative path that here does not exist.
 func TestHandoffPromptWritesUnderHome(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, false)
@@ -276,6 +294,11 @@ func TestHandoffPromptWritesUnderHome(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "h.md")); err != nil {
 		t.Fatal(err)
+	}
+	must(t, os.Mkdir(filepath.Join(home, "someone"), 0o700))
+	_, errOut, code := runPicker(t, f.env, "w\n~someone/h.md\n\n", f.id)
+	if _, err := os.Stat(filepath.Join(home, "someone", "h.md")); code != 0 || err == nil || !strings.Contains(errOut, "open ~someone/h.md") {
+		t.Fatalf("~someone: code=%d stderr=%s", code, errOut)
 	}
 }
 
@@ -294,7 +317,8 @@ func TestHandoffPromptAsksAgainAfterAFailedWrite(t *testing.T) {
 	if _, err := os.Stat(good); err != nil {
 		t.Fatal(err)
 	}
-	for _, cancel := range []string{"\n", "q\n"} {
+	// Input ending cancels rather than asking forever.
+	for _, cancel := range []string{"\n", "q\n", ""} {
 		out, errOut, code := runPicker(t, f.env, "w\n"+missing+"\n"+cancel, f.id)
 		if code != 0 || strings.Contains(errOut, "wrote") || strings.Contains(out, "## Where it left off") {
 			t.Fatalf("cancel %q: code=%d stderr=%s\n%s", cancel, code, errOut, out)
@@ -521,6 +545,8 @@ func TestHandoffHereAndNewWindowFlags(t *testing.T) {
 		{false, []string{f.id, "--new-window"}, "apply to a launched agent"},
 		{true, []string{f.id, "--here", "--output", filepath.Join(t.TempDir(), "x.md")}, "apply to a launched agent"},
 		{true, []string{f.id, "--new-window", "--format", "json"}, "apply to a launched agent"},
+		{true, []string{f.id, "--here", "--no-preamble"}, "apply to a launched agent"},
+		{true, []string{f.id, "--new-window", "--no-preamble"}, "apply to a launched agent"},
 	} {
 		run := runHandoff
 		if tc.terminal {

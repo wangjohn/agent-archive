@@ -188,8 +188,9 @@ func deliverHandoff(choice handoffChoice, p *prompter, rendered []byte, target h
 
 // writeHandoffChoice asks for a path and writes the handoff there with mode
 // 0600, replacing an existing file only when told to. The default is in dir.
-// A leading ~/ is the home directory, as in a shell. A write that fails is
-// reported and asked again, with no default: Enter or q then cancels.
+// A leading ~/ is the home directory, as in a shell; ~user is left as
+// typed. q cancels (./q is a file named q). A write that fails is reported
+// and asked again, with no default: Enter then cancels too.
 func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir string, stderr io.Writer, env handoffDestinationDependencies) error {
 	def := filepath.Join(dir, "handoff-"+shortSessionID(handoffFileName(target.bundle))+".md")
 	label := "Write to"
@@ -201,7 +202,7 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir 
 		if err != nil {
 			return err
 		}
-		if def == "" && (path == "" || path == "q") {
+		if path == "q" || (def == "" && path == "") {
 			return nil
 		}
 		if path == "~" || strings.HasPrefix(path, "~/") {
@@ -212,7 +213,14 @@ func writeHandoffChoice(p *prompter, rendered []byte, target handoffTarget, dir 
 			path = filepath.Join(home, path[1:])
 		}
 		force := false
-		if _, err := os.Lstat(path); err == nil {
+		info, statErr := os.Lstat(path)
+		if statErr == nil && info.IsDir() {
+			// Replacing it could only fail after asking.
+			terminal.Printf(stderr, "agent-archive: handoff: %s is a directory\n", path)
+			label, def = "Write to (Enter to cancel)", ""
+			continue
+		}
+		if statErr == nil {
 			replace, err := p.yesNo(fmt.Sprintf("%s already exists. Replace it?", path), false)
 			if errors.Is(err, io.EOF) {
 				return nil
