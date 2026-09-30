@@ -71,8 +71,10 @@ follow [Semantic Versioning](https://semver.org/).
   projects, drop apps, or change how long sessions are kept, and setup says
   how many other projects your apps have sessions in. Answer no to choose
   them one at a time as before. Setup no longer pre-selects a repository that
-  is your home folder, holds it, or is in the temporary folder: it asks for
-  the projects instead.
+  is your home folder or holds it, or that is a temporary folder (`/tmp`,
+  `/private/tmp`, `/var/folders`, `$TMPDIR`) or holds one: it says so and
+  asks for the projects instead. A repository inside a temporary folder is
+  still offered.
 - `setup` offers to import past sessions after it has said how to check that
   capture works, not before, and `setup` ends with the command for another
   Mac after that offer. `setup --yes` is unchanged.
