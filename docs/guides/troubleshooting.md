@@ -261,6 +261,31 @@ To be asked anyway, run the command as
 is not a valid setting` means the value is not one of 1/true/yes/on or
 0/false/no/off; fix or unset it.
 
+## My agent does not use the skill
+
+The `agent-archive` skill ([agent skills](agent-skills.md)) is what lets Claude
+Code, Codex, or Cursor pull in a past session when you ask.
+
+1. **Start a new session.** Agents read their skills when a session starts, so
+   one that was open during setup does not have it.
+2. **Check that it is installed.** `agent-archive status --verbose` says when
+   agent skills are turned off (`agent-archive setup --skills` turns them
+   on), lists the skill files setup wrote, and warns about one written by an
+   earlier release (run `agent-archive setup` to refresh it). If setup said `Left ... as it
+   is`, a file that is not setup's is at that path; move it aside and run
+   setup again.
+3. **Ask for it plainly**, naming what you want: "pull in my Codex session
+   about the login bug". You can also name the skill: `/agent-archive` in
+   Claude Code, `$agent-archive` in Codex (or pick it from `/skills`), and in
+   Cursor "use the agent-archive skill".
+4. **Expect a question the first time.** Claude Code asks before running
+   `handoff`, `list`, or `show`, and Codex and Cursor apply their own
+   approvals; the skill deliberately does not pre-approve them
+   ([permissions](agent-skills.md#permissions)).
+5. **A sandbox may block it.** If the agent says the network or the Keychain
+   was blocked, a session on this Mac is still found by its title; allow the
+   command, or run it yourself in a terminal.
+
 ## An interrupted setup
 
 A failed setup restores the previous configuration, hooks, and scheduler. If

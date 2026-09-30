@@ -23,16 +23,44 @@ const (
 // dataHome is not "" (see commandLine). The file must carry marker, or
 // setup would never own, replace, or remove it.
 type Skill struct {
-	// Name is the skill's directory name and its slash name: "handoff".
+	// Name is the skill's directory name: "handoff", "agent-archive".
 	Name string
-	// Summary says what the skill does, for setup's "Installed /name, which
-	// <summary>" line; empty leaves the clause out.
+	// Slash is true for a skill the person runs by name, as /handoff: setup
+	// and status call it "/handoff". Any other skill is one the agent picks
+	// up on its own, from its description, and is called "the agent-archive
+	// skill".
+	Slash bool
+	// Summary says what the skill does, for setup's "Installed <title>,
+	// which <summary>" line; empty leaves the clause out.
 	Summary string
 	Render  func(dest Destination, executable, dataHome string) []byte
 }
 
+// Title is how a sentence names the skill: "/handoff", or "the
+// agent-archive skill".
+func (s Skill) Title() string {
+	if s.Slash {
+		return "/" + s.Name
+	}
+	return "the " + s.Name + " skill"
+}
+
+// Label is how status names the skill called name, in a row or a warning
+// ("The /handoff skill at ... is out of date"): "/handoff", or, for a skill
+// the person does not run by name, "agent-archive". A name that is not in
+// the Registry (a file an earlier release wrote) is labelled as a slash
+// skill.
+func Label(name string) string {
+	for _, s := range Registry {
+		if s.Name == name && !s.Slash {
+			return name
+		}
+	}
+	return "/" + name
+}
+
 // Registry lists every skill setup installs, in a stable order.
-var Registry = []Skill{handoffSkill}
+var Registry = []Skill{handoffSkill, archiveSkill}
 
 // skillTemplates holds each skill's text, one directory per skill, so that a
 // change to a skill's prose reviews as prose.
@@ -89,8 +117,23 @@ var handoffTemplate = parseSkill("handoff")
 
 var handoffSkill = Skill{
 	Name:    "handoff",
+	Slash:   true,
 	Summary: "continues a session in another agent",
 	Render: func(dest Destination, executable, dataHome string) []byte {
 		return render(handoffTemplate, newTemplateData(dest, executable, dataHome))
+	},
+}
+
+// archiveTemplate is the agent-archive skill's text: everything the agent
+// needs is in the one file, since the installer renders one file per skill
+// and Cursor may not load anything beside it. Claude Code's file lets the
+// agent run `status` without asking, and nothing else (see the template).
+var archiveTemplate = parseSkill("agent-archive")
+
+var archiveSkill = Skill{
+	Name:    "agent-archive",
+	Summary: "lets your agents look up and pull in past sessions",
+	Render: func(dest Destination, executable, dataHome string) []byte {
+		return render(archiveTemplate, newTemplateData(dest, executable, dataHome))
 	},
 }

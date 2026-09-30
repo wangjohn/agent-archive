@@ -752,10 +752,10 @@ func printSkillFiles(p *prompter, skills []agentskills.Skill, files []agentskill
 				installed = append(installed, displayPath(f.Path, userHome))
 				continue
 			}
-			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so /%s is not installed there.\n", displayPath(f.Path, userHome), skill.Name)
+			terminal.Printf(p.out, "Left %s as it is: it is not this agent-archive installation's (it lacks the marker line, or names another data directory), so %s is not installed there.\n", displayPath(f.Path, userHome), skill.Title())
 		}
 		if len(installed) > 0 {
-			what := "/" + skill.Name
+			what := skill.Title()
 			if skill.Summary != "" {
 				what += ", which " + skill.Summary
 			}

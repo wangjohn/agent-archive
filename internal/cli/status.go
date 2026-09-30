@@ -2311,9 +2311,9 @@ var recordedErrorCode = regexp.MustCompile(`(?:^|api error |: )([A-Z][A-Za-z]+):
 // reads the chain of operation errors.
 var recordedOperationService = regexp.MustCompile(`operation error ([^:]+): `)
 
-// skillLabel is the slash name of the skill whose file is at path
+// skillLabel is the name status gives the skill whose file is at path
 // (".../skills/handoff/SKILL.md" is "/handoff").
-func skillLabel(path string) string { return "/" + filepath.Base(filepath.Dir(path)) }
+func skillLabel(path string) string { return agentskills.Label(filepath.Base(filepath.Dir(path))) }
 
 // printStatusDetails writes the Details section of status --verbose: every
 // line the text status printed before it was redesigned, with its codes,

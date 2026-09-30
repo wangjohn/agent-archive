@@ -278,7 +278,10 @@ agent-archive setup --yes --provider s3 --bucket BUCKET --aws-profile PROFILE \
   directory: `/handoff` is written to `$CLAUDE_CONFIG_DIR/skills/handoff/SKILL.md`
   (`~/.claude/skills/…` by default) for Claude Code and to
   `~/.agents/skills/handoff/SKILL.md` for Codex and Cursor
-  ([handoff](../guides/handoff.md#from-inside-an-agent-handoff)). Each file
+  ([handoff](../guides/handoff.md#from-inside-an-agent-handoff)), and
+  `agent-archive`, which lets the agent find and pull in a past session, to
+  `skills/agent-archive/SKILL.md` in the same two places
+  ([agent skills](../guides/agent-skills.md)). Each file
   carries a marker line: setup replaces, `status` lists, and uninstall
   removes only a file with it (naming this installation's data directory),
   and leaves any other file at that path alone, saying so. After you upgrade
