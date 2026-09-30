@@ -23,7 +23,7 @@ import (
 // both stdin and stdout are terminals, and the caller is not forcing JSON.
 // Interactive list skips the pager so the prompt stays with the table.
 func browseInteractive(env sessionBrowseDependencies, stdin io.Reader, stdout io.Writer) bool {
-	return env.isTerminal(stdin) && env.isTerminal(stdout)
+	return env.interactive(stdin) && env.interactive(stdout)
 }
 
 // browseAction is what the session browser does after a prompt.
