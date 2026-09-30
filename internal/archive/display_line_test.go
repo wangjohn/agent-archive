@@ -14,7 +14,10 @@ import (
 func TestDisplayLineRemovesInvisibleCharacters(t *testing.T) {
 	t.Parallel()
 	tags := string([]rune{0xE0001, 0xE0041, 0xE0042, 0xE007F})
-	for name, tc := range map[string]struct{ in, want string }{
+	for name, tc := range map[string]struct {
+		in   string
+		want string
+	}{
 		"plain":                 {"widgets", "widgets"},
 		"zero-width space":      {"a\u200bb", "ab"},
 		"joiner and non-joiner": {"a\u200cb\u200dc", "abc"},

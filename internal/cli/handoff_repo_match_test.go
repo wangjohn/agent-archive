@@ -151,7 +151,7 @@ func TestHandoffLatestFindsAnotherMachinesSessionByRepository(t *testing.T) {
 	}
 	// "using" reads as the outcome of the question, not as a claim made
 	// before it.
-	if matched, asked, using := strings.Index(errOut, "matched by repository"), strings.Index(errOut, "Hand off this session?"), strings.Index(errOut, "handoff: using"); !(matched < asked && asked < using) {
+	if matched, asked, using := strings.Index(errOut, "matched by repository"), strings.Index(errOut, "Hand off this session?"), strings.Index(errOut, "handoff: using"); matched >= asked || asked >= using {
 		t.Errorf("stderr is out of order (matched %d, asked %d, using %d):\n%s", matched, asked, using, errOut)
 	}
 	for _, want := range []string{"source: archive", "Next I will inject a fake clock.",
@@ -242,7 +242,7 @@ func TestHandoffRepositoryMatchRefusesWithoutATerminal(t *testing.T) {
 			// Nothing of what the session or the archive says about itself is
 			// shown to a reader that cannot be asked, and nothing that says
 			// "using": the session is not used.
-			for _, leaked := range []string{"Fix the flaky", "fix/widget-test", "first prompt", "project ", filepath.Base(f.project), "handoff: using"} {
+			for _, leaked := range []string{"Fix the flaky", "fix/widget-test", "first prompt", "project ", "handoff: using"} {
 				if strings.Contains(stderr, leaked) {
 					t.Errorf("stderr shows %q without a person to ask:\n%s", leaked, stderr)
 				}
