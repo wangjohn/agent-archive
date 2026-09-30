@@ -54,6 +54,6 @@ BY WEEK (weeks start Monday)  sessions  prompts  tokens  est. cost
 
 Scope: this archive only. Sessions with no token data are left out of token and
 cost totals (Cursor: 3).
-Cost is an estimate at list price, not a bill. Prices 2026-09.2, as of
-2026-09-29.
+Cost is an estimate at list price, not a bill. Prices golden-1, as of
+2026-09-29, with your --prices file applied.
 + leaves out tokens of models the price table does not list (codex-auto-review).

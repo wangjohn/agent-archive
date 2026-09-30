@@ -53,6 +53,10 @@ func mustRunStats(t *testing.T, env Env, width int, args ...string) string {
 	return out
 }
 
+// goldenPrices pins the prices the screen goldens are costed with, so a change
+// to the built-in table does not rewrite them.
+const goldenPrices = "testdata/stats/prices.json"
+
 func statsGolden(name string) string { return filepath.Join("testdata", "stats", name+".golden") }
 
 // The screen is pinned at the widths it has layouts for: a terminal of 80
@@ -74,7 +78,7 @@ func TestStatsScreenGoldens(t *testing.T) {
 		{"by-project-80", 80, []string{"--by", "project", "--days", "14"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out := mustRunStats(t, env, tc.width, tc.args...)
+			out := mustRunStats(t, env, tc.width, append([]string{"--prices", goldenPrices}, tc.args...)...)
 			golden.Check(t, statsGolden(tc.name), []byte(out))
 			limit := max(tc.width, statsUnknownWidth)
 			if tc.width > 0 && tc.width < statsFullWidth {
@@ -164,7 +168,7 @@ func TestStatsFallsBackToASCIIOutsideUTF8Locales(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := env
 			e.LookupEnv = func(key string) (string, bool) { v, ok := tc.vars[key]; return v, ok }
-			out := mustRunStats(t, e, 120)
+			out := mustRunStats(t, e, 120, "--prices", goldenPrices)
 			if nonASCII := regexp.MustCompile("[^\x00-\x7f]").FindString(out); (nonASCII != "") != !tc.ascii {
 				t.Fatalf("ascii=%v but output has %q:\n%s", tc.ascii, nonASCII, out)
 			}
@@ -665,7 +669,7 @@ func TestStatsOmitsSectionsThatHaveNoData(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
 	syntheticSession{id: "cursor-only", harness: "cursor", project: "p", captured: statsDay(time.September, 28, 9), models: []string{"cursor-auto"}, turns: 3}.publish(t, mem)
-	out := mustRunStats(t, env, 0)
+	out := mustRunStats(t, env, 0, "--prices", goldenPrices)
 	flat := flatten(out)
 	for _, absent := range []string{"TOKENS BY DAY", "WHAT USED YOUR TOKENS", "COST BY MODEL", "Subagents", "Skills", "MCP", "Tool errors"} {
 		if strings.Contains(out, absent) {
