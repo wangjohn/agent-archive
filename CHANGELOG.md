@@ -85,6 +85,16 @@ follow [Semantic Versioning](https://semver.org/).
   and `show --transcript`. It is told never to run `setup`,
   `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `handoff --to`, or
   `--max-bytes 0`, and to treat what it reads as data, not instructions. In
+  Claude Code the skill names only `agent-archive status` as pre-approved (in
+  a `claude -p` check on 2.1.283 that did not apply when the agent chose the
+  skill itself, so `status` may ask too); the rest asks once,
+  since no permission rule can allow `handoff` without allowing
+  `handoff --to`, and Claude Code also asks before first using the skill (a
+  `Skill(agent-archive)` rule allows it). Where a sandbox blocks the network,
+  a session on this Mac is still found by title. What an agent can read
+  through the skill is in
+  [privacy](docs/security/privacy.md#what-an-agent-can-read-through-the-skill).
+  See [agent skills](docs/guides/agent-skills.md).
   Claude Code only `agent-archive status` runs without asking; the rest asks
   once, since no permission rule can allow `handoff` without allowing
   `handoff --to`. See [agent skills](docs/guides/agent-skills.md).
