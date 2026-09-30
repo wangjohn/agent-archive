@@ -39,9 +39,57 @@ jobs:
           AGENT_ARCHIVE_PERF: '1'
       - run: go vet ./...
       - run: python3 scripts/test_release_signing.py
+      - run: python3 scripts/test_release_assets.py
       - run: python3 scripts/test_install.py
       - run: python3 scripts/test_install_from_source.py
       - run: python3 scripts/test_purge_recipe.py
+
+  cross-build:
+    # What the two platform legs above cannot see: the ubuntu leg builds only
+    # linux/amd64, and the macOS leg builds only darwin with cgo (the release
+    # configuration). This job, on Linux, builds and vets the other targets,
+    # so a change that breaks one fails here, not on release day. The macOS
+    # legs and the lint job already vet darwin with cgo natively, which no
+    # Linux runner can do (cgo needs Apple's SDK).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: go.sum
+      - name: Require Go 1.27.1 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+      - name: Build and vet linux/arm64
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: |
+          go build ./...
+          go vet ./...
+      # A macOS build without cgo uses the Keychain stand-in in
+      # internal/credentials/keychain_nocgo_darwin.go, which the macOS legs
+      # (cgo on) never compile.
+      - name: Vet darwin without cgo
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: go vet ./...
+      # The release workflow's Linux build and checks, on a placeholder
+      # version, so everything except tagging and publishing is exercised
+      # before a release.
+      - name: Build and check the release's Linux binaries
+        env:
+          VERSION: v0.0.0-ci
+        run: |
+          ./scripts/build-release.sh linux
+          ./scripts/verify-linux-release.sh
 
   fuzz:
     # Every parser, redaction, and hook fuzz target, briefly, so a change that
@@ -96,7 +144,14 @@ jobs:
           install-mode: goinstall
           args: --disable=revive
       # Production code only tests reach belongs in a _test.go file (or a
-      # test-only package); deadcode finds it. Listed exceptions: the test
+      # test-only package); deadcode finds it. It sees only the macOS build:
+      # code in a Linux-only file (a _linux.go file or a linux build tag) is
+      # never analysed. There is none yet; when the first Linux-only file
+      # lands, add a second run here with GOOS=linux CGO_ENABLED=0 (build
+      # deadcode first, since `go run` cannot execute a cross-built tool).
+      # Today that run reports three more functions than this one
+      # (credentials.EncodeSecret, DecodeSecret, and errorForOSStatus, which
+      # only the macOS Keychain code calls), so it needs its own exceptions. Listed exceptions: the test
       # helper packages, a cgo probe (test files cannot use cgo), a load
       # counter other packages' cost tests read, and the terminal UI layer in
       # internal/cli/ui.go, whose parts the onboarding screens adopt one PR at
