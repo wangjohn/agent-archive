@@ -47,8 +47,13 @@ import (
 // when experimentalR2Create says so. Remove that function, and its one use in
 // storageMenuFor, to end the gate.
 
-// guidedR2Choice is the storage menu's key for creating an R2 bucket.
-const guidedR2Choice = "r2-create"
+// guidedR2Choice is the storage menu's key for creating an R2 bucket, and
+// storageLabelR2New its label, which messages that point at the choice share
+// with the menu.
+const (
+	guidedR2Choice    = "r2-create"
+	storageLabelR2New = "Cloudflare R2: create a new bucket for me"
+)
 
 // experimentalR2CreateVar is the environment variable that turns the guided
 // R2 option on.
@@ -62,11 +67,12 @@ func experimentalR2Create(env Env) bool {
 }
 
 func guidedR2Option() option {
-	return option{guidedR2Choice, "Cloudflare R2: create a new bucket for me"}
+	return option{guidedR2Choice, storageLabelR2New}
 }
 
 // storageMenuFor is the storage menu setup shows: storageMenuOptions, plus
-// the guided R2 option, before the instructions, when it is switched on.
+// the guided R2 option, after the guided S3 one and before the instructions,
+// when it is switched on.
 func storageMenuFor(env Env) []option {
 	options := storageMenuOptions()
 	if !experimentalR2Create(env) {

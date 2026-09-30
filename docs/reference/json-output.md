@@ -163,7 +163,7 @@ untrimmed output. See [list and show](../guides/list-and-show.md#size).
   "generated_at": "2026-09-29T12:00:00-07:00",
   "filters": { "harness": "claude" },
   "window": { "days": 30, "timezone": "America/Los_Angeles", "first_day": "2026-08-31", "last_day": "2026-09-29", "...": "from, to, previous_from, previous_to" },
-  "prices": { "version": "2026-09.2", "as_of": "2026-09-29", "currency": "USD", "...": "sources, notes, overridden" },
+  "prices": { "version": "2026-09.4", "as_of": "2026-09-30", "currency": "USD", "...": "sources, notes, overridden" },
   "coverage": { "sessions": 412, "sessions_with_tokens": 371, "unknown_tokens_by_agent": { "cursor": 41 }, "...": "" },
   "daily": [ { "date": "2026-08-31", "sessions": 3, "tokens": 1200000, "cost": { "usd": 41.2, "partial": false, "unpriced_tokens": 0, "approximate": false } } ],
   "peak": { "date": "2026-09-17", "tokens": 4900000 },
@@ -240,12 +240,16 @@ at the top level. Read the rules below before using a number:
   (5); `total_projects`, `total_skills` and `mcp.total_servers` say how many
   there are. `projects` is ranked by estimated cost before it is cut, so the
   top five are the five that cost the most, not the five with the most tokens
-  (see below). `models` lists every model family. `display_skills` is `skills`
-  for showing to a person: a plugin prefix is stripped from each name
-  (`anthropic-skills:docs` is `docs`; only the first `:` counts) and skills
-  that then share a name are one row, counted in the sessions that used any
-  of them (a session that used both counts once); `total_display_skills` is
-  its length before the cut. `skills` keeps the names as recorded.
+  (see below). Every project is in `groups.rows` with `--by project`, which
+  is never cut; the terminal's "all in --json --by project" points at it.
+  The JSON has no more than five skills or MCP servers (the terminal's detail
+  screen lists up to 40). `models` lists every model family (the terminal's
+  "all in --json"). `display_skills` is `skills` for showing to a person: a
+  plugin prefix is stripped from each name (`anthropic-skills:docs` is `docs`;
+  only the first `:` counts) and skills that then share a name are one row,
+  counted in the sessions that used any of them (a session that used both
+  counts once); `total_display_skills` is its length before the cut. `skills`
+  keeps the names as recorded.
 - **Project order.** `projects` (and `groups.rows` with `--by project`) are
   ordered by `cost.usd`, the highest first, and only then cut to the top
   five, so a project left out never has a higher `usd` than one listed. A
@@ -313,7 +317,8 @@ Treat an absent field and `null` the same way.
 | `storage_access_confirmed_at`, `storage_access_confirmed_by` | The latest confirmation that the destination is reachable with the configured credentials, and by whom: `setup`, or `collector` (its access probe, or a pass that uploaded). Use this to tell whether capture can still reach the bucket. |
 | `authentication` | The last storage health check: state (`verified`, `stale_configuration`, …), time, and whether it came from a manual `sync` or the background collector. |
 | `privacy`, `privacy_evidence` | Bucket privacy: `verified_private`, `public_or_risky`, or `not_verified`, with the reason, scope, and check time. |
-| `background` | The launchd job: `loaded`, `running`, `missing`, `another_installation` (launchd runs this installation's label from a different plist, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
+| `background` | The background job (the launchd job on macOS, the user's systemd timer on Linux): `loaded`, `running`, `missing`, `another_installation` (the scheduler runs this installation's job from a different definition, which is left alone), `broken` (the job runs an executable that no longer exists), or `unknown`. |
+| `background_warnings` | What the background job does, but not robustly, one sentence each: on Linux, that lingering is off (the collector stops when you log out) or that a systemd drop-in overrides its unit. The state is not changed by them. Absent when there is nothing to say, which is always the case on macOS. |
 | `paused` | Whether collection is paused. |
 | `projects` | Included project roots. |
 | `skill_evidence` | Effective filesystem skill evidence policy: `none`, `metadata`, or `body`. Older configs without the field report `body`. |

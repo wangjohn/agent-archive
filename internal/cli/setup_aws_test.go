@@ -87,7 +87,7 @@ func TestStorageProviderDefaultSkipsDiscoveryWhenProviderSaved(t *testing.T) {
 	if called {
 		t.Fatal("AWS profile discovery ran although a provider was saved")
 	}
-	if !strings.Contains(out.String(), storageMenuPrompt("[2]: ")) {
+	if !strings.Contains(out.String(), storageMenuPromptS3()) {
 		t.Fatalf("output %q, want the saved S3 as default", &out)
 	}
 }
@@ -201,7 +201,7 @@ func TestStorageProviderDefaultFollowsAWSProfiles(t *testing.T) {
 		var out bytes.Buffer
 		// The reader ends after the provider question, so setup stops there.
 		_, _, _, err := promptStorage(newPrompter(strings.NewReader(""), &out), credentials.Config{Provider: tc.existing}, env, "")
-		if err == nil || !strings.Contains(out.String(), storageMenuPrompt(tc.want)) {
+		if err == nil || !strings.Contains(out.String(), fmt.Sprintf("Enter 1-%d ", len(storageMenuOptions()))+tc.want) {
 			t.Errorf("%s: err=%v output %q, want default %q", tc.name, err, &out, tc.want)
 		}
 	}
@@ -351,7 +351,7 @@ func TestS3LocationFallsBackToTyping(t *testing.T) {
 		{
 			"no buckets", fakeBuckets{regions: map[string]string{"typed": "us-west-2"}},
 			"\ntyped\n", "us-west-2",
-			[]string{"Profile work can't see any buckets. Type the bucket name.\nBucket name: "},
+			[]string{"Profile work can't see any buckets. Type the bucket name; to create one instead, choose \"Amazon S3: create a new bucket for me\" at the storage question.\nBucket name:"},
 		},
 		{
 			"region denied, profile's used", fakeBuckets{names: []string{"typed"}, regionErr: errAccessDenied},
@@ -606,14 +606,8 @@ func TestStorageDefaultsFollowAWSProfileVariable(t *testing.T) {
 	if err == nil {
 		t.Fatal("setup went past the bucket question")
 	}
-	want := storageMenuPrompt("[2]: ") + "Which AWS profile has access to the bucket?\n  1) bare (no credentials configured)\nEnter 1-1, or another profile name [1]: "
+	want := storageMenuPromptS3() + "Which AWS profile has access to the bucket?\n  1) bare (no credentials configured)\nEnter 1-1, or another profile name [1]: "
 	if !strings.Contains(out.String(), want) {
 		t.Fatalf("output %q, want %q", &out, want)
 	}
-}
-
-// storageMenuPrompt is the storage menu's answer line ending in tail, such
-// as "[2]: ": "Enter 1-N " for the N options the menu has.
-func storageMenuPrompt(tail string) string {
-	return fmt.Sprintf("Enter 1-%d %s", len(storageMenuOptions()), tail)
 }

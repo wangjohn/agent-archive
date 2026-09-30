@@ -48,6 +48,9 @@ type Store struct {
 	// collectorPass marks a Store from ForCollectorPass, which may move a
 	// corrupt collector-owned file aside.
 	collectorPass bool
+	// afterRemovalRecord, when set by a test, runs once ForgetIdleSession
+	// has written the removal record and before it takes the request lock.
+	afterRemovalRecord func()
 }
 
 // OpenReadOnly returns a handle to an existing local store under

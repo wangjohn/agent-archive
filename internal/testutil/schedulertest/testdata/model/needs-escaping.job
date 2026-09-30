@@ -1,0 +1,8 @@
+job=model-c78e5b9b
+program=/Users/test/bin/agent-archive
+args=_collect
+data=/Users/test/a & <b> "c"
+interval=1m0s
+run_at_load=true
+env.HTTPS_PROXY=http://proxy.example:3128/?a&b<2>
+env.PATH=/usr/bin

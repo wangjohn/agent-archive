@@ -283,7 +283,7 @@ func TestSetupYesGivesTheCollectorTheAWSSettingsItVerified(t *testing.T) {
 		t.Fatalf("setup --yes warned about a helper the collector can find:\n%s", output)
 	}
 	environment, _ := collectorPlistEnvironment(t, env, home, userHome)
-	if environment["AWS_CONFIG_FILE"] != configFile || environment["PATH"] != collectorPath(path) {
+	if environment["AWS_CONFIG_FILE"] != configFile || environment["PATH"] != collectorPath(path, env.defaultPATH()) {
 		t.Fatalf("collector environment %v", environment)
 	}
 }

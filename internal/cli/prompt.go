@@ -32,8 +32,12 @@ type prompter struct {
 	// reviewHint, when set, is a line the setup review repeats: where to
 	// change what an answer chose for the person.
 	reviewHint string
-	// guided is a guided bucket creation whose key setup has yet to stage;
-	// created is what the last one left in the person's Cloudflare account.
+	// createdBuckets are the S3 buckets setup created in this run (see
+	// setup_s3_create.go); in memory only.
+	createdBuckets []createdS3Bucket
+	// guided is a guided R2 bucket creation whose key setup has yet to
+	// stage; created is what the last one left in the person's Cloudflare
+	// account.
 	guided  *r2Handoff
 	created *r2Created
 }

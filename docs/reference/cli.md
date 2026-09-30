@@ -373,10 +373,11 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --view overview|detail|projects|models|agents
                                  Which screen to print (default overview):
                                  detail has the streaks, tool errors, token
-                                 breakdown, every skill and MCP server and the
-                                 notes on what the numbers rest on; projects,
-                                 models and agents list every one. Not with
-                                 --json or --html
+                                 breakdown, up to 40 skills and MCP servers
+                                 and the notes on what the numbers rest on;
+                                 projects and models list up to 500 rows,
+                                 agents every agent. Not with --json or
+                                 --html
   --detail                       The same as --view detail. Not with --view
   --days N                       Window of N calendar days ending today
                                  (default 30; up to 3660)
@@ -387,7 +388,7 @@ keys, q quits. Otherwise text is paged through $PAGER unless --no-pager.
   --by day|week|month|project    Also break the window down that way:
                                  project is --view projects, and day, week
                                  and month add a table to --view detail
-                                 (--json has the rows for all four)
+                                 (with --json, groups.rows has every row)
   --harness codex|claude|cursor  Only this application
   --model NAME                   Only sessions that used this model (their
                                  other models count too)
@@ -647,13 +648,18 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 Guide: [Uninstall](../getting-started/uninstall.md).
 
 ```text
-Usage: agent-archive uninstall [--delete-local-data] [--yes]
+Usage: agent-archive uninstall [--delete-local-data] [--skip-scheduler] [--yes]
 
 Remove hooks, the agent skills (/handoff and agent-archive), and the
 background collector. Keep local evidence,
 settings, and credentials by default, so setup can restore the installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
+--skip-scheduler goes on when the background scheduler cannot be reached (no
+user session bus, for example): it tries to stop the job, removes its
+definition and the rest all the same, prints the command that stops the job by
+hand, and says the job was not verified stopped. Without it, uninstall stops
+there and changes nothing.
 --yes skips the confirmations; it is required without a terminal.
 Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
@@ -662,6 +668,7 @@ Example: agent-archive uninstall
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--delete-local-data` | no value | — |
+| `--skip-scheduler` | no value | — |
 | `--yes` | no value | — |
 
 ## agent-archive purge

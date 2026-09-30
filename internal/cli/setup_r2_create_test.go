@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -907,38 +906,48 @@ func TestParseR2AccountID(t *testing.T) {
 	}
 }
 
-// storageHelpNumber is the number of the storage menu's instructions entry
-// under env, as a person types it.
-func storageHelpNumber(env Env) string {
-	for i, o := range storageMenuFor(env) {
-		if o.Key == "help" {
-			return strconv.Itoa(i + 1)
+// withR2CreateSwitch is an Env whose lookup answers the experimental R2
+// switch with value, set or not, and nothing else.
+func withR2CreateSwitch(value string, set bool) Env {
+	return Env{LookupEnv: func(key string) (string, bool) {
+		if key == experimentalR2CreateVar {
+			return value, set
 		}
-	}
-	panic("the storage menu has no instructions entry")
+		return "", false
+	}}
 }
 
-// Setup tests choose the instructions with storageHelpNumber, so a menu that
-// grows never breaks them. A literal number for it in a test would.
-func TestSetupTestsNeverHardcodeTheHelpEntryNumber(t *testing.T) {
+func menuKeys(options []option) string {
+	var keys []string
+	for _, o := range options {
+		keys = append(keys, o.Key)
+	}
+	return strings.Join(keys, ",")
+}
+
+// With the switch off the menu is exactly storageMenuOptions, which the
+// goldens show. The guided R2 choice joins it next to the guided S3 one,
+// before the instructions, only when the switch is on, and nothing but the
+// exact value 1 turns it on.
+func TestStorageMenuGateForGuidedR2(t *testing.T) {
 	t.Parallel()
-	literal := regexp.MustCompile(`help\\n[0-9]\\n|"", "[0-9]", "2", "work"`)
-	files, err := filepath.Glob("setup*_test.go")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no setup tests found: %v", err)
-	}
-	for _, file := range files {
-		data, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if loc := literal.FindIndex(data); loc != nil {
-			t.Errorf("%s hardcodes the help entry's number: %q", file, data[loc[0]:loc[1]])
+	for name, env := range map[string]Env{
+		"unset": withR2CreateSwitch("", false), "empty": withR2CreateSwitch("", true), "zero": withR2CreateSwitch("0", true),
+		"true": withR2CreateSwitch("true", true), "yes": withR2CreateSwitch("yes", true), "two": withR2CreateSwitch("2", true),
+	} {
+		if !slices.Equal(storageMenuFor(env), storageMenuOptions()) {
+			t.Errorf("%s: the default menu differs from storageMenuOptions: %s", name, menuKeys(storageMenuFor(env)))
 		}
 	}
-	on := Env{LookupEnv: func(string) (string, bool) { return "1", true }}
-	if storageHelpNumber(Env{}) != "3" || storageHelpNumber(on) != "4" {
-		t.Fatalf("help is entry %s by default and %s with guided creation", storageHelpNumber(Env{}), storageHelpNumber(on))
+	on := storageMenuFor(withR2CreateSwitch("1", true))
+	if got, want := menuKeys(on), "r2,s3,"+storageChoiceS3New+","+guidedR2Choice+",help"; got != want {
+		t.Fatalf("switched on: menu = %s, want %s", got, want)
+	}
+	if on[len(on)-2].Label != storageLabelR2New {
+		t.Fatalf("the guided R2 entry is labelled %q, want %q", on[len(on)-2].Label, storageLabelR2New)
+	}
+	if on[len(on)-1].Key != "help" {
+		t.Fatalf("the instructions must stay last: %s", menuKeys(on))
 	}
 }
 

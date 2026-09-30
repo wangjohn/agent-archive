@@ -23,7 +23,10 @@ CI (`test.yml`) runs the tests and scripts on macOS and Ubuntu with Go
 1.27.1 exactly (go.mod's `toolchain` line), and golangci-lint on macOS: the
 first run blocks, and revive's doc-comment rule runs only on code a pull
 request adds or changes. The Keychain code needs cgo and Xcode's command
-line tools on macOS; elsewhere a stub is built. `go test ./...` also checks the docs:
+line tools on macOS; elsewhere a stub is built. A separate `real-systemd` job
+runs the Linux scheduler against a real systemd user manager on Ubuntu (see
+[below](#never-test-against-your-real-mac)); it is its own check, not a
+required one. `go test ./...` also checks the docs:
 `internal/doclinks` fails on a broken relative link or `#anchor` in any
 Markdown file, `TestDocsQuoteOnlyRealCommandsAndFlags` on an
 `agent-archive COMMAND --flag` quoted in the README, the docs, or an issue
@@ -106,21 +109,73 @@ In Go tests, everything goes through injection:
   folder of the run's own (`internal/testutil/isolation`). Its tests call
   `capture.HandleEvent` directly; tests that go through a command (`_hook`,
   `status`, `sync`, `setup`) stay in `internal/cli`.
-- `internal/setupjournal` (setup's journal, rollback and recovery) reaches
-  launchd only through the `Launchd` it is passed, so its tests pass a
-  `fakeLaunchd` (or `launchdSim`, which answers as launchd and cli's
-  ownership check do: a label loaded from another plist is never stopped,
-  and bootstrap and bootout can fail) and cannot reach launchctl; its
-  `TestMain` isolates the process as `internal/capture`'s does. Tests that
-  run `setup` itself stay in `internal/cli`.
+- `internal/setupjournal` (setup's journal, rollback and recovery) reaches a
+  scheduler only through the `Backends` it is passed, which resolve the backend
+  name each journal records, so its tests pass a `launchdSim` (a launchd's
+  ownership rules: a label loaded from another plist is never stopped, and
+  bootstrap and bootout can fail) or a `schedulertest.Model` (a second
+  backend, to see each job driven through the backend that made it) and cannot
+  reach launchctl; its `TestMain` isolates the process as `internal/capture`'s
+  does. Tests that run `setup` itself stay in `internal/cli`.
 - `internal/scheduler/launchd` (the macOS adapter) runs launchctl only through
   the `scheduler.Runner` it is given, so its tests pass a recording Runner and
-  cannot reach launchd. `internal/scheduler/host` owns the real Runner; its
+  cannot reach launchd. It passes `schedulertest.RunConformance`, the suite
+  every scheduler adapter must (the state matrix, refusing to stop what another
+  installation owns with typed errors, an idempotent unload, loads and unloads
+  that a cancelled context does not stop, `Plan`'s purity and
+  recorded output, the `Plan` to `Inspect` and refresh round trips, no
+  credential in a definition, `Installed` listing the installation's own job
+  first and its earlier jobs after), over a fake `launchctl` that prints the
+  recordings in `internal/cli/testdata/scheduler/launchctl-print`; the
+  `schedulertest.Model`, a scheduler with a vocabulary of its own, passes it
+  too, and is what code written against the port can be tested over. `internal/scheduler/host` owns the real Runner; its
   tests run a stand-in `launchctl` script found on a temporary `PATH`.
   `TestOnlyListedPackagesRunPrograms` fails when a package outside a listed
   set imports `os/exec`, and `TestOnlyHostImportsAdapters` when one but `host`
-  (and, for now, `cli`) imports an adapter; depguard says the same in
+  imports an adapter; depguard says the same in
   `.golangci.yml`.
+- `internal/scheduler/systemd` (the Linux adapter) is tested the same way: a
+  recording or fake `Runner` and no `systemctl`. It passes `schedulertest.RunConformance` for systemd 239, 245, 252 and 255
+  over a fake `systemctl` that answers `show` from the fixtures in
+  `internal/scheduler/systemd/testdata/systemctl` (captured from real user
+  managers in disposable containers; the README there says how), and the
+  state map is pinned over the same fixtures. `internal/cli`'s Linux tests
+  drive the real commands over it with `fakeUserManager`, a user manager that
+  keeps each job's state, answers `show` and enables a timer only when its unit
+  files are where the manager searches.
+- The same adapter also runs against a **real** systemd user manager, which no
+  fake can vouch for: `TestRealUserManagerConformance` (the conformance suite,
+  with states put in and read back by `systemctl` itself) in
+  `internal/scheduler/systemd` and `TestRealSystemdSetupRunsTheTimerAndUninstallStopsIt`
+  (the real `setup`, the manager's timer starting the job's program, the real
+  `uninstall`) in `internal/cli`, with
+  `TestRealSystemdUninstallSkippingTheSchedulerPrintsACommandThatStopsTheJob`
+  (`uninstall --skip-scheduler` with the manager out of reach, then the command
+  it prints, which must stop the timer the manager still runs after the unit
+  files are gone). They skip unless
+  `AGENT_ARCHIVE_REAL_SYSTEMD=1`, because they change the running user's
+  manager (units named `agent-archive-collector*` in `~/.config/systemd/user`,
+  and the user's hook and skill files for the smoke); they refuse a machine that
+  already has such units. CI runs them in the `real-systemd` job on
+  `ubuntu-latest` (a virtual machine with systemd: it enables lingering for the
+  runner user, sets `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS`, and
+  waits up to two and a half minutes for the timer's first run). That job is
+  its own check and is not among the branch's required ones, so a change to the
+  runner image does not stop unrelated pull requests; a failure in it is a real
+  finding about the adapter. To run it yourself, never on your own Mac or
+  login, use a disposable Linux container with systemd as PID 1 (Docker on
+  macOS runs it in a Linux VM) and a non-root user:
+
+  ```sh
+  docker run -d --name aa-systemd --privileged --cgroupns=host \
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw --tmpfs /run --tmpfs /run/lock \
+    IMAGE /sbin/init   # Ubuntu 24.04 with systemd, dbus-user-session, sudo and Go
+  # as a user with sudo, in a checkout of the repository inside it:
+  sudo loginctl enable-linger "$USER"     # starts the user's manager
+  export XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
+  AGENT_ARCHIVE_REAL_SYSTEMD=1 go test -count=1 -v -run 'TestReal' ./internal/scheduler/systemd ./internal/cli
+  docker rm -f aa-systemd                 # when done
+  ```
 - `internal/stats` (the statistics engine) is a pure function of the metadata,
   time, time zone and price table it is passed, so its tests build synthetic
   `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
@@ -128,7 +183,9 @@ In Go tests, everything goes through injection:
   `archive`'s types and reads no clock, file or environment. Its default
   prices are `internal/stats/prices.json`, dated and versioned; update the
   file (and its `as_of` and `version`) from the pages in its `sources` when
-  list prices change.
+  list prices change. Read each model's own page as well as the pricing
+  table (the two can differ), and re-check any price the notes call
+  promotional on its end date: the table does not expire by itself.
 - `internal/statshtml` (the `stats --html` page) is a pure function of the
   `stats.Stats` it is passed, so its tests compute stats from synthetic
   metadata and need no isolation. Every page a test renders goes through
@@ -312,7 +369,7 @@ assigns a package variable (`stubLaunchctl`, `collectSoftDeadline`,
 counter (`state.PublishedStateLoads`), removes this process's Cursor
 snapshots or checks what a sweep of the shared snapshot folder did, orders goroutines with real sleeps, or needs work to finish
 within a production time bound that a busy parallel run can exceed (a
-hook's one-second lock wait, a version command's output deadline) stays
+hook's lock wait, a version command's output deadline) stays
 sequential, with a comment saying why when it is not obvious. Go runs every sequential test
 before it releases the parallel ones, so a package variable a sequential
 test changes and restores is never seen by a parallel test. Test seams
@@ -444,6 +501,13 @@ In `internal/scheduler/launchd`:
 | --- | --- | --- |
 | `FuzzLaunchAgentRoundTrip` | an executable, a data directory, a label, and one environment variable | the three plist readers give back what `LaunchAgent` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`, the data directory), up to XML's own rewriting of characters it cannot spell |
 | `FuzzLaunchAgentReaders` | any bytes | the readers never panic, and the data directory is what the environment says |
+
+In `internal/scheduler/systemd`:
+
+| Target | Input | Properties |
+| --- | --- | --- |
+| `FuzzRenderServiceRoundTrip` | an executable, a data directory, and one environment variable | the unit reader gives back exactly what `renderService` wrote (the program, the environment with `AGENT_ARCHIVE_HOME`), whatever `%`, `$`, quotes, backslashes and spaces the values hold, and every line of the unit is a setting the renderer writes, so a value cannot inject one |
+| `FuzzReadService` | any bytes | the reader never panics, and a unit it accepts has a program and an environment |
 
 In `internal/cli`:
 

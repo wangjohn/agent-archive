@@ -8,6 +8,21 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Setup can create an Amazon S3 bucket for you: choose "Amazon S3: create a
+  new bucket for me" at the storage question. It creates the bucket
+  in your own AWS account with the profile you pick (region and name are
+  asked, the name suggested as `agent-archive-` and random characters),
+  turns on all four Block Public Access settings, and reads them back, then
+  prints the least-privilege policy for the new bucket and asks which
+  profile archiving should use, recommending a separate narrower one. The profile needs `s3:CreateBucket` and
+  `s3:PutBucketPublicAccessBlock`; without them (or when an organization
+  policy forbids it) setup says so and lets you pick an existing bucket. If
+  Block Public Access can't be turned on, setup offers to retry, or to delete
+  the empty bucket once you type its name, and never uploads to it. Only the
+  standard AWS regions are supported.
+  If setup ends without using a bucket it created, it says so. Setup does
+  not create IAM users or keys, and sets no lifecycle rule. The
+  manual steps in the bucket guide still work.
 - **Experimental:** `setup` can create a Cloudflare R2 bucket for you. Set
   `AGENT_ARCHIVE_EXPERIMENTAL_R2_CREATE=1` to see **Cloudflare R2: create a new
   bucket for me** at the storage question, then paste one Cloudflare API token
@@ -289,6 +304,20 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **Privacy filter 13: a session's name and linked pull request are now
+  archived.** Claude Code's session name (the one in its sidebar, set from
+  your prompt or by `/rename`) and the pull request a session linked (its
+  `owner/repo`, number, and GitHub link) are kept, and so is a Cursor chat's
+  name. Every name a Claude Code session was given is kept, so renaming one
+  does not remove its earlier names from the archive. Names pass the same
+  redaction as your prompts; the link is kept
+  only in the exact shape `https://github.com/owner/repo/pull/N`, and a link
+  that is not is dropped. Nothing else changes: Claude Code's `agent-name` and
+  `last-prompt` records are still dropped. `list`, `show`, and `handoff` do
+  not show the new fields yet. The next sync re-reads and republishes each
+  session whose transcript is still on the Mac, so it can carry them. See the
+  [filter changelog](dev/specs/privacy-filter-changelog.md) and
+  [privacy](docs/security/privacy.md#what-is-uploaded).
 - `agent-archive stats` has a new default screen: a short summary with the
   headline numbers (estimated spend, sessions, tokens, with the change from the
   previous period only when there was one, and how much of the tokens were
@@ -393,6 +422,29 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The `handoff` picker no longer offers archived subagent sessions. They
+  filled the first screen under their orchestrator (one had 45 of them) and
+  were counted in "Showing 50 of 659", though only top-level sessions can be
+  handed off. The picker now lists top-level sessions only and counts only
+  those; `list` and `show` are unchanged.
+- A hook that fires while a retention sweep is expiring its session no
+  longer fails with "another collector or setup is running" on a busy Mac,
+  leaving the session to expire without that turn. Retention wrote the
+  session's removal record while holding the lock the hook waits a second
+  for, and that write's disk syncs could take longer; it now writes the
+  record first and holds the lock only to recheck and forget the session.
+- **`agent-archive stats` no longer says `--json` has every row of a list it
+  cut.** Under a cut list the screens said `(--json has them all)`, but plain
+  `--json` keeps only the top five projects. The projects screen now says `+ N
+  more (all in --json --by project)` (the by-project rows are never cut),
+  the models screen `(all in --json)` (`models` is never cut), and the
+  detail screen's day, week and month tables `N earlier rows not shown (all in
+  --json --by day)`; the interactive screen, which takes no command, says to
+  quit first and names the window on show (`+ N more (quit, then run
+  agent-archive stats --days 90 --json --by project)`). The skills and MCP
+  servers were never claimed to be in `--json`, which keeps only the top five
+  of each; `stats --help` and the guide now say the detail screen lists up to
+  40 of them.
 - **The `agent-archive` skill no longer claims the session you are in is
   never matched, and `uninstall --help` names both skills.** The skill said
   the calling session is always skipped, but only Claude Code is known to

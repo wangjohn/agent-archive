@@ -3,46 +3,17 @@ package setupjournal
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
 )
 
+// legacyLaunchLabel is the prototype's upload job, which the launchd adapter
+// lists as an alias of the default installation.
+const legacyLaunchLabel = "com.agent-skills.skill-runs-upload"
+
 const legacyPlist = `<?xml version="1.0"?><plist><dict><key>Label</key><string>com.agent-skills.skill-runs-upload</string><key>ProgramArguments</key><array><string>/usr/bin/python3</string><string>/private/runtime/skill_runs.py</string><string>--home</string><string>/private/records</string><string>upload</string></array></dict></plist>`
-
-func TestLegacyMigrationRejectsUnownedJob(t *testing.T) {
-	t.Parallel()
-	home := t.TempDir()
-	path := filepath.Join(home, "Library", "LaunchAgents", LegacyLaunchLabel+".plist")
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	data := strings.Replace(legacyPlist, "skill_runs.py", "unrelated.py", 1)
-	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := PlanLegacyMigration(home, fakeLaunchd{state: func(string) string { return "loaded" }}); err == nil {
-		t.Fatal("accepted unowned job")
-	}
-	after, _ := os.ReadFile(path)
-	if string(after) != data {
-		t.Fatal("unowned job changed")
-	}
-}
-
-// Without a legacy plist, the legacy migration needs no answer from
-// launchctl. (Setup itself still does, for its own job's label: see
-// TestFirstSetupRefusesAnUnknownJobState.)
-func TestLegacyMigrationWithoutALegacyJobNeedsNoLaunchctl(t *testing.T) {
-	t.Parallel()
-	userHome := t.TempDir()
-	launchd := fakeLaunchd{state: func(string) string { return "unknown" }}
-	if job, err := PlanLegacyMigration(userHome, launchd); err != nil || job != nil {
-		t.Fatalf("no legacy plist must not need launchctl: job=%+v err=%v", job, err)
-	}
-}
 
 // A crash after the legacy job was retired and the new collector's files
 // were written, but before the collector was started, leaves a journal with
@@ -51,7 +22,7 @@ func TestLegacyMigrationWithoutALegacyJobNeedsNoLaunchctl(t *testing.T) {
 func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
-	legacyPath := filepath.Join(userHome, "Library", "LaunchAgents", LegacyLaunchLabel+".plist")
+	legacyPath := filepath.Join(userHome, "Library", "LaunchAgents", legacyLaunchLabel+".plist")
 	plistPath := filepath.Join(userHome, "Library", "LaunchAgents", "com.agent-archive.collector.plist")
 	states := map[string]string{}
 	var loaded []string
@@ -85,7 +56,7 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 	if err := local.Write(JournalPath(home), journal); err != nil {
 		t.Fatal(err)
 	}
-	if err := Recover(home, launchd, noLock); err != nil {
+	if err := Recover(home, backends(launchd), noLock); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(legacyPath); err != nil || string(data) != legacyPlist {
@@ -103,7 +74,7 @@ func TestRecoverSetupReplaysLegacyJournal(t *testing.T) {
 		t.Fatal("journal not removed")
 	}
 	// Recovery is idempotent once the journal is gone.
-	if err := Recover(home, launchd, noLock); err != nil {
+	if err := Recover(home, backends(launchd), noLock); err != nil {
 		t.Fatal(err)
 	}
 }

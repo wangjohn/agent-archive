@@ -131,6 +131,9 @@ type Env struct {
 	// AWSBuckets lists an AWS profile's buckets and reads their regions
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
+	// AWSBucketCreator opens the client setup creates a new S3 bucket with,
+	// for profile, in region. Defaults to S3 with the profile's credentials.
+	AWSBucketCreator func(profile, region string) (BucketCreator, error)
 	// Cloudflare makes the client guided R2 creation uses for the pasted
 	// bootstrap API token. Defaults to the real Cloudflare API.
 	Cloudflare func(token string) cloudflare.API
@@ -170,11 +173,16 @@ type Env struct {
 	// discovery. It must not inspect transcripts, install hooks, or use the network.
 	DiscoverApplications func(userHome string) map[string]applicationDiscovery
 	// Scheduler is the background job manager: it reports the collector's job
-	// state, loads the LaunchAgent setup wrote so scheduled collection
-	// starts without a login/logout cycle, and stops it again (rolling setup
-	// back, or during uninstall). Defaults to this system's own, through
-	// newScheduler (launchd on macOS, through launchctl).
+	// state, loads the job setup defined so scheduled collection starts
+	// without a login/logout cycle, and stops it again (rolling setup back,
+	// or during uninstall). Defaults to the backend the installation's
+	// configuration records, through newScheduler: launchd on macOS (through
+	// launchctl) and systemd on Linux (through systemctl --user); setup uses
+	// this system's own and records it.
 	Scheduler scheduler.Scheduler
+	// choosesBackend is set for a command that picks the scheduler rather than
+	// addressing the installation's recorded one (see choosingBackend).
+	choosesBackend bool
 	// Credentials opens the credential store setup saves R2 secrets to and
 	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
 	// Keychain on macOS (which needs a cgo build), a private file under the

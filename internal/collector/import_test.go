@@ -287,8 +287,8 @@ func TestRemovalRecordCanonicalApp(t *testing.T) {
 	}
 }
 
-// The removal record is written under the request lock, after the recheck for
-// new work and before the session is forgotten. A session a hook kept alive
+// The removal record is written before the session is forgotten and taken
+// back when the recheck for new work keeps it. A session a hook kept alive
 // gets no record; a record that cannot be written leaves the session
 // registered, and a retry then records and forgets it.
 func TestForgetIdleSessionRecordsRemovalOnlyWhenItForgets(t *testing.T) {

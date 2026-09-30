@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -51,6 +52,8 @@ type refreshPlan struct {
 	// run the new plist.
 	plist     bool
 	restarted bool
+	// definition is what the scheduler calls that file ("plist", "unit file").
+	definition string
 	// skills are the skill files written or removed; left are the other
 	// files at the skills' paths, which are not setup's and stay.
 	skills []string
@@ -172,7 +175,7 @@ func refreshSetup(env Env) (plan refreshPlan, userHome string, err error) {
 	// Registering for the signals absorbs them until Commit returns.
 	_, stopSignals := env.interrupts()
 	defer stopSignals()
-	err = setupjournal.Commit(home, plan.journal, env.launchd())
+	err = setupjournal.Commit(home, plan.journal, env.backends())
 	// A skill file removed leaves the directories written for it.
 	agentskills.RemoveEmptyDirs(userHome, claudeConfigDir(env.installedHookFiles(userHome, cfg)))
 	return plan, userHome, err
@@ -257,13 +260,15 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	if !cfg.NoSkills {
 		plan.left = leftSkillFiles(agentskills.Files(userHome, claudeDir, cfg.Harnesses, exe, dataHome), skillChanges)
 	}
-	plistChange, changed, err := refreshPlist(in.collectorPlist(), home, exe)
+	definition := env.jobDefinition(userHome, in.ref())
+	jobChanges, err := refreshJob(in, userHome, home, exe, definition)
 	if err != nil {
 		return plan, refuse("%v", err)
 	}
-	if changed {
-		changes = append(changes, plistChange)
+	if len(jobChanges) > 0 {
+		changes = append(changes, jobChanges...)
 		plan.plist = true
+		plan.definition = in.sched().Words().Definition
 	}
 	if cfg.InstalledExecutable != exe {
 		data, err := json.MarshalIndent(next, "", "  ")
@@ -280,9 +285,9 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	// The job is left as it is: no file change needs launchd, and none asks
 	// it anything. A new plist for a loaded job is the one thing that does,
 	// since launchd runs the definition it loaded, not the file.
-	plan.journal = setupjournal.Journal{Changes: changes, Plist: in.collectorPlist(), FilesOnly: true}
+	plan.journal = setupjournal.Journal{Changes: changes, Plist: definitionPath(definition), Backend: in.sched().Name(), JobRef: string(in.ref()), FilesOnly: true}
 	if plan.plist {
-		if err := planJobRestart(&plan, userHome, env); err != nil {
+		if err := planJobRestart(&plan, in, userHome, env); err != nil {
 			return plan, err
 		}
 	}
@@ -294,50 +299,61 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 // new plist (the ordinary setup transaction), and a job that is not loaded
 // stays that way. A state it cannot read, or a job of another installation
 // under this label, refuses, as setup does.
-func planJobRestart(plan *refreshPlan, userHome string, env Env) error {
-	plist := plan.journal.Plist
-	job := env.jobState(userHome, plist)
+func planJobRestart(plan *refreshPlan, in installation, userHome string, env Env) error {
+	ref, words := in.ref(), in.sched().Words()
+	job := env.jobStatus(userHome, ref)
 	switch {
-	case job == "unknown":
-		return refuse("cannot determine the background job's state; restore access to launchctl and retry")
-	case job == setupjournal.JobAnotherInstallation:
-		return refuse("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation; refresh leaves it running and changes nothing", launchd.Label(plist), plist)
-	case setupjournal.JobActive(job):
+	case job.State == scheduler.Unknown:
+		return refuse("%s", unknownJobMessage(words, problemOf(job)))
+	case job.State == scheduler.AnotherInstallation:
+		return refuse("%s's %s job was loaded from a %s other than %s, so it belongs to another installation; refresh leaves it running and changes nothing", words.Manager, ref, words.Definition, problemOf(job).Expected)
+	case jobActive(job.State):
 		plan.journal.FilesOnly, plan.journal.WasLoaded, plan.restarted = false, true, true
 	}
 	return nil
 }
 
-// refreshPlist is the change that points the collector's LaunchAgent plist
-// at exe, keeping everything else in it (the environment setup verified the
-// storage with, which this shell may not have). changed is false when the
-// plist already runs exe, or there is none: creating a plist is setup's.
-func refreshPlist(plistPath, home, exe string) (change hooks.Change, changed bool, err error) {
-	current, err := os.ReadFile(plistPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return change, false, nil
+// refreshJob is the change that points the collector's definition (the
+// LaunchAgent plist) at exe, keeping everything else in it (the environment
+// setup verified the storage with, which this shell may not have): it
+// redefines the job from what the definition on disk says, with exe as its
+// program. It changes every artifact the definition is in (a scheduler may
+// keep a job in more than one file), and nothing when the definition already
+// runs exe, or there is none: creating a definition is setup's.
+func refreshJob(in installation, userHome, home, exe string, definition scheduler.Status) ([]hooks.Change, error) {
+	if !definition.Defined {
+		return nil, nil
 	}
+	unreadable := func(err error) error {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			return err
+		}
+		return fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", definitionPath(definition), err)
+	}
+	if definition.Program == "" && definition.DefinitionErr != nil {
+		return nil, unreadable(definition.DefinitionErr)
+	}
+	if definition.Program == exe {
+		return nil, nil
+	}
+	if definition.DefinitionErr != nil {
+		return nil, unreadable(definition.DefinitionErr)
+	}
+	plan, err := in.planJob(userHome, collectorJob(exe, home, definition.Env))
 	if err != nil {
-		return change, false, err
+		return nil, err
 	}
-	program, err := launchd.LaunchAgentProgram(current)
-	if err != nil {
-		return change, false, fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", plistPath, err)
+	return artifactChanges(plan.Artifacts)
+}
+
+// definitionPath is the file a job's definition is in, "" when the scheduler
+// named none.
+func definitionPath(status scheduler.Status) string {
+	if len(status.Paths) == 0 {
+		return ""
 	}
-	if program == exe {
-		return change, false, nil
-	}
-	environment, err := launchd.LaunchAgentEnvironment(current)
-	if err != nil {
-		return change, false, fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", plistPath, err)
-	}
-	delete(environment, "AGENT_ARCHIVE_HOME")
-	plist, err := launchd.LaunchAgent(exe, home, launchd.Label(plistPath), environment)
-	if err != nil {
-		return change, false, err
-	}
-	change, err = fileChange(plistPath, plist)
-	return change, err == nil, err
+	return status.Paths[0]
 }
 
 // leftSkillFiles are the paths of files that setup would write but the
@@ -376,7 +392,7 @@ func (p refreshPlan) summary() string {
 	case p.restarted:
 		parts = append(parts, "the background collector (restarted)")
 	case p.plist:
-		parts = append(parts, "the background collector's plist (its job is not loaded, and was left so)")
+		parts = append(parts, "the background collector's "+p.definition+" (its job is not loaded, and was left so)")
 	}
 	if len(p.skills) > 0 {
 		parts = append(parts, countNoun(len(p.skills), "skill file"))

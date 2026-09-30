@@ -5,7 +5,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -89,7 +88,7 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.runSetup(t, strings.Join([]string{"", storageHelpNumber(Env{}), "2", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", storageMenuNumber(t, "help"), "2", "work", "2", ""}, "\n")+"\n")
 	if !strings.Contains(out, bucketDocURL) {
 		t.Fatalf("no link to the bucket guide:\n%s", out)
 	}
@@ -104,40 +103,16 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	}
 }
 
-// By default the menu is the two providers and the instructions. The guided
-// R2 choice joins it, before the instructions, only when the experimental
-// switch is on, and nothing but the exact value 1 turns it on.
+// The menu is the two providers, the guided choices, then the instructions,
+// in that order.
 func TestStorageMenuOptionsOrder(t *testing.T) {
 	t.Parallel()
-	keys := func(env Env) string {
-		var keys []string
-		for _, o := range storageMenuFor(env) {
-			keys = append(keys, o.Key)
-		}
-		return strings.Join(keys, ",")
+	var keys []string
+	for _, o := range storageMenuOptions() {
+		keys = append(keys, o.Key)
 	}
-	withSwitch := func(value string, set bool) Env {
-		return Env{LookupEnv: func(key string) (string, bool) {
-			if key == experimentalR2CreateVar {
-				return value, set
-			}
-			return "", false
-		}}
-	}
-	// Off, the menu is exactly what it was before guided creation existed.
-	for name, env := range map[string]Env{
-		"unset": withSwitch("", false), "empty": withSwitch("", true), "zero": withSwitch("0", true),
-		"true": withSwitch("true", true), "yes": withSwitch("yes", true), "two": withSwitch("2", true),
-	} {
-		if got := keys(env); got != "r2,s3,help" {
-			t.Errorf("%s: menu = %s", name, got)
-		}
-		if !slices.Equal(storageMenuFor(env), storageMenuOptions()) {
-			t.Errorf("%s: the default menu differs from storageMenuOptions", name)
-		}
-	}
-	if got := keys(withSwitch("1", true)); got != "r2,s3,r2-create,help" {
-		t.Fatalf("switched on: menu = %s", got)
+	if strings.Join(keys, ",") != "r2,s3,s3-new,help" {
+		t.Fatalf("menu = %v", keys)
 	}
 }
 

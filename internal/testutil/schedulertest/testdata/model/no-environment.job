@@ -1,0 +1,6 @@
+job=model-default
+program=/Users/test/bin/agent-archive
+args=_collect
+data=/Users/test/plain
+interval=1m0s
+run_at_load=true
