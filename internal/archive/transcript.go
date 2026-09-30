@@ -24,6 +24,9 @@ type Transcript struct {
 	// ToolResultsUnavailable is true when the harness records no tool
 	// results at all (Cursor), so their absence can be stated once.
 	ToolResultsUnavailable bool
+	// Elisions records what FitTranscript trimmed to meet a size limit, in
+	// the order it applied each step. Empty when nothing was.
+	Elisions []TranscriptElision
 }
 
 // TranscriptExchangeKind says what starts a TranscriptExchange.
@@ -48,6 +51,8 @@ type TranscriptExchange struct {
 	Text      string
 	Timestamp string
 	Steps     []TranscriptStep
+	// TextTruncated is true when FitTranscript cut a prompt short.
+	TextTruncated bool
 }
 
 // TranscriptStepKind says which of the TranscriptStep shapes a step is.
@@ -70,6 +75,9 @@ const (
 	TranscriptStepSummary TranscriptStepKind = "summary"
 	// TranscriptStepOutput is command output with no command before it.
 	TranscriptStepOutput TranscriptStepKind = "output"
+	// TranscriptStepCollapsed stands for tool calls FitTranscript replaced
+	// with a count by name, such as "14 tool calls: Bash ×9, Read ×5".
+	TranscriptStepCollapsed TranscriptStepKind = "collapsed"
 )
 
 // TranscriptStep is one thing that happened in an exchange. Text is the
@@ -80,6 +88,8 @@ type TranscriptStep struct {
 	Text   string
 	Output string
 	Tool   *HandoffToolCall
+	// TextTruncated is true when FitTranscript shortened Text.
+	TextTruncated bool
 }
 
 // BuildTranscript arranges a filtered bundle for reading. Tool results and
@@ -182,7 +192,7 @@ func lastCommandStep(steps []TranscriptStep) *TranscriptStep {
 				return nil
 			}
 			return &steps[i]
-		case TranscriptStepTool, TranscriptStepSummary:
+		case TranscriptStepTool, TranscriptStepSummary, TranscriptStepCollapsed:
 		case TranscriptStepText, TranscriptStepOutput:
 			return nil
 		}

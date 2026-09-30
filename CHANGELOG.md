@@ -33,6 +33,13 @@ follow [Semantic Versioning](https://semver.org/).
   Your prompts are quoted with a `┃` gutter that stays on wrapped lines,
   and the agent's part of each exchange starts with the app's name
   (`Claude Code ›`).
+- `show --transcript` prints at most 120,000 bytes (about 30k tokens), like
+  `handoff`, so a script or an agent that runs it on a long session is not
+  flooded. `--max-bytes N` changes the limit and `0` removes it; it applies
+  to `--full` and `--json` too. Over the limit, the oldest tool output, tool
+  calls, agent text, and prompts are trimmed first, the newest exchanges are
+  kept, and the untrimmed output is saved in the data directory's
+  `handoffs/` for 7 days, its path named at the end (`trimmed` in `--json`).
 - Browsing on a terminal (`list`, bare `show`) opens a session's summary in
   place of the list, on the terminal's alternate screen: `t` shows its
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
