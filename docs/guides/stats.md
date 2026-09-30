@@ -408,7 +408,8 @@ as a table" view (sessions, spend and tokens per day) for screen readers and
 keyboards; every other number is in a table or a sentence.
 
 The by-project list shows the top few projects by estimated spend, dearest
-first (one that could not be priced last), and says how many more there are;
+first (one that could not be priced last, one that is partly priced on the
+spend it has, marked `+`), and says how many more there are;
 `--by project` lists more of them. The same order and cut are in `--json`.
 
 - **Where it goes.** `--output FILE` saves it with mode 0600 (readable by you

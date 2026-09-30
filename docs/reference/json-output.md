@@ -236,16 +236,20 @@ at the top level. Read the rules below before using a number:
   its length before the cut. `skills` keeps the names as recorded.
 - **Project order.** `projects` (and `groups.rows` with `--by project`) are
   ordered by `cost.usd`, the highest first, and only then cut to the top
-  five, so a project left out never cost more than one listed. A project
-  whose cost is partial (`cost.partial`) is ordered on the `usd` it has; a
-  project with no priced cost (`usd` is `null`) comes after every project
-  that has one. Projects of equal cost, and those with none, are ordered by
-  `tokens` (highest first, `null` last), then `sessions` (highest first),
-  then `name`, so the order does not depend on the order sessions were read
-  in. Until this change both lists were ordered by tokens, which cache reads
-  dominate, so a cheaper project with more cache reads could push a dearer one
-  out of the top five; the fields and `schema_version` (1) are unchanged, only
-  the order and which five are kept.
+  five, so a project left out never has a higher `usd` than one listed. A
+  project whose cost is partial (`cost.partial`) is ordered on the `usd` it
+  has, which leaves out `cost.unpriced_tokens`, so its real cost is higher
+  than its place says; a project with no priced cost (`usd` is `null`) comes
+  after every project that has one, and is the first to be cut, however many
+  `tokens` it has. The overall `overview.cost` says when any of that
+  happened (`partial`, `unpriced_tokens`), and `models` names the model with
+  no price (`priced` is `false`). Projects of equal cost, and those with none,
+  are ordered by `tokens` (highest first, `null` last), then `sessions`
+  (highest first), then `name`, so the order does not depend on the order
+  sessions were read in. Releases through 0.2.0 ordered both lists by tokens,
+  which cache reads dominate, so a cheaper project with more cache reads could
+  push a dearer one out of the top five; the fields and `schema_version` (1)
+  are unchanged, only the order and which five are kept.
 - **`heads_up`** is what deserves a second look, at most three notes in
   priority order, `[]` when nothing does. Each note is data only, with a
   `kind` that says which fields it has; the words are the reader's:

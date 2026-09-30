@@ -148,7 +148,9 @@ type Stats struct {
 	// Projects are ranked by estimated cost, dearest first (a partly priced
 	// project on the cost it has; a project with no priced cost after every
 	// one that has one; ties by tokens, sessions, then name), and cut to the
-	// top few after that, so a project left out never cost more than one kept.
+	// top few after that, so a project left out never has a higher cost than
+	// one kept. A partial or unpriced cost leaves tokens out: the overall
+	// Overview.Cost and Models say so, whatever the cut left out.
 	Projects []Project `json:"projects"`
 	// TotalProjects is how many distinct projects the window has; Projects
 	// keeps the top few of them.
