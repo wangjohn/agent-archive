@@ -89,7 +89,18 @@ tbody th { font-weight: 500; overflow-wrap: anywhere; min-width: 7em; }
 tbody tr + tr th, tbody tr + tr td { border-top: 1px solid var(--grid); }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-right: 0; padding-left: 12px; }
 .barcol { width: 30%; min-width: 80px; padding-left: 4px; }
-@media (max-width: 559px) { .barcol, .barnote { display: none; } }
+@media (max-width: 559px) {
+  .barcol, .barnote { display: none; }
+  main { padding: 16px 12px 40px; }
+  .card { padding: 12px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; }
+  table { font-size: 13px; }
+  .num { padding-left: 8px; }
+  thead th.num { white-space: normal; }
+  tbody th { min-width: 5.5em; }
+}
+.nb { white-space: nowrap; }
+@media (min-width: 560px) and (max-width: 859px) { .cards { grid-template-columns: repeat(3, 1fr); } }
 .scroll { overflow-x: auto; }
 .two > * { min-width: 0; }
 svg.bar { display: block; overflow: hidden; }

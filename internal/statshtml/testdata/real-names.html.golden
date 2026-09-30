@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark" />
 <meta name="robots" content="noindex" />
 <meta name="referrer" content="no-referrer" />
-<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src data:; base-uri &#39;none&#39;; form-action &#39;none&#39;" />
+<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;" />
 <title>agent-archive stats · last 30 days</title>
 <style>:root {
   color-scheme: light dark;
@@ -99,7 +99,18 @@ tbody th { font-weight: 500; overflow-wrap: anywhere; min-width: 7em; }
 tbody tr + tr th, tbody tr + tr td { border-top: 1px solid var(--grid); }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-right: 0; padding-left: 12px; }
 .barcol { width: 30%; min-width: 80px; padding-left: 4px; }
-@media (max-width: 559px) { .barcol, .barnote { display: none; } }
+@media (max-width: 559px) {
+  .barcol, .barnote { display: none; }
+  main { padding: 16px 12px 40px; }
+  .card { padding: 12px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; }
+  table { font-size: 13px; }
+  .num { padding-left: 8px; }
+  thead th.num { white-space: normal; }
+  tbody th { min-width: 5.5em; }
+}
+.nb { white-space: nowrap; }
+@media (min-width: 560px) and (max-width: 859px) { .cards { grid-template-columns: repeat(3, 1fr); } }
 .scroll { overflow-x: auto; }
 .two > * { min-width: 0; }
 svg.bar { display: block; overflow: hidden; }
@@ -190,7 +201,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 <main>
 <header class="head">
 <h1>agent-archive stats</h1>
-<p class="sub">Last 30 days · 2026-08-31 to 2026-09-29 · 3 agents · 22 sessions (19 with token data)</p>
+<p class="sub"><span class="nb">Last 30 days</span> · <span class="nb">2026-08-31 to 2026-09-29</span> · <span class="nb">3 agents</span> · <span class="nb">22 sessions (19 with token data)</span></p>
 <p class="sub">Filtered to harness claude, hook-captured sessions.</p>
 </header>
 <section class="card" aria-labelledby="h-daily">
@@ -310,7 +321,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 <div class="two">
 <section class="card" aria-labelledby="h-agents">
 <h2 id="h-agents">Agents</h2>
-<div class="scroll">
+<div class="scroll" role="region" tabindex="0" aria-labelledby="h-agents">
 <table class="rows">
 <thead><tr><th scope="col">Agent</th><th scope="col" class="barcol"><span class="sr">Bar</span></th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Est. cost</th></tr></thead>
 <tbody>
@@ -324,7 +335,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 </section>
 <section class="card" aria-labelledby="h-models">
 <h2 id="h-models">Cost by model</h2>
-<div class="scroll">
+<div class="scroll" role="region" tabindex="0" aria-labelledby="h-models">
 <table class="rows">
 <thead><tr><th scope="col">Model</th><th scope="col" class="barcol"><span class="sr">Bar</span></th><th scope="col" class="num">Est. cost</th><th scope="col" class="num">Share</th></tr></thead>
 <tbody>
@@ -340,7 +351,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 </div>
 <section class="card" aria-labelledby="h-projects">
 <h2 id="h-projects">Top projects</h2>
-<div class="scroll">
+<div class="scroll" role="region" tabindex="0" aria-labelledby="h-projects">
 <table class="rows">
 <thead><tr><th scope="col">Project</th><th scope="col" class="barcol"><span class="sr">Bar</span></th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Est. cost</th></tr></thead>
 <tbody>
@@ -416,7 +427,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 </section>
 <section class="card" aria-labelledby="h-groups">
 <h2 id="h-groups">By project</h2>
-<div class="scroll">
+<div class="scroll" role="region" tabindex="0" aria-labelledby="h-groups">
 <table class="rows">
 <thead><tr><th scope="col">Project</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Prompts</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Est. cost</th></tr></thead>
 <tbody>

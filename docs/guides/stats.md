@@ -64,24 +64,29 @@ phone. Every bar answers a hover with its exact numbers, and the daily chart
 has a "Show as a table" view for screen readers.
 
 - **Where it goes.** `--output FILE` saves it with mode 0600 (readable by you
-  only; change that when you share it) and says so on stderr. Without
-  `--output` it goes to standard output, so redirect it; on a terminal
-  `--html` alone asks you for `--output` rather than filling the screen with
-  markup. `--output` never replaces a file that exists unless you add
-  `--force`, and it is checked before the archive is read. `--html` cannot be
+  only; change that when you share it) and says so on stderr. The page is
+  written to a temporary file next to it and moved into place, so a failure
+  never leaves half a page, and it does not replace a file that exists unless
+  you add `--force`. A symbolic link, a folder or a device is never written or
+  replaced, `--force` or not. Without `--output` it goes to standard output,
+  so redirect it (a failed write is an error, exit 1); on a terminal `--html`
+  alone asks you for `--output` rather than filling the screen with markup.
+  The flags are checked before the archive is read. `--html` cannot be
   combined with `--json`.
 - **What is in it.** Counts, model names, skill and MCP server names, dates,
   and project names, only. Never a prompt, transcript text, a file path or a
   session ID (the costliest session is described, not named: `show` cannot
-  open it from the page, by design).
-- **Project names are hidden by default.** So the page can be shared, each
-  project is a stand-in, "project A", "project B" and so on, in the order the
-  page lists them: the same project has the same letter throughout the page,
-  but the letters follow this run's ranking and are not stable between runs.
-  `--include-project-names` shows the real names, for a page only you read.
-  Skill and MCP server names are shown as they are: they are names of tools,
-  but a skill or server you named after a client would be visible, so check
-  those before sharing.
+  open it from the page, by design). It also names the time zone the days were
+  counted in.
+- **Names are hidden by default.** So the page can be shared, each project is
+  a stand-in, "project A", "project B" and so on, in the order the page lists
+  them; skills and MCP servers get "skill A" and "MCP server A" the same way.
+  The same name has the same letter throughout the page, but the letters
+  follow this run's ranking and are not stable between runs.
+  `--include-project-names` shows the real names of all three, for a page only
+  you read. Model names are shown either way (they name a vendor's model, not
+  your work), so a model you named after a client would be visible: check the
+  cost-by-model table before sharing a page from a custom deployment.
 - **Same rules as the terminal.** Unknown is not zero (Cursor's tokens read
   unknown, and a window with no token data says so instead of drawing an empty
   chart), cost is an estimate whose price table and date are in the footer,

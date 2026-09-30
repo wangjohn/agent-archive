@@ -39,7 +39,7 @@ var pageTemplate = template.Must(template.New("page").Parse(strings.Replace(page
 // load from anywhere, no script may run, and only the page's inline styles
 // apply. It is a second lock behind the escaping, so a name that somehow got
 // through as markup still could not run or fetch anything.
-const contentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"
+const contentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
 
 // Row limits keep a page a few hundred kilobytes however large the archive:
 // the engine bounds the daily series (stats.MaxDays), and these bound the
@@ -160,9 +160,7 @@ func (b *builder) header(p *page, window string) {
 	if s.Coverage.SessionsWithTokens != s.Coverage.Sessions {
 		sessions += fmt.Sprintf(" (%s with token data)", commaInt(int64(s.Coverage.SessionsWithTokens)))
 	}
-	p.Subtitle = strings.Join([]string{
-		window, plain(s.Window.FirstDay) + " to " + plain(s.Window.LastDay), agents, sessions,
-	}, " · ")
+	p.Subtitle = []string{window, plain(s.Window.FirstDay) + " to " + plain(s.Window.LastDay), agents, sessions}
 	f := b.opts.Filters
 	var parts []string
 	if f.Harness != "" {

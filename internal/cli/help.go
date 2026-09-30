@@ -234,11 +234,13 @@ paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
                                  to --output. Counts and names only. Not with
                                  --json
   --output FILE                  With --html, write the page to FILE (mode
-                                 0600) instead of stdout
-  --force                        With --output, replace FILE if it exists
-  --include-project-names        With --html, name the real projects; by
-                                 default the page says project A, project B,
-                                 ... so it can be shared
+                                 0600, replaced in one step) instead of stdout
+  --force                        With --output, replace FILE if it is an
+                                 ordinary file that exists
+  --include-project-names        With --html, name the real projects, skills
+                                 and MCP servers; by default the page says
+                                 project A, skill A, MCP server A, ... so it
+                                 can be shared
 Example: agent-archive stats --since 2026-09-01 --by project
 Example: agent-archive stats --html --output stats.html
 `,

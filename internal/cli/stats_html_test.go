@@ -128,6 +128,10 @@ func TestStatsHTMLFlagCombinations(t *testing.T) {
 		{[]string{"--output", file}, "--output applies only to --html"},
 		{[]string{"--include-project-names"}, "--include-project-names applies only to --html"},
 		{[]string{"--html", "--force"}, "--force applies only to --output"},
+		{[]string{"--html", "--output", ""}, "--output needs a file name"},
+		{[]string{"--json", "--output", file}, "--output applies only to --html"},
+		{[]string{"--json", "--include-project-names"}, "--include-project-names applies only to --html"},
+		{[]string{"--html", "--json", "--force"}, "--html and --json cannot be combined"},
 	} {
 		out, errOut, code := runStats(t, env, 0, tc.args...)
 		if code != 2 || out != "" || !strings.Contains(errOut, tc.want) {

@@ -9,7 +9,9 @@ import "strings"
 type page struct {
 	CSP      string
 	Title    string
-	Subtitle string
+	// Subtitle is the parts of the line under the title; the template keeps
+	// each part whole when the line wraps (a date is never cut in two).
+	Subtitle []string
 	Filters  string
 	// Empty is the message shown instead of the sections when the window has
 	// no sessions.

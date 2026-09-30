@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark" />
 <meta name="robots" content="noindex" />
 <meta name="referrer" content="no-referrer" />
-<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; img-src data:; base-uri &#39;none&#39;; form-action &#39;none&#39;" />
+<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; base-uri &#39;none&#39;; form-action &#39;none&#39;" />
 <title>agent-archive stats · last 30 days</title>
 <style>:root {
   color-scheme: light dark;
@@ -99,7 +99,18 @@ tbody th { font-weight: 500; overflow-wrap: anywhere; min-width: 7em; }
 tbody tr + tr th, tbody tr + tr td { border-top: 1px solid var(--grid); }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-right: 0; padding-left: 12px; }
 .barcol { width: 30%; min-width: 80px; padding-left: 4px; }
-@media (max-width: 559px) { .barcol, .barnote { display: none; } }
+@media (max-width: 559px) {
+  .barcol, .barnote { display: none; }
+  main { padding: 16px 12px 40px; }
+  .card { padding: 12px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; }
+  table { font-size: 13px; }
+  .num { padding-left: 8px; }
+  thead th.num { white-space: normal; }
+  tbody th { min-width: 5.5em; }
+}
+.nb { white-space: nowrap; }
+@media (min-width: 560px) and (max-width: 859px) { .cards { grid-template-columns: repeat(3, 1fr); } }
 .scroll { overflow-x: auto; }
 .two > * { min-width: 0; }
 svg.bar { display: block; overflow: hidden; }
@@ -190,7 +201,7 @@ table.legend .swatch { display: inline-block; vertical-align: -2px; margin-right
 <main>
 <header class="head">
 <h1>agent-archive stats</h1>
-<p class="sub">Last 30 days · 2026-08-31 to 2026-09-29 · 0 agents · 0 sessions</p>
+<p class="sub"><span class="nb">Last 30 days</span> · <span class="nb">2026-08-31 to 2026-09-29</span> · <span class="nb">0 agents</span> · <span class="nb">0 sessions</span></p>
 </header>
 <section class="card" aria-labelledby="h-empty">
 <h2 id="h-empty">Nothing to show yet</h2>

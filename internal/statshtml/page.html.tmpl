@@ -14,7 +14,7 @@
 <main>
 <header class="head">
 <h1>agent-archive stats</h1>
-<p class="sub">{{.Subtitle}}</p>
+<p class="sub">{{range $i, $part := .Subtitle}}{{if $i}} · {{end}}<span class="nb">{{$part}}</span>{{end}}</p>
 {{- if .Filters}}
 <p class="sub">{{.Filters}}</p>
 {{- end}}
@@ -179,7 +179,7 @@
 {{- if .}}
 <section class="card" aria-labelledby="h-{{.ID}}">
 <h2 id="h-{{.ID}}">{{.Title}}</h2>
-<div class="scroll">
+<div class="scroll" role="region" tabindex="0" aria-labelledby="h-{{.ID}}">
 <table class="rows">
 <thead><tr><th scope="col">{{.Heading}}</th>{{if .HasBars}}<th scope="col" class="barcol"><span class="sr">Bar</span></th>{{end}}{{range .Cols}}<th scope="col" class="num">{{.}}</th>{{end}}</tr></thead>
 <tbody>
