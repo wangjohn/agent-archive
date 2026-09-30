@@ -74,6 +74,15 @@ follow [Semantic Versioning](https://semver.org/).
   `status --json` lists them as `collector.expired_subagents`. The type is
   kept on this Mac only and never uploaded. Default `status` still says
   nothing about them.
+- `install.sh` and `scripts/install-from-source.sh` work on Linux (x86_64 and
+  aarch64) as well as macOS. On Linux the installer picks
+  `agent-archive-linux-<arch>` and checks it against the release's
+  `SHA256SUMS` with `sha256sum` or `shasum`; that check is mandatory, and the
+  install stops before anything is installed if there is no such tool, no
+  matching entry, or a mismatch. Linux binaries are not signed, so the
+  installer skips the macOS Developer ID check there and says how to verify
+  the release attestation (`gh attestation verify`). On macOS nothing
+  changes, and the Developer ID check is still required.
 
 ### Changed
 
