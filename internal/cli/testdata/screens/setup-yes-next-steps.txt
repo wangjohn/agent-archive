@@ -10,6 +10,7 @@ Skill evidence: metadata. User-level skill roots outside selected projects may b
 
 Configuration saved.
 Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md
+To remove them and keep them off, run agent-archive setup --no-skills.
 
 Next, in each app:
   Claude Code: nothing to approve; start a new session (or /clear).

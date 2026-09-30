@@ -233,6 +233,25 @@ func applySetup(home, userHome, executable string, old config.Config, next *conf
 	return err
 }
 
+// planAgentSkills is the journal changes for the agent skills of cfg: its
+// apps' skill files, or, when it turns them off (cfg.NoSkills), the removal
+// of every skill file of this installation's, in claudeDir and where
+// Claude Code's configuration was when setup last ran (previousClaudeDir).
+// Only a file setup wrote is replaced or removed (see agentskills.PlanInstall).
+// While they are off the other files at the skills' paths are returned in
+// kept, for setup to say it left them.
+func planAgentSkills(userHome, claudeDir, previousClaudeDir string, cfg config.Config, executable, dataHome string) (changes []hooks.Change, kept []string, err error) {
+	if !cfg.NoSkills {
+		changes, _, err = agentskills.PlanInstall(userHome, claudeDir, cfg.Harnesses, executable, dataHome, previousClaudeDir)
+		return changes, nil, err
+	}
+	if changes, _, err = agentskills.PlanInstall(userHome, claudeDir, nil, executable, dataHome, previousClaudeDir); err != nil {
+		return nil, nil, err
+	}
+	_, kept, err = agentskills.PlanRemoval(userHome, claudeDir, dataHome)
+	return changes, kept, err
+}
+
 // claudeConfigDir is Claude Code's configuration directory, which holds its
 // hook file (files) and its skills.
 func claudeConfigDir(files hooks.Files) string { return filepath.Dir(files["claude"]) }
@@ -354,9 +373,9 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 			changes = append(changes, removal)
 		}
 	}
-	// The agent skills (/handoff), for the apps chosen. Only a file setup
-	// wrote is replaced or removed (see agentskills.PlanInstall).
-	commands, _, err := agentskills.PlanInstall(userHome, claudeConfigDir(files), next.Harnesses, executable, env.installation(home, userHome).commandDataHome(), claudeConfigDir(previousFiles))
+	// The agent skills (/handoff), for the apps chosen, or none while they
+	// are turned off. Only a file setup wrote is replaced or removed.
+	commands, _, err := planAgentSkills(userHome, claudeConfigDir(files), claudeConfigDir(previousFiles), *next, executable, env.installation(home, userHome).commandDataHome())
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}

@@ -109,6 +109,12 @@ type Config struct {
 	// SkillEvidence controls filesystem skill inventory and snapshot uploads.
 	// An absent field is a legacy body policy, not a new-install default.
 	SkillEvidence SkillEvidence `json:"skill_evidence,omitempty"`
+	// NoSkills records that the person opted out of the agent skills setup
+	// installs into their coding agents (setup --no-skills). While it is set,
+	// setup installs none and removes the ones it wrote earlier; setup
+	// --skills clears it. The zero value installs them, so a configuration
+	// from before this field behaves as it did.
+	NoSkills bool `json:"no_skills,omitempty"`
 	// RetentionDays is whole-session retention, proposed as 90 by setup.
 	// Enforcing it is the Retention slice's job, not this package's.
 	RetentionDays int `json:"retention_days"`

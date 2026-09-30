@@ -38,7 +38,45 @@ type setupOptions struct {
 	yes                  bool
 	verbose              bool
 	skillEvidence        string
+	noSkills             bool
+	skills               bool
 	storageFlagsSupplied bool
+}
+
+// skillsChoice is what the person asked of the agent skills on this run:
+// nothing (keep what the saved configuration says), --no-skills, or
+// --skills.
+type skillsChoice int
+
+const (
+	skillsUnchanged skillsChoice = iota
+	skillsOff
+	skillsOn
+)
+
+// skillsChoice is the choice the flags make; setup refuses both before it
+// gets here.
+func (o setupOptions) skillsChoice() skillsChoice {
+	switch {
+	case o.noSkills:
+		return skillsOff
+	case o.skills:
+		return skillsOn
+	}
+	return skillsUnchanged
+}
+
+// noSkills is Config.NoSkills after this run: the choice when one was made,
+// else what the saved configuration has.
+func (c skillsChoice) noSkills(saved bool) bool {
+	switch c {
+	case skillsOff:
+		return true
+	case skillsOn:
+		return false
+	case skillsUnchanged:
+	}
+	return saved
 }
 
 // projectList is a repeatable --project.
@@ -63,6 +101,8 @@ func setupFlags(fs *commandFlags, args []string) (setupOptions, bool) {
 	fs.StringVar(&opts.region, "region", "", "S3 bucket region")
 	fs.StringVar(&opts.apps, "apps", "", "apps to capture, comma-separated")
 	fs.StringVar(&opts.skillEvidence, "skill-evidence", "", "none, metadata, or body")
+	fs.BoolVar(&opts.noSkills, "no-skills", false, "install no agent skills, and remove those setup wrote")
+	fs.BoolVar(&opts.skills, "skills", false, "install the agent skills again after --no-skills")
 	fs.Var(&projects, "project", "project directory to capture (repeatable)")
 	fs.BoolVar(&opts.yes, "yes", false, "apply without questions")
 	fs.BoolVar(&opts.verbose, "verbose", false, "show a failed storage check's full error")
@@ -196,13 +236,14 @@ func setupWithoutQuestions(opts setupOptions, stdin io.Reader, out, errOut io.Wr
 		return discard(err)
 	}
 	warnCollectorEnvironment(p, cfg.Storage, userHome, env)
+	skills := planSkillOptOut(env, home, userHome, exe, existing, cfg)
 	if err = applySetup(home, userHome, exe, existing, &cfg, nil, env); err != nil {
 		if len(draft.StagedRefs) > 0 {
 			return fmt.Errorf("%w; the new R2 key is kept with the unfinished setup: run agent-archive setup to finish or discard it", err)
 		}
 		return err
 	}
-	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome})
+	return finishSetup(p, errOut, home, cfg, existing.Paused, discoveries, discoveredAt, setupFinish{env: env, userHome: userHome, skills: skills})
 }
 
 // reviewWithoutQuestions is setup --yes's review: a reconfiguration's
@@ -240,6 +281,7 @@ func setupAnswers(existing config.Config, opts setupOptions, home, userHome stri
 	if opts.skillEvidence != "" {
 		cfg.SkillEvidence = config.SkillEvidence(opts.skillEvidence)
 	}
+	cfg.NoSkills = opts.skillsChoice().noSkills(existing.NoSkills)
 	if !config.ValidSkillEvidence(cfg.EffectiveSkillEvidence()) {
 		return cfg, credentials.R2Credentials{}, fmt.Errorf("--skill-evidence must be none, metadata, or body")
 	}

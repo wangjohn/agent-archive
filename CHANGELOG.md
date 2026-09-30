@@ -16,6 +16,12 @@ follow [Semantic Versioning](https://semver.org/).
   `status --json` lists them in `agent_skills`. After an upgrade, `status`
   warns about a skill file an earlier release wrote and lists it in
   `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
+- `agent-archive setup --no-skills` (also with `--yes`) installs no agent
+  skills and removes the ones setup wrote; a file that is not setup's is left
+  alone and named. It is saved, so later setup runs keep the skills off, and
+  `agent-archive setup --skills` turns them back on. `status` says when they
+  are turned off (`agent_skills_disabled` in `--json`). Setup now says in one
+  line how to opt out.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.
