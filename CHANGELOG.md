@@ -8,6 +8,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,
+  `counts.tool_errors` (tool results the app flagged as errors; not known
+  for Codex), `model_tokens` (token counts split by model, so a session that
+  used several models can be costed per model), and `mcp_calls` (MCP calls
+  counted by server). Codex's `cache_write_input_tokens` now fills
+  `counts.cache_write_tokens`. Existing sessions gain the new fields on the
+  next metadata refresh; nothing is re-uploaded but the metadata.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record. The session can be local or archived. With no
   session named, run inside Claude Code, Codex, or Cursor, it hands off that
@@ -49,6 +56,13 @@ follow [Semantic Versioning](https://semver.org/).
   Your prompts are quoted with a `┃` gutter that stays on wrapped lines,
   and the agent's part of each exchange starts with the app's name
   (`Claude Code ›`).
+- `show --transcript` prints at most 120,000 bytes (about 30k tokens), like
+  `handoff`, so a script or an agent that runs it on a long session is not
+  flooded. `--max-bytes N` changes the limit and `0` removes it; it applies
+  to `--full` and `--json` too. Over the limit, the oldest tool output, tool
+  calls, agent text, and prompts are trimmed first, the newest exchanges are
+  kept, and the untrimmed output is saved in the data directory's
+  `handoffs/` for 7 days, its path named at the end (`trimmed` in `--json`).
 - Browsing on a terminal (`list`, bare `show`) opens a session's summary in
   place of the list, on the terminal's alternate screen: `t` shows its
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
@@ -57,8 +71,8 @@ follow [Semantic Versioning](https://semver.org/).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
-  paths). Parser version is now `0.13.0`, so existing sessions gain them on
-  the next metadata refresh.
+  paths). They arrive with parser `0.13.0`; this release ships `0.14.0`,
+  so existing sessions gain them on the next metadata refresh.
 - A Claude Code parent session whose subagent's transcript was never written
   now says why the subagent is missing: its metadata carries a
   `subagent_transcript_never_written` capture gap, "Claude Code reported a
@@ -142,6 +156,36 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `status` is shorter, and stays the same length however many projects you
+  include. Each app has one line with its sessions (subagents counted
+  apart), imports and uploads ("212 sessions (+40 subagents) · 48 imported ·
+  3 uploading"), and under it each session still uploading, at most five,
+  with its project and start time; only an unusual one says more ("waiting
+  for its first upload", or a ! row naming the failure). The storage line
+  shows the last upload, and a failure the headline already states is no
+  longer repeated in the Storage section: a lone storage failure is named
+  in the headline ("The last sync failed: storage refused access"). The
+  per-project rows, the included projects, skill evidence, the Imported
+  line, why bucket privacy couldn't be verified, and the pending count
+  moved to `status --verbose`, where the global imports line is now
+  "Imported (all destinations)". Hooks read "hooks on", or "hooks
+  installed" while an app that needs approval has run none yet; versions
+  drop the app's own name; and the footer names the commands to run
+  (`agent-archive status --verbose`, `agent-archive status APP`). While the
+  headline says the last pass failed on storage, the destination row says
+  so ("refused access on the last pass") instead of "reachable". Cursor
+  chats with no transcript are counted on a line of their own, not as
+  uploading.
+- `status APP` (`claude`, `codex` or `cursor`) shows one app in full: every
+  uploading session and a table of its projects with the sessions each
+  captured, imported and is uploading, and how far read-back has got, then
+  the Storage section.
+- `status --json` adds, per application, `subagent_sessions`,
+  `imported_sessions`, `uploading_sessions`,
+  `waiting_for_transcript_sessions`, and `uploading`, the sessions
+  not yet uploaded with their project, start time and state
+  (`uploading`, `first_upload`, or `failing` with its `issue`). Nothing
+  else in it changed.
 - `status --json` adds `collector.issue_counts`, the number of sessions per
   failure code. The fallback code in `collector.session_issues` is now
   `capture_failed` (was `capture_or_publication_failed`, which older status

@@ -117,7 +117,10 @@ func chooseDestination(p *prompter, installed []handoffDestination, def handoffD
 		terminal.Printf(p.out, "  %s) %s\n", l.key, l.label)
 	}
 	label, defKey := "Enter p, c, w, or q", "p"
-	if len(agents) > 0 {
+	switch {
+	case len(agents) == 1:
+		label, defKey = "Enter 1, p, c, w, or q", "1"
+	case len(agents) > 1:
 		label, defKey = fmt.Sprintf("Enter 1-%d, p, c, w, or q", len(agents)), "1"
 	}
 	for {
