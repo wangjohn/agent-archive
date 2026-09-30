@@ -20,8 +20,8 @@ import (
 
 // The characterization tests of setup --refresh's scheduler paths reach
 // launchd only through runLaunchctl, the one seam every scheduler
-// implementation keeps, so they need no Env.Scheduler stand-in. They replace a package variable and so do not
-// run in parallel.
+// implementation keeps, so they need no Env.Scheduler stand-in. They replace
+// a package variable and so do not run in parallel.
 
 // defaultCollectorLabel is the label of the account's default installation's
 // collector, which no release has changed.
