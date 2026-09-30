@@ -190,7 +190,12 @@ func TestOpenRemovesTheScriptWhenTheTerminalFails(t *testing.T) {
 // Outside tmux, only macOS has a terminal Open drives: Linux, and a system
 // the program does not know, are never treated as a Mac.
 func TestOpenWithoutATerminal(t *testing.T) {
-	for _, system := range []platform.OS{platform.Linux, platform.Unknown, "freebsd", ""} {
+	// Values that are not any system the program knows.
+	const (
+		otherSystem platform.OS = "freebsd"
+		noSystem    platform.OS = ""
+	)
+	for _, system := range []platform.OS{platform.Linux, platform.Unknown, otherSystem, noSystem} {
 		spec := testSpec(t)
 		env, calls := fakeEnv(system, map[string]string{"TERM_PROGRAM": "iTerm.app"}, "")
 		_, err := Open(context.Background(), spec, env)

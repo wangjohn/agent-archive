@@ -60,11 +60,9 @@ func runtimeGOOSUses(t *testing.T, name string, src any) []string {
 		if spec.Name != nil {
 			local = spec.Name.Name
 		}
-		switch local {
-		case ".":
+		if local == "." {
 			uses = append(uses, fset.Position(spec.Pos()).String()+": dot-imports runtime, which hides runtime.GOOS")
-		case "_":
-		default:
+		} else if local != "_" {
 			names[local] = true
 		}
 	}
