@@ -114,15 +114,23 @@ func localeIsUTF8(env interface{ lookupEnv(string) (string, bool) }) bool {
 	return true
 }
 
+// wrap breaks a message to the view's width (at most statsFullWidth).
+func (v statsView) wrap(text string) string {
+	width := v.width
+	if width <= 0 {
+		width = statsUnknownWidth
+	}
+	return hangingIndent("", text, min(max(width, statsMinWidth), statsFullWidth))
+}
+
 // statsPrinter builds the screen line by line.
 type statsPrinter struct {
 	s      stats.Stats
 	v      statsView
 	g      statsGlyphs
 	full   bool
-	width  int // the terminal's width
-	cw     int // the width right-aligned labels line up to
-	lines  []string
+	width  int  // the terminal's width
+	cw     int  // the width right-aligned labels line up to
 	approx bool // some cost shown is approximate (~)
 	part   bool // some cost shown leaves out unpriced tokens (+)
 }
@@ -131,14 +139,14 @@ type statsPrinter struct {
 // with bars, at statsFullWidth columns or more, and a compact table below
 // that; color only when the view's style has it.
 func renderStats(w io.Writer, s stats.Stats, v statsView) error {
-	p := &statsPrinter{s: s, v: v, g: v.glyphs}
-	p.width = v.width
-	if p.width <= 0 {
-		p.width = statsUnknownWidth
+	width := v.width
+	if width <= 0 {
+		width = statsUnknownWidth
 	}
-	p.width = max(p.width, statsMinWidth)
-	p.full = p.width >= statsFullWidth
-	p.cw = min(p.width, statsBaseWidth)
+	width = max(width, statsMinWidth)
+	p := &statsPrinter{
+		s: s, v: v, g: v.glyphs, width: width, full: width >= statsFullWidth, cw: min(width, statsBaseWidth),
+	}
 	sections := [][]string{
 		p.header(), p.tokensByDay(), p.overview(), p.agents(), p.costByModel(), p.topProjects(),
 		p.composition(), p.highlights(), p.grouped(), p.footer(),
@@ -268,20 +276,24 @@ func (p *statsPrinter) sparkline() (string, int) {
 		perCell++
 	}
 	type cell struct {
-		tokens int64
+		perDay float64
 		known  bool
 	}
 	var cells []cell
-	var peak int64
+	var peak float64
 	for i := 0; i < len(days); i += perCell {
+		run := days[i:min(i+perCell, len(days))]
 		var c cell
-		for _, d := range days[i:min(i+perCell, len(days))] {
+		for _, d := range run {
 			if d.Tokens != nil {
-				c.tokens += *d.Tokens
+				c.perDay += float64(*d.Tokens)
 				c.known = true
 			}
 		}
-		peak = max(peak, c.tokens)
+		// A cell of several days is the average day, so a shorter last
+		// cell is not drawn lower for having fewer days.
+		c.perDay /= float64(len(run))
+		peak = math.Max(peak, c.perDay)
 		cells = append(cells, c)
 	}
 	var b strings.Builder
@@ -292,7 +304,7 @@ func (p *statsPrinter) sparkline() (string, int) {
 		case peak == 0:
 			b.WriteString(p.g.spark[0])
 		default:
-			b.WriteString(p.g.spark[int(math.Round(float64(c.tokens)/float64(peak)*float64(len(p.g.spark)-1)))])
+			b.WriteString(p.g.spark[int(math.Round(c.perDay/peak*float64(len(p.g.spark)-1)))])
 		}
 	}
 	return b.String(), len(cells)
@@ -806,17 +818,14 @@ func ordinal(n int) string {
 // drivers says what likely made the costliest session costly.
 func (p *statsPrinter) drivers(c *stats.CostliestSession) string {
 	var parts []string
-	for _, d := range c.Drivers {
-		switch d {
-		case stats.DriverLongContext:
-			parts = append(parts, "long context")
-		case stats.DriverSubagents:
-			parts = append(parts, plural(c.Subagents, "subagent"))
-		case stats.DriverLowCacheHit:
-			if c.CacheHitRate != nil {
-				parts = append(parts, percent(*c.CacheHitRate)+" cache hit")
-			}
-		}
+	if slices.Contains(c.Drivers, stats.DriverLongContext) {
+		parts = append(parts, "long context")
+	}
+	if slices.Contains(c.Drivers, stats.DriverSubagents) {
+		parts = append(parts, plural(c.Subagents, "subagent"))
+	}
+	if slices.Contains(c.Drivers, stats.DriverLowCacheHit) && c.CacheHitRate != nil {
+		parts = append(parts, percent(*c.CacheHitRate)+" cache hit")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -1041,13 +1050,24 @@ func commaInt(n int64) string {
 	return sign + b.String()
 }
 
+// maxShownTokens and maxShownMoney are where a number is shown as a bound: a
+// saturated sum, not a measurement.
+const (
+	maxShownTokens = 1e15
+	maxShownMoney  = 1e12
+)
+
 // tokenCount is a token total in its shortest form: 812, 4.9K, 61M, 1.2B.
 // Under ten of a unit it keeps one decimal, beyond that none.
 func tokenCount(n int64) string {
+	if n >= maxShownTokens {
+		// Sums saturate at the largest int64; no real usage is near this.
+		return ">999T"
+	}
 	units := []struct {
 		size   float64
 		suffix string
-	}{{1e9, "B"}, {1e6, "M"}, {1e3, "K"}}
+	}{{1e12, "T"}, {1e9, "B"}, {1e6, "M"}, {1e3, "K"}}
 	value := float64(n)
 	for _, u := range units {
 		if value >= u.size {
@@ -1067,6 +1087,9 @@ func money(currency string, amount float64, precise bool) string {
 	symbol := "$"
 	if currency != "" && currency != "USD" {
 		symbol = archive.DisplayLine(currency) + " "
+	}
+	if amount >= maxShownMoney {
+		return symbol + ">999B"
 	}
 	if !precise && amount >= 10 {
 		return symbol + commaInt(int64(math.Round(amount)))

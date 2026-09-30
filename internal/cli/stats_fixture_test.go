@@ -48,66 +48,67 @@ type modelTokenSpec struct {
 	input, output, cacheRead, write int
 }
 
+// positive is a count that is reported only when it is above zero.
+func positive(n int) *int {
+	if n > 0 {
+		return intPtr(n)
+	}
+	return nil
+}
+
 // build turns the spec into the sidecar's metadata.
 func (s syntheticSession) build() archive.Metadata {
 	parser := s.parser
 	if parser == "" {
 		parser = "0.14.0"
 	}
-	m := archive.Metadata{
+	var models []archive.ModelSummary
+	for _, model := range s.models {
+		models = append(models, archive.ModelSummary{
+			Attributes: map[string]string{"gen_ai.request.model": model}, Source: archive.ModelSummarySourceNativeTranscript,
+			ResponseModelStatus: archive.ResponseModelStatusNotExposed, TurnCount: intPtr(s.turns),
+		})
+	}
+	var input, output, read, write int
+	var modelTokens []archive.ModelTokens
+	for _, t := range s.perModel {
+		input, output, read, write = input+t.input, output+t.output, read+t.cacheRead, write+t.write
+		if parser != "0.13.0" {
+			modelTokens = append(modelTokens, archive.ModelTokens{
+				Model: t.model, InputTokens: intPtr(t.input), OutputTokens: intPtr(t.output),
+				CacheReadTokens: intPtr(t.cacheRead), CacheWriteTokens: intPtr(t.write),
+			})
+		}
+	}
+	var toolErrors, inputTokens, outputTokens, cacheRead, cacheWrite *int
+	if s.toolResults > 0 && s.harness != "codex" && parser != "0.13.0" {
+		toolErrors = intPtr(s.errors)
+	}
+	if len(s.perModel) > 0 {
+		inputTokens, outputTokens, cacheRead, cacheWrite = intPtr(input), intPtr(output), intPtr(read), intPtr(write)
+	}
+	counts := archive.Counts{
+		Turns: positive(s.turns), Messages: positive(s.messages), Compactions: positive(s.compactions),
+		ToolResults: positive(s.toolResults), ToolErrors: toolErrors,
+		InputTokens: inputTokens, OutputTokens: outputTokens, CacheReadTokens: cacheRead, CacheWriteTokens: cacheWrite,
+	}
+	var skills []archive.SkillUse
+	for _, name := range s.skills {
+		skills = append(skills, archive.SkillUse{Name: name, Evidence: archive.SkillUseEvidenceNativeInvocation})
+	}
+	var mcp []archive.ToolUsage
+	for _, server := range slices.Sorted(maps.Keys(s.mcp)) {
+		mcp = append(mcp, archive.ToolUsage{Name: server, Count: s.mcp[server]})
+	}
+	return archive.Metadata{
 		SchemaVersion: archive.MetadataSchemaVersion, SessionID: s.id, NativeSessionID: s.id,
 		ProjectName: s.project, StartedAt: s.captured, CapturedAt: s.captured, MetadataDerivedAt: s.captured,
 		Harness:         archive.Harness{Name: s.harness},
 		Parser:          archive.ParserInfo{Name: s.harness, Version: parser, Status: archive.ParserStatusPartial},
 		ParentSessionID: s.parent, Origin: s.origin,
 		SourceBundle: archive.SourceReference{Key: "sessions/" + s.harness + "/" + s.id + "/source.jsonl.gz", SHA256: strings.Repeat("a", 64)},
+		Counts:       counts, Models: models, ModelTokens: modelTokens, SkillsUsed: skills, MCPCalls: mcp,
 	}
-	if s.turns > 0 {
-		m.Counts.Turns = intPtr(s.turns)
-	}
-	if s.messages > 0 {
-		m.Counts.Messages = intPtr(s.messages)
-	}
-	if s.compactions > 0 {
-		m.Counts.Compactions = intPtr(s.compactions)
-	}
-	if s.toolResults > 0 {
-		m.Counts.ToolResults = intPtr(s.toolResults)
-		if s.harness != "codex" && parser != "0.13.0" {
-			m.Counts.ToolErrors = intPtr(s.errors)
-		}
-	}
-	for _, model := range s.models {
-		m.Models = append(m.Models, archive.ModelSummary{
-			Attributes: map[string]string{"gen_ai.request.model": model}, Source: archive.ModelSummarySourceNativeTranscript,
-			ResponseModelStatus: archive.ResponseModelStatusNotExposed, TurnCount: intPtr(s.turns),
-		})
-	}
-	total := func(target **int, n int) {
-		if *target == nil {
-			*target = intPtr(0)
-		}
-		**target += n
-	}
-	for _, t := range s.perModel {
-		total(&m.Counts.InputTokens, t.input)
-		total(&m.Counts.OutputTokens, t.output)
-		total(&m.Counts.CacheReadTokens, t.cacheRead)
-		total(&m.Counts.CacheWriteTokens, t.write)
-		if parser != "0.13.0" {
-			m.ModelTokens = append(m.ModelTokens, archive.ModelTokens{
-				Model: t.model, InputTokens: intPtr(t.input), OutputTokens: intPtr(t.output),
-				CacheReadTokens: intPtr(t.cacheRead), CacheWriteTokens: intPtr(t.write),
-			})
-		}
-	}
-	for _, name := range s.skills {
-		m.SkillsUsed = append(m.SkillsUsed, archive.SkillUse{Name: name, Evidence: archive.SkillUseEvidenceNativeInvocation})
-	}
-	for _, server := range slices.Sorted(maps.Keys(s.mcp)) {
-		m.MCPCalls = append(m.MCPCalls, archive.ToolUsage{Name: server, Count: s.mcp[server]})
-	}
-	return m
 }
 
 // publish writes the sidecar to the store.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/reader"
@@ -75,7 +76,8 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 			daysSet = true
 		}
 	})
-	now := env.now()
+	loc := statsZone(env.now(), env)
+	now := env.now().In(loc)
 	windowDays, code := statsWindowDays(fs, *days, daysSet, *since, now)
 	if code != 0 {
 		return code
@@ -102,7 +104,6 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 	if code != 0 {
 		return code
 	}
-	loc := now.Location()
 	opts.filter.From = statsFetchFrom(now, loc, windowDays)
 
 	store, _, found, err := openReadOnlyStore(env)
@@ -142,7 +143,7 @@ func runStatsCommand(args []string, stdout, stderr io.Writer, env statsCommandDe
 		})
 	}
 	if computed.Coverage.Sessions == 0 {
-		terminal.Println(stdout, statsEmptyMessage(computed, filters, len(sessions) > 0))
+		terminal.Println(stdout, newStatsView(stdout, env).wrap(statsEmptyMessage(computed, filters, len(sessions) > 0)))
 		return 0
 	}
 	view := newStatsView(stdout, env)
@@ -222,7 +223,7 @@ func statsPriceTable(fs *commandFlags, path string) (stats.PriceTable, int) {
 	if err != nil {
 		return stats.PriceTable{}, fs.usageError("--prices: %v", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxPricesFileBytes+1))
 	if err != nil {
 		return stats.PriceTable{}, fs.usageError("--prices: %v", err)
@@ -258,4 +259,33 @@ func statsEmptyMessage(s stats.Stats, filters statsFilters, sawSessions bool) st
 		return "No archived sessions were captured " + span + "." + longer
 	}
 	return "No archived sessions " + span + ". If you have just set up, sessions appear once an app session is captured (agent-archive status shows capture)." + longer
+}
+
+// statsZone is the time zone days, weeks and months are counted in: the
+// clock's own. The machine's local zone is found by its name, from $TZ or
+// where /etc/localtime points, so the output can say which zone it counted
+// in (Go's time.Local is only called "Local"); when no name matches the
+// clock's offset, it stays time.Local.
+func statsZone(now time.Time, env interface{ lookupEnv(string) (string, bool) }) *time.Location {
+	if now.Location() != time.Local {
+		return now.Location()
+	}
+	var names []string
+	if tz, _ := env.lookupEnv("TZ"); tz != "" {
+		names = append(names, strings.TrimPrefix(tz, ":"))
+	}
+	if target, err := os.Readlink("/etc/localtime"); err == nil {
+		if _, name, found := strings.Cut(target, "zoneinfo/"); found {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
+		if name == "" || name == "Local" {
+			continue
+		}
+		if named, err := time.LoadLocation(name); err == nil && now.In(named).Format("-07:00") == now.Format("-07:00") {
+			return named
+		}
+	}
+	return time.Local
 }

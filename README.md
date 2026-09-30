@@ -59,6 +59,7 @@ Setup edits each included app's hook settings and adds one LaunchAgent; for Curs
 | `sync` | Collect and upload pending sessions now. | `agent-archive sync` |
 | `list` | Find archived sessions. | `agent-archive list --since 7d` |
 | `show` | View a session's summary, or its transcript with `--transcript`. | `agent-archive show SESSION_ID` |
+| `stats` | See your usage: tokens by day, estimated cost, agents, models, projects, highlights. | `agent-archive stats --days 7` |
 | `backfill` | Preview sessions already on this Mac for import. | `agent-archive backfill --dry-run` |
 | `handoff` | Turn your latest session into a prompt for another agent, or launch a local agent with it. | `agent-archive handoff --latest --to codex` |
 

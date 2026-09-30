@@ -195,19 +195,6 @@ func (t PriceTable) WithOverrides(custom PriceTable) PriceTable {
 	return merged
 }
 
-// Lookup returns the price of a model id as the archive records it (any
-// case, with or without a date or context suffix), and whether the table
-// prices it.
-func (t PriceTable) Lookup(model string) (ModelPrice, bool) {
-	id := NormalizeModel(model)
-	for _, entry := range t.Models {
-		if NormalizeModel(entry.ID) == id {
-			return entry, true
-		}
-	}
-	return ModelPrice{}, false
-}
-
 var (
 	contextSuffix = regexp.MustCompile(`\[[^\]]*\]$`)
 	dateSuffix    = regexp.MustCompile(`([-@]\d{8}|-\d{4}-\d{2}-\d{2})$`)

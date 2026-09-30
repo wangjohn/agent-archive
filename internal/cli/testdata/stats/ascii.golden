@@ -39,11 +39,12 @@ MCP: Claude Code and Cursor only; Codex MCP calls are not recorded.
 HIGHLIGHTS
 Busiest day  Sep 17 (2 sessions)      Favorite model  opus
 Costliest    $65.10  proj-api  (long context, 2 subagents)
-Tool errors  5.5% of 1,700 tool results, 13 sessions measured (9 do not record errors)
+Tool errors  5.5% of 1,700 tool results flagged as errors, 13 sessions measured (9 do not record
+             them)
 This month so far is your heaviest of the last 6 months
 
 Scope: this archive only. Sessions with no token data are left out of token and cost totals (Cursor:
 3).
-Cost is an estimate at list price, not a bill. Prices 2026-09.1, as of 2026-09-29.
+Cost is an estimate at list price, not a bill. Prices 2026-09.2, as of 2026-09-29.
 + leaves out tokens of models the price table does not list (codex-auto-review).
 --by day|week|month|project - --json

@@ -42,8 +42,8 @@ HIGHLIGHTS
 Busiest day     Sep 17 (2 sessions)
 Favorite model  opus
 Costliest       $65.10  proj-api  (long context, 2 subagents)
-Tool errors     6.0% of 1,000 tool results, 6 sessions measured (4 do not record
-                errors)
+Tool errors     6.0% of 1,000 tool results flagged as errors, 6 sessions
+                measured (4 do not record them)
 This month so far is your heaviest of the last 6 months
 
 BY PROJECT     sessions  prompts  tokens  est. cost
@@ -53,6 +53,6 @@ dotfiles              3       14    2.1M     $2.27+
 
 Scope: this archive only. Sessions with no token data are left out of token and
 cost totals (Cursor: 1).
-Cost is an estimate at list price, not a bill. Prices 2026-09.1, as of
+Cost is an estimate at list price, not a bill. Prices 2026-09.2, as of
 2026-09-29.
 + leaves out tokens of models the price table does not list (codex-auto-review).

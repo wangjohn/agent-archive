@@ -730,8 +730,9 @@ func TestStatsHasHelp(t *testing.T) {
 	}
 }
 
-// A test can publish a few thousand sidecars and stats stays quick: this is
-// a smoke test that a full read scales linearly, not a benchmark.
+// A few thousand sidecars are read in one pass and only the window's are
+// counted. (No cache: this measures the read and the computation, not the
+// disk.)
 func TestStatsReadsThousandsOfSessions(t *testing.T) {
 	if testing.Short() {
 		t.Skip("reads several thousand sidecars")
@@ -745,12 +746,42 @@ func TestStatsReadsThousandsOfSessions(t *testing.T) {
 			perModel: []modelTokenSpec{{"claude-opus-5", 10_000, 5_000, 200_000, 20_000}},
 		}.publish(t, mem)
 	}
+	start := time.Now()
+	var doc statsDocument
+	if err := json.Unmarshal([]byte(mustRunStats(t, env, 0, "--json", "--no-cache")), &doc); err != nil {
+		t.Fatal(err)
+	}
+	// Captured 2 hours apart, back from Sep 29 12:00: 355 fall on or after Aug 31.
+	if doc.Coverage.Sessions != 355 || doc.Coverage.Agents != 3 || doc.TotalProjects != 40 {
+		t.Fatalf("coverage = %+v, projects = %d", doc.Coverage, doc.TotalProjects)
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Fatalf("reading 3000 sidecars took %v", elapsed)
+	}
+}
+
+// A session whose metadata predates parser 0.14.0 has no per-model split: it
+// is priced at its main model, marked ~, and the footer says why.
+func TestStatsMarksSessionsPricedAtTheirMainModel(t *testing.T) {
+	t.Parallel()
+	env, mem := statsEnv(t)
+	syntheticSession{
+		id: "old-parser", harness: "claude", project: "p", captured: statsDay(time.September, 28, 9), parser: "0.13.0",
+		models: []string{"claude-opus-5"}, turns: 2, toolResults: 10, perModel: []modelTokenSpec{{"claude-opus-5", 100_000, 50_000, 0, 0}},
+	}.publish(t, mem)
+	out := mustRunStats(t, env, 0)
+	if !strings.Contains(out, "~$") || !strings.Contains(flatten(out), "~ priced at the session's main model for 1 session with no per-model split") {
+		t.Fatalf("no ~ mark or explanation:\n%s", out)
+	}
 	var doc statsDocument
 	if err := json.Unmarshal([]byte(mustRunStats(t, env, 0, "--json")), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Coverage.Sessions == 0 || doc.Coverage.Sessions > 3000 {
-		t.Fatalf("sessions = %d", doc.Coverage.Sessions)
+	if doc.Coverage.SessionsBeforeParser014 != 1 || doc.Coverage.SessionsPricedAtMainModel != 1 || !doc.Overview.Cost.Approximate {
+		t.Fatalf("coverage=%+v cost=%+v", doc.Coverage, doc.Overview.Cost)
+	}
+	if doc.Highlights.ToolErrors != nil {
+		t.Fatalf("tool errors are unknown before parser 0.14.0, got %+v", doc.Highlights.ToolErrors)
 	}
 }
 
