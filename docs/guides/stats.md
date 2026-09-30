@@ -471,7 +471,13 @@ spend it has, marked `+`), and says how many more there are;
   version and date), not a bill. Prices for
   a model the table does not list are left out rather than guessed; the
   total is then marked `+` and the detail notes name the models. Reasoning tokens
-  cost what output costs. Cache writes use the five-minute rate.
+  cost what output costs. Cache writes use Anthropic's five-minute rate, so
+  an archive of Claude Code sessions that wrote one-hour cache entries (the
+  archive does not record which) is estimated low on cache writes, and
+  OpenAI prompts over 272K tokens, fast mode and data-residency uplifts are
+  not modelled either; Batch and Flex processing would be half. The `notes`
+  in the price table (`prices.notes` in `--json`) list exactly what is and
+  is not modelled.
 - **`--prices FILE`** puts your own entries on top of the built-in table, in
   the same JSON shape (`internal/stats/prices.json` in the source shows it):
   a `version` (up to 64 bytes), an `as_of` date, an optional `currency`
