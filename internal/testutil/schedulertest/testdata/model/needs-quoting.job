@@ -1,0 +1,8 @@
+job=model-a97bf54b
+program=/Users/test/My Apps/agent-archive
+args=_collect
+data=/Users/test/100% $HOME's \data
+interval=1m0s
+run_at_load=true
+env.AWS_PROFILE=it's "work" at 50%
+env.PATH=/opt/$tools/bin:/usr/bin

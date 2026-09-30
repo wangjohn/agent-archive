@@ -21,7 +21,10 @@ import (
 // suite puts a job in a state through it, and reads back what the scheduler
 // did. An adapter's Manager is its fake Runner, answering as the real tool
 // does (launchd: a launchctl that prints, bootstraps and boots out); the Model
-// is its own.
+// is its own. Like the real tool, a fake Runner fails when its context is
+// done, and a stop stops whatever job of that name is loaded, whosever
+// definition it came from, so the suite sees a change that should not have
+// happened.
 type Manager interface {
 	// Put makes the manager report the job ref at site as state. A job in
 	// AnotherInstallation is one loaded from a definition that is not site's,
@@ -66,6 +69,11 @@ func specimens(home string) []specimen {
 			collect(filepath.Join(home, "plain"), nil)},
 		{"needs-escaping", scheduler.Installation{DataHome: filepath.Join(home, `a & <b> "c"`)},
 			collect(filepath.Join(home, `a & <b> "c"`), map[string]string{"HTTPS_PROXY": "http://proxy.example:3128/?a&b<2>", "PATH": "/usr/bin"})},
+		// What a unit file or a shell line would read as something else: a
+		// space in the program's path, a specifier (%), a variable ($), quotes
+		// and a backslash.
+		{"needs-quoting", scheduler.Installation{DataHome: filepath.Join(home, `100% $HOME's \data`)},
+			scheduler.JobSpec{Executable: filepath.Join(home, "My Apps", "agent-archive"), Args: []string{"_collect"}, DataHome: filepath.Join(home, `100% $HOME's \data`), Env: map[string]string{"AWS_PROFILE": `it's "work" at 50%`, "PATH": `/opt/$tools/bin:/usr/bin`}, Interval: time.Minute, RunAtLoad: true}},
 	}
 }
 
@@ -73,7 +81,8 @@ func specimens(home string) []specimen {
 // scheduler port must do, so that code written against the port behaves the
 // same over any of them. It covers, in order, the state matrix, the refusal to
 // stop what another installation owns (with typed errors) and an idempotent
-// unload, the purity and the recorded output of Plan, the round trips from Plan
+// unload, a load, changes that an interrupt does not cancel, the purity and
+// the recorded output of Plan, the round trips from Plan
 // through the disk to Inspect and back to Plan (a refresh), that a definition
 // holds no credential value, and the problem a job in an unknown state comes
 // with.
@@ -83,6 +92,7 @@ func RunConformance(t *testing.T, b Backend) {
 	t.Run("UnloadRefusesWhatItDoesNotOwn", func(t *testing.T) { unloadRefuses(t, b) })
 	t.Run("UnloadIsIdempotent", func(t *testing.T) { unloadIdempotent(t, b) })
 	t.Run("LoadStartsTheDefinedJob", func(t *testing.T) { loadStarts(t, b) })
+	t.Run("ChangesAreNotCancelled", func(t *testing.T) { changesNotCancelled(t, b) })
 	t.Run("PlanIsPure", func(t *testing.T) { planPure(t, b) })
 	t.Run("PlanOutput", func(t *testing.T) { planOutput(t, b) })
 	t.Run("RefIdentifiesTheInstallation", func(t *testing.T) { refIdentifies(t, b) })
@@ -125,85 +135,96 @@ var allStates = []scheduler.JobState{scheduler.Loaded, scheduler.Running, schedu
 
 // Whatever the manager says, Inspect says it back, with the facts a command
 // needs when it blocks: nothing for a job it can act on, and for the two it
-// cannot, a Problem naming the job, what was expected, and a next step.
-// Definition says nothing of the manager and does not ask it.
+// cannot, a Problem naming the job, the definition it expected (one of the
+// job's own), and a next step. Definition says nothing of the manager and
+// does not ask it. Both the default installation's job and another's are
+// asked about.
 func stateMatrix(t *testing.T, b Backend) {
 	t.Helper()
-	for _, state := range allStates {
-		t.Run(string(state), func(t *testing.T) {
-			s, m, site := fresh(t, b)
-			sp := specimens(t.TempDir())[0]
-			plan := define(t, s, site, sp)
-			m.Put(site, plan.Ref, state)
-			asked := len(m.Calls())
-			got := s.Inspect(context.Background(), site, plan.Ref)
-			if got.State != state {
-				t.Fatalf("Inspect: state %q, want %q", got.State, state)
-			}
-			if len(m.Calls()) == asked {
-				t.Error("Inspect did not ask the manager")
-			}
-			switch state {
-			case scheduler.Unknown:
-				if p := got.Problem; p == nil || p.Kind != scheduler.ProblemCannotTell || p.Ref != plan.Ref || p.Expected == "" || p.Fix == "" {
-					t.Errorf("a job the manager cannot describe has problem %+v", p)
+	for _, sp := range specimens(t.TempDir())[:2] {
+		for _, state := range allStates {
+			t.Run(sp.name+"/"+string(state), func(t *testing.T) {
+				s, m, site := fresh(t, b)
+				plan := define(t, s, site, sp)
+				m.Put(site, plan.Ref, state)
+				asked := len(m.Calls())
+				got := s.Inspect(context.Background(), site, plan.Ref)
+				if got.State != state {
+					t.Fatalf("Inspect: state %q, want %q", got.State, state)
 				}
-			case scheduler.AnotherInstallation:
-				if p := got.Problem; p == nil || p.Kind != scheduler.ProblemNotOwned || p.Ref != plan.Ref || p.Expected == "" || p.LoadedFrom == "" || p.LoadedFrom == p.Expected || p.Fix == "" {
-					t.Errorf("a job another installation owns has problem %+v", p)
+				if len(m.Calls()) == asked {
+					t.Error("Inspect did not ask the manager")
 				}
-			case scheduler.Loaded, scheduler.Running, scheduler.Missing:
-				if got.Problem != nil {
-					t.Errorf("a %s job has problem %+v", state, got.Problem)
+				switch state {
+				case scheduler.Unknown:
+					if p := got.Problem; p == nil || p.Kind != scheduler.ProblemCannotTell || p.Ref != plan.Ref || !slices.Contains(got.Paths, p.Expected) || p.Fix == "" {
+						t.Errorf("a job the manager cannot describe has problem %+v (paths %q)", p, got.Paths)
+					}
+				case scheduler.AnotherInstallation:
+					if p := got.Problem; p == nil || p.Kind != scheduler.ProblemNotOwned || p.Ref != plan.Ref || !slices.Contains(got.Paths, p.Expected) || p.LoadedFrom == "" || p.LoadedFrom == p.Expected || p.Fix == "" {
+						t.Errorf("a job another installation owns has problem %+v (paths %q)", p, got.Paths)
+					}
+				case scheduler.Loaded, scheduler.Running, scheduler.Missing:
+					if got.Problem != nil {
+						t.Errorf("a %s job has problem %+v", state, got.Problem)
+					}
 				}
-			}
-			// The definition is read whatever the state is.
-			if !got.Defined || got.Program != sp.spec.Executable {
-				t.Errorf("Inspect of a %s job: defined %v, program %q", state, got.Defined, got.Program)
-			}
-			asked = len(m.Calls())
-			definition := s.Definition(site, plan.Ref)
-			if definition.State != "" || len(m.Calls()) != asked {
-				t.Errorf("Definition asked the manager or answered a state (%q)", definition.State)
-			}
-		})
+				// The definition is read whatever the state is.
+				if !got.Defined || got.Program != sp.spec.Executable {
+					t.Errorf("Inspect of a %s job: defined %v, program %q", state, got.Defined, got.Program)
+				}
+				asked = len(m.Calls())
+				definition := s.Definition(site, plan.Ref)
+				if definition.State != "" || len(m.Calls()) != asked {
+					t.Errorf("Definition asked the manager or answered a state (%q)", definition.State)
+				}
+			})
+		}
 	}
 }
 
 // Nothing stops a job the manager runs from another installation's
 // definition, or one it cannot describe: the refusal is a *NotOwnedError or an
-// *IndeterminateError that says which job it left, and the job is still
-// there.
+// *IndeterminateError, in the scheduler's own words, with the facts of the
+// problem, that says which job it left; and the job is still there.
 func unloadRefuses(t *testing.T, b Backend) {
 	t.Helper()
-	s, m, site := fresh(t, b)
-	plan := define(t, s, site, specimens(t.TempDir())[0])
-	ctx := context.Background()
+	for _, sp := range specimens(t.TempDir())[:2] {
+		t.Run(sp.name, func(t *testing.T) {
+			s, m, site := fresh(t, b)
+			plan := define(t, s, site, sp)
+			ctx := context.Background()
+			words := s.Words()
+			if words.Manager == "" || words.Job == "" || words.Definition == "" || words.Tool == "" {
+				t.Errorf("the scheduler's words %+v leave a noun out", words)
+			}
 
-	m.Put(site, plan.Ref, scheduler.AnotherInstallation)
-	err := s.Unload(ctx, site, plan.Ref)
-	var notOwned *scheduler.NotOwnedError
-	if !errors.As(err, &notOwned) {
-		t.Fatalf("Unload of another installation's job: %v, want a *NotOwnedError", err)
-	}
-	if notOwned.Problem.Ref != plan.Ref || notOwned.Problem.Expected == "" || !strings.Contains(err.Error(), string(plan.Ref)) {
-		t.Errorf("the refusal %q (%+v) does not name the job and the definition it expected", err, notOwned.Problem)
-	}
-	if held := m.Held(site, plan.Ref); held != scheduler.AnotherInstallation {
-		t.Errorf("another installation's job is %q after the refusal", held)
-	}
+			m.Put(site, plan.Ref, scheduler.AnotherInstallation)
+			err := s.Unload(ctx, site, plan.Ref)
+			var notOwned *scheduler.NotOwnedError
+			if !errors.As(err, &notOwned) {
+				t.Fatalf("Unload of another installation's job: %v, want a *NotOwnedError", err)
+			}
+			if p := notOwned.Problem; p.Kind != scheduler.ProblemNotOwned || p.Ref != plan.Ref || p.Expected == "" || p.LoadedFrom == p.Expected || notOwned.Words != words || !strings.Contains(err.Error(), string(plan.Ref)) {
+				t.Errorf("the refusal %q (%+v, %+v) does not name the job and the definition it expected, in the scheduler's words", err, p, notOwned.Words)
+			}
+			if held := m.Held(site, plan.Ref); held != scheduler.AnotherInstallation {
+				t.Errorf("another installation's job is %q after the refusal", held)
+			}
 
-	m.Put(site, plan.Ref, scheduler.Unknown)
-	err = s.Unload(ctx, site, plan.Ref)
-	var indeterminate *scheduler.IndeterminateError
-	if !errors.As(err, &indeterminate) {
-		t.Fatalf("Unload of a job it cannot describe: %v, want an *IndeterminateError", err)
-	}
-	if indeterminate.Problem.Ref != plan.Ref || !strings.Contains(err.Error(), string(plan.Ref)) {
-		t.Errorf("the refusal %q does not name the job", err)
-	}
-	if held := m.Held(site, plan.Ref); held != scheduler.Unknown {
-		t.Errorf("a job the manager cannot describe is %q after the refusal", held)
+			m.Put(site, plan.Ref, scheduler.Unknown)
+			err = s.Unload(ctx, site, plan.Ref)
+			var indeterminate *scheduler.IndeterminateError
+			if !errors.As(err, &indeterminate) {
+				t.Fatalf("Unload of a job it cannot describe: %v, want an *IndeterminateError", err)
+			}
+			if p := indeterminate.Problem; p.Kind != scheduler.ProblemCannotTell || p.Ref != plan.Ref || indeterminate.Words != words || !strings.Contains(err.Error(), string(plan.Ref)) {
+				t.Errorf("the refusal %q (%+v, %+v) does not name the job in the scheduler's words", err, p, indeterminate.Words)
+			}
+			if held := m.Held(site, plan.Ref); held != scheduler.Unknown {
+				t.Errorf("a job the manager cannot describe is %q after the refusal", held)
+			}
+		})
 	}
 }
 
@@ -246,6 +267,29 @@ func loadStarts(t *testing.T, b Backend) {
 	}
 }
 
+// A change runs to its end on a context of its own: the caller's
+// cancellation (an interrupt of setup) never stops a load or an unload
+// halfway, since the setup journal handles what is half applied.
+func changesNotCancelled(t *testing.T, b Backend) {
+	t.Helper()
+	s, m, site := fresh(t, b)
+	plan := define(t, s, site, specimens(t.TempDir())[0])
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.Load(ctx, site, plan.Ref); err != nil {
+		t.Fatalf("Load on a cancelled context: %v", err)
+	}
+	if held := m.Held(site, plan.Ref); held != scheduler.Loaded && held != scheduler.Running {
+		t.Fatalf("the job is %q after Load on a cancelled context", held)
+	}
+	if err := s.Unload(ctx, site, plan.Ref); err != nil {
+		t.Fatalf("Unload on a cancelled context: %v", err)
+	}
+	if held := m.Held(site, plan.Ref); held != scheduler.Missing {
+		t.Errorf("the job is %q after Unload on a cancelled context", held)
+	}
+}
+
 // Plan is pure: the same installation and spec give the same plan, and it
 // reads no file, writes none, and asks the manager nothing, so the shared
 // transaction is what reads and applies.
@@ -280,6 +324,23 @@ func planPure(t *testing.T, b Backend) {
 	}
 	if _, err := os.Stat(site.UserHome); !os.IsNotExist(err) {
 		t.Errorf("Plan touched the user home (%v)", err)
+	}
+	// What is on disk changes nothing: a plan made over another definition of
+	// the same job (another program, another environment) is the plan made
+	// over none.
+	site = scheduler.Site{UserHome: t.TempDir()}
+	for _, sp := range specimens(t.TempDir()) {
+		want, err := s.Plan(site, sp.inst, sp.spec)
+		if err != nil {
+			t.Fatalf("Plan(%s): %v", sp.name, err)
+		}
+		old := sp
+		old.spec.Executable = filepath.Join(t.TempDir(), "old", "agent-archive")
+		old.spec.Env = map[string]string{"FROM_THE_OLD_DEFINITION": "1"}
+		define(t, s, site, old)
+		if got, err := s.Plan(site, sp.inst, sp.spec); err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("Plan(%s) over another definition: %v, %+v; want the plan made over none", sp.name, err, got)
+		}
 	}
 	if calls := m.Calls(); len(calls) != 0 {
 		t.Errorf("Plan asked the manager %q", calls)
@@ -354,9 +415,12 @@ func planInspectRoundTrip(t *testing.T, b Backend) {
 				if _, has := got.Env["AGENT_ARCHIVE_HOME"]; has {
 					t.Errorf("%s: the environment holds AGENT_ARCHIVE_HOME, which is the data directory", name)
 				}
-				path, _ := plan.Artifacts[0].Path()
-				if !slices.Contains(got.Paths, path) {
-					t.Errorf("%s: paths %q do not hold the definition %s", name, got.Paths, path)
+				// Paths are what uninstall removes, so every file Plan writes
+				// is among them.
+				for _, artifact := range plan.Artifacts {
+					if path, _ := artifact.Path(); !slices.Contains(got.Paths, path) {
+						t.Errorf("%s: paths %q do not hold the definition %s", name, got.Paths, path)
+					}
 				}
 			}
 		})
@@ -425,25 +489,44 @@ func noCredentials(t *testing.T, b Backend) {
 }
 
 // A job with no definition is not defined, and no error; one with a
-// definition that cannot be read is defined, with the error, and its manager
-// state is still what the manager says.
+// definition that cannot be read (the read fails) or cannot be understood (it
+// is not a definition) is defined, with the error, and its manager state is
+// still what the manager says.
 func unreadableDefinitions(t *testing.T, b Backend) {
 	t.Helper()
-	s, m, site := fresh(t, b)
-	sp := specimens(t.TempDir())[0]
-	ref := s.Ref(sp.inst)
-	absent := s.Inspect(context.Background(), site, ref)
-	if absent.Defined || absent.DefinitionErr != nil || absent.Program != "" || absent.State != scheduler.Missing || len(absent.Paths) == 0 {
-		t.Errorf("a job with no definition reads %+v (%v)", absent, absent.DefinitionErr)
-	}
-	plan := define(t, s, site, sp)
-	path, _ := plan.Artifacts[0].Path()
-	if err := os.WriteFile(path, []byte("this is not a definition"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	m.Put(site, ref, scheduler.Loaded)
-	bad := s.Inspect(context.Background(), site, ref)
-	if !bad.Defined || bad.DefinitionErr == nil || bad.Program != "" || bad.State != scheduler.Loaded {
-		t.Errorf("an unreadable definition reads %+v (%v)", bad, bad.DefinitionErr)
+	for _, damage := range []struct {
+		name string
+		do   func(path string) error
+	}{
+		{"not-a-definition", func(path string) error { return os.WriteFile(path, []byte("this is not a definition"), 0o600) }},
+		{"read-fails", func(path string) error {
+			// A folder where the file was: its read fails, even as root.
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			return os.Mkdir(path, 0o700)
+		}},
+	} {
+		t.Run(damage.name, func(t *testing.T) {
+			s, m, site := fresh(t, b)
+			sp := specimens(t.TempDir())[0]
+			ref := s.Ref(sp.inst)
+			absent := s.Inspect(context.Background(), site, ref)
+			if absent.Defined || absent.DefinitionErr != nil || absent.Program != "" || absent.State != scheduler.Missing || len(absent.Paths) == 0 {
+				t.Errorf("a job with no definition reads %+v (%v)", absent, absent.DefinitionErr)
+			}
+			plan := define(t, s, site, sp)
+			for _, artifact := range plan.Artifacts {
+				path, _ := artifact.Path()
+				if err := damage.do(path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m.Put(site, ref, scheduler.Loaded)
+			bad := s.Inspect(context.Background(), site, ref)
+			if !bad.Defined || bad.DefinitionErr == nil || bad.Program != "" || bad.State != scheduler.Loaded {
+				t.Errorf("an unreadable definition reads %+v (%v)", bad, bad.DefinitionErr)
+			}
+		})
 	}
 }

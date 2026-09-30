@@ -23,7 +23,10 @@ const recordings = "../../cli/testdata/scheduler/launchctl-print"
 // fakeLaunchctl is the launchctl the conformance suite drives the adapter
 // through: a Runner that answers print with the recorded output of the state
 // the suite put the job in, boots a job out and bootstraps one as launchd
-// does. It is the schedulertest.Manager of the adapter.
+// does. Like the real one, it fails when its context is done (as
+// exec.CommandContext does), and bootout stops whatever job has the label,
+// whichever plist it was loaded from: launchd does not check, the adapter
+// must. It is the schedulertest.Manager of the adapter.
 type fakeLaunchctl struct {
 	t     *testing.T
 	mu    sync.Mutex
@@ -47,12 +50,15 @@ func (f *fakeLaunchctl) recording(name, plist string) string {
 	return strings.ReplaceAll(string(data), "@PLIST@", plist)
 }
 
-func (f *fakeLaunchctl) run(_ context.Context, name string, args ...string) ([]byte, error) {
+func (f *fakeLaunchctl) run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, name+" "+strings.Join(args, " "))
 	if name != "launchctl" {
 		return nil, fmt.Errorf("ran %q, not launchctl", name)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	switch {
 	case len(args) == 2 && args[0] == "print":
@@ -72,7 +78,7 @@ func (f *fakeLaunchctl) run(_ context.Context, name string, args ...string) ([]b
 		return []byte(f.recording("missing.txt", plist)), errors.New("exit status 113")
 	case len(args) == 2 && args[0] == "bootout":
 		label := args[1][strings.LastIndex(args[1], "/")+1:]
-		if state := f.held(label); state != scheduler.Loaded && state != scheduler.Running {
+		if f.held(label) == scheduler.Missing {
 			return []byte("Boot-out failed: 113: Could not find specified service"), errors.New("exit status 113")
 		}
 		delete(f.state, label)
@@ -115,8 +121,9 @@ func (f *fakeLaunchctl) Calls() []string {
 
 // launchd passes the conformance suite over a launchctl that prints what the
 // recordings say, and its plists are the golden files in
-// testdata/conformance (the same bytes the characterization of setup pins). It
-// is not parallel: one of the suite's checks sets the process's environment.
+// testdata/conformance (the shape the characterization of setup pins in
+// internal/cli/testdata/scheduler/plists, over the suite's own jobs). It is
+// not parallel: one of the suite's checks sets the process's environment.
 func TestConformance(t *testing.T) {
 	schedulertest.RunConformance(t, schedulertest.Backend{
 		New: func(t *testing.T) (scheduler.Scheduler, schedulertest.Manager) {
