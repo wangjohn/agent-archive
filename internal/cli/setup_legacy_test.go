@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/scheduler"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
@@ -24,7 +24,7 @@ func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
 			home := filepath.Join(account, ".local", "share", "agent-archive")
 			env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 			env.AccountHome = func() (string, error) { return account, nil }
-			path := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
+			path := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LegacyLaunchLabel+".plist")
 			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 				t.Fatal(err)
 			}
@@ -66,7 +66,7 @@ func TestTestInstallationLeavesPrototypeAlone(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	path := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
+	path := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LegacyLaunchLabel+".plist")
 	must(t, os.MkdirAll(filepath.Dir(path), 0700))
 	must(t, os.WriteFile(path, []byte(legacyPlist), 0600))
 	prototype := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"python old.py hook","statusMessage":"Recording private skill-run evidence"}]}]}}`

@@ -187,6 +187,44 @@ type Status struct {
 	DefinitionErr error
 }
 
+// Alias says why a job that is not an installation's own current one is among
+// its jobs: setup retires each of them in favor of the current job.
+type Alias string
+
+const (
+	// EarlierLabel is a collector an earlier release installed for the same
+	// data directory under another name.
+	EarlierLabel Alias = "earlier_label"
+	// Prototype is the job of the tool this one replaced (the prototype's
+	// upload job), which the account's default installation retires.
+	Prototype Alias = "prototype"
+)
+
+// Job is one job of an installation's: its Ref and, for a job that is not
+// its own current one, why it is among them. Alias is empty for the current
+// job.
+type Job struct {
+	Ref   Ref
+	Alias Alias
+}
+
+// Retiree is a job setup retires, as found: shared code builds it, from
+// Installed for the jobs and Inspect for their state and files, so it can
+// name another backend's job. It lives in the setup journal, which resolves
+// Backend to that backend's Controller to stop and restore it.
+type Retiree struct {
+	// Backend is the name of the scheduler that runs the job (Definer.Name).
+	Backend string
+	Ref     Ref
+	Alias   Alias
+	// Artifacts are the job's definition as found: After holds what was
+	// there (what recovery puts back) and Mode its permissions. Retiring the
+	// job deletes each.
+	Artifacts []Artifact
+	// WasLoaded is whether the scheduler had the job loaded, running or not.
+	WasLoaded bool
+}
+
 // Definer defines jobs: the desired state, without touching anything.
 type Definer interface {
 	// Name is the adapter's name, which the setup journal records to find its
@@ -213,6 +251,16 @@ type Inspector interface {
 	// is asked of the scheduler. Refresh reads a definition this way, so a
 	// job whose definition it leaves alone is never asked about.
 	Definition(site Site, ref Ref) Status
+	// Installed is the jobs of inst on disk, its own current job first (even
+	// when it has no definition yet), then its aliases: the collectors earlier
+	// releases installed for the same data directory, and the prototype's job
+	// for the account's default installation. A job of another data directory
+	// is never among them. When something about an alias blocks setup (a
+	// prototype's job whose definition is not the one the prototype wrote:
+	// "preserve it and resolve it before setup") the error says so, and the
+	// jobs it could recognize are returned with it, since status and uninstall
+	// never touch the prototype and act on those.
+	Installed(ctx context.Context, site Site, inst Installation) ([]Job, error)
 }
 
 // Controller changes what runs. Its operations run on a bounded context that

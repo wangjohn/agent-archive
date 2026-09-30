@@ -138,7 +138,7 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 	})
 
 	in := env.installation(home, userHome)
-	ref, words := in.ref(), in.definer().Words()
+	ref, words := in.ref(), in.sched().Words()
 	job := preflightCheck{Label: "Background job", Detail: words.Tool + " responds", OK: true}
 	status := env.jobStatus(userHome, ref)
 	problem := problemOf(status)

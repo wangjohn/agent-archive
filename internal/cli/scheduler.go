@@ -38,7 +38,7 @@ func collectorJob(executable, home string, environment map[string]string) schedu
 // planJob is the plan that defines spec as this installation's job at the
 // site of userHome. It reads nothing.
 func (in installation) planJob(userHome string, spec scheduler.JobSpec) (scheduler.Plan, error) {
-	return in.definer().Plan(userSite(userHome), in.schedulerInstallation(), spec)
+	return in.sched().Plan(userSite(userHome), in.schedulerInstallation(), spec)
 }
 
 // artifactChanges are the changes a plan makes to disk, as the setup journal
