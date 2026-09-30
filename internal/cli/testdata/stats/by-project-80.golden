@@ -1,0 +1,55 @@
+agent-archive stats · last 14 days · 3 agents · 10 sessions (9 with token data)
+
+TOKENS BY DAY                                          peak 29M · Sep 17
+▂█▂▁▂▁▂▁▂▁▁▁▁▁
+Sep 16  Sep 29
+
+OVERVIEW                                             vs previous 14 days
+Sessions        10  ▼ 17%
+Prompts        143  ▲ 39%
+Tokens         55M  ▲ 64%
+Est. cost    $107+  ▲ 90%  at list price, prices as of 2026-09-29
+Active days   7/14         no current streak (best 3)
+
+AGENTS                               sessions   tokens  est. cost
+Claude Code  █████████████░░░░░░░░░    6  60%      53M       $105
+Codex        ███████░░░░░░░░░░░░░░░    3  30%     2.1M     $2.27+
+Cursor       ██░░░░░░░░░░░░░░░░░░░░    1  10%  unknown        n/a
+
+COST BY MODEL                      est. cost
+opus               ████████████░░        $90
+sonnet             ██░░░░░░░░░░░░        $14
+gpt-5              █░░░░░░░░░░░░░      $2.27
+codex-auto-review                   unpriced  110K tokens
+
+TOP PROJECTS                   sessions  tokens  est. cost
+proj-api       ██████░░░░░░░░         2     33M        $73
+agent-archive  ██████████████         5     20M        $32
+dotfiles       ████████░░░░░░         3    2.1M     $2.27+
+
+WHAT USED YOUR TOKENS
+███████████████████████████████████████▓▓▓▓▒▒▒▒▒░░
+█ Cache read 78% 43M  ▓ Cache write 8% 4.6M  ▒ Input 9% 4.8M  ░ Output 4% 2.4M
+Subagents  18% of tokens (10M) in 2 sessions
+Skills     review-pr 6 · create-skill 1
+MCP        github 60 · linear 12
+Skills count sessions that used each one; MCP counts calls.
+MCP: Claude Code and Cursor only; Codex MCP calls are not recorded.
+
+HIGHLIGHTS
+Busiest day  Sep 17 (2 sessions)      Favorite model  opus
+Costliest    $65.10  proj-api  (long context, 2 subagents)
+Tool errors  6.0% of 1,000 tool results flagged as errors, 6 sessions measured
+             (4 do not record them)
+This month so far is your heaviest of the last 6 months
+
+BY PROJECT     sessions  prompts  tokens  est. cost
+proj-api              2       57     33M        $73
+agent-archive         5       72     20M        $32
+dotfiles              3       14    2.1M     $2.27+
+
+Scope: this archive only. Sessions with no token data are left out of token and
+cost totals (Cursor: 1).
+Cost is an estimate at list price, not a bill. Prices golden-1, with your
+--prices file applied.
++ leaves out tokens of models the price table does not list (codex-auto-review).

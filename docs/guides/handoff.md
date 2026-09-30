@@ -50,6 +50,12 @@ With no session selector, `handoff` opens the same numbered session picker as
 `show` when stdin and stdout are terminals. The picker lists archived
 sessions; `--harness` narrows the list. Quit with `q` without producing a
 handoff. In a script or pipeline, pass a session ID, `--latest`, or `--file`.
+The picker never opens when a coding agent runs the command, even in a
+pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
+`CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns
+prompts off, and `handoff` without a selector is a usage error (exit 2)
+instead. `AGENT_ARCHIVE_NONINTERACTIVE=0` turns them back on; see
+[configuration](../reference/configuration.md#environment-variables).
 Use `--latest` to hand off a local session that has not uploaded yet.
 
 A session registered on this Mac is read from its transcript as it is now, so

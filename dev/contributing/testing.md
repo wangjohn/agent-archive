@@ -108,6 +108,14 @@ In Go tests, everything goes through injection:
   and bootstrap and bootout can fail) and cannot reach launchctl; its
   `TestMain` isolates the process as `internal/capture`'s does. Tests that
   run `setup` itself stay in `internal/cli`.
+- `internal/stats` (the statistics engine) is a pure function of the metadata,
+  time, time zone and price table it is passed, so its tests build synthetic
+  `archive.Metadata` and need no isolation. `TestStatsImportBoundary` and
+  `TestStatsReadsNoClockOrEnvironment` keep it that way: it imports only
+  `archive`'s types and reads no clock, file or environment. Its default
+  prices are `internal/stats/prices.json`, dated and versioned; update the
+  file (and its `as_of` and `version`) from the pages in its `sources` when
+  list prices change.
 - `internal/credentials` fails closed too: its `TestMain` replaces every
   Keychain call `KeychainStore` makes with one that stops the test, so a
   test can reach the real login Keychain only through the opt-in
@@ -175,7 +183,8 @@ LaunchAgent runs) are not part of the user interface and may change.
   with synthetic content only. `filter-golden.json` pins the SHA-256 of what
   each fixture filters to; Cursor database chats
   (`internal/archive/testdata/cursor-composer/`), handoff output
-  (`testdata/handoff/`), backfill plans (`internal/cli/testdata/backfill/`,
+  (`testdata/handoff/`), the `stats` screens at 60, 80 and 120 columns and
+  without a terminal (`internal/cli/testdata/stats/`), backfill plans (`internal/cli/testdata/backfill/`,
   `internal/backfill/testdata/`) and the [CLI reference](../../docs/reference/cli.md)
   have goldens of their own.
 - One flag rewrites every golden file:
@@ -274,7 +283,7 @@ Redaction, parsing, hook-file editing and the hook itself have fuzz targets
 | `FuzzRedactSensitive` | any string | redacting twice changes nothing; valid UTF-8 stays valid |
 | `FuzzRedactCredentialTemplates` | a secret in each credential shape | the secret never survives |
 | `FuzzSanitizeValueIdempotent` | any string | the whole string sanitizer (JSON inside strings, instruction blocks, redaction, the cap) is idempotent |
-| `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character |
+| `FuzzFilterJSONL` | any JSONL, with each adapter (Claude Code, Codex, Cursor) | no panic; only `FilterError`s; retained records are JSON objects that refilter unchanged; the handoff renders with no control character; every token count in the metadata is from 0 to 2^53, and the per-model counts add up to the session's unless one saturated |
 | `FuzzFilterJSONLDropsSecrets` | a secret in typed input, credential-named arguments, and JSON strings, per adapter | the secret never survives |
 | `FuzzCursorText` | any Cursor text transcript | refiltering is a no-op; no hidden section is retained; the handoff finds no more prompts than the filter kept |
 | `FuzzCursorComposer` | a Cursor database chat and one message row | no panic; retained records are JSON objects; the handoff renders cleanly |
