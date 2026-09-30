@@ -52,6 +52,8 @@ type refreshPlan struct {
 	// run the new plist.
 	plist     bool
 	restarted bool
+	// definition is what the scheduler calls that file ("plist", "unit file").
+	definition string
 	// skills are the skill files written or removed; left are the other
 	// files at the skills' paths, which are not setup's and stay.
 	skills []string
@@ -266,6 +268,7 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 	if len(jobChanges) > 0 {
 		changes = append(changes, jobChanges...)
 		plan.plist = true
+		plan.definition = in.sched().Words().Definition
 	}
 	if cfg.InstalledExecutable != exe {
 		data, err := json.MarshalIndent(next, "", "  ")
@@ -301,7 +304,7 @@ func planJobRestart(plan *refreshPlan, in installation, userHome string, env Env
 	job := env.jobStatus(userHome, ref)
 	switch {
 	case job.State == scheduler.Unknown:
-		return refuse("cannot determine the background job's state; restore access to %s and retry", words.Tool)
+		return refuse("%s", unknownJobMessage(words, problemOf(job)))
 	case job.State == scheduler.AnotherInstallation:
 		return refuse("%s's %s job was loaded from a %s other than %s, so it belongs to another installation; refresh leaves it running and changes nothing", words.Manager, ref, words.Definition, problemOf(job).Expected)
 	case jobActive(job.State):
@@ -389,7 +392,7 @@ func (p refreshPlan) summary() string {
 	case p.restarted:
 		parts = append(parts, "the background collector (restarted)")
 	case p.plist:
-		parts = append(parts, "the background collector's plist (its job is not loaded, and was left so)")
+		parts = append(parts, "the background collector's "+p.definition+" (its job is not loaded, and was left so)")
 	}
 	if len(p.skills) > 0 {
 		parts = append(parts, countNoun(len(p.skills), "skill file"))

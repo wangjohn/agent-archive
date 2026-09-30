@@ -653,13 +653,18 @@ Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 Guide: [Uninstall](../getting-started/uninstall.md).
 
 ```text
-Usage: agent-archive uninstall [--delete-local-data] [--yes]
+Usage: agent-archive uninstall [--delete-local-data] [--skip-scheduler] [--yes]
 
 Remove hooks, the agent skills (/handoff and agent-archive), and the
 background collector. Keep local evidence,
 settings, and credentials by default, so setup can restore the installation.
 --delete-local-data also removes owned local files and stored credentials,
 including unpublished evidence, after a separate confirmation.
+--skip-scheduler goes on when the background scheduler cannot be reached (no
+user session bus, for example): it tries to stop the job, removes its
+definition and the rest all the same, prints the command that stops the job by
+hand, and says the job was not verified stopped. Without it, uninstall stops
+there and changes nothing.
 --yes skips the confirmations; it is required without a terminal.
 Remote archives and unrelated files are always kept.
 Example: agent-archive uninstall
@@ -668,6 +673,7 @@ Example: agent-archive uninstall
 | Flag | Takes | Default |
 | --- | --- | --- |
 | `--delete-local-data` | no value | — |
+| `--skip-scheduler` | no value | — |
 | `--yes` | no value | — |
 
 ## agent-archive purge
