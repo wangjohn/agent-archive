@@ -65,6 +65,22 @@ type ModelPrice struct {
 // counts can reach +Inf, which JSON cannot carry.
 const MaxPricePerMTok = 1e9
 
+// maxPriceVersionBytes bounds a table's version label, which is printed.
+const maxPriceVersionBytes = 64
+
+// isCurrencyCode reports whether s is three ASCII capital letters.
+func isCurrencyCode(s string) bool {
+	if len(s) != 3 {
+		return false
+	}
+	for _, r := range s {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
 // validPrice reports whether a price is a finite number in [0, MaxPricePerMTok].
 func validPrice(price float64) bool {
 	return price >= 0 && price <= MaxPricePerMTok && !math.IsNaN(price)
@@ -101,7 +117,9 @@ func DefaultPriceTable() PriceTable {
 }
 
 // ParsePriceTable reads a price table from its JSON form (the format of the
-// built-in table). It rejects a table with no version or no models, a date
+// built-in table). It rejects a table with no version (or one over
+// maxPriceVersionBytes) or no models, a currency that is not a three-letter
+// code, a date
 // that is not YYYY-MM-DD, an empty or repeated model id, and any of the four
 // prices missing, negative, or above MaxPricePerMTok. Unknown fields are an
 // error, so a misspelled price name does not turn into a free token type.
@@ -117,6 +135,12 @@ func ParsePriceTable(data []byte) (PriceTable, error) {
 	}
 	if strings.TrimSpace(file.Version) == "" {
 		return PriceTable{}, errors.New(`price table needs a "version"`)
+	}
+	if len(file.Version) > maxPriceVersionBytes {
+		return PriceTable{}, fmt.Errorf(`price table "version" is longer than %d bytes`, maxPriceVersionBytes)
+	}
+	if currency := strings.ToUpper(strings.TrimSpace(file.Currency)); currency != "" && !isCurrencyCode(currency) {
+		return PriceTable{}, fmt.Errorf(`price table "currency" must be a three-letter ISO 4217 code like USD, got %q`, file.Currency)
 	}
 	if _, err := time.Parse("2006-01-02", file.AsOf); err != nil {
 		return PriceTable{}, fmt.Errorf(`price table "as_of" must be a date like 2026-09-29, got %q`, file.AsOf)
@@ -206,22 +230,6 @@ func (t PriceTable) WithOverrides(custom PriceTable) PriceTable {
 	return merged
 }
 
-// Lookup returns the price of a model id as the archive records it (any
-// case, with or without a date or context suffix), and whether the table
-// prices it.
-func (t PriceTable) Lookup(model string) (ModelPrice, bool) {
-	id := NormalizeModel(model)
-	if id == "" {
-		return ModelPrice{}, false
-	}
-	for _, entry := range t.Models {
-		if NormalizeModel(entry.ID) == id {
-			return entry, true
-		}
-	}
-	return ModelPrice{}, false
-}
-
 // A date suffix is a plausible calendar date (year 19xx or 20xx, month 01-12,
 // day 01-31), not any run of digits: a model id that merely ends in eight
 // digits, or in "-1234-56-78", must not be priced as the model before them.
@@ -301,6 +309,21 @@ func (t PriceTable) index() priceIndex {
 		}
 	}
 	return index
+}
+
+// Family returns the family label the table groups a model id under in cost by
+// model ("opus", "gpt-5"), and whether the table lists the model at all. The id
+// is read as the archive records it (any case, with or without a date or
+// context suffix). A caller that must show only model names a table lists,
+// such as a page that is meant to be shared, asks this of the built-in table:
+// a fine-tune id or a custom deployment name is not listed, so it is not shown.
+func (t PriceTable) Family(model string) (string, bool) {
+	index := t.index()
+	id := NormalizeModel(model)
+	if _, ok := index[id]; !ok {
+		return "", false
+	}
+	return index.label(id), true
 }
 
 // price returns USD-like cost for tokens of one model, and whether the model
