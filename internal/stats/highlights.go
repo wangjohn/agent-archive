@@ -110,13 +110,11 @@ func toolErrors(current []*unit) *ToolErrors {
 			unknown++
 		}
 	}
-	if known == 0 {
+	// No tool results at all has no error rate (0 of 0 is not "0%").
+	if known == 0 || results == 0 {
 		return nil
 	}
-	rate := 0.0
-	if results > 0 {
-		rate = float64(errors) / float64(results)
-	}
+	rate := float64(errors) / float64(results)
 	return &ToolErrors{Errors: errors, Results: results, Rate: rate, Sessions: known, UnknownSessions: unknown}
 }
 
@@ -124,13 +122,15 @@ func toolErrors(current []*unit) *ToolErrors {
 // over every unit given (not only the window). Months without token data are
 // left out of the comparison rather than counted as zero.
 func monthRank(all []*unit, now time.Time, loc *time.Location) *MonthRank {
+	local := now.In(loc)
+	today := dayNumber(civilOf(local))
 	byMonth := map[int]int64{}
 	for _, u := range all {
-		if u.hasData {
+		// A session after Now (a skewed clock) is not part of the month so far.
+		if u.hasData && u.day <= today {
 			byMonth[u.month] = satAdd(byMonth[u.month], u.tokens.total())
 		}
 	}
-	local := now.In(loc)
 	thisMonth := local.Year()*12 + int(local.Month()) - 1
 	tokens, ok := byMonth[thisMonth]
 	if !ok {

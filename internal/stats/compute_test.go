@@ -451,6 +451,11 @@ func TestToolErrorRateCoversOnlySessionsThatKnowIt(t *testing.T) {
 	if te == nil || te.Errors != 4 || te.Results != 200 || !near(te.Rate, 0.02) || te.Sessions != 2 || te.UnknownSessions != 2 {
 		t.Fatalf("tool errors = %+v", te)
 	}
+	// Sessions that know their errors but ran no tool: 0 of 0 is no rate, not 0%.
+	none := Compute([]archive.Metadata{meta("z", "claude", day(time.September, 28, 10), toolResults(0, 0))}, opts())
+	if none.Highlights.ToolErrors != nil {
+		t.Fatalf("0 tool results gave tool errors %+v", none.Highlights.ToolErrors)
+	}
 	// Only Codex: unknown, not 0%.
 	only := Compute([]archive.Metadata{meta("c", "codex", day(time.September, 28, 12), toolResultsOnly(1000))}, opts())
 	if only.Highlights.ToolErrors != nil {
@@ -557,6 +562,10 @@ func TestMonthRank(t *testing.T) {
 		{"heaviest", []archive.Metadata{month(time.September, 500), month(time.August, 100)}, &MonthRank{Month: "2026-09", Rank: 1, Of: 2, Tokens: 500}},
 		{"the sixth month back is out of range", []archive.Metadata{month(time.September, 500), month(time.March, 900)}, nil},
 		{"no earlier data", []archive.Metadata{month(time.September, 500)}, nil},
+		{"a session after Now is not this month so far", []archive.Metadata{
+			month(time.September, 500), month(time.August, 100),
+			meta("later", "claude", day(time.September, 30, 10), modelTokens("claude-opus-5-5", 9999, 0, 0, 0)),
+		}, &MonthRank{Month: "2026-09", Rank: 1, Of: 2, Tokens: 500}},
 		{"this month has no data", []archive.Metadata{month(time.August, 100)}, nil},
 	}
 	for _, tc := range cases {

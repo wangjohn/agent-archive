@@ -36,6 +36,20 @@ func TestDefaultPriceTableIsValid(t *testing.T) {
 		if strings.HasPrefix(m.ID, "claude-") && m.CacheWritePerMTok < m.InputPerMTok {
 			t.Errorf("%s: a cache write costs at least the input price: %+v", m.ID, m)
 		}
+		if strings.HasPrefix(m.ID, "claude-") {
+			// Anthropic's published multipliers: a 5-minute write is 1.25x input,
+			// a read 0.1x (0.025x on Fable 5.1, 0.05x on Opus 5.5). A typo in one
+			// column shows up here.
+			readMultiplier := map[string]float64{"claude-fable-5-1": 0.025, "claude-opus-5-5": 0.05}[m.ID]
+			if readMultiplier == 0 {
+				readMultiplier = 0.1
+			}
+			if !near(m.CacheWritePerMTok, 1.25*m.InputPerMTok) || !near(m.CacheReadPerMTok, readMultiplier*m.InputPerMTok) {
+				t.Errorf("%s cache prices do not follow Anthropic's multipliers: %+v", m.ID, m)
+			}
+		} else if m.CacheWritePerMTok != 0 {
+			t.Errorf("%s: OpenAI has no cache-write charge: %+v", m.ID, m)
+		}
 	}
 	for _, source := range table.Sources {
 		if !strings.HasPrefix(source, "https://") {
@@ -66,6 +80,8 @@ func TestRealModelIDsThePriceTableKnows(t *testing.T) {
 		{"gpt-5.6-terra", true, "gpt-5.6"},
 		{"gpt-6-luna", true, "gpt-6"},
 		{"gpt-5", true, "gpt-5"},
+		{"gpt-5-2025-08-07", true, "gpt-5"},
+		{"gpt-5.5", true, "gpt-5.5"},
 		// Not priced, never guessed.
 		{"codex-auto-review", false, ""},
 		{"unknown", false, ""},
@@ -96,6 +112,8 @@ func TestNormalizeModel(t *testing.T) {
 		"claude-opus-4-1":              "claude-opus-4-1", // a version, not a date
 		"claude-3-5-sonnet-2024102":    "claude-3-5-sonnet-2024102",
 		"gpt-5.6-terra":                "gpt-5.6-terra",
+		"gpt-5-2025-08-07":             "gpt-5",
+		"gpt-5.3-codex":                "gpt-5.3-codex",
 		"":                             "",
 		"claude-sonnet-4-20250514[1m]": "claude-sonnet-4",
 	} {
@@ -169,6 +187,30 @@ func TestOverridesReplaceAndAddEntries(t *testing.T) {
 	got := Compute([]archive.Metadata{m}, Options{Now: now, Location: newYork, PriceTable: merged})
 	if v := got.Overview.Cost.Value; v == nil || !near(*v, 1) || got.Prices.Version != "custom-1" || !got.Prices.Overridden {
 		t.Fatalf("cost %v prices %+v", f64(v), got.Prices)
+	}
+}
+
+// Prices in another currency replace the built-in ones: relabelling dollar
+// prices as euros would be a silent, wrong estimate.
+func TestOverridesInAnotherCurrencyDoNotKeepDollarPrices(t *testing.T) {
+	t.Parallel()
+	custom, err := ParsePriceTable([]byte(strings.Replace(validTable, `"as_of"`, `"currency":"eur","as_of"`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := DefaultPriceTable().WithOverrides(custom)
+	if merged.Currency != "EUR" || len(merged.Models) != 2 {
+		t.Fatalf("merged = %s with %d models, want EUR with only the custom 2", merged.Currency, len(merged.Models))
+	}
+	if _, ok := merged.Lookup("claude-sonnet-5-5"); ok {
+		t.Fatal("a dollar price survived into a euro table")
+	}
+	same, err := ParsePriceTable([]byte(strings.Replace(validTable, `"as_of"`, `"currency":"usd","as_of"`, 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if merged := DefaultPriceTable().WithOverrides(same); merged.Currency != "USD" || len(merged.Models) != len(DefaultPriceTable().Models)+1 {
+		t.Fatalf("same-currency override lost the defaults: %s, %d models", merged.Currency, len(merged.Models))
 	}
 }
 
