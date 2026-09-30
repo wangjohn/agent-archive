@@ -664,6 +664,20 @@ func configFingerprint(cfg config.Config) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// backfillTempDirs are the temporary folders backfill skips sessions from,
+// and setup will not offer as a project: the operating system's defaults
+// and $TMPDIR, or the list a test sets.
+func (e Env) backfillTempDirs() []string {
+	if e.BackfillTempDirs != nil {
+		return e.BackfillTempDirs
+	}
+	temps := backfill.Environment{OS: e.OS}.DefaultTempDirs()
+	if tmp, ok := e.lookupEnv("TMPDIR"); ok && strings.TrimSpace(tmp) != "" {
+		temps = append(temps, strings.TrimSpace(tmp))
+	}
+	return temps
+}
+
 // backfillEnvironment is what planning reads: the user's home, the
 // temporary directories, and the clock. Files are read from the real file
 // system, and Cursor's database is opened read-only to count the chats only
@@ -672,15 +686,9 @@ func (e Env) backfillEnvironment(userHome string, cfg config.Config) backfill.En
 	claude, codex := e.appSessionDirs(userHome, cfg)
 	env := backfill.Environment{
 		Home: userHome, ClaudeDirs: claude, CodexDirs: codex,
-		TempDirs: e.BackfillTempDirs, Now: e.now, OS: e.OS,
+		TempDirs: e.backfillTempDirs(), Now: e.now, OS: e.OS,
 		// XDG_CONFIG_HOME places Cursor's data folder off macOS.
 		Getenv: e.getenv,
-	}
-	if env.TempDirs == nil {
-		env.TempDirs = env.DefaultTempDirs()
-		if tmp, ok := e.lookupEnv("TMPDIR"); ok && strings.TrimSpace(tmp) != "" {
-			env.TempDirs = append(env.TempDirs, strings.TrimSpace(tmp))
-		}
 	}
 	env.CursorDatabase = backfill.CursorDatabaseReaderFor(env)
 	return env

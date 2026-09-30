@@ -147,7 +147,9 @@ In Go tests, everything goes through injection:
   `archive`'s types and reads no clock, file or environment. Its default
   prices are `internal/stats/prices.json`, dated and versioned; update the
   file (and its `as_of` and `version`) from the pages in its `sources` when
-  list prices change.
+  list prices change. Read each model's own page as well as the pricing
+  table (the two can differ), and re-check any price the notes call
+  promotional on its end date: the table does not expire by itself.
 - `internal/statshtml` (the `stats --html` page) is a pure function of the
   `stats.Stats` it is passed, so its tests compute stats from synthetic
   metadata and need no isolation. Every page a test renders goes through
@@ -331,7 +333,7 @@ assigns a package variable (`stubLaunchctl`, `collectSoftDeadline`,
 counter (`state.PublishedStateLoads`), removes this process's Cursor
 snapshots or checks what a sweep of the shared snapshot folder did, orders goroutines with real sleeps, or needs work to finish
 within a production time bound that a busy parallel run can exceed (a
-hook's one-second lock wait, a version command's output deadline) stays
+hook's lock wait, a version command's output deadline) stays
 sequential, with a comment saying why when it is not obvious. Go runs every sequential test
 before it releases the parallel ones, so a package variable a sequential
 test changes and restores is never seen by a parallel test. Test seams

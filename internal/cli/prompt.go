@@ -29,6 +29,9 @@ type prompter struct {
 	// singleArea is set while setup changes one area of an installed
 	// setup, where step headings do not count steps.
 	singleArea bool
+	// reviewHint, when set, is a line the setup review repeats: where to
+	// change what an answer chose for the person.
+	reviewHint string
 }
 
 // step prints a wizard step heading, set apart from the prompts above it.

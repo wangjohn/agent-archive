@@ -33,10 +33,26 @@ func TestNormalizeModelRealAndHostileIDs(t *testing.T) {
 		{"gpt-5-2025-08-07", "gpt-5", true},
 		{"openrouter/anthropic/claude-opus-5-5", "claude-opus-5-5", true},
 		{"CLAUDE-HAİKU-4-5", "claude-haiku-4-5", true}, // U+0130 lower-cases to i
+		// Bedrock's one colon-less version (Opus 4.6), behind its vendor prefix.
+		{"us.anthropic.claude-opus-4-6-v1", "claude-opus-4-6", true},
+		{"anthropic.claude-opus-4-6-v1[1m]", "claude-opus-4-6", true},
+		{"bedrock/us.anthropic.claude-opus-4-6-v1", "claude-opus-4-6", true},
+		{"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-4-6-v1", "claude-opus-4-6", true},
+		{"anthropic.claude-opus-5-5-v1:0", "claude-opus-5-5", true},
+		{"anthropic.claude-sonnet-4-5-20250929-v1:0", "claude-sonnet-4-5", true},
 		// Not the same model, or not a model the table names: unpriced.
 		{"opus", "opus", false},
 		{"deepseek-v3", "deepseek-v3", false},
 		{"claude-opus-5-5-v1", "claude-opus-5-5-v1", false}, // no colon: not Bedrock's
+		{"anthropic/claude-opus-5-5-v1", "claude-opus-5-5-v1", false},
+		{"claude-opus-4-6-20260205-v1", "claude-opus-4-6-20260205-v1", false},
+		{"anthropic.claude-opus-4-6-v1-v1", "claude-opus-4-6-v1", false}, // only one layer comes off
+		{"anthropic.claude-opus-4-6-v2", "claude-opus-4-6-v2", false},
+		{"anthropic.claude-opus-4-6-v1:x", "claude-opus-4-6-v1:x", false},
+		{"anthropic.claude-opus-4-6-v\uff11", "claude-opus-4-6-v\uff11", false}, // a full-width 1
+		{"anthropic.claude-opus-4-6-v1\u200b", "claude-opus-4-6-v1\u200b", false},
+		{"anthropic.gpt-5-v1", "gpt-5-v1", false},                                 // the colon-less version is Claude's
+		{"anthropic.claude-3-5-sonnet-20241022-v2:0", "claude-3-5-sonnet", false}, // retired, not listed
 		{"o3", "o3", false},
 		{"gpt-5-v1:0", "gpt-5-v1:0", false}, // Bedrock's version belongs to Claude ids
 		{"gpt-5-pro", "gpt-5-pro", false},
@@ -76,7 +92,7 @@ func TestNormalizeModelRealAndHostileIDs(t *testing.T) {
 // replace, another model's price after the duplicate check had passed.
 func TestNormalizeModelIsIdempotent(t *testing.T) {
 	t.Parallel()
-	parts := []string{"claude-opus-5-5", "gpt-5", "us.anthropic.", "anthropic/", "/", "[1m]", "[x]", "-20250101", "@20250101", "-2025-08-07", "-v1:0", "-v2", " ", " ", ".", "-", "x"}
+	parts := []string{"claude-opus-5-5", "gpt-5", "us.anthropic.", "anthropic/", "/", "[1m]", "[x]", "-20250101", "@20250101", "-2025-08-07", "-v1:0", "-v1", "anthropic.", "global.anthropic.", "-v2", " ", " ", ".", "-", "x"}
 	rng := rand.New(rand.NewPCG(3, 7))
 	for range 20000 {
 		var id strings.Builder
@@ -110,7 +126,7 @@ func TestNoPricedModelNormalizesToAnotherPricedModel(t *testing.T) {
 			"anthropic/" + entry.ID, strings.ToUpper(entry.ID),
 		}
 		if strings.HasPrefix(entry.ID, "claude-") {
-			wrappers = append(wrappers, "us.anthropic."+entry.ID+"-v1:0")
+			wrappers = append(wrappers, "us.anthropic."+entry.ID+"-v1:0", "anthropic."+entry.ID+"-v1", "global.anthropic."+entry.ID+"-v1")
 		}
 		for _, wrapped := range wrappers {
 			if got := NormalizeModel(wrapped); got != entry.ID {

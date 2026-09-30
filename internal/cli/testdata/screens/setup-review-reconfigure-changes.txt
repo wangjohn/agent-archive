@@ -124,14 +124,14 @@ Installed /handoff, which continues a session in another agent: ~/.claude/skills
 Installed the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md
 To remove the agent skills and keep them off, run agent-archive setup --no-skills.
 
-Looking for past sessions in these projects… none to import.
-
 Next, in each app:
   Codex: run /hooks and approve the archive hooks, then start a new session (or /clear).
   Claude Code: nothing to approve; start a new session (or /clear).
   Cursor: nothing to approve; start a new Agent chat.
 Sessions already open are not captured. Start a new one in an included project.
 Check progress with agent-archive status.
+
+Looking for past sessions in these projects… none to import.
 
 To set up another Mac with this storage, run there:
   agent-archive setup --yes --provider s3 --bucket team-archive --aws-profile work --region us-east-1 --apps codex,claude,cursor --project ~/src/web-app --project ~/src/api
