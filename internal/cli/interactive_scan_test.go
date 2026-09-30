@@ -103,6 +103,7 @@ var promptSites = classifiedCalls{
 	"show_resolve.go":     {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
 	"handoff_select.go":   {"newPrompter": 1},                  // handoff's picker: runHandoffCommand reaches it only when browseInteractive
 	"handoff.go":          {"newPrompter": 1},                  // "Continue in:": offersDestinations requires browseInteractive
+	"handoff_match.go":    {"newPrompter": 1},                  // "Hand off this session?" for a repository-only match: gateRepoMatch refuses without browseInteractive
 	"handoff_worktree.go": {"newPrompter": 1},                  // the active-source y/N/w question: checkActiveSource asks only when env.interactive(stdin) and (stderr)
 }
 

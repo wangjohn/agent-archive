@@ -371,7 +371,7 @@ func TestHandoffToLaunchesAnArchiveOnlySession(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stderr=%s", code, errOut)
 	}
-	for _, want := range []string{"source: archive", "Archived elsewhere", "handoff " + f.archiveOnly + " --harness codex --max-bytes 0"} {
+	for _, want := range []string{"source: archive", "Archived elsewhere", "handoff " + f.archiveOnly + " --source archive --harness codex --max-bytes 0"} {
 		if !strings.Contains(*document, want) {
 			t.Errorf("document missing %q:\n%s", want, *document)
 		}
