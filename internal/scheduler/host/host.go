@@ -45,7 +45,7 @@ func New(system platform.OS, run scheduler.Runner) scheduler.Scheduler {
 		return systemd.Scheduler{Run: run}
 	case platform.Unknown:
 	}
-	return Unavailable(noneName, fmt.Sprintf("agent-archive has no background scheduler for this system (%s)", system), "agent-archive runs its background collector with launchd on macOS and with systemd on Linux")
+	return Unavailable(noneName, fmt.Sprintf("agent-archive has no background scheduler for this system (%s)", system), "Run agent-archive on macOS, or on Linux with a systemd user manager: its background collector runs under launchd or systemd")
 }
 
 // Named is the scheduler called name on system, over run: the one a

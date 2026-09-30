@@ -46,6 +46,8 @@ type fakeUserManager struct {
 	searchHome string
 	// dropIn makes the timer report a drop-in that overrides it.
 	dropIn bool
+	// masked makes both units of every job masked.
+	masked bool
 }
 
 const fakeSystemdVersion = "systemd 255 (255.4-1ubuntu8.17)\n+PAM +AUDIT +SELINUX default-hierarchy=unified\n"
@@ -114,6 +116,9 @@ func (m *fakeUserManager) show(ref string) string {
 			in = dropIns
 		}
 		return fmt.Sprintf("Id=%s\nLoadState=%s\nActiveState=%s\nSubState=%s\nFragmentPath=%s\nDropInPaths=%s\n", id, load, active, sub, path, in)
+	}
+	if m.masked {
+		return block(ref+".timer", "", "masked", "inactive", "dead") + "\n" + block(ref+".service", "", "masked", "inactive", "dead")
 	}
 	switch m.held(ref) {
 	case scheduler.Loaded:
