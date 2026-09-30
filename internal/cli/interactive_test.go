@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -327,17 +328,23 @@ func TestPagerNotStartedInAnAgent(t *testing.T) {
 
 // handoff never opens its picker in an agent, with or without --to, and a
 // session named on the command line, including the caller's own, still works.
+// Inside Cursor, --to takes the newest Cursor session instead of asking, and
+// the fixture has none.
 func TestHandoffInAnAgentNeverPicks(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, true)
 	for _, key := range agentVariables {
 		for _, args := range [][]string{{"handoff"}, {"handoff", "--harness", "codex"}, {"handoff", "--to", "codex"}, {"handoff", "--to", "claude", "--harness", "cursor"}} {
-			f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+			f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 				t.Errorf("%s %v: launched without a session", key, args)
 				return nil
 			}
 			out, errOut, code := ttyRun(t, withEnvironment(f.env, agentShell(key)), "1\n", args...)
-			if code != 2 || !strings.Contains(errOut, "name a session ID, --latest, or --file PATH") || out != "" {
+			wantCode, want := 2, "name a session ID, --latest, or --file PATH"
+			if key == cursorAgentEnv && slices.Contains(args, "--to") {
+				wantCode, want = 1, "no session for "
+			}
+			if code != wantCode || !strings.Contains(errOut, want) || out != "" {
 				t.Errorf("%s %v: code=%d stdout=%q stderr=%q", key, args, code, out, errOut)
 			}
 		}
@@ -354,7 +361,7 @@ func TestHandoffToFromInsideAnAgentUsesTheCallingSession(t *testing.T) {
 	f := newHandoffFixture(t, false)
 	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
 	launched := 0
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		launched++
 		return nil
 	}

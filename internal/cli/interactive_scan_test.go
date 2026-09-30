@@ -74,15 +74,16 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
-	"prompt.go":        {"newPrompter": 1, "prompter{}": 1}, // the definition
-	"setup.go":         {"newPrompter": 1},                  // interactive setup: runSetupCommand refuses unless env.interactive(stdin) or --yes
-	"setup_flags.go":   {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
-	"uninstall.go":     {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
-	"backfill.go":      {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
-	"backfill_undo.go": {"newPrompter": 1},                  // runBackfillUndo refuses unless env.interactive(stdin) or --yes
-	"list_browse.go":   {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
-	"inspect.go":       {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
-	"show_resolve.go":  {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
+	"prompt.go":         {"newPrompter": 1, "prompter{}": 1}, // the definition
+	"setup.go":          {"newPrompter": 1},                  // interactive setup: runSetupCommand refuses unless env.interactive(stdin) or --yes
+	"setup_flags.go":    {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
+	"uninstall.go":      {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
+	"backfill.go":       {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
+	"backfill_undo.go":  {"newPrompter": 1},                  // runBackfillUndo refuses unless env.interactive(stdin) or --yes
+	"list_browse.go":    {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
+	"inspect.go":        {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
+	"show_resolve.go":   {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
+	"handoff_select.go": {"newPrompter": 1},                  // handoff's picker: runHandoffCommand reaches it only when browseInteractive
 }
 
 // inputReads are the ways a command reads a stream it was handed, other than

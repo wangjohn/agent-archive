@@ -436,11 +436,10 @@ prints conversation content, filtered as it is for the archive: injected
 instructions and credentials removed, tool output trimmed, edit bodies left
 out. A session on this machine is read from its transcript now, without
 waiting for a sync; otherwise it is downloaded from the archive.
-With no selector on a terminal, pick an archived session from the same
-numbered session browser as show. Without a terminal, or when
-AGENT_ARCHIVE_NONINTERACTIVE is on (automatic inside coding agents), give a
-SESSION_ID, --latest, or --file PATH. The picker lists archived sessions
-only; --latest can also find a local session that has not uploaded yet.
+With no selector on a terminal, pick a session from a numbered list of this
+Mac's sessions (including ones not yet uploaded) and archived ones, newest
+first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
+(automatic inside coding agents), give a SESSION_ID, --latest, or --file PATH.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -460,13 +459,20 @@ only; --latest can also find a local session that has not uploaded yet.
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Launch local claude, codex, or cursor with the handoff
-                        in a private temporary file. Reads only a local session;
-                        requires the target CLI installed on this Mac
+  --to NAME             Launch local claude, codex, or cursor with the handoff.
+                        The agent reads a copy kept in the data directory for
+                        7 days (before setup, in a private temporary folder);
+                        needs the agent's CLI (claude, codex, or agent) on
+                        PATH. With no selector, hands off the Claude Code,
+                        Codex, or Cursor session it runs in, or picks one on
+                        a terminal
+  -- ARGS               Everything after -- goes to the launched agent, after
+                        any arguments set in config.json's handoff.args
 Example: agent-archive handoff
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: agent-archive handoff --latest --harness claude --to codex
+Example: agent-archive handoff SESSION_ID --to claude -- --model opus
 ```
 
 | Flag | Takes | Default |
