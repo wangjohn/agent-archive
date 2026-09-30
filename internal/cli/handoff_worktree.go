@@ -40,11 +40,14 @@ var errHandoffCanceled = errors.New("canceled; nothing was launched")
 
 // prepareLaunchDir returns the directory the agent starts in: dir, or with
 // --worktree (or the answer w to the active-source question) the matching
-// directory of a new git worktree beside dir's checkout.
-func prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin io.Reader, stderr io.Writer) (string, error) {
+// directory of a new git worktree beside dir's checkout. stdin is only
+// checked for a terminal; the answer is read from answers, which a command
+// asking several questions shares between them (a *bufio.Reader of the
+// default size is used as is, so typed-ahead answers are not lost).
+func prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (string, error) {
 	branch := opts.branch
 	if !opts.worktree {
-		useWorktree, err := checkActiveSource(env, opts, target, dir, stdin, stderr)
+		useWorktree, err := checkActiveSource(env, opts, target, dir, stdin, answers, stderr)
 		if err != nil || !useWorktree {
 			return dir, err
 		}
@@ -56,7 +59,7 @@ func prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target hand
 // working in, in the checkout the launch would share with it. On a terminal
 // it asks whether to continue there, cancel, or use a worktree instead;
 // elsewhere it warns and continues.
-func checkActiveSource(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin io.Reader, stderr io.Writer) (useWorktree bool, err error) {
+func checkActiveSource(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin, answers io.Reader, stderr io.Writer) (useWorktree bool, err error) {
 	// Only this machine's own sessions have a checkout here to share.
 	if target.source != "local" || target.lastActivityAt.IsZero() {
 		return false, nil
@@ -80,7 +83,7 @@ func checkActiveSource(env worktreeDependencies, opts handoffOptions, target han
 		terminal.Printf(stderr, "handoff: warning: the source session was active %s in this checkout; both agents can edit its files (--worktree gives the new agent its own checkout)\n", age)
 		return false, nil
 	}
-	p := newPrompter(stdin, stderr)
+	p := newPrompter(answers, stderr)
 	question := fmt.Sprintf("The source session was active %s; continue in the same checkout?", age)
 	for {
 		answer, err := p.ask(question, true, []string{"y", "N", "w"}, 1, " ")

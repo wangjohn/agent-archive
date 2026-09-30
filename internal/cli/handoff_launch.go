@@ -57,7 +57,7 @@ func launchDir(opts handoffOptions, env handoffLaunchDependencies) (string, erro
 // record stays out of process arguments: the agent's prompt only names the
 // file. The arguments after `--` follow the configured arguments for dest.
 func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, dir string, opts handoffOptions, home string, stdin io.Reader, stderr io.Writer, env handoffLaunchDependencies) (launchSpec, error) {
-	dir, err := prepareLaunchDir(env, opts, target, dir, stdin, stderr)
+	dir, err := prepareLaunchDir(env, opts, target, dir, stdin, stdin, stderr)
 	if err != nil {
 		return launchSpec{}, err
 	}

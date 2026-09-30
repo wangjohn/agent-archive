@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -113,7 +114,7 @@ func TestHandoffWorktreeFromCleanRepository(t *testing.T) {
 	repo := newTestRepo(t)
 	env := worktreeEnv(t, t.TempDir(), time.Now())
 	var stderr bytes.Buffer
-	dir, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("abcdef1234567890"), repo, nil, &stderr)
+	dir, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("abcdef1234567890"), repo, nil, nil, &stderr)
 	want := repo + "-handoff-abcdef12"
 	if err != nil || dir != want {
 		t.Fatalf("dir=%q err=%v, want %s", dir, err, want)
@@ -148,7 +149,7 @@ func TestHandoffWorktreeCarriesChangesAndLeavesTheCheckoutAlone(t *testing.T) {
 	statusBefore := mustGit(t, repo, "status", "--porcelain")
 	env := worktreeEnv(t, t.TempDir(), time.Now())
 	var stderr bytes.Buffer
-	dir, err := prepareLaunchDir(env, handoffOptions{to: "codex", worktree: true, branch: "feature/carry"}, worktreeTarget("s1"), repo, nil, &stderr)
+	dir, err := prepareLaunchDir(env, handoffOptions{to: "codex", worktree: true, branch: "feature/carry"}, worktreeTarget("s1"), repo, nil, nil, &stderr)
 	if err != nil {
 		t.Fatalf("err=%v stderr=%s", err, stderr.String())
 	}
@@ -193,7 +194,7 @@ func TestHandoffWorktreeLaunchesInTheMatchingSubdirectory(t *testing.T) {
 	t.Parallel()
 	repo := newTestRepo(t)
 	env := worktreeEnv(t, t.TempDir(), time.Now())
-	dir, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("sub12345"), filepath.Join(repo, "sub", "inner"), nil, io.Discard)
+	dir, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("sub12345"), filepath.Join(repo, "sub", "inner"), nil, nil, io.Discard)
 	if want := filepath.Join(repo+"-handoff-sub12345", "sub", "inner"); err != nil || dir != want {
 		t.Fatalf("dir=%q err=%v, want %s", dir, err, want)
 	}
@@ -203,7 +204,7 @@ func TestHandoffWorktreeLaunchesInTheMatchingSubdirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	dir, err = prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("bld12345"), filepath.Join(repo, "build", "x"), nil, &stderr)
+	dir, err = prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("bld12345"), filepath.Join(repo, "build", "x"), nil, nil, &stderr)
 	if want := repo + "-handoff-bld12345"; err != nil || dir != want || !strings.Contains(stderr.String(), "starting at its top level") {
 		t.Fatalf("dir=%q err=%v stderr=%q, want %s", dir, err, stderr.String(), want)
 	}
@@ -216,7 +217,7 @@ func TestHandoffWorktreeRefusesExistingBranchOrDirectory(t *testing.T) {
 	opts := handoffOptions{to: "claude", worktree: true}
 
 	mustGit(t, repo, "branch", "handoff/taken123")
-	_, err := prepareLaunchDir(env, opts, worktreeTarget("taken123"), repo, nil, io.Discard)
+	_, err := prepareLaunchDir(env, opts, worktreeTarget("taken123"), repo, nil, nil, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "branch handoff/taken123 already exists") || !strings.Contains(err.Error(), "--branch") {
 		t.Fatalf("existing branch: err=%v", err)
 	}
@@ -226,7 +227,7 @@ func TestHandoffWorktreeRefusesExistingBranchOrDirectory(t *testing.T) {
 
 	// A branch whose name only starts with the default is not a match.
 	mustGit(t, repo, "branch", "handoff/pre12345-other")
-	if _, err := prepareLaunchDir(env, opts, worktreeTarget("pre12345"), repo, nil, io.Discard); err != nil {
+	if _, err := prepareLaunchDir(env, opts, worktreeTarget("pre12345"), repo, nil, nil, io.Discard); err != nil {
 		t.Fatalf("prefix branch: err=%v", err)
 	}
 
@@ -234,12 +235,12 @@ func TestHandoffWorktreeRefusesExistingBranchOrDirectory(t *testing.T) {
 	if err := os.Mkdir(existing, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err = prepareLaunchDir(env, opts, worktreeTarget("exists12"), repo, nil, io.Discard)
+	_, err = prepareLaunchDir(env, opts, worktreeTarget("exists12"), repo, nil, nil, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), existing+" already exists") {
 		t.Fatalf("existing directory: err=%v", err)
 	}
 
-	_, err = prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true, branch: "bad..name"}, worktreeTarget("badname1"), repo, nil, io.Discard)
+	_, err = prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true, branch: "bad..name"}, worktreeTarget("badname1"), repo, nil, nil, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), `"bad..name" is not a valid branch name`) {
 		t.Fatalf("invalid branch: err=%v", err)
 	}
@@ -249,7 +250,7 @@ func TestHandoffWorktreeNeedsAGitCheckout(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	env := worktreeEnv(t, t.TempDir(), time.Now())
-	_, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("s1"), dir, nil, io.Discard)
+	_, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("s1"), dir, nil, nil, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--worktree needs a git checkout") || !strings.Contains(err.Error(), dir) {
 		t.Fatalf("err=%v", err)
 	}
@@ -267,7 +268,7 @@ func TestHandoffWorktreeFailureAfterAddLeavesTheWorktree(t *testing.T) {
 		return testGit(ctx, dir, args...)
 	}
 	path := repo + "-handoff-fail1234"
-	_, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("fail1234"), repo, nil, io.Discard)
+	_, err := prepareLaunchDir(env, handoffOptions{to: "claude", worktree: true}, worktreeTarget("fail1234"), repo, nil, nil, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "created worktree "+path) || !strings.Contains(err.Error(), "left in place") || !strings.Contains(err.Error(), "apply failed") {
 		t.Fatalf("err=%v", err)
 	}
@@ -320,7 +321,7 @@ func TestActiveSourceWarnsOffATerminal(t *testing.T) {
 	t.Parallel()
 	f, target := activeFixture(t)
 	var stderr bytes.Buffer
-	dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, nil, &stderr)
+	dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, nil, nil, &stderr)
 	if err != nil || dir != f.project || !strings.Contains(stderr.String(), "handoff: warning: the source session was active just now in this checkout") {
 		t.Fatalf("dir=%q err=%v stderr=%q", dir, err, stderr.String())
 	}
@@ -335,7 +336,7 @@ func TestActiveSourceWarnsOffATerminal(t *testing.T) {
 		tgt, d := target, f.project
 		change(&tgt, &d)
 		stderr.Reset()
-		if got, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, tgt, d, nil, &stderr); err != nil || got != d || stderr.Len() != 0 {
+		if got, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, tgt, d, nil, nil, &stderr); err != nil || got != d || stderr.Len() != 0 {
 			t.Errorf("%s: dir=%q err=%v stderr=%q", name, got, err, stderr.String())
 		}
 	}
@@ -345,7 +346,7 @@ func TestActiveSourceWarnsOffATerminal(t *testing.T) {
 		tgt := target
 		tgt.lastActivityAt = f.env.now().Add(offset)
 		stderr.Reset()
-		if _, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, tgt, f.project, nil, &stderr); err != nil || !strings.Contains(stderr.String(), "warning") {
+		if _, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, tgt, f.project, nil, nil, &stderr); err != nil || !strings.Contains(stderr.String(), "warning") {
 			t.Errorf("offset %v: err=%v stderr=%q", offset, err, stderr.String())
 		}
 	}
@@ -354,7 +355,13 @@ func TestActiveSourceWarnsOffATerminal(t *testing.T) {
 func TestActiveSourceAsksOnATerminal(t *testing.T) {
 	t.Parallel()
 	f, target := activeFixture(t)
-	f.env.IsTerminal = func(any) bool { return true }
+	// Only stdin and stderr are checked for a terminal; the answers come
+	// from a reader the command shares between its questions.
+	tty := strings.NewReader("")
+	f.env.IsTerminal = func(stream any) bool {
+		_, isBuffer := stream.(*bytes.Buffer)
+		return stream == tty || isBuffer
+	}
 	repo := f.project
 	initTestRepo(t, repo)
 	// Only the last answer creates a worktree, so the cases share one repository.
@@ -373,7 +380,7 @@ func TestActiveSourceAsksOnATerminal(t *testing.T) {
 		{"maybe\nw\n", false, true},
 	} {
 		var stderr bytes.Buffer
-		dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, repo, strings.NewReader(tc.answer), &stderr)
+		dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, repo, tty, bufio.NewReader(strings.NewReader(tc.answer)), &stderr)
 		if !strings.Contains(stderr.String(), "The source session was active just now; continue in the same checkout? [y/N/w]") {
 			t.Errorf("%q: no question in %q", tc.answer, stderr.String())
 		}
@@ -405,7 +412,7 @@ func TestActiveSourceDoesNotAskTheCallingAgent(t *testing.T) {
 		return "", false
 	}
 	var stderr bytes.Buffer
-	dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, strings.NewReader(""), &stderr)
+	dir, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, nil, strings.NewReader(""), &stderr)
 	if err != nil || dir != f.project || strings.Contains(stderr.String(), "[y/N/w]") || strings.Count(stderr.String(), "\n") != 1 ||
 		!strings.Contains(stderr.String(), "is the agent running this command") {
 		t.Fatalf("dir=%q err=%v stderr=%q", dir, err, stderr.String())
@@ -418,7 +425,7 @@ func TestActiveSourceDoesNotAskTheCallingAgent(t *testing.T) {
 		return "", false
 	}
 	stderr.Reset()
-	if _, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, strings.NewReader("n\n"), &stderr); !errors.Is(err, errHandoffCanceled) {
+	if _, err := prepareLaunchDir(f.env, handoffOptions{to: "claude"}, target, f.project, nil, strings.NewReader("n\n"), &stderr); !errors.Is(err, errHandoffCanceled) {
 		t.Fatalf("other harness's variable: err=%v stderr=%q", err, stderr.String())
 	}
 }
