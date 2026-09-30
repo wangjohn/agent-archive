@@ -59,6 +59,9 @@ follow [Semantic Versioning](https://semver.org/).
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.
+  The session can be local or archived. With no session named, run inside
+  Claude Code, Codex, or Cursor, it hands off that agent's own session;
+  otherwise a terminal gets the picker.
 - `show --transcript` prints a session's conversation to read: each prompt,
   the agent's replies, one line per tool call (✗ when it failed), your `!`
   shell and local slash commands, compactions, and app notices such as a
@@ -104,6 +107,9 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The `handoff` picker also lists this Mac's sessions, including ones not
+  yet uploaded (marked so), newest activity first, and still works when the
+  archive cannot be read. Sessions with no prompt yet are left out.
 - The default pager scrolls on the mouse wheel and names its keys. With no
   `AGENT_ARCHIVE_PAGER` or `PAGER` set, or one set to a bare `less`, `less`
   551 or later runs with `--mouse` (hold Option while dragging to select

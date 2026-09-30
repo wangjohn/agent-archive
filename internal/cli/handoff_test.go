@@ -122,7 +122,6 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 		{"abc", "--project", "/tmp"},
 		{"abc", "--force"},
 		{"abc", "--to", "gemini"},
-		{"abc", "--to", "codex", "--source", "archive"},
 		{"abc", "--to", "codex", "--output", "x.md"},
 		{"abc", "--to", "codex", "--format", "json"},
 		{"abc", "--to", "codex", "--no-preamble"},
@@ -619,27 +618,5 @@ func TestHandoffLaunchFailureRemovesPrivateFile(t *testing.T) {
 	}
 	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
 		t.Fatalf("private handoff was not removed after launch failure: %v", err)
-	}
-}
-
-func TestHandoffLaunchDoesNotFallBackToArchive(t *testing.T) {
-	t.Parallel()
-	f := newHandoffFixture(t, true)
-	regs, err := os.ReadDir(filepath.Join(f.home, "registrations"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, reg := range regs {
-		if err := os.Remove(filepath.Join(f.home, "registrations", reg.Name())); err != nil {
-			t.Fatal(err)
-		}
-	}
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
-		t.Error("launched with no local source")
-		return nil
-	}
-	_, _, code := runHandoff(t, f.env, f.id, "--to", "codex")
-	if code == 0 {
-		t.Fatal("launched from archive after local source disappeared")
 	}
 }

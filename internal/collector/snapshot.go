@@ -76,6 +76,48 @@ func LastActivity(ctx context.Context, reg archive.SessionRegistration, cursorDa
 	return info.ModTime(), true
 }
 
+// readCursorLastUpdated is cursorstore.ReadLastUpdated; a test counts the
+// database reads LastActivities makes.
+var readCursorLastUpdated = cursorstore.ReadLastUpdated
+
+// LastActivities is LastActivity for many registrations, keyed by archive
+// session ID, reading the Cursor database once for all of its chats rather
+// than once each. A registration whose activity can't be read is left out.
+func LastActivities(ctx context.Context, regs []archive.SessionRegistration, cursorDatabase string) map[string]time.Time {
+	out := make(map[string]time.Time, len(regs))
+	// sessions maps each Cursor chat to the archive sessions reading it.
+	sessions := map[string][]string{}
+	var chats []string
+	for _, reg := range regs {
+		if reg.SourceKind != archive.SourceKindCursorSQLite {
+			if at, ok := LastActivity(ctx, reg, cursorDatabase); ok {
+				out[reg.ArchiveSessionID] = at
+			}
+			continue
+		}
+		if reg.SourceKey == "" {
+			continue
+		}
+		if _, seen := sessions[reg.SourceKey]; !seen {
+			chats = append(chats, reg.SourceKey)
+		}
+		sessions[reg.SourceKey] = append(sessions[reg.SourceKey], reg.ArchiveSessionID)
+	}
+	if len(chats) == 0 {
+		return out
+	}
+	updated, err := readCursorLastUpdated(ctx, Options{CursorDatabase: cursorDatabase}.cursorDatabase(), chats)
+	if err != nil {
+		return out
+	}
+	for chat, ms := range updated {
+		for _, id := range sessions[chat] {
+			out[id] = time.UnixMilli(ms)
+		}
+	}
+	return out
+}
+
 // FilterTranscriptFile filters one native transcript file that has no
 // registration, for a harness named by the caller. startedAt stands in for
 // the fresh-start proof a Cursor text transcript otherwise needs. A
