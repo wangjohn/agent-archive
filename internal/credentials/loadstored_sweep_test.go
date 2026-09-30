@@ -181,3 +181,164 @@ func TestFileStoreRefusalMessagesAreNotPrefixedTwice(t *testing.T) {
 		t.Errorf("Delete through a linked folder = %v", err)
 	}
 }
+
+// The runtime resolves R2 credentials with Load, so the environment fallback
+// works through the real wiring: with no file and the variables set, the
+// store OpenDefault returns on Linux gives LoadR2Config a key.
+func TestLoadR2ConfigUsesTheEnvironmentFallbackOnLinux(t *testing.T) {
+	env := map[string]string{EnvR2AccessKeyID: "env-id", EnvR2SecretAccessKey: "env-secret"}
+	dir := filepath.Join(t.TempDir(), CredentialsDirName)
+	store, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(env)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Provider: ProviderR2, Bucket: "b", R2CredentialRef: testRef, R2AccountID: "0123456789abcdef0123456789abcdef"}
+	awsCfg, _, err := LoadR2Config(context.Background(), cfg, store)
+	if err != nil {
+		t.Fatalf("LoadR2Config with only an environment key = %v", err)
+	}
+	got, err := awsCfg.Credentials.Retrieve(context.Background())
+	if err != nil || got.AccessKeyID != "env-id" || got.SecretAccessKey != "env-secret" {
+		t.Fatalf("credentials = %+v, %v", got, err)
+	}
+	// Without the variables there is nothing to load.
+	bare, err := OpenDefault(OpenOptions{GOOS: "linux", Dir: func() (string, error) { return dir, nil }, LookupEnv: envOf(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = LoadR2Config(context.Background(), cfg, bare); !errors.Is(err, ErrCredentialFileNotFound) {
+		t.Fatalf("LoadR2Config with no key anywhere = %v", err)
+	}
+}
+
+// The sweep runs only in a folder Save would trust: in one open to others, or
+// reached through a link, Save fails and leaves an old temporary file where it
+// is (a sweep before the folder check would delete it).
+func TestFileStoreSaveDoesNotSweepAFolderItRefuses(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	plant := func(dir string) string {
+		t.Helper()
+		path := filepath.Join(dir, ".tmp-x")
+		if err := os.WriteFile(path, []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	store, dir := savedFileStore(t)
+	stale := plant(dir)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(context.Background(), "another", testCredentials); !errors.Is(err, ErrInsecurePermissions) {
+		t.Fatalf("Save into a 0755 folder = %v", err)
+	}
+	if _, err := os.Lstat(stale); err != nil {
+		t.Errorf("Save swept a folder it refused: %v", err)
+	}
+
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	staleBehindLink := plant(real)
+	link := filepath.Join(t.TempDir(), CredentialsDirName)
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("no symbolic links: %v", err)
+	}
+	linked, err := NewFileStore(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = linked.Save(context.Background(), "another", testCredentials); !errors.Is(err, ErrInsecurePermissions) {
+		t.Fatalf("Save through a linked folder = %v", err)
+	}
+	if _, err = os.Lstat(staleBehindLink); err != nil {
+		t.Errorf("Save swept through a linked folder: %v", err)
+	}
+}
+
+// Only files named like a temporary file are swept: a reference with "tmp" in
+// it, however old its file, is a credential.
+func TestFileStoreSweepKeepsAReferenceWithTmpInItsName(t *testing.T) {
+	store, dir := newTestFileStore(t)
+	ctx := context.Background()
+	for _, ref := range []string{"my-tmp", "tmp", "a.tmp-b", "tmp-x"} {
+		if err := store.Save(ctx, ref, testCredentials); err != nil {
+			t.Fatal(err)
+		}
+		old := time.Now().Add(-48 * time.Hour)
+		if err := os.Chtimes(filepath.Join(dir, ref+".json"), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Save(ctx, "another", testCredentials); err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{"my-tmp", "tmp", "a.tmp-b", "tmp-x"} {
+		if got, err := store.Load(ctx, ref); err != nil || got != testCredentials {
+			t.Errorf("Load(%q) after a sweep = %+v, %v", ref, got, err)
+		}
+	}
+}
+
+// A refusal for permissions is the same set of errors whether the file or the
+// folder is refused, and whichever operation meets it.
+func TestInsecureRefusalsAreOneSetOfErrors(t *testing.T) {
+	ctx := context.Background()
+	check := func(name string, err error) {
+		t.Helper()
+		for _, want := range []error{ErrInsecurePermissions, ErrUnavailable, ErrCredentialFileUnreadable} {
+			if !errors.Is(err, want) {
+				t.Errorf("%s = %v, want it to be %v", name, err, want)
+			}
+		}
+		if errors.Is(err, ErrMissingCredential) || errors.Is(err, ErrCredentialFileNotFound) {
+			t.Errorf("%s = %v is also a missing credential", name, err)
+		}
+		if strings.Contains(err.Error(), "could not be read") {
+			t.Errorf("%s message is prefixed twice: %v", name, err)
+		}
+	}
+	// An insecure file.
+	store, dir := savedFileStore(t)
+	if err := os.Chmod(filepath.Join(dir, testRef+".json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.Load(ctx, testRef)
+	check("Load of an insecure file", err)
+	// An insecure folder, on each operation that refuses it.
+	if err = os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Load(ctx, testRef)
+	check("Load in an insecure folder", err)
+	check("Save in an insecure folder", store.Save(ctx, "x", testCredentials))
+	// A link where the file should be, and one where the folder should be.
+	store2, dir2 := savedFileStore(t)
+	if err = os.Symlink(filepath.Join(dir2, testRef+".json"), filepath.Join(dir2, "link.json")); err != nil {
+		t.Skipf("no symbolic links: %v", err)
+	}
+	_, err = store2.Load(ctx, "link")
+	check("Load of a linked file", err)
+	linkDir := filepath.Join(t.TempDir(), CredentialsDirName)
+	if err = os.Symlink(dir2, linkDir); err != nil {
+		t.Fatal(err)
+	}
+	linked, err := NewFileStore(linkDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = linked.Load(ctx, testRef)
+	check("Load through a linked folder", err)
+	check("Delete through a linked folder", linked.Delete(ctx, testRef))
+	// Not owned by this user.
+	store3, _ := savedFileStore(t)
+	me := store3.uid()
+	store3.uid = func() int { return me + 1 }
+	_, err = store3.Load(ctx, testRef)
+	check("Load of what another user owns", err)
+}

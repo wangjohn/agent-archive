@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
@@ -94,6 +95,10 @@ func lookCredentialFolder(dataDir string) credentialFolder {
 		return credentialFolder{}
 	}
 	target, _ := os.Readlink(dir)
+	if target != "" && !filepath.IsAbs(target) {
+		// A relative link is relative to the folder that holds the link.
+		target = filepath.Join(filepath.Dir(dir), target)
+	}
 	return credentialFolder{isLink: true, linkTarget: target}
 }
 

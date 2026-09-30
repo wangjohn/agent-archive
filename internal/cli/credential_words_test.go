@@ -354,6 +354,12 @@ func TestOpenCredentialStoreIsWiredToTheDataDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The store the program opens is the undecorated one: setup's questions
+	// about what is stored (credentials.LoadStored) reach the credentials file
+	// only through it.
+	if _, ok := store.(credentials.StoredLoader); !ok {
+		t.Fatalf("the Linux store is %T, which does not implement credentials.StoredLoader", store)
+	}
 	must(t, store.Save(context.Background(), "setup-abc", credentials.R2Credentials{AccessKeyID: "k", SecretAccessKey: "s"}))
 	if _, err = os.Stat(filepath.Join(home, "credentials", "setup-abc.json")); err != nil {
 		t.Fatalf("the default store does not write under the data directory: %v", err)
@@ -521,5 +527,72 @@ func TestPreflightCredentialProbeOnLinuxReadsOnlyWhatIsStored(t *testing.T) {
 	}
 	if reads != 0 {
 		t.Errorf("the credential check read the environment %d times", reads)
+	}
+}
+
+// Interactive setup that skips the storage questions (it only edits the apps)
+// still confirms the saved key is stored before it commits: with the file
+// gone and the variables exported, it refuses rather than commit a
+// configuration whose collector could not read its key.
+func TestSetupThatSkipsStorageRefusesAConfigWhoseKeyFileIsGoneOnLinux(t *testing.T) {
+	vars := map[string]string{envR2AccessKeyID: "ENVKEY", envR2SecretAccessKey: "env-secret-value"}
+	env, home, project := linuxFixture(t, vars)
+	setupYes(t, env, "", 0, "--yes", "--provider", "r2", "--r2-account", r2URL, "--project", project, "--apps", "claude")
+	before, _, _ := config.Load(home)
+	must(t, os.Remove(filepath.Join(credentials.FileStoreDir(home), before.Storage.R2CredentialRef+".json")))
+
+	// Edit the captured apps only: no storage question is asked.
+	output := setupRun(t, env, "capture\ny\ny\nn\nn\ny\n\ny\n", 1)
+	if !strings.Contains(output, "stored R2 credential is unavailable; enter it again") {
+		t.Fatalf("setup committed, or refused for another reason:\n%s", output)
+	}
+	if strings.Contains(output, "Keep stored R2 credentials?") {
+		t.Errorf("setup offered to keep a key that is only in the environment:\n%s", output)
+	}
+	// The active configuration is untouched.
+	after, _, _ := config.Load(home)
+	if after.Storage.R2CredentialRef != before.Storage.R2CredentialRef {
+		t.Fatalf("the active configuration changed: %q", after.Storage.R2CredentialRef)
+	}
+}
+
+// The runtime paths keep the environment fallback: with no file and the
+// variables set, the store the program opens on Linux loads an R2 key, so a
+// container configured only by its environment can capture.
+func TestOpenedStoreOnLinuxServesTheRuntimeFromTheEnvironment(t *testing.T) {
+	useCredentialGOOS(t, "linux")
+	store, err := credentials.OpenDefault(credentials.OpenOptions{
+		GOOS: "linux",
+		Dir:  func() (string, error) { return credentials.FileStoreDir(t.TempDir()), nil },
+		LookupEnv: func(key string) (string, bool) {
+			v, ok := map[string]string{envR2AccessKeyID: "ENVKEY", envR2SecretAccessKey: "env-secret-value"}[key]
+			return v, ok
+		},
+	})
+	must(t, err)
+	cfg := config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "setup-0123456789abcdef0123456789abcdef", R2AccountID: testR2Account}}
+	if _, err = openConfiguredStore(cfg, func() (credentials.CredentialStore, error) { return store, nil }); err != nil {
+		t.Fatalf("the runtime cannot open R2 storage from the environment's key: %v", err)
+	}
+}
+
+// A relative link's target is reported where it points, from the folder that
+// holds the link, not as written.
+func TestLookCredentialFolderResolvesARelativeLink(t *testing.T) {
+	base := t.TempDir()
+	must(t, os.Symlink(filepath.Join("..", "shared", "creds"), credentials.FileStoreDir(base)))
+	got := lookCredentialFolder(base)
+	if want := filepath.Join(filepath.Dir(base), "shared", "creds"); !got.isLink || got.linkTarget != want {
+		t.Fatalf("relative link = %+v, want target %s", got, want)
+	}
+	if msg := undeletedCredentialsProblem("linux", base, []string{"r"}, errors.New("cause"), got); !strings.Contains(msg, "is a link to "+got.linkTarget) || strings.Contains(msg, "..") {
+		t.Errorf("message = %q", msg)
+	}
+	// An absolute link is reported as it is.
+	abs := t.TempDir()
+	other := t.TempDir()
+	must(t, os.Symlink(other, credentials.FileStoreDir(abs)))
+	if got := lookCredentialFolder(abs); got.linkTarget != other {
+		t.Errorf("absolute link = %+v", got)
 	}
 }

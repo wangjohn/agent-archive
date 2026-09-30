@@ -122,8 +122,11 @@ func (s *FileStore) path(reference string) string {
 // apostrophe in a fix command is still one word.
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+// insecureError is a refusal for permissions. Whichever check refuses (the
+// file or its folder, on Load, Save or Delete), it is the same set of errors:
+// ErrInsecurePermissions, ErrUnavailable, and ErrCredentialFileUnreadable.
 func insecureError(path, problem, fix string) error {
-	return fmt.Errorf("%w: %s %s; %s", ErrInsecurePermissions, path, problem, fix)
+	return alsoUnreadable{fmt.Errorf("%w: %s %s; %s", ErrInsecurePermissions, path, problem, fix)}
 }
 
 // checkInfo is the test every folder and file passes before it is trusted:
@@ -333,12 +336,11 @@ func (s *FileStore) Load(ctx context.Context, reference string) (R2Credentials, 
 
 // unreadable is an ErrCredentialFileUnreadable that carries the operating
 // system's error, which names a path and a reason and never a file's content.
-// A refusal for permissions (ErrInsecurePermissions) is already a full
-// message, so it is not prefixed again; it is still also an
-// ErrCredentialFileUnreadable.
+// A refusal for permissions (see insecureError) is already a full message, so
+// it is not prefixed again.
 func (s *FileStore) unreadable(err error) error {
 	if errors.Is(err, ErrInsecurePermissions) {
-		return alsoUnreadable{err}
+		return err
 	}
 	return fmt.Errorf("%w: %w", ErrCredentialFileUnreadable, err)
 }
