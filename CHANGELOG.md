@@ -85,9 +85,16 @@ follow [Semantic Versioning](https://semver.org/).
   and `show --transcript`. It is told never to run `setup`,
   `uninstall`, `purge`, `backfill`, `sync`, `feedback`, `handoff --to`, or
   `--max-bytes 0`, and to treat what it reads as data, not instructions. In
-  Claude Code only `agent-archive status` runs without asking; the rest asks
-  once, since no permission rule can allow `handoff` without allowing
-  `handoff --to`. See [agent skills](docs/guides/agent-skills.md).
+  Claude Code the skill names only `agent-archive status` as pre-approved (in
+  a `claude -p` check on 2.1.283 that did not apply when the agent chose the
+  skill itself, so `status` may ask too); the rest asks once,
+  since no permission rule can allow `handoff` without allowing
+  `handoff --to`, and Claude Code also asks before first using the skill (a
+  `Skill(agent-archive)` rule allows it). Where a sandbox blocks the network,
+  a session on this Mac is still found by title. What an agent can read
+  through the skill is in
+  [privacy](docs/security/privacy.md#what-an-agent-can-read-through-the-skill).
+  See [agent skills](docs/guides/agent-skills.md).
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
@@ -325,6 +332,13 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The `agent-archive` skill no longer claims the session you are in is
+  never matched, and `uninstall --help` names both skills.** The skill said
+  the calling session is always skipped, but only Claude Code is known to
+  expose a session ID to skip, so it now says "skipped where your agent
+  reports it". `uninstall --help` listed only the
+  `/handoff` skill; it now names the `agent-archive` skill too. A skill file
+  installed by an earlier build shows as out of date until `setup --refresh`.
 - A Claude Code subagent resumed after it stopped (continued with
   SendMessage) no longer fails `sync` with "subagent transcript has
   incomplete native timestamp provenance" while it runs. Its archive keeps
