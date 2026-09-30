@@ -134,8 +134,9 @@ SESSION_ID prefix when none), relative capture time, harness, project,
 and a short SESSION_ID. On a terminal with an interactive stdin, list a
 numbered table and pick a session to show its summary, then t for its
 transcript, Enter or b to go back, or q to quit. Piped or --json output is
-never interactive. On a terminal without interactive stdin, text is paged
-through $PAGER unless --no-pager.
+never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
+is inside coding agents (see the configuration reference). On a terminal
+without interactive stdin, text is paged through $PAGER unless --no-pager.
   --harness codex|claude|cursor   Filter by application
   --model NAME                   Filter by model
   --skill NAME                   Filter by skill
@@ -176,7 +177,9 @@ activity counts, skills, subagents, and capture gaps. --json prints the
 metadata sidecar instead. A TITLE substring or short SESSION_ID also matches;
 several matches on a terminal open a picker. With no SESSION_ID on a
 terminal, browse sessions as list does: pick one for its summary, then t for
-its transcript, Enter or b to go back, or q to quit.
+its transcript, Enter or b to go back, or q to quit. Nothing is asked when
+AGENT_ARCHIVE_NONINTERACTIVE is on, as it is inside coding agents: give a
+SESSION_ID.
   --harness NAME        The session's app, if the same SESSION_ID exists under
                         more than one
   --transcript          Download and verify the source bundle, and print the
@@ -205,12 +208,13 @@ out. A session on this machine is read from its transcript now, without
 waiting for a sync; otherwise it is downloaded from the archive.
 With no selector on a terminal, pick a session from a numbered list of this
 Mac's sessions (including ones not yet uploaded) and archived ones, newest
-first. Without a terminal, give a SESSION_ID, --latest, or --file PATH.
+first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
+(automatic inside coding agents), give a SESSION_ID, --latest, or --file PATH.
 On a terminal without --to, --output, or --format json, it then asks where
 to continue: an installed agent (default: handoff.default_to in
 config.json, else Codex for a Claude Code session and Claude Code for the
-others), or print, copy to the clipboard, or write to a file. Piped, it
-prints the handoff as it always has.
+others), or print, copy to the clipboard, or write to a file. Piped, or
+with AGENT_ARCHIVE_NONINTERACTIVE on, it prints the handoff as it always has.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -237,11 +241,13 @@ prints the handoff as it always has.
                         PATH. With no selector, hands off the Claude Code,
                         Codex, or Cursor session it runs in, or picks one on
                         a terminal. On a terminal the agent runs there;
-                        otherwise it opens in a new tmux window, or a new
-                        iTerm2, Ghostty, or Terminal tab, and the command
-                        returns. If the source session was active in the
-                        last 2 minutes in this checkout, a terminal is asked
-                        whether to continue here, cancel, or use a worktree
+                        otherwise, or inside a coding agent, it opens in a
+                        new tmux window, or a new iTerm2, Ghostty, or
+                        Terminal tab, and the command returns. If the source
+                        session was active in the last 2 minutes in this
+                        checkout, a terminal is asked whether to continue
+                        here, cancel, or use a worktree (inside an agent it
+                        only warns)
   --here                Run the launched agent in this terminal
   --new-window          Open the launched agent in a new window or tab
   --worktree            Launch in a new git worktree beside the checkout

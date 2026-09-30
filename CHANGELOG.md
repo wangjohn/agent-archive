@@ -21,6 +21,12 @@ follow [Semantic Versioning](https://semver.org/).
   counted by server). Codex's `cache_write_input_tokens` now fills
   `counts.cache_write_tokens`. Existing sessions gain the new fields on the
   next metadata refresh; nothing is re-uploaded but the metadata.
+- `AGENT_ARCHIVE_NONINTERACTIVE=1` stops agent-archive from asking anything:
+  no session picker or browser, no pager, no confirmation prompt (`purge
+  apply` needs `--yes`), even on a terminal. It is on by itself when `CLAUDE_CODE_SESSION_ID`,
+  `CODEX_THREAD_ID`, or `CURSOR_AGENT` is set, so a coding agent whose shell is
+  a pseudo-terminal never hangs on a prompt; `AGENT_ARCHIVE_NONINTERACTIVE=0`
+  turns it off, and a refusal caused by it says so.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record. The session can be local or archived. With no
   session named, run inside Claude Code, Codex, or Cursor, it hands off that

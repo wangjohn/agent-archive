@@ -185,14 +185,20 @@ left out, and `--harness` narrows the list. When the archive cannot be read
 (offline, say), the picker lists this Mac's sessions and says why archived
 ones are missing. Quit with `q` without producing a handoff. In a script or
 pipeline, pass a session ID, `--latest`, or `--file`.
+The picker never opens when a coding agent runs the command, even in a
+pseudo-terminal: `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or
+`CURSOR_AGENT` in the environment (or `AGENT_ARCHIVE_NONINTERACTIVE=1`) turns
+prompts off, and `handoff` without a selector is a usage error (exit 2)
+instead. `AGENT_ARCHIVE_NONINTERACTIVE=0` turns them back on; see
+[configuration](../reference/configuration.md#environment-variables).
 
 With `--to` and no selector, run from inside an agent, `handoff` hands off
 the session it is running in without asking: the one Claude Code names in
 `CLAUDE_CODE_SESSION_ID` or Codex in `CODEX_THREAD_ID`. Cursor names no
 session, so inside Cursor (`CURSOR_AGENT` is set) it takes the newest Cursor
 session for the current directory, as `--latest --harness cursor` would.
-Otherwise a terminal gets the picker, and anything else is told to name a
-session.
+That is not a prompt, so it works while prompts are off. Otherwise a terminal
+gets the picker, and anything else is told to name a session.
 
 A session registered on this Mac is read from its transcript as it is now, so
 a handoff right after you stop needs no sync and works while collection is

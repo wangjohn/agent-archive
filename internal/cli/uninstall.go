@@ -34,8 +34,8 @@ func runUninstallCommand(args []string, stdin io.Reader, stdout, stderr io.Write
 	if !fs.parseFlagsOnly(args) {
 		return 2
 	}
-	if !*yes && !env.isTerminal(stdin) {
-		terminal.Println(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking.")
+	if !*yes && !env.interactive(stdin) {
+		terminal.Println(stderr, "agent-archive: uninstall: confirming needs a terminal. Nothing was changed. Run again with --yes to uninstall without asking."+env.overrideHint(stdin))
 		return 1
 	}
 	if err := uninstall(*purge, *yes, stdin, stdout, env); err != nil {
