@@ -92,14 +92,30 @@ unknown, never zero):
 
 Token counts keep each app's own meaning: Claude Code's `input_tokens` leaves
 out what was read from or written to the prompt cache, while Codex's
-`input_tokens` includes its cached input, which `cache_read_tokens` repeats.
+`input_tokens` includes its cached input and its cache-write input, which
+`cache_read_tokens` and `cache_write_tokens` repeat (OpenAI reports both as
+parts of the input, and a Codex record's `total_tokens` is input plus output).
 `cache_write_tokens` is Claude Code's cache creation, or Codex's
-`cache_write_input_tokens`.
+`cache_write_input_tokens`. `stats` adds the two apps up in one meaning: a
+Codex record's fresh input is its input minus both, and never below zero, so
+a record whose cache counts exceed its input keeps both counts and has no
+fresh input rather than a negative one.
 
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and
 `hook_finals`. `show --normalized` is a deprecated name for it; its output
 is unchanged, and it prints a deprecation note on stderr.
+
+Both documents together are limited to `--max-bytes` (default 120000; `0`
+for no limit). When that trims the normalized view, it gains a last field,
+`trimmed`: `{"max_bytes": N, "omitted": [{"kind", "count"}, ...],
+"full_record": PATH}`. The kinds, in the order they are applied, are
+`tool_results` and `hook_finals` (entries dropped), `tool_input` (calls
+whose `input` was dropped), `assistant_text` and `prompt_text` (turns whose
+`text` was cut, each with `"text_truncated": true`), and `oldest_records`
+(turns, calls, and results dropped, oldest first). `full_record` is the saved untrimmed output,
+kept 7 days, and is absent if it could not be saved. Neither field exists in
+untrimmed output. See [list and show](../guides/list-and-show.md#size).
 
 ## `stats --json`
 

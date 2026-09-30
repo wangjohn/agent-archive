@@ -206,13 +206,24 @@ func (t PriceTable) WithOverrides(custom PriceTable) PriceTable {
 	return merged
 }
 
+// A date suffix is a plausible calendar date (year 19xx or 20xx, month 01-12,
+// day 01-31), not any run of digits: a model id that merely ends in eight
+// digits, or in "-1234-56-78", must not be priced as the model before them.
+const (
+	dateYear  = `(?:19|20)\d{2}`
+	dateMonth = `(?:0[1-9]|1[0-2])`
+	dateDay   = `(?:0[1-9]|[12]\d|3[01])`
+)
+
 var (
 	contextSuffix = regexp.MustCompile(`\[[^\]]*\]$`)
-	dateSuffix    = regexp.MustCompile(`([-@]\d{8}|-\d{4}-\d{2}-\d{2})$`)
+	dateSuffix    = regexp.MustCompile(`(?:[-@]` + dateYear + dateMonth + dateDay + `|-` + dateYear + `-` + dateMonth + `-` + dateDay + `)$`)
 	// vendorPrefix is Amazon Bedrock's "anthropic." vendor prefix and its
 	// cross-region inference prefix ("us.anthropic.", "global.anthropic.").
 	vendorPrefix = regexp.MustCompile(`^(?:[a-z0-9-]+\.)?anthropic\.`)
-	// platformVersion is Bedrock's "-v1:0" model version suffix (it always has the colon, unlike a name such as "deepseek-v3").
+	// platformVersion is Bedrock's "-v1:0" model version suffix (it always has
+	// the colon, unlike a name such as "deepseek-v3"). Only Claude models are
+	// served under it here, so only a Claude id loses it.
 	platformVersion = regexp.MustCompile(`-v\d+:\d+$`)
 )
 
@@ -227,14 +238,31 @@ var (
 // (regional endpoints add 10%) is not reflected. It does not map aliases: a
 // bare "opus" stays "opus", which no table prices, because it does not say
 // which version answered.
+//
+// It only ever removes a prefix or a suffix, and repeats until nothing more
+// comes off, so NormalizeModel(NormalizeModel(id)) is NormalizeModel(id): a
+// table entry stored by its normalized id is found under that same key, and
+// two entries that passed the duplicate check cannot collide in the index.
 func NormalizeModel(id string) string {
 	id = strings.ToLower(strings.TrimSpace(id))
+	for {
+		next := normalizeModelOnce(id)
+		if next == id {
+			return id
+		}
+		id = next
+	}
+}
+
+func normalizeModelOnce(id string) string {
 	if slash := strings.LastIndex(id, "/"); slash >= 0 {
 		id = id[slash+1:]
 	}
 	id = vendorPrefix.ReplaceAllString(id, "")
 	id = contextSuffix.ReplaceAllString(id, "")
-	id = platformVersion.ReplaceAllString(id, "")
+	if strings.HasPrefix(id, "claude-") {
+		id = platformVersion.ReplaceAllString(id, "")
+	}
 	id = dateSuffix.ReplaceAllString(id, "")
 	return strings.TrimSpace(id)
 }
@@ -251,7 +279,9 @@ func (t PriceTable) index() priceIndex {
 	for _, entry := range t.Models {
 		if validPrice(entry.InputPerMTok) && validPrice(entry.OutputPerMTok) &&
 			validPrice(entry.CacheReadPerMTok) && validPrice(entry.CacheWritePerMTok) {
-			index[NormalizeModel(entry.ID)] = entry
+			if id := NormalizeModel(entry.ID); id != "" {
+				index[id] = entry
+			}
 		}
 	}
 	return index
