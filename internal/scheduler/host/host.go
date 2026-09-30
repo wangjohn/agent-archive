@@ -45,7 +45,7 @@ func New(system platform.OS, run scheduler.Runner) scheduler.Scheduler {
 		return systemd.Scheduler{Run: run}
 	case platform.Unknown:
 	}
-	return Unavailable(noneName, fmt.Sprintf("agent-archive has no background scheduler for this system (%s)", system))
+	return Unavailable(noneName, fmt.Sprintf("agent-archive has no background scheduler for this system (%s)", system), "agent-archive runs its background collector with launchd on macOS and with systemd on Linux")
 }
 
 // Named is the scheduler called name on system, over run: the one a
@@ -123,15 +123,19 @@ func managerEnvironment(environ []string) []string {
 
 // Unavailable is a scheduler called name that cannot be used: the one of a
 // system with no adapter ("none"), or of a backend a configuration names that
-// this system cannot reach (why says so). It defines no job, says every job's
-// state is unknown with why as the problem, and refuses to load or stop one,
-// so a command refuses to go on rather than act on a job it cannot see.
-func Unavailable(name, why string) scheduler.Scheduler { return unavailable{name: name, why: why} }
+// this system cannot reach (why says so, and fix what to do about it). It
+// defines no job, says every job's state is unknown with why and fix as the
+// problem, and refuses to load or stop one, so a command refuses to go on
+// rather than act on a job it cannot see.
+func Unavailable(name, why, fix string) scheduler.Scheduler {
+	return unavailable{name: name, why: why, fix: fix}
+}
 
 // unavailable is the scheduler Unavailable makes.
 type unavailable struct {
 	name string
 	why  string
+	fix  string
 }
 
 // unavailableRef is the job's name under a scheduler that cannot be used: there
@@ -141,7 +145,7 @@ const unavailableRef scheduler.Ref = "agent-archive-collector"
 func (u unavailable) Name() string { return u.name }
 
 func (unavailable) Words() scheduler.Words {
-	return scheduler.Words{Manager: "the background scheduler", Job: "background job", Definition: "job definition", Tool: "the scheduler"}
+	return scheduler.Words{Manager: "the background scheduler", Job: "background job", Definition: "job definition", Tool: "the scheduler", Name: "name"}
 }
 
 func (unavailable) Ref(scheduler.Installation) scheduler.Ref { return unavailableRef }
@@ -165,7 +169,7 @@ func (unavailable) Installed(context.Context, scheduler.Site, scheduler.Installa
 }
 
 func (u unavailable) Inspect(_ context.Context, _ scheduler.Site, ref scheduler.Ref) scheduler.Status {
-	return scheduler.Status{State: scheduler.Unknown, Problem: &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Fix: u.why}}
+	return scheduler.Status{State: scheduler.Unknown, Problem: &scheduler.Problem{Kind: scheduler.ProblemCannotTell, Ref: ref, Reason: u.why, Fix: u.fix}}
 }
 
 func (u unavailable) Load(context.Context, scheduler.Site, scheduler.Ref) error { return u.refuse() }

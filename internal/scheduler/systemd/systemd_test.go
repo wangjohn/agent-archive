@@ -489,7 +489,7 @@ func TestChangesAreBoundedAndIgnoreTheCallersCancellation(t *testing.T) {
 func TestWordsAndNames(t *testing.T) {
 	t.Parallel()
 	s := Scheduler{}
-	if got, want := s.Words(), (scheduler.Words{Manager: "systemd", Job: "user timer", Definition: "unit file", Tool: "systemctl"}); got != want || s.Name() != "systemd" {
+	if got, want := s.Words(), (scheduler.Words{Manager: "systemd", Job: "user timer", Definition: "unit file", Tool: "systemctl", Name: "unit name"}); got != want || s.Name() != "systemd" {
 		t.Errorf("words %+v, name %q", got, s.Name())
 	}
 	if !strings.Contains(s.DefaultPATH(), "/usr/bin") || strings.HasPrefix(s.DefaultPATH(), ":") {

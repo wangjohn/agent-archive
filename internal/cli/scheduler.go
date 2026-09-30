@@ -120,7 +120,7 @@ func (e Env) recordedBackend() string {
 func (e Env) namedScheduler(name string) scheduler.Scheduler {
 	s, err := newScheduler(name)
 	if err != nil {
-		return host.Unavailable(name, err.Error())
+		return host.Unavailable(name, err.Error(), "Run agent-archive setup on this system to schedule the collector with its own scheduler")
 	}
 	return s
 }
