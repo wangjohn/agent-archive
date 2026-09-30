@@ -14,6 +14,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/storage"
 	"github.com/wangjohn/agent-archive/internal/storage/storagetest"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // noEnv is an empty process environment.
@@ -66,6 +67,14 @@ func testEnv(t *testing.T, home string, now time.Time) Env {
 		// A less new enough for --mouse, as macOS ships; the tests of the
 		// other defaults set their own.
 		LessVersion: func(string) (int, bool) { return testLessVersion, true },
+		OpenTerminal: func(spec termlaunch.Spec) (string, error) {
+			t.Errorf("unexpected new terminal for %q: set Env.OpenTerminal", spec.Argv)
+			return "", errors.New("no terminal in this test")
+		},
+		Clipboard: func([]byte) error {
+			t.Error("unexpected clipboard write: set Env.Clipboard")
+			return errors.New("no clipboard in this test")
+		},
 	}
 }
 

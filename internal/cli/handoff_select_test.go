@@ -16,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // addSession registers a session through the hook path, writes its
@@ -97,6 +98,10 @@ func runPicker(t *testing.T, env Env, answer string, args ...string) (string, st
 	stdin := strings.NewReader(answer)
 	var out, errOut bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&out) }
+	if env.RunPager == nil {
+		var pager string
+		env.RunPager = copyPager(&pager)
+	}
 	code := Run(append([]string{"handoff"}, args...), stdin, &out, &errOut, env)
 	return out.String(), errOut.String(), code
 }
@@ -149,7 +154,7 @@ func TestHandoffPickerMergesLocalAndArchivedSessionsByActivity(t *testing.T) {
 func TestHandoffPickerHandsOffASessionNotYetUploaded(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
-	out, errOut, code := runPicker(t, f.env, "1\n")
+	out, errOut, code := runPicker(t, f.env, "1\np\n")
 	if code != 0 || !strings.Contains(out, "source: local") || !strings.Contains(out, "Not uploaded yet") {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
@@ -197,7 +202,7 @@ func TestHandoffPickerWorksWithoutTheArchive(t *testing.T) {
 	if strings.Contains(out, f.archiveOnly[:minShortSessionID]) || strings.Contains(out, "not yet uploaded") {
 		t.Fatalf("offline picker:\n%s", out)
 	}
-	out, errOut, code = runPicker(t, f.env, "1\n")
+	out, errOut, code = runPicker(t, f.env, "1\np\n")
 	if code != 0 || !strings.Contains(out, "Not uploaded yet") {
 		t.Fatalf("offline handoff: code=%d stderr=%s", code, errOut)
 	}
@@ -223,6 +228,16 @@ func recordLaunch(t *testing.T, env *Env) *string {
 		}
 		*document = string(data)
 		return nil
+	}
+	// Off a terminal, as when an agent runs it, the agent opens in a new
+	// window.
+	env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+		data, err := os.ReadFile(filepath.Join(spec.ScriptDir, launchHandoffName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		*document = string(data)
+		return "a new tmux window", nil
 	}
 	return document
 }

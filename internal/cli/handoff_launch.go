@@ -14,29 +14,45 @@ import (
 	"github.com/wangjohn/agent-archive/internal/archive"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/terminal"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
-// launchPreparedHandoff starts opts.to in this terminal with the filtered
-// record, and returns when the agent exits.
-func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, opts handoffOptions, home string, stdin io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) error {
+// launchPreparedHandoff starts dest with the filtered record: in this
+// terminal when here is set, returning when the agent exits, else in a new
+// terminal window or tab, returning once it opens.
+func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, here bool, opts handoffOptions, home string, stdin io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) error {
 	dir, err := launchDir(opts, env)
 	if err != nil {
 		return err
 	}
-	spec, err := prepareLaunch(record, h, target, handoffDestination(opts.to), dir, opts.agentArgs, home, env)
+	spec, err := prepareLaunch(record, h, target, dest, dir, opts.agentArgs, home, env)
 	if err != nil {
 		return err
 	}
-	terminal.Printf(stderr, "handoff: launching local %s in %s\n", opts.to, dir)
-	if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
-		return fmt.Errorf("launch %s: %w", opts.to, err)
+	if here {
+		terminal.Printf(stderr, "handoff: launching local %s in %s\n", dest, dir)
+		if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
+			return fmt.Errorf("launch %s: %w", dest, err)
+		}
+		return nil
 	}
+	// The launcher script goes beside the launch copy, in a directory only
+	// this user can write to (termlaunch refuses any other). The new window
+	// starts from the terminal's environment, not spec.Env, so the calling
+	// agent's session variables are unset there.
+	where, err := env.openTerminal(termlaunch.Spec{Dir: spec.Dir, Argv: append([]string{spec.Binary}, spec.Args...),
+		Unset: handoffSessionEnv, ScriptDir: filepath.Dir(spec.HandoffFile)})
+	if err != nil {
+		// termlaunch.ErrNoTerminal's message ends with the command to run.
+		return fmt.Errorf("open %s: %w", dest, err)
+	}
+	terminal.Printf(stderr, "handoff: opened %s in %s\n", dest, where)
 	return nil
 }
 
 // launchDir is the absolute directory the agent starts in: --project, else
 // the working directory.
-func launchDir(opts handoffOptions, env handoffLaunchDependencies) (string, error) {
+func launchDir(opts handoffOptions, env workingDirDependencies) (string, error) {
 	dir := opts.project
 	var err error
 	if dir == "" {
