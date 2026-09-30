@@ -25,6 +25,8 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck source=local-signing.sh
+source scripts/local-signing.sh
 
 version="${VERSION:-dev}"
 out_dir="dist"
@@ -53,15 +55,18 @@ ldflags="-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=${versi
 
 if $build_darwin; then
   for arch in amd64 arm64; do
-    binary="$out_dir/agent-archive-darwin-${arch}"
+    binary="$out_dir/$(release_asset_name darwin "$arch")"
     echo "building $binary (version=${version})"
     GOOS=darwin GOARCH="$arch" CGO_ENABLED=1 go build -trimpath -ldflags "$ldflags" -o "$binary" ./cmd/agent-archive
+    # Only with AGENT_ARCHIVE_SIGN_IDENTITY set, for a local build; the release
+    # workflow leaves it unset and signs with its Developer ID afterwards.
+    sign_local_build "$binary" "$(basename "$binary")"
   done
 fi
 
 if $build_linux; then
   for arch in amd64 arm64; do
-    binary="$out_dir/agent-archive-linux-${arch}"
+    binary="$out_dir/$(release_asset_name linux "$arch")"
     echo "building $binary (version=${version})"
     GOOS=linux GOARCH="$arch" CGO_ENABLED=0 go build -trimpath -ldflags "$ldflags" -o "$binary" ./cmd/agent-archive
   done

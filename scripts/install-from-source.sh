@@ -93,6 +93,8 @@ esac
 [[ ! -e "$destination" || -f "$destination" ]] || fail "destination is not a regular file: $destination"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# shellcheck source=local-signing.sh
+source "$repo_root/scripts/local-signing.sh"
 install_dir="$(dirname "$destination")"
 mkdir -p "$install_dir"
 [[ -w "$install_dir" ]] || fail "destination directory is not writable: $install_dir"
@@ -113,6 +115,17 @@ printf 'Building %s for %s/%s...\n' "$repo_root" "$goos" "$arch"
     -ldflags '-s -w -X github.com/wangjohn/agent-archive/internal/cli.Version=dev' \
     -o "$binary" ./cmd/agent-archive
 )
+
+# See local-signing.sh: opt-in signing keeps Keychain approval across
+# rebuilds. Linux has neither code signing nor the Keychain.
+if [[ "$goos" == darwin ]]; then
+  if [[ -z "${AGENT_ARCHIVE_SIGN_IDENTITY:-}" ]]; then
+    printf 'Note: this build is signed ad hoc, so macOS asks again for Keychain access after\n' >&2
+    printf 'every rebuild. To sign it instead, see docs/getting-started/install.md.\n' >&2
+  fi
+  sign_local_build "$binary" "$(release_asset_name darwin "$arch")"
+fi
+
 version="$("$binary" --version)" || fail 'the new binary failed its version check'
 [[ "$version" == dev-* ]] || fail "expected a dev version, got: $version"
 

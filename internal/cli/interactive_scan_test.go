@@ -92,16 +92,18 @@ var terminalPackageUses = classifiedCalls{
 // hand): every place agent-archive can ask a question. The comment says what
 // stops the question when interaction is off.
 var promptSites = classifiedCalls{
-	"prompt.go":         {"newPrompter": 1, "prompter{}": 1}, // the definition
-	"setup.go":          {"newPrompter": 1},                  // interactive setup: runSetupCommand refuses unless env.interactive(stdin) or --yes
-	"setup_flags.go":    {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
-	"uninstall.go":      {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
-	"backfill.go":       {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
-	"backfill_undo.go":  {"newPrompter": 1},                  // runBackfillUndo refuses unless env.interactive(stdin) or --yes
-	"list_browse.go":    {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
-	"inspect.go":        {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
-	"show_resolve.go":   {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
-	"handoff_select.go": {"newPrompter": 1},                  // handoff's picker: runHandoffCommand reaches it only when browseInteractive
+	"prompt.go":           {"newPrompter": 1, "prompter{}": 1}, // the definition
+	"setup.go":            {"newPrompter": 1},                  // interactive setup: runSetupCommand refuses unless env.interactive(stdin) or --yes
+	"setup_flags.go":      {"newPrompter": 1, "prompter{}": 1}, // setup --yes: only reads a secret, guarded in readR2Secret; the literal has no input, it only prints
+	"uninstall.go":        {"newPrompter": 1},                  // runUninstallCommand refuses unless env.interactive(stdin) or --yes
+	"backfill.go":         {"newPrompter": 1},                  // runBackfillCommand refuses unless env.interactive(stdin) or --yes
+	"backfill_undo.go":    {"newPrompter": 1},                  // runBackfillUndo refuses unless env.interactive(stdin) or --yes
+	"list_browse.go":      {"newPrompter": 1},                  // selectArchivedSession: reached only after browseInteractive
+	"inspect.go":          {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
+	"show_resolve.go":     {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
+	"handoff_select.go":   {"newPrompter": 1},                  // handoff's picker: runHandoffCommand reaches it only when browseInteractive
+	"handoff.go":          {"newPrompter": 1},                  // "Continue in:": offersDestinations requires browseInteractive
+	"handoff_worktree.go": {"newPrompter": 1},                  // the active-source y/N/w question: checkActiveSource asks only when env.interactive(stdin) and (stderr)
 }
 
 // inputReads are the ways a command reads a stream it was handed, other than
@@ -112,12 +114,19 @@ var inputReads = classifiedCalls{
 	"prompt.go": {"bufio.NewReader": 1},
 	// The hook payload the agent writes and closes; never a person.
 	"hook_command.go": {"json.NewDecoder": 1},
+	// handoff's one buffer for its answers, read only by the picker and the
+	// "Continue in:" prompt, both behind browseInteractive. A launched agent
+	// run here gets stdin itself, not through a reader: it is the agent's
+	// terminal, not a question, and runs only when browseInteractive.
+	"handoff.go": {"bufio.NewReader": 1},
 	// purge apply's typed digest: refused in runPurgeApply when the switch is
 	// on and --yes is not given.
 	"purge.go": {"bufio.NewReader": 1},
 	// Files, not standard input.
 	"setup_aws.go": {"bufio.NewScanner": 1},
-	"feedback.go":  {"io.ReadAll": 1},
+	// copyRootFile: a file copied into the new worktree.
+	"handoff_worktree.go": {"io.Copy": 1},
+	"feedback.go":         {"io.ReadAll": 1},
 	// stats --prices: a file the person names, read in full, bounded.
 	"stats.go": {"io.ReadAll": 1},
 }

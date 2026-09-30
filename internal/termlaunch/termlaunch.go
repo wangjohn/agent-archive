@@ -137,6 +137,9 @@ var (
 	ghosttyScript = []string{
 		"on run argv",
 		`tell application "Ghostty"`,
+		// Activated first so the tab is the last step: an error after it
+		// opened would fall back to Terminal.app and launch twice.
+		"activate",
 		"set cfg to new surface configuration",
 		"set initial working directory of cfg to (item 2 of argv)",
 		"set command of cfg to quoted form of (item 1 of argv)",
@@ -145,7 +148,6 @@ var (
 		"else",
 		"new tab in front window with configuration cfg",
 		"end if",
-		"activate",
 		"end tell",
 		"end run",
 	}
