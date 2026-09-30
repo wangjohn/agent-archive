@@ -6,13 +6,20 @@ on:
 # Each job asks for what it needs. Only the publish job can write to the
 # repository, and only it can see the Apple signing secrets, which live in
 # the protected `release` environment.
+#
+# Three jobs: `build` (macOS binaries), `build-linux` (Linux binaries), and
+# `publish`, which signs the macOS binaries and publishes all four. The Linux
+# binaries are not signed: trust in them rests on SHA256SUMS and the build
+# provenance attestation. The two build jobs repeat the tag and toolchain
+# guards on purpose, so neither can build from an untagged or off-main commit;
+# keep them in step.
 permissions: {}
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   build:
-    # Both Intel and ARM64 binaries are cross-compiled from one macOS
+    # The macOS binaries. Both Intel and ARM64 are cross-compiled from one macOS
     # runner: real Keychain access requires CGO_ENABLED=1 (see
     # internal/credentials/keychain_darwin.go), and Xcode's clang, already
     # present on GitHub's macOS runners, cross-compiles cgo for both
@@ -65,11 +72,12 @@ jobs:
           go vet ./...
           go test -race ./...
           python3 scripts/test_release_signing.py
+          python3 scripts/test_release_assets.py
           python3 scripts/test_install.py
           python3 scripts/test_purge_recipe.py
 
       - name: Build
-        run: ./scripts/build-release.sh
+        run: ./scripts/build-release.sh darwin
 
       - name: Verify build reports the release version
         run: |
@@ -97,8 +105,74 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  build-linux:
+    # The Linux binaries (x86-64 and ARM64): pure Go with CGO_ENABLED=0, so
+    # both cross-compile on one Linux runner with no C toolchain, and the
+    # x86-64 one runs natively here for the version check.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Same guard as the build job's.
+      - name: Require a vX.Y.Z tag on a commit in main
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tags must be vX.Y.Z; got a tag that is not"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::the tagged commit is not on main; tag a commit that has been merged"
+            exit 1
+          fi
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          # No module cache, as in the build job.
+          cache: false
+      - name: Require Go 1.27.1 (go.mod's toolchain line)
+        run: |
+          go version
+          go version | grep -q ' go1\.27\.1 ' || { echo "expected go1.27.1, matching go.mod's toolchain line" >&2; exit 1; }
+
+      # The same gate as a pull request's Linux test job: nothing is built
+      # for release from a commit whose tests fail on Linux.
+      - name: Test
+        run: |
+          go vet ./...
+          go test -race ./...
+          python3 scripts/test_release_signing.py
+          python3 scripts/test_release_assets.py
+          python3 scripts/test_install.py
+          python3 scripts/test_purge_recipe.py
+
+      - name: Build
+        run: ./scripts/build-release.sh linux
+
+      # Static linking, the x86-64 binary's version run natively, and the
+      # ARM64 binary's embedded version string (it cannot run on this
+      # runner). The same script the Test workflow runs on every pull request.
+      - name: Verify build reports the release version
+        run: ./scripts/verify-linux-release.sh
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux
+          path: |
+            dist/agent-archive-linux-amd64
+            dist/agent-archive-linux-arm64
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
-    needs: build
+    needs: [build, build-linux]
     runs-on: macos-14
     # Holds the Apple secrets. Configure it with required reviewers so a
     # pushed tag cannot sign and publish on its own.
@@ -128,6 +202,13 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: unsigned
+          path: dist
+
+      # Unsigned by design (the Codesign and Notarize steps below name only
+      # the macOS binaries); see the build-linux job.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux
           path: dist
 
       - name: Import signing certificate
@@ -192,19 +273,24 @@ jobs:
           KEYCHAIN: ${{ steps.signing.outputs.keychain }}
         run: security delete-keychain "$KEYCHAIN" || true
 
+      # Lists all four binaries, the macOS ones as signed. The Linux ones are
+      # exactly the bytes build-linux built.
       - name: Recompute checksums after signing
-        run: |
-          cd dist
-          shasum -a 256 agent-archive-darwin-amd64 agent-archive-darwin-arm64 > SHA256SUMS
+        run: ./scripts/write-checksums.sh dist
 
       # Records, signed by GitHub, that these exact bytes came from this
       # workflow run at this commit. Check one with:
       #   gh attestation verify agent-archive-darwin-arm64 --repo wangjohn/agent-archive
+      # The subjects are exactly the released binaries, the upload-artifact
+      # and `gh release create` lists below (scripts/test_release_assets.py
+      # checks that the three agree).
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/agent-archive-darwin-amd64
             dist/agent-archive-darwin-arm64
+            dist/agent-archive-linux-amd64
+            dist/agent-archive-linux-arm64
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -212,6 +298,8 @@ jobs:
           path: |
             dist/agent-archive-darwin-amd64
             dist/agent-archive-darwin-arm64
+            dist/agent-archive-linux-amd64
+            dist/agent-archive-linux-arm64
             dist/SHA256SUMS
           if-no-files-found: error
 
@@ -225,4 +313,6 @@ jobs:
             --notes "See CHANGELOG.md for what changed, docs/getting-started/install.md for installation, and SHA256SUMS below for checksums. Verify a binary's build provenance with: gh attestation verify <file> --repo $GITHUB_REPOSITORY" \
             dist/agent-archive-darwin-amd64 \
             dist/agent-archive-darwin-arm64 \
+            dist/agent-archive-linux-amd64 \
+            dist/agent-archive-linux-arm64 \
             dist/SHA256SUMS
