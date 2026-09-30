@@ -42,7 +42,8 @@ const (
 	// statsFilterLimit cuts a --harness or --model value in the heading.
 	statsFilterLimit = 30
 	// statsMaxListRows bounds a list view: a few hundred rows are already
-	// more than a screen is read for, and --json has them all.
+	// more than a screen is read for; --json --by project has every project,
+	// and --json every model.
 	statsMaxListRows = 500
 	// statsMaxGroupRows bounds a --by day, week or month table.
 	statsMaxGroupRows = 60

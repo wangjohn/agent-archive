@@ -334,7 +334,7 @@ func replayIntentKinds(intent admissionIntent, payload map[string]any) (start, f
 func replayAdmissionAction(home string, store *state.Store, cfg config.Config, intent admissionIntent, payload map[string]any, registered, start, followup bool) error {
 	switch {
 	case !registered && start:
-		if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true); err != nil {
+		if err := handleSessionStartWithProof(home, store, cfg, intent.Harness, intent.NativeSessionID, intent.Event, payload, intent.ObservedAt, true, ""); err != nil {
 			return fmt.Errorf("replay admission intent: %w", err)
 		}
 	case registered && followup:
