@@ -84,6 +84,28 @@ func TestStatsInterruptStopsTheReadQuietly(t *testing.T) {
 	}
 }
 
+// A signal that lands as the read finishes still stops the command: it is
+// not swallowed by a read that happened to succeed. The signal here arrives
+// at the moment the command stops listening for them, after the read is done.
+func TestStatsInterruptThatArrivesWithTheLastReadStillStops(t *testing.T) {
+	t.Parallel()
+	env, mem := statsEnv(t)
+	publishStatsFixture(t, mem)
+	signals := make(chan os.Signal, 4)
+	env.Interrupts = func() (<-chan os.Signal, func()) {
+		return signals, func() {
+			select {
+			case signals <- os.Interrupt:
+			default:
+			}
+		}
+	}
+	out, errOut, code := runStats(t, env, 100)
+	if code != 130 || out != "" || errOut != "" {
+		t.Fatalf("code=%d stdout=%q stderr=%q, want 130 and nothing printed", code, out, errOut)
+	}
+}
+
 // A store that fails is an error message and exit 1, not mistaken for an
 // interrupt.
 func TestStatsStoreErrorIsNotAnInterrupt(t *testing.T) {

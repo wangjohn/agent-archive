@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -12,6 +14,52 @@ func mustZone(t *testing.T, name string) *time.Location {
 		t.Fatalf("zone %s: %v", name, err)
 	}
 	return loc
+}
+
+// /etc/localtime may point at another link (NixOS does) before the zone
+// database: the chain is followed to the first target inside a zoneinfo
+// directory; a link that never gets there ends the chain at its last target,
+// and a loop of links ends too.
+func TestZoneFileLinkFollowsAChainOfLinks(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	link := func(name, target string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	zone := "/nix/store/abc-tzdata/share/zoneinfo/Asia/Tokyo"
+	link("static", zone)
+	direct := link("direct", zone)
+	chain := link("chain", "static")
+	longChain := link("long", "chain")
+	away := link("away", "/etc/somewhere/else")
+	loopA := link("loopA", "loopB")
+	link("loopB", "loopA")
+	plain := filepath.Join(dir, "plain")
+	if err := os.WriteFile(plain, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{"one link", direct, zone},
+		{"two links", chain, zone},
+		{"three links", longChain, zone},
+		{"a link away from the database", away, "/etc/somewhere/else"},
+		{"a loop of links", loopA, filepath.Join(dir, "loopA")},
+		{"not a link", plain, ""},
+		{"missing", filepath.Join(dir, "missing"), ""},
+	} {
+		if got := zoneFileLink(tc.path); got != tc.want {
+			t.Errorf("%s: zoneFileLink = %q, want %q", tc.name, got, tc.want)
+		}
+	}
 }
 
 // The machine's zone is named from $TZ, or from where /etc/localtime points

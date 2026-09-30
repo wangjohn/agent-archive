@@ -44,7 +44,8 @@ changed. `--no-cache` reads everything again.
 
 `--by day|week|month|project` adds a table of the window broken down that
 way (weeks start on Monday). On a terminal of 80 columns or more the screen
-draws bars; narrower, it is a compact table. It is paged through `$PAGER` on a
+draws bars; narrower, it is a compact table (laid out for at least 50
+columns: on a terminal narrower than that, lines wrap). It is paged through `$PAGER` on a
 terminal (`--no-pager` to print directly), plain text when piped, and ASCII
 instead of block characters in a locale that is not UTF-8.
 
