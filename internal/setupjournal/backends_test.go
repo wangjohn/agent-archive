@@ -3,6 +3,7 @@ package setupjournal
 import (
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -133,64 +134,113 @@ func TestRecoverRestartsEachJobThroughTheBackendThatMadeIt(t *testing.T) {
 	}
 }
 
-// A journal whose backend this build cannot drive changes nothing it cannot
-// ask about: recovery is blocked, saying the scheduler's state is unknown, and
-// a commit fails to stop the collector, leaving the record.
-func TestAJobOfAnUnknownBackendIsNeverChanged(t *testing.T) {
-	t.Parallel()
-	f := newMixedFixture(t)
-	f.journal.Backend = "systemd"
-	err := Recover(f.home, Backends(f.backends), noLock)
-	var blocked *RecoveryBlockedError
-	if err != nil {
-		t.Fatalf("recover without a journal: %v", err)
-	}
+// crash leaves f as a setup interrupted after its stops and file changes,
+// before the collector starts, with its journal on disk.
+func (f *mixedFixture) crash(t *testing.T) {
+	t.Helper()
+	f.model.Put(f.site, "model-collector", scheduler.Missing)
+	f.model.Put(f.site, "model-earlier", scheduler.Missing)
+	delete(f.sim.loaded, simLabel(f.legacy))
+	must(t, os.Remove(f.earlier))
+	must(t, os.Remove(f.legacy))
+	must(t, os.WriteFile(f.collector, []byte("new collector definition"), 0o600))
 	must(t, local.Write(JournalPath(f.home), f.journal))
-	err = Recover(f.home, Backends(f.backends), noLock)
-	if !errors.As(err, &blocked) || !strings.Contains(err.Error(), "state is unknown") || !strings.Contains(err.Error(), "restore access to the scheduler") {
-		t.Errorf("recovery of a systemd journal: %v", err)
+}
+
+// files is every definition's bytes, "" for one that is gone.
+func (f *mixedFixture) files() map[string]string {
+	got := map[string]string{}
+	for _, path := range []string{f.collector, f.earlier, f.legacy} {
+		data, _ := os.ReadFile(path)
+		got[path] = string(data)
 	}
-	if len(f.model.Calls()) != 0 || len(f.sim.calls) != 0 {
-		t.Errorf("a job was asked about: %q %q", f.model.Calls(), f.sim.calls)
-	}
-	err = Commit(f.home, f.journal, Backends(f.backends))
-	if err == nil || !strings.Contains(err.Error(), "stop previous collector: no systemd scheduler here") {
-		t.Errorf("Commit = %v", err)
-	}
-	if len(f.model.Calls()) != 0 {
-		t.Errorf("the model was asked %q", f.model.Calls())
+	return got
+}
+
+// A journal naming a job this build cannot drive (a backend it does not have,
+// a definition no plan of its backend writes, a job_ref its definition does
+// not name) changes nothing at all, whichever job it is: recovery is blocked
+// before a file is put back or a job asked about, saying which job and why,
+// and a commit is refused before anything is recorded.
+func TestAJobThatCannotBeDrivenIsNeverChanged(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		edit func(f *mixedFixture)
+		want string
+	}{
+		"collector of an unknown backend": {func(f *mixedFixture) { f.journal.Backend = "systemd" }, "the background collector: no systemd scheduler here"},
+		"retiree of an unknown backend":   {func(f *mixedFixture) { f.journal.Legacy.Backend = "systemd" }, "com.agent-skills.skill-runs-upload.plist: no systemd scheduler here"},
+		"collector's job_ref disagrees": {
+			func(f *mixedFixture) { f.journal.JobRef = "model-other" },
+			"the journal names the model job model-other, but its job file " + filepath.Join("%U", ".model", "model-collector.job") + " is the model job model-collector; the model was left as it is",
+		},
+		"retiree's job_ref disagrees": {
+			func(f *mixedFixture) { f.journal.Relabeled.JobRef = "model-collector" },
+			"the journal names the model job model-collector, but its job file " + filepath.Join("%U", ".model", "model-earlier.job") + " is the model job model-earlier",
+		},
+		"collector's definition is no job": {
+			func(f *mixedFixture) { f.journal.Plist = filepath.Join(f.userHome, "model-collector.job") },
+			"the background collector: " + filepath.Join("%U", "model-collector.job") + " is not a model job file",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newMixedFixture(t)
+			tc.edit(f)
+			want := strings.ReplaceAll(tc.want, "%U", f.userHome)
+			f.crash(t)
+			before, calls := f.files(), len(f.model.Calls())
+			err := Recover(f.home, Backends(f.backends), noLock)
+			var blocked *RecoveryBlockedError
+			if !errors.As(err, &blocked) || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "recovery changed nothing") {
+				t.Errorf("recovery = %v; want it blocked, saying %q", err, want)
+			}
+			if got := f.files(); !maps.Equal(got, before) || !TransactionPending(f.home) {
+				t.Errorf("recovery changed the files %q (were %q), or removed the journal", got, before)
+			}
+			if len(f.model.Calls()) != calls || len(f.sim.calls) != 0 {
+				t.Errorf("a job was asked about: %q %q", f.model.Calls(), f.sim.calls)
+			}
+
+			f = newMixedFixture(t)
+			tc.edit(f)
+			want = strings.ReplaceAll(tc.want, "%U", f.userHome)
+			before, calls = f.files(), len(f.model.Calls())
+			err = Commit(f.home, f.journal, Backends(f.backends))
+			if err == nil || !strings.Contains(err.Error(), "nothing was changed: ") || !strings.Contains(err.Error(), want) {
+				t.Errorf("Commit = %v; want a refusal saying %q", err, want)
+			}
+			if got := f.files(); !maps.Equal(got, before) || TransactionPending(f.home) {
+				t.Errorf("Commit changed the files %q (were %q), or recorded a journal", got, before)
+			}
+			if len(f.model.Calls()) != calls || len(f.sim.calls) != 0 {
+				t.Errorf("a job was asked about: %q %q", f.model.Calls(), f.sim.calls)
+			}
+		})
 	}
 }
 
 // A job is addressed at the site its own definition is in, whatever
-// site the recovering setup runs at, and by the ref the journal records when it
-// records one, or else the ref its definition names.
+// site the recovering setup runs at, and as the job its definition names,
+// which a recorded job_ref agrees with.
 func TestJobsAreAddressedByTheirOwnSiteAndRecordedRef(t *testing.T) {
 	t.Parallel()
-	f := newMixedFixture(t)
-	other := scheduler.Site{UserHome: t.TempDir()}
-	// The same ref at another site: not this journal's job.
-	f.model.Put(other, "model-collector", scheduler.Running)
-	f.journal.JobRef = "" // absent: the ref is the one the definition's path names
-	f.journal.Legacy, f.journal.Relabeled = nil, nil
-	if err := Commit(f.home, f.journal, Backends(f.backends)); err != nil {
-		t.Fatal(err)
-	}
-	if held := f.model.Held(other, "model-collector"); held != scheduler.Running {
-		t.Errorf("a job of the same name at another site is %q; it must not be touched", held)
-	}
-	// A recorded ref wins over the one the path names.
-	f = newMixedFixture(t)
-	f.journal.Legacy, f.journal.Relabeled = nil, nil
-	f.journal.JobRef = "recorded-ref"
-	f.model.Put(f.site, "recorded-ref", scheduler.Running)
-	must(t, local.WriteBytes(filepath.Join(f.userHome, ".model", "recorded-ref.job"), []byte("job=recorded-ref\n")))
-	must(t, local.Write(JournalPath(f.home), f.journal))
-	if err := Restore(f.home, f.journal, Backends(f.backends)); err != nil {
-		t.Fatal(err)
-	}
-	if calls := f.model.Calls(); !slices.Contains(calls, "inspect recorded-ref") || slices.Contains(calls, "inspect model-collector") {
-		t.Errorf("the model was asked %q; want the recorded ref", calls)
+	for _, jobRef := range []string{"", "model-collector"} {
+		f := newMixedFixture(t)
+		other := scheduler.Site{UserHome: t.TempDir()}
+		// The same ref at another site: not this journal's job.
+		f.model.Put(other, "model-collector", scheduler.Running)
+		f.journal.JobRef = jobRef
+		f.journal.Legacy, f.journal.Relabeled = nil, nil
+		if err := Commit(f.home, f.journal, Backends(f.backends)); err != nil {
+			t.Fatal(err)
+		}
+		if held := f.model.Held(other, "model-collector"); held != scheduler.Running {
+			t.Errorf("job_ref %q: a job of the same name at another site is %q; it must not be touched", jobRef, held)
+		}
+		if got, want := f.model.Calls(), []string{"unload model-collector", "load model-collector"}; !slices.Equal(got, want) {
+			t.Errorf("job_ref %q: the model was called %q, want %q", jobRef, got, want)
+		}
 	}
 }
 

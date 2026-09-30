@@ -38,9 +38,13 @@ type target struct {
 
 // target resolves the job of a journal or a retired job: backend names the
 // scheduler (empty means DefaultBackend, which is how every journal before the
-// field was written), definition is the path of its definition, which says
-// where it is (the site), and jobRef, when the journal has one, is the job's
-// ref (else it is the one the definition's path names).
+// field was written), and definition is the path of its definition, which says
+// where it is (the site) and which job it is. jobRef, when the journal has one,
+// must be that same job: a release before the field acts on the job the
+// definition names, so a journal whose job_ref names another (only a hand
+// edit, or a release that means something else by it, writes one) is refused
+// rather than driven two ways, and its job is never mistaken for another
+// installation's of the same site.
 func (b Backends) target(backend, jobRef, definition string) target {
 	name := backend
 	if name == "" {
@@ -54,10 +58,31 @@ func (b Backends) target(backend, jobRef, definition string) target {
 	if err != nil {
 		return target{sched: sched, err: err}
 	}
-	if jobRef != "" {
-		ref = scheduler.Ref(jobRef)
+	if jobRef != "" && scheduler.Ref(jobRef) != ref {
+		words := sched.Words()
+		return target{sched: sched, err: fmt.Errorf("the journal names the %s %s, but its %s %s is the %s %s; %s was left as it is", words.Job, jobRef, words.Definition, definition, words.Job, ref, words.Manager)}
 	}
 	return target{sched: sched, site: site, ref: ref}
+}
+
+// resolve is the collector's job in journal, once every job the journal drives
+// through a scheduler resolves (the collector's, and each retired job that was
+// loaded): a journal naming one that does not is refused before anything is
+// changed, with the job it names and why.
+func (b Backends) resolve(journal Journal) (target, error) {
+	collector := b.target(journal.Backend, journal.JobRef, journal.Plist)
+	if collector.err != nil {
+		return collector, fmt.Errorf("the background collector: %w", collector.err)
+	}
+	for _, job := range journal.retired() {
+		if !job.WasLoaded {
+			continue
+		}
+		if t := b.target(job.Backend, job.JobRef, job.Change.Path); t.err != nil {
+			return collector, fmt.Errorf("the job %s: %w", job.Change.Path, t.err)
+		}
+	}
+	return collector, nil
 }
 
 // state is the job's state, unknown when it cannot be asked.

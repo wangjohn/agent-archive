@@ -50,7 +50,8 @@ type Journal struct {
 	// scheduler.Definer.Name), and JobRef the job's ref in it. Both are
 	// optional: a journal written before they existed has neither, and then
 	// the backend is DefaultBackend and the job is the one Plist names (see
-	// scheduler.Definer.Locate). Every field before them is still written, so
+	// scheduler.Definer.Locate), which JobRef must agree with when it is
+	// recorded (see Backends.target). Every field before them is still written, so
 	// a release that does not know them recovers the journal all the same
 	// (encoding/json skips unknown fields).
 	Backend string `json:"backend,omitempty"`
@@ -78,11 +79,29 @@ func (j Journal) relabeled() []*LegacyJob {
 	return append([]*LegacyJob{j.Relabeled}, j.MoreRelabeled...)
 }
 
+// retired lists every job the journal retires: the prototype's, then the
+// collectors under other labels.
+func (j Journal) retired() []*LegacyJob {
+	if j.Legacy == nil {
+		return j.relabeled()
+	}
+	return append([]*LegacyJob{j.Legacy}, j.relabeled()...)
+}
+
 // Commit records journal, then makes the changes it holds: it stops the
 // collector when it was loaded, applies every file change, retires the jobs
 // the journal retires, and starts the collector. A failure on the way puts
 // everything back from the journal (Restore); success removes it.
 func Commit(home string, journal Journal, backends Backends) error {
+	// A job the journal could not drive is refused before anything is
+	// recorded or changed, rather than found halfway.
+	var collector target
+	if !journal.FilesOnly {
+		var err error
+		if collector, err = backends.resolve(journal); err != nil {
+			return fmt.Errorf("nothing was changed: %w", err)
+		}
+	}
 	if err := local.Write(JournalPath(home), journal); err != nil {
 		return err
 	}
@@ -101,7 +120,6 @@ func Commit(home string, journal Journal, backends Backends) error {
 		}
 		return nil
 	}
-	collector := backends.target(journal.Backend, journal.JobRef, journal.Plist)
 	if journal.WasLoaded {
 		if err := collector.unload(); err != nil {
 			return fail(fmt.Errorf("stop previous collector: %w", err))
@@ -157,7 +175,13 @@ func Restore(home string, journal Journal, backends Backends) error {
 			return err
 		}
 	}
-	collector := backends.target(journal.Backend, journal.JobRef, journal.Plist)
+	// So is every job it drives: one it names that cannot be driven here (a
+	// backend this system does not have, a definition no plan of that
+	// backend writes) is never asked about, stopped or started.
+	collector, err := backends.resolve(journal)
+	if err != nil {
+		return &RecoveryBlockedError{home: home, cause: fmt.Sprintf("%v, so recovery changed nothing", err)}
+	}
 	state := collector.state()
 	if state.Active() {
 		if err := collector.unload(); err != nil {

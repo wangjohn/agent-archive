@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -110,5 +111,52 @@ func TestRefreshJournalNamesItsBackendAndJob(t *testing.T) {
 	must(t, err)
 	if plan.journal.Backend != "launchd" || plan.journal.JobRef != r.label() || !slices.Contains([]string{r.plist}, plan.journal.Plist) {
 		t.Errorf("refresh journal: backend %q, job_ref %q, plist %q; want launchd, %s, %s", plan.journal.Backend, plan.journal.JobRef, plan.journal.Plist, r.label(), r.plist)
+	}
+}
+
+// A journal this system cannot drive (one a setup on another system's
+// scheduler wrote, or whose job_ref names another job than its plist) blocks
+// recovery before anything changes: no launchctl call, every file as the crash
+// left it, the record kept, and the message says why and the way out.
+func TestRecoveryOfAJournalThisSystemCannotDriveChangesNothing(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(journal map[string]any)
+		says string
+	}{
+		"another backend":                   {func(j map[string]any) { j["backend"] = "systemd" }, "the interrupted setup used the systemd scheduler, and this system's is launchd; its jobs were left as they are"},
+		"a retired job of another backend":  {func(j map[string]any) { j["relabeled"].(map[string]any)["backend"] = "systemd" }, "used the systemd scheduler"},
+		"a job_ref its plist does not name": {func(j map[string]any) { j["job_ref"] = "com.agent-archive.collector.0123456789ab" }, "the journal names the LaunchAgent com.agent-archive.collector.0123456789ab, but its plist"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newSchedRun(t, true)
+			journal := r.interrupted("resetup-earlier-labels", beforeStart)
+			raw, err := os.ReadFile(r.journalPath())
+			must(t, err)
+			var edited map[string]any
+			must(t, json.Unmarshal(raw, &edited))
+			tc.edit(edited)
+			raw, err = json.Marshal(edited)
+			must(t, err)
+			writeFile(t, r.journalPath(), raw)
+			before := map[string][]byte{}
+			for _, c := range journal.Changes {
+				before[c.Path], _ = os.ReadFile(c.Path)
+			}
+			for _, job := range journal.retired() {
+				before[job.Change.Path], _ = os.ReadFile(job.Change.Path)
+			}
+			code, out := r.run("setup")
+			if code == 0 || !r.journalPending() || !strings.Contains(out, tc.says) || !strings.Contains(out, "so recovery changed nothing") || !strings.Contains(out, "setup --abandon-recovery") {
+				t.Errorf("exit %d, record pending %v:\n%s", code, r.journalPending(), out)
+			}
+			if len(r.lines) != 0 {
+				t.Errorf("launchctl was run: %q", r.lines)
+			}
+			for path, data := range before {
+				if got, _ := os.ReadFile(path); !bytes.Equal(got, data) {
+					t.Errorf("%s changed", path)
+				}
+			}
+		})
 	}
 }
