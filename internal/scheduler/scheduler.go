@@ -151,6 +151,11 @@ type Problem struct {
 	Reason string
 	// Fix is the adapter's next step, as a sentence without its full stop.
 	Fix string
+	// Manual is the command that stops the job by hand, from a session that can
+	// reach the manager, for a job the manager cannot be asked about here:
+	// uninstall prints it when it goes on without verifying the job stopped.
+	// Empty when there is none.
+	Manual string
 }
 
 // Words is the small set of nouns a scheduler goes by, for the messages that
