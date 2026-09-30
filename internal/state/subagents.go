@@ -181,22 +181,73 @@ func (s *Store) removeSubagentCandidate(id string) error {
 // subagent or its parent. Another session's unreadable candidate does not
 // stand in the way (the scan quarantines one that does not decode).
 func (s *Store) removeSubagentCandidatesForSession(id string) error {
-	candidates, issues, err := s.ScanSubagentCandidates()
+	ids, err := s.subagentCandidatesForSession(id)
 	if err != nil {
 		return err
+	}
+	for _, candidateID := range ids {
+		if err := s.RemoveSubagentCandidate(candidateID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeSubagentCandidatesWithoutWaiting is removeSubagentCandidatesForSession
+// for a caller holding the session's request lock, which hooks wait on for a
+// second: it takes each candidate's lock without waiting, and removes nothing
+// unless it has them all. busy reports a candidate lock held by a hook or the
+// collector, at work on the session's subagents right now.
+func (s *Store) removeSubagentCandidatesWithoutWaiting(id string) (busy bool, err error) {
+	ids, err := s.subagentCandidatesForSession(id)
+	if err != nil {
+		return false, err
+	}
+	var unlocks []func()
+	defer func() {
+		for _, unlock := range unlocks {
+			unlock()
+		}
+	}()
+	for _, candidateID := range ids {
+		if !safeFileComponent(candidateID) {
+			return false, errors.New("invalid subagent candidate ID")
+		}
+		unlock, err := local.NamedLock(s.home, subagentLockName(candidateID))
+		if errors.Is(err, local.ErrBusy) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		unlocks = append(unlocks, unlock)
+	}
+	for _, candidateID := range ids {
+		if err := s.removeSubagentCandidate(candidateID); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+// subagentCandidatesForSession lists the candidates naming id as the
+// subagent or its parent.
+func (s *Store) subagentCandidatesForSession(id string) ([]string, error) {
+	candidates, issues, err := s.ScanSubagentCandidates()
+	if err != nil {
+		return nil, err
 	}
 	// The session's own candidate could not be read, so it cannot be
 	// removed: forgetting the session anyway would leave a candidate that
 	// registers it again once readable. A quarantined one is already gone.
 	if issue := issues[id]; issue != nil && !errors.Is(issue, ErrQuarantined) {
-		return issue
+		return nil, issue
 	}
+	var ids []string
 	for _, candidate := range candidates {
 		if candidate.ArchiveSessionID == id || candidate.ParentArchiveSessionID == id {
-			if err := s.RemoveSubagentCandidate(candidate.ArchiveSessionID); err != nil {
-				return err
-			}
+			ids = append(ids, candidate.ArchiveSessionID)
 		}
 	}
-	return nil
+	return ids, nil
 }
