@@ -118,7 +118,10 @@ func costliestNote(total *bucket, best *CostliestSession) *Note {
 	if cost <= CostliestNoteMinCost || costShare < CostliestNoteMinShare {
 		return nil
 	}
+	// The note owns its cost: the number is copied, not shared with the
+	// highlight it comes from.
 	c, subagents := best.Cost, best.Subagents
+	c.USD = &cost
 	return &Note{
 		Kind: NoteCostliestSession, Cost: &c, CostShare: &costShare, Project: best.Project,
 		Subagents: &subagents, Drivers: append([]string(nil), best.Drivers...),
