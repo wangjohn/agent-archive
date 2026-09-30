@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -120,6 +121,29 @@ func checkFuzzedMetadata(t *testing.T, adapter Adapter, filtered FilteredTranscr
 	}
 	if !saturated {
 		assertModelTokensSum(t, "fuzz", metadata)
+	}
+	checkGitActivityShape(t, metadata)
+}
+
+// checkGitActivityShape fails when an event breaks the published shape: the
+// list is capped, and every field matches its schema pattern, so no free
+// text from a result can reach the metadata through it.
+func checkGitActivityShape(t *testing.T, metadata Metadata) {
+	t.Helper()
+	if len(metadata.GitActivity) > MaxGitActivity {
+		t.Fatalf("%d git events listed", len(metadata.GitActivity))
+	}
+	repository := regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	for _, event := range metadata.GitActivity {
+		switch {
+		case event.SHA != "" && !shaPattern.MatchString(event.SHA),
+			event.Branch != "" && validBranch(event.Branch) != event.Branch,
+			event.Repository != "" && !repository.MatchString(event.Repository),
+			event.PRNumber < 0 || event.PRNumber > maxPRNumber,
+			event.URL != "" && !strings.HasPrefix(event.URL, "https://"),
+			strings.ContainsAny(event.URL, " \t\n\"<>"):
+			t.Fatalf("git event out of shape: %+v", event)
+		}
 	}
 }
 

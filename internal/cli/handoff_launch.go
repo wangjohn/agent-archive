@@ -20,17 +20,17 @@ import (
 // launchPreparedHandoff starts dest with the filtered record: in this
 // terminal when here is set, returning when the agent exits, else in a new
 // terminal window or tab, returning once it opens.
-func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, here bool, opts handoffOptions, home string, stdin io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) error {
+func launchPreparedHandoff(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, here bool, opts handoffOptions, home string, stdin, answers io.Reader, stdout, stderr io.Writer, env handoffLaunchDependencies) error {
 	dir, err := launchDir(opts, env)
 	if err != nil {
 		return err
 	}
-	spec, err := prepareLaunch(record, h, target, dest, dir, opts.agentArgs, home, env)
+	spec, err := prepareLaunch(record, h, target, dest, dir, opts, home, stdin, answers, stderr, env)
 	if err != nil {
 		return err
 	}
 	if here {
-		terminal.Printf(stderr, "handoff: launching local %s in %s\n", dest, dir)
+		terminal.Printf(stderr, "handoff: launching local %s in %s\n", dest, spec.Dir)
 		if err := env.launchHandoff(spec, stdin, stdout, stderr); err != nil {
 			return fmt.Errorf("launch %s: %w", dest, err)
 		}
@@ -69,10 +69,10 @@ func launchDir(opts handoffOptions, env workingDirDependencies) (string, error) 
 }
 
 // prepareLaunch writes the launch copy of the handoff and builds the command
-// that starts dest in dir. The record stays out of process arguments: the
-// agent's prompt only names the file. extra (arguments after `--`) follows
-// the configured arguments for dest.
-func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, dir string, extra []string, home string, env handoffLaunchDependencies) (launchSpec, error) {
+// that starts dest in dir, or in a new worktree of it (prepareLaunchDir). The
+// record stays out of process arguments: the agent's prompt only names the
+// file. The arguments after `--` follow the configured arguments for dest.
+func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest handoffDestination, dir string, opts handoffOptions, home string, stdin, answers io.Reader, stderr io.Writer, env handoffLaunchDependencies) (launchSpec, error) {
 	executable, err := env.executable()
 	if err != nil {
 		return launchSpec{}, fmt.Errorf("executable: %w", err)
@@ -88,7 +88,16 @@ func prepareLaunch(record []byte, h archive.Handoff, target handoffTarget, dest 
 		return launchSpec{}, err
 	}
 	prompt := fmt.Sprintf("Read the complete handoff document at %q, then continue the work in this checkout. Agent Archive is available if you need more context; its commands are explained in that document.", path)
-	spec, err := buildLaunchSpec(dest, prompt, path, dir, slices.Concat(cfg.Handoff.Args[string(dest)], extra), env)
+	args := slices.Concat(cfg.Handoff.Args[string(dest)], opts.agentArgs)
+	// Build the command before choosing the directory, so a missing agent
+	// or bad arguments fail before a worktree is created.
+	spec, err := buildLaunchSpec(dest, prompt, path, dir, args, env)
+	if err == nil {
+		var launch string
+		if launch, err = prepareLaunchDir(env, opts, target, dir, stdin, answers, stderr); err == nil && launch != dir {
+			spec, err = buildLaunchSpec(dest, prompt, path, launch, args, env)
+		}
+	}
 	if err != nil {
 		// Nothing will read it. Its directory holds only this copy.
 		_ = os.RemoveAll(filepath.Dir(path))

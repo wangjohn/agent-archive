@@ -139,6 +139,7 @@ type launchSpecDependencies interface {
 
 type handoffLaunchDependencies interface {
 	launchSpecDependencies
+	worktreeDependencies
 	executable() (string, error)
 	tempDir() string
 	workingDirDependencies
