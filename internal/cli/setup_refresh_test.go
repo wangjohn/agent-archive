@@ -565,6 +565,35 @@ func TestRefreshRefusals(t *testing.T) {
 	}
 }
 
+// An uninstall that finishes between refresh's first look at the settings
+// and its locks must not be undone: the settings are read again under the
+// locks, and the refresh changes nothing.
+func TestRefreshRechecksTheSettingsUnderItsLocks(t *testing.T) {
+	t.Parallel()
+	f := newRefreshFixture(t, "loaded")
+	uninstaller := f.env
+	uninstaller.IsTerminal = func(any) bool { return true }
+	exe := f.env.Executable
+	var before map[string]string
+	f.env.Executable = func() (string, error) {
+		// Refresh reads the running executable after its first look at the
+		// settings and before it takes any lock.
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"uninstall"}, strings.NewReader("y\n"), &out, &errOut, uninstaller); code != 0 {
+			t.Errorf("uninstall: %s %s", &out, &errOut)
+		}
+		before = tree(t, f.userHome)
+		return exe()
+	}
+	code, stdout, stderr := refreshRun(t, f.env)
+	if code != 1 || stdout != "" || !strings.Contains(stderr, "integrations are not installed") {
+		t.Fatalf("exit %d\n%q\n%q", code, stdout, stderr)
+	}
+	if changed := differences(before, tree(t, f.userHome)); len(changed) != 0 {
+		t.Errorf("a refused refresh changed %v", changed)
+	}
+}
+
 // A collector pass, an open setup, or a hook that is writing holds a lock
 // refresh needs: it refuses, changing nothing, and says to retry.
 func TestRefreshRefusesWhileALockIsHeld(t *testing.T) {
