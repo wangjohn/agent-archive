@@ -63,11 +63,28 @@ follow [Semantic Versioning](https://semver.org/).
   a pseudo-terminal never hangs on a prompt; `AGENT_ARCHIVE_NONINTERACTIVE=0`
   turns it off, and a refusal caused by it says so.
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
-  filtered session record in a private temporary file. The receiving agent is
-  told how to inspect the archived or current local record with Agent Archive.
-  The session can be local or archived. With no session named, run inside
-  Claude Code, Codex, or Cursor, it hands off that agent's own session;
-  otherwise a terminal gets the picker.
+  filtered session record. The session can be local or archived. With no
+  session named, run inside Claude Code, Codex, or Cursor, it hands off that
+  agent's own session; otherwise a terminal gets the picker. The receiving
+  agent is told how to inspect the archived or current local record with
+  Agent Archive. The record is kept in the data directory's `handoffs/` for 7
+  days, so a resumed session can read it again (before setup, in a private
+  temporary folder the system clears). Each launch's copy has a folder of its
+  own, which is all Claude Code gets with `--add-dir`; Codex and Cursor get
+  the checkout with `--cd` and `--workspace`. Cursor's `agent` CLI is tried
+  before `cursor-agent`. The launched agent does not inherit the calling
+  agent's session variables.
+- On a terminal, `handoff` asks where to continue: an installed agent
+  (default: another agent than the session's, or `handoff.default_to`),
+  print (paged when long), copy to the clipboard, or write to a file. Pipes,
+  `--output`, `--format json`, and `--no-preamble` print as before.
+- Without a terminal, as when an agent runs it, `handoff --to` opens the
+  agent in a new tmux window or iTerm2, Ghostty, or Terminal tab and returns;
+  `--here` and `--new-window` choose explicitly. Where no window can be
+  opened it prints the command to run instead.
+- Arguments after `--` go to the agent `handoff --to` launches, and
+  `config.json` may set per-agent arguments (`handoff.args`) and a default
+  destination per source harness (`handoff.default_to`).
 - `show --transcript` prints a session's conversation to read: each prompt,
   the agent's replies, one line per tool call (✗ when it failed), your `!`
   shell and local slash commands, compactions, and app notices such as a
@@ -89,6 +106,19 @@ follow [Semantic Versioning](https://semver.org/).
   transcript, Enter or `b` goes back to the list, and `q` quits. The last
   summary viewed stays in scrollback. Bare `show` now keeps browsing like
   `list` instead of exiting after one pick.
+- The session browser and the session pickers (`list`, bare `show`,
+  `handoff`, `show --json` without an ID, an ambiguous `show QUERY`) fit the
+  window. The browser reads keys as you press them, without Enter: the
+  mouse wheel, the arrows, PgUp and PgDn (or space, `n`, `p`), and Home and
+  End scroll the list and a long summary at once, with a status line saying
+  where you are (Top, a percentage, Bottom) and, in the summary, how many
+  lines are above and below. Type a row number or short ID and press Enter
+  to open it; in the summary, `t`, `m` (the whole summary in the pager),
+  `b`, and `q` act on their own key, and Enter or Backspace go back
+  to the list. The wheel's arrows are no longer echoed into the prompt as
+  `^[[A`. The other pickers still read a line and show a list taller than
+  the terminal a page at a time (`n` and `p` move; any row number or short
+  ID still works).
 - Metadata may include optional `ended_at` (latest record timestamp),
   `tools_used` (the 10 most-called tools with counts), and
   `counts.files_touched` (distinct files edited; a count only, never
@@ -105,6 +135,24 @@ follow [Semantic Versioning](https://semver.org/).
   `status --json` lists them as `collector.expired_subagents`. The type is
   kept on this Mac only and never uploaded. Default `status` still says
   nothing about them.
+- `install.sh` and `scripts/install-from-source.sh` now recognise Linux release
+  assets (x86_64 and aarch64): the installer selects
+  `agent-archive-linux-<arch>`, skips the macOS-only Developer ID check for
+  it, and on every OS refuses to install unless the download matches its
+  entry in `SHA256SUMS`, which must be exactly one well-formed lowercase
+  SHA-256 line; an empty download also stops the install. The macOS Developer
+  ID check is unchanged. Other changes you can see on macOS: `sha256sum` is
+  preferred over `shasum` when both are present; an unset or empty `HOME` now
+  fails with a clear message when no install directory can be chosen
+  otherwise; `AGENT_ARCHIVE_VERSION` must look like a release tag (`latest`
+  is refused; leave it unset); a relative `AGENT_ARCHIVE_INSTALL_DIR` is
+  resolved to an absolute path; the installer refuses to install over a
+  directory named `agent-archive` (it used to move the file into it); it
+  stages the new binary with `mktemp` and removes it on failure; it prints
+  `Downloading from <url>` when `AGENT_ARCHIVE_DOWNLOAD_URL` is set; and it
+  reports a missing `curl` ("curl is required") and a failed temporary
+  file or directory creation with their own messages. Linux is not yet a
+  supported platform.
 
 - `show SESSION_ID`'s summary, `status`, and `purge plan` are paged on a
   terminal, like `list`; `status` and `purge plan` take `--no-pager`, and

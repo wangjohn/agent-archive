@@ -217,7 +217,8 @@ Default text columns: TITLE (first filtered prompt preview, or a short
 SESSION_ID prefix when none), relative capture time, harness, project,
 and a short SESSION_ID. On a terminal with an interactive stdin, list a
 numbered table and pick a session to show its summary, then t for its
-transcript, Enter or b to go back, or q to quit. Piped or --json output is
+transcript, Enter or b to go back, or q to quit. Keys act as pressed; the
+wheel, arrows, and PgUp/PgDn scroll. Piped or --json output is
 never interactive, nor is any run with AGENT_ARCHIVE_NONINTERACTIVE on, as it
 is inside coding agents (see the configuration reference). On a terminal
 without interactive stdin, text is paged through $PAGER unless --no-pager.
@@ -519,6 +520,11 @@ With no selector on a terminal, pick a session from a numbered list of this
 Mac's sessions (including ones not yet uploaded) and archived ones, newest
 first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
 (automatic inside coding agents), give a SESSION_ID, --latest, or --file PATH.
+On a terminal without --to, --output, or --format json, it then asks where
+to continue: an installed agent (default: handoff.default_to in
+config.json, else Codex for a Claude Code session and Claude Code for the
+others), or print, copy to the clipboard, or write to a file. Piped, or
+with AGENT_ARCHIVE_NONINTERACTIVE on, it prints the handoff as it always has.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -538,15 +544,25 @@ first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Launch local claude, codex, or cursor with the handoff
-                        in a private temporary file; requires the target CLI
-                        installed on this Mac. With no selector, hands off
-                        the Claude Code, Codex, or Cursor session it runs in,
-                        or picks one on a terminal
+  --to NAME             Launch local claude, codex, or cursor with the handoff.
+                        The agent reads a copy kept in the data directory for
+                        7 days (before setup, in a private temporary folder);
+                        needs the agent's CLI (claude, codex, or agent) on
+                        PATH. With no selector, hands off the Claude Code,
+                        Codex, or Cursor session it runs in, or picks one on
+                        a terminal. On a terminal the agent runs there;
+                        otherwise it opens in a new tmux window, or a new
+                        iTerm2, Ghostty, or Terminal tab, and the command
+                        returns
+  --here                Run the launched agent in this terminal
+  --new-window          Open the launched agent in a new window or tab
+  -- ARGS               Everything after -- goes to the launched agent, after
+                        any arguments set in config.json's handoff.args
 Example: agent-archive handoff
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: agent-archive handoff --latest --harness claude --to codex
+Example: agent-archive handoff SESSION_ID --to claude -- --model opus
 ```
 
 | Flag | Takes | Default |
@@ -555,8 +571,10 @@ Example: agent-archive handoff --latest --harness claude --to codex
 | `--force` | no value | — |
 | `--format` | a value | `markdown` |
 | `--harness` | a value | — |
+| `--here` | no value | — |
 | `--latest` | no value | — |
 | `--max-bytes` | a value | `120000` |
+| `--new-window` | no value | — |
 | `--no-preamble` | no value | — |
 | `--output` | a value | — |
 | `--project` | a value | — |

@@ -97,14 +97,41 @@ When stdin and stdout are both terminals, `list` and bare `show` open a
 session browser on the terminal's alternate screen, so the list and a
 session's summary replace each other instead of piling up:
 
-- Enter a row number or short SESSION_ID to see that session's summary.
+- The browser reads each key as you press it; there is no need to press
+  Enter after a command.
+- Type a row number or short SESSION_ID and press Enter to see that
+  session's summary. What you type shows at the prompt; Backspace edits it
+  and Esc clears it. Row numbers are those of the whole list, so any listed
+  number or short ID works wherever the list is scrolled (in the list
+  grouped by project, the numbers on screen need not be consecutive).
+- A list taller than the window scrolls: the mouse wheel and ↑ ↓ by a
+  row, PgUp and PgDn (or space, `n`, and `p`) by a screen, Home and End to
+  the top and bottom. A status line below it says where you are (`Top`, a
+  percentage, `Bottom`, or `All` when the whole list fits), for example
+  `Top · ↑↓ scroll · PgUp/PgDn page · type a number and Enter · q quit`. A
+  project scrolled into keeps its heading at the top, marked
+  `(continued)`. `n`, `p`, and `q` act only when nothing is typed.
 - In the summary, `t` opens its transcript through the pager (quit the pager
-  to come back), Enter or `b` returns to the list, and `q` quits. `less`
-  keeps even a one-screen transcript open until you press `q`; after another
-  pager, press Enter to return to the summary.
-- `q` (or an empty answer at the list, or Ctrl-D) quits from anywhere. The
-  last summary you viewed is printed to the normal screen as the browser
-  closes, so its ID stays in your scrollback.
+  to come back), `b`, Enter, or Backspace return to the list, and `q`
+  quits. `less` keeps even a one-screen transcript open until you press
+  `q`; after another pager, press Enter to return to the summary.
+- A summary taller than the window scrolls the same way, with a line such
+  as `↑ 3 lines above · ↓ 12 more lines` below it; `m` opens the whole
+  summary through the pager, as `t` does the transcript.
+- `q` (or Enter with nothing typed at the list, or Ctrl-D) quits from
+  anywhere, and Ctrl-C quits at once. The last summary you viewed is printed
+  to the normal screen as the browser closes, so its ID stays in your
+  scrollback.
+- Wherever else a session is picked from a list (the handoff picker, bare
+  `show --json`, and a `show` query that matches more than one session),
+  you type an answer and press Enter. A list taller than the window is
+  shown a page at a time there, with a line such as
+  `Page 2 of 3 · 50 sessions · [n] next  [p] previous`: `n` and `p` move
+  between pages, and a project whose sessions started on the previous page
+  is headed again, marked `(continued)`. The browser reads lines the same
+  way when its input is not a terminal; there, a summary taller than the
+  window is cut with `… N more lines`, and without a pager `m` prints the
+  lines left out.
 
 Bare `show --transcript` is a usage error: pick a session with `show` and
 press `t`, or give a SESSION_ID. Bare `show --json` keeps a one-shot picker

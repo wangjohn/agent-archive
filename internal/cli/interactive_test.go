@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // The environments an agent's shell runs commands in. Each variable alone
@@ -335,7 +336,7 @@ func TestHandoffInAnAgentNeverPicks(t *testing.T) {
 	f := newHandoffFixture(t, true)
 	for _, key := range agentVariables {
 		for _, args := range [][]string{{"handoff"}, {"handoff", "--harness", "codex"}, {"handoff", "--to", "codex"}, {"handoff", "--to", "claude", "--harness", "cursor"}} {
-			f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+			f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 				t.Errorf("%s %v: launched without a session", key, args)
 				return nil
 			}
@@ -356,14 +357,20 @@ func TestHandoffInAnAgentNeverPicks(t *testing.T) {
 	}
 }
 
+// Inside an agent, even on a terminal, the launched agent gets a new window:
+// the agent's shell is not a terminal to take over.
 func TestHandoffToFromInsideAnAgentUsesTheCallingSession(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, false)
 	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	launched := 0
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
-		launched++
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
+		t.Error("ran in the agent's terminal")
 		return nil
+	}
+	launched := 0
+	f.env.OpenTerminal = func(termlaunch.Spec) (string, error) {
+		launched++
+		return "a new tmux window", nil
 	}
 	env := withEnvironment(f.env, map[string]string{"CODEX_THREAD_ID": "native-1"})
 	_, errOut, code := ttyRun(t, env, "1\n", "handoff", "--latest", "--harness", "codex", "--to", "claude")

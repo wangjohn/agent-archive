@@ -8,6 +8,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // Run passes Env at the command boundary. The read commands and their
@@ -23,20 +24,31 @@ type metadataCacheDependencies interface {
 
 type sessionBrowseDependencies interface {
 	interactive(any) bool
+	terminalSizeDependencies
+}
+
+// terminalSizeDependencies is what the session pickers and browser read
+// before each redraw to fit the window.
+type terminalSizeDependencies interface {
+	terminalSize(io.Writer) (width, height int, ok bool)
 }
 
 type sessionSelectionDependencies interface {
 	metadataCacheDependencies
+	terminalSizeDependencies
 	now() time.Time
 }
 
 // sessionBrowserDependencies is what the interactive session browser uses:
-// the pager for transcripts, and interrupts so it can restore the screen
-// before it exits.
+// the pager for transcripts and the details, the window's size, and
+// interrupts so it can restore the screen before it exits, and stdin read
+// a key at a time on a terminal.
 type sessionBrowserDependencies interface {
 	pagerDependencies
+	terminalSizeDependencies
 	interrupts() (<-chan os.Signal, func())
 	exit(int)
+	openKeyTerminal(io.Reader) (keyTerminal, bool)
 }
 
 type listCommandDependencies interface {
@@ -105,6 +117,10 @@ type handoffOptionsDependencies interface {
 type handoffTargetDependencies interface {
 	handoffResolverDependencies
 	currentSessionDependencies
+	workingDirDependencies
+}
+
+type workingDirDependencies interface {
 	workingDir() (string, error)
 }
 
@@ -112,7 +128,32 @@ type handoffCommandDependencies interface {
 	handoffOptionsDependencies
 	handoffTargetDependencies
 	sessionBrowseDependencies
+	handoffLaunchDependencies
+	handoffDestinationDependencies
+}
+
+type launchSpecDependencies interface {
+	lookPath(string) (string, error)
+	environ() []string
+}
+
+type handoffLaunchDependencies interface {
+	launchSpecDependencies
 	executable() (string, error)
 	tempDir() string
-	launchHandoff(string, string, string, io.Reader, io.Writer, io.Writer) error
+	workingDirDependencies
+	now() time.Time
+	launchHandoff(launchSpec, io.Reader, io.Writer, io.Writer) error
+	openTerminal(termlaunch.Spec) (string, error)
+}
+
+// handoffDestinationDependencies is what the destination prompt uses: which
+// agents are installed, the pager for printing, the clipboard, and the
+// directories a written file's path is resolved against.
+type handoffDestinationDependencies interface {
+	launchSpecDependencies
+	pagerDependencies
+	workingDirDependencies
+	userHomeDir() (string, error)
+	clipboard([]byte) error
 }

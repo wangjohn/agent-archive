@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -26,7 +27,8 @@ import (
 )
 
 // handoffDir is the data-directory entry holding untrimmed handoffs saved when
-// the budget trimmed the printed one. uninstall's localStateEntries lists it.
+// the budget trimmed the printed one, and the directories holding the copies
+// launched agents read (launch-*/). uninstall's localStateEntries lists it.
 const handoffDir = "handoffs"
 
 // handoffMaxAge is how long a saved full handoff is kept.
@@ -73,6 +75,9 @@ var errHandoffNotSetUp = errors.New("handoff not set up")
 // rendered byte comes from a filtered bundle, whether that bundle was
 // downloaded or built in memory from a local transcript.
 func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer, env handoffCommandDependencies) int {
+	// Every question below (the picker, "Continue in:", running a launched
+	// agent here) depends on this, which is false inside an agent's shell
+	// even when that shell is a pseudo-terminal.
 	interactive := browseInteractive(env, stdin, stdout)
 	opts, ok := parseHandoffOptions(args, stderr, env, interactive)
 	if !ok {
@@ -83,8 +88,12 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		terminal.Printf(stderr, "agent-archive: handoff: resolve home: %v\n", err)
 		return 1
 	}
+	// Every prompt reads through one buffer, so an answer typed (or
+	// scripted) ahead for a later prompt is not lost to an earlier one's.
+	// A launched agent gets stdin itself: it must see the terminal.
+	answers := bufio.NewReader(stdin)
 	if opts.sessionID == "" && !opts.latest && opts.file == "" {
-		if code, done := chooseHandoffSession(&opts, home, interactive, stdin, stdout, stderr, env); done {
+		if code, done := chooseHandoffSession(&opts, home, interactive, answers, stdout, stderr, env); done {
 			return code
 		}
 	}
@@ -106,8 +115,27 @@ func runHandoffCommand(args []string, stdin io.Reader, stdout, stderr io.Writer,
 		return 1
 	}
 	rendered := prepareHandoff(h, target.bundle, opts, home, stderr, env)
-	if opts.to != "" {
-		if err := launchPreparedHandoff(rendered, h, target, opts, stdin, stdout, stderr, env); err != nil {
+	dest := handoffDestination(opts.to)
+	if offersDestinations(opts, interactive) {
+		p := newPrompter(answers, stdout)
+		choice, err := askHandoffDestination(p, h, home, env)
+		if err == nil && choice.action != handoffLaunch {
+			err = deliverHandoff(choice, p, rendered, target, opts, stdout, stderr, env)
+		}
+		if err != nil {
+			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
+			return 1
+		}
+		if choice.action != handoffLaunch {
+			return 0
+		}
+		dest = choice.dest
+	}
+	if dest != "" {
+		// Run from inside an agent (interaction is off there), without a
+		// terminal, or asked to, the new agent gets a terminal of its own.
+		here := interactive && !opts.newWindow
+		if err := launchPreparedHandoff(rendered, h, target, dest, here, opts, home, stdin, stdout, stderr, env); err != nil {
 			terminal.Printf(stderr, "agent-archive: handoff: %v\n", err)
 			return 1
 		}
@@ -606,23 +634,33 @@ func plural(n int, unit string) string {
 }
 
 // handoffFullPath names where the untrimmed rendering of a bundle is saved.
-// The archive session ID is already a safe file component; anything else is
-// hashed.
 func handoffFullPath(home string, bundle archive.SourceBundle, format string) string {
+	ext := ".md"
+	if format == "json" {
+		ext = ".json"
+	}
+	return filepath.Join(home, handoffDir, handoffFileName(bundle)+ext)
+}
+
+// handoffFileName is the file name stem for a bundle's saved handoffs. The
+// archive session ID is already a safe file component; anything else is
+// hashed.
+func handoffFileName(bundle archive.SourceBundle) string {
 	name := bundle.ArchiveSessionID
 	if name == "" || strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, ".") {
 		sum := sha256.Sum256([]byte(bundle.ArchiveSessionID + "\x00" + bundle.NativeSessionID))
 		name = hex.EncodeToString(sum[:])[:16]
 	}
-	ext := ".md"
-	if format == "json" {
-		ext = ".json"
-	}
-	return filepath.Join(home, handoffDir, name+ext)
+	return name
 }
 
-// pruneHandoffs deletes saved handoffs older than handoffMaxAge. It is best
-// effort: a failure leaves files for the next run.
+// launchHandoffPrefix begins the name of each launch copy's directory under
+// handoffDir.
+const launchHandoffPrefix = "launch-"
+
+// pruneHandoffs deletes saved handoffs, and launch copies' directories,
+// older than handoffMaxAge. It is best effort: a failure leaves them for the
+// next run.
 func pruneHandoffs(home string, now time.Time) {
 	dir := filepath.Join(home, handoffDir)
 	entries, err := os.ReadDir(dir)
@@ -630,14 +668,14 @@ func pruneHandoffs(home string, now time.Time) {
 		return
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), launchHandoffPrefix) {
 			continue
 		}
 		info, err := entry.Info()
 		if err != nil || now.Sub(info.ModTime()) <= handoffMaxAge {
 			continue
 		}
-		_ = os.Remove(filepath.Join(dir, entry.Name()))
+		_ = os.RemoveAll(filepath.Join(dir, entry.Name()))
 	}
 }
 

@@ -65,7 +65,20 @@ var terminalPackageUses = classifiedCalls{
 	"cli.go": {"term.IsTerminal": 1},
 	// styleFor: colour, redrawing, and width. Presentation, governed by
 	// NO_COLOR and TERM.
-	"ui.go": {"term.IsTerminal": 1, "term.GetSize": 1},
+	// and Env.terminalSize, the window size the browser and pickers fit.
+	"ui.go": {"term.IsTerminal": 2, "term.GetSize": 2},
+	// Key mode: the session browser reads keys one at a time. It is set up
+	// only by runSessionBrowser, which runs after browseInteractive, and
+	// its terminal is restored on every way out.
+	"keys_unix.go": {
+		"term.IsTerminal": 1, "unix.IoctlGetTermios": 3, "unix.IoctlSetTermios": 2,
+		"unix.ICANON": 1, "unix.ECHO": 1, "unix.ECHONL": 1, "unix.IEXTEN": 1, "unix.ISIG": 1,
+		"unix.VMIN": 1, "unix.VTIME": 1, "unix.VQUIT": 1,
+		"unix.Select": 1, "unix.FdSet": 1, "unix.NsecToTimeval": 1, "unix.Read": 1, "unix.EINTR": 2,
+		"unix.Kill": 2, "unix.SIGSTOP": 2,
+	},
+	"keys_darwin.go": {"unix.TIOCGETA": 1, "unix.TIOCSETA": 1, "unix.TIOCSETAF": 1},
+	"keys_linux.go":  {"unix.TCGETS": 1, "unix.TCSETS": 1, "unix.TCSETSF": 1},
 	// saveTerminalState restores modes the pager or a prompt changed; it does
 	// nothing unless something interactive already ran.
 	"list_browse.go": {"term.IsTerminal": 1, "term.GetState": 1, "term.Restore": 1},
@@ -89,6 +102,7 @@ var promptSites = classifiedCalls{
 	"inspect.go":        {"newPrompter": 2},                  // list and show browsers: reached only after browseInteractive
 	"show_resolve.go":   {"newPrompter": 1},                  // the ambiguity picker, after browseInteractive
 	"handoff_select.go": {"newPrompter": 1},                  // handoff's picker: runHandoffCommand reaches it only when browseInteractive
+	"handoff.go":        {"newPrompter": 1},                  // "Continue in:": offersDestinations requires browseInteractive
 }
 
 // inputReads are the ways a command reads a stream it was handed, other than
@@ -99,6 +113,11 @@ var inputReads = classifiedCalls{
 	"prompt.go": {"bufio.NewReader": 1},
 	// The hook payload the agent writes and closes; never a person.
 	"hook_command.go": {"json.NewDecoder": 1},
+	// handoff's one buffer for its answers, read only by the picker and the
+	// "Continue in:" prompt, both behind browseInteractive. A launched agent
+	// run here gets stdin itself, not through a reader: it is the agent's
+	// terminal, not a question, and runs only when browseInteractive.
+	"handoff.go": {"bufio.NewReader": 1},
 	// purge apply's typed digest: refused in runPurgeApply when the switch is
 	// on and --yes is not given.
 	"purge.go": {"bufio.NewReader": 1},

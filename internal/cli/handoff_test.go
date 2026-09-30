@@ -2,13 +2,10 @@ package cli
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +79,9 @@ func newHandoffFixture(t *testing.T, sync bool) handoffFixture {
 	env := testEnv(t, home, now)
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return mem, nil }
 	env.WorkingDir = func() (string, error) { return project, nil }
+	// Launch tests never reach a real agent or the real environment.
+	env.LookPath = func(name string) (string, error) { return "/opt/bin/" + name, nil }
+	env.Environ = func() []string { return []string{"PATH=/opt/bin"} }
 	if sync {
 		var out, errOut bytes.Buffer
 		if code := runSyncCommand(nil, &out, &errOut, env); code != 0 {
@@ -125,6 +125,8 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 		{"abc", "--to", "codex", "--output", "x.md"},
 		{"abc", "--to", "codex", "--format", "json"},
 		{"abc", "--to", "codex", "--no-preamble"},
+		{"abc", "--", "--model", "x"},
+		{"--latest", "--", "-m"},
 		{"--file", "x.jsonl", "--harness", "codex", "--source", "archive"},
 		{"abc", "extra"},
 	} {
@@ -137,11 +139,13 @@ func TestHandoffRejectsBadArguments(t *testing.T) {
 func TestHandoffWithoutIDUsesShowPicker(t *testing.T) {
 	t.Parallel()
 	f := newHandoffFixture(t, true)
-	stdin := strings.NewReader("1\n")
+	stdin := strings.NewReader("1\np\n")
 	var out, errOut bytes.Buffer
 	f.env.IsTerminal = func(stream any) bool {
 		return stream == any(stdin) || stream == any(&out)
 	}
+	var pager string
+	f.env.RunPager = copyPager(&pager)
 	if code := Run([]string{"handoff", "--harness", "codex"}, stdin, &out, &errOut, f.env); code != 0 {
 		t.Fatalf("code=%d stderr=%s out=%s", code, errOut.String(), out.String())
 	}
@@ -512,111 +516,5 @@ func TestHandoffFileWithoutSetupDoesNotCreateTheDataDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(home); !os.IsNotExist(err) {
 		t.Fatalf("data directory created: %v", err)
-	}
-}
-
-func TestHandoffLaunchesLocalAgentWithRetrievalInstructions(t *testing.T) {
-	t.Parallel()
-	f := newHandoffFixture(t, false)
-	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	called := false
-	var handoffPath string
-	f.env.LaunchHandoff = func(name, cwd, prompt string, _ io.Reader, _, _ io.Writer) error {
-		called = true
-		if name != "claude" || cwd != f.project {
-			t.Errorf("launch name=%q cwd=%q", name, cwd)
-		}
-		const prefix = "Read the complete handoff document at "
-		if !strings.HasPrefix(prompt, prefix) || strings.Contains(prompt, "Fix the flaky widget test.") {
-			t.Fatalf("initial argument contains the transcript or no handoff path: %q", prompt)
-		}
-		quoted := strings.SplitN(strings.TrimPrefix(prompt, prefix), ", then continue", 2)[0]
-		var err error
-		handoffPath, err = strconv.Unquote(quoted)
-		if err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(handoffPath)
-		if err != nil || info.Mode().Perm() != 0o600 {
-			t.Fatalf("handoff file: info=%v err=%v", info, err)
-		}
-		dirInfo, err := os.Stat(filepath.Dir(handoffPath))
-		if err != nil || dirInfo.Mode().Perm() != 0o700 {
-			t.Fatalf("handoff directory: info=%v err=%v", dirInfo, err)
-		}
-		data, err := os.ReadFile(handoffPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		document := string(data)
-		for _, want := range []string{
-			"Agent Archive is available. Its executable is at /opt/agent-archive",
-			"show " + f.id + " --harness codex --transcript",
-			"handoff " + f.id + " --source local --max-bytes 0",
-			"Fix the flaky widget test.",
-		} {
-			if !strings.Contains(document, want) {
-				t.Errorf("handoff document missing %q", want)
-			}
-		}
-		if strings.Contains(document, "hunter2secret") {
-			t.Error("handoff document included unfiltered credential")
-		}
-		return nil
-	}
-	out, errOut, code := runHandoff(t, f.env, f.id, "--to", "claude")
-	if code != 0 || !called || out != "" || !strings.Contains(errOut, "launching local claude") {
-		t.Fatalf("code=%d called=%v stdout=%q stderr=%q", code, called, out, errOut)
-	}
-	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
-		t.Fatalf("private handoff was not removed: %v", err)
-	}
-	if keys, _ := f.mem.List(t.Context(), ""); len(keys) != 0 {
-		t.Fatalf("local launch uploaded %d objects", len(keys))
-	}
-}
-
-func TestHandoffLaunchLatestIncludesCallingSession(t *testing.T) {
-	t.Parallel()
-	f := newHandoffFixture(t, false)
-	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	f.env.LookupEnv = func(key string) (string, bool) {
-		if key == "CODEX_THREAD_ID" {
-			return "native-1", true
-		}
-		return "", false
-	}
-	called := false
-	f.env.LaunchHandoff = func(_, _, _ string, _ io.Reader, _, _ io.Writer) error {
-		called = true
-		return nil
-	}
-	_, errOut, code := runHandoff(t, f.env, "--latest", "--harness", "codex", "--to", "claude")
-	if code != 0 || !called || !strings.Contains(errOut, f.id) {
-		t.Fatalf("code=%d called=%v stderr=%q", code, called, errOut)
-	}
-}
-
-func TestHandoffLaunchFailureRemovesPrivateFile(t *testing.T) {
-	t.Parallel()
-	f := newHandoffFixture(t, false)
-	f.env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	var handoffPath string
-	f.env.LaunchHandoff = func(_, _, prompt string, _ io.Reader, _, _ io.Writer) error {
-		const prefix = "Read the complete handoff document at "
-		quoted := strings.SplitN(strings.TrimPrefix(prompt, prefix), ", then continue", 2)[0]
-		var err error
-		handoffPath, err = strconv.Unquote(quoted)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return errors.New("agent failed")
-	}
-	_, _, code := runHandoff(t, f.env, f.id, "--to", "codex")
-	if code != 1 || handoffPath == "" {
-		t.Fatalf("code=%d path=%q", code, handoffPath)
-	}
-	if _, err := os.Stat(handoffPath); !os.IsNotExist(err) {
-		t.Fatalf("private handoff was not removed after launch failure: %v", err)
 	}
 }

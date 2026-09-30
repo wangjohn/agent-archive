@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/storage"
+	"github.com/wangjohn/agent-archive/internal/termlaunch"
 )
 
 // addSession registers a session through the hook path, writes its
@@ -98,6 +98,10 @@ func runPicker(t *testing.T, env Env, answer string, args ...string) (string, st
 	stdin := strings.NewReader(answer)
 	var out, errOut bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&out) }
+	if env.RunPager == nil {
+		var pager string
+		env.RunPager = copyPager(&pager)
+	}
 	code := Run(append([]string{"handoff"}, args...), stdin, &out, &errOut, env)
 	return out.String(), errOut.String(), code
 }
@@ -150,7 +154,7 @@ func TestHandoffPickerMergesLocalAndArchivedSessionsByActivity(t *testing.T) {
 func TestHandoffPickerHandsOffASessionNotYetUploaded(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
-	out, errOut, code := runPicker(t, f.env, "1\n")
+	out, errOut, code := runPicker(t, f.env, "1\np\n")
 	if code != 0 || !strings.Contains(out, "source: local") || !strings.Contains(out, "Not uploaded yet") {
 		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
 	}
@@ -198,7 +202,7 @@ func TestHandoffPickerWorksWithoutTheArchive(t *testing.T) {
 	if strings.Contains(out, f.archiveOnly[:minShortSessionID]) || strings.Contains(out, "not yet uploaded") {
 		t.Fatalf("offline picker:\n%s", out)
 	}
-	out, errOut, code = runPicker(t, f.env, "1\n")
+	out, errOut, code = runPicker(t, f.env, "1\np\n")
 	if code != 0 || !strings.Contains(out, "Not uploaded yet") {
 		t.Fatalf("offline handoff: code=%d stderr=%s", code, errOut)
 	}
@@ -217,18 +221,23 @@ func recordLaunch(t *testing.T, env *Env) *string {
 	t.Helper()
 	document := new(string)
 	env.Executable = func() (string, error) { return "/opt/agent-archive", nil }
-	env.LaunchHandoff = func(_, _, prompt string, _ io.Reader, _, _ io.Writer) error {
-		const prefix = "Read the complete handoff document at "
-		path, err := strconv.Unquote(strings.SplitN(strings.TrimPrefix(prompt, prefix), ", then continue", 2)[0])
-		if err != nil {
-			t.Fatal(err)
-		}
-		data, err := os.ReadFile(path)
+	env.LaunchHandoff = func(spec launchSpec, _ io.Reader, _, _ io.Writer) error {
+		data, err := os.ReadFile(spec.HandoffFile)
 		if err != nil {
 			t.Fatal(err)
 		}
 		*document = string(data)
 		return nil
+	}
+	// Off a terminal, as when an agent runs it, the agent opens in a new
+	// window.
+	env.OpenTerminal = func(spec termlaunch.Spec) (string, error) {
+		data, err := os.ReadFile(filepath.Join(spec.ScriptDir, launchHandoffName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		*document = string(data)
+		return "a new tmux window", nil
 	}
 	return document
 }
@@ -277,7 +286,7 @@ func TestHandoffToUsesTheCallingSession(t *testing.T) {
 func TestHandoffToIgnoresASessionVariableOfAnotherHarness(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched")
 		return nil
 	}
@@ -296,7 +305,7 @@ func TestHandoffToInCursorUsesLatestCursorSession(t *testing.T) {
 	t.Parallel()
 	f := newPickerFixture(t)
 	f.env.LookupEnv = agentEnv(map[string]string{"CURSOR_AGENT": "1"})
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched without a Cursor session")
 		return nil
 	}
@@ -400,7 +409,7 @@ func TestHandoffPickerAndToSkipSubagents(t *testing.T) {
 	if code != 0 || strings.Contains(out, sub[:minShortSessionID]) {
 		t.Fatalf("code=%d stderr=%s; subagent listed:\n%s", code, errOut, out)
 	}
-	f.env.LaunchHandoff = func(string, string, string, io.Reader, io.Writer, io.Writer) error {
+	f.env.LaunchHandoff = func(launchSpec, io.Reader, io.Writer, io.Writer) error {
 		t.Error("launched a subagent")
 		return nil
 	}
