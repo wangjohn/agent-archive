@@ -41,7 +41,22 @@ follow [Semantic Versioning](https://semver.org/).
   one you are in. Setup leaves a file it did not write, uninstall removes
   only its own, and `status --json` lists them in `agent_skills`. After an
   upgrade, `status` warns about a skill file an earlier release wrote and lists
-  it in `agent_skills_out_of_date`; `agent-archive setup` refreshes it.
+  it in `agent_skills_out_of_date`; `agent-archive setup --refresh` refreshes it.
+- `agent-archive setup --refresh` brings the app hooks, the background
+  collector's plist, and the skill files up to date for the saved settings and
+  the binary you run it from, and changes nothing else. It asks nothing and
+  needs no terminal, prints `nothing to refresh` or what it refreshed, and
+  refuses (exit 1) before setup has finished, while a setup needs recovery,
+  after uninstall, or when another installation's hooks are in the way. It
+  also repairs hooks left pointing at a binary that moved. `install.sh` runs it
+  when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
+  skills; if it fails, or the installer runs as root (which would leave
+  root-owned files in your home directory), the install still succeeds and
+  says how to run it. It waits up to ten seconds for a running collection
+  pass, and finishes once it starts writing even if you press Ctrl-C. Run as
+  root in another user's home directory, it refuses, changing nothing.
+  `status` names it where it reports out-of-date skills, hooks that are
+  missing, or a moved binary.
 - `agent-archive setup --no-skills` (also with `--yes`) installs no agent
   skills and removes the ones setup wrote; a file that is not setup's is left
   alone and named. It is saved, so later setup runs keep the skills off, and
@@ -81,9 +96,16 @@ follow [Semantic Versioning](https://semver.org/).
   flagged, and what an agent does not record (Cursor's tokens) reads
   "unknown", never zero. See [stats](docs/guides/stats.md).
 - `agent-archive stats --html` writes the same numbers as one self-contained
-  web page: a chart of tokens by day with its peak, overview cards, agents,
-  cost by model, top projects, a donut of what used your tokens, highlights,
-  and the scope, coverage and price-table notes. It is a single file with
+  web page shaped like the terminal's default view: spend, sessions and
+  tokens (with the cache share) at the top, the agents as one bar, a chart of
+  daily spend with its dearest day (days that could not be priced are marked,
+  not drawn as zero), where the spend went by project and by model in the
+  agents', model families' and projects' colors, the skills and MCP servers
+  used most, up to three "heads up" notes, and, under a divider, the agents'
+  table, a donut of what used your tokens, facts (days active, busiest day,
+  tool errors, month rank) and the scope, coverage and price-table notes. The
+  change from the previous period is shown only when there was a previous
+  period, and subagents are counted as runs, not sessions. It is a single file with
   inline styles and SVG, no script and no request to anything else; it
   follows your light or dark setting, prints, and reads on a phone. Give
   `--output FILE` to save it (mode 0600; an existing file is kept unless

@@ -240,6 +240,16 @@ type Env struct {
 	// registers, and uploads, and stop ends the delivery. Defaults to
 	// os/signal for os.Interrupt, SIGTERM, and SIGHUP.
 	Interrupts func() (signals <-chan os.Signal, stop func())
+	// RefreshCollectorWait is how long setup --refresh waits for a running
+	// collector pass to finish before it refuses. Defaults to
+	// refreshCollectorWait; tests shorten it.
+	RefreshCollectorWait func() time.Duration
+	// EffectiveUID is the user ID this process runs as. Defaults to
+	// os.Geteuid; tests set it to run as root.
+	EffectiveUID func() int
+	// FileOwner is the user ID that owns a path (ok false when unknown).
+	// Defaults to the file system's.
+	FileOwner func(path string) (uid int, ok bool)
 }
 
 func (e Env) isTerminal(stream any) bool {
@@ -257,6 +267,27 @@ func (e Env) interrupts() (<-chan os.Signal, func()) {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	return signals, func() { signal.Stop(signals) }
+}
+
+func (e Env) refreshCollectorWait() time.Duration {
+	if e.RefreshCollectorWait != nil {
+		return e.RefreshCollectorWait()
+	}
+	return refreshCollectorWait
+}
+
+func (e Env) effectiveUID() int {
+	if e.EffectiveUID != nil {
+		return e.EffectiveUID()
+	}
+	return os.Geteuid()
+}
+
+func (e Env) fileOwner(path string) (uid int, ok bool) {
+	if e.FileOwner != nil {
+		return e.FileOwner(path)
+	}
+	return fileOwner(path)
 }
 
 func (e Env) lookupEnv(key string) (string, bool) {

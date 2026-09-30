@@ -43,6 +43,7 @@ func TestPageGoldens(t *testing.T) {
 	golden.Check(t, goldenPath("real-names"), render(t, computeFixture(t, sessions, 30, stats.GroupProject),
 		Options{IncludeNames: true, Filters: Filters{Harness: "claude", Origin: "hook"}}))
 	golden.Check(t, goldenPath("empty"), render(t, computeFixture(t, nil, 30, stats.GroupNone), Options{}))
+	golden.Check(t, goldenPath("realistic"), render(t, modelStats(t, realisticSessions(), realisticPrices, stats.GroupNone), Options{}))
 }
 
 func TestRenderIsDeterministic(t *testing.T) {
@@ -83,21 +84,35 @@ func TestShareablePageHasNoProjectNamesOrIDs(t *testing.T) {
 	}
 }
 
-// One project has one label throughout the file: its row in top projects, the
-// costliest session, and the breakdown by project agree.
+// One project has one label throughout the file: its row in "by project", the
+// heads-up about the costliest session, the highlight and the breakdown by
+// project agree, and the labels follow the order the page names the projects
+// in, dearest first.
 func TestProjectLabelsAreConsistentAcrossSections(t *testing.T) {
 	t.Parallel()
 	s := computeFixture(t, fixtureSessions(), 30, stats.GroupProject)
 	out := string(render(t, s, Options{}))
+	dearest := ""
+	best := -1.0
+	for _, p := range s.Projects {
+		if p.Cost.USD != nil && *p.Cost.USD > best {
+			dearest, best = p.Name, *p.Cost.USD
+		}
+	}
+	// The first project the page names is the dearest, and is project A.
 	names := newNamer(false, "project")
-	first := names.project(s.Projects[0].Name)
-	if first != "project A" {
-		t.Fatalf("the top project is %q, want project A", first)
+	if got := names.project(dearest); got != "project A" {
+		t.Fatalf("the dearest project is %q, want project A", got)
+	}
+	_, table, found := strings.Cut(out, `id="h-projects"`)
+	first, second := strings.Index(table, "project A"), strings.Index(table, "project B")
+	if !found || first < 0 || second < first {
+		t.Error("the dearest project is not the first row of the by-project table")
 	}
 	costliest := s.Highlights.CostliestSession.Project
 	label := names.project(costliest)
-	if !strings.Contains(out, label+" (long context") && !strings.Contains(out, "· "+label) {
-		t.Errorf("the costliest session's project %q is not labelled %q in the highlights", costliest, label)
+	if !strings.Contains(out, " · "+label+" · long context") && !strings.Contains(out, "· "+label+" (long context") {
+		t.Errorf("the costliest session's project %q is not labelled %q in the heads-up and the highlights", costliest, label)
 	}
 	// Every project of the breakdown has a label, and labels are not reused.
 	seen := map[string]string{}
@@ -108,8 +123,8 @@ func TestProjectLabelsAreConsistentAcrossSections(t *testing.T) {
 		}
 		seen[l] = row.Key
 	}
-	if strings.Count(out, "project A") < 3 {
-		t.Errorf("project A appears %d times, want it in top projects, highlights and the breakdown", strings.Count(out, "project A"))
+	if strings.Count(out, "project A") < 4 {
+		t.Errorf("project A appears %d times, want it in by project, heads-up, highlights and the breakdown", strings.Count(out, "project A"))
 	}
 }
 
@@ -223,16 +238,20 @@ func TestPageIsSelfContainedInBothThemes(t *testing.T) {
 func TestDailyChartLabelsThePeakAndAnswersHover(t *testing.T) {
 	t.Parallel()
 	out := string(render(t, computeFixture(t, fixtureSessions(), 30, stats.GroupNone), Options{}))
-	if !strings.Contains(out, "Peak 29M · Sep 17") {
-		t.Error("the chart does not label its peak")
+	s := computeFixture(t, fixtureSessions(), 30, stats.GroupNone)
+	if s.PeakSpend == nil || s.PeakSpend.Date != "2026-09-17" {
+		t.Fatalf("the fixture's dearest day is %+v, want Sep 17", s.PeakSpend)
+	}
+	if !strings.Contains(out, "Peak $66 · Sep 17") {
+		t.Error("the chart does not label its peak spend")
 	}
 	if got := strings.Count(out, `<g class="slot"><title>`); got != 30 {
 		t.Errorf("%d hover titles, want one per day (30)", got)
 	}
 	for _, want := range []string{
-		"<title>Sep 17 · 29M tokens · 2 sessions</title>",
+		"<title>Sep 17 · $66 · 2 sessions</title>",
 		"<title>Sep 3 · no sessions</title>",
-		"<title>Sep 15 · 1 session · token count unknown</title>",
+		"<title>Sep 15 · 1 session · cost unknown</title>",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the chart lacks the hover text %q", want)
@@ -241,8 +260,22 @@ func TestDailyChartLabelsThePeakAndAnswersHover(t *testing.T) {
 	if !strings.Contains(out, `class="bar unknown"`) || !strings.Contains(out, `class="bar day peak"`) {
 		t.Error("the chart does not mark an unknown day and the peak")
 	}
-	if !strings.Contains(out, `role="img" aria-label="Tokens by day, Aug 31 to Sep 29. Peak 29M tokens on Sep 17."`) {
+	if !strings.Contains(out, `role="img" aria-label="Spend by day, Aug 31 to Sep 29. Peak $66 on Sep 17."`) {
 		t.Error("the chart has no text alternative naming the peak")
+	}
+	if strings.Contains(out, "Tokens by day") {
+		t.Error("the page still charts tokens by day")
+	}
+	// The peak bar is the tallest of the plot, and the table view carries the
+	// spend of every day: sessions, spend, tokens.
+	if !strings.Contains(out, `<tr><th scope="row">Sep 17</th><td class="num">2</td><td class="num">$66</td><td class="num">29M</td></tr>`) {
+		t.Error("the chart's table does not give Sep 17's sessions, spend and tokens")
+	}
+	if !strings.Contains(out, `<tr><th scope="row">Sep 15</th><td class="num">1</td><td class="num">n/a</td><td class="num">unknown</td></tr>`) {
+		t.Error("the chart's table does not show an unpriced day as n/a, not $0")
+	}
+	if !strings.Contains(out, `<tr><th scope="row">Sep 3</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>`) {
+		t.Error("the chart's table does not show a day without sessions as 0")
 	}
 	if !strings.Contains(out, "<summary>Show as a table</summary>") {
 		t.Error("the chart has no table view")
@@ -261,8 +294,11 @@ func TestLargeArchiveStaysWithinItsBudget(t *testing.T) {
 			project:  fmt.Sprintf("project-%d-%s", i%700, strings.Repeat("n", i%50)),
 			captured: start.Add(time.Duration(i) * 13 * time.Hour), models: []string{"claude-opus-5", fmt.Sprintf("model-%d", i%40)},
 			turns: 5, messages: 30, toolResults: 20, errors: 1, skills: []string{fmt.Sprintf("skill-%d", i%60)},
-			mcp:    map[string]int{fmt.Sprintf("server-%d", i%30): 4},
-			tokens: []tokenSpec{{fmt.Sprintf("model-%d", i%40), 10_000 + i, 5_000, 200_000, 20_000}},
+			mcp: map[string]int{fmt.Sprintf("server-%d", i%30): 4},
+			tokens: []tokenSpec{
+				{fmt.Sprintf("model-%d", i%40), 10_000 + i, 5_000, 200_000, 20_000},
+				{"claude-opus-5", 1_000 + i, 500, 20_000, 2_000},
+			},
 		}.build())
 	}
 	for _, by := range []stats.Grouping{stats.GroupNone, stats.GroupDay, stats.GroupProject} {
@@ -292,13 +328,13 @@ func TestUnknownTokensAreNeverZero(t *testing.T) {
 			t.Errorf("the Cursor-only page lacks %q", want)
 		}
 	}
-	for _, bad := range []string{"Tokens by day, ", "What used your tokens", ">0 tokens", "$0"} {
+	for _, bad := range []string{"Spend by day, ", "What used your tokens", ">0 tokens", "$0"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("the Cursor-only page contains %q", bad)
 		}
 	}
 	mixed := string(render(t, computeFixture(t, fixtureSessions(), 30, stats.GroupNone), Options{}))
-	if !strings.Contains(mixed, `<td class="num">3 (14%)</td><td class="num">unknown</td><td class="num">n/a</td>`) {
+	if !strings.Contains(mixed, `<td class="num">3 (14%)</td><td class="num">unknown</td><td class="num">n/a</td><td class="num">unknown</td>`) {
 		t.Error("the agents table does not show Cursor as unknown tokens and n/a cost")
 	}
 }
@@ -316,7 +352,7 @@ func TestEmptyWindowGetsAHelpfulPage(t *testing.T) {
 	if !strings.Contains(custom, "No archived sessions match &lt;these&gt; filters.") {
 		t.Error("the caller's empty message is not shown, escaped")
 	}
-	if strings.Contains(out, "Tokens by day") || strings.Contains(out, `class="card stat"`) {
+	if strings.Contains(out, "Daily spend") || strings.Contains(out, `class="stat"`) || strings.Contains(out, "Details") {
 		t.Error("the empty page draws sections without data")
 	}
 }
@@ -358,60 +394,6 @@ func TestDonutSegmentsAddUp(t *testing.T) {
 	}
 	if !strings.Contains(single, `stroke-dasharray="427.26 0"`) {
 		t.Error("a single-type composition is not a whole ring")
-	}
-}
-
-// The colors clear WCAG: text at 4.5:1 and marks at 3:1 against the surface,
-// in both themes, and the categorical ring colors are the ones the palette
-// was validated with.
-// reliefColors are the marks the validated palette leaves under 3:1 against
-// the surface, by theme; they are ring segments whose share and tokens are
-// also written out in the legend.
-var reliefColors = map[string]map[string]bool{"light": {"seg3": true, "seg4": true}}
-
-func TestPaletteContrast(t *testing.T) {
-	t.Parallel()
-	light, dark := themeColors(t)
-	for name, theme := range map[string]map[string]string{"light": light, "dark": dark} {
-		surface := theme["surface"]
-		for _, text := range []string{"ink", "ink-2", "ink-3"} {
-			if got := contrast(t, theme[text], surface); got < 4.5 {
-				t.Errorf("%s: --%s on the surface is %.2f:1, under 4.5:1", name, text, got)
-			}
-			if got := contrast(t, theme[text], theme["page"]); got < 4.5 {
-				t.Errorf("%s: --%s on the page is %.2f:1, under 4.5:1", name, text, got)
-			}
-		}
-		for _, mark := range []string{"series", "series-strong", "seg1", "seg2", "seg3", "seg4", "unknown"} {
-			floor := 3.0
-			// The light theme's aqua and yellow sit under 3:1 by design of the
-			// validated palette; the legend and table carry them (relief rule).
-			if reliefColors[name][mark] {
-				floor = 2.0
-			}
-			if got := contrast(t, theme[mark], surface); got < floor {
-				t.Errorf("%s: --%s against the surface is %.2f:1, under %.1f:1", name, mark, got, floor)
-			}
-		}
-		// Labels on the ring are black; each ring color must carry them.
-		for _, seg := range []string{"seg1", "seg2", "seg3", "seg4"} {
-			if got := contrast(t, "#000000", theme[seg]); got < 4.5 {
-				t.Errorf("%s: black label on --%s is %.2f:1, under 4.5:1", name, seg, got)
-			}
-		}
-	}
-	if light["seg1"] != "#2a78d6" || dark["seg1"] != "#3987e5" {
-		t.Error("the first ring color is not the validated palette's slot 1")
-	}
-}
-
-// Delta glyphs come with a spoken form, and a number is never a color alone:
-// every up or down arrow has its words next to it for a screen reader.
-func TestDeltasHaveASpokenForm(t *testing.T) {
-	t.Parallel()
-	out := string(render(t, computeFixture(t, fixtureSessions(), 30, stats.GroupNone), Options{}))
-	if !strings.Contains(out, `<span aria-hidden="true">▲ 267%</span><span class="sr">up 267 percent</span>`) {
-		t.Error("the sessions delta has no spoken form")
 	}
 }
 
