@@ -1,0 +1,6 @@
+# exit 1
+Setup incomplete: stop previous collector: cannot confirm which plist launchd's com.agent-archive.collector job was loaded from; it was left as it is
+rollback incomplete; run setup again: cannot recover the interrupted setup: the background collector's state is unknown, so recovery cannot safely continue; restore access to launchctl and rerun setup
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.

@@ -1,0 +1,6 @@
+# exit 1
+  ✓ Claude Code hooks: ~/.claude/settings.json
+  ✗ Background job: launchd's com.agent-archive.collector job was loaded from a plist other than ~/Library/LaunchAgents/com.agent-archive.collector.plist, so it belongs to another installation
+    Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own.
+Setup incomplete: Background job: launchd's com.agent-archive.collector job was loaded from a plist other than ~/Library/LaunchAgents/com.agent-archive.collector.plist, so it belongs to another installation
+Nothing was changed. Fix what is marked ✗ above, then run the same agent-archive setup --yes command again.

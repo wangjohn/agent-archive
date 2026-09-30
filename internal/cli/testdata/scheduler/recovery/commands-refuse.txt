@@ -1,0 +1,9 @@
+## agent-archive uninstall --yes (exit 1)
+Uninstall incomplete: setup was interrupted and needs recovery (recorded in @DATA_HOME@/setup-transaction.json). Run agent-archive setup to recover it; if setup reports a file changed outside setup, run agent-archive setup --abandon-recovery to keep your files as they are now
+
+## agent-archive pause (exit 1)
+agent-archive: pause: no settings changed: setup was interrupted and needs recovery (recorded in @DATA_HOME@/setup-transaction.json). Run agent-archive setup to recover it; if setup reports a file changed outside setup, run agent-archive setup --abandon-recovery to keep your files as they are now
+
+## agent-archive sync (exit 1)
+agent-archive: sync: setup was interrupted and needs recovery (recorded in @DATA_HOME@/setup-transaction.json). Run agent-archive setup to recover it; if setup reports a file changed outside setup, run agent-archive setup --abandon-recovery to keep your files as they are now
+

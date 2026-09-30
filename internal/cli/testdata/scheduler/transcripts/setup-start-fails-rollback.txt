@@ -1,0 +1,20 @@
+# setup whose new job fails to start
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=absent own=old prototype=present earlier:223bda05f72f=present
+print gui/UID/com.agent-archive.collector  |  journal=absent own=old prototype=present earlier:223bda05f72f=present
+print gui/UID/com.agent-skills.skill-runs-upload  |  journal=absent own=old prototype=present earlier:223bda05f72f=present
+print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=absent own=old prototype=present earlier:223bda05f72f=present
+print gui/UID/com.agent-archive.collector  |  journal=present own=old prototype=present earlier:223bda05f72f=present
+bootout gui/UID/com.agent-archive.collector  |  journal=present own=old prototype=present earlier:223bda05f72f=present
+print gui/UID/com.agent-skills.skill-runs-upload  |  journal=present own=new prototype=present earlier:223bda05f72f=present
+bootout gui/UID/com.agent-skills.skill-runs-upload  |  journal=present own=new prototype=present earlier:223bda05f72f=present
+print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=present own=new prototype=absent earlier:223bda05f72f=present
+bootout gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=present own=new prototype=absent earlier:223bda05f72f=present
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present own=new prototype=absent earlier:223bda05f72f=absent
+print gui/UID/com.agent-archive.collector  |  journal=present own=new prototype=absent earlier:223bda05f72f=absent
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present own=old prototype=absent earlier:223bda05f72f=absent
+print gui/UID/com.agent-skills.skill-runs-upload  |  journal=present own=old prototype=present earlier:223bda05f72f=absent
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-skills.skill-runs-upload.plist  |  journal=present own=old prototype=present earlier:223bda05f72f=absent
+print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=present own=old prototype=present earlier:223bda05f72f=present
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.223bda05f72f.plist  |  journal=present own=old prototype=present earlier:223bda05f72f=present
+# exit 1, end: journal=absent own=old prototype=present earlier:223bda05f72f=present
