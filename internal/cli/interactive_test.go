@@ -158,7 +158,7 @@ func ttyRun(t *testing.T, env Env, input string, args ...string) (out, errOut st
 	stdin := strings.NewReader(input)
 	var stdout, stderr bytes.Buffer
 	env.IsTerminal = func(stream any) bool { return stream == any(stdin) || stream == any(&stdout) }
-	env.RunPager = func(_ context.Context, _ string, in io.Reader, _, _ io.Writer) error {
+	env.RunPager = func(_ context.Context, _ string, _ []string, in io.Reader, _, _ io.Writer) error {
 		t.Errorf("%v started a pager", args)
 		_, err := io.Copy(io.Discard, in)
 		return err
@@ -298,7 +298,7 @@ func TestPagerNotStartedInAnAgent(t *testing.T) {
 		pages := 0
 		e := withEnvironment(env, vars)
 		e.IsTerminal = func(stream any) bool { return stream == any(&stdout) }
-		e.RunPager = func(_ context.Context, _ string, in io.Reader, _, _ io.Writer) error {
+		e.RunPager = func(_ context.Context, _ string, _ []string, in io.Reader, _, _ io.Writer) error {
 			pages++
 			_, err := io.Copy(io.Discard, in)
 			return err
