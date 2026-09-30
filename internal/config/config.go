@@ -101,6 +101,14 @@ type Config struct {
 	// written before this field existed falls back to the current
 	// environment's paths.
 	HookFiles map[string]string `json:"hook_files,omitempty"`
+	// BackgroundBackend names the scheduler that runs the background collector
+	// ("systemd"), as setup recorded it. Status, uninstall, refresh and
+	// recovery address the job through this backend and never pick another.
+	// Setup leaves out "launchd", and an absent field means launchd on macOS
+	// and systemd on Linux, for all time, so a macOS configuration never
+	// changes and a binary that rewrites this file without the field cannot
+	// change what it means.
+	BackgroundBackend string `json:"background_backend,omitempty"`
 	// RequireSkillUse opts out of the spec's default (capture sessions with
 	// no detected skill use too, to preserve comparison evidence). The zero
 	// value (false) matches that default, so a config that predates this
