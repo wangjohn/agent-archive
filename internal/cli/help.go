@@ -264,6 +264,11 @@ With no selector on a terminal, pick a session from a numbered list of this
 Mac's sessions (including ones not yet uploaded) and archived ones, newest
 first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
 (automatic inside coding agents), give a SESSION_ID, --latest, or --file PATH.
+On a terminal without --to, --output, or --format json, it then asks where
+to continue: an installed agent (default: handoff.default_to in
+config.json, else Codex for a Claude Code session and Claude Code for the
+others), or print, copy to the clipboard, or write to a file. Piped, or
+with AGENT_ARCHIVE_NONINTERACTIVE on, it prints the handoff as it always has.
   --latest              The most recent session for the project
   --project DIR         Project for --latest (default: current directory)
   --harness NAME        claude, codex, or cursor
@@ -289,7 +294,12 @@ first. Without a terminal, or when AGENT_ARCHIVE_NONINTERACTIVE is on
                         needs the agent's CLI (claude, codex, or agent) on
                         PATH. With no selector, hands off the Claude Code,
                         Codex, or Cursor session it runs in, or picks one on
-                        a terminal
+                        a terminal. On a terminal the agent runs there;
+                        otherwise it opens in a new tmux window, or a new
+                        iTerm2, Ghostty, or Terminal tab, and the command
+                        returns
+  --here                Run the launched agent in this terminal
+  --new-window          Open the launched agent in a new window or tab
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
 Example: agent-archive handoff

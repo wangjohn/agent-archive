@@ -68,6 +68,14 @@ follow [Semantic Versioning](https://semver.org/).
   the checkout with `--cd` and `--workspace`. Cursor's `agent` CLI is tried
   before `cursor-agent`. The launched agent does not inherit the calling
   agent's session variables.
+- On a terminal, `handoff` asks where to continue: an installed agent
+  (default: another agent than the session's, or `handoff.default_to`),
+  print (paged when long), copy to the clipboard, or write to a file. Pipes,
+  `--output`, `--format json`, and `--no-preamble` print as before.
+- Without a terminal, as when an agent runs it, `handoff --to` opens the
+  agent in a new tmux window or iTerm2, Ghostty, or Terminal tab and returns;
+  `--here` and `--new-window` choose explicitly. Where no window can be
+  opened it prints the command to run instead.
 - Arguments after `--` go to the agent `handoff --to` launches, and
   `config.json` may set per-agent arguments (`handoff.args`) and a default
   destination per source harness (`handoff.default_to`).
