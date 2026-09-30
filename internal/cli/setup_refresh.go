@@ -259,12 +259,12 @@ func planSetupRefresh(home, userHome, exe string, cfg config.Config, env Env) (r
 		plan.left = leftSkillFiles(agentskills.Files(userHome, claudeDir, cfg.Harnesses, exe, dataHome), skillChanges)
 	}
 	definition := env.jobDefinition(userHome, in.ref())
-	plistChange, changed, err := refreshJob(in, userHome, home, exe, definition)
+	jobChanges, err := refreshJob(in, userHome, home, exe, definition)
 	if err != nil {
 		return plan, refuse("%v", err)
 	}
-	if changed {
-		changes = append(changes, plistChange)
+	if len(jobChanges) > 0 {
+		changes = append(changes, jobChanges...)
 		plan.plist = true
 	}
 	if cfg.InstalledExecutable != exe {
@@ -314,11 +314,12 @@ func planJobRestart(plan *refreshPlan, in installation, userHome string, env Env
 // LaunchAgent plist) at exe, keeping everything else in it (the environment
 // setup verified the storage with, which this shell may not have): it
 // redefines the job from what the definition on disk says, with exe as its
-// program. changed is false when the definition already runs exe, or there is
-// none: creating a definition is setup's.
-func refreshJob(in installation, userHome, home, exe string, definition scheduler.Status) (change hooks.Change, changed bool, err error) {
+// program. It changes every artifact the definition is in (a scheduler may
+// keep a job in more than one file), and nothing when the definition already
+// runs exe, or there is none: creating a definition is setup's.
+func refreshJob(in installation, userHome, home, exe string, definition scheduler.Status) ([]hooks.Change, error) {
 	if !definition.Defined {
-		return change, false, nil
+		return nil, nil
 	}
 	unreadable := func(err error) error {
 		var pathErr *fs.PathError
@@ -328,23 +329,19 @@ func refreshJob(in installation, userHome, home, exe string, definition schedule
 		return fmt.Errorf("%s cannot be read (%w); run agent-archive setup to write it again", definitionPath(definition), err)
 	}
 	if definition.Program == "" && definition.DefinitionErr != nil {
-		return change, false, unreadable(definition.DefinitionErr)
+		return nil, unreadable(definition.DefinitionErr)
 	}
 	if definition.Program == exe {
-		return change, false, nil
+		return nil, nil
 	}
 	if definition.DefinitionErr != nil {
-		return change, false, unreadable(definition.DefinitionErr)
+		return nil, unreadable(definition.DefinitionErr)
 	}
 	plan, err := in.planJob(userHome, collectorJob(exe, home, definition.Env))
 	if err != nil {
-		return change, false, err
+		return nil, err
 	}
-	changes, err := artifactChanges(plan.Artifacts)
-	if err != nil {
-		return change, false, err
-	}
-	return changes[0], true, nil
+	return artifactChanges(plan.Artifacts)
 }
 
 // definitionPath is the file a job's definition is in, "" when the scheduler
