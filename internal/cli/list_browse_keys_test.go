@@ -58,10 +58,12 @@ type fakeKeys struct {
 	onResize func()
 	// clock is the fake's time, moved on by each chunk that arrives later.
 	clock time.Time
+	// stopPending is a Ctrl-Z that came while no key was read.
+	stopPending bool
 }
 
 func newFakeKeys(chunks ...string) *fakeKeys {
-	return &fakeKeys{chunks: append([]string(nil), chunks...), unblock: make(chan struct{}), blocked: make(chan struct{})}
+	return &fakeKeys{clock: time.Unix(1_700_000_000, 0), chunks: append([]string(nil), chunks...), unblock: make(chan struct{}), blocked: make(chan struct{})}
 }
 
 func (f *fakeKeys) keys() error {
@@ -84,6 +86,14 @@ func (f *fakeKeys) note(event string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.events = append(f.events, event)
+}
+
+func (f *fakeKeys) pendingStop() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	pending := f.stopPending
+	f.stopPending = false
+	return pending
 }
 
 func (f *fakeKeys) now() time.Time {
@@ -154,8 +164,8 @@ func (f *fakeKeys) read(p []byte, wait time.Duration) (int, error) {
 		}
 		chunk, f.chunks[0] = data, data
 		f.clock = f.clock.Add(time.Duration(d))
-	} else if wait >= 0 && !f.arrived {
-		// The burst is over.
+	} else if wait >= 0 && !f.arrived && chunk != string(fakeSuspend) {
+		// The burst is over, unless Ctrl-Z came during the wait.
 		f.mu.Unlock()
 		return 0, nil
 	}

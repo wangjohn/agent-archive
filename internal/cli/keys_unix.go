@@ -83,6 +83,8 @@ func (t *ttyKeys) release() {
 
 func (t *ttyKeys) now() time.Time { return time.Now() }
 
+func (t *ttyKeys) pendingStop() bool { return signalled(t.suspended) }
+
 // whilePaging answers Ctrl-Z while a pager runs by stopping the process:
 // the pager has stopped itself, and the shell sees the job stop once the
 // browser has too. fg continues both; the pager still owns the screen, so
@@ -95,6 +97,10 @@ func (t *ttyKeys) whilePaging() (end func()) {
 			select {
 			case <-t.suspended:
 				_ = unix.Kill(os.Getpid(), unix.SIGSTOP)
+				// Continued: a second Ctrl-Z already sent must not stop
+				// it again at once.
+				for signalled(t.suspended) {
+				}
 			case <-done:
 				return
 			}
@@ -162,6 +168,9 @@ func (t *ttyKeys) read(p []byte, wait time.Duration) (int, error) {
 				return 0, errWindowResized
 			}
 			continue
+		}
+		if signalled(t.suspended) {
+			return 0, errSuspended
 		}
 		if !time.Now().Before(deadline) {
 			return 0, nil

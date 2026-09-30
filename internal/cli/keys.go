@@ -88,8 +88,8 @@ type keyTerminal interface {
 	// returns what is available at once: several keys when the terminal
 	// sent them together, as the mouse wheel does. It returns 0 bytes when
 	// wait passes with no input, io.EOF when input ends, and
-	// errWindowResized or errSuspended when the window changed size or
-	// Ctrl-Z was pressed while it waited forever.
+	// errWindowResized when the window changed size while it waited
+	// forever, and errSuspended when Ctrl-Z was pressed while it waited.
 	read(p []byte, wait time.Duration) (int, error)
 	// stop stops the process, as Ctrl-Z does, and returns once it is
 	// continued.
@@ -98,6 +98,9 @@ type keyTerminal interface {
 	// the pager stops itself, and so must the browser waiting for it, or
 	// the shell never sees the job stop.
 	whilePaging() (end func())
+	// pendingStop reports, once, a Ctrl-Z that came while no key was
+	// being read.
+	pendingStop() bool
 	// release ends what keys set up for the browser's whole run (Ctrl-Z
 	// is its own from the first keys to release).
 	release()
@@ -203,7 +206,16 @@ func (k *keyInput) close() {
 
 // page gives a pager the terminal: line input back, and Ctrl-Z answered
 // while it runs. end ends that; resume turns keys back on after it.
+//
+// A Ctrl-Z that came before (while the transcript loaded, say) is answered
+// first, with the browser's screen put away: the watcher would stop the
+// process at once, before the pager ran, with the alternate screen up.
 func (k *keyInput) page() (end func()) {
+	if k.term.pendingStop() {
+		// An error setting the modes again leaves line input, which the
+		// pager wants anyway; resume after it reports it.
+		_ = k.pause()
+	}
 	k.suspend()
 	return k.term.whilePaging()
 }
@@ -216,11 +228,14 @@ func (k *keyInput) buffered() bool {
 // next returns the next key press, waiting for one.
 func (k *keyInput) next() (key, error) {
 	for len(k.pending) == 0 {
-		if err := k.failed; err != nil {
-			k.failed = nil
-			return key{}, err
+		// An error that ended the last burst (Ctrl-Z during the wait for
+		// an escape sequence's rest, say) is handled as a read's would be.
+		var data []byte
+		err := k.failed
+		k.failed = nil
+		if err == nil {
+			data, err = k.readBurst()
 		}
-		data, err := k.readBurst()
 		if err != nil {
 			// What came before a resize or Ctrl-Z is not continued after.
 			k.stale = nil

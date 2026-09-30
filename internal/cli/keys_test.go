@@ -40,6 +40,7 @@ func TestKeysReadASplitEscapeSequenceAsItsKey(t *testing.T) {
 		{"\x1b", later(300*time.Millisecond, "Ox")},
 		{"\x1b[", later(time.Minute, "Ox")},
 		{"\x1b[", string(fakeResize), "Ox"},
+		{"\x1b[", string(fakeSuspend), "Ox"},
 	} {
 		_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, append(chunks, "\x1b")...)
 		typed := screens[len(screens)-2]
