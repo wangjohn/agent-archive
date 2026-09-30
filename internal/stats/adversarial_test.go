@@ -201,3 +201,26 @@ func TestNegativeCountsAreNotTokens(t *testing.T) {
 		t.Errorf("prompts %v, want 0", f64(p))
 	}
 }
+
+// A subagent chain that loops (a session its own ancestor) still counts every
+// session once: the loop's sessions, and whatever hangs off it, stand alone.
+func TestParentLoopsCountEachSessionOnce(t *testing.T) {
+	t.Parallel()
+	at := day(time.September, 28, 10)
+	sessions := []archive.Metadata{
+		meta("self", "claude", at, parentOf("self"), modelTokens("claude-opus-5-5", 1, 1, 0, 0)),
+		meta("a", "claude", at, parentOf("b"), modelTokens("claude-opus-5-5", 2, 2, 0, 0)),
+		meta("b", "claude", at, parentOf("a"), modelTokens("claude-opus-5-5", 4, 4, 0, 0)),
+		meta("under-loop", "claude", at, parentOf("a"), modelTokens("claude-opus-5-5", 8, 8, 0, 0)),
+		meta("root", "claude", at, modelTokens("claude-opus-5-5", 16, 16, 0, 0)),
+		meta("kid", "claude", at, parentOf("root"), modelTokens("claude-opus-5-5", 32, 32, 0, 0)),
+		meta("grandkid", "claude", at, parentOf("kid"), modelTokens("claude-opus-5-5", 64, 64, 0, 0)),
+	}
+	got := Compute(sessions, opts())
+	if got.Overview.Tokens.Value == nil || *got.Overview.Tokens.Value != 254 {
+		t.Fatalf("tokens = %v, want every session's tokens once (254)", f64(got.Overview.Tokens.Value))
+	}
+	if got.Coverage.Sessions != 5 || got.Coverage.SubagentSessions != 2 {
+		t.Fatalf("coverage = %+v, want 5 sessions with 2 subagents rolled in", got.Coverage)
+	}
+}

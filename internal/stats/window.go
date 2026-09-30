@@ -31,11 +31,17 @@ func dateString(n int) string {
 	return time.Unix(int64(n)*secondsPerDay, 0).UTC().Format("2006-01-02")
 }
 
-// startOfDay is midnight of day number n in loc. In a zone whose clocks skip
-// midnight, time.Date picks the nearest valid instant.
+// startOfDay is the first instant of day number n in loc: midnight, or, in a
+// zone whose clocks skip midnight (São Paulo before 2019 sprang forward from
+// 00:00 to 01:00), the first moment that exists on that date. time.Date alone
+// would return an instant on the day before there.
 func startOfDay(n int, loc *time.Location) time.Time {
 	c := civilFromDayNumber(n)
-	return time.Date(c.year, c.month, c.day, 0, 0, 0, 0, loc)
+	t := time.Date(c.year, c.month, c.day, 0, 0, 0, 0, loc)
+	for dayNumber(civilOf(t)) < n {
+		t = t.Add(time.Minute)
+	}
+	return t
 }
 
 // floorMod is a modulo that is never negative.
