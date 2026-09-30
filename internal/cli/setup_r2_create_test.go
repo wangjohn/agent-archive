@@ -292,7 +292,7 @@ func TestGuidedR2NeverPersistsTheBootstrapToken(t *testing.T) {
 		t.Parallel()
 		g := newGuidedR2Fixture(t)
 		// A check that keeps failing leaves the setup draft on disk.
-		g.env.OpenStore = failingOpener(func() error { return invalidKey() })
+		g.env.OpenStore = failingOpener(invalidKey)
 		input := guidedAnswers(append(append([]string{}, askToken...), "", "n", "", "stop")...)
 		out := g.run(t, input, 1)
 		if _, err := os.Stat(draftPath(g.home)); err != nil {
