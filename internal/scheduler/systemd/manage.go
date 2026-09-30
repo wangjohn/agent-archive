@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -265,15 +266,24 @@ func parseVersion(output string) (int, bool) {
 
 // appendBackported reports whether `systemctl --version` names RHEL 8's
 // systemd 239 at a package release with StandardOutput=append: backported:
-// "systemd 239 (239-82.el8_10.19)", a release of rhelAppendRelease or later.
+// "systemd 239 (239-82.el8_10.19)", a release of rhelAppendRelease or later
+// whose dist tag is el8, wherever it comes (Oracle Linux puts a number of its
+// own before it: "239-82.0.13.el8_10.19"). Anything else is not.
 func appendBackported(output string) bool {
 	fields := strings.Fields(strings.SplitN(output, "\n", 2)[0])
-	if len(fields) < 3 || fields[1] != "239" {
+	if len(fields) < 3 || fields[0] != "systemd" || fields[1] != "239" {
 		return false
 	}
-	release, rest, ok := strings.Cut(strings.TrimPrefix(strings.Trim(fields[2], "()"), "239-"), ".")
-	n, err := strconv.Atoi(release)
-	return ok && err == nil && strings.HasPrefix(rest, "el8") && n >= rhelAppendRelease
+	release, prefixed := strings.CutPrefix(fields[2], "(239-")
+	release, suffixed := strings.CutSuffix(release, ")")
+	if !prefixed || !suffixed {
+		return false
+	}
+	parts := strings.Split(release, ".")
+	if n, err := strconv.Atoi(parts[0]); err != nil || strings.Trim(parts[0], "0123456789") != "" || n < rhelAppendRelease {
+		return false
+	}
+	return slices.ContainsFunc(parts[1:], func(part string) bool { return part == "el8" || strings.HasPrefix(part, "el8_") })
 }
 
 // Inspect asks systemd about the job ref names, reads its answer against the

@@ -207,17 +207,31 @@ func TestInspectStateMap(t *testing.T) {
 func TestOldSystemdIsRefused(t *testing.T) {
 	t.Parallel()
 	for version, refused := range map[string]bool{
-		"systemd 238\n+PAM":                 true,
-		"systemd 239\n+PAM":                 true,
-		"systemd 239 (239)\n":               true,
-		"systemd 239 (239-31.el8)\n":        true,
-		"systemd 239 (239-45.fc29)\n":       true,
-		"systemd 237 (237-3ubuntu10.57)\n":  true,
-		"systemd 239 (239-32.el8)\n":        false,
-		"systemd 239 (239-82.el8_10.19)\n":  false,
-		"systemd 240 (240)\n":               false,
-		"systemd 255 (255.4-1ubuntu8.17)\n": false,
-		"systemd 257.7 (257.7-1)\n":         false, // not a number: asked as if new
+		"systemd 238\n+PAM":                     true,
+		"systemd 239\n+PAM":                     true,
+		"systemd 239 (239)\n":                   true,
+		"systemd 239 (239-31.el8)\n":            true,
+		"systemd 239 (239-45.fc29)\n":           true,
+		"systemd 237 (237-3ubuntu10.57)\n":      true,
+		"systemd 239 (239-31.el8_2.8)\n":        true, // RHEL 8.2's last
+		"systemd 239 (239-32)\n":                true, // no dist tag
+		"systemd 239 (239-32.el7)\n":            true,
+		"systemd 239 (239-32.el80)\n":           true,
+		"systemd 239 (239-x.el8)\n":             true,
+		"systemd 239 (239-+32.el8)\n":           true,
+		"systemd 239 (32.el8)\n":                true,
+		"systemd 239 (239-32.el8\n":             true,
+		"systemd 239 239-32.el8)\n":             true,
+		"systemd 239 (239-32.el8)\n":            false,
+		"systemd 239 (239-41.el8_3)\n":          false, // CentOS 8.3
+		"systemd 239 (239-45.el8_4.3)\n":        false,
+		"systemd 239 (239-58.el8)\n":            false,
+		"systemd 239 (239-82.el8_10.19)\n":      false, // Rocky 8.10, captured
+		"systemd 239 (239-82.0.13.el8_10.19)\n": false, // Oracle Linux 8.10
+		"systemd 239 (239-74.el8_8.alma.1)\n":   false,
+		"systemd 240 (240)\n":                   false,
+		"systemd 255 (255.4-1ubuntu8.17)\n":     false,
+		"systemd 257.7 (257.7-1)\n":             false, // not a number: asked as if new
 	} {
 		f := newFakeSystemctl(t, "252")
 		f.versionText = version
@@ -552,6 +566,43 @@ func TestDropInOfAnInactiveJobIsNoNote(t *testing.T) {
 	}
 	if got := (Scheduler{Run: run}).Inspect(context.Background(), site, ref); got.State != scheduler.Missing || len(got.Degraded) != 0 {
 		t.Errorf("an inactive job with a drop-in: %q, degraded %q", got.State, got.Degraded)
+	}
+}
+
+// A drop-in is the job's own, and noted, unless it is in the directory every
+// unit of the type reads (service.d, timer.d, wherever that is): the unit's
+// own directory, a name-prefix one (agent-archive-.service.d, which systemd
+// applies to every agent-archive-*.service) and a runtime one from `systemctl
+// set-property` all override this job.
+func TestOwnDropIns(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		id   string
+		path string
+		own  bool
+	}{
+		{"agent-archive-collector.service", "/usr/lib/systemd/user/service.d/10-timeout-abort.conf", false},
+		{"agent-archive-collector.service", "/etc/systemd/user/service.d/x.conf", false},
+		{"agent-archive-collector.service", "/home/u/.config/systemd/user/service.d/x.conf", false},
+		{"agent-archive-collector.timer", "/etc/systemd/user/timer.d/x.conf", false},
+		{"agent-archive-collector.timer", "/etc/systemd/user/service.d/x.conf", true},
+		{"agent-archive-collector.service", "/etc/systemd/user/timer.d/x.conf", true},
+		{"agent-archive-collector.service", "/home/u/.config/systemd/user/agent-archive-collector.service.d/override.conf", true},
+		{"agent-archive-collector-0123456789ab.service", "/home/u/.config/systemd/user/agent-archive-collector-0123456789ab.service.d/override.conf", true},
+		{"agent-archive-collector.service", "/home/u/.config/systemd/user/agent-archive-.service.d/x.conf", true},
+		{"agent-archive-collector-0123456789ab.service", "/etc/systemd/user/agent-archive-collector-.service.d/x.conf", true},
+		{"agent-archive-collector.service", "/etc/systemd/user/agent-.service.d/x.conf", true},
+		{"agent-archive-collector.service", "/run/user/1000/systemd/user.control/agent-archive-collector.service.d/50-CPUQuota.conf", true},
+	} {
+		typeWide := "/usr/lib/systemd/user/" + strings.TrimPrefix(filepath.Ext(tc.id), ".") + ".d/"
+		got := ownDropIns(unit{id: tc.id, dropIns: []string{typeWide + "a.conf", tc.path, typeWide + "b.conf"}})
+		var want []string
+		if tc.own {
+			want = []string{tc.path}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s with %s: own %q, want %q", tc.id, tc.path, got, want)
+		}
 	}
 }
 
