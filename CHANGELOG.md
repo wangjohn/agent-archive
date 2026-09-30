@@ -8,6 +8,19 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `agent-archive stats` shows how you use your coding agents over the last 30
+  days (`--days`, or `--since` for a start day): tokens by day, sessions,
+  prompts, estimated cost and active days with their change from the
+  previous period, agents, cost by model, top projects, what used your
+  tokens (cache reads and writes, input, output, subagents, skills, MCP),
+  and highlights. `--by day|week|month|project` breaks the window down,
+  `--json` prints a versioned document (`schema_version` 1), `--prices FILE`
+  puts your own model prices on top of the built-in table, and `--harness`,
+  `--model`, `--imported` and `--hook-captured` filter as `list` does. It
+  reads metadata only and prints no prompts or paths. Cost is an estimate at
+  list price from a dated price table, unpriced models are left out and
+  flagged, and what an agent does not record (Cursor's tokens) reads
+  "unknown", never zero. See [stats](docs/guides/stats.md).
 - Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,
   `counts.tool_errors` (tool results the app flagged as errors; not known
   for Codex), `model_tokens` (token counts split by model, so a session that

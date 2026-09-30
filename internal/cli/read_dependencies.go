@@ -46,6 +46,16 @@ type listCommandDependencies interface {
 	newCommandFlags(string, io.Writer) *commandFlags
 }
 
+// statsCommandDependencies is what `stats` uses: list's store and cache, the
+// pager, and the environment for the character set.
+type statsCommandDependencies interface {
+	readOnlyStoreDependencies
+	pagerDependencies
+	interrupts() (<-chan os.Signal, func())
+	now() time.Time
+	newCommandFlags(string, io.Writer) *commandFlags
+}
+
 type showCommandDependencies interface {
 	readOnlyStoreDependencies
 	sessionBrowserDependencies

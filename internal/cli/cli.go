@@ -379,6 +379,7 @@ Manage capture
 Inspect history
   agent-archive list        Find archived sessions
   agent-archive show        Read a session's summary or transcript
+  agent-archive stats       See your usage: tokens, cost, agents, projects
   agent-archive feedback    Add explicit feedback from a local file
 
 Import history
@@ -461,6 +462,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer, env Env) int 
 		return runListCommand(args[1:], stdin, stdout, stderr, env)
 	case "show":
 		return runShowCommand(args[1:], stdin, stdout, stderr, env)
+	case "stats":
+		return runStatsCommand(args[1:], stdout, stderr, env)
 	case "feedback":
 		return runFeedbackCommand(args[1:], stdout, stderr, env)
 	case "handoff":
