@@ -42,6 +42,13 @@ func runStatsOnTerminal(t *testing.T, size fixedTerminal, tweak func(*Env), chun
 	t.Helper()
 	env, mem := statsEnv(t)
 	publishStatsFixture(t, mem)
+	return runStatsOnTerminalWith(t, env, mem, size, chunks, tweak, args...)
+}
+
+// runStatsOnTerminalWith is runStatsOnTerminal for an archive the caller
+// published to mem.
+func runStatsOnTerminalWith(t *testing.T, env Env, mem *storagetest.MemoryStore, size fixedTerminal, chunks []string, tweak func(*Env), args ...string) terminalRun {
+	t.Helper()
 	store := &countingStore{MemoryStore: mem}
 	env.OpenStore = func(config.Config) (storage.ObjectStore, error) { return store, nil }
 	run := terminalRun{fake: newFakeKeys(chunks...)}
@@ -132,7 +139,7 @@ func TestStatsInteractiveSinceIsTheStartingWindow(t *testing.T) {
 	if run.code != 0 || len(run.frames) != 2 {
 		t.Fatalf("code %d, %d frames, stderr %q", run.code, len(run.frames), run.stderr)
 	}
-	if !strings.Contains(run.frames[0][0], "last 10 days") || !strings.Contains(run.frames[0][len(run.frames[0])-1], "w window 10d") {
+	if !strings.Contains(run.frames[0][0], "last 10 days") || !strings.Contains(run.frames[0][len(run.frames[0])-1], "w window 10d>30d") {
 		t.Errorf("first frame: %q / %q", run.frames[0][0], run.frames[0][len(run.frames[0])-1])
 	}
 	if !strings.Contains(run.frames[1][0], "last 30 days") {
@@ -168,7 +175,7 @@ func TestStatsInteractiveFiltersAndEmptyWindows(t *testing.T) {
 	}
 	// 30d, 90d, 7d (nothing from Cursor in the last week), 30d.
 	empty := strings.Join(run.frames[2], "\n")
-	if !strings.Contains(empty, "No archived sessions match these filters") || !strings.Contains(run.frames[2][len(run.frames[2])-1], "w window 7d") {
+	if !strings.Contains(empty, "No archived sessions match these filters") || !strings.Contains(run.frames[2][len(run.frames[2])-1], "w window 7d>30d") {
 		t.Errorf("the empty window:\n%s", empty)
 	}
 	if strings.Contains(strings.Join(run.frames[3], "\n"), "No archived sessions") {

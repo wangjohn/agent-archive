@@ -33,6 +33,10 @@ type screenOptions struct {
 	fake *fakeKeys
 	// tweak, when set, changes the Env before the screen runs.
 	tweak func(*Env)
+	// inputs, when set, are the sessions to count instead of the fixture's.
+	inputs *statsInputs
+	// filters, when set, are echoed in the title as --harness and --model are.
+	filters statsFilters
 }
 
 // screenRun is one run of the interactive screen.
@@ -89,8 +93,12 @@ func runScreen(t *testing.T, o screenOptions, chunks ...string) screenRun {
 		o.tweak(&env)
 	}
 	inputs := screenInputs(t)
+	if o.inputs != nil {
+		inputs = *o.inputs
+	}
+	inputs.filters = o.filters
 	windows, index := statsWindowCycle(o.days)
-	view := statsView{style: textStyle{color: o.color}, glyphs: unicodeGlyphs}
+	view := statsView{style: textStyle{color: o.color}, glyphs: unicodeGlyphs, filters: o.filters}
 	var stderr strings.Builder
 	code, ran := runStatsBrowser(env, stdin, out, &stderr, statsBrowserStart{
 		inputs: inputs, windows: windows, window: index, first: inputs.compute(o.days, true), view: view,
