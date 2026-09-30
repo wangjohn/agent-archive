@@ -337,7 +337,7 @@ func resolvePagerCommand(env pagerDependencies, noPager bool, stdout io.Writer) 
 
 // expandHome expands a leading ~/ in program with $HOME, as sh does for the
 // pager's command, so its version can be asked of the same file.
-func expandHome(env pagerDependencies, program string) string {
+func expandHome(env interface{ lookupEnv(string) (string, bool) }, program string) string {
 	rest, ok := strings.CutPrefix(program, "~/")
 	if !ok {
 		return program
