@@ -140,6 +140,24 @@ func (m *Model) Inspect(_ context.Context, site scheduler.Site, ref scheduler.Re
 	return status
 }
 
+// Installed is the model's own job first, then every other job of the same
+// data directory in the model's folder, as earlier labels.
+func (m *Model) Installed(_ context.Context, site scheduler.Site, inst scheduler.Installation) ([]scheduler.Job, error) {
+	own := m.Ref(inst)
+	jobs := []scheduler.Job{{Ref: own}}
+	entries, _ := os.ReadDir(filepath.Dir(definitionPath(site, own))) // no folder, no earlier jobs
+	for _, entry := range entries {
+		ref, ok := strings.CutSuffix(entry.Name(), ".job")
+		if !ok || scheduler.Ref(ref) == own {
+			continue
+		}
+		if status := m.Definition(site, scheduler.Ref(ref)); status.Defined && status.DefinitionErr == nil && status.DataHome == inst.DataHome {
+			jobs = append(jobs, scheduler.Job{Ref: scheduler.Ref(ref), Alias: scheduler.EarlierLabel})
+		}
+	}
+	return jobs, nil
+}
+
 // Load loads the definition on disk.
 func (m *Model) Load(_ context.Context, site scheduler.Site, ref scheduler.Ref) error {
 	m.record("load " + string(ref))

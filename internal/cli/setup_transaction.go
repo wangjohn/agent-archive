@@ -406,21 +406,21 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	// Unknown refuses even a first setup: loading over a job launchd may
 	// already run under this label is the one thing setup must not do.
 	if job.State == scheduler.Unknown {
-		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to %s and retry", in.definer().Words().Tool)
+		return setupjournal.Journal{}, fmt.Errorf("cannot determine the background job's state; restore access to %s and retry", in.sched().Words().Tool)
 	}
 	if job.State == scheduler.AnotherInstallation {
-		problem, words := problemOf(job), in.definer().Words()
+		problem, words := problemOf(job), in.sched().Words()
 		return setupjournal.Journal{}, fmt.Errorf("%s's %s job was loaded from a %s other than %s, so it belongs to another installation; setup leaves it running and installs nothing over it. %s", words.Manager, plan.Ref, words.Definition, problem.Expected, problem.Fix)
 	}
-	// The prototype's job is the account's, retired only by the account's
-	// default installation: a test installation must not change it.
-	var legacy *setupjournal.LegacyJob
-	if in.isDefault() {
-		if legacy, err = setupjournal.PlanLegacyMigration(userHome, env.launchd()); err != nil {
-			return setupjournal.Journal{}, err
-		}
+	// The jobs this installation's setup retires in favor of its own: the
+	// prototype's upload job (the account's, retired only by its default
+	// installation: a test installation must not change it) and the
+	// collectors earlier releases installed under other labels.
+	retirees, err := planRetirees(env, in, userHome)
+	if err != nil {
+		return setupjournal.Journal{}, err
 	}
-	relabeled, err := setupjournal.PlanRelabel(in.previousCollectorPlists(), env.launchd())
+	legacy, relabeled, err := setupjournal.RetireeJobs(retirees)
 	if err != nil {
 		return setupjournal.Journal{}, err
 	}
@@ -431,6 +431,62 @@ func planSetupTransaction(home, userHome, executable string, old config.Config, 
 	}
 	journal := setupjournal.Journal{Legacy: legacy, Relabeled: firstRelabeled, MoreRelabeled: moreRelabeled, Changes: changes, Plist: jobChanges[0].Path, WasLoaded: jobActive(job.State)}
 	return journal, nil
+}
+
+// planRetirees is the jobs setup retires in favor of this installation's own,
+// as found: each alias the scheduler lists (see installation.installed) with
+// its definition on disk and whether it is loaded. What blocks setup is an
+// error: an alias definition the scheduler does not recognize, one whose
+// state cannot be read (setup will not retire a job it cannot tell is loaded),
+// and a prototype job the scheduler runs from another installation's
+// definition. An earlier-label collector the scheduler runs from another
+// installation's definition is that installation's, and is left alone.
+func planRetirees(env Env, in installation, userHome string) ([]scheduler.Retiree, error) {
+	jobs, err := in.installed(userHome)
+	if err != nil {
+		return nil, err
+	}
+	words := in.sched().Words()
+	var retirees []scheduler.Retiree
+	for _, job := range jobs {
+		if job.Alias == "" {
+			continue
+		}
+		path := definitionPath(env.jobDefinition(userHome, job.Ref))
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		status := env.jobStatus(userHome, job.Ref)
+		switch {
+		case status.State == scheduler.Unknown && job.Alias == scheduler.Prototype:
+			// Only an existing, recognized prototype job needs the scheduler
+			// to answer: retiring it without knowing whether it is loaded
+			// could leave the prototype uploader running with its definition
+			// gone. With none on disk (the common fresh install) it is not
+			// listed, so an unknown state never blocks setup for it.
+			return nil, fmt.Errorf("cannot determine legacy upload job state; restore %s access and retry", words.Tool)
+		case status.State == scheduler.Unknown:
+			return nil, fmt.Errorf("cannot determine the state of %s; restore access to %s and retry", path, words.Tool)
+		case status.State == scheduler.AnotherInstallation && job.Alias == scheduler.Prototype:
+			problem := problemOf(status)
+			return nil, fmt.Errorf("%s's legacy upload job was loaded from a %s other than %s; %s", words.Manager, words.Definition, problem.Expected, problem.Fix)
+		case status.State == scheduler.AnotherInstallation:
+			continue
+		}
+		retirees = append(retirees, scheduler.Retiree{
+			Backend:   in.sched().Name(),
+			Ref:       job.Ref,
+			Alias:     job.Alias,
+			Artifacts: []scheduler.Artifact{scheduler.FileArtifact(path, data, info.Mode().Perm())},
+			WasLoaded: jobActive(status.State),
+		})
+	}
+	return retirees, nil
 }
 
 // otherInstallationError is a setup refused because another installation's

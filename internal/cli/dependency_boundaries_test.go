@@ -22,7 +22,7 @@ type preflightProbe struct {
 func (p preflightProbe) hookFiles(string) hooks.Files { return p.files }
 
 func (p preflightProbe) installation(home, userHome string) installation {
-	return installation{home: home, userHome: userHome, accountHome: userHome, definer: func() scheduler.Definer { return launchd.Scheduler{} }}
+	return installation{home: home, userHome: userHome, accountHome: userHome, sched: func() scheduler.Scheduler { return launchd.Scheduler{} }}
 }
 
 func (p preflightProbe) jobStatus(string, scheduler.Ref) scheduler.Status {

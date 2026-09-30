@@ -79,7 +79,7 @@ func (twoFileDefiner) Plan(site scheduler.Site, _ scheduler.Installation, spec s
 func TestRefreshJobRedefinesEveryFileOrNothing(t *testing.T) {
 	t.Parallel()
 	userHome := t.TempDir()
-	in := installation{home: "/data", userHome: userHome, accountHome: userHome, definer: func() scheduler.Definer { return twoFileDefiner{} }}
+	in := installation{home: "/data", userHome: userHome, accountHome: userHome, sched: func() scheduler.Scheduler { return twoFileDefiner{} }}
 	defined := func(program string, err error) scheduler.Status {
 		return scheduler.Status{Defined: true, Program: program, Env: map[string]string{}, Paths: []string{"/defs/job"}, DefinitionErr: err}
 	}

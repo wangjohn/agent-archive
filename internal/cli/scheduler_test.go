@@ -33,7 +33,7 @@ func TestLaunchdFindsEveryPlistFromRefAndSite(t *testing.T) {
 		t.Fatalf("previousCollectorPlists = %q, want %q", got, earlier)
 	}
 	site := scheduler.Site{UserHome: userHome}
-	prototype := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
+	prototype := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LegacyLaunchLabel+".plist")
 	for _, plist := range []string{in.collectorPlist(), earlier, prototype} {
 		if got := launchd.PlistPath(site, jobRef(plist)); got != plist {
 			t.Errorf("the job of %s is found at %s", plist, got)
@@ -152,7 +152,7 @@ func TestEveryJournaledPlistIsOneJobAtOneSite(t *testing.T) {
 		env := Env{Scheduler: sched, AccountHome: func() (string, error) { return "/Users/account", nil }}
 		in := env.installation("/Users/me/archive", userHome)
 		earlier := filepath.Join(userHome, "Library", "LaunchAgents", launchd.CollectorLabel("/Users/me/Archive", "")+".plist")
-		prototype := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
+		prototype := filepath.Join(userHome, "Library", "LaunchAgents", launchd.LegacyLaunchLabel+".plist")
 		for _, plist := range []string{in.collectorPlist(), earlier, prototype} {
 			sched.sites = nil
 			sched.forget()
