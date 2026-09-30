@@ -25,8 +25,8 @@ func TestKeysReadASplitEscapeSequenceAsItsKey(t *testing.T) {
 		{[]string{"\x1b", later(50*time.Millisecond, "[B"), "q"}, 2},
 		{[]string{"\x1bO", later(50*time.Millisecond, "B"), "q"}, 2},
 		// Waited out: the Esc on its own, then the arrow.
-		{[]string{"\x1b", later(time.Second, "[B"), "q"}, 3},
-		{[]string{"\x1b[", later(time.Second, "B"), "q"}, 2},
+		{[]string{"\x1b", later(300*time.Millisecond, "[B"), "q"}, 3},
+		{[]string{"\x1b[", later(300*time.Millisecond, "B"), "q"}, 2},
 	} {
 		_, ok, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, c.chunks...)
 		last := screens[len(screens)-1]
@@ -34,9 +34,18 @@ func TestKeysReadASplitEscapeSequenceAsItsKey(t *testing.T) {
 			t.Errorf("%q: %d screens, want %d:\n%s", c.chunks, len(screens), c.screens, strings.Join(screens, "\n----\n"))
 		}
 	}
-	_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, "\x1b", later(time.Second, "Ox"), "\x1b")
-	if len(screens) != 4 || !strings.HasSuffix(screens[2], " to quit: Ox") || rowSpan(screens[2]) != "1-15" {
-		t.Fatalf("Esc then Ox:\n%s", strings.Join(screens, "\n----\n"))
+	// Esc then O and x typed; a cut-off ESC [ then B typed long after, or
+	// after a resize.
+	for _, chunks := range [][]string{
+		{"\x1b", later(300*time.Millisecond, "Ox")},
+		{"\x1b[", later(time.Minute, "Ox")},
+		{"\x1b[", string(fakeResize), "Ox"},
+	} {
+		_, _, screens := runKeyPicker(t, &sessionPicker{env: fixedTerminal{120, 20}}, sessions, listFormatOptions{}, append(chunks, "\x1b")...)
+		typed := screens[len(screens)-2]
+		if !strings.HasSuffix(typed, " to quit: Ox") || rowSpan(typed) != "1-15" {
+			t.Errorf("%q:\n%s", chunks, strings.Join(screens, "\n----\n"))
+		}
 	}
 }
 
@@ -44,7 +53,7 @@ func TestKeysReadASplitEscapeSequenceAsItsKey(t *testing.T) {
 // and Enter, Backspace, and b go back.
 func TestKeyDetailsIgnoreEsc(t *testing.T) {
 	t.Parallel()
-	out, _, _ := browseKeys(t, fixedTerminal{100, 9}, newFakeKeys("1\r", "\x1b", later(time.Second, "[B"), "q"))
+	out, _, _ := browseKeys(t, fixedTerminal{100, 9}, newFakeKeys("1\r", "\x1b", later(300*time.Millisecond, "[B"), "q"))
 	screens := keyDetailsScreens(out)
 	if strings.Count(out, "Enter number") != 1 || len(screens) != 3 || !strings.Contains(screens[2], "↑ 1 line above") {
 		t.Fatalf("details:\n%s", strings.Join(screens, "\n----\n"))
@@ -148,7 +157,7 @@ func TestKeysStayOffOnceClosed(t *testing.T) {
 		t.Fatalf("resumed after close: %v %v", err, fake.history())
 	}
 	keys.close()
-	if got, want := fake.history(), []string{"keys", "flush", "lines"}; !reflect.DeepEqual(got, want) {
+	if got, want := fake.history(), []string{"keys", "flush", "lines", "release"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("terminal modes %v, want %v", got, want)
 	}
 }
@@ -163,7 +172,7 @@ func TestKeysSuspendLeavesTheAlternateScreen(t *testing.T) {
 	if stop < 0 || !strings.HasPrefix(out[stop:], leaveAltScreenSequence+enterAltScreenSequence+clearScreenSequence) {
 		t.Fatalf("output %q", out)
 	}
-	if got, want := fake.history(), []string{"keys", "lines", "stop", "keys", "flush", "lines"}; !reflect.DeepEqual(got, want) {
+	if got, want := fake.history(), []string{"keys", "lines", "stop", "keys", "flush", "lines", "release"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("terminal modes %v, want %v", got, want)
 	}
 }

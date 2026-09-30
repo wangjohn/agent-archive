@@ -65,14 +65,42 @@ func (t *ttyKeys) keys() error {
 		return err
 	}
 	signal.Notify(t.resized, syscall.SIGWINCH)
+	// SIGTSTP stays notified until release: Go keeps its own handler for
+	// it once notified, and that handler ignores it, so a Ctrl-Z while a
+	// pager runs would otherwise do nothing here (see whilePaging).
 	signal.Notify(t.suspended, syscall.SIGTSTP)
 	return nil
 }
 
 func (t *ttyKeys) lines() {
 	signal.Stop(t.resized)
-	signal.Stop(t.suspended)
 	t.restore()
+}
+
+func (t *ttyKeys) release() {
+	signal.Stop(t.suspended)
+}
+
+func (t *ttyKeys) now() time.Time { return time.Now() }
+
+// whilePaging answers Ctrl-Z while a pager runs by stopping the process:
+// the pager has stopped itself, and the shell sees the job stop once the
+// browser has too. fg continues both; the pager still owns the screen, so
+// nothing is redrawn.
+func (t *ttyKeys) whilePaging() (end func()) {
+	done, finished := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(finished)
+		for {
+			select {
+			case <-t.suspended:
+				_ = unix.Kill(os.Getpid(), unix.SIGSTOP)
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { close(done); <-finished }
 }
 
 // flush discards input not read yet, keeping the terminal's modes.
@@ -92,8 +120,8 @@ func (t *ttyKeys) stop() error {
 	if err := unix.Kill(os.Getpid(), unix.SIGSTOP); err != nil {
 		return err
 	}
-	// The stop takes effect as the signal is delivered, which may be just
-	// after Kill returns; key mode goes back on only once continued.
+	// A process stops itself before Kill returns; the wait for SIGCONT is
+	// only a guard, so key mode never goes back on while stopped.
 	select {
 	case <-continued:
 	case <-time.After(stopWait):
@@ -101,8 +129,8 @@ func (t *ttyKeys) stop() error {
 	return nil
 }
 
-// stopWait bounds how long stop waits for SIGCONT, in case it never
-// comes; a stopped process gets it as it continues.
+// stopWait bounds the guard's wait for SIGCONT, which a process continued
+// after stopping itself has already had.
 const stopWait = time.Second
 
 // readPoll is how often a read waiting forever checks for a resize or

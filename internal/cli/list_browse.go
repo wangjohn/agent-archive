@@ -328,9 +328,10 @@ func (b *sessionBrowser) transcript(row listRow) (action browseAction, failure s
 // stops the pager, then the browser restores the screen and exits.
 func (b *sessionBrowser) page(text []byte) (browseAction, error) {
 	b.screen.clear()
+	endPaging := func() {}
 	if b.keys != nil {
 		// The pager reads the terminal in the modes it had.
-		b.keys.suspend()
+		endPaging = b.keys.page()
 	}
 	restoreTerminal := saveTerminalState(b.prompt.source)
 	pagerCtx, stopPager := context.WithCancel(context.Background())
@@ -338,6 +339,7 @@ func (b *sessionBrowser) page(text []byte) (browseAction, error) {
 	paged, waited, err := pageText(pagerCtx, b.stdout, b.stderr, b.env, b.noPager, true, text)
 	sig := b.screen.endPaging()
 	stopPager()
+	endPaging()
 	if sig != nil {
 		// A signal stopped the pager; the pager has exited, so exit as the
 		// signal would have. A pager killed before it could restore the

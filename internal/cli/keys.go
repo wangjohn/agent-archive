@@ -94,6 +94,15 @@ type keyTerminal interface {
 	// stop stops the process, as Ctrl-Z does, and returns once it is
 	// continued.
 	stop() error
+	// whilePaging answers Ctrl-Z while a pager runs, until end is called:
+	// the pager stops itself, and so must the browser waiting for it, or
+	// the shell never sees the job stop.
+	whilePaging() (end func())
+	// release ends what keys set up for the browser's whole run (Ctrl-Z
+	// is its own from the first keys to release).
+	release()
+	// now is the time, for how long a split escape sequence is waited for.
+	now() time.Time
 }
 
 // escapeWait is how long a lone Esc waits for the rest of an escape
@@ -102,6 +111,14 @@ type keyTerminal interface {
 // (ssh, tmux, a loaded machine); a sequence split by more is still read as
 // its key when the rest starts the next burst (see keyInput.stale).
 const escapeWait = 120 * time.Millisecond
+
+// staleFor is how long after it timed out the start of an escape sequence
+// can still be joined by its rest. Later, what comes is typed.
+const staleFor = 500 * time.Millisecond
+
+// maxCarry is the longest tail cut off by maxBurst that is carried to the
+// next read; a longer one is no key and is dropped.
+const maxCarry = 16
 
 // keyInput reads the browser's key presses. Keys read together (a wheel
 // burst, or a pasted number) are queued, and a screen draws itself again
@@ -122,7 +139,8 @@ type keyInput struct {
 	// stale is the start of an escape sequence that timed out at the end of
 	// the last burst: a lone Esc, or ESC [ with no final byte. When the next
 	// burst goes on with the rest of it, the two are read as one key.
-	stale []byte
+	stale   []byte
+	staleAt time.Time
 	// hide and show, when set, leave the alternate screen before Ctrl-Z
 	// stops the process and enter it again once it continues.
 	hide func()
@@ -180,6 +198,14 @@ func (k *keyInput) close() {
 		k.on = false
 		k.term.lines()
 	}
+	k.term.release()
+}
+
+// page gives a pager the terminal: line input back, and Ctrl-Z answered
+// while it runs. end ends that; resume turns keys back on after it.
+func (k *keyInput) page() (end func()) {
+	k.suspend()
+	return k.term.whilePaging()
 }
 
 // buffered reports whether keys already read wait to be handled.
@@ -195,6 +221,10 @@ func (k *keyInput) next() (key, error) {
 			return key{}, err
 		}
 		data, err := k.readBurst()
+		if err != nil {
+			// What came before a resize or Ctrl-Z is not continued after.
+			k.stale = nil
+		}
 		if errors.Is(err, errSuspended) {
 			if err := k.pause(); err != nil {
 				return key{}, err
@@ -217,19 +247,24 @@ func (k *keyInput) next() (key, error) {
 
 // pause answers Ctrl-Z: the terminal gets its modes and its normal screen
 // back while the process is stopped, and the browser's once it continues.
+//
+// Key mode goes back on before the browser's screen: continued in the
+// background (bg), setting the terminal's modes stops the process again
+// (SIGTTOU) until it is in the foreground, so the screen is not drawn
+// over the shell's prompt.
 func (k *keyInput) pause() error {
 	k.suspend()
 	if k.hide != nil {
 		k.hide()
 	}
 	err := k.term.stop()
+	if err == nil {
+		err = k.resume()
+	}
 	if k.show != nil {
 		k.show()
 	}
-	if err != nil {
-		return err
-	}
-	return k.resume()
+	return err
 }
 
 // decode turns a burst into keys. A burst going on with an escape sequence
@@ -239,6 +274,9 @@ func (k *keyInput) pause() error {
 func (k *keyInput) decode(data []byte) []key {
 	stale := k.stale
 	k.stale = nil
+	if len(stale) > 0 && k.term.now().Sub(k.staleAt) > staleFor {
+		stale = nil
+	}
 	if len(stale) > 0 && len(data) > 0 && (len(stale) > 1 || data[0] == '[' || data[0] == 'O') {
 		joined := append(append([]byte(nil), stale...), data...)
 		if found, size, complete := decodeEscape(joined); complete && size > len(stale) && (found != nil || joined[1] == '[') {
@@ -253,6 +291,7 @@ func (k *keyInput) decode(data []byte) []key {
 		// Waited out: decoded below as a lone Esc or dropped, and kept in
 		// case the rest comes next.
 		k.stale = append([]byte(nil), data[len(data)-tail:]...)
+		k.staleAt = k.term.now()
 	}
 	return decodeKeys(data)
 }
@@ -272,7 +311,9 @@ func (k *keyInput) readBurst() ([]byte, error) {
 	k.carry = nil
 	if tail := incompleteTail(data); tail > 0 && len(data) >= maxBurst {
 		// Cut off by the cap, not by time: the rest is already waiting.
-		k.carry = append([]byte(nil), data[len(data)-tail:]...)
+		if tail <= maxCarry {
+			k.carry = append([]byte(nil), data[len(data)-tail:]...)
+		}
 		data = data[:len(data)-tail]
 	}
 	return data, nil

@@ -26,7 +26,7 @@ const (
 	fakeResize  fakeEvent = "\x00resize"
 	fakeSuspend fakeEvent = "\x00suspend"
 	fakeFailure fakeEvent = "\x00fail"
-	// fakeBlock waits until the test closes the fake's release channel,
+	// fakeBlock waits until the test closes the fake's unblock channel,
 	// then ends input.
 	fakeBlock fakeEvent = "\x00block"
 )
@@ -49,17 +49,19 @@ type fakeKeys struct {
 	chunks  []string
 	on      bool
 	events  []string
-	release chan struct{}
+	unblock chan struct{}
 	// blocked is closed when a read starts waiting on fakeBlock.
 	blocked chan struct{}
 	// arrived is set while the rest of a chunk longer than one read waits.
 	arrived bool
 	// onResize, when set, is called as fakeResize is read.
 	onResize func()
+	// clock is the fake's time, moved on by each chunk that arrives later.
+	clock time.Time
 }
 
 func newFakeKeys(chunks ...string) *fakeKeys {
-	return &fakeKeys{chunks: append([]string(nil), chunks...), release: make(chan struct{}), blocked: make(chan struct{})}
+	return &fakeKeys{chunks: append([]string(nil), chunks...), unblock: make(chan struct{}), blocked: make(chan struct{})}
 }
 
 func (f *fakeKeys) keys() error {
@@ -75,6 +77,36 @@ func (f *fakeKeys) lines() {
 	defer f.mu.Unlock()
 	f.on = false
 	f.events = append(f.events, "lines")
+}
+
+// note records a test's own event among the terminal's.
+func (f *fakeKeys) note(event string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, event)
+}
+
+func (f *fakeKeys) now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.clock
+}
+
+func (f *fakeKeys) release() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, "release")
+}
+
+func (f *fakeKeys) whilePaging() func() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, "paging")
+	return func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.events = append(f.events, "paged")
+	}
 }
 
 func (f *fakeKeys) flush() {
@@ -121,6 +153,7 @@ func (f *fakeKeys) read(p []byte, wait time.Duration) (int, error) {
 			return 0, nil
 		}
 		chunk, f.chunks[0] = data, data
+		f.clock = f.clock.Add(time.Duration(d))
 	} else if wait >= 0 && !f.arrived {
 		// The burst is over.
 		f.mu.Unlock()
@@ -157,7 +190,7 @@ func (f *fakeKeys) event(event fakeEvent) (int, error) {
 		return 0, errSuspended
 	case fakeBlock:
 		close(f.blocked)
-		<-f.release
+		<-f.unblock
 		return 0, io.EOF
 	case fakeFailure:
 	}
@@ -446,7 +479,7 @@ func TestKeysSuspendRestoresTheTerminal(t *testing.T) {
 	if err != nil || ok || strings.Count(out.String(), screenBreak) != 1 {
 		t.Fatalf("ok=%v err=%v:\n%s", ok, err, out.String())
 	}
-	if got, want := fake.history(), []string{"keys", "lines", "stop", "keys", "flush", "lines"}; !reflect.DeepEqual(got, want) {
+	if got, want := fake.history(), []string{"keys", "lines", "stop", "keys", "flush", "lines", "release"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("terminal modes %v, want %v", got, want)
 	}
 }
@@ -561,8 +594,9 @@ func TestKeyDetailsSingleKeys(t *testing.T) {
 		t.Fatalf("alternate screen entered %d times, want 3", n)
 	}
 	history := fake.history()
-	// Input is flushed only as the browser ends, not before a pager.
-	if want := []string{"keys", "lines", "keys", "lines", "keys", "flush", "lines"}; !reflect.DeepEqual(history, want) {
+	// Input is flushed only as the browser ends, not before a pager, and
+	// Ctrl-Z is answered while each pager runs.
+	if want := []string{"keys", "lines", "paging", "paged", "keys", "lines", "paging", "paged", "keys", "flush", "lines", "release"}; !reflect.DeepEqual(history, want) {
 		t.Fatalf("terminal modes %v, want %v", history, want)
 	}
 }
@@ -603,7 +637,7 @@ func TestKeyBrowserRestoresTheTerminal(t *testing.T) {
 	for _, chunks := range [][]string{{"q"}, {"1\r", "q"}, {}, {"1\r"}} {
 		fake := newFakeKeys(chunks...)
 		browseKeys(t, fixedTerminal{100, 20}, fake)
-		if history := fake.history(); len(history) == 0 || history[len(history)-1] != "lines" {
+		if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "flush", "lines", "release"}) {
 			t.Errorf("%q: terminal modes %v", chunks, history)
 		}
 	}
@@ -673,10 +707,10 @@ func TestKeyBrowserSignalRestoresTheTerminal(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no exit after SIGTERM")
 	}
-	close(fake.release)
+	close(fake.unblock)
 	<-done
 	// Closed once by the handler; the browser's own close does nothing.
-	if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "flush", "lines"}) {
+	if history := fake.history(); !reflect.DeepEqual(history, []string{"keys", "flush", "lines", "release"}) {
 		t.Fatalf("terminal modes %v", history)
 	}
 }

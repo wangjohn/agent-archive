@@ -21,6 +21,12 @@ func TestBrowserKeysTerminalChild(t *testing.T) {
 	env.openKeys = terminalKeys
 	// The real terminal, its size, and signals.
 	env.IsTerminal, env.TerminalSize, env.Interrupts = nil, nil, nil
+	env.LookupEnv = func(name string) (string, bool) {
+		if name == "PAGER" {
+			return os.LookupEnv("ARCHIVE_KEYS_TEST_PAGER")
+		}
+		return "", false
+	}
 	if code := Run([]string{"list"}, os.Stdin, os.Stdout, os.Stderr, env); code != 0 {
 		t.Fatalf("code %d", code)
 	}
@@ -29,8 +35,10 @@ func TestBrowserKeysTerminalChild(t *testing.T) {
 // On a real terminal the browser turns off echo, line editing, the
 // extended input characters and Ctrl-\ while it reads keys, and turns them
 // back on however it ends: quitting, Ctrl-C, or Ctrl-Z (until the shell
-// continues it, with the normal screen shown meanwhile). The modes are
-// checked one run at a time, each well within its own deadline.
+// continues it, with the normal screen shown meanwhile). Ctrl-Z while a
+// pager runs stops the browser too, so the shell sees the job stop, and
+// continuing it finishes the pager. The modes are checked one run at a
+// time, each well within its own deadline.
 func TestBrowserKeysRestoreTheTerminal(t *testing.T) {
 	t.Parallel()
 	python, err := exec.LookPath("python3")
@@ -42,7 +50,7 @@ func TestBrowserKeysRestoreTheTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One at a time, not as parallel subtests.
-	for _, mode := range []string{"quit", "interrupt", "suspend"} {
+	for _, mode := range []string{"quit", "interrupt", "suspend", "pager"} {
 		if out, err := runKeysPTYScript(python, binary, mode); err != nil {
 			t.Errorf("PTY test %s: %v %s", mode, err, out)
 		}
@@ -69,6 +77,9 @@ before = termios.tcgetattr(slave)
 vdisable = b'\xff' if sys.platform == 'darwin' else b'\x00'
 assert before[6][termios.VQUIT] != vdisable
 env = dict(os.environ, ARCHIVE_KEYS_TEST_CHILD='1', TERM='xterm-256color')
+if mode == 'pager':
+    # A pager that stops its job as Ctrl-Z in less would, then reads its text.
+    env['ARCHIVE_KEYS_TEST_PAGER'] = 'kill -TSTP 0; cat >/dev/null'
 # As a shell does: this script leads a session whose controlling terminal
 # is the pty, and runs the child as the foreground job, so Ctrl-C and
 # Ctrl-Z typed on the pty signal it, and the pty outlives it.
@@ -109,10 +120,18 @@ def finish(code):
     while p.poll() is None: pump()
     assert p.returncode == code, (p.returncode, output[-800:])
 def wait_stopped():
+    global output
+    limit = min(deadline, time.monotonic() + 10)
     while True:
         pid, status = os.waitpid(p.pid, os.WUNTRACED | os.WNOHANG)
-        if pid: return status
+        if pid: break
+        if time.monotonic() > limit: raise RuntimeError('the job did not stop', output[-300:])
         pump()
+    # What it wrote before it stopped.
+    while select.select([master], [], [], 0)[0]:
+        try: output += os.read(master, 65536)
+        except OSError: break
+    return status
 try:
     wait_for(b'or q to quit')
     wait_until(keys_on, 'key mode not on at the list')
@@ -125,6 +144,18 @@ try:
     elif mode == 'interrupt':
         os.write(master, b'\x03')
         finish(130)
+    elif mode == 'pager':
+        os.write(master, b'1\r')
+        wait_for(b't transcript')
+        os.write(master, b't')
+        status = wait_stopped()
+        assert os.WIFSTOPPED(status), status
+        assert restored(), 'terminal modes not restored for the pager'
+        os.killpg(p.pid, signal.SIGCONT)
+        wait_for(b'back to details')
+        wait_until(keys_on, 'key mode not back on after the pager')
+        os.write(master, b'q')
+        finish(0)
     else:
         os.write(master, b'\x1a')
         status = wait_stopped()
