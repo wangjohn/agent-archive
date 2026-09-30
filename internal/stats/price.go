@@ -161,10 +161,15 @@ func ParsePriceTable(data []byte) (PriceTable, error) {
 // entry for a model t already prices replaces it, any other is added. The
 // result takes custom's version, date, sources and notes and is marked
 // Overridden, so output built from it says the prices are the person's own.
+// A custom table in another currency than t replaces t outright: t's numbers
+// must not be relabelled as if they were in custom's currency.
 func (t PriceTable) WithOverrides(custom PriceTable) PriceTable {
 	currency := t.Currency
 	if custom.Currency != "" {
 		currency = custom.Currency
+	}
+	if !strings.EqualFold(currency, t.Currency) {
+		t = PriceTable{}
 	}
 	merged := PriceTable{
 		Version: custom.Version, AsOf: custom.AsOf, Currency: currency, Sources: custom.Sources,
@@ -205,14 +210,15 @@ func (t PriceTable) Lookup(model string) (ModelPrice, bool) {
 
 var (
 	contextSuffix = regexp.MustCompile(`\[[^\]]*\]$`)
-	dateSuffix    = regexp.MustCompile(`[-@]\d{8}$`)
+	dateSuffix    = regexp.MustCompile(`([-@]\d{8}|-\d{4}-\d{2}-\d{2})$`)
 )
 
 // NormalizeModel is the form of a model id the price table is keyed by:
 // trimmed, lower case, without a bracketed suffix such as Claude Code's
-// "[1m]" context marker and without a trailing 8-digit date ("-20251001" or
-// "@20251001"). It does not map aliases: a bare "opus" stays "opus", which
-// no table prices, because it does not say which version answered.
+// "[1m]" context marker and without a trailing date ("-20251001",
+// "@20251001", or OpenAI's "-2025-08-07"). It does not map aliases: a bare
+// "opus" stays "opus", which no table prices, because it does not say which
+// version answered.
 func NormalizeModel(id string) string {
 	id = strings.ToLower(strings.TrimSpace(id))
 	id = contextSuffix.ReplaceAllString(id, "")

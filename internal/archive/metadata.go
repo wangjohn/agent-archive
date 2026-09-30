@@ -130,7 +130,7 @@ func (t *tokenTotals) usage() (TokenUsage, []ModelTokens) {
 			continue
 		}
 		addUsage(&total, source.usage)
-		model := source.model
+		model := boundModelName(source.model)
 		if model == "" {
 			model = UnknownModel
 		}
@@ -139,6 +139,7 @@ func (t *tokenTotals) usage() (TokenUsage, []ModelTokens) {
 		}
 		addUsage(byModel[model], source.usage)
 	}
+	foldExtraModels(byModel)
 	models := make([]string, 0, len(byModel))
 	for model := range byModel {
 		models = append(models, model)
@@ -153,6 +154,68 @@ func (t *tokenTotals) usage() (TokenUsage, []ModelTokens) {
 		})
 	}
 	return total, split
+}
+
+// boundModelName caps a model id at maxModelNameRunes runes, since the filter
+// bounds a string only at 64 KB and a hostile transcript could name a new one
+// on every record. A real model id is far shorter.
+func boundModelName(name string) string {
+	runes := []rune(name)
+	if len(runes) <= maxModelNameRunes {
+		return name
+	}
+	return string(runes[:maxModelNameRunes-1]) + "…"
+}
+
+// foldExtraModels keeps the per-model split to MaxModelTokens entries without
+// losing a token: the models with the most tokens stay, and the rest are added
+// together under OtherModels, so the split still sums to the session's counts.
+// Which stay does not depend on map order (most tokens first, then name).
+func foldExtraModels(byModel map[string]*TokenUsage) {
+	if len(byModel) <= MaxModelTokens {
+		return
+	}
+	weight := func(u *TokenUsage) int {
+		sum := 0
+		for _, count := range []*int{u.Input, u.Output, u.CacheRead, u.CacheWrite} {
+			if count != nil {
+				sum = min(sum+*count, maxTokenCount)
+			}
+		}
+		return sum
+	}
+	names := make([]string, 0, len(byModel))
+	for name := range byModel {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if wi, wj := weight(byModel[names[i]]), weight(byModel[names[j]]); wi != wj {
+			return wi > wj
+		}
+		return names[i] < names[j]
+	})
+	var folded TokenUsage
+	for _, name := range names[MaxModelTokens-1:] {
+		addTokenUsage(&folded, *byModel[name])
+		delete(byModel, name)
+	}
+	if byModel[OtherModels] == nil {
+		byModel[OtherModels] = &TokenUsage{}
+	}
+	addTokenUsage(byModel[OtherModels], folded)
+}
+
+// addTokenUsage adds every count src reports to dst, saturating like
+// addTokenCount.
+func addTokenUsage(dst *TokenUsage, src TokenUsage) {
+	for _, pair := range []struct {
+		to   **int
+		from *int
+	}{{&dst.Input, src.Input}, {&dst.Output, src.Output}, {&dst.CacheRead, src.CacheRead}, {&dst.CacheWrite, src.CacheWrite}, {&dst.Reasoning, src.Reasoning}} {
+		if pair.from != nil {
+			addTokenCount(pair.to, *pair.from)
+		}
+	}
 }
 
 // tokenModel is the model a record's token accounting belongs to: for Codex

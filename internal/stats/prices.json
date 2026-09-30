@@ -1,5 +1,5 @@
 {
-  "version": "2026-09.1",
+  "version": "2026-09.2",
   "as_of": "2026-09-29",
   "currency": "USD",
   "sources": [
@@ -32,6 +32,12 @@
     {"id": "gpt-5.6-sol",       "family": "gpt-5.6", "input_per_mtok": 4,    "output_per_mtok": 20,  "cache_read_per_mtok": 0.4,   "cache_write_per_mtok": 0},
     {"id": "gpt-5.6-terra",     "family": "gpt-5.6", "input_per_mtok": 2,    "output_per_mtok": 12,  "cache_read_per_mtok": 0.2,   "cache_write_per_mtok": 0},
     {"id": "gpt-5.6-luna",      "family": "gpt-5.6", "input_per_mtok": 0.2,  "output_per_mtok": 1.2, "cache_read_per_mtok": 0.02,  "cache_write_per_mtok": 0},
+    {"id": "gpt-5.5",           "family": "gpt-5.5", "input_per_mtok": 5,    "output_per_mtok": 30,  "cache_read_per_mtok": 0.5,   "cache_write_per_mtok": 0},
+    {"id": "gpt-5.4",           "family": "gpt-5.4", "input_per_mtok": 2.5,  "output_per_mtok": 15,  "cache_read_per_mtok": 0.25,  "cache_write_per_mtok": 0},
+    {"id": "gpt-5.4-mini",      "family": "gpt-5.4-mini", "input_per_mtok": 0.75, "output_per_mtok": 4.5, "cache_read_per_mtok": 0.075, "cache_write_per_mtok": 0},
+    {"id": "gpt-5.4-nano",      "family": "gpt-5.4-nano", "input_per_mtok": 0.2, "output_per_mtok": 1.25, "cache_read_per_mtok": 0.02, "cache_write_per_mtok": 0},
+    {"id": "gpt-5.2",           "family": "gpt-5.2", "input_per_mtok": 1.75, "output_per_mtok": 14,  "cache_read_per_mtok": 0.175, "cache_write_per_mtok": 0},
+    {"id": "gpt-5.1",           "family": "gpt-5",   "input_per_mtok": 1.25, "output_per_mtok": 10,  "cache_read_per_mtok": 0.125, "cache_write_per_mtok": 0},
     {"id": "gpt-5.3-codex",     "family": "gpt-5",   "input_per_mtok": 1.75, "output_per_mtok": 14,  "cache_read_per_mtok": 0.175, "cache_write_per_mtok": 0},
     {"id": "gpt-5",             "family": "gpt-5",   "input_per_mtok": 1.25, "output_per_mtok": 10,  "cache_read_per_mtok": 0.125, "cache_write_per_mtok": 0},
     {"id": "gpt-5-mini",        "family": "gpt-5-mini", "input_per_mtok": 0.25, "output_per_mtok": 2, "cache_read_per_mtok": 0.025, "cache_write_per_mtok": 0},
