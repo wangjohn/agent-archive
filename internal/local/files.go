@@ -156,6 +156,7 @@ func writeAtomic(path string, write func(io.Writer) error) error {
 		e = write(f)
 	}
 	if e == nil {
+		traceSlow("fsync " + path)
 		e = f.Sync()
 	}
 	ce := f.Close()
@@ -173,6 +174,7 @@ func writeAtomic(path string, write func(io.Writer) error) error {
 		return e
 	}
 	defer func() { _ = d.Close() }()
+	traceSlow("fsync " + filepath.Dir(path))
 	return d.Sync()
 }
 
@@ -290,8 +292,11 @@ func NamedLock(home, name string) (func(), error) {
 			return nil, e
 		}
 		release, current, e := lockOpened(path, f)
-		if e != nil || current {
+		if e != nil {
 			return release, e
+		}
+		if current {
+			return traceHold(name, release), nil
 		}
 		// Unlinked (or replaced) between the open and the lock: try again.
 	}
@@ -307,6 +312,7 @@ const lockAttempts = 100
 // with a deadline (a hook) tolerates short contention without overrunning it.
 // When the lock is still held at the deadline it returns ErrBusy.
 func NamedLockWait(home, name string, timeout time.Duration) (func(), error) {
+	traceSlow("wait for " + name)
 	deadline := time.Now().Add(timeout)
 	for {
 		unlock, err := NamedLock(home, name)
