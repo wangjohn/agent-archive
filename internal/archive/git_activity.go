@@ -214,9 +214,7 @@ func shellGitEvents(command, output, branch string) []GitEvent {
 			})
 		}
 	}
-	if segment := commandSegment(command, gitPushCommand); segment != "" && !pushDryRunFlag.MatchString(segment) {
-		events = append(events, pushEvents(output)...)
-	}
+	events = append(events, pushEvents(command, output)...)
 	if ghPRCreateCommand.MatchString(command) {
 		for _, match := range pullURLLine.FindAllStringSubmatch(output, -1) {
 			if event, ok := pullRequestEvent(GitEventPRCreated, match[1], match[2], match[3], match[4]); ok {
@@ -225,8 +223,14 @@ func shellGitEvents(command, output, branch string) []GitEvent {
 			}
 		}
 	}
-	if segment := commandSegment(command, ghPRMergeCommand); segment != "" && !ghAutoMergeFlag.MatchString(segment) {
-		events = append(events, ghMergeEvents(segment, output)...)
+	// Enabling auto-merge prints no merge confirmation, so the output is
+	// read when any gh pr merge in the command is a real merge; its flags
+	// name the repository.
+	for _, segment := range commandSegments(command, ghPRMergeCommand) {
+		if !ghAutoMergeFlag.MatchString(segment) {
+			events = append(events, ghMergeEvents(segment, output)...)
+			break
+		}
 	}
 	return events
 }
@@ -259,19 +263,19 @@ func shellOutput(text string) (string, bool) {
 	return text, true
 }
 
-// commandSegment returns the part of command from the first match of
-// pattern to the next command separator, so a flag is read only from the
-// command it belongs to. "" when pattern does not match.
-func commandSegment(command string, pattern *regexp.Regexp) string {
-	at := pattern.FindStringIndex(command)
-	if at == nil {
-		return ""
+// commandSegments returns, for each match of pattern in command, the part
+// from the match to the next command separator, so a flag is read only from
+// the command it belongs to.
+func commandSegments(command string, pattern *regexp.Regexp) []string {
+	var segments []string
+	for _, at := range pattern.FindAllStringIndex(command, -1) {
+		rest := command[at[0]:]
+		if end := commandSeparator.FindStringIndex(rest); end != nil {
+			rest = rest[:end[0]]
+		}
+		segments = append(segments, rest)
 	}
-	rest := command[at[0]:]
-	if end := commandSeparator.FindStringIndex(rest); end != nil {
-		rest = rest[:end[0]]
-	}
-	return rest
+	return segments
 }
 
 // commitBranch reads the branch from git commit's "[<branch> <sha>]" line:
@@ -284,11 +288,42 @@ func commitBranch(label string) string {
 	return validBranch(label)
 }
 
-// pushEvents reads git push's report: one event per ref it updated or
-// created under a "To <remote>" line. Rejected, deleted, and up-to-date
-// refs are not events.
-func pushEvents(output string) []GitEvent {
+// pushEvents reads the pushes a command's git push calls made. Each push
+// that reached a remote prints its own "To <remote>" block, so when some of
+// the command's pushes are dry runs, blocks are paired with the pushes in
+// order, and a dry run's block is skipped. A push with nothing to send
+// prints no block, so when the counts differ that pairing cannot be
+// trusted and nothing is recorded.
+func pushEvents(command, output string) []GitEvent {
+	segments := commandSegments(command, gitPushCommand)
+	if len(segments) == 0 {
+		return nil
+	}
+	dryRuns := 0
+	for _, segment := range segments {
+		if pushDryRunFlag.MatchString(segment) {
+			dryRuns++
+		}
+	}
+	blocks := pushBlocks(output)
+	if dryRuns > 0 && (dryRuns == len(segments) || len(blocks) != len(segments)) {
+		return nil
+	}
 	var events []GitEvent
+	for i, block := range blocks {
+		if dryRuns > 0 && pushDryRunFlag.MatchString(segments[i]) {
+			continue
+		}
+		events = append(events, block...)
+	}
+	return events
+}
+
+// pushBlocks reads git push's report, one block per "To <remote>" line,
+// each with one event per ref it updated or created. Rejected, deleted,
+// and up-to-date refs are not events.
+func pushBlocks(output string) [][]GitEvent {
+	var blocks [][]GitEvent
 	host, repository := "", ""
 	// Ref lines count only under a push's "To <remote>" header: git fetch
 	// and git pull print the same shapes under "From <remote>".
@@ -298,6 +333,7 @@ func pushEvents(output string) []GitEvent {
 		if match := pushRemoteLine.FindStringSubmatch(line); match != nil {
 			host, repository = parseRemote(match[1])
 			pushing = true
+			blocks = append(blocks, nil)
 			continue
 		}
 		if strings.HasPrefix(line, "From ") {
@@ -319,9 +355,9 @@ func pushEvents(output string) []GitEvent {
 		if event.Branch != "" && repository != "" && publicHost(host) {
 			event.URL = "https://" + host + "/" + repository + "/tree/" + escapeBranch(event.Branch)
 		}
-		events = append(events, event)
+		blocks[len(blocks)-1] = append(blocks[len(blocks)-1], event)
 	}
-	return events
+	return blocks
 }
 
 // parseRemote reads a push remote (https://host/owner/repo.git,
@@ -338,7 +374,8 @@ func parseRemote(remote string) (host, repository string) {
 			rest = rest[at+1:]
 		}
 		parsed, err := url.Parse(scheme + "://" + rest)
-		if err != nil {
+		// A file:// remote, or any URL without a host, is a local path.
+		if err != nil || strings.EqualFold(scheme, "file") || parsed.Host == "" {
 			return "", ""
 		}
 		host, path = parsed.Hostname(), parsed.Path
