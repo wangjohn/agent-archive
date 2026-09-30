@@ -88,7 +88,7 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	f := newScreenFixture(t)
 	f.withApps(t, "claude")
 	f.inWebApp(t)
-	out := f.runSetup(t, strings.Join([]string{"", "3", "2", "work", "2", ""}, "\n")+"\n")
+	out := f.runSetup(t, strings.Join([]string{"", "4", "2", "work", "2", ""}, "\n")+"\n")
 	if !strings.Contains(out, bucketDocURL) {
 		t.Fatalf("no link to the bucket guide:\n%s", out)
 	}
@@ -103,15 +103,15 @@ func TestSetupStorageInstructionsPointAtTheBucketGuide(t *testing.T) {
 	}
 }
 
-// With no guided creation yet, the menu is the two providers and the
-// instructions, in that order.
-func TestStorageMenuOptionsWithoutGuidedCreation(t *testing.T) {
+// The menu is the two providers, then the guided choices, then the
+// instructions.
+func TestStorageMenuOptionsOrder(t *testing.T) {
 	t.Parallel()
 	var keys []string
 	for _, o := range storageMenuOptions() {
 		keys = append(keys, o.Key)
 	}
-	if strings.Join(keys, ",") != "r2,s3,help" {
+	if strings.Join(keys, ",") != "r2,s3,r2-create,help" {
 		t.Fatalf("menu = %v", keys)
 	}
 }

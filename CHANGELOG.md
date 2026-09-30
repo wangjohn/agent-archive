@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `setup` can create a Cloudflare R2 bucket for you: choose **Create a new R2
+  bucket for me** at the storage question and paste one Cloudflare API token
+  (Workers R2 Storage Write and Account API Tokens Write, or set
+  `CLOUDFLARE_API_TOKEN`). Setup creates a private bucket and a key that can
+  read and write only that bucket, checks it, and keeps the key in the
+  Keychain. The token you pasted is used during setup and then dropped, never
+  saved. It can also set the bucket to delete objects after your retention
+  period, and reports whether the bucket's public `r2.dev` URL is on. Not
+  available with `setup --yes`. See [creating a
+  bucket](docs/getting-started/bucket.md#let-setup-create-it).
 - `handoff --to claude|codex|cursor` launches a local coding agent with the
   filtered session record in a private temporary file. The receiving agent is
   told how to inspect the archived or current local record with Agent Archive.

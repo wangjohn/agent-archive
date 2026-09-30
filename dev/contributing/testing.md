@@ -264,6 +264,72 @@ of a path, and macOS's per-user temporary folder can hold thousands of
 entries. (The product calls it only from setup, status and uninstall, on
 paths under your home folder, never from a hook or a collector pass.)
 
+## Live acceptance: guided R2 creation
+
+Guided R2 creation (`internal/cloudflare`, `internal/cli/setup_r2_create.go`)
+is tested against a fake Cloudflare (`internal/cloudflare/cloudflaretest`). Its
+request and response shapes come from Cloudflare's API reference, read on
+2026-09-29, and the fake cannot confirm the points the documentation leaves
+open. **None of the items below has been run against a real account: the
+feature must not ship in a release until each is checked.** Use a scratch
+Cloudflare account (never one with real archives), and the sandbox recipe
+below, so nothing touches your real Mac; create the bootstrap token with
+exactly the two permissions setup prints, then run `agent-archive setup` and
+choose "Create a new R2 bucket for me". Record the result of each item in the
+open-source acceptance record.
+
+- [ ] **Secret encoding (blocker).** The derived key
+      (`cloudflare.DeriveS3Credentials`: Access Key ID = the token's `id`,
+      Secret Access Key = lowercase hex SHA-256 of its `value`) passes the
+      storage check (probe, write, read, list, delete). Cloudflare's docs say
+      only "SHA-256 hash". If the check fails there, try the other encodings
+      (base64, raw bytes) in that one function; it is the only place to
+      change.
+- [ ] **Key activation delay.** How long after the token is created the key is
+      accepted. Setup makes up to `r2VerifyAttempts` checks, `r2VerifyPause`
+      apart; tune them to what you see.
+- [ ] **`GET /accounts` with only the two permissions.** Whether it lists the
+      account (else setup asks for the account ID, which is the fallback).
+- [ ] **Public-access reads.** Whether `GET .../domains/managed` and
+      `GET .../domains/custom` work with only Workers R2 Storage Write
+      (else setup says "couldn't check"; adjust its wording if a Read
+      permission is needed), and that `result.enabled` and
+      `result.domains[]` are the fields read. Turn r2.dev on for a scratch
+      bucket and confirm the loud warning.
+- [ ] **Token expiry.** A token created without `expires_on` has no expiry in
+      the dashboard.
+- [ ] **Token revoke.** `DELETE /accounts/{account}/tokens/{id}` with the
+      bootstrap token revokes the key. Exercise the failure path (for
+      example a scratch build with a wrong derivation): the key is revoked,
+      and nothing is stored.
+- [ ] **Prefix scoping unavailable.** The runtime token reaches the whole
+      bucket, and only it: it cannot read or list another bucket, create a
+      bucket, or set a lifecycle rule. The docs describe bucket-level scope
+      only; setup treats prefix scoping as unavailable.
+- [ ] **Bucket name collision.** Creating a name that is taken returns what
+      `cloudflare.Error.AlreadyExists` expects (HTTP 409, or a message saying
+      it already exists), and the retry with a new name works.
+- [ ] **Jurisdiction.** A bucket created with the `eu` jurisdiction, and its
+      token resource string `..._eu_<bucket>`, pass the storage check at
+      `<account>.eu.r2.cloudflarestorage.com`, and the saved endpoint works
+      after setup finishes.
+- [ ] **Non-administrator member.** Token creation by a member who lacks a
+      permission is refused with a 403 that the message covers.
+- [ ] **Lifecycle rule.** The rule setup writes (empty prefix, delete after
+      the retention days) shows in the dashboard and is accepted with the
+      request body used.
+- [ ] **Permission group listing.** The lookup by name returns the
+      bucket-item-write group with `is_selectable`, and the paging parameter
+      is accepted (or ignored harmlessly).
+- [ ] **Rate limits.** A 429 carries `Retry-After` in whole seconds, as the
+      client reads it.
+- [ ] **Orphan token name.** The name printed before creation is the name the
+      dashboard shows for the token.
+- [ ] **No leftovers.** After a run, search the sandbox (data directory, hook
+      files, LaunchAgent plist, `setup-draft.json`) for the bootstrap token;
+      it appears nowhere. The automated search
+      (`TestGuidedR2NeverPersistsTheBootstrapToken`) covers the fake only.
+
 ## Fuzzing
 
 Redaction, parsing, hook-file editing and the hook itself have fuzz targets

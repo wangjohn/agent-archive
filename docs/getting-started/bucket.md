@@ -3,10 +3,52 @@
 agent-archive stores sessions in a private bucket you own. Create it once;
 every Mac you set up can share it. You need a Cloudflare or AWS account for
 the bucket; there is no agent-archive account or hosted service. Cloudflare
-R2 is the quickest to set up. `agent-archive setup` links here when you
-choose "Show setup instructions" at its storage question.
+R2 is the quickest to set up. `agent-archive setup` can create an R2 bucket
+for you (below), and links here when you choose "Show setup instructions" at
+its storage question.
 
 ## Cloudflare R2 (recommended)
+
+### Let setup create it
+
+`agent-archive setup` can create the bucket for you: at the storage question
+choose **Create a new R2 bucket for me**. You make one Cloudflare API token
+by hand, once; setup does the rest. R2 must already be enabled on your
+Cloudflare account (Cloudflare may ask for a payment method; see [current R2
+pricing](https://developers.cloudflare.com/r2/pricing/)).
+
+1. In the [Cloudflare dashboard](https://dash.cloudflare.com), open **Manage
+   account → Account API tokens → Create Token** ([Cloudflare's
+   steps](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/))
+   and create an account token with two permissions on your account:
+   **Workers R2 Storage Write** (creates the bucket) and **Account API Tokens
+   Write** (creates the bucket's own key). Account members can grant only
+   permissions they hold themselves, so if setup is refused here, ask an
+   account administrator to create the token.
+2. Run `agent-archive setup`, choose **Create a new R2 bucket for me**, and
+   paste the token when asked (it is hidden). If your shell sets
+   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, as Cloudflare's own
+   tools expect, setup uses them and doesn't ask.
+3. Setup asks for a bucket name (suggesting `agent-archive-` and six random
+   characters), lets you pick a data location if you care, and offers to have
+   Cloudflare delete objects after your retention period. It then creates the
+   bucket, creates a second token that can read, write, and list objects in
+   **that one bucket only**, checks that it works, and keeps that second key
+   in the macOS Keychain like any R2 key.
+
+The token you pasted is used during setup and then dropped: it is never
+saved, in the Keychain or anywhere else, and the collector never sees it. You
+can delete it in the dashboard afterwards. If setup stops partway, it names
+the token it was creating, so you can revoke a leftover one; it also says
+when it leaves an empty bucket behind. What setup does with the token, and
+what it reports about public access, is in
+[privacy](../security/privacy.md#guided-r2-bucket-creation).
+
+Setup creates only a bucket you have not used: it never changes an existing
+one, and it never reuses an existing name. To use a bucket you already have,
+or if you prefer to do it by hand, follow the manual steps below.
+
+### Create it by hand
 
 1. In the [Cloudflare dashboard](https://dash.cloudflare.com), open
    **Storage & databases → R2 → Overview** ([current Cloudflare

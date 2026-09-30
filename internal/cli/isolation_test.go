@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 )
@@ -75,6 +76,9 @@ func isolateProcessForTesting() func() {
 	openKeychain = func() (credentials.CredentialStore, error) {
 		panic("a test reached the real Keychain: set Env.Keychain (newFakeKeychain)")
 	}
+	openCloudflare = func(string) cloudflare.API {
+		panic("a test reached the real Cloudflare API: set Env.Cloudflare")
+	}
 	openAWSBuckets = func(string, string) (BucketFinder, error) {
 		return nil, errors.New("no AWS in this test: set Env.AWSBuckets")
 	}
@@ -100,6 +104,7 @@ func TestIsolationFailsClosed(t *testing.T) {
 	panics("R2 store", func() {
 		_, _ = Env{}.openStore(config.Config{Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "r"}})
 	})
+	panics("Env{}.cloudflareAPI", func() { Env{}.cloudflareAPI("token") })
 	if _, err := (Env{}).awsBuckets("default", "us-east-1"); err == nil {
 		t.Error("Env{}.awsBuckets reached AWS instead of failing")
 	}

@@ -25,6 +25,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/wangjohn/agent-archive/internal/cloudflare"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/cursorstore"
@@ -119,6 +120,12 @@ type Env struct {
 	// AWSBuckets lists an AWS profile's buckets and reads their regions
 	// for setup. Defaults to asking S3 with the profile's credentials.
 	AWSBuckets func(profile, region string) (BucketFinder, error)
+	// Cloudflare makes the client guided R2 creation uses for the pasted
+	// bootstrap API token. Defaults to the real Cloudflare API.
+	Cloudflare func(token string) cloudflare.API
+	// Pause waits between guided R2 creation's checks of a key Cloudflare
+	// has only just made. Defaults to sleeping; tests skip the wait.
+	Pause      func(time.Duration)
 	WorkingDir func() (string, error)
 	// JobState reports loaded, running, missing, or unknown without changing launchd.
 	JobState func(string) string

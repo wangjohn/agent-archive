@@ -79,6 +79,17 @@ captured. If you finish with no project included, setup asks again.
 Setup suggests S3 when your shell sets `AWS_PROFILE` or your AWS settings
 already have a profile with credentials, and R2 otherwise.
 
+- **Create a new R2 bucket for me:** setup makes the bucket and a key for
+  it from one Cloudflare API token you paste (or set as
+  `CLOUDFLARE_API_TOKEN`, with `CLOUDFLARE_ACCOUNT_ID`). It prints the token's
+  permissions first, then asks for the bucket name, an optional data
+  location, and whether Cloudflare should also delete objects after your
+  retention period. It is offered only in this interactive setup, never by
+  `setup --yes`. The [bucket guide](bucket.md#let-setup-create-it) has the
+  steps, and [privacy](../security/privacy.md#guided-r2-bucket-creation)
+  what happens to the token. If something fails, setup says what to fix, and
+  you can try again with the same bucket, choose another storage option, or
+  stop.
 - **R2:** enter the account ID, then the bucket, then credentials. Pasting
   the bucket's URL from the Cloudflare dashboard,
   `https://<account-id>.r2.cloudflarestorage.com/<bucket>`, gives both the
@@ -107,7 +118,10 @@ already have a profile with credentials, and R2 otherwise.
   `us-east-1`. These lookups use the profile's credentials only inside the
   AWS SDK; setup never prints or saves them.
 
-Setup checks the connection in two steps. First it lists at most one object
+Setup checks the connection in two steps. (After **Create a new R2 bucket
+for me** setup has already made this check on the new key before storing it,
+so a key that doesn't work is revoked at once; the check then runs again on
+the stored key.) First it lists at most one object
 under `.setup-test/`, which writes nothing, so a wrong account ID, key, or
 profile fails within moments with an explanation. Then it writes one
 temporary synthetic object (`.setup-test/<random>.json`), reads it back, and
@@ -115,7 +129,8 @@ deletes it. That proves the credentials work; it does not prove the bucket is pr
 inspects the bucket's public-access settings read-only (S3 only; see
 [privacy](../security/privacy.md#bucket-privacy-evidence)). R2 keys cannot
 read those settings, so for R2 the review reminds you to check that public
-access is disabled in the Cloudflare dashboard.
+access is disabled in the Cloudflare dashboard. A bucket setup created
+reports what its Cloudflare token could read at that moment, while you set up.
 
 Never pass secrets as command arguments; secret input fails rather than
 falling back to visible keystrokes.

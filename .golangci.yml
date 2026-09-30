@@ -46,6 +46,14 @@ linters:
           deny:
             - pkg: github.com/wangjohn/agent-archive/internal/storage/storagetest
               desc: test helpers only; production code stores through storage's S3 client
+        # The fake Cloudflare API stands in for the real one in tests; nothing
+        # in production may talk to it.
+        cloudflaretest-only-in-tests:
+          files:
+            - "!$test"
+          deny:
+            - pkg: github.com/wangjohn/agent-archive/internal/cloudflare/cloudflaretest
+              desc: test helpers only; production code uses the cloudflare client
         # The golden-file helper registers the -update test flag; a
         # production package importing it would grow that flag.
         golden-only-in-tests:

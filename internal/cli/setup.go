@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -442,6 +443,7 @@ func advanceSetupDraft(p *prompter, draft *setupDraft, save func() error, savedP
 	}
 	if draft.Step == 1 {
 		p.step(2, "Connect storage")
+		p.storageRetentionDays = cmp.Or(draft.Config.RetentionDays, defaultRetentionDays)
 		cfg, secret, saveSecret, e := promptStorage(p, draft.Config.Storage, env, draft.FailedRegion)
 		if e != nil {
 			return false, e
@@ -1070,9 +1072,9 @@ func storageMenuOptions() []option {
 }
 
 // guidedStorageOptions is where the "Create a new bucket for me" choices go
-// once guided bucket creation exists (dev/proposals/portable-handoff-and-onboarding.md,
-// Part 2). Until then the menu offers only existing buckets.
-func guidedStorageOptions() []option { return nil }
+// (dev/proposals/portable-handoff-and-onboarding.md, Part 2). Each is handled
+// in promptStorage by its own file.
+func guidedStorageOptions() []option { return []option{guidedR2Option()} }
 
 func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegion string) (credentials.Config, credentials.R2Credentials, bool, error) {
 	cfg := existing
@@ -1091,6 +1093,13 @@ func promptStorage(p *prompter, existing credentials.Config, env Env, failedRegi
 	}
 	if err != nil {
 		return cfg, secret, false, err
+	}
+	if choice == guidedR2Choice {
+		cfg, secret, saved, e := createR2Bucket(p, env)
+		if !errors.Is(e, errChooseStorageAgain) {
+			return cfg, secret, saved, e
+		}
+		return promptStorage(p, existing, env, failedRegion)
 	}
 	if cfg.Provider != choice {
 		cfg = credentials.Config{Provider: choice}

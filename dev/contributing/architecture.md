@@ -52,6 +52,7 @@ flowchart LR
 | `state` | Per-session local state: registrations, requests, published and pending publications, change detection, removal records, and the per-session locks (`Store`; see [local state](../../docs/reference/local-state.md)). `state/statetest` has test helpers. |
 | `retention` | Deleting superseded snapshots and expired sessions, with the remote metadata as the source of truth. |
 | `storage` | The object-store contract and the S3/R2 implementation; checksums, read-back, bucket privacy inspection, and `Diagnose`, which names a storage failure's cause in plain words. Keys are relative to the configured prefix. `storage/storagetest` has the in-memory store tests use. |
+| `cloudflare` | Cloudflare's management API, only what guided R2 setup needs: list accounts, create a bucket, create and revoke a bucket-scoped API token, set a lifecycle rule, read public-access settings. Used at setup time with a pasted bootstrap token that is never stored; `cloudflare/cloudflaretest` is the fake tests use. |
 | `credentials` | Resolving storage credentials: AWS profiles, and R2 secrets in the Keychain (cgo, Security.framework). |
 | `config` | `config.json`: the one record of how this Mac is set up. |
 | `local` | The data directory, atomic durable writes, and file locks. |
@@ -75,7 +76,7 @@ everything imports, are left out. Only `cmd/agent-archive` imports `cli`; `captu
 ```mermaid
 flowchart TD
   cli --> capture & setupjournal & backfill & collector & retention & reader & hooks & evidence
-  cli --> config & state & storage & credentials & cursorstore & terminal
+  cli --> config & state & storage & credentials & cloudflare & cursorstore & terminal
   capture --> setupjournal & config & state
   setupjournal --> hooks & state
   backfill --> collector & retention & config & state & storage & cursorstore & terminal
