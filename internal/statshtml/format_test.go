@@ -70,7 +70,8 @@ func TestNonFiniteNumbersReadAsUnavailable(t *testing.T) {
 		if got := ratePercent(v); got != "n/a" {
 			t.Errorf("ratePercent(%v) = %q", v, got)
 		}
-		if got := pct(v); got != "0%" && got != "100%" {
+		// A length that is not a number is no length at all.
+		if got := pct(v); got != "0%" {
 			t.Errorf("pct(%v) = %q", v, got)
 		}
 		if got := num(v); got != "0" {

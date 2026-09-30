@@ -141,11 +141,11 @@ func TestStatsPageAgreesWithTheTerminalAndJSON(t *testing.T) {
 			html := parsePage(t, page)
 			checkOverview(t, html, screen)
 			checkHeader(t, html, screen)
-			for _, table := range []struct{ html, terminal string }{
-				{"Agents", "AGENTS"}, {"Cost by model", "COST BY MODEL"}, {"Top projects", "TOP PROJECTS"},
+			for title, terminalTitle := range map[string]string{
+				"Agents": "AGENTS", "Cost by model": "COST BY MODEL", "Top projects": "TOP PROJECTS",
 			} {
-				checkTable(t, html, screen, table.html, table.terminal)
-				checkTable(t, html, wide, table.html, table.terminal)
+				checkTable(t, html, screen, title, terminalTitle)
+				checkTable(t, html, wide, title, terminalTitle)
 			}
 			for _, prefix := range []string{"By day", "By week", "By month", "By project"} {
 				if html.section(prefix) != nil {
@@ -177,8 +177,7 @@ type node struct {
 	id       string
 	attrs    map[string]string
 	children []*node
-	text     string // the element's own text, in order with its children's
-	parts    []any  // string and *node, in document order
+	parts    []any // string and *node, in document order
 }
 
 // parsePage builds the page's element tree; the page is well-formed XHTML.
@@ -362,7 +361,7 @@ func checkTable(t *testing.T, page *node, screen, htmlTitle, screenTitle string)
 // order: the page may carry a cell the narrow screen leaves to a bar.
 func sameCells(page, screen string) bool {
 	rest := strings.Fields(page)
-	for _, f := range strings.Fields(screen) {
+	for f := range strings.FieldsSeq(screen) {
 		found := false
 		for len(rest) > 0 {
 			head := rest[0]
@@ -471,12 +470,10 @@ func checkComposition(t *testing.T, page *node, screen string) {
 		body := row.visible()
 		label := strings.SplitN(body, " ", 2)[0]
 		rest := strings.TrimSpace(strings.TrimPrefix(body, label))
-		switch label {
-		case "Subagents":
-			if !strings.Contains(text, rest) {
-				t.Errorf("subagents: page %q, screen %q", rest, text)
-			}
-		case "Skills", "MCP":
+		if label == "Subagents" && !strings.Contains(text, rest) {
+			t.Errorf("subagents: page %q, screen %q", rest, text)
+		}
+		if chips := map[string]bool{"Skills": true, "MCP": true}; chips[label] {
 			if a, b := chipCounts(rest), screenChips(text, label); !equalCounts(a, b) {
 				t.Errorf("%s: page %v, screen %v", label, a, b)
 			}
@@ -639,7 +636,7 @@ func checkDaily(t *testing.T, page *node, doc statsDocument) {
 		if doc.Peak.Tokens != peak {
 			t.Errorf("JSON peak %d is not the busiest day's %d", doc.Peak.Tokens, peak)
 		}
-		if peak > 0 && !strings.Contains(squash(fmt.Sprint(sec.byClass("text", "peak-label")[0].visible())), "Peak "+tokenCount(peak)) {
+		if peak > 0 && !strings.Contains(squash(sec.byClass("text", "peak-label")[0].visible()), "Peak "+tokenCount(peak)) {
 			t.Errorf("the chart's peak label does not say %s", tokenCount(peak))
 		}
 	}

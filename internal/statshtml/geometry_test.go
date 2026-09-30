@@ -19,26 +19,24 @@ func numericLeaves(s *stats.Stats) []reflect.Value {
 	var out []reflect.Value
 	var walk func(v reflect.Value)
 	walk = func(v reflect.Value) {
-		switch v.Kind() {
-		case reflect.Struct:
+		kind := v.Kind()
+		if kind == reflect.Struct {
 			for i := range v.NumField() {
 				if v.Type().Field(i).IsExported() {
 					walk(v.Field(i))
 				}
 			}
-		case reflect.Pointer:
-			if !v.IsNil() {
-				walk(v.Elem())
-			}
-		case reflect.Slice:
+		}
+		if kind == reflect.Pointer && !v.IsNil() {
+			walk(v.Elem())
+		}
+		if kind == reflect.Slice {
 			for i := range v.Len() {
 				walk(v.Index(i))
 			}
-		case reflect.Float64, reflect.Int, reflect.Int64:
-			if v.CanSet() {
-				out = append(out, v)
-			}
-		default:
+		}
+		if (kind == reflect.Float64 || kind == reflect.Int || kind == reflect.Int64) && v.CanSet() {
+			out = append(out, v)
 		}
 	}
 	walk(reflect.ValueOf(s).Elem())
@@ -49,12 +47,9 @@ func numericLeaves(s *stats.Stats) []reflect.Value {
 func deepCopy(s stats.Stats) stats.Stats {
 	var clone func(v reflect.Value) reflect.Value
 	clone = func(v reflect.Value) reflect.Value {
-		switch v.Kind() {
-		case reflect.Struct:
-			// time.Time has unexported fields: copy it whole.
-			if v.Type().PkgPath() == "time" {
-				return v
-			}
+		kind := v.Kind()
+		// time.Time has unexported fields: copy it whole.
+		if kind == reflect.Struct && v.Type().PkgPath() != "time" {
 			out := reflect.New(v.Type()).Elem()
 			for i := range v.NumField() {
 				if v.Type().Field(i).IsExported() {
@@ -62,28 +57,26 @@ func deepCopy(s stats.Stats) stats.Stats {
 				}
 			}
 			return out
-		case reflect.Pointer:
-			if v.IsNil() {
-				return v
-			}
+		}
+		if kind == reflect.Pointer && !v.IsNil() {
 			out := reflect.New(v.Type().Elem())
 			out.Elem().Set(clone(v.Elem()))
 			return out
-		case reflect.Slice:
-			if v.IsNil() {
-				return v
-			}
+		}
+		if kind == reflect.Slice && !v.IsNil() {
 			out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
 			for i := range v.Len() {
 				out.Index(i).Set(clone(v.Index(i)))
 			}
 			return out
-		default:
-			return v
 		}
+		return v
 	}
 	return clone(reflect.ValueOf(s)).Interface().(stats.Stats)
 }
+
+// sizes are the attributes that are lengths, which are never negative.
+var sizes = map[string]bool{"width": true, "height": true, "r": true, "rx": true, "stroke-width": true}
 
 var (
 	svgNumber = regexp.MustCompile(`\s(x|y|x1|x2|y1|y2|cx|cy|r|rx|width|height|stroke-width|stroke-dashoffset)="([^"]*)"`)
@@ -110,7 +103,7 @@ func assertSaneGeometry(t *testing.T, page, what string) {
 			t.Errorf("%s: %s=%q is not a number", what, name, m[2])
 			continue
 		}
-		if (name == "width" || name == "height" || name == "r" || name == "rx" || name == "stroke-width") && n < 0 {
+		if sizes[name] && n < 0 {
 			t.Errorf("%s: %s=%q is negative", what, name, m[2])
 		}
 		if strings.HasSuffix(m[2], "%") && (n < 0 || n > 100) {
@@ -223,28 +216,29 @@ func sumOf(v []float64) float64 {
 func TestDailyBarsStayInsideTheChart(t *testing.T) {
 	t.Parallel()
 	for _, days := range []int{1, 2, 7, 30, 31, 119, 120, 121, 240, 365, 1000, stats.MaxDays} {
-		for _, shape := range []string{"peak-first", "peak-last", "flat", "one-day", "unknown-days"} {
+		// Each shape is what day i's tokens are, and how many days have sessions.
+		shapes := map[string]struct {
+			tokens func(i int, base tokenSpec) []tokenSpec
+			days   int
+		}{
+			"peak-first": {func(i int, b tokenSpec) []tokenSpec { b.input = 5_000_000 - i*100_000; return []tokenSpec{b} }, 20},
+			"peak-last":  {func(i int, b tokenSpec) []tokenSpec { b.input = 100_000 + i*100_000; return []tokenSpec{b} }, 20},
+			"flat":       {func(i int, b tokenSpec) []tokenSpec { b.input = 1; return []tokenSpec{b} }, 20},
+			"one-day":    {func(i int, b tokenSpec) []tokenSpec { return []tokenSpec{b} }, 1},
+			"unknown-days": {func(i int, b tokenSpec) []tokenSpec {
+				if i%2 == 0 {
+					return nil
+				}
+				return []tokenSpec{b}
+			}, 20},
+		}
+		for shape, spec := range shapes {
 			t.Run(fmt.Sprintf("%d-%s", days, shape), func(t *testing.T) {
 				t.Parallel()
 				var sessions []archive.Metadata
-				for i := range min(days, 20) {
+				for i := range min(days, spec.days) {
 					at := fixtureNow.AddDate(0, 0, -i*max(days/20, 1))
-					if shape == "one-day" && i > 0 {
-						break
-					}
-					tokens := []tokenSpec{{"claude-opus-5", 10_000 * (i + 1), 5_000, 100_000, 10_000}}
-					switch shape {
-					case "peak-first":
-						tokens[0].input = 5_000_000 - i*100_000
-					case "peak-last":
-						tokens[0].input = 100_000 + i*100_000
-					case "flat":
-						tokens[0].input = 1
-					case "unknown-days":
-						if i%2 == 0 {
-							tokens = nil
-						}
-					}
+					tokens := spec.tokens(i, tokenSpec{"claude-opus-5", 10_000 * (i + 1), 5_000, 100_000, 10_000})
 					sessions = append(sessions, sessionSpec{
 						id: fmt.Sprintf("s%d", i), harness: "claude", project: "p", captured: at,
 						models: []string{"claude-opus-5"}, turns: 3, tokens: tokens,
@@ -278,8 +272,7 @@ func TestDailyBarsStayInsideTheChart(t *testing.T) {
 					if x < 0 || x > 100 {
 						t.Errorf("the peak label is at %s%%", m[1])
 					}
-					switch {
-					case m[3] == "start" && x > 25, m[3] == "end" && x < 75:
+					if runsOff := map[string]bool{"start": x > 25, "end": x < 75}; runsOff[m[3]] {
 						t.Errorf("the peak label is anchored %s at %.1f%%, so it would run off the chart", m[3], x)
 					}
 				}

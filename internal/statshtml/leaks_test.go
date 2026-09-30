@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -55,26 +56,24 @@ func stringLeaves(s *stats.Stats) []stringLeaf {
 	var out []stringLeaf
 	var walk func(path string, v reflect.Value)
 	walk = func(path string, v reflect.Value) {
-		switch v.Kind() {
-		case reflect.Struct:
+		kind := v.Kind()
+		if kind == reflect.Struct {
 			for i := range v.NumField() {
 				if f := v.Type().Field(i); f.IsExported() {
 					walk(path+"."+f.Name, v.Field(i))
 				}
 			}
-		case reflect.Pointer:
-			if !v.IsNil() {
-				walk(path, v.Elem())
-			}
-		case reflect.Slice:
+		}
+		if kind == reflect.Pointer && !v.IsNil() {
+			walk(path, v.Elem())
+		}
+		if kind == reflect.Slice {
 			for i := range v.Len() {
 				walk(path+"[]", v.Index(i))
 			}
-		case reflect.String:
-			if v.CanSet() {
-				out = append(out, stringLeaf{path, v})
-			}
-		default:
+		}
+		if kind == reflect.String && v.CanSet() {
+			out = append(out, stringLeaf{path, v})
 		}
 	}
 	walk("Stats", reflect.ValueOf(s).Elem())
@@ -140,7 +139,7 @@ func TestHostileTextIsInertInEveryField(t *testing.T) {
 	base := computeFixture(t, fixtureSessions(), 30, stats.GroupProject)
 	leaves := stringLeaves(&base)
 	for p, payload := range hostilePayloads {
-		t.Run(fmt.Sprint(p), func(t *testing.T) {
+		t.Run(strconv.Itoa(p), func(t *testing.T) {
 			t.Parallel()
 			where := ""
 			defer func() {

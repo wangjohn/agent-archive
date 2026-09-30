@@ -43,6 +43,11 @@ var rawTerminalChecks = classifiedCalls{
 	// backfill's progress line redraws in place on a terminal; that is
 	// presentation. It asks nothing.
 	"backfill_import.go": {"isTerminal": 1},
+	// stats --html refuses to write a web page onto a terminal (it asks for
+	// --output instead). That is a refusal, not a prompt, and it holds inside
+	// an agent too, where a page on the pty would land in the agent's
+	// context, so it asks the terminal itself rather than Env.interactive.
+	"stats.go": {"isTerminal": 1},
 }
 
 // injectedTerminalChecks are mentions of the Env.IsTerminal field itself,
