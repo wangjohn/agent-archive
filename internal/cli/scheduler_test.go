@@ -10,15 +10,16 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
-// launchdScheduler finds a job's definition from its ref and the user home
+// launchd finds a job's definition from its ref and the user home
 // alone, so every plist a command names (this installation's own, an earlier
 // release's under another label, the prototype's upload job) must be the one
 // its ref and site give back.
-func TestLaunchdSchedulerFindsEveryPlistFromRefAndSite(t *testing.T) {
+func TestLaunchdFindsEveryPlistFromRefAndSite(t *testing.T) {
 	t.Parallel()
 	home, userHome := t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -31,10 +32,10 @@ func TestLaunchdSchedulerFindsEveryPlistFromRefAndSite(t *testing.T) {
 	if got := in.previousCollectorPlists(); !slices.Equal(got, []string{earlier}) {
 		t.Fatalf("previousCollectorPlists = %q, want %q", got, earlier)
 	}
-	site := schedulerSite{userHome}
+	site := scheduler.Site{UserHome: userHome}
 	prototype := filepath.Join(userHome, "Library", "LaunchAgents", setupjournal.LegacyLaunchLabel+".plist")
 	for _, plist := range []string{in.collectorPlist(), earlier, prototype} {
-		if got := site.launchAgent(jobRef(plist)); got != plist {
+		if got := launchd.PlistPath(site, jobRef(plist)); got != plist {
 			t.Errorf("the job of %s is found at %s", plist, got)
 		}
 	}
@@ -69,7 +70,7 @@ func TestRecoveryAddressesTheJournalsPlistNotTheCurrentHomes(t *testing.T) {
 
 	must(t, recoverSetup(home, Env{UserHomeDir: func() (string, error) { return account, nil }}))
 
-	target := serviceTarget(plist)
+	target := launchd.ServiceTarget(plist)
 	want := []string{"print " + target, "print " + target, "bootout " + target, "bootstrap " + strings.TrimSuffix(target, "/"+label) + " " + plist}
 	if !slices.Equal(argv, want) {
 		t.Errorf("launchctl calls\n%q\nwant\n%q", argv, want)
@@ -181,70 +182,27 @@ type siteRecorder struct {
 	sites []string
 }
 
-func (s *siteRecorder) jobState(ctx context.Context, site schedulerSite, ref schedulerRef) string {
-	s.sites = append(s.sites, site.userHome)
-	return s.fakeScheduler.jobState(ctx, site, ref)
+func (s *siteRecorder) JobState(ctx context.Context, site scheduler.Site, ref scheduler.Ref) scheduler.JobState {
+	s.sites = append(s.sites, site.UserHome)
+	return s.fakeScheduler.JobState(ctx, site, ref)
 }
 
-func (s *siteRecorder) load(ctx context.Context, site schedulerSite, ref schedulerRef) error {
-	s.sites = append(s.sites, site.userHome)
-	return s.fakeScheduler.load(ctx, site, ref)
+func (s *siteRecorder) Load(ctx context.Context, site scheduler.Site, ref scheduler.Ref) error {
+	s.sites = append(s.sites, site.UserHome)
+	return s.fakeScheduler.Load(ctx, site, ref)
 }
 
-func (s *siteRecorder) unload(ctx context.Context, site schedulerSite, ref schedulerRef) error {
-	s.sites = append(s.sites, site.userHome)
-	return s.fakeScheduler.unload(ctx, site, ref)
+func (s *siteRecorder) Unload(ctx context.Context, site scheduler.Site, ref scheduler.Ref) error {
+	s.sites = append(s.sites, site.UserHome)
+	return s.fakeScheduler.Unload(ctx, site, ref)
 }
 
-// launchdScheduler's load and unload run on a bounded context of their own
-// that the caller's cancellation and deadline never reach: a setup that was
-// interrupted (or whose own context ran out) still finishes the launchctl
-// change it started, and the setup journal handles what comes after.
-func TestLaunchdSchedulerChangesIgnoreTheCallersCancellation(t *testing.T) {
-	site := schedulerSite{"/Users/me"}
-	ref := schedulerRef("com.agent-archive.collector")
-	plist := site.launchAgent(ref)
-	type seen struct {
-		err  error
-		left time.Duration
-	}
-	calls := map[string]seen{}
-	stubLaunchctlContext(t, func(ctx context.Context, args ...string) ([]byte, error) {
-		deadline, ok := ctx.Deadline()
-		if !ok {
-			t.Errorf("launchctl %s ran with no deadline", args[0])
-		}
-		calls[args[0]] = seen{ctx.Err(), time.Until(deadline)}
-		if args[0] == "print" {
-			return []byte("path = " + plist + "\nstate = running\n"), nil
-		}
-		return nil, nil
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
-	cancel()
-
-	must(t, launchdScheduler{}.load(ctx, site, ref))
-	must(t, launchdScheduler{}.unload(ctx, site, ref))
-
-	for _, tc := range []struct {
-		verb string
-		min  time.Duration
-		max  time.Duration
-	}{
-		{"print", time.Second, 2 * time.Second},
-		{"bootstrap", 25 * time.Second, launchctlChangeTimeout},
-		{"bootout", 25 * time.Second, launchctlChangeTimeout},
-	} {
-		got, ok := calls[tc.verb]
-		if !ok || got.err != nil || got.left < tc.min || got.left > tc.max {
-			t.Errorf("launchctl %s: ran %v, context error %v, %v to its deadline; want it run, uncancelled, with between %v and %v", tc.verb, ok, got.err, got.left, tc.min, tc.max)
-		}
-	}
-
-	// Asking changes nothing, so a question alone is the caller's to cancel.
-	delete(calls, "print")
-	launchdScheduler{}.jobState(ctx, site, ref)
-	if got := calls["print"]; got.err == nil {
-		t.Errorf("launchctl print for jobState ran uncancelled with %v to its deadline", got.left)
+// setupjournal names the state of a job launchd loaded from another plist
+// with its own constant, and the commands compare states as strings: it must
+// be the scheduler's word for it.
+func TestTheJournalSpeaksTheSchedulersStates(t *testing.T) {
+	t.Parallel()
+	if setupjournal.JobAnotherInstallation != string(scheduler.AnotherInstallation) {
+		t.Errorf("setupjournal.JobAnotherInstallation = %q, scheduler.AnotherInstallation = %q", setupjournal.JobAnotherInstallation, scheduler.AnotherInstallation)
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/terminal"
 )
@@ -142,11 +143,11 @@ func preflight(env preflightDependencies, home, userHome string, scope preflight
 	switch env.jobState(userHome, plist) {
 	case "unknown":
 		job.OK = false
-		job.Detail = "launchctl did not say whether the " + launchLabel(plist) + " job is loaded, and setup loads it only when it can tell"
+		job.Detail = "launchctl did not say whether the " + launchd.Label(plist) + " job is loaded, and setup loads it only when it can tell"
 		job.Fix = "Check that launchctl print gui/$(id -u) works in Terminal, then run agent-archive setup again."
 	case setupjournal.JobAnotherInstallation:
 		job.OK = false
-		job.Detail = fmt.Sprintf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation", launchLabel(plist), displayPath(plist, userHome))
+		job.Detail = fmt.Sprintf("launchd's %s job was loaded from a plist other than %s, so it belongs to another installation", launchd.Label(plist), displayPath(plist, userHome))
 		job.Fix = "Uninstall that installation first, or set AGENT_ARCHIVE_HOME to a directory of this installation's own."
 	}
 	checks = append(checks, job)

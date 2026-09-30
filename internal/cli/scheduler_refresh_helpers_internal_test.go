@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // The characterization tests of setup --refresh's scheduler paths reach
-// launchd only through runLaunchctl, the one seam every scheduler
-// implementation keeps, so they need no Env.Scheduler stand-in. They replace
-// a package variable and so do not run in parallel.
+// launchd only through the launchctl Runner (stubLaunchctlContext puts one
+// under launchd's own scheduler), the one seam every scheduler implementation
+// keeps, so they need no Env.Scheduler stand-in. They replace a package
+// variable and so do not run in parallel.
 
 // defaultCollectorLabel is the label of the account's default installation's
 // collector, which no release has changed.
@@ -65,7 +67,7 @@ type argvLaunchd struct {
 // stubArgvLaunchd replaces launchctl with an argvLaunchd for the test.
 func stubArgvLaunchd(t *testing.T, plist string, mode launchdMode) *argvLaunchd {
 	t.Helper()
-	l := &argvLaunchd{mode: mode, label: launchLabel(plist), plist: plist, remaining: map[string]time.Duration{}}
+	l := &argvLaunchd{mode: mode, label: launchd.Label(plist), plist: plist, remaining: map[string]time.Duration{}}
 	stubLaunchctlContext(t, l.run)
 	return l
 }
@@ -116,7 +118,7 @@ func (l *argvLaunchd) run(ctx context.Context, args ...string) ([]byte, error) {
 		// The code and words vary by macOS release (3, No such process, on
 		// some); only that it fails is launchd's, and no test reads them.
 		return []byte("Boot-out failed: 113: Could not find specified service"), errors.New("exit status 113")
-	case len(args) == 3 && args[0] == "bootstrap" && args[1] == domain && launchLabel(args[2]) == l.label:
+	case len(args) == 3 && args[0] == "bootstrap" && args[1] == domain && launchd.Label(args[2]) == l.label:
 		_, statErr := os.Stat(args[2])
 		if l.failBootstrap || l.mode != modeMissing || statErr != nil {
 			l.failBootstrap = false
@@ -138,7 +140,7 @@ func (l *argvLaunchd) argv() []string {
 }
 
 // label is the collector's launchd label: its plist's file name.
-func (r *refreshInstall) label() string { return launchLabel(r.plist) }
+func (r *refreshInstall) label() string { return launchd.Label(r.plist) }
 
 // print, bootout and bootstrap are the launchctl arguments, joined, that ask
 // about, stop and load the collector's job in this user's session.

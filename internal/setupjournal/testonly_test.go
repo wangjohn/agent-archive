@@ -42,7 +42,7 @@ func noLock() (func(), error) { return func() {}, nil }
 // paths: loaded maps a label to the plist launchd loaded it from. JobState
 // reports JobAnotherInstallation for a label loaded from another file;
 // Unload stops a job only when launchd loaded it from that very plist, and
-// refuses otherwise, as cli's unloadLaunchAgent does; Load of a label that
+// refuses otherwise, as launchd.Scheduler.Unload does; Load of a label that
 // is already loaded fails, as launchctl bootstrap does. failLoad and
 // failUnload make the next n calls for a plist fail; unknown makes its
 // state unknown.

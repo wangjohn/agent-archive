@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
@@ -151,7 +152,7 @@ func TestSetupRetiresTheJobOfAnotherCaseSpelling(t *testing.T) {
 	sched := fakeSched(env).set(jobRef(old), "loaded")
 	setupRun(t, env, s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir()), 0)
 	_, err = os.Stat(old)
-	if unloaded := sched.unloaded(); !os.IsNotExist(err) || !slices.Equal(unloaded, []schedulerRef{jobRef(old)}) {
+	if unloaded := sched.unloaded(); !os.IsNotExist(err) || !slices.Equal(unloaded, []scheduler.Ref{jobRef(old)}) {
 		t.Fatalf("the other spelling's job was not retired: unloaded %v, stat %v", unloaded, err)
 	}
 	if sched.state(jobRef(env.installation(home, userHome).collectorPlist())) != "loaded" {

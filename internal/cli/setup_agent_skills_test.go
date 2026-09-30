@@ -14,6 +14,7 @@ import (
 
 	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/config"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
 func claudeSkillPath(userHome string) string {
@@ -172,7 +173,7 @@ func TestFailedSetupTakesBackTheHandoffSkill(t *testing.T) {
 	t.Parallel()
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
-	fakeSched(env).beforeLoad = func(schedulerRef) error { return errors.New("bootstrap failed") }
+	fakeSched(env).beforeLoad = func(scheduler.Ref) error { return errors.New("bootstrap failed") }
 	setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 1)
 	for _, dir := range []string{filepath.Join(userHome, ".claude", "skills"), filepath.Join(userHome, ".agents")} {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
@@ -295,7 +296,7 @@ func TestFailedSetupRestoresTheHandoffSkillItReplaced(t *testing.T) {
 	must(t, os.WriteFile(path, []byte(older), 0644))
 	must(t, os.Chmod(path, 0644))
 	var written string
-	fakeSched(env).beforeLoad = func(schedulerRef) error {
+	fakeSched(env).beforeLoad = func(scheduler.Ref) error {
 		if written == "" {
 			written = readText(t, path)
 			return errors.New("bootstrap failed")

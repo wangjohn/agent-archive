@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
@@ -406,7 +407,7 @@ func TestRefreshKeepsTheCollectorsEnvironment(t *testing.T) {
 	t.Parallel()
 	f := newRefreshFixture(t, "loaded")
 	plistPath := f.plist()
-	written, err := launchd.LaunchAgent(f.oldExe, f.home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
+	written, err := launchd.LaunchAgent(f.oldExe, f.home, launchd.Label(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
 	must(t, err)
 	must(t, os.WriteFile(plistPath, written, 0600))
 
@@ -424,7 +425,7 @@ func TestRefreshKeepsTheCollectorsEnvironment(t *testing.T) {
 	if program, _ := launchd.LaunchAgentProgram(after); program != f.newExe {
 		t.Fatalf("the plist runs %s", program)
 	}
-	want, err := launchd.LaunchAgent(f.newExe, f.home, launchLabel(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
+	want, err := launchd.LaunchAgent(f.newExe, f.home, launchd.Label(plistPath), map[string]string{"AWS_CONFIG_FILE": "/aws/config", "PATH": "/opt/bin:/usr/bin"})
 	must(t, err)
 	if !bytes.Equal(after, want) {
 		t.Fatalf("plist:\n%s\nwant\n%s", after, want)
@@ -657,13 +658,13 @@ func TestRefreshAbsorbsSignalsWhileItChangesFiles(t *testing.T) {
 		}
 	}
 	var duringLoad, duringUnload bool
-	f.launchd.beforeLoad = func(schedulerRef) error {
+	f.launchd.beforeLoad = func(scheduler.Ref) error {
 		mu.Lock()
 		duringLoad = active
 		mu.Unlock()
 		return nil
 	}
-	f.launchd.beforeUnload = func(schedulerRef) error {
+	f.launchd.beforeUnload = func(scheduler.Ref) error {
 		mu.Lock()
 		duringUnload = active
 		mu.Unlock()
@@ -870,7 +871,7 @@ func TestRefreshFailureWithoutAJobRestartNeverAsksLaunchd(t *testing.T) {
 func TestRefreshRollsBackWhenTheRestartedJobFails(t *testing.T) {
 	t.Parallel()
 	f := newRefreshFixture(t, "loaded")
-	f.launchd.beforeLoad = func(schedulerRef) error {
+	f.launchd.beforeLoad = func(scheduler.Ref) error {
 		if len(f.launchd.all()) == 3 { // state, unload, then the new plist's load
 			return errors.New("bootstrap failed")
 		}

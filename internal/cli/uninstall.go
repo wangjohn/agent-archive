@@ -19,6 +19,7 @@ import (
 	"github.com/wangjohn/agent-archive/internal/credentials"
 	"github.com/wangjohn/agent-archive/internal/hooks"
 	"github.com/wangjohn/agent-archive/internal/local"
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/state"
 	"github.com/wangjohn/agent-archive/internal/terminal"
@@ -224,7 +225,7 @@ func stopCollectors(plists []string, out io.Writer, userHome string, env Env) (k
 			return nil, fmt.Errorf("cannot determine background job state; restore access to launchctl and retry")
 		}
 		if state == setupjournal.JobAnotherInstallation {
-			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchLabel(plist), plist)
+			terminal.Printf(out, "Left launchd's %s job running: it was loaded from another plist, so it belongs to another installation. %s was kept.\n", launchd.Label(plist), plist)
 			kept[plist] = true
 			continue
 		}

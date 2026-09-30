@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/scheduler"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
 )
 
@@ -32,7 +33,7 @@ func TestSetupMigratesLegacyJobAndRestoresOnFailure(t *testing.T) {
 			}
 			legacy := jobRef(path)
 			sched := fakeSched(env).set(legacy, "loaded")
-			sched.beforeLoad = func(ref schedulerRef) error {
+			sched.beforeLoad = func(ref scheduler.Ref) error {
 				if fail && ref != legacy {
 					return errors.New("start failed")
 				}
@@ -73,7 +74,7 @@ func TestTestInstallationLeavesPrototypeAlone(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Dir(settings), 0700))
 	must(t, os.WriteFile(settings, []byte(prototype), 0600))
 	sched := fakeSched(env).set(jobRef(path), "loaded")
-	sched.beforeUnload = func(ref schedulerRef) error {
+	sched.beforeUnload = func(ref scheduler.Ref) error {
 		t.Errorf("unloaded %s", ref)
 		return nil
 	}

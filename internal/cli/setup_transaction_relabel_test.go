@@ -39,7 +39,7 @@ func (l *fakeLaunchd) run(args ...string) ([]byte, error) {
 		if args[2] == l.failLoading {
 			return nil, errors.New("exit status 5")
 		}
-		l.loaded[launchLabel(args[2])] = args[2]
+		l.loaded[launchd.Label(args[2])] = args[2]
 	case "bootout":
 		delete(l.loaded, filepath.Base(args[1]))
 	}
@@ -89,9 +89,9 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 	otherDirectory := write(launchd.CollectorLabel(elsewhere, ""), elsewhere)
 	notOurs := write(launchd.LaunchLabel+".backup", home)
 	mac := &fakeLaunchd{loaded: map[string]string{
-		launchLabel(loadedA):        loadedA,
-		launchd.LaunchLabel:         "/Users/real/Library/LaunchAgents/" + launchd.LaunchLabel + ".plist",
-		launchLabel(otherDirectory): otherDirectory,
+		launchd.Label(loadedA):        loadedA,
+		launchd.LaunchLabel:           "/Users/real/Library/LaunchAgents/" + launchd.LaunchLabel + ".plist",
+		launchd.Label(otherDirectory): otherDirectory,
 	}}
 	stubLaunchctl(t, mac.run)
 	own := env.installation(home, userHome).collectorPlist()
@@ -100,8 +100,8 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 	if code := Run([]string{"setup"}, strings.NewReader(s3SetupInput("b", "us-east-1", "p", false, true, false, t.TempDir())), &out, &errOut, env); code != 0 {
 		t.Fatalf("setup: exit %d\n%s", code, &errOut)
 	}
-	if got := mac.bootouts(); !slices.Equal(got, []string{launchLabel(loadedA)}) {
-		t.Fatalf("setup booted out %v, want only %s", got, launchLabel(loadedA))
+	if got := mac.bootouts(); !slices.Equal(got, []string{launchd.Label(loadedA)}) {
+		t.Fatalf("setup booted out %v, want only %s", got, launchd.Label(loadedA))
 	}
 	for _, gone := range []string{loadedA, unloadedB} {
 		if _, err := os.Stat(gone); !os.IsNotExist(err) {
@@ -113,7 +113,7 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 			t.Errorf("%s: %v", kept, err)
 		}
 	}
-	if mac.loaded[launchLabel(own)] != own {
+	if mac.loaded[launchd.Label(own)] != own {
 		t.Fatal("the collector was not loaded under the directory's own label")
 	}
 
@@ -121,7 +121,7 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 	// removes them with its own, and nothing else.
 	loadedC := write(launchd.CollectorLabel("/old/spelling/c", ""), home)
 	unloadedD := write(launchd.CollectorLabel("/old/spelling/d", ""), home)
-	mac.loaded[launchLabel(loadedC)] = loadedC
+	mac.loaded[launchd.Label(loadedC)] = loadedC
 	mac.calls = nil
 	out.Reset()
 	errOut.Reset()
@@ -130,7 +130,7 @@ func TestEveryEarlierLabelOfTheDirectoryIsRetired(t *testing.T) {
 	}
 	got := mac.bootouts()
 	slices.Sort(got)
-	want := []string{launchLabel(own), launchLabel(loadedC)}
+	want := []string{launchd.Label(own), launchd.Label(loadedC)}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Fatalf("uninstall booted out %v, want %v", got, want)
@@ -170,8 +170,8 @@ func TestFailedSetupRestoresEveryRetiredJob(t *testing.T) {
 	}
 	own := env.installation(home, userHome).collectorPlist()
 	mac := &fakeLaunchd{failLoading: own, loaded: map[string]string{
-		launchLabel(paths[0]): paths[0],
-		launchLabel(paths[2]): paths[2],
+		launchd.Label(paths[0]): paths[0],
+		launchd.Label(paths[2]): paths[2],
 	}}
 	stubLaunchctl(t, mac.run)
 	var out, errOut bytes.Buffer
@@ -187,11 +187,11 @@ func TestFailedSetupRestoresEveryRetiredJob(t *testing.T) {
 		}
 	}
 	for _, path := range []string{paths[0], paths[2]} {
-		if mac.loaded[launchLabel(path)] != path {
+		if mac.loaded[launchd.Label(path)] != path {
 			t.Errorf("%s was running and was not restarted", path)
 		}
 	}
-	if _, running := mac.loaded[launchLabel(paths[1])]; running {
+	if _, running := mac.loaded[launchd.Label(paths[1])]; running {
 		t.Errorf("%s was not running and was started", paths[1])
 	}
 	if setupjournal.TransactionPending(home) {

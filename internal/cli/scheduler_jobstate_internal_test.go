@@ -6,13 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wangjohn/agent-archive/internal/scheduler/launchd"
 )
 
 // Characterization of the macOS scheduler (PR 5a-0), the part that names code
-// a later PR moves or removes: parseJobState moves into the launchd adapter,
-// and Env.Scheduler (the seam 5a-1 put in place of Env.JobState,
-// LoadLaunchAgent and UnloadLaunchAgent) gives way to the port. This file
-// moves or changes with them, mechanically;
+// a later PR moves or removes: launchd.ParseJobState (moved into the launchd
+// adapter by 5a-2) and Env.Scheduler (the seam 5a-1 put in place of
+// Env.JobState, LoadLaunchAgent and UnloadLaunchAgent), which give way to the
+// port's own types. This file moves or changes with them, mechanically;
 // scheduler_jobstate_test.go pins the same answers through status and names
 // none of it.
 
@@ -43,7 +45,7 @@ func TestParseJobStateOverRecordedOutput(t *testing.T) {
 		{"missing.txt", nil, "unknown"},
 		{"running.txt", errors.New("signal: killed"), "unknown"},
 	} {
-		if got := parseJobState(read(tc.file), tc.failed, plist); got != tc.want {
+		if got := launchd.ParseJobState(read(tc.file), tc.failed, plist); string(got) != tc.want {
 			t.Errorf("%s (error %v): %s, want %s", tc.file, tc.failed, got, tc.want)
 		}
 	}
