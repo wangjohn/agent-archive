@@ -72,8 +72,8 @@ func specimens(home string) []specimen {
 		// What a unit file or a shell line would read as something else: a
 		// space in the program's path, a specifier (%), a variable ($), quotes
 		// and a backslash.
-		{"needs-quoting", scheduler.Installation{DataHome: filepath.Join(home, `100% $HOME's \data`)},
-			scheduler.JobSpec{Executable: filepath.Join(home, "My Apps", "agent-archive"), Args: []string{"_collect"}, DataHome: filepath.Join(home, `100% $HOME's \data`), Env: map[string]string{"AWS_PROFILE": `it's "work" at 50%`, "PATH": `/opt/$tools/bin:/usr/bin`}, Interval: time.Minute, RunAtLoad: true}},
+		{"needs-quoting", scheduler.Installation{DataHome: filepath.Join(home, `100% $HOME's data`)},
+			scheduler.JobSpec{Executable: filepath.Join(home, "My Apps", "agent-archive"), Args: []string{"_collect"}, DataHome: filepath.Join(home, `100% $HOME's data`), Env: map[string]string{"AWS_PROFILE": `it's "work" \ 50%`, "PATH": `/opt/$tools/bin:/usr/bin`}, Interval: time.Minute, RunAtLoad: true}},
 	}
 }
 
