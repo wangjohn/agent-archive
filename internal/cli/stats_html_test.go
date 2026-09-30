@@ -174,10 +174,18 @@ func TestStatsHTMLEmptyWindowAndFilters(t *testing.T) {
 	}
 	publishStatsFixture(t, mem)
 	filtered := mustRunStats(t, env, 0, "--html", "--model", `<b>none</b>`, "--hook-captured")
-	for _, want := range []string{"No archived sessions match these filters", "model &lt;b&gt;none&lt;/b&gt;", "hook-captured sessions"} {
+	for _, want := range []string{"No archived sessions match these filters", "Filtered to model model A", "hook-captured sessions"} {
 		if !strings.Contains(filtered, want) {
 			t.Errorf("the filtered empty page lacks %q\n%s", want, filtered)
 		}
+	}
+	if strings.Contains(filtered, "&lt;b&gt;none") {
+		t.Error("an unlisted model filter is named on the shareable page")
+	}
+	// With real names asked for it is named, escaped.
+	named := mustRunStats(t, env, 0, "--html", "--include-names", "--model", `<b>none</b>`, "--hook-captured")
+	if !strings.Contains(named, "model &lt;b&gt;none&lt;/b&gt;") || strings.Contains(named, "<b>none</b>") {
+		t.Error("the model filter is not named, escaped, with --include-names")
 	}
 	if strings.Contains(filtered, "<b>none</b>") {
 		t.Error("the model filter reached the page unescaped")

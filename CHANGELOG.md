@@ -30,8 +30,9 @@ follow [Semantic Versioning](https://semver.org/).
   `--output FILE` to save it (mode 0600; an existing file is kept unless
   `--force`; the file is written in one step, never half), or redirect
   standard output. It holds counts and names only, never prompts, paths or
-  session IDs, and names each project, skill and MCP server "project A",
-  "skill A", "MCP server A" and so on unless you pass
+  session IDs, and names each project, skill and MCP server, and each model
+  the built-in price table does not list (a fine-tune id, a custom deployment), "project A",
+  "skill A", "MCP server A", "model A" and so on unless you pass
   `--include-names`, so the page can be shared. See [stats](docs/guides/stats.md#share-it-as-a-web-page).
 - Metadata may include, from parser `0.14.0`, `counts.reasoning_tokens`,
   `counts.tool_errors` (tool results the app flagged as errors; not known

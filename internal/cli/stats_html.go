@@ -34,7 +34,7 @@ func addStatsHTMLFlags(fs *commandFlags) *statsHTMLFlags {
 	fs.BoolVar(&f.html, "html", false, "write one self-contained HTML page (inline styles and SVG, no script, no external requests) to stdout, or to --output")
 	fs.StringVar(&f.output, "output", "", "with --html, write the page to this file (mode 0600, replaced in one step) instead of stdout")
 	fs.BoolVar(&f.force, "force", false, "with --output, replace FILE if it is an ordinary file that exists")
-	fs.BoolVar(&f.includeNames, "include-names", false, "with --html, name the real projects, skills and MCP servers; by default the page says project A, skill A, MCP server A, ... so it can be shared")
+	fs.BoolVar(&f.includeNames, "include-names", false, "with --html, name the real projects, skills, MCP servers and models the built-in price table does not list; by default the page says project A, skill A, MCP server A, model A, ... so it can be shared")
 	return f
 }
 

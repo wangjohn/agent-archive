@@ -240,10 +240,11 @@ paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
                                  0600, replaced in one step) instead of stdout
   --force                        With --output, replace FILE if it is an
                                  ordinary file that exists
-  --include-names                With --html, name the real projects, skills
-                                 and MCP servers; by default the page says
-                                 project A, skill A, MCP server A, ... so it
-                                 can be shared
+  --include-names                With --html, name the real projects, skills,
+                                 MCP servers and models the built-in price
+                                 table does not list; by default the page
+                                 says project A, skill A, MCP server A,
+                                 model A, ... so it can be shared
 Example: agent-archive stats --since 2026-09-01 --by project
 Example: agent-archive stats --html --output stats.html
 `,

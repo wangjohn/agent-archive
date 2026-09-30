@@ -86,7 +86,8 @@ func stringLeaves(s *stats.Stats) []stringLeaf {
 // the stats does not reach the page (and so cannot leak) until this list
 // says it may. Session IDs, harness IDs, model IDs, price sources and notes
 // are not on it. With names hidden, no project, skill or MCP server name is
-// either.
+// either, and no model label: the fixture's marker is not a model the
+// built-in price table lists.
 func TestOnlyTheseStatsTextsReachThePage(t *testing.T) {
 	t.Parallel()
 	base := computeFixture(t, fixtureSessions(), 30, stats.GroupProject)
@@ -113,13 +114,13 @@ func TestOnlyTheseStatsTextsReachThePage(t *testing.T) {
 	}
 	common := []string{
 		"Stats.Agents[].Label", "Stats.Daily[].Date", "Stats.Groups.By", "Stats.Highlights.BusiestDay.Date",
-		"Stats.Highlights.FavoriteModel.Label", "Stats.MCP.Scope", "Stats.Models[].Label",
+		"Stats.MCP.Scope",
 		"Stats.Prices.AsOf", "Stats.Prices.Currency", "Stats.Prices.Version",
 		"Stats.Window.FirstDay", "Stats.Window.LastDay", "Stats.Window.Timezone",
 	}
 	named := []string{
-		"Stats.Groups.Rows[].Key", "Stats.Highlights.CostliestSession.Project", "Stats.MCP.Servers[].Name",
-		"Stats.Projects[].Name", "Stats.Skills[].Name",
+		"Stats.Groups.Rows[].Key", "Stats.Highlights.CostliestSession.Project", "Stats.Highlights.FavoriteModel.Label",
+		"Stats.MCP.Servers[].Name", "Stats.Models[].Label", "Stats.Projects[].Name", "Stats.Skills[].Name",
 	}
 	if got, want := reached(true), slices.Sorted(slices.Values(slices.Concat(common, named))); !slices.Equal(got, want) {
 		t.Errorf("with names shown, the stats texts on the page are\n  %q\nwant\n  %q", got, want)

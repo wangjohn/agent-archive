@@ -77,19 +77,24 @@ every other number is in a table.
   The flags are checked before the archive is read. `--html` cannot be
   combined with `--json`.
 - **What is in it.** Counts, model names, skill and MCP server names, dates,
-  and project names, only. Never a prompt, transcript text, a file path or a
-  session ID (the costliest session is described, not named: `show` cannot
+  and project names, only (by default only the model names the built-in
+  price table lists, see the next item). Never a prompt, transcript text, a
+  file path or a session ID (the costliest session is described, not named: `show` cannot
   open it from the page, by design). It also names the time zone the days were
   counted in.
 - **Names are hidden by default.** So the page can be shared, each project is
   a stand-in, "project A", "project B" and so on, in the order the page lists
-  them; skills and MCP servers get "skill A" and "MCP server A" the same way.
-  The same name has the same letter throughout the page, but the letters
-  follow this run's ranking and are not stable between runs.
-  `--include-names` shows the real names of all three, for a page only
-  you read. Model names are shown either way (they name a vendor's model, not
-  your work), so a model you named after a client would be visible: check the
-  cost-by-model table before sharing a page from a custom deployment.
+  them; skills, MCP servers and models get "skill A", "MCP server A" and
+  "model A" the same way. A model keeps its name only when the built-in price
+  table lists it ("opus", "gpt-5"; so are the archive's own "unknown" and
+  "other"); a fine-tune id, a custom deployment name or any other model the
+  table does not list is a stand-in, in the heading's `--model` filter, the
+  cost-by-model table, the favorite model and the footer's note on unpriced
+  models alike. A model your own `--prices` file adds
+  is not listed either. The same name has the same letter throughout the
+  page, but the letters follow this run's ranking and are not stable between
+  runs. `--include-names` shows the real names of all four, for a page only
+  you read. The terminal view and `--json` are not affected: they print to you.
 - **Same rules as the terminal.** Unknown is not zero (Cursor's tokens read
   unknown, and a window with no token data says so instead of drawing an empty
   chart), cost is an estimate whose price table and date are in the footer,

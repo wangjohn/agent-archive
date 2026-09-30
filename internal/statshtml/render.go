@@ -5,11 +5,12 @@
 //
 // It is a pure function of the engine's stats.Stats and Options. It holds
 // aggregates and names only: never prompts, transcript text, file paths or
-// session IDs. Project names are replaced by stand-ins ("project A") unless
-// Options.IncludeNames is set, and every name that came from a
-// transcript (project, model, skill, MCP server) is cleaned of control
-// characters and escaped for HTML by the template, which is the only way text
-// reaches the page.
+// session IDs. Project, skill and MCP server names, and the names of models
+// the built-in price table does not list, are replaced by stand-ins
+// ("project A", "model A") unless Options.IncludeNames is set, and every name
+// that came from a transcript (project, model, skill, MCP server) is cleaned
+// of control characters and escaped for HTML by the template, which is the
+// only way text reaches the page.
 package statshtml
 
 import (
@@ -74,11 +75,12 @@ type Options struct {
 	// GeneratedAt is stamped in the footer; the zero time leaves the stamp
 	// out. The renderer never reads the clock.
 	GeneratedAt time.Time
-	// IncludeNames shows the real names of projects, skills and MCP
-	// servers, which can identify a client or an internal tool. By default
-	// each is a stand-in ("project A", "skill A", "MCP server A"), so the page
-	// can be shared. Model names are shown either way: they name a vendor's
-	// model, not the user's work.
+	// IncludeNames shows the real names of projects, skills, MCP servers and
+	// models the built-in price table does not list, which can identify a
+	// client or an internal tool (a fine-tune id, a deployment name). By
+	// default each is a stand-in ("project A", "skill A", "MCP server A",
+	// "model A"), so the page can be shared. A model the built-in price table
+	// lists ("opus", "gpt-5") is public and shown either way.
 	IncludeNames bool
 	// Filters are named in the heading.
 	Filters Filters
@@ -91,9 +93,10 @@ type Options struct {
 func Render(s stats.Stats, opts Options) ([]byte, error) {
 	b := builder{
 		s: s, opts: opts,
-		names:   newNamer(opts.IncludeNames, "project"),
-		skills:  newNamer(opts.IncludeNames, "skill"),
-		servers: newNamer(opts.IncludeNames, "MCP server"),
+		names:      newNamer(opts.IncludeNames, "project"),
+		skills:     newNamer(opts.IncludeNames, "skill"),
+		servers:    newNamer(opts.IncludeNames, "MCP server"),
+		modelNames: newModelNamer(opts.IncludeNames, s.Models),
 	}
 	p := b.page()
 	var out bytes.Buffer
@@ -112,7 +115,10 @@ type builder struct {
 	names   *namer
 	skills  *namer
 	servers *namer
-	cost    costFlags
+	// models shows the model names the built-in price table lists, or
+	// stand-ins for the others.
+	modelNames *modelNamer
+	cost       costFlags
 }
 
 func (b *builder) page() page {
@@ -168,7 +174,7 @@ func (b *builder) header(p *page, window string) {
 		parts = append(parts, "harness "+clean(f.Harness))
 	}
 	if f.Model != "" {
-		parts = append(parts, "model "+clean(f.Model))
+		parts = append(parts, "model "+b.modelNames.id(f.Model))
 	}
 	if f.Origin != "" {
 		text, known := originText[f.Origin]
@@ -266,6 +272,9 @@ func (b *builder) models() *barTable {
 	if more > 0 {
 		t.Notes = append(t.Notes, fmt.Sprintf("and %d more models", more))
 	}
+	if b.modelNames.hidden {
+		t.Notes = append(t.Notes, "Models the built-in price table does not list are replaced by letters in this file.")
+	}
 	return t
 }
 
@@ -273,7 +282,7 @@ func (b *builder) models() *barTable {
 // table does not list, its tokens and an empty bar (it has no share of the
 // cost to draw).
 func (b *builder) modelRow(r stats.ModelRow) barRow {
-	label := clean(r.Label)
+	label := b.modelNames.label(r.Label)
 	if !r.Priced || r.Cost.USD == nil {
 		return barRow{Label: label, Pct: "0%", Cells: []string{"unpriced", statsfmt.TokenCount(r.Tokens) + " tokens"}}
 	}
@@ -377,7 +386,7 @@ func (b *builder) highlights() []highlight {
 		out = append(out, highlight{"Busiest day", fmt.Sprintf("%s (%s)", dayLabel(h.BusiestDay.Date, b.s.Window.Days), plural(h.BusiestDay.Sessions, "session"))})
 	}
 	if h.FavoriteModel != nil {
-		text := clean(h.FavoriteModel.Label)
+		text := b.modelNames.label(h.FavoriteModel.Label)
 		if h.FavoriteModel.By == "tokens" {
 			text += " (by tokens)"
 		}
@@ -450,7 +459,7 @@ func (b *builder) footer(p *page) {
 	p.Footer.Lines = lines
 	p.Footer.Privacy = "This page holds counts and names only: no prompts, transcript text, file paths or session IDs."
 	if !b.opts.IncludeNames {
-		p.Footer.Privacy += " Project, skill and MCP server names are replaced by letters; run with --include-names to show them."
+		p.Footer.Privacy += " Project, skill, MCP server and unrecognized model names are replaced by letters; run with --include-names to show them."
 	}
 	if !b.opts.GeneratedAt.IsZero() {
 		p.Footer.Generated = "Generated " + b.opts.GeneratedAt.Format("2006-01-02 15:04 MST") + " by agent-archive stats --html."
@@ -474,7 +483,7 @@ func (b *builder) unpricedModels() string {
 	var names []string
 	for _, r := range b.s.Models {
 		if !r.Priced || r.Cost.USD == nil {
-			names = append(names, clean(r.Label))
+			names = append(names, b.modelNames.label(r.Label))
 		}
 	}
 	if len(names) == 0 {
