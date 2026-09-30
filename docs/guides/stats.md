@@ -87,7 +87,8 @@ Estimated at list price, not a bill.   --detail for more · --by project · --ht
   whose sessions have no price (Cursor records no tokens) is a dot, never a
   low bar (a line under the chart says so). When the window has more days than
   the terminal has columns, as 90 days do on 80, each bar is the costliest day
-  of a run of days, and a line under the chart says how many.
+  of a run of days, and a line under the chart says how many. A window of one
+  day has no chart.
 - **Where it went** is the projects and the models by spend. From 80 columns
   they are two columns; from 60 they are stacked; narrower, plain rows. Bars
   are scaled to the largest row of their list and have no track behind them.

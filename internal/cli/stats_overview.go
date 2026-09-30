@@ -457,7 +457,11 @@ func (p *statsPrinter) skillsRow(limit int) []string {
 	for i, sk := range shown {
 		items[i] = fmt.Sprintf("%s %s", truncateVisible(clean(sk.Name), statsNameLimit), statsfmt.CommaInt(int64(sk.Sessions)))
 	}
-	text := strings.Join(items, " "+p.g.sep+" ") + " sessions"
+	unit := "sessions"
+	if len(shown) == 1 && shown[0].Sessions == 1 {
+		unit = "session"
+	}
+	text := strings.Join(items, " "+p.g.sep+" ") + " " + unit
 	if more := max(p.s.TotalDisplaySkills, len(skills)) - len(shown); more > 0 {
 		text += fmt.Sprintf(", + %d more", more)
 	}
@@ -476,7 +480,11 @@ func (p *statsPrinter) mcpRow(limit int) []string {
 	for i, srv := range shown {
 		items[i] = fmt.Sprintf("%s %s", truncateVisible(clean(srv.Name), statsNameLimit), statsfmt.CommaInt(srv.Calls))
 	}
-	text := strings.Join(items, " "+p.g.sep+" ") + " calls"
+	unit := "calls"
+	if len(shown) == 1 && shown[0].Calls == 1 {
+		unit = "call"
+	}
+	text := strings.Join(items, " "+p.g.sep+" ") + " " + unit
 	if more := max(m.TotalServers, len(m.Servers)) - len(shown); more > 0 {
 		text += fmt.Sprintf(", + %d more", more)
 	}

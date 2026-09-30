@@ -604,6 +604,13 @@ func TestStatsOneDayWindowReadsNaturally(t *testing.T) {
 	if !strings.Contains(out, "today") {
 		t.Errorf("one-day window:\n%s", out)
 	}
+	// A chart of one bar says nothing the headline does not.
+	if strings.Contains(out, "DAILY SPEND") {
+		t.Errorf("a one-day window draws a one-bar chart:\n%s", out)
+	}
+	if two := mustRunStats(t, env, 100, "--days", "2", "--prices", goldenPrices); !strings.Contains(two, "DAILY SPEND") {
+		t.Errorf("a two-day window has no chart:\n%s", two)
+	}
 	if detail := mustRunStats(t, env, 100, "--days", "1", "--prices", goldenPrices, "--view", "detail"); !strings.Contains(detail, "day before") {
 		t.Errorf("one-day detail does not name the day before:\n%s", detail)
 	}

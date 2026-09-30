@@ -13,8 +13,8 @@ follow [Semantic Versioning](https://semver.org/).
   the dearest day (`peak_spend`), the share of tokens that were cache reads
   (`overview.cache_share`), up to three prioritized `heads_up` notes as data
   (subagents using a quarter or more of the tokens, one session costing a
-  tenth or more of the spend when the window has more than one session, sessions without token data, a low cache-hit
-  rate), and `display_skills`, which lists a plugin's skill once under its
+  tenth or more of the spend when the window has more than one session,
+  sessions without token data, a low cache-hit rate), and `display_skills`, which lists a plugin's skill once under its
   bare name, with `total_skills`, `total_display_skills` and
   `mcp.total_servers` counting every row. Existing fields and the page are
   unchanged. See [JSON output](docs/reference/json-output.md#stats---json).
