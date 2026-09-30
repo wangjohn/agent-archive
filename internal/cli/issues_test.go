@@ -301,8 +301,15 @@ func TestNothingToDoProblemsAreNotShownAsFailures(t *testing.T) {
 	if err := store.SaveStatus(status); err != nil {
 		t.Fatal(err)
 	}
-	if plain := statusOutput(t, env); !strings.Contains(plain, "✗ Last error: 1 session failed to capture") {
+	// The headline states the failure, so default status doesn't repeat
+	// it; the size-limit notice beside it is still shown, and --verbose
+	// shows both.
+	plain := statusOutput(t, env)
+	if !strings.Contains(plain, "! Some sessions could not be captured\n") || strings.Contains(plain, "Last error: 1 session failed to capture") || !strings.Contains(plain, "over the transcript size limit") {
 		t.Errorf("status with a failure:\n%s", plain)
+	}
+	if verbose := statusOutput(t, env, "--verbose"); !strings.Contains(verbose, "✗ Last error: 1 session failed to capture") {
+		t.Errorf("status --verbose with a failure:\n%s", verbose)
 	}
 }
 
