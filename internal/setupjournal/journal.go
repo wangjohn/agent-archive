@@ -1,8 +1,9 @@
 // Package setupjournal is setup's transaction: the journal setup writes
 // before it changes any hook file or the LaunchAgent (Commit), putting an
-// interrupted or failed setup back from it (Restore, Recover), retiring the
-// jobs earlier installations left (PlanLegacyMigration, PlanRelabel), and
-// the check every other command and the hook make that one is pending.
+// interrupted or failed setup back from it (Restore, Recover), recording the
+// jobs earlier installations left that it retires (RetireeJobs; which jobs
+// those are is the scheduler's to say, see scheduler.Inspector.Installed),
+// and the check every other command and the hook make that one is pending.
 // launchd is reached only through the Launchd a caller passes; prompts and
 // output stay in internal/cli.
 package setupjournal
@@ -35,7 +36,7 @@ type Journal struct {
 	Legacy *LegacyJob `json:"legacy,omitempty"`
 	// Relabeled and MoreRelabeled are the collectors earlier releases
 	// installed for this data directory under other labels (see
-	// previousCollectorPlists); setup retires them in favor of the
+	// scheduler.EarlierLabel); setup retires them in favor of the
 	// directory's own label. The first stays in Relabeled, where releases
 	// that retired at most one recorded it, so either reads the other's
 	// journal of one.
@@ -237,31 +238,4 @@ func Recover(home string, launchd Launchd, lockCollector func() (func(), error))
 	}
 	defer releaseHooks()
 	return Restore(home, journal, launchd)
-}
-
-// PlanRelabel prepares retiring the collectors earlier releases installed
-// for this data directory under other labels: plists, from
-// previousCollectorPlists.
-func PlanRelabel(plists []string, launchd Launchd) ([]*LegacyJob, error) {
-	var jobs []*LegacyJob
-	for _, path := range plists {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return nil, err
-		}
-		state := launchd.JobState(path)
-		if state == "unknown" {
-			return nil, fmt.Errorf("cannot determine the state of %s; restore access to launchctl and retry", path)
-		}
-		if state == JobAnotherInstallation {
-			// launchd runs that label from another plist: not this one's to retire.
-			continue
-		}
-		jobs = append(jobs, &LegacyJob{Change: hooks.Change{Path: path, Before: data, Existed: true, Mode: info.Mode().Perm()}, WasLoaded: JobActive(state)})
-	}
-	return jobs, nil
 }

@@ -128,5 +128,16 @@ func TestConformance(t *testing.T) {
 			t.Helper()
 			golden.Check(t, filepath.Join("testdata", "conformance", name+".plist"), got)
 		},
+		Earlier: func(t *testing.T, site scheduler.Site, inst scheduler.Installation) scheduler.Ref {
+			t.Helper()
+			// An earlier release labeled the directory as it then spelled it.
+			label := CollectorLabel(filepath.Join(inst.DataHome, "earlier-spelling"), "")
+			plist, err := LaunchAgent("/opt/old/agent-archive", inst.DataHome, label, nil)
+			must(t, err)
+			path := PlistPath(site, scheduler.Ref(label))
+			must(t, os.MkdirAll(filepath.Dir(path), 0o700))
+			must(t, os.WriteFile(path, plist, 0o600))
+			return scheduler.Ref(label)
+		},
 	})
 }

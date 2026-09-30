@@ -119,7 +119,8 @@ In Go tests, everything goes through injection:
   every scheduler adapter must (the state matrix, refusing to stop what another
   installation owns with typed errors, an idempotent unload, `Plan`'s purity and
   recorded output, the `Plan` to `Inspect` and refresh round trips, no
-  credential in a definition), over a fake `launchctl` that prints the
+  credential in a definition, `Installed` listing the installation's own job
+  first and its earlier jobs after), over a fake `launchctl` that prints the
   recordings in `internal/cli/testdata/scheduler/launchctl-print`; the
   `schedulertest.Model`, a scheduler with a vocabulary of its own, passes it
   too, and is what code written against the port can be tested over. `internal/scheduler/host` owns the real Runner; its

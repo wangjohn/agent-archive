@@ -919,11 +919,29 @@ type statusBackground struct {
 	environmentProblems []string
 }
 
+// installedRef is the job status reports on: this installation's own, or, when
+// it has no definition, the first collector an earlier release installed for
+// it under another label.
+func installedRef(in installation, userHome string, env Env) scheduler.Ref {
+	own := in.ref()
+	if env.jobDefinition(userHome, own).Defined {
+		return own
+	}
+	// What blocks setup (the prototype's job) does not block status.
+	jobs, _ := in.installed(userHome)
+	for _, job := range jobs {
+		if job.Alias == scheduler.EarlierLabel {
+			return job.Ref
+		}
+	}
+	return own
+}
+
 // readBackground reads the background collector's scheduler state, and what
 // its definition actually runs.
 func readBackground(view *statusView, cfg config.Config, home, userHome string, env Env) statusBackground {
 	in := env.installation(home, userHome)
-	ref, words := jobRef(in.installedCollectorPlist()), in.definer().Words()
+	ref, words := installedRef(in, userHome, env), in.sched().Words()
 	job := env.jobStatus(userHome, ref)
 	view.Background = string(job.State)
 	// launchd reports a job whose program is gone as loaded (it only fails
@@ -937,7 +955,7 @@ func readBackground(view *statusView, cfg config.Config, home, userHome string, 
 		// The collector has only the environment its definition sets, which
 		// may no longer match the files and programs the profile needs.
 		if job.Env != nil {
-			environmentProblems = collectorEnvironmentProblems(cfg.Storage, job.Env, userHome, in.definer().DefaultPATH())
+			environmentProblems = collectorEnvironmentProblems(cfg.Storage, job.Env, userHome, in.sched().DefaultPATH())
 			view.Warnings = append(view.Warnings, environmentProblems...)
 			if drift := env.awsFilesDrift(cfg.Storage, job.Env, userHome); drift != "" {
 				view.Warnings = append(view.Warnings, drift)

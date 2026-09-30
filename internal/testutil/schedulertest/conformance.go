@@ -42,6 +42,11 @@ type Backend struct {
 	// Golden checks got, the bytes of one definition, against the recorded
 	// output of this backend, for the definition name.
 	Golden func(t *testing.T, name string, got []byte)
+	// Earlier writes, under site, the definition of a job an earlier release
+	// of the tool left for inst's data directory under another name than the
+	// installation's own, and returns its ref. A backend with no such history
+	// leaves it nil.
+	Earlier func(t *testing.T, site scheduler.Site, inst scheduler.Installation) scheduler.Ref
 }
 
 // specimen is a job the suite defines: an installation and what it runs.
@@ -90,6 +95,7 @@ func RunConformance(t *testing.T, b Backend) {
 	t.Run("RefreshRoundTrip", func(t *testing.T) { refreshRoundTrip(t, b) })
 	t.Run("NoCredentialValuesInADefinition", func(t *testing.T) { noCredentials(t, b) })
 	t.Run("UnreadableAndAbsentDefinitions", func(t *testing.T) { unreadableDefinitions(t, b) })
+	t.Run("InstalledListsTheInstallationsJobs", func(t *testing.T) { installedJobs(t, b) })
 }
 
 // site is a user home the suite may write under, and a scheduler over it.
@@ -445,5 +451,54 @@ func unreadableDefinitions(t *testing.T, b Backend) {
 	bad := s.Inspect(context.Background(), site, ref)
 	if !bad.Defined || bad.DefinitionErr == nil || bad.Program != "" || bad.State != scheduler.Loaded {
 		t.Errorf("an unreadable definition reads %+v (%v)", bad, bad.DefinitionErr)
+	}
+}
+
+// Installed names an installation's own job first, even before it is
+// defined, then its aliases; a job of another data directory is never among
+// them, and asking changes nothing.
+func installedJobs(t *testing.T, b Backend) {
+	t.Helper()
+	s, m, site := fresh(t, b)
+	specs := specimens(t.TempDir())
+	own, other := specs[1], specs[3]
+	ref := s.Ref(own.inst)
+	ctx := context.Background()
+	jobs, err := s.Installed(ctx, site, own.inst)
+	if err != nil || !slices.Equal(jobs, []scheduler.Job{{Ref: ref}}) {
+		t.Fatalf("Installed before anything is defined: %+v, %v; want only the installation's own job %s", jobs, err, ref)
+	}
+	define(t, s, site, own)
+	define(t, s, site, other)
+	asked := len(m.Calls())
+	jobs, err = s.Installed(ctx, site, own.inst)
+	if err != nil || !slices.Equal(jobs, []scheduler.Job{{Ref: ref}}) {
+		t.Errorf("Installed with another installation's job on disk: %+v, %v; want only %s", jobs, err, ref)
+	}
+	if len(m.Calls()) != asked {
+		t.Error("Installed asked the manager")
+	}
+	if b.Earlier == nil {
+		return
+	}
+	earlier := b.Earlier(t, site, own.inst)
+	if earlier == "" || earlier == ref {
+		t.Fatalf("the earlier job is %q, want a ref of its own", earlier)
+	}
+	jobs, err = s.Installed(ctx, site, own.inst)
+	want := []scheduler.Job{{Ref: ref}, {Ref: earlier, Alias: scheduler.EarlierLabel}}
+	if err != nil || !slices.Equal(jobs, want) {
+		t.Errorf("Installed with an earlier job on disk: %+v, %v; want %+v", jobs, err, want)
+	}
+	// Whatever is defined for an earlier job is readable by its ref.
+	if got := s.Definition(site, earlier); !got.Defined || got.DefinitionErr != nil || got.DataHome != own.inst.DataHome {
+		t.Errorf("Definition of the earlier job: %+v (%v)", got, got.DefinitionErr)
+	}
+	// The installation's own job comes first even when only an earlier job
+	// has a definition.
+	elsewhere := scheduler.Site{UserHome: t.TempDir()}
+	earlier = b.Earlier(t, elsewhere, own.inst)
+	if jobs, err = s.Installed(ctx, elsewhere, own.inst); err != nil || len(jobs) != 2 || jobs[0] != (scheduler.Job{Ref: ref}) || jobs[1].Ref != earlier {
+		t.Errorf("Installed with only an earlier job defined: %+v, %v; want %s first, then %s", jobs, err, ref, earlier)
 	}
 }
