@@ -38,6 +38,15 @@ type Manager interface {
 	Calls() []string
 }
 
+// Sited is an optional method of a Manager whose fake must know where the
+// definitions of the run's jobs are to answer as its real manager does (systemd
+// finds a unit by name in the user's unit directory, and is not told a path
+// as launchctl is): the suite tells it the user home of the run before it does
+// anything else.
+type Sited interface {
+	UseSite(site scheduler.Site)
+}
+
 // Backend is one scheduler for the suite to run over.
 type Backend struct {
 	// New returns a scheduler and the manager behind it, both with no job.
@@ -109,11 +118,16 @@ func RunConformance(t *testing.T, b Backend) {
 	t.Run("LocateIsTheInverseOfPlan", func(t *testing.T) { locateInverse(t, b) })
 }
 
-// site is a user home the suite may write under, and a scheduler over it.
+// fresh is a scheduler and its manager over a user home the suite may write
+// under.
 func fresh(t *testing.T, b Backend) (scheduler.Scheduler, Manager, scheduler.Site) {
 	t.Helper()
 	s, m := b.New(t)
-	return s, m, scheduler.Site{UserHome: t.TempDir()}
+	site := scheduler.Site{UserHome: t.TempDir()}
+	if sited, ok := m.(Sited); ok {
+		sited.UseSite(site)
+	}
+	return s, m, site
 }
 
 // define plans sp at site and writes what it plans, as setup does.

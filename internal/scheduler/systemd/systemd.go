@@ -24,6 +24,15 @@ import (
 	"github.com/wangjohn/agent-archive/internal/scheduler"
 )
 
+// ChangeTimeout bounds a load or an unload, as launchd's does: setup absorbs
+// Ctrl-C while it changes a job, so a systemctl that hangs must end on its
+// own, and the setup journal handles what was left half done.
+const ChangeTimeout = 30 * time.Second
+
+// stateTimeout bounds the questions Inspect asks together (the version, the
+// units, lingering), which only read.
+const stateTimeout = 3 * time.Second
+
 // DefaultPATH is the PATH systemd's own compiled-in default gives a service
 // that sets none: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin, with
 // /sbin:/bin after them (systemd.exec(5), $PATH; the last two are the
@@ -55,6 +64,9 @@ const collectorInterval = time.Minute
 type Scheduler struct {
 	// Run runs a program, and is required.
 	Run scheduler.Runner
+	// ChangeTimeout is the bound on a load and an unload; zero means the
+	// package's ChangeTimeout. A test shortens it.
+	ChangeTimeout time.Duration
 }
 
 // Name is "systemd", which the setup journal records for the jobs it made.
@@ -108,7 +120,8 @@ var unitDir = filepath.Join(".config", "systemd", "user")
 // the shell's XDG_CONFIG_HOME would name a directory the manager does not
 // search. A manager that does have another XDG_CONFIG_HOME (set by pam_env
 // or a user@.service drop-in) does not find the units, Load fails with
-// systemctl's "unit file ... does not exist", and setup rolls back. A
+// systemctl's "unit file ... does not exist" and this directory, and setup
+// rolls back. A
 // sandbox or a test that names another home keeps its units under that home.
 func (Scheduler) UnitDir(site scheduler.Site) string {
 	return filepath.Join(site.UserHome, unitDir)
@@ -212,4 +225,11 @@ func (s Scheduler) Definition(site scheduler.Site, ref scheduler.Ref) scheduler.
 		}
 	}
 	return status
+}
+
+func (s Scheduler) changeTimeout() time.Duration {
+	if s.ChangeTimeout > 0 {
+		return s.ChangeTimeout
+	}
+	return ChangeTimeout
 }

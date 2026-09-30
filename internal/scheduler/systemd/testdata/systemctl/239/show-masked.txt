@@ -1,0 +1,13 @@
+Id=@REF@.timer
+LoadState=masked
+ActiveState=failed
+SubState=failed
+FragmentPath=/dev/null
+DropInPaths=
+
+Id=@REF@.service
+LoadState=loaded
+ActiveState=failed
+SubState=failed
+FragmentPath=@SERVICE@
+DropInPaths=
