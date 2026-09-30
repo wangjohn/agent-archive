@@ -16,9 +16,13 @@ import (
 
 // Layout constants for the stats screen.
 const (
-	// statsFullWidth is the terminal width from which the screen draws bars;
-	// below it, it is a compact table.
-	statsFullWidth = 100
+	// statsFullWidth is the terminal width from which the screen draws bars
+	// (the designed screen, which is laid out for 80 columns); below it, it
+	// is a compact table.
+	statsFullWidth = 80
+	// statsMaxWidth is the width prose is wrapped to on a wider terminal, so
+	// lines stay readable.
+	statsMaxWidth = 100
 	// statsUnknownWidth is the width assumed for output that is not a
 	// terminal (a pipe, a file): the full layout.
 	statsUnknownWidth = 100
@@ -29,12 +33,17 @@ const (
 	statsMinWidth = 50
 
 	minLabelWidth = 8
+	// minBarWidth is the narrowest a bar is shrunk to before a row is cut
+	// to fit.
+	minBarWidth = 6
 
-	statsAgentBar      = 22
-	statsModelBar      = 14
-	statsProjectBar    = 14
-	statsCompositionW  = 50
-	statsNameLimit     = 24
+	statsAgentBar     = 22
+	statsModelBar     = 14
+	statsProjectBar   = 14
+	statsCompositionW = 50
+	statsNameLimit    = 24
+	// statsFilterLimit cuts a --harness or --model value in the heading.
+	statsFilterLimit   = 30
 	statsMaxModelRows  = 6
 	statsMaxGroupRows  = 60
 	statsMaxProjectRow = 25
@@ -114,13 +123,13 @@ func localeIsUTF8(env interface{ lookupEnv(string) (string, bool) }) bool {
 	return true
 }
 
-// wrap breaks a message to the view's width (at most statsFullWidth).
+// wrap breaks a message to the view's width (at most statsMaxWidth).
 func (v statsView) wrap(text string) string {
 	width := v.width
 	if width <= 0 {
 		width = statsUnknownWidth
 	}
-	return hangingIndent("", text, min(max(width, statsMinWidth), statsFullWidth))
+	return hangingIndent("", text, min(max(width, statsMinWidth), statsMaxWidth))
 }
 
 // statsPrinter builds the screen line by line.
@@ -133,11 +142,15 @@ type statsPrinter struct {
 	cw     int  // the width right-aligned labels line up to
 	approx bool // some cost shown is approximate (~)
 	part   bool // some cost shown leaves out unpriced tokens (+)
+	// asOfShown is whether the overview already says when the prices are
+	// from, so the footer need not.
+	asOfShown bool
 }
 
 // renderStats writes the stats screen for s to w. It draws the full layout,
-// with bars, at statsFullWidth columns or more, and a compact table below
-// that; color only when the view's style has it.
+// with bars, at statsFullWidth (80) columns or more, and a compact table
+// below that; color only when the view's style has it. No line is wider than
+// the terminal.
 func renderStats(w io.Writer, s stats.Stats, v statsView) error {
 	width := v.width
 	if width <= 0 {
@@ -181,7 +194,7 @@ func (p *statsPrinter) heading(title, note string) string {
 
 // wrap breaks text to the screen's width.
 func (p *statsPrinter) wrap(text string) []string {
-	return strings.Split(hangingIndent("", text, min(p.width, statsFullWidth)), "\n")
+	return strings.Split(hangingIndent("", text, min(p.width, statsMaxWidth)), "\n")
 }
 
 func (p *statsPrinter) header() []string {
@@ -230,10 +243,10 @@ func (p *statsPrinter) filterText() string {
 	var parts []string
 	f := p.v.filters
 	if f.Harness != "" {
-		parts = append(parts, "harness "+archive.DisplayLine(f.Harness))
+		parts = append(parts, "harness "+truncateVisible(archive.DisplayLine(f.Harness), statsFilterLimit))
 	}
 	if f.Model != "" {
-		parts = append(parts, "model "+archive.DisplayLine(f.Model))
+		parts = append(parts, "model "+truncateVisible(archive.DisplayLine(f.Model), statsFilterLimit))
 	}
 	if f.Origin != "" {
 		parts = append(parts, f.Origin+" only")
@@ -332,6 +345,12 @@ func (p *statsPrinter) overview() []string {
 	}
 	if p.full {
 		rows[3].extra = "at list price"
+		if asOf := p.s.Prices.AsOf; asOf != "" {
+			// The prices' date sits with the cost, so the screen says how
+			// old the estimate can be where it is read.
+			rows[3].extra += ", prices as of " + archive.DisplayLine(asOf)
+			p.asOfShown = true
+		}
 	}
 	labelW, valueW := 0, 0
 	for _, r := range rows {
@@ -460,18 +479,22 @@ type tableCol struct {
 	cells []string
 }
 
+// tableBar is the bar drawn beside each row of a table: width cells at most,
+// with shares (0 to 1) per row; a negative share leaves a row's bar blank.
+type tableBar struct {
+	width  int
+	shares []float64
+}
+
 // table draws rows under a title: each row's label, an optional bar, and the
-// columns, right-aligned under their heads on the title's line.
-func (p *statsPrinter) table(title string, labels, bars []string, cols []tableCol) []string {
+// columns, right-aligned under their heads on the title's line. A row that
+// would run past the terminal is fitted to it: bars shrink first, then labels
+// are cut, and last of all the bars go, so no line is wider than the terminal.
+func (p *statsPrinter) table(title string, labels []string, bar *tableBar, cols []tableCol) []string {
 	leftW := 0
 	for _, l := range labels {
 		leftW = max(leftW, visibleWidth(l))
 	}
-	barW := 0
-	if len(bars) > 0 {
-		barW = visibleWidth(bars[0]) + 2
-	}
-	leftW = max(leftW, visibleWidth(title)-barW)
 	widths := make([]int, len(cols))
 	for i, c := range cols {
 		widths[i] = visibleWidth(c.head)
@@ -479,39 +502,72 @@ func (p *statsPrinter) table(title string, labels, bars []string, cols []tableCo
 			widths[i] = max(widths[i], visibleWidth(cell))
 		}
 	}
-	// A label that would push a row past the terminal is cut short.
 	colsW := 0
 	for _, w := range widths {
 		colsW += w + 2
 	}
-	if excess := leftW + barW + colsW - p.width; excess > 0 && leftW > minLabelWidth {
+	barW := 0
+	if bar != nil {
+		barW = bar.width
+	}
+	// space is the columns a table takes with a bar barW wide and labels
+	// labelW wide (the title may set the label column's width).
+	space := func(barW, labelW int) int {
+		barSpace := 0
+		if barW > 0 {
+			barSpace = barW + 2
+		}
+		return max(labelW, visibleWidth(title)-barSpace) + barSpace + colsW
+	}
+	for barW > minBarWidth && space(barW, leftW) > p.width {
+		barW--
+	}
+	if barW > 0 && space(barW, minLabelWidth) > p.width {
+		barW = 0
+	}
+	barSpace := 0
+	if barW > 0 {
+		barSpace = barW + 2
+	}
+	leftW = max(leftW, visibleWidth(title)-barSpace)
+	// A label that would push a row past the terminal is cut short.
+	if excess := leftW + barSpace + colsW - p.width; excess > 0 && leftW > minLabelWidth {
 		leftW = max(leftW-excess, minLabelWidth)
 		labels = slices.Clone(labels)
 		for i, l := range labels {
 			labels[i] = truncateVisible(l, leftW)
 		}
 	}
-	head := p.bold(title) + strings.Repeat(" ", max(leftW+barW-visibleWidth(title), 0))
+	head := p.bold(title) + strings.Repeat(" ", max(leftW+barSpace-visibleWidth(title), 0))
 	for i, c := range cols {
+		if c.head == "" && (i == len(cols)-1 || cols[i+1].head == "") {
+			// Nothing to say over this column: no trailing blanks.
+			continue
+		}
 		head += "  " + p.dim(padLeft(c.head, widths[i]))
 	}
 	lines := []string{head}
 	for r, label := range labels {
 		line := padRight(label, leftW)
-		if len(bars) > 0 {
-			line += "  " + bars[r]
+		if barW > 0 {
+			line += "  " + p.bar(bar.shares[r], barW)
 		}
 		for i, c := range cols {
 			line += "  " + padLeft(c.cells[r], widths[i])
 		}
-		lines = append(lines, line)
+		lines = append(lines, strings.TrimRight(line, " "))
 	}
+	lines[0] = strings.TrimRight(lines[0], " ")
 	return lines
 }
 
-// bar draws share (0 to 1) of width cells: filled up to it, empty after.
+// bar draws share (0 to 1) of width cells: filled up to it, empty after. A
+// negative share is blank: nothing to draw.
 func (p *statsPrinter) bar(share float64, width int) string {
-	share = math.Max(0, math.Min(1, share))
+	if share < 0 {
+		return strings.Repeat(" ", width)
+	}
+	share = math.Min(1, share)
 	n := int(math.Round(share * float64(width)))
 	if share > 0 && n == 0 {
 		n = 1
@@ -520,10 +576,11 @@ func (p *statsPrinter) bar(share float64, width int) string {
 }
 
 func (p *statsPrinter) agents() []string {
-	var labels, bars, sessions, tokens, costs []string
+	var labels, sessions, tokens, costs []string
+	bar := &tableBar{width: statsAgentBar}
 	for _, a := range p.s.Agents {
 		labels = append(labels, archive.DisplayLine(a.Label))
-		bars = append(bars, p.bar(a.SessionShare, statsAgentBar))
+		bar.shares = append(bar.shares, a.SessionShare)
 		sessions = append(sessions, commaInt(int64(a.Sessions)))
 		tokens = append(tokens, "unknown")
 		costs = append(costs, "n/a")
@@ -541,9 +598,9 @@ func (p *statsPrinter) agents() []string {
 		shares[i] = padLeft(sessions[i], sessionW) + " " + padLeft(percent(a.SessionShare), 4)
 	}
 	if !p.full {
-		bars = nil
+		bar = nil
 	}
-	return p.table("AGENTS", labels, bars, []tableCol{
+	return p.table("AGENTS", labels, bar, []tableCol{
 		{"sessions", shares}, {"tokens", tokens}, {"est. cost", costs},
 	})
 }
@@ -558,36 +615,33 @@ func (p *statsPrinter) costByModel() []string {
 		more = len(rows) - statsMaxModelRows
 		rows = rows[:statsMaxModelRows]
 	}
-	var labels, bars, costs, shares []string
+	var labels, costs, shares, notes []string
+	bar := &tableBar{width: statsModelBar}
 	for _, r := range rows {
 		labels = append(labels, truncateVisible(archive.DisplayLine(r.Label), statsNameLimit))
 		if !r.Priced || r.Cost.USD == nil {
-			// An unpriced model has no share of the cost to draw.
-			bars = append(bars, strings.Repeat(" ", statsModelBar))
+			// An unpriced model has no share of the cost to draw; its
+			// tokens are said instead.
+			bar.shares = append(bar.shares, -1)
 			costs = append(costs, "unpriced")
 			shares = append(shares, tokenCount(r.Tokens)+" tokens")
+			notes = append(notes, tokenCount(r.Tokens)+" tokens")
 			continue
 		}
 		share := 0.0
 		if r.CostShare != nil {
 			share = *r.CostShare
 		}
-		bars = append(bars, p.bar(share, statsModelBar))
+		bar.shares = append(bar.shares, share)
 		costs = append(costs, p.costText(r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false))
 		shares = append(shares, percent(share))
+		notes = append(notes, "")
 	}
 	var lines []string
 	if p.full {
-		lines = p.table("COST BY MODEL", labels, bars, []tableCol{{"est. cost", costs}})
+		lines = p.table("COST BY MODEL", labels, bar, []tableCol{{"est. cost", costs}, {"", notes}})
 	} else {
 		lines = p.table("COST BY MODEL", labels, nil, []tableCol{{"est. cost", costs}, {"share", shares}})
-	}
-	if p.full {
-		for i, r := range rows {
-			if !r.Priced || r.Cost.USD == nil {
-				lines[i+1] += "  " + p.dim(tokenCount(r.Tokens)+" tokens")
-			}
-		}
 	}
 	if more > 0 {
 		lines = append(lines, p.dim(fmt.Sprintf("+ %d more models (--json has them all)", more)))
@@ -600,7 +654,8 @@ func (p *statsPrinter) topProjects() []string {
 	if len(rows) == 0 {
 		return nil
 	}
-	var labels, bars, sessions, tokens, costs []string
+	var labels, sessions, tokens, costs []string
+	bar := &tableBar{width: statsProjectBar}
 	top := 0
 	for _, r := range rows {
 		top = max(top, r.Sessions)
@@ -611,7 +666,7 @@ func (p *statsPrinter) topProjects() []string {
 		if top > 0 {
 			share = float64(r.Sessions) / float64(top)
 		}
-		bars = append(bars, p.bar(share, statsProjectBar))
+		bar.shares = append(bar.shares, share)
 		sessions = append(sessions, commaInt(int64(r.Sessions)))
 		tokens = append(tokens, "unknown")
 		costs = append(costs, "n/a")
@@ -621,9 +676,9 @@ func (p *statsPrinter) topProjects() []string {
 		}
 	}
 	if !p.full {
-		bars = nil
+		bar = nil
 	}
-	lines := p.table("TOP PROJECTS", labels, bars, []tableCol{{"sessions", sessions}, {"tokens", tokens}, {"est. cost", costs}})
+	lines := p.table("TOP PROJECTS", labels, bar, []tableCol{{"sessions", sessions}, {"tokens", tokens}, {"est. cost", costs}})
 	if more := p.s.TotalProjects - len(rows); more > 0 {
 		lines = append(lines, p.dim(fmt.Sprintf("+ %d more (--by project lists them)", more)))
 	}
@@ -674,7 +729,14 @@ func (p *statsPrinter) composition() []string {
 		inline = append(inline, fmt.Sprintf("%s %s %s %s", p.g.segments[i], seg.label, percent(seg.Share), tokenCount(seg.Tokens)))
 		legend = append(legend, fmt.Sprintf("%s %s  %4s  %s", p.g.segments[i], padRight(seg.label, labelW), percent(seg.Share), tokenCount(seg.Tokens)))
 	}
-	if joined := strings.Join(inline, "   "); p.full && visibleWidth(joined) <= p.width {
+	// The legend goes on one line under the bar when it fits, with three
+	// spaces between the segments or, when that is too wide for the
+	// terminal, two.
+	joined := strings.Join(inline, "   ")
+	if visibleWidth(joined) > p.width {
+		joined = strings.Join(inline, "  ")
+	}
+	if p.full && visibleWidth(joined) <= p.width {
 		lines = append(lines, joined)
 	} else {
 		lines = append(lines, legend...)
@@ -725,15 +787,12 @@ func (p *statsPrinter) composition() []string {
 // following lines indented under it. A colored prefix is not passed: prefix
 // is plain.
 func (p *statsPrinter) hang(prefix, text string) string {
-	return hangingIndent(prefix, text, min(p.width, statsFullWidth))
+	return hangingIndent(prefix, text, min(p.width, statsMaxWidth))
 }
 
 func (p *statsPrinter) highlights() []string {
 	h := p.s.Highlights
 	labelW := len("Busiest day")
-	if !p.full {
-		labelW = len("Favorite model")
-	}
 	type item struct{ label, text string }
 	var items []item
 	if h.BusiestDay != nil {
@@ -747,13 +806,21 @@ func (p *statsPrinter) highlights() []string {
 		}
 	}
 	lines := []string{p.bold("HIGHLIGHTS")}
-	switch {
-	case favorite != "" && len(items) > 0 && p.full:
+	// The busiest day and the favorite model share a line when the terminal
+	// has room; otherwise each has its own, and the labels line up under
+	// the longest.
+	pair := ""
+	if favorite != "" && len(items) > 0 && p.full {
 		left := padRight(items[0].label, labelW) + "  " + items[0].text
-		lines = append(lines, padRight(left, 38)+"Favorite model  "+favorite)
+		pair = padRight(left, 38) + "Favorite model  " + favorite
+	}
+	switch {
+	case pair != "" && visibleWidth(pair) <= p.width:
+		lines = append(lines, pair)
 		items = nil
 	case favorite != "":
 		items = append(items, item{"Favorite model", favorite})
+		labelW = len("Favorite model")
 	}
 	for _, it := range items {
 		lines = append(lines, padRight(it.label, labelW)+"  "+it.text)
@@ -837,9 +904,6 @@ func (p *statsPrinter) grouped() []string {
 		return nil
 	}
 	title := "BY " + strings.ToUpper(string(g.By))
-	if g.By == stats.GroupWeek {
-		title += " (weeks start Monday)"
-	}
 	rows := g.Rows
 	limit := statsMaxGroupRows
 	if g.By == stats.GroupProject {
@@ -874,6 +938,9 @@ func (p *statsPrinter) grouped() []string {
 		}
 	}
 	lines := p.table(title, labels, nil, []tableCol{{"sessions", sessions}, {"prompts", prompts}, {"tokens", tokens}, {"est. cost", costs}})
+	if g.By == stats.GroupWeek {
+		lines = append(lines, p.dim("Weeks start on Monday."))
+	}
 	switch {
 	case more > 0 && g.By == stats.GroupProject:
 		lines = append(lines, p.dim(fmt.Sprintf("+ %d more (--json has them all)", more)))
@@ -893,7 +960,10 @@ func (p *statsPrinter) footer() []string {
 	lines = append(lines, p.wrap(scope)...)
 	cost := "Cost is an estimate at list price, not a bill."
 	if s.Prices.Version != "" {
-		cost += fmt.Sprintf(" Prices %s, as of %s", archive.DisplayLine(s.Prices.Version), archive.DisplayLine(s.Prices.AsOf))
+		cost += " Prices " + archive.DisplayLine(s.Prices.Version)
+		if !p.asOfShown {
+			cost += ", as of " + archive.DisplayLine(s.Prices.AsOf)
+		}
 		if s.Prices.Overridden {
 			cost += ", with your --prices file applied"
 		}

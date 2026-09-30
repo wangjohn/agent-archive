@@ -59,10 +59,11 @@ const goldenPrices = "testdata/stats/prices.json"
 
 func statsGolden(name string) string { return filepath.Join("testdata", "stats", name+".golden") }
 
-// The screen is pinned at the widths it has layouts for: a terminal of 80
-// columns (compact table), one of 120 (bars), and output that is not a
-// terminal (bars, no color), all from one multi-agent archive with several
-// models, subagents, Cursor sessions without tokens and an unpriced model.
+// The screen is pinned at the widths it has layouts for: a terminal of 60
+// columns (compact table), the 80 the screen is designed for and one of 120
+// (both with bars), and output that is not a terminal (bars, no color), all
+// from one multi-agent archive with several models, subagents, Cursor
+// sessions without tokens and an unpriced model.
 func TestStatsScreenGoldens(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
@@ -72,6 +73,7 @@ func TestStatsScreenGoldens(t *testing.T) {
 		width int
 		args  []string
 	}{
+		{"width-60", 60, []string{"--by", "week"}},
 		{"width-80", 80, []string{"--by", "week"}},
 		{"width-120", 120, []string{"--by", "week"}},
 		{"not-a-terminal", 0, nil},
@@ -80,9 +82,9 @@ func TestStatsScreenGoldens(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			out := mustRunStats(t, env, tc.width, append([]string{"--prices", goldenPrices}, tc.args...)...)
 			golden.Check(t, statsGolden(tc.name), []byte(out))
-			limit := max(tc.width, statsUnknownWidth)
-			if tc.width > 0 && tc.width < statsFullWidth {
-				limit = tc.width
+			limit := tc.width
+			if tc.width == 0 {
+				limit = statsUnknownWidth
 			}
 			for _, line := range strings.Split(out, "\n") {
 				if w := visibleWidth(line); w > limit {
@@ -93,12 +95,13 @@ func TestStatsScreenGoldens(t *testing.T) {
 	}
 }
 
-// Below 100 columns the screen is a table without bars; from 100, with them.
-func TestStatsLayoutSwitchesAtOneHundredColumns(t *testing.T) {
+// Below 80 columns the screen is a table without bars; from 80, the columns
+// it is designed for, with them.
+func TestStatsLayoutSwitchesAtEightyColumns(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
 	publishStatsFixture(t, mem)
-	for width, bars := range map[int]bool{60: false, 99: false, 100: true, 120: true, 0: true} {
+	for width, bars := range map[int]bool{50: false, 60: false, 79: false, 80: true, 100: true, 120: true, 0: true} {
 		out := mustRunStats(t, env, width)
 		if got := strings.Contains(out, "██████"); got != bars {
 			t.Errorf("width %d: bars=%v, want %v\n%s", width, got, bars, out)
@@ -112,7 +115,7 @@ func TestStatsNarrowTerminalNeverOverflows(t *testing.T) {
 	t.Parallel()
 	env, mem := statsEnv(t)
 	publishStatsFixture(t, mem)
-	for _, width := range []int{statsMinWidth, 60} {
+	for _, width := range []int{statsMinWidth, 60, 79, 80, 81, 90, 99, 100, 120, 200} {
 		out := mustRunStats(t, env, width, "--by", "day")
 		for _, line := range strings.Split(out, "\n") {
 			if w := visibleWidth(line); w > width {
@@ -632,13 +635,17 @@ func TestStatsPricesFileOverridesAndIsNamed(t *testing.T) {
 		t.Fatalf("prices = %+v / %+v", mine.Prices, builtin.Prices)
 	}
 	text := flatten(mustRunStats(t, env, 0, "--prices", file))
-	if !strings.Contains(text, "Prices mine-1, as of 2026-09-30, with your --prices file applied") {
+	if !strings.Contains(text, "at list price, prices as of 2026-09-30") || !strings.Contains(text, "Prices mine-1, with your --prices file applied") {
 		t.Fatalf("the screen does not say whose prices these are:\n%s", text)
+	}
+	// A terminal too narrow for the overview's note says the date in the footer.
+	if narrow := flatten(mustRunStats(t, env, 60, "--prices", file)); !strings.Contains(narrow, "Prices mine-1, as of 2026-09-30, with your --prices file applied") {
+		t.Fatalf("the compact screen does not date the prices:\n%s", narrow)
 	}
 	if strings.Contains(text, file) || strings.Contains(text, filepath.Base(file)) {
 		t.Fatalf("the prices file's path is printed:\n%s", text)
 	}
-	if got := flatten(mustRunStats(t, env, 0)); !strings.Contains(got, "Prices "+stats.DefaultPriceTable().Version+", as of "+stats.DefaultPriceTable().AsOf+".") {
+	if got := flatten(mustRunStats(t, env, 0)); !strings.Contains(got, "prices as of "+stats.DefaultPriceTable().AsOf) || !strings.Contains(got, "Prices "+stats.DefaultPriceTable().Version+".") {
 		t.Fatalf("built-in prices are not named:\n%s", got)
 	}
 }
