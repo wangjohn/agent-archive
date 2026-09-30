@@ -20,8 +20,8 @@ import (
 
 // copyPager is Env.RunPager for tests: it records the command and copies
 // its input to stdout, as `less -F` does with text that fits.
-func copyPager(command *string) func(context.Context, string, io.Reader, io.Writer, io.Writer) error {
-	return func(_ context.Context, c string, stdin io.Reader, stdout, _ io.Writer) error {
+func copyPager(command *string) func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error {
+	return func(_ context.Context, c string, _ []string, stdin io.Reader, stdout, _ io.Writer) error {
 		*command = c
 		_, err := io.Copy(stdout, stdin)
 		return err
@@ -199,7 +199,7 @@ func TestHandoffPromptPrintsThroughThePager(t *testing.T) {
 	var pager string
 	f.env.RunPager = copyPager(&pager)
 	out, errOut, code := runPicker(t, f.env, "p\n", f.id)
-	if code != 0 || pager != defaultPager || !strings.HasSuffix(out, "[1]: "+want) {
+	if code != 0 || !strings.HasPrefix(pager, "less") || !strings.HasSuffix(out, "[1]: "+want) {
 		t.Fatalf("code=%d pager=%q stderr=%s\n%s", code, pager, errOut, out)
 	}
 }

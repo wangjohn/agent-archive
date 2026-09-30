@@ -164,6 +164,12 @@ func TestParsePriceTable(t *testing.T) {
 		"duplicate id":     `{"version":"v","as_of":"2026-09-01","models":[{"id":"a","input_per_mtok":1,"output_per_mtok":1,"cache_read_per_mtok":1,"cache_write_per_mtok":1},{"id":"A[1m]","input_per_mtok":1,"output_per_mtok":1,"cache_read_per_mtok":1,"cache_write_per_mtok":1}]}`,
 		"empty id":         `{"version":"v","as_of":"2026-09-01","models":[{"id":" ","input_per_mtok":1,"output_per_mtok":1,"cache_read_per_mtok":1,"cache_write_per_mtok":1}]}`,
 		"trailing garbage": validTable + `{}`,
+		// A currency and a version are printed on the screen: a code, and a label.
+		"long currency":     strings.Replace(validTable, `"as_of"`, `"currency":"ABCDEFGHIJ","as_of"`, 1),
+		"currency symbol":   strings.Replace(validTable, `"as_of"`, `"currency":"$","as_of"`, 1),
+		"digits in code":    strings.Replace(validTable, `"as_of"`, `"currency":"U5D","as_of"`, 1),
+		"control in code":   strings.Replace(validTable, `"as_of"`, `"currency":"U\u001bD","as_of"`, 1),
+		"very long version": strings.Replace(validTable, `custom-1`, strings.Repeat("v", 65), 1),
 	} {
 		if _, err := ParsePriceTable([]byte(doc)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -273,5 +279,47 @@ func TestEachTokenTypeIsPricedSeparately(t *testing.T) {
 	m.ModelTokens[0].ReasoningTokens = ip(900_000)
 	if v := Compute([]archive.Metadata{m}, Options{Now: now, Location: newYork, PriceTable: table}).Overview.Cost.Value; !near(*v, 10) {
 		t.Fatalf("reasoning was priced on top of output: %v", *v)
+	}
+}
+
+// Family answers for the models a table lists, as the archive records them,
+// and for nothing else: a fine-tune id, a family name and a model no table
+// prices are not listed.
+func TestFamilyIsOnlyForListedModels(t *testing.T) {
+	t.Parallel()
+	table := DefaultPriceTable()
+	cases := []struct {
+		model  string
+		family string
+		listed bool
+	}{
+		{"claude-opus-5", "opus", true},
+		{"  CLAUDE-OPUS-5-20250101 ", "opus", true},
+		{"claude-opus-5[1m]", "opus", true},
+		{"gpt-5", "gpt-5", true},
+		{"opus", "", false},
+		{"ft:gpt-4o:acme::abc", "", false},
+		{"codex-auto-review", "", false},
+		{"unknown", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		family, listed := table.Family(c.model)
+		if family != c.family || listed != c.listed {
+			t.Errorf("Family(%q) = %q, %v; want %q, %v", c.model, family, listed, c.family, c.listed)
+		}
+	}
+	// It reads the table it is asked of: a table's own family is its answer,
+	// a family left empty falls back to the id, and an entry with an invalid
+	// price is not listed.
+	custom := PriceTable{Models: []ModelPrice{
+		{ID: "acme-model", Family: "acme"},
+		{ID: "no-family"},
+		{ID: "bad", InputPerMTok: -1},
+	}}
+	for model, want := range map[string]string{"acme-model": "acme", "NO-FAMILY": "no-family", "bad": ""} {
+		if family, listed := custom.Family(model); family != want || listed != (want != "") {
+			t.Errorf("custom Family(%q) = %q, %v; want %q", model, family, listed, want)
+		}
 	}
 }

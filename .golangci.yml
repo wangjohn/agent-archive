@@ -153,6 +153,71 @@ linters:
               desc: stats never opens credentials
             - pkg: github.com/wangjohn/agent-archive/internal/state
               desc: stats never reads local state
+        # How stats writes a number is pure too: it takes a value and returns
+        # text, so the screen and the page print one number the same way.
+        # TestFormattersImportBoundary checks the same on every platform.
+        statsfmt-is-pure:
+          files:
+            - "**/internal/statsfmt/*.go"
+            - "!$test"
+          deny:
+            - pkg: os$
+              desc: statsfmt reads no files or environment
+            - pkg: os/exec
+              desc: statsfmt runs no program
+            - pkg: net$
+              desc: statsfmt never touches the network
+            - pkg: net/http
+              desc: statsfmt never touches the network
+            - pkg: math/rand
+              desc: statsfmt is deterministic
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: cli uses statsfmt, never the other way round
+            - pkg: github.com/wangjohn/agent-archive/internal/terminal
+              desc: return text; cli prints it
+            - pkg: github.com/wangjohn/agent-archive/internal/stats
+              desc: statsfmt formats numbers and knows nothing of the engine
+            - pkg: github.com/wangjohn/agent-archive/internal/storage
+              desc: statsfmt never opens the bucket
+            - pkg: github.com/wangjohn/agent-archive/internal/reader
+              desc: statsfmt never opens the bucket
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: statsfmt never opens credentials
+            - pkg: github.com/wangjohn/agent-archive/internal/state
+              desc: statsfmt never reads local state
+        # The stats page is a pure function of stats.Stats too: it writes no
+        # file (cli does), reads no clock or environment, and never touches
+        # the network, so the page it returns cannot fetch or leak anything.
+        # TestRendererImportBoundary checks the same on every platform.
+        statshtml-is-pure:
+          files:
+            - "**/internal/statshtml/*.go"
+            - "!$test"
+          deny:
+            - pkg: os$
+              desc: statshtml writes nothing; cli delivers the page it returns
+            - pkg: os/exec
+              desc: statshtml runs no program
+            - pkg: net$
+              desc: statshtml never touches the network
+            - pkg: net/http
+              desc: statshtml never touches the network
+            - pkg: text/template
+              desc: html/template escapes for the context; text/template does not
+            - pkg: math/rand
+              desc: statshtml is deterministic
+            - pkg: github.com/wangjohn/agent-archive/internal/cli
+              desc: cli delivers the page, never the other way round
+            - pkg: github.com/wangjohn/agent-archive/internal/terminal
+              desc: return the page; cli prints it
+            - pkg: github.com/wangjohn/agent-archive/internal/storage
+              desc: the caller reads metadata
+            - pkg: github.com/wangjohn/agent-archive/internal/reader
+              desc: the caller reads metadata
+            - pkg: github.com/wangjohn/agent-archive/internal/credentials
+              desc: statshtml never opens credentials
+            - pkg: github.com/wangjohn/agent-archive/internal/state
+              desc: statshtml never reads local state
     revive:
       rules:
         - name: exported
