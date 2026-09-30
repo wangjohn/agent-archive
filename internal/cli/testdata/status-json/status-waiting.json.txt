@@ -89,7 +89,12 @@ $ agent-archive status --json
       "hooks": "installed",
       "name": "codex",
       "state": "waiting for first session",
-      "sessions": 0
+      "sessions": 0,
+      "subagent_sessions": 0,
+      "imported_sessions": 0,
+      "uploading_sessions": 0,
+      "uploading": [],
+      "waiting_for_transcript_sessions": 0
     }
   ],
   "agent_skills": [

@@ -2,17 +2,12 @@ $ agent-archive status
 Agent Archive  ● Ready
 
 Capture
-  ✓ Codex   hooks installed   1 session archived, verified just now
-  · Projects: ~/src/web-app
-  · Skill evidence: metadata
+  ✓ Codex   hooks on   1 session
 
 Storage
-  ✓ s3://team-archive/agent-archive/   reachable, checked by setup just now
-  ! Bucket privacy not verified        this storage can't be inspected
-    Check public access: https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+  ✓ s3://team-archive/agent-archive/   reachable · uploaded just now
   ✓ Background collector on            last scan just now
-  · Last upload: just now · 0 pending
+  ! Bucket privacy not verified        this storage can't be inspected; see https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
 
-Next: Keep working. Run agent-archive list to inspect archived sessions.
-Details: agent-archive status --verbose
+More: agent-archive status --verbose · agent-archive status codex
 [exit 0]

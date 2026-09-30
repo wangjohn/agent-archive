@@ -662,7 +662,7 @@ which hands off *that* session and opens Codex in a new terminal tab.
    installs a registry of skills, of which `handoff` is one, with its text
    in `internal/agentskills/skills/handoff/SKILL.md.tmpl`. It was
    `internal/agentcommands` when this package landed; the plan for the
-   registry and the other skills is `dev/specs/agent-skill.md`.
+   registry and the other skills is [agent-skill.md](agent-skill.md).
 
 ### Shared names
 
@@ -677,7 +677,7 @@ Packages rely on these; change them only in this section first.
 | C `internal/termlaunch` | `type Spec struct { Dir string; Argv []string; Unset []string; ScriptDir string }`; `type Environment struct { GOOS string; LookupEnv func(string) (string, bool); Run func(ctx context.Context, name string, args ...string) error }`; `Open(ctx, spec, env) (where string, err error)`; `ErrNoTerminal` |
 | D `handoff_destination.go` | `chooseDestination(p *prompter, installed []handoffDestination, def handoffDestination) (handoffChoice, error)`; `Env.OpenTerminal func(termlaunch.Spec) (string, error)`; `Env.Clipboard func([]byte) error` |
 | E `handoff_worktree.go` | `prepareLaunchDir(env worktreeDependencies, opts handoffOptions, target handoffTarget, dir string, stdin io.Reader, stderr io.Writer) (string, error)`; `Env.RunGit func(ctx context.Context, dir string, args ...string) ([]byte, error)` |
-| F `internal/agentskills` (was `agentcommands`) | `Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File`; `type File struct { Skill string; Harnesses []string; Path string; Content []byte }`; `var Registry []Skill`; the rest of the shared names are in `dev/specs/agent-skill.md` ("Shared names") |
+| F `internal/agentskills` (was `agentcommands`) | `Files(userHome, claudeDir string, harnesses []string, executable, dataHome string) []File`; `type File struct { Skill string; Harnesses []string; Path string; Content []byte }`; `var Registry []Skill`; the rest of the shared names are in [agent-skill.md](agent-skill.md#shared-names) |
 
 Each `Env` field gets an unexported method with a default (as
 `Env.launchHandoff` does today), and callers take a small

@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab. Use only when the person explicitly asks to hand off.
+description: Continue this session in another coding agent (Claude Code, Codex, or Cursor) in a new terminal tab or window. Use only when the person explicitly asks to hand off.
 ---
 <!-- Written by agent-archive setup, which replaces this file; agent-archive uninstall removes it. Delete this line to keep your own version. -->
 
@@ -16,6 +16,6 @@ Run exactly this command, and nothing else:
 none, choose a different agent than yourself: codex if you are Claude Code,
 claude if you are Codex or Cursor.
 
-The command opens that agent in a new terminal tab with this session as its
-context, and returns at once. Report its output. Do not paste the handoff
-content, and do nothing else.
+The command opens that agent in a new terminal tab or window with this
+session as its context, and returns at once. Report its output. Do not
+paste the handoff content, and do nothing else.

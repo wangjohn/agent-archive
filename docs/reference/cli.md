@@ -139,16 +139,22 @@ Example: printf '%s\n' "$SECRET" | agent-archive setup --yes --provider r2 \
 Guide: [Reading status](../guides/troubleshooting.md#reading-status); `--json` fields in [JSON output](json-output.md).
 
 ```text
-Usage: agent-archive status [--verbose] [--json]
+Usage: agent-archive status [APP] [--verbose] [--json]
 
 Show local capture evidence, background health, and a next step.
 No conversations are printed and no cloud request is made.
---verbose adds a Details section with the codes, exact times, full
+Each app's line counts its sessions, imports and uploads, with at most
+five uploading sessions under it; the screen doesn't grow with projects.
+APP (claude, codex or cursor) shows that app in full: every uploading
+session and a table of its projects.
+--verbose adds each project's progress, skill evidence, imports and
+every error, then a Details section with the codes, exact times, full
 paths and raw errors behind each line.
 --json prints the same status as a versioned JSON document. In it,
 storage_verified_at is when setup's storage check last passed, and
 storage_access_confirmed_at is the latest confirmation of access (by
 "setup" or the "collector", in storage_access_confirmed_by).
+Example: agent-archive status claude
 Example: agent-archive status --verbose
 Example: agent-archive status --json
 ```
@@ -289,6 +295,10 @@ its transcript, Enter or b to go back, or q to quit.
                         conversation: prompts, replies, one line per tool call
   --full                With --transcript, also print tool results and shell
                         command output (trimmed)
+  --max-bytes N         With --transcript, the output limit, default 120000
+                        (about 30k tokens); 0 for no limit. When trimmed, the
+                        full version is saved in the data directory for 7 days
+                        and its path is named at the end
   --json                Print JSON: the metadata sidecar, which an imported
                         session extends with origin, imported_at, and
                         started_at_source; with --transcript, then the
@@ -304,6 +314,7 @@ Example: agent-archive show SESSION_ID --transcript
 | `--full` | no value | — |
 | `--harness` | a value | — |
 | `--json` | no value | — |
+| `--max-bytes` | a value | `120000` |
 | `--no-pager` | no value | — |
 | `--normalized` | no value | — |
 | `--transcript` | no value | — |
