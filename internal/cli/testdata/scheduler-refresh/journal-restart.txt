@@ -1,0 +1,359 @@
+files_only: false
+was_loaded: true
+plist: @USER_HOME@/Library/LaunchAgents/@LABEL@.plist
+
+== @USER_HOME@/.codex/hooks.json (existed true, mode 0600, delete false)
+-- before
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
+-- after
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness codex # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+== @USER_HOME@/.claude/settings.json (existed true, mode 0600, delete false)
+-- before
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@OLD_EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
+-- after
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "command": "AGENT_ARCHIVE_HOME='@DATA_HOME@' '@EXE@' _hook --harness claude # agent-archive lifecycle capture",
+            "statusMessage": "agent-archive lifecycle capture",
+            "timeout": 2,
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+== @USER_HOME@/.claude/skills/handoff/SKILL.md (existed true, mode 0600, delete false)
+-- before
+(skill file)
+-- after
+(skill file)
+
+== @USER_HOME@/.agents/skills/handoff/SKILL.md (existed true, mode 0600, delete false)
+-- before
+(skill file)
+-- after
+(skill file)
+
+== @USER_HOME@/Library/LaunchAgents/@LABEL@.plist (existed true, mode 0600, delete false)
+-- before
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>@LABEL@</string>
+<key>ProgramArguments</key><array><string>@OLD_EXE@</string><string>_collect</string></array>
+<key>EnvironmentVariables</key><dict><key>AGENT_ARCHIVE_HOME</key><string>@DATA_HOME@</string><key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+<key>RunAtLoad</key><true/><key>StartInterval</key><integer>60</integer>
+<key>ProcessType</key><string>Background</string>
+<key>StandardOutPath</key><string>@DATA_HOME@/collector.log</string>
+<key>StandardErrorPath</key><string>@DATA_HOME@/collector-error.log</string>
+</dict></plist>
+-- after
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>@LABEL@</string>
+<key>ProgramArguments</key><array><string>@EXE@</string><string>_collect</string></array>
+<key>EnvironmentVariables</key><dict><key>AGENT_ARCHIVE_HOME</key><string>@DATA_HOME@</string><key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+<key>RunAtLoad</key><true/><key>StartInterval</key><integer>60</integer>
+<key>ProcessType</key><string>Background</string>
+<key>StandardOutPath</key><string>@DATA_HOME@/collector.log</string>
+<key>StandardErrorPath</key><string>@DATA_HOME@/collector-error.log</string>
+</dict></plist>
+
+== @DATA_HOME@/config.json (existed true, mode 0600, delete false)
+-- before
+installed_executable: @OLD_EXE@
+-- after
+installed_executable: @EXE@
