@@ -19,8 +19,9 @@ import (
 
 var (
 	// ErrUnavailable means no credential store can be used here: the
-	// Keychain is missing (a non-macOS or cgo-disabled build) or refused
-	// access, or a stored secret could not be decoded.
+	// Keychain is missing (a macOS build without cgo) or refused access, the
+	// credentials file is insecure or unreadable (ErrInsecurePermissions,
+	// ErrCredentialFileUnreadable), or a stored secret could not be decoded.
 	ErrUnavailable = errors.New("credential store unavailable")
 	// ErrInvalidReference means a credential reference is empty.
 	ErrInvalidReference = errors.New("invalid credential reference")
@@ -36,9 +37,10 @@ var (
 // resolve the same stored item.
 const KeychainService = "agent-archive"
 
-// R2Credentials are intentionally only accepted through a Keychain-backed
-// reference in production setup. They are value types so callers can inject a
-// test credential provider without any shell or command-line transport.
+// R2Credentials are intentionally only accepted through a reference to a
+// credential store (the Keychain on macOS, a private file elsewhere; see
+// OpenDefault) in production setup. They are value types so callers can
+// inject a test credential provider without any shell or command-line transport.
 // The JSON tags pin the format already stored in users' Keychains: renaming
 // one would make existing credentials unreadable.
 type R2Credentials struct {
@@ -64,7 +66,8 @@ type CredentialStore interface {
 
 // Config describes one archive storage destination. For S3, AWSProfile is
 // mandatory and is loaded deterministically. For R2, R2CredentialRef points
-// to a Keychain item and Endpoint may be omitted when AccountID is supplied.
+// to an item in the credential store (see OpenDefault) and Endpoint may be
+// omitted when AccountID is supplied.
 // The JSON tags spell the Go field names, the format already saved in users'
 // config files: renaming one would make existing configs unreadable.
 type Config struct {
@@ -82,7 +85,7 @@ type Config struct {
 const (
 	// ProviderS3 is Amazon S3, authenticated through a shared AWS profile.
 	ProviderS3 = "s3"
-	// ProviderR2 is Cloudflare R2, authenticated through a Keychain item.
+	// ProviderR2 is Cloudflare R2, authenticated through a credential store item.
 	ProviderR2 = "r2"
 )
 
@@ -116,7 +119,7 @@ func LoadAWSConfig(ctx context.Context, profile, region string) (aws.Config, err
 	return cfg, nil
 }
 
-// LoadR2Config creates an AWS config using a Keychain-resolved static
+// LoadR2Config creates an AWS config using a store-resolved static
 // provider. Region is always "auto", as required by Cloudflare R2. Endpoint
 // is normalized and may be derived from a Cloudflare account ID.
 func LoadR2Config(ctx context.Context, cfg Config, store CredentialStore) (aws.Config, string, error) {
@@ -219,14 +222,14 @@ func ParseR2Location(input string) (R2Location, error) {
 	return R2Location{Endpoint: endpoint, Bucket: bucket}, nil
 }
 
-// EncodeSecret is used by KeychainStore and is exported solely so a test can
+// EncodeSecret is used by KeychainStore and FileStore and is exported solely so a test can
 // verify that the stored representation contains no JSON configuration.
 func EncodeSecret(value R2Credentials) ([]byte, error) {
 	if err := value.validate(); err != nil {
 		return nil, err
 	}
 	// The secret is serialized on purpose: this is the value stored in the
-	// Keychain item, and it goes nowhere else.
+	// Keychain item or the credentials file, and it goes nowhere else.
 	return json.Marshal(value) //nolint:gosec // G117: see above.
 }
 

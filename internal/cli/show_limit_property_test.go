@@ -282,6 +282,10 @@ func randomNormalized(r *rand.Rand) normalizedOutput {
 	return n
 }
 
+// fixedHomeLength is the length of every home the random-session property
+// test uses, longer than any platform's temporary directory.
+const fixedHomeLength = 200
+
 func TestShowTranscriptJSONTrimmingHoldsTheLimitForRandomSessions(t *testing.T) {
 	t.Parallel()
 	view := summaryFixture()
@@ -294,7 +298,12 @@ func TestShowTranscriptJSONTrimmingHoldsTheLimitForRandomSessions(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		home := t.TempDir()
+		// The saved record's path is in the floor, and the floor sizes the
+		// next random draw, so a temporary directory whose random name
+		// varies in length would make the cases vary from run to run and
+		// between platforms. Every case gets a home of one fixed length.
+		base := t.TempDir()
+		home := base + string(os.PathSeparator) + strings.Repeat("h", max(1, fixedHomeLength-len(base)-1))
 		floorView := normalizedOutput{Trimmed: &trimmedOutput{FullRecord: showFullPath(home, bundle, true, false)}}
 		for _, kind := range []trimKind{trimToolResults, trimHookFinals, trimToolInput, trimAssistantText, trimPromptText, trimOldestRecords} {
 			floorView.Trimmed.Omitted = append(floorView.Trimmed.Omitted, trimmedOmitted{Kind: kind, Count: 99999})

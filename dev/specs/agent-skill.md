@@ -201,6 +201,61 @@ everything the agent must do is in `SKILL.md` itself).
 - **If a command fails for network or credential reasons** (agent sandbox),
   say so and ask the person to allow it, rather than retrying variants.
 
+### 6. Non-interactive mode (`AGENT_ARCHIVE_NONINTERACTIVE`)
+
+Goal 3 says nothing an agent reaches through the skill hangs on a prompt.
+"Not a terminal" is not enough for that: an agent's shell tool may allocate
+a pseudo-terminal (Codex may), and every interactive decision (`list`/`show`
+browser and picker, `handoff` picker, the pager, the alternate screen,
+setup/uninstall/backfill confirmations) asks `Env.isTerminal`. So one
+environment switch overrides it, decided in one place:
+
+- `Env.interactive(stream)` is `isTerminal(stream)` and not switched off.
+  Every decision to ask, page, or take over the screen uses it. A raw
+  `isTerminal` (or `term.IsTerminal`) is for presentation only (colour,
+  redrawing a line, wrapping), which `NO_COLOR` and the terminal govern, not
+  the switch. `TestTerminalChecksAreClassified` scans the package's syntax
+  tree and fails on any terminal check, and any `newPrompter` call, not listed
+  with what it decides, so a new prompt cannot bypass the switch by accident.
+- `AGENT_ARCHIVE_NONINTERACTIVE`: `1`/`true`/`yes`/`on` is on, `0`/`false`/
+  `no`/`off` is off, any case. Unset or empty means automatic: on when
+  `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, or `CURSOR_AGENT` is set
+  (`currentSessionEnv` plus `cursorAgentEnv`, the variables handoff already
+  reads), since those mean an agent's shell is running the command. An
+  explicit value wins over automatic in both directions. Any other value is
+  one usage error (exit 2) before the command runs (not for the hidden
+  `_hook`/`_collect`, which must stay silent, nor help, version, or a
+  subcommand's `--help`, which answer before the environment is read) and, until
+  reported, counts as on: a typo never turns a prompt back on.
+- Read through `Env.lookupEnv`, so tests never see the process environment;
+  `testEnv` gives an empty one, so the suite passes when run from inside an
+  agent.
+- On: a command behaves as when piped. Ambiguous matches print candidates on
+  stderr and exit 1; `handoff`/`show` with no session are usage errors (exit
+  2); the pager and alternate screen are off; `setup`, `uninstall`, and
+  `backfill` keep refusing without `--yes`, and when the switch (not a
+  missing terminal) is why, the message names it and
+  `AGENT_ARCHIVE_NONINTERACTIVE=0`. `purge apply` without `--yes` refuses
+  too, terminal or pipe: it reads its typed digest from standard input
+  whatever that is, so it is refused explicitly instead of through
+  `interactive`. `setup --yes` never reads the R2 secret from a terminal it
+  may not ask on (a pipe is still read: a script's secret is not a prompt).
+- Not covered by the switch, on purpose: presentation (the spinner and
+  colour still draw on a pseudo-terminal; `NO_COLOR` governs them), a read
+  of standard input that is a pipe (`_hook` payloads, the `setup --yes`
+  secret), and credential helpers the AWS SDK runs for an S3 profile
+  (`credential_process`, aws-vault, `op`), which agent-archive does not
+  control. `TestTerminalChecksAreClassified` is syntactic: it counts every
+  mention of a terminal check, prompt, or stream read in this package, so
+  method values and renamed imports are caught, but not a check made in
+  another package and handed in.
+- `handoff --to <agent>` inside an agent (`/handoff`) needs no prompt: it
+  resolves the caller's own session from the environment (handoff v2 A),
+  `--latest --harness cursor` under `CURSOR_AGENT`, and otherwise is a usage
+  error, exit 2, instead of a picker. Handoff v2 D's choice between running in
+  this terminal and opening a new window must use `env.interactive`, so an
+  agent's pseudo-terminal opens a new window instead of being taken over.
+
 ## Risks
 
 | # | Risk | Mitigation |
@@ -225,6 +280,7 @@ Parallel packages rely on these; change them here first.
 | PR 4 `internal/cli` | `status --json`: `agent_skills_disabled` (only when true) |
 | PR 5 skill | directory `agent-archive`, `Registry` entry `archiveSkill` |
 | PR 6 `internal/cli/setup_refresh.go` | `runSetupRefresh(...)`, flag `--refresh` |
+| PR 4b `internal/cli` | `AGENT_ARCHIVE_NONINTERACTIVE`, `Env.interactive(stream)`, `cursorAgentEnv`, `agentShellEnv()` |
 
 ## PR breakdown
 
@@ -242,11 +298,12 @@ and the rest wait on handoff v2.
 | 2 | `handoff` accepts a title | main | handoff v2 A (#150) |
 | 3 | Rename `agentcommands` to `agentskills`; skill registry; `status` out-of-date | main | handoff v2 F (#152) |
 | 4 | `setup --no-skills` opt-out | main | 3 |
+| 4b | Non-interactive mode: `AGENT_ARCHIVE_NONINTERACTIVE` | main | — |
 | 5 | The `agent-archive` skill | main | 1, 2, 3 |
 | 6 | `setup --refresh`; `install.sh` upgrades skills and hooks | main | 3, 4 |
 | 7 | Docs; live check in all three agents | main | 1–6 |
 
-Parallel once unblocked: 1 ∥ 2 ∥ 3; then 4 ∥ 5; then 6; then 7. There is
+Parallel once unblocked: 1 ∥ 2 ∥ 3 ∥ 4b; then 4 ∥ 5; then 6; then 7. There is
 no separate status/uninstall PR: #152 already does it for `/handoff`, and
 PR 3 generalizes it. A PR may be stacked on an unmerged base branch to
 start early, and is retargeted to `main` when its base merges.
@@ -308,6 +365,20 @@ it renames the package.
   error; another installation's file is never removed; the journal rolls the
   removal back on failure.
 - Docs: setup guide, `docs/reference/configuration.md`, CLI reference.
+
+### PR 4b — Non-interactive mode (~250 lines + tests)
+
+- `Env.interactive`, the switch, the automatic agent variables, the
+  refusal hints, one usage error for a bad value (design section 6).
+- Every interactive decision moves to `interactive`; the rest are
+  classified by `TestTerminalChecksAreClassified`.
+- Tests: each picker, browser, pager, and confirmation with the switch on and
+  a fake terminal; automatic on for each of the three variables; explicit `0`
+  overrides; invalid value; unchanged when unset; the suite passes with
+  `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` set in its own environment.
+- Docs: `configuration.md`, the handoff and list/show guides,
+  troubleshooting, help text and the CLI reference.
+- Independent of 1–3 and 5–6; PR 5's skill can rely on it.
 
 ### PR 5 — The skill (~150 lines of prose + tests)
 

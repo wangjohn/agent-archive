@@ -77,8 +77,23 @@ replace the `agent-archive` currently on `PATH` at the same path, run
 `--destination /absolute/path/to/agent-archive`. The command does not run
 setup or change hooks, data, credentials, or the background collector. Run
 setup from the development binary only when you intend to point hooks and the
-collector at it. Source builds are unsigned and do not test the release
-download, signature, or notarization.
+collector at it. Source builds do not test the release download, signature,
+or notarization.
+
+A source build is signed ad hoc, which macOS treats as a new program after
+every rebuild, so it asks again for Keychain access to the R2 key each time,
+even after "Always Allow". To keep that approval across rebuilds, set
+`AGENT_ARCHIVE_SIGN_IDENTITY` (for example in your shell profile) and
+`install-from-source.sh` and `build-release.sh` sign each build with it:
+`auto` picks a Developer ID Application certificate from your Keychain,
+otherwise the first valid code signing identity; you can also give an
+identity's name or SHA-1 hash, or `-` for the ad hoc signature. A build
+signed with the project's own Developer ID matches the release's signature,
+so a Keychain that already trusts the release asks nothing; any other
+identity is asked once. That trust covers every build you sign this way,
+including one from a branch you have not reviewed. If signing fails (for
+example, a locked Keychain over SSH), the build stays signed ad hoc with a
+warning.
 
 Put the binary on your `PATH` as plain `agent-archive`, for example:
 

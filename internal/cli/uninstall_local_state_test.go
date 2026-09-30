@@ -51,6 +51,8 @@ var handListedLocalState = []string{
 	"status.json", "storage-clock.json", "storage-health.json", "capture-diagnostics.json", "diagnostics.lock", "admission-intents", "admission-intents.lock", "application-versions.json",
 	"collector.lock", "collector-lock.json", "collector.log", "collector-error.log",
 	"cache", "handoffs", "purge-plans",
+	// Added with the credentials file store (Linux): one file per R2 key.
+	"credentials",
 }
 
 // The entries uninstall deletes, the store's now taken from

@@ -123,7 +123,7 @@ func TestUninstallPurgeContinuesPastKeychainFailure(t *testing.T) {
 			home, _, env := installedFixture(t, keychain, r2SetupInput(t.TempDir(), "supersecret"))
 			cfg, _, _ := config.Load(home)
 			ref := cfg.Storage.R2CredentialRef
-			env.Keychain = func() (credentials.CredentialStore, error) { return keychainFor(keychain) }
+			env.Credentials = func() (credentials.CredentialStore, error) { return keychainFor(keychain) }
 
 			var stdout, stderr bytes.Buffer
 			code := runUninstallCommand([]string{"--delete-local-data"}, strings.NewReader("y\ny\n"), &stdout, &stderr, env)

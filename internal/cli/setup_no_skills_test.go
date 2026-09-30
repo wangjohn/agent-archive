@@ -58,7 +58,7 @@ func TestSetupNamesTheOptOutWhenItInstallsSkills(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
-	if !strings.Contains(output, "Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md\nTo remove them and keep them off, run agent-archive setup --no-skills.\n") {
+	if !strings.Contains(output, "Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md\nTo remove the agent skills and keep them off, run agent-archive setup --no-skills.\n") {
 		t.Fatalf("setup did not name the opt-out after the installed skills:\n%s", output)
 	}
 	if strings.Contains(output, "turned off") {

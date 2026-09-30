@@ -403,8 +403,8 @@ func TestNewMetadataFieldsJSONNames(t *testing.T) {
 			t.Errorf("metadata has no %s", key)
 		}
 	}
-	if metadata.Parser.Version != "0.14.0" {
-		t.Errorf("parser version = %q, want 0.14.0", metadata.Parser.Version)
+	if metadata.Parser.Version != DefaultParserVersion {
+		t.Errorf("parser version = %q, want %s", metadata.Parser.Version, DefaultParserVersion)
 	}
 	_, empty := parsedFixture(t, "cursor", "cursor-turn.jsonl")
 	raw, _ = json.Marshal(empty)
