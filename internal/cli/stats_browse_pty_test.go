@@ -44,7 +44,7 @@ func TestStatsScreenOnARealTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	// One at a time, not as parallel subtests.
-	for _, mode := range []string{"keys", "quit", "interrupt", "term", "hup", "resize", "suspend", "save"} {
+	for _, mode := range []string{"keys", "quit", "interrupt", "term", "hup", "sigquit", "resize", "suspend", "save"} {
 		dir := t.TempDir()
 		out, err := runStatsPTYScript(python, binary, mode, dir)
 		if err != nil {
@@ -184,6 +184,13 @@ try:
     elif mode == 'hup':
         p.send_signal(signal.SIGHUP)
         finish(129)
+        check_restored()
+    elif mode == 'sigquit':
+        # From outside (Ctrl-\ is off in key mode): handled like the others,
+        # no goroutine dump, the terminal given back, the shell's status.
+        p.send_signal(signal.SIGQUIT)
+        finish(131)
+        assert b'goroutine ' not in output and b'SIGQUIT' not in output, output[-400:]
         check_restored()
     elif mode == 'resize':
         resize(12, 60)

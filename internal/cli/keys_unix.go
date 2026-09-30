@@ -49,8 +49,9 @@ func terminalKeys(stdin io.Reader) (keyTerminal, bool) {
 // Ctrl-O would discard output, Ctrl-V quote the next key). ISIG stays on,
 // so Ctrl-C still sends SIGINT, which the browser's interrupt handler
 // answers by restoring the terminal, and Ctrl-Z suspends (keyInput
-// restores the terminal first). Ctrl-\ is turned off: its SIGQUIT would
-// end the process with no chance to restore the terminal.
+// restores the terminal first). Ctrl-\ is turned off, so a stray key cannot
+// quit; a SIGQUIT sent from outside is answered like Ctrl-C (Env.interrupts
+// catches it), with the terminal restored.
 func (t *ttyKeys) keys() error {
 	modes, err := unix.IoctlGetTermios(t.fd, ioctlGetTermios)
 	if err != nil {

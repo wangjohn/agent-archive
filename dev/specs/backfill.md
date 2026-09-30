@@ -83,8 +83,8 @@ app, a bad date, `--json` without `--dry-run`); and `1` on any other failure.
 Ctrl-C during registration exits `1`, because the import is incomplete until a
 rerun; Ctrl-C during upload exits `0`, because the collector finishes it. The
 first Ctrl-C, in planning, registration, or upload, prints that it is
-stopping. A second Ctrl-C, or SIGTERM or SIGHUP at any point, exits at once
-with the shell's status for the signal (130, 143, 129), after
+stopping. A second Ctrl-C, or SIGTERM, SIGHUP or SIGQUIT at any point, exits at once
+with the shell's status for the signal (130, 143, 129, 131), after
 `cursorstore.RemoveOwnSnapshots` removes the database copies this process's
 Readers hold (the one-step backup can't be interrupted, and those Readers
 are never closed).
