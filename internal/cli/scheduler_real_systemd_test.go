@@ -218,10 +218,10 @@ func TestRealSystemdUninstallSkippingTheSchedulerPrintsACommandThatStopsTheJob(t
 	if out, err := exec.CommandContext(ctx, "sh", "-c", manual).CombinedOutput(); err != nil {
 		t.Fatalf("the printed command %q failed: %v\n%s", manual, err, out)
 	}
-	for _, unit := range []string{timer, r.ref + ".service"} {
-		if active := strings.TrimSpace(realSystemctl(t, "is-active", unit)); active == "active" || active == "activating" {
-			t.Errorf("%s is %s after the printed command %q", unit, active, manual)
-		}
+	// is-active exits 0 when either unit is active; the service's runs, which
+	// a oneshot spends activating, are what staysStill watches for.
+	if _, err := host.Exec(ctx, "systemctl", "--user", "is-active", "--quiet", timer, r.ref+".service"); err == nil {
+		t.Errorf("the job is still active after the printed command %q:\n%s", manual, realSystemctl(t, "status", "--no-pager", timer, r.ref+".service"))
 	}
 	r.staysStill(t)
 }
