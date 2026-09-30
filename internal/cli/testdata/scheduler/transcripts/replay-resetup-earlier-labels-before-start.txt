@@ -1,0 +1,8 @@
+# resetup-earlier-labels journal replayed by setup, crashed before start
+# each launchctl call, then the state of the files as it was asked
+print gui/UID/com.agent-archive.collector  |  journal=present com.agent-archive.collector.223bda05f72f=absent com.agent-archive.collector.cf1324b3e539=absent own=present
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist  |  journal=present com.agent-archive.collector.223bda05f72f=absent com.agent-archive.collector.cf1324b3e539=absent own=present
+print gui/UID/com.agent-archive.collector.223bda05f72f  |  journal=present com.agent-archive.collector.223bda05f72f=present com.agent-archive.collector.cf1324b3e539=absent own=present
+bootstrap gui/UID @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.223bda05f72f.plist  |  journal=present com.agent-archive.collector.223bda05f72f=present com.agent-archive.collector.cf1324b3e539=absent own=present
+print gui/UID/com.agent-archive.collector  |  journal=absent com.agent-archive.collector.223bda05f72f=present com.agent-archive.collector.cf1324b3e539=present own=present
+# exit 1, end: journal=absent com.agent-archive.collector.223bda05f72f=present com.agent-archive.collector.cf1324b3e539=present own=present
