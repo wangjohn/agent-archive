@@ -102,8 +102,8 @@ func toolErrors(current []*unit) *ToolErrors {
 	var errors, results int64
 	known, unknown := 0, 0
 	for _, u := range current {
-		errors += u.toolErrors
-		results += u.toolResults
+		errors = satAdd(errors, u.toolErrors)
+		results = satAdd(results, u.toolResults)
 		if u.toolMembersKnown > 0 {
 			known++
 		} else {
@@ -127,7 +127,7 @@ func monthRank(all []*unit, now time.Time, loc *time.Location) *MonthRank {
 	byMonth := map[int]int64{}
 	for _, u := range all {
 		if u.hasData {
-			byMonth[u.month] += u.tokens.total()
+			byMonth[u.month] = satAdd(byMonth[u.month], u.tokens.total())
 		}
 	}
 	local := now.In(loc)

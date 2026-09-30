@@ -285,7 +285,7 @@ func models(current []*unit, prices priceIndex) []ModelRow {
 				byLabel[label] = acc
 			}
 			acc.models[use.id] = struct{}{}
-			acc.tokens += use.set.total()
+			acc.tokens = satAdd(acc.tokens, use.set.total())
 			acc.cost.add(use.cost)
 			_, priced := prices[use.id]
 			acc.priced = acc.priced || priced
@@ -407,7 +407,7 @@ func subagentShare(current []*unit, total *bucket) *SubagentShare {
 	var tokens int64
 	sessions := 0
 	for _, u := range current {
-		tokens += u.childTokens
+		tokens = satAdd(tokens, u.childTokens)
 		sessions += u.childrenWithData
 	}
 	if tokens == 0 || total.dataSessions == 0 {
@@ -442,7 +442,7 @@ func mcpServers(current []*unit, topN int) *MCP {
 	sessions := map[string]int{}
 	for _, u := range current {
 		for server, n := range u.mcp {
-			calls[server] += n
+			calls[server] = satAdd(calls[server], n)
 			sessions[server]++
 		}
 	}

@@ -160,7 +160,7 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 	u.orphan = root.ParentSessionID != ""
 	u.lacksParser014 = !parserAtLeast(root.Parser.Version, 0, 14, 0)
 	if root.Counts.Turns != nil {
-		turns := int64(*root.Counts.Turns)
+		turns := value(root.Counts.Turns)
 		u.prompts = &turns
 	}
 	u.skills = map[string]struct{}{}
@@ -183,7 +183,7 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 				u.rootTokens = memberTotal
 			} else {
 				u.childrenWithData++
-				u.childTokens += memberTotal.total()
+				u.childTokens = satAdd(u.childTokens, memberTotal.total())
 			}
 		}
 		u.addToolErrors(m)
@@ -194,7 +194,7 @@ func (u *unit) finish(loc *time.Location, prices priceIndex) {
 		}
 		for _, call := range m.MCPCalls {
 			if name := strings.TrimSpace(call.Name); name != "" && call.Count > 0 {
-				u.mcp[name] += int64(call.Count)
+				u.mcp[name] = satAdd(u.mcp[name], int64(call.Count))
 			}
 		}
 	}
@@ -219,8 +219,8 @@ func (u *unit) addToolErrors(m *archive.Metadata) {
 		return
 	}
 	u.toolMembersKnown++
-	u.toolErrors += int64(*m.Counts.ToolErrors)
-	u.toolResults += int64(*m.Counts.ToolResults)
+	u.toolErrors = satAdd(u.toolErrors, value(m.Counts.ToolErrors))
+	u.toolResults = satAdd(u.toolResults, value(m.Counts.ToolResults))
 }
 
 // parserAtLeast reports whether a "major.minor.patch" version is at least

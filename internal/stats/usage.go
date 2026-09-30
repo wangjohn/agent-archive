@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"math"
 	"sort"
 	"strings"
 
@@ -24,23 +25,26 @@ type tokenSet struct {
 	cacheKnown     bool
 }
 
-func (t *tokenSet) total() int64 { return t.fresh + t.read + t.write + t.out }
+func (t *tokenSet) total() int64 { return satAdd(t.inputSide(), t.out) }
 
 // inputSide is every token the prompt side of a request carried.
-func (t *tokenSet) inputSide() int64 { return t.fresh + t.read + t.write }
+func (t *tokenSet) inputSide() int64 { return satAdd(satAdd(t.fresh, t.read), t.write) }
 
 func (t *tokenSet) add(o tokenSet) {
-	t.fresh += o.fresh
-	t.read += o.read
-	t.write += o.write
-	t.out += o.out
-	t.reasoning += o.reasoning
+	t.fresh = satAdd(t.fresh, o.fresh)
+	t.read = satAdd(t.read, o.read)
+	t.write = satAdd(t.write, o.write)
+	t.out = satAdd(t.out, o.out)
+	t.reasoning = satAdd(t.reasoning, o.reasoning)
 	t.reasoningKnown = t.reasoningKnown || o.reasoningKnown
 	t.cacheKnown = t.cacheKnown || o.cacheKnown
 }
 
+// value is a stored count as a non-negative int64: nil is 0 (callers track
+// whether anything was reported), and a negative count, which the parser never
+// writes, is 0 too so it cannot cancel other tokens out of a total.
 func value(p *int) int64 {
-	if p == nil {
+	if p == nil || *p < 0 {
 		return 0
 	}
 	return int64(*p)
@@ -140,7 +144,7 @@ type costAcc struct {
 func (c *costAcc) add(o costAcc) {
 	c.usd += o.usd
 	c.priced = c.priced || o.priced
-	c.unpriced += o.unpriced
+	c.unpriced = satAdd(c.unpriced, o.unpriced)
 	c.approximate = c.approximate || o.approximate
 }
 
@@ -179,7 +183,7 @@ func (b *bucket) add(u *unit) {
 	b.sessions++
 	if u.prompts != nil {
 		b.promptSess++
-		b.prompts += *u.prompts
+		b.prompts = satAdd(b.prompts, *u.prompts)
 	}
 	if u.hasData {
 		b.dataSessions++
@@ -213,4 +217,14 @@ func cacheHitRate(t *tokenSet) *float64 {
 	}
 	rate := float64(t.read) / float64(side)
 	return &rate
+}
+
+// satAdd adds two non-negative counts, stopping at the largest int64 instead
+// of wrapping negative. The archive caps each count it stores at 2^53, but a
+// sum over many sessions (or a session's dozens of models) can pass int64.
+func satAdd(a, b int64) int64 {
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
+	}
+	return a + b
 }
