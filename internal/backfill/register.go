@@ -168,9 +168,16 @@ func (r Registration) checkChats(works []*parentWork) {
 // resolveRepoKeys asks, before hooks.lock is taken, for the repository key of
 // each project the next hold can reach, at most once per project root
 // (repoKeys remembers the answers across holds). Asking runs git, which a
-// hold must not wait for.
+// hold must not wait for. A session the configuration does not admit (an
+// excluded project, one not yet activated) is not asked about at all; it will
+// not be registered.
 func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys map[string]string) {
 	if r.RepoKey == nil {
+		return
+	}
+	cfg, found, err := config.Load(r.Home)
+	if err != nil || !found {
+		// The hold reports it; nothing is asked about meanwhile.
 		return
 	}
 	limit := maxHoldSteps
@@ -179,6 +186,10 @@ func (r Registration) resolveRepoKeys(works []*parentWork, repoKeys map[string]s
 	}
 	for _, w := range works[:min(limit, len(works))] {
 		if w.repoKeyChecked {
+			continue
+		}
+		if !cfg.AcceptSession(r.registration(w.c, "", "")) {
+			w.repoKeyChecked = true
 			continue
 		}
 		key, asked := repoKeys[w.c.ProjectRoot]

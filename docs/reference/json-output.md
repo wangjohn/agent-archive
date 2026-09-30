@@ -101,7 +101,8 @@ identifier for the git repository the session ran in (`repo-` and 16 hex
 digits: a hash of the normalized `origin` address, never the address). Two
 sessions of one repository share it whatever their checkout paths, and
 whether cloned over SSH or HTTPS. It is absent for a project that is not a
-git repository or has no `origin`.
+git repository or has no `origin`. The repository name keeps its case and a
+port is ignored (see [privacy](../security/privacy.md)).
 
 `show --transcript --json` prints a second JSON document after the sidecar:
 the verified conversation as `turns`, `tool_calls`, `tool_results`, and

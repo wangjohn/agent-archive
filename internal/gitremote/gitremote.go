@@ -17,6 +17,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -90,20 +92,22 @@ func (r *Resolver) Key(root string) string {
 	return key
 }
 
-// ExecRunner runs the git found on PATH, without a shell, in dir. Its
+// ExecRunner runs the git found on PATH, without a shell. The directory to
+// ask about is in args (-C), not the process's working directory, and is not
+// checked first: a stat of a hung mount would block with nothing to stop it,
+// and git's own failure on a missing directory is the same answer. The
 // environment carries none of the caller's GIT_* variables (a stray GIT_DIR
-// would answer for another repository), git never prompts, and only the first
-// few kilobytes of output are read.
-func ExecRunner(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		return nil, errors.New("project directory is gone")
-	}
+// would answer for another repository), git never prompts, and output past a
+// few kilobytes is an error, not a truncated URL.
+func ExecRunner(ctx context.Context, _ string, args ...string) ([]byte, error) {
 	git, err := exec.LookPath("git")
 	if err != nil {
 		return nil, err
 	}
+	if git == macGitStub && !stubUsable() {
+		return nil, errors.New("git is not installed (the macOS stub needs the developer tools)")
+	}
 	cmd := exec.CommandContext(ctx, git, args...)
-	cmd.Dir = dir
 	cmd.Env = environment(os.Environ())
 	cmd.Stdin = nil
 	cmd.Stderr = io.Discard
@@ -113,7 +117,51 @@ func ExecRunner(ctx context.Context, dir string, args ...string) ([]byte, error)
 	if err := cmd.Run(); err != nil {
 		return nil, err
 	}
-	return out.Bytes(), nil
+	if out.over {
+		return nil, errors.New("git printed more than a remote URL")
+	}
+	return out.buf.Bytes(), nil
+}
+
+// macOS ships /usr/bin/git as a stub that, without the developer tools, opens
+// a graphical "install developer tools" prompt instead of running. A hook or
+// the LaunchAgent must never do that.
+const macGitStub = "/usr/bin/git"
+
+// developerGits are where the developer tools keep the real git.
+var developerGits = []string{
+	"/Library/Developer/CommandLineTools/usr/bin/git",
+	"/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+}
+
+var (
+	gitUsableOnce   sync.Once
+	gitUsableResult bool
+)
+
+// usableGit reports whether git, as LookPath found it, can be run without the
+// macOS stub's prompt: anything but the stub is, and the stub is when the
+// developer tools provide a git (a DEVELOPER_DIR pointing elsewhere is not
+// consulted: refusing is the safe error). exists is a file check, a parameter
+// for tests.
+func usableGit(path, goos string, exists func(string) bool) bool {
+	if goos != "darwin" || path != macGitStub {
+		return true
+	}
+	return slices.ContainsFunc(developerGits, exists)
+}
+
+// stubUsable is usableGit for the real stub, answered once per process.
+func stubUsable() bool {
+	gitUsableOnce.Do(func() {
+		gitUsableResult = usableGit(macGitStub, runtime.GOOS, fileExists)
+	})
+	return gitUsableResult
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // environment is env without any GIT_* variable, plus the settings that keep
@@ -128,12 +176,22 @@ func environment(env []string) []string {
 	return append(kept, "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
 }
 
-// limitedBuffer keeps the first maxOutput bytes written and discards the rest.
-type limitedBuffer struct{ bytes.Buffer }
+// limitedBuffer keeps the first maxOutput bytes written, discards the rest,
+// and records that it did. The buffer is a field, not embedded: embedding
+// would promote bytes.Buffer's ReadFrom, which io.Copy prefers, and skip this
+// Write's cap.
+type limitedBuffer struct {
+	buf  bytes.Buffer
+	over bool
+}
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
-	if room := maxOutput - b.Len(); room > 0 {
-		b.Buffer.Write(p[:min(room, len(p))])
+	room := maxOutput - b.buf.Len()
+	if len(p) > room {
+		b.over = true
+	}
+	if room > 0 {
+		b.buf.Write(p[:min(room, len(p))])
 	}
 	return len(p), nil
 }

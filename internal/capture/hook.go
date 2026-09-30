@@ -4,7 +4,9 @@
 // continues a registered one, records lifecycle and final-response evidence
 // and subagent links as local requests, and leaves a content-free diagnostic
 // when a start is declined. It never touches the network or writes to
-// stdout, and every wait it can make is bounded: the command around it (in
+// stdout, runs no program of its own (the one git call, for a repository
+// key, is a lookup the command passes in, made before hooks.lock and bounded),
+// and every wait it can make is bounded: the command around it (in
 // internal/cli) owns flag parsing, the exit code, and panic recovery.
 package capture
 
@@ -140,22 +142,73 @@ func WithRepoKey(repoKey RepoKeyFunc) Option {
 	return func(o *eventOptions) { o.repoKey = repoKey }
 }
 
-// registrationRepoKey is repoKey(root), or "" when it is nil, panics, or does
-// not return a RepoKey: a repository key never fails a registration.
-func registrationRepoKey(repoKey RepoKeyFunc, root string) (key string) {
+// repoKeyBudget is the longest the hook waits for a repository key. The
+// lookup bounds itself (internal/gitremote) but a hung mount can stall a
+// process before its timeout starts, so the wait is bounded here too.
+const repoKeyBudget = 600 * time.Millisecond
+
+// startRepoKey is newSessionRepoKey for an event that can register a session:
+// a start, or, for Cursor only (see the hookEventTurnStart case), a turn
+// start. Any other event gets "".
+func startRepoKey(home, harness string, kind hookEventKind, payload map[string]any, repoKey RepoKeyFunc) string {
 	if repoKey == nil {
 		return ""
 	}
-	defer func() {
-		if recover() != nil {
-			key = ""
-		}
-	}()
-	key = repoKey(root)
-	if !archive.IsRepoKey(key) {
+	if kind == hookEventStart || (kind == hookEventTurnStart && archive.CanonicalHarness(harness) == "cursor") {
+		return newSessionRepoKey(home, payload, repoKey)
+	}
+	return ""
+}
+
+// newSessionRepoKey is the repository key for a session this event may
+// register: "" unless it starts in an included configured project and is not
+// a continuation of a session already registered, so the lookup runs for at
+// most one event per session, and never for a project that is not archived.
+// It reads the configuration and the session index without hooks.lock; a
+// stale answer only costs a key that is not recorded (the collector derives
+// one later).
+func newSessionRepoKey(home string, payload map[string]any, repoKey RepoKeyFunc) string {
+	cfg, found, err := config.Load(home)
+	if err != nil || !found || !cfg.Archive.Enabled || cfg.Paused {
 		return ""
 	}
-	return key
+	nativeSessionID := firstNonEmptyString(payload, "session_id", "conversation_id")
+	owner, owned := ConfiguredProjectActivationFor(cfg, projectRoot(payload))
+	if nativeSessionID == "" || !owned || !owner.Included {
+		return ""
+	}
+	if _, registered, err := state.OpenReadOnly(home).ArchiveSessionID(nativeSessionID); err != nil || registered {
+		return ""
+	}
+	return boundedRepoKey(repoKey, owner.Root)
+}
+
+// boundedRepoKey is repoKey(root), or "" when it is nil, panics, does not
+// return within repoKeyBudget, or does not return a RepoKey: a repository key
+// never fails or delays a registration.
+func boundedRepoKey(repoKey RepoKeyFunc, root string) string {
+	if repoKey == nil {
+		return ""
+	}
+	answer := make(chan string, 1)
+	go func() {
+		defer func() {
+			if recover() != nil {
+				answer <- ""
+			}
+		}()
+		answer <- repoKey(root)
+	}()
+	timer := time.NewTimer(repoKeyBudget)
+	defer timer.Stop()
+	select {
+	case key := <-answer:
+		if archive.IsRepoKey(key) {
+			return key
+		}
+	case <-timer.C:
+	}
+	return ""
 }
 
 // afterLock is used by the contention test to model a bounded slow durable
@@ -172,6 +225,9 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 	if setupjournal.TransactionPending(home) {
 		return recordSetupInProgress(home, kind, harness, payload, now)
 	}
+	// Asked before hooks.lock is taken, never under it: a slow lookup must not
+	// use up the hook's budget or make concurrent hooks find the lock busy.
+	sessionRepoKey := startRepoKey(home, harness, kind, payload, repoKey)
 	// Leave room in the harness's two-second timeout for a retry intent and
 	// diagnostic if capture is contended. Those writes are synchronous and
 	// cannot be guaranteed against an indefinitely stalled filesystem.
@@ -217,7 +273,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 
 	switch kind {
 	case hookEventStart:
-		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, repoKey)
+		err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, sessionRepoKey)
 	case hookEventTurnStart:
 		registered := true
 		if archive.CanonicalHarness(harness) == "cursor" {
@@ -231,7 +287,7 @@ func handleEvent(home, harness string, payload map[string]any, now time.Time, af
 			// (observed on 3.21.13): its first hook is beforeSubmitPrompt.
 			// A never-seen conversation is registered there, under the
 			// same fresh-start proof a sessionStart would need.
-			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, repoKey)
+			err = handleSessionStart(home, store, cfg, harness, nativeSessionID, eventName, payload, now, sessionRepoKey)
 		} else {
 			err = handleSessionActivity(store, harness, nativeSessionID, eventName, payload, now)
 		}
@@ -422,11 +478,11 @@ func adoptCursorTranscriptPath(store *state.Store, reg *archive.SessionRegistrat
 	return nil
 }
 
-func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, repoKey RepoKeyFunc) error {
+func handleSessionStart(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, repoKey string) error {
 	return handleSessionStartWithProof(home, store, cfg, harness, nativeSessionID, eventName, payload, now, false, repoKey)
 }
 
-func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool, repoKey RepoKeyFunc) error {
+func handleSessionStartWithProof(home string, store *state.Store, cfg config.Config, harness, nativeSessionID, eventName string, payload map[string]any, now time.Time, provedAtHook bool, repoKey string) error {
 	reason := strings.ToLower(eventName)
 	transcriptPath, _ := payload["transcript_path"].(string)
 	isCursor := archive.CanonicalHarness(harness) == "cursor"
@@ -518,9 +574,6 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 	}
 	observedHarness := archive.Harness{Name: strings.ToLower(strings.TrimSpace(harness))}
 	applyHarnessObservation(&observedHarness, harness, payload)
-	// Asked once, here, before the registration: it is bounded, and only a
-	// session that will register pays for it.
-	sessionRepoKey := registrationRepoKey(repoKey, root)
 	// RegisterNewSession saves under the archive ID's request lock and
 	// rechecks the index there, so an index entry retention is removing
 	// right now is never reused for a registration that would outlive it.
@@ -530,7 +583,7 @@ func handleSessionStartWithProof(home string, store *state.Store, cfg config.Con
 			NativeSessionID:  nativeSessionID,
 			ProjectID:        archive.ProjectID(root),
 			ProjectRoot:      root,
-			RepoKey:          sessionRepoKey,
+			RepoKey:          repoKey,
 			Harness:          observedHarness,
 			TranscriptPath:   transcriptPath,
 			SessionStartedAt: now,

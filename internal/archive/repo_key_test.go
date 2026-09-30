@@ -36,6 +36,15 @@ func TestNormalizeRemoteURL(t *testing.T) {
 		{"trailing .git slash", "https://github.com/acme/widget.git/", want},
 		{"query and fragment", "https://github.com/acme/widget.git?x=1#frag", want},
 		{"padded", "  https://github.com/acme/widget \n", want},
+		{"upper-case .GIT", "https://github.com/acme/widget.GIT", want},
+		{"repeated .git", "https://github.com/acme/widget.git.git", want},
+		{".git before a slash", "https://github.com/acme/widget.git//", want},
+		{"fully qualified host", "https://github.com./acme/widget", want},
+		{"fully qualified scp host", "git@github.com.:acme/widget.git", want},
+		{"escaped newline in the path", "https://github.com/acme/wid%0Aget", ""},
+		{"escaped NUL in the path", "https://github.com/acme/widget%00", ""},
+		{"escaped space in the path", "https://github.com/acme/wid%20get", ""},
+		{"escaped control in the host", "https://github.com%0A/acme/widget", ""},
 		{"path case is kept", "https://github.com/Acme/Widget", "github.com/Acme/Widget"},
 		{"nested group", "git@gitlab.example.com:group/sub/widget.git", "gitlab.example.com/group/sub/widget"},
 		{"empty", "", ""},
@@ -188,6 +197,9 @@ func FuzzNormalizeRemoteURL(f *testing.F) {
 		normalized := NormalizeRemoteURL(in)
 		if normalized != "" && (normalized[0] == '/' || normalized[len(normalized)-1] == '/') {
 			t.Fatalf("NormalizeRemoteURL(%q) = %q, has an edge slash", in, normalized)
+		}
+		if strings.ContainsFunc(normalized, isControl) || strings.HasSuffix(strings.ToLower(normalized), ".git") {
+			t.Fatalf("NormalizeRemoteURL(%q) = %q, has a control character or a .git suffix", in, normalized)
 		}
 	})
 }

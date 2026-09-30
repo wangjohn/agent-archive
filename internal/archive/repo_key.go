@@ -40,18 +40,22 @@ func IsRepoKey(s string) bool { return repoKeyShape.MatchString(s) }
 // NormalizeRemoteURL reduces a git remote URL to "host/owner/repo", so an SSH
 // clone (git@host:owner/repo.git, ssh://git@host/owner/repo.git) and an HTTPS
 // clone of one repository normalize to the same string. Userinfo
-// (user:token@) is dropped before anything else, so a credential never
-// reaches the hash input or varies the result. The scheme, the port (an SSH
-// port is a transport detail, not part of the repository's identity), any
-// query or fragment, a trailing ".git" and trailing slashes are dropped, and
-// the host is lower-cased; the path keeps its case.
+// (user:token@) is split off with the host and never reaches the result, so
+// a credential does not enter the hash input or vary it. The scheme, the port
+// (an SSH port is a transport detail, not part of the repository's
+// identity), any query or fragment, a trailing ".git" in any case (and
+// repeated), trailing slashes, and a trailing dot on the host are dropped,
+// and the host is lower-cased. The path keeps its case, so a host that treats
+// Acme/Widget and acme/widget as one repository gives them two keys: a
+// missed match, never a wrong one. Remotes that are url.insteadOf shorthands
+// in git's configuration are read as written, not expanded.
 //
 // It returns "" for an empty or malformed URL, a local path or file:// URL
 // (not portable between machines), and any scheme that is not http, https,
 // ssh, or git. It never panics.
 func NormalizeRemoteURL(raw string) string {
 	raw = strings.TrimSpace(raw)
-	if raw == "" || strings.ContainsFunc(raw, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+	if raw == "" || strings.ContainsFunc(raw, isControl) {
 		return ""
 	}
 	var host, repoPath string
@@ -60,19 +64,33 @@ func NormalizeRemoteURL(raw string) string {
 	} else {
 		host, repoPath = splitSCPRemote(raw)
 	}
-	host = strings.ToLower(host)
-	if !plausibleHost(host) {
+	// A fully qualified host (github.com.) is the same host.
+	host = strings.TrimRight(strings.ToLower(host), ".")
+	// Percent-escapes were decoded by now (%0A, %00): no control character
+	// may survive into the hash input.
+	if !plausibleHost(host) || strings.ContainsFunc(repoPath, isControl) {
 		return ""
 	}
 	// Cleaning a rooted path removes "." and ".." elements, so what is left
 	// is either empty or a plain owner/repo path.
 	repoPath = strings.Trim(path.Clean("/"+repoPath), "/")
-	repoPath = strings.Trim(strings.TrimSuffix(repoPath, ".git"), "/")
+	for {
+		trimmed := strings.Trim(repoPath, "/")
+		if len(trimmed) >= len(".git") && strings.EqualFold(trimmed[len(trimmed)-len(".git"):], ".git") {
+			trimmed = trimmed[:len(trimmed)-len(".git")]
+		}
+		if trimmed == repoPath {
+			break
+		}
+		repoPath = trimmed
+	}
 	if repoPath == "" {
 		return ""
 	}
 	return host + "/" + repoPath
 }
+
+func isControl(r rune) bool { return r <= ' ' || r == 0x7f }
 
 // splitURLRemote splits a scheme://... remote into host (no userinfo, no
 // port) and path.

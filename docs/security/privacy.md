@@ -109,7 +109,13 @@ filter-derived text stored in the bucket, not a separate redaction pass.
   repository the address is guessable. That is why only the hash is stored,
   and why bucket read access should stay limited to you. A project that is
   not a git repository, has no `origin`, or whose remote is a local path has
-  no key.
+  no key. Two details of the matching: the repository name keeps its case, so
+  `Acme/Widget` and `acme/widget` get different keys even on a host that
+  treats them as one repository (a missed match, never a wrong one), and a
+  remote's port is ignored, so two repositories with the same name on
+  different ports of one host share a key. Only `origin` is read, as written
+  in your git configuration: a remote that is a `url.insteadOf` shorthand is
+  not expanded and may not match the full address used elsewhere.
 - **Hook observations**: for each hook event, its name, the app's turn and
   message IDs, the model and model settings the hook reported, and, for a
   stop hook, the agent's final message (filtered like the transcript).
