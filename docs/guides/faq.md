@@ -61,6 +61,9 @@ Migration Assistant, or restore from Time Machine, read
 [that section](multiple-macs.md#migration-assistant-and-time-machine)
 first: the copy keeps the old Mac's identity.
 
+**Can my coding agent see my archive?**
+Only through the `agent-archive` skill setup installs (`agent-archive setup --no-skills` turns it off), and then only what `handoff`, `list`, and `show` print: the same filtered content you would see running them, cut to a size bound. The agent treats it as data, not instructions, and Claude Code asks before it first uses the skill and before it runs the commands. See [agent skills](agent-skills.md) and [privacy](../security/privacy.md#what-an-agent-can-read-through-the-skill).
+
 **Does it run on Linux or Windows?**
 No. Capture runs on macOS only: it relies on launchd and the Keychain.
 Linux builds exist so the tests run in CI; they cannot capture.

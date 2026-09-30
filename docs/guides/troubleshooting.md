@@ -269,8 +269,11 @@ is not a valid setting` means the value is not one of 1/true/yes/on or
 The `agent-archive` skill ([agent skills](agent-skills.md)) is what lets Claude
 Code, Codex, or Cursor pull in a past session when you ask.
 
-1. **Start a new session.** Agents read their skills when a session starts, so
-   one that was open during setup does not have it.
+1. **Start a new session.** Claude Code and Codex pick up a new skill in a
+   running session (restart the app if it does not appear), but Cursor's
+   documentation does not say it does, so start a new chat there. Codex reads
+   `~/.agents/skills`, and Claude Code `~/.claude/skills`
+   (`$CLAUDE_CONFIG_DIR/skills` when set).
 2. **Check that it is installed.** `agent-archive status --verbose` says when
    agent skills are turned off (`agent-archive setup --skills` turns them
    on), lists the skill files setup wrote, and warns about one written by an
@@ -282,10 +285,12 @@ Code, Codex, or Cursor pull in a past session when you ask.
    about the login bug". You can also name the skill: `/agent-archive` in
    Claude Code, `$agent-archive` in Codex (or pick it from `/skills`), and in
    Cursor "use the agent-archive skill".
-4. **Expect a question the first time.** Claude Code asks before running
-   `handoff`, `list`, or `show`, and Codex and Cursor apply their own
-   approvals; the skill deliberately does not pre-approve them
-   ([permissions](agent-skills.md#permissions)).
+4. **Expect a question the first time.** Claude Code asks before it uses the
+   skill (a `Skill(agent-archive)` permission rule allows it for good) and
+   before running `handoff`, `list`, or `show`, and Codex and Cursor apply
+   their own approvals; the skill deliberately does not pre-approve them
+   ([permissions](agent-skills.md#permissions)). Where nothing can ask, as in
+   `claude -p`, the agent is refused instead and should say so; allow the command in that agent's settings, or run it yourself.
 5. **A sandbox may block it.** If the agent says the network or the Keychain
    was blocked, a session on this Mac is still found by its title; allow the
    command, or run it yourself in a terminal.
