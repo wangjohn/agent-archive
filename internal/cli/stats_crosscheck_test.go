@@ -82,6 +82,10 @@ func crossScenarios() []crossScenario {
 			claude("s1", statsDay(time.September, 20, 10), modelTokenSpec{"claude-opus-5", math.MaxInt64 / 2, math.MaxInt64 / 2, math.MaxInt64 / 2, 1}),
 			claude("s2", statsDay(time.September, 21, 10), modelTokenSpec{"claude-opus-5", math.MaxInt64 / 2, math.MaxInt64 / 2, math.MaxInt64 / 2, 1}),
 		)},
+		// Totals on the edges of the number formats: 999.6K is 1M, 9,950 is 10K.
+		{name: "number-format-edges", build: only(
+			claude("e1", statsDay(time.September, 20, 10), modelTokenSpec{"claude-opus-5", 999_600, 9_949, 9_950, 999_499_999}),
+			claude("e2", statsDay(time.September, 21, 10), modelTokenSpec{"claude-opus-5", 500, 500, 999_499, 1}))},
 		{name: "one-cache-type-only", build: only(
 			claude("r", statsDay(time.September, 20, 10), modelTokenSpec{"claude-opus-5", 0, 0, 1_000_000, 0}))},
 		{name: "subagents-skills-and-mcp-present", build: func(tb testing.TB, mem *storagetest.MemoryStore) {

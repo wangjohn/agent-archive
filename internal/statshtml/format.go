@@ -74,13 +74,21 @@ func tokenCount(n int64) string {
 		suffix string
 	}{{1e12, "T"}, {1e9, "B"}, {1e6, "M"}, {1e3, "K"}}
 	value := float64(n)
-	for _, u := range units {
+	for i, u := range units {
 		if value >= u.size {
 			v := value / u.size
 			if v < 9.95 {
 				return strings.TrimSuffix(strconv.FormatFloat(v, 'f', 1, 64), ".0") + u.suffix
 			}
-			return strconv.FormatFloat(math.Round(v), 'f', 0, 64) + u.suffix
+			rounded := math.Round(v)
+			if rounded >= 1000 {
+				// 999.6K reads as 1M, not 1000K.
+				if i == 0 {
+					return ">999T"
+				}
+				return "1" + units[i-1].suffix
+			}
+			return strconv.FormatFloat(rounded, 'f', 0, 64) + u.suffix
 		}
 	}
 	return strconv.FormatInt(n, 10)
