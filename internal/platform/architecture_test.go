@@ -50,20 +50,25 @@ func runtimeGOOSUses(t *testing.T, name string, src any) []string {
 		t.Fatalf("parse %s: %v", name, err)
 	}
 	var uses []string
-	local := ""
+	// A file may import runtime more than once, under different names.
+	names := map[string]bool{}
 	for _, spec := range file.Imports {
 		if path, _ := strconv.Unquote(spec.Path.Value); path != "runtime" {
 			continue
 		}
-		local = "runtime"
+		local := "runtime"
 		if spec.Name != nil {
 			local = spec.Name.Name
 		}
-		if local == "." {
+		switch local {
+		case ".":
 			uses = append(uses, fset.Position(spec.Pos()).String()+": dot-imports runtime, which hides runtime.GOOS")
+		case "_":
+		default:
+			names[local] = true
 		}
 	}
-	if local == "" || local == "_" {
+	if len(names) == 0 {
 		return uses
 	}
 	ast.Inspect(file, func(n ast.Node) bool {
@@ -71,7 +76,7 @@ func runtimeGOOSUses(t *testing.T, name string, src any) []string {
 		if !ok {
 			return true
 		}
-		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == local && sel.Sel.Name == "GOOS" {
+		if pkg, ok := sel.X.(*ast.Ident); ok && names[pkg.Name] && sel.Sel.Name == "GOOS" {
 			uses = append(uses, fset.Position(sel.Pos()).String()+": runtime.GOOS")
 		}
 		return true
@@ -147,6 +152,9 @@ func TestRuntimeGOOSScanFindsEverySpelling(t *testing.T) {
 		{"twice", "package p\nimport \"runtime\"\nvar x, y = runtime.GOOS, runtime.GOOS\n", 2},
 		{"renamed import", "package p\nimport rt \"runtime\"\nvar x = rt.GOOS\n", 1},
 		{"dot import", "package p\nimport . \"runtime\"\nvar x = GOOS\n", 1},
+		{"imported twice, read through the first name", "package p\nimport (\n\trt \"runtime\"\n\t\"runtime\"\n)\nvar x = rt.GOOS\nvar n = runtime.NumCPU()\n", 1},
+		{"imported twice, read through both names", "package p\nimport (\n\trt \"runtime\"\n\t\"runtime\"\n)\nvar x, y = rt.GOOS, runtime.GOOS\n", 2},
+		{"blank import", "package p\nimport _ \"runtime\"\nvar runtime struct{ GOOS string }\nvar x = runtime.GOOS\n", 0},
 		{"other runtime names", "package p\nimport \"runtime\"\nvar x = runtime.GOARCH\nvar n = runtime.NumCPU()\n", 0},
 		{"another package's GOOS", "package p\nimport \"other\"\nvar x = other.GOOS\n", 0},
 		{"a local variable named runtime", "package p\nvar runtime struct{ GOOS string }\nvar x = runtime.GOOS\n", 0},
