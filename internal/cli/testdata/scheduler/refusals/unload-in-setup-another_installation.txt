@@ -1,2 +1,6 @@
 # exit 1
-Setup incomplete: previous installation restored: stop previous collector: launchd's com.agent-archive.collector job was not loaded from @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist; it belongs to another installation and was left running
+Setup incomplete: stop previous collector: launchd's com.agent-archive.collector job was not loaded from @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.plist; it belongs to another installation and was left running
+rollback incomplete; run setup again: cannot recover the interrupted setup: launchctl could not restart the background collector (launchctl bootstrap: exit status 5: Bootstrap failed: 5: Input/output error); once launchctl works again, rerun setup
+The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
+To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
+Then run agent-archive setup to review your settings.

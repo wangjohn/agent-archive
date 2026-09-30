@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wangjohn/agent-archive/internal/hooks"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
@@ -39,13 +37,12 @@ func (r *schedRun) checkRefusal(name string, code int, output string) {
 func TestPreflightRefusalTexts(t *testing.T) {
 	for _, state := range refusedStates {
 		r := newSchedRun(t, true)
-		label := launchLabel(r.own())
-		r.answers[label] = []launchdAnswer{state}
+		r.answers[r.ownLabel()] = []launchdAnswer{state}
 		code, out := r.run("setup")
 		r.checkRefusal("preflight-"+string(state)+"-interactive", code, out)
 		code, out = r.setup()
 		r.checkRefusal("preflight-"+string(state)+"-yes", code, out)
-		if setupjournal.TransactionPending(r.home) || len(r.fake.loaded) != 0 {
+		if r.journalPending() || len(r.loaded) != 0 {
 			t.Fatalf("%s: preflight changed something", state)
 		}
 	}
@@ -56,10 +53,10 @@ func TestPreflightRefusalTexts(t *testing.T) {
 func TestSetupPlanRefusalTexts(t *testing.T) {
 	for _, state := range refusedStates {
 		r := newSchedRun(t, true)
-		r.answers[launchLabel(r.own())] = []launchdAnswer{answerMissing, state}
+		r.answers[r.ownLabel()] = []launchdAnswer{answerMissing, state}
 		code, _ := r.setup()
 		r.checkRefusal("setup-plan-"+string(state), code, r.stderr)
-		if _, err := os.Stat(r.own()); !os.IsNotExist(err) || setupjournal.TransactionPending(r.home) {
+		if _, err := os.Stat(r.own()); !os.IsNotExist(err) || r.journalPending() {
 			t.Fatalf("%s: setup wrote its plist or journal (%v)", state, err)
 		}
 	}
@@ -72,7 +69,7 @@ func TestUninstallRefusalTexts(t *testing.T) {
 	for _, state := range refusedStates {
 		r := newSchedRun(t, true)
 		r.install()
-		r.answers[launchLabel(r.own())] = []launchdAnswer{state}
+		r.answers[r.ownLabel()] = []launchdAnswer{state}
 		code, out := r.run("uninstall", "--yes")
 		r.checkRefusal("uninstall-"+string(state), code, out)
 		if _, err := os.Stat(r.own()); err != nil {
@@ -80,9 +77,8 @@ func TestUninstallRefusalTexts(t *testing.T) {
 		}
 		// Unknown stops uninstall before anything changes; another_installation
 		// disables capture and removes the hooks, and only the plist stays.
-		claude, _ := os.ReadFile(filepath.Join(r.userHome, ".claude", "settings.json"))
-		if hooksLeft := strings.Contains(string(claude), hooks.Owner); hooksLeft == (state == answerAnotherInstallation) {
-			t.Fatalf("%s: hooks left = %v\n%s", state, hooksLeft, claude)
+		if hooksLeft := r.hooksInstalled(); hooksLeft == (state == answerAnotherInstallation) {
+			t.Fatalf("%s: hooks left = %v", state, hooksLeft)
 		}
 		for _, call := range r.lines {
 			if !strings.HasPrefix(call, "print ") {
@@ -95,17 +91,24 @@ func TestUninstallRefusalTexts(t *testing.T) {
 // Unload: the job was loaded from this installation's plist when checked, and
 // launchctl says otherwise when setup's commit or uninstall goes to stop it. The
 // refusal is wrapped by its caller: setup's commit rolls back, uninstall stops.
+//
+// setup's rollback asks launchctl to start this installation's job again from
+// its plist even when launchd now runs the label from another plist, which
+// launchd refuses (the fake refuses it as launchd does), so the rollback ends
+// incomplete and the record stays. The transcript pins that call sequence.
 func TestUnloadRefusalTexts(t *testing.T) {
 	for _, state := range refusedStates {
 		r := newSchedRun(t, true)
 		r.install()
-		r.answers[launchLabel(r.own())] = []launchdAnswer{answerLoaded, answerLoaded, state}
+		r.probe("own", r.own(), nil)
+		r.answers[r.ownLabel()] = []launchdAnswer{answerLoaded, answerLoaded, state}
 		code, _ := r.setup()
 		r.checkRefusal("unload-in-setup-"+string(state), code, r.stderr)
+		r.checkTranscript("unload-refused-in-setup-"+string(state), "setup whose stop of the job is refused: "+string(state)+" when the commit asks", code)
 
 		r = newSchedRun(t, true)
 		r.install()
-		r.answers[launchLabel(r.own())] = []launchdAnswer{answerLoaded, state}
+		r.answers[r.ownLabel()] = []launchdAnswer{answerLoaded, state}
 		code, out := r.run("uninstall", "--yes")
 		r.checkRefusal("unload-in-uninstall-"+string(state), code, out)
 	}

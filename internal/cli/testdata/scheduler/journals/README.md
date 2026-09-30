@@ -27,12 +27,19 @@ AGENT_ARCHIVE_WRITE_JOURNAL_FIXTURES=1 go test ./internal/cli -run TestWriteInte
 
 Two things differ from the bytes the code wrote. The temporary folders of the
 fake Mac are rewritten to fixed paths (`/fixture/user-home`, `/fixture/account`,
-`/fixture/project`, `/fixture/bin`), inside the base64 `Before` and `After` of
-each file as well as in the path fields, and a replay rewrites them to its own
-folders; and the file is written as sorted, indented JSON, so its keys are not
-in the order of the Go struct. Every field the code wrote is kept.
+`/fixture/project`, `/fixture/bin`, `/fixture/bin-new`), inside the base64
+`Before` and `After` of each file as well as in the path fields, and a replay
+rewrites them to its own folders; and the file is written as sorted, indented
+JSON, so its keys are not in the order of the Go struct. Every field the code
+wrote is kept. Values derived from a path rather than holding one are not
+rewritten: the `project_id` in the recorded `config.json` hashes the
+temporary project folder, and the `machine_id` is random, so both differ from
+a fresh run's; recovery compares and restores bytes and reads neither.
 
-A replay puts the fake Mac in one of the two states a crash can leave: before
-the first change (every file as found, every old job running) or just before
-the new job starts (every file changed, every old job stopped), then runs
-`agent-archive setup` and checks that everything is put back.
+A replay puts the fake Mac in one of three states a crash can leave: before
+the first change (every file as found, every old job running), just before
+the new job starts (every file changed, every old job stopped), or after it
+started but before the journal was removed, then runs `agent-archive setup`
+and checks that everything is put back. The tests read the fixtures as JSON
+(`journalFile` in `scheduler_journal_fixtures_test.go`), not through the
+code's own types.

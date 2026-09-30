@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,9 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wangjohn/agent-archive/internal/hooks"
-	"github.com/wangjohn/agent-archive/internal/local"
-	"github.com/wangjohn/agent-archive/internal/setupjournal"
 	"github.com/wangjohn/agent-archive/internal/testutil/golden"
 )
 
@@ -22,109 +18,65 @@ import (
 // replaying unchanged: they are never regenerated, a new format gets new
 // fixtures beside them.
 
-// The journal fixtures name the paths of the fake Mac they were written on;
-// a replay maps them to its own temporary folders.
+// crashPoint is where in its commit an interrupted setup stopped.
+type crashPoint string
+
 const (
-	fixtureUserHome = "/fixture/user-home"
-	fixtureAccount  = "/fixture/account"
-	fixtureProject  = "/fixture/project"
-	fixtureBin      = "/fixture/bin/agent-archive"
-	fixtureNewBin   = "/fixture/bin-new/agent-archive"
+	// beforeChanges: the journal is written, nothing else happened. Every
+	// file is as setup found it and every old job still runs.
+	beforeChanges crashPoint = "before-changes"
+	// beforeStart: every file changed and every old job stopped, the new job
+	// not started yet.
+	beforeStart crashPoint = "before-start"
+	// afterStart: the new job started, the journal not yet removed.
+	afterStart crashPoint = "after-start"
 )
 
-// rewritePaths rewrites the paths in a journal by pairs (old, new, ...).
-func rewritePaths(t *testing.T, raw []byte, pairs ...string) []byte {
-	t.Helper()
-	return transformJournal(t, raw, strings.NewReplacer(pairs...).Replace)
-}
+var crashPoints = []crashPoint{beforeChanges, beforeStart, afterStart}
 
-// The journal fields that hold a path, and the ones that hold a file's bytes.
-var (
-	journalPathKeys = map[string]bool{"Path": true, "plist": true}
-	journalFileKeys = map[string]bool{"Before": true, "After": true}
-)
-
-// transformJournal returns the journal in raw with every path field, and every
-// file's recorded bytes (Before and After, which are base64), passed through f.
-// Everything else, including fields this code does not know, is kept.
-func transformJournal(t *testing.T, raw []byte, f func(text string) string) []byte {
-	t.Helper()
-	var tree any
-	must(t, json.Unmarshal(raw, &tree))
-	var walk func(v any)
-	walk = func(v any) {
-		switch v := v.(type) {
-		case map[string]any:
-			for key, value := range v {
-				text, isText := value.(string)
-				switch {
-				case isText && journalPathKeys[key]:
-					v[key] = f(text)
-				case isText && journalFileKeys[key]:
-					data, err := base64.StdEncoding.DecodeString(text)
-					must(t, err)
-					v[key] = base64.StdEncoding.EncodeToString([]byte(f(string(data))))
-				default:
-					walk(value)
-				}
-			}
-		case []any:
-			for _, item := range v {
-				walk(item)
-			}
-		}
-	}
-	walk(tree)
-	out, err := json.MarshalIndent(tree, "", "  ")
-	must(t, err)
-	return append(out, '\n')
-}
-
-func fixturePath(name string) string {
-	return filepath.Join("testdata", "scheduler", "journals", name+".json")
-}
-
-// interrupted puts the fake Mac in the state a crash left it in, with the
-// journal fixture name as its record: applied (setup crashed just before
-// starting the new job: every file changed, every old job stopped) or not
-// (crashed before the first change: every file as found, every old job still
-// running).
-func (r *schedRun) interrupted(name string, applied bool) setupjournal.Journal {
+// interrupted puts the fake Mac in the state a crash at crash left it in,
+// with the journal fixture name as its record, and returns that record.
+func (r *schedRun) interrupted(name string, crash crashPoint) journalFile {
 	r.t.Helper()
 	raw, err := os.ReadFile(fixturePath(name))
 	must(r.t, err)
 	raw = rewritePaths(r.t, raw, fixtureUserHome, r.userHome, fixtureAccount, r.account, fixtureProject, r.project, fixtureBin, r.exe, fixtureNewBin, r.exe+"-new")
-	must(r.t, local.WriteBytes(setupjournal.JournalPath(r.home), raw))
-	var journal setupjournal.Journal
-	must(r.t, local.Read(setupjournal.JournalPath(r.home), &journal))
+	writeFile(r.t, r.journalPath(), raw)
+	var journal journalFile
+	must(r.t, json.Unmarshal(raw, &journal))
 	if journal.Plist != r.own() {
 		r.t.Fatalf("the fixture's collector plist %s is not this installation's %s", journal.Plist, r.own())
 	}
 	for _, c := range journal.Changes {
 		switch {
-		case applied && c.Delete:
-		case applied:
-			must(r.t, local.WriteBytes(c.Path, c.After))
+		case crash != beforeChanges && c.Delete:
+		case crash != beforeChanges:
+			writeFile(r.t, c.Path, c.After)
 		case c.Existed:
-			must(r.t, local.WriteBytes(c.Path, c.Before))
+			writeFile(r.t, c.Path, c.Before)
 		}
 	}
-	for _, job := range append([]*setupjournal.LegacyJob{journal.Legacy, journal.Relabeled}, journal.MoreRelabeled...) {
-		if job == nil {
-			continue
-		}
-		if !applied {
-			must(r.t, local.WriteBytes(job.Change.Path, job.Change.Before))
+	for _, job := range journal.retired() {
+		if crash == beforeChanges {
+			writeFile(r.t, job.Change.Path, job.Change.Before)
 			if job.WasLoaded {
-				r.fake.loaded[launchLabel(job.Change.Path)] = job.Change.Path
+				r.loaded[plistLabel(job.Change.Path)] = job.Change.Path
 			}
 		}
-		r.probe(launchLabel(job.Change.Path), job.Change.Path, nil)
+		r.probe(plistLabel(job.Change.Path), job.Change.Path, nil)
 	}
-	if !applied && journal.WasLoaded {
-		r.fake.loaded[launchLabel(journal.Plist)] = journal.Plist
+	if (crash == beforeChanges && journal.WasLoaded) || crash == afterStart {
+		r.loaded[plistLabel(journal.Plist)] = journal.Plist
 	}
-	r.probe("own", journal.Plist, nil)
+	// The collector's plist reads "old" while it is as setup found it and
+	// "new" while it is setup's, when setup found one.
+	var found []byte
+	for _, c := range journal.Changes {
+		if c.Path == journal.Plist {
+			found = c.Before
+		}
+	}
+	r.probe("own", journal.Plist, found)
 	return journal
 }
 
@@ -133,36 +85,35 @@ func (r *schedRun) interrupted(name string, applied bool) setupjournal.Journal {
 // the journal gone. The launchctl calls and the files at each are the golden.
 func TestInterruptedSetupJournalsReplay(t *testing.T) {
 	for _, name := range []string{"resetup-earlier-labels", "first-setup-prototype"} {
-		for _, applied := range []bool{false, true} {
-			state := map[bool]string{false: "before-changes", true: "before-start"}[applied]
-			t.Run(name+"-"+state, func(t *testing.T) {
+		for _, crash := range crashPoints {
+			t.Run(name+"-"+string(crash), func(t *testing.T) {
 				r := newSchedRun(t, true)
-				journal := r.interrupted(name, applied)
+				journal := r.interrupted(name, crash)
+				// setup recovers first; then its wizard checks launchctl again
+				// (the last print) and finds no answer to its first question,
+				// so it exits 1 whether or not recovery succeeded.
 				code, out := r.run("setup")
-				if setupjournal.TransactionPending(r.home) {
+				if r.journalPending() {
 					t.Fatalf("the journal remains: exit %d\n%s", code, out)
 				}
 				for _, c := range journal.Changes {
-					if !c.Unapplied() {
-						t.Errorf("%s is not as setup found it", c.Path)
+					data, err := os.ReadFile(c.Path)
+					if found := err == nil; found != c.Existed || (found && !bytes.Equal(data, c.Before)) {
+						t.Errorf("%s is not as setup found it (%v)", c.Path, err)
 					}
 				}
-				jobs := append([]*setupjournal.LegacyJob{journal.Legacy, journal.Relabeled}, journal.MoreRelabeled...)
-				for _, job := range jobs {
-					if job == nil {
-						continue
-					}
+				for _, job := range journal.retired() {
 					if data, err := os.ReadFile(job.Change.Path); err != nil || !bytes.Equal(data, job.Change.Before) {
 						t.Errorf("%s was not put back (%v)", job.Change.Path, err)
 					}
-					if _, running := r.fake.loaded[launchLabel(job.Change.Path)]; running != job.WasLoaded {
+					if running := r.running(job.Change.Path); running != job.WasLoaded {
 						t.Errorf("%s running = %v, was %v", job.Change.Path, running, job.WasLoaded)
 					}
 				}
-				if _, running := r.fake.loaded[launchLabel(journal.Plist)]; running != journal.WasLoaded {
+				if running := r.running(journal.Plist); running != journal.WasLoaded {
 					t.Errorf("the collector running = %v, was %v", running, journal.WasLoaded)
 				}
-				r.checkTranscript("replay-"+name+"-"+state, name+" journal replayed by setup, crashed "+strings.ReplaceAll(state, "-", " "), code)
+				r.checkTranscript("replay-"+name+"-"+string(crash), name+" journal replayed by setup, crashed "+strings.ReplaceAll(string(crash), "-", " "), code)
 			})
 		}
 	}
@@ -173,15 +124,15 @@ func TestInterruptedSetupJournalsReplay(t *testing.T) {
 func TestAbandonRecoveryKeepsEverythingAndListsIt(t *testing.T) {
 	for _, name := range []string{"resetup-earlier-labels", "first-setup-prototype"} {
 		r := newSchedRun(t, true)
-		journal := r.interrupted(name, true)
+		journal := r.interrupted(name, beforeStart)
 		before := map[string][]byte{}
 		for _, c := range journal.Changes {
 			before[c.Path], _ = os.ReadFile(c.Path)
 		}
 		code, out := r.run("setup", "--abandon-recovery")
 		r.checkRefusal("abandon-"+name, code, out)
-		if setupjournal.TransactionPending(r.home) || len(r.lines) != 0 {
-			t.Fatalf("%s: journal pending %v, launchctl calls %q", name, setupjournal.TransactionPending(r.home), r.lines)
+		if r.journalPending() || len(r.lines) != 0 {
+			t.Fatalf("%s: journal pending %v, launchctl calls %q", name, r.journalPending(), r.lines)
 		}
 		for path, data := range before {
 			if got, _ := os.ReadFile(path); !bytes.Equal(got, data) {
@@ -195,48 +146,48 @@ func TestAbandonRecoveryKeepsEverythingAndListsIt(t *testing.T) {
 // names. Each case starts from the same interrupted setups; the record stays.
 func TestRecoveryBlockedTexts(t *testing.T) {
 	const resetup, prototype = "resetup-earlier-labels", "first-setup-prototype"
-	earlier := hooks.CollectorLabel("/old/spelling/a", "")
+	earlier := earlierLabel("/old/spelling/a")
 	var got strings.Builder
 	for _, tc := range []struct {
 		name    string
 		fixture string
-		applied bool
-		arrange func(r *schedRun, journal setupjournal.Journal)
+		crash   crashPoint
+		arrange func(r *schedRun, journal journalFile)
 	}{
-		{"a file setup changed was edited since", resetup, true, func(r *schedRun, j setupjournal.Journal) {
+		{"a file setup changed was edited since", resetup, beforeStart, func(r *schedRun, j journalFile) {
 			must(r.t, os.WriteFile(j.Changes[0].Path, []byte("edited by hand\n"), 0o600))
 		}},
-		{"an earlier collector's plist was edited since", resetup, false, func(r *schedRun, j setupjournal.Journal) {
+		{"an earlier collector's plist was edited since", resetup, beforeChanges, func(r *schedRun, j journalFile) {
 			must(r.t, os.WriteFile(j.Relabeled.Change.Path, append(j.Relabeled.Change.Before, "<!-- edited -->"...), 0o600))
 		}},
-		{"the prototype's plist was edited since", prototype, false, func(r *schedRun, j setupjournal.Journal) {
+		{"the prototype's plist was edited since", prototype, beforeChanges, func(r *schedRun, j journalFile) {
 			must(r.t, os.WriteFile(j.Legacy.Change.Path, append(j.Legacy.Change.Before, "<!-- edited -->"...), 0o600))
 		}},
-		{"launchctl cannot stop the collector", resetup, false, func(r *schedRun, j setupjournal.Journal) { r.failBootout[launchLabel(j.Plist)] = true }},
-		{"launchctl cannot restart the collector", resetup, true, func(r *schedRun, j setupjournal.Journal) { r.failOne[j.Plist] = true }},
-		{"launchctl cannot restart an earlier collector", resetup, true, func(r *schedRun, j setupjournal.Journal) { r.failOne[j.Relabeled.Change.Path] = true }},
-		{"the collector's state is unknown", resetup, false, func(r *schedRun, j setupjournal.Journal) {
-			r.answers[launchLabel(j.Plist)] = []launchdAnswer{answerUnknown}
+		{"launchctl cannot stop the collector", resetup, beforeChanges, func(r *schedRun, j journalFile) { r.failBootout[plistLabel(j.Plist)] = true }},
+		{"launchctl cannot restart the collector", resetup, beforeStart, func(r *schedRun, j journalFile) { r.failOne[j.Plist] = true }},
+		{"launchctl cannot restart an earlier collector", resetup, beforeStart, func(r *schedRun, j journalFile) { r.failOne[j.Relabeled.Change.Path] = true }},
+		{"the collector's state is unknown", resetup, beforeChanges, func(r *schedRun, j journalFile) {
+			r.answers[plistLabel(j.Plist)] = []launchdAnswer{answerUnknown}
 		}},
-		{"an earlier collector's state is unknown", resetup, true, func(r *schedRun, j setupjournal.Journal) { r.answers[earlier] = []launchdAnswer{answerUnknown} }},
-		{"an earlier collector's label runs from another plist", resetup, true, func(r *schedRun, j setupjournal.Journal) {
+		{"an earlier collector's state is unknown", resetup, beforeStart, func(r *schedRun, _ journalFile) { r.answers[earlier] = []launchdAnswer{answerUnknown} }},
+		{"an earlier collector's label runs from another plist", resetup, beforeStart, func(r *schedRun, _ journalFile) {
 			r.answers[earlier] = []launchdAnswer{answerAnotherInstallation}
 		}},
-		{"the prototype's state is unknown", prototype, true, func(r *schedRun, j setupjournal.Journal) {
-			r.answers[setupjournal.LegacyLaunchLabel] = []launchdAnswer{answerUnknown}
+		{"the prototype's state is unknown", prototype, beforeStart, func(r *schedRun, _ journalFile) {
+			r.answers[prototypeLabel] = []launchdAnswer{answerUnknown}
 		}},
-		{"the record cannot be read", "", false, func(r *schedRun, _ setupjournal.Journal) {
-			must(r.t, local.WriteBytes(setupjournal.JournalPath(r.home), []byte(`{"changes":[`)))
+		{"the record cannot be read", "", beforeChanges, func(r *schedRun, _ journalFile) {
+			writeFile(r.t, r.journalPath(), []byte(`{"changes":[`))
 		}},
 	} {
 		r := newSchedRun(t, true)
-		var journal setupjournal.Journal
+		var journal journalFile
 		if tc.fixture != "" {
-			journal = r.interrupted(tc.fixture, tc.applied)
+			journal = r.interrupted(tc.fixture, tc.crash)
 		}
 		tc.arrange(r, journal)
 		code, out := r.run("setup")
-		if !setupjournal.TransactionPending(r.home) {
+		if !r.journalPending() {
 			t.Errorf("%s: the record was removed", tc.name)
 		}
 		fmt.Fprintf(&got, "## %s (exit %d)\n%s\n", tc.name, code, r.normalize(out))
@@ -247,7 +198,7 @@ func TestRecoveryBlockedTexts(t *testing.T) {
 // Any other command tells the user about the record and both ways out.
 func TestCommandsRefuseWhileSetupIsInterrupted(t *testing.T) {
 	r := newSchedRun(t, true)
-	r.interrupted("resetup-earlier-labels", true)
+	r.interrupted("resetup-earlier-labels", beforeStart)
 	var got strings.Builder
 	for _, command := range []string{"uninstall --yes", "pause", "sync"} {
 		code, out := r.run(strings.Fields(command)...)
