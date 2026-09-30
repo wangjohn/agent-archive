@@ -38,9 +38,9 @@ func TestDefaultPriceTableIsValid(t *testing.T) {
 		}
 		if strings.HasPrefix(m.ID, "claude-") {
 			// Anthropic's published multipliers: a 5-minute write is 1.25x input,
-			// a read 0.1x (0.025x on Fable 5.1, 0.05x on Opus 5.5). A typo in one
+			// a read 0.1x (0.025x on Fable 5.1 and Mythos 5.1, 0.05x on Opus 5.5). A typo in one
 			// column shows up here.
-			readMultiplier := map[string]float64{"claude-fable-5-1": 0.025, "claude-opus-5-5": 0.05}[m.ID]
+			readMultiplier := map[string]float64{"claude-fable-5-1": 0.025, "claude-mythos-5-1": 0.025, "claude-opus-5-5": 0.05}[m.ID]
 			if readMultiplier == 0 {
 				readMultiplier = 0.1
 			}
@@ -87,6 +87,19 @@ func TestRealModelIDsThePriceTableKnows(t *testing.T) {
 		{"gpt-5", true, "gpt-5"},
 		{"gpt-5-2025-08-07", true, "gpt-5"},
 		{"gpt-5.5", true, "gpt-5.5"},
+		{"gpt-5.5-2026-04-23", true, "gpt-5.5"},
+		{"gpt-5.6", true, "gpt-5.6"}, // OpenAI's alias for gpt-5.6-sol
+		{"gpt-6.1-sol", true, "gpt-6"},
+		{"gpt-5.3-codex", true, "gpt-5"},
+		{"gpt-5.2-codex", true, "gpt-5.2"},
+		{"gpt-5.1-codex-mini", true, "gpt-5-mini"},
+		{"claude-mythos-5-1", true, "mythos"},
+		// Ids a cloud platform gives the same models (Bedrock, Vertex).
+		{"anthropic.claude-opus-4-6-v1", true, "opus"},
+		{"global.anthropic.claude-opus-4-6-v1", true, "opus"},
+		{"us.anthropic.claude-sonnet-4-5-20250929-v1:0", true, "sonnet"},
+		{"anthropic.claude-sonnet-4-6", true, "sonnet"},
+		{"claude-opus-4@20250514", true, "opus"},
 		// Not priced, never guessed.
 		{"codex-auto-review", false, ""},
 		{"unknown", false, ""},
@@ -96,6 +109,13 @@ func TestRealModelIDsThePriceTableKnows(t *testing.T) {
 		{"jev-latest", false, ""},
 		{"claude-opus-5-6", false, ""}, // a later version is not the earlier one
 		{"claude-opus-5-5-fast", false, ""},
+		{"gpt-5.5-pro", false, ""},   // no cached-input price is published
+		{"gpt-5.6-cyber", false, ""}, // access-restricted, not a coding-agent model
+		{"claude-opus-4-6-v2", false, ""},
+		// Models the vendors price but the table leaves out on purpose.
+		{"gpt-5.4-pro", false, ""}, {"gpt-5-pro", false, ""}, {"o3", false, ""}, {"o4-mini", false, ""},
+		{"gpt-4.1", false, ""}, {"gpt-4o", false, ""}, {"chat-latest", false, ""},
+		{"claude-3-7-sonnet-20250219", false, ""}, {"claude-3-haiku-20240307", false, ""}, {"claude-mythos-preview", false, ""},
 		{"", false, ""},
 	} {
 		entry, ok := table.Lookup(tc.id)
@@ -133,6 +153,12 @@ func TestNormalizeModel(t *testing.T) {
 		"anthropic.":                "",
 		"/":                         "",
 		"claude-3-5-haiku-20241022": "claude-3-5-haiku",
+		// Bedrock's one colon-less version suffix, only behind its vendor prefix.
+		"anthropic.claude-opus-4-6-v1":        "claude-opus-4-6",
+		"global.anthropic.claude-opus-4-6-v1": "claude-opus-4-6",
+		"claude-opus-4-6-v1":                  "claude-opus-4-6-v1",
+		"anthropic.claude-opus-4-6-v2":        "claude-opus-4-6-v2",
+		"gpt-5-v1":                            "gpt-5-v1",
 	} {
 		if got := NormalizeModel(in); got != want {
 			t.Errorf("NormalizeModel(%q) = %q, want %q", in, got, want)
@@ -320,6 +346,41 @@ func TestFamilyIsOnlyForListedModels(t *testing.T) {
 	for model, want := range map[string]string{"acme-model": "acme", "NO-FAMILY": "no-family", "bad": ""} {
 		if family, listed := custom.Family(model); family != want || listed != (want != "") {
 			t.Errorf("custom Family(%q) = %q, %v; want %q", model, family, listed, want)
+		}
+	}
+}
+
+// An alias row is the model it routes to, price for price: OpenAI's docs say
+// the gpt-5.6 alias routes to gpt-5.6-sol, so a table that priced them apart
+// would price the same tokens two ways.
+func TestAliasRowsMatchTheirModel(t *testing.T) {
+	t.Parallel()
+	table := DefaultPriceTable()
+	alias, ok := table.Lookup("gpt-5.6")
+	if !ok {
+		t.Fatal("gpt-5.6 is not priced")
+	}
+	sol, ok := table.Lookup("gpt-5.6-sol")
+	if !ok {
+		t.Fatal("gpt-5.6-sol is not priced")
+	}
+	alias.ID, sol.ID = "", ""
+	if alias != sol {
+		t.Fatalf("gpt-5.6 = %+v, gpt-5.6-sol = %+v", alias, sol)
+	}
+}
+
+// The notes say what the estimate leaves out, so a reader can tell which way it
+// is biased. A rewrite that drops one of these should be a decision, not an
+// accident.
+func TestPriceNotesNameWhatIsNotModelled(t *testing.T) {
+	t.Parallel()
+	notes := DefaultPriceTable().Notes
+	for _, want := range []string{
+		"5-minute", "1-hour", "272K", "fast mode", "Batch", "data-residency", "2026-11-21", "unpriced", "codex-auto-review",
+	} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("notes do not mention %q", want)
 		}
 	}
 }

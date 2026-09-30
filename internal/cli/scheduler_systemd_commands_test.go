@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -95,7 +96,7 @@ func TestSetupOnASystemWithoutASchedulerChangesNothing(t *testing.T) {
 		return nil, nil
 	})
 	output := setupRun(t, l.env, l.setupInput(), 1)
-	for _, want := range []string{"Background job", "agent-archive has no background scheduler for this system", "Nothing was changed"} {
+	for _, want := range []string{"Background job", "agent-archive has no background scheduler for this system", "Run agent-archive on macOS, or on Linux with a systemd user manager", "Nothing was changed"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("the refusal lacks %q:\n%s", want, output)
 		}
@@ -121,7 +122,9 @@ func TestLinuxSetupThatTheManagerCannotLoadNamesTheUnitDirectoryAndRollsBack(t *
 	}
 	text := out.String() + errOut.String()
 	unitDir := filepath.Join(l.userHome, ".config", "systemd", "user")
-	for _, want := range []string{"does not exist", unitDir, "XDG_CONFIG_HOME", "UnitPath"} {
+	// systemctl's own line ends with a newline, which the error leaves out,
+	// so the directory is said on the same line.
+	for _, want := range []string{"does not exist. (the units are in " + unitDir, "XDG_CONFIG_HOME", "UnitPath"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the failure lacks %q:\n%s", want, text)
 		}
@@ -316,4 +319,133 @@ func TestLinuxRefreshOfAJobThatIsNotLoadedLeavesTheManagerAlone(t *testing.T) {
 	if data, err := os.ReadFile(service); err != nil || !bytes.Contains(data, []byte(next)) {
 		t.Errorf("the unit file runs %q (%v), want it to run %s", data, err, next)
 	}
+}
+
+// A masked unit is refused before the first question too, with the unmask
+// that lets setup load it, and nothing changes.
+func TestLinuxSetupRefusesAMaskedUnit(t *testing.T) {
+	t.Parallel()
+	l := newLinuxInstall(t)
+	l.manager.masked = true
+	output := setupRun(t, l.env, l.setupInput(), 1)
+	for _, want := range []string{"Background job", l.ref() + ".timer is masked", "systemctl --user unmask " + l.ref() + ".timer " + l.ref() + ".service", "then run agent-archive setup again", "Nothing was changed"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("the refusal lacks %q:\n%s", want, output)
+		}
+	}
+	l.nothingChanged()
+}
+
+// A Load that fails for a reason of the manager's own (not a unit file it
+// cannot find) reaches the person as systemctl said it, and setup rolls back
+// to nothing: no unit file, configuration, journal or hook is left.
+func TestLinuxSetupWhoseLoadFailsRollsBackToNothing(t *testing.T) {
+	t.Parallel()
+	l := newLinuxInstall(t)
+	l.manager.failLoad = "Failed to start the timer: Transaction is destructive.\n"
+	var out, errOut bytes.Buffer
+	if code := Run([]string{"setup"}, strings.NewReader(l.setupInput()), &out, &errOut, l.env); code != 1 {
+		t.Fatalf("setup: exit %d\n%s%s", code, &out, &errOut)
+	}
+	if text := out.String() + errOut.String(); !strings.Contains(text, "Transaction is destructive") || strings.Contains(text, "launchctl") || strings.Contains(text, "plist") {
+		t.Errorf("the failure says:\n%s", text)
+	}
+	timer, service := l.units()
+	for _, path := range []string{timer, service, filepath.Join(l.home, "config.json"), setupjournal.JournalPath(l.home), filepath.Join(l.userHome, ".claude", "settings.json"), filepath.Join(l.userHome, ".codex", "hooks.json")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("%s is left after the rollback (%v)", path, err)
+		}
+	}
+	if got := l.manager.held(l.ref()); got != scheduler.Missing {
+		t.Errorf("the job is %q after the rollback", got)
+	}
+}
+
+// A refresh that cannot ask the manager about the job's state refuses in the
+// adapter's words, with its fix, and changes nothing: the unit files still run
+// the old executable and the manager was not touched.
+func TestLinuxRefreshWithNoUserBusRefusesAndChangesNothing(t *testing.T) {
+	t.Parallel()
+	l := newLinuxInstall(t)
+	l.setup()
+	timer, _ := l.units()
+	before := tree(t, filepath.Dir(timer), l.home)
+	upgradedTo(t, &l.env)
+	l.manager.noBus = true
+	l.manager.calls = nil
+	code, stdout, stderr := refreshRun(t, l.env)
+	if code == 0 {
+		t.Fatalf("refresh with no user bus: exit 0\n%s%s", stdout, stderr)
+	}
+	text := stdout + stderr
+	for _, want := range []string{"cannot determine the background job's state: the systemd user manager cannot be reached (this session has no user bus)", "loginctl enable-linger", "then retry"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the refusal lacks %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"launchctl", "plist", "LaunchAgent"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("a Linux refusal says %q:\n%s", unwanted, text)
+		}
+	}
+	if changes := l.manager.changing(); len(changes) != 0 {
+		t.Errorf("refresh changed the manager by %q", changes)
+	}
+	if after := tree(t, filepath.Dir(timer), l.home); !maps.Equal(before, after) {
+		t.Errorf("refresh changed files:\nbefore %v\nafter  %v", before, after)
+	}
+}
+
+// The status rows of a Linux job in each state it can be in, in systemd's
+// words: running and loaded are on, missing is not running, and a unit file
+// whose executable is gone is broken, said of the user timer.
+func TestLinuxStatusRowsForEachState(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		state scheduler.JobState
+		row   string
+	}{
+		{scheduler.Loaded, "Background collector on"},
+		{scheduler.Running, "Background collector on"},
+		{scheduler.Missing, "Background collector isn't running"},
+	} {
+		t.Run(string(tc.state), func(t *testing.T) {
+			t.Parallel()
+			l := newLinuxInstall(t)
+			l.setup()
+			l.manager.put(l.ref(), tc.state)
+			var out, errOut bytes.Buffer
+			if code := Run([]string{"status", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
+				t.Fatalf("status: exit %d\n%s%s", code, &out, &errOut)
+			}
+			if text := out.String(); !strings.Contains(text, tc.row) || strings.Contains(text, "launchctl") || strings.Contains(text, "LaunchAgent") {
+				t.Errorf("status for a %s job:\n%s", tc.state, text)
+			}
+			out.Reset()
+			if code := Run([]string{"status", "--json"}, nil, &out, &errOut, l.env); code != 0 {
+				t.Fatalf("status --json: exit %d", code)
+			}
+			var status struct {
+				Background string `json:"background"`
+			}
+			must(t, json.Unmarshal(out.Bytes(), &status))
+			if status.Background != string(tc.state) {
+				t.Errorf("status --json: background %q, want %q", status.Background, tc.state)
+			}
+		})
+	}
+	t.Run("broken", func(t *testing.T) {
+		t.Parallel()
+		l := newLinuxInstall(t)
+		l.setup()
+		must(t, os.Remove(mustLoadConfig(t, l.home).InstalledExecutable))
+		var out, errOut bytes.Buffer
+		if code := Run([]string{"status", "--no-pager"}, nil, &out, &errOut, l.env); code != 0 {
+			t.Fatalf("status: exit %d\n%s%s", code, &out, &errOut)
+		}
+		text := out.String()
+		if !strings.Contains(text, "Background collector is broken") || !strings.Contains(text, "background collector's user timer runs") || strings.Contains(text, "LaunchAgent") {
+			t.Errorf("status for a broken job:\n%s", text)
+		}
+	})
 }

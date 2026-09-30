@@ -132,6 +132,35 @@ func TestIsolationFailsClosed(t *testing.T) {
 	panics("launchctl print", func() { Env{}.scheduler().Inspect(context.Background(), site, ref) })
 	panics("launchctl bootstrap", func() { _ = Env{}.scheduler().Load(context.Background(), site, ref) })
 	panics("launchctl bootout", func() { _ = Env{}.scheduler().Unload(context.Background(), site, ref) })
+	// So does every backend name a configuration or a journal records:
+	// launchd's, and "" (this system's own), stop the test, and any other is
+	// refused before a scheduler exists, so a configuration that names it gets
+	// one that runs nothing.
+	for _, name := range []string{"", "launchd"} {
+		s, err := newScheduler(name)
+		if err != nil {
+			t.Fatalf("newScheduler(%q): %v", name, err)
+		}
+		panics("launchctl print for "+name, func() { s.Inspect(context.Background(), site, ref) })
+		panics("launchctl bootstrap for "+name, func() { _ = s.Load(context.Background(), site, ref) })
+		panics("launchctl bootout for "+name, func() { _ = s.Unload(context.Background(), site, ref) })
+	}
+	for _, name := range []string{"systemd", "none", "cron"} {
+		if s, err := newScheduler(name); err == nil {
+			t.Errorf("newScheduler(%q) = %s, want a refusal", name, s.Name())
+		}
+		dataHome := t.TempDir()
+		if err := config.Save(dataHome, config.Config{BackgroundBackend: name}); err != nil {
+			t.Fatal(err)
+		}
+		s := Env{Home: func() (string, error) { return dataHome, nil }}.scheduler()
+		if got := s.Inspect(context.Background(), site, ref); s.Name() != name || got.State != scheduler.Unknown {
+			t.Errorf("a configuration recording %s: scheduler %s says %q", name, s.Name(), got.State)
+		}
+		if s.Load(context.Background(), site, ref) == nil || s.Unload(context.Background(), site, ref) == nil {
+			t.Errorf("a configuration recording %s: its scheduler changed a job", name)
+		}
+	}
 	panics("Env{}.credentialStore", func() { _, _ = Env{}.credentialStore() })
 	panics("less --version", func() { _, _ = Env{}.lessVersion("less") })
 	panics("R2 store", func() {

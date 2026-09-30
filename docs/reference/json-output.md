@@ -163,7 +163,7 @@ untrimmed output. See [list and show](../guides/list-and-show.md#size).
   "generated_at": "2026-09-29T12:00:00-07:00",
   "filters": { "harness": "claude" },
   "window": { "days": 30, "timezone": "America/Los_Angeles", "first_day": "2026-08-31", "last_day": "2026-09-29", "...": "from, to, previous_from, previous_to" },
-  "prices": { "version": "2026-09.2", "as_of": "2026-09-29", "currency": "USD", "...": "sources, notes, overridden" },
+  "prices": { "version": "2026-09.4", "as_of": "2026-09-30", "currency": "USD", "...": "sources, notes, overridden" },
   "coverage": { "sessions": 412, "sessions_with_tokens": 371, "unknown_tokens_by_agent": { "cursor": 41 }, "...": "" },
   "daily": [ { "date": "2026-08-31", "sessions": 3, "tokens": 1200000, "cost": { "usd": 41.2, "partial": false, "unpriced_tokens": 0, "approximate": false } } ],
   "peak": { "date": "2026-09-17", "tokens": 4900000 },

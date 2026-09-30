@@ -344,7 +344,7 @@ func TestLoadReloadsThenEnablesTheTimer(t *testing.T) {
 	}
 	must(t, os.Remove(s.timerPath(site, ref)))
 	err := s.Load(context.Background(), site, ref)
-	if err == nil || !strings.Contains(err.Error(), "systemctl enable") || !strings.Contains(err.Error(), "does not exist") || !strings.Contains(err.Error(), "the units are in "+s.UnitDir(site)) || !strings.Contains(err.Error(), "XDG_CONFIG_HOME") {
+	if err == nil || !strings.Contains(err.Error(), "systemctl enable") || !strings.Contains(err.Error(), "does not exist. (the units are in ") || !strings.Contains(err.Error(), "the units are in "+s.UnitDir(site)) || !strings.Contains(err.Error(), "XDG_CONFIG_HOME") {
 		t.Errorf("Load of a missing unit file: %v", err)
 	}
 	refused := func(_ context.Context, _ string, args ...string) ([]byte, error) {

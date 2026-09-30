@@ -329,11 +329,12 @@ func (s Scheduler) Inspect(ctx context.Context, site scheduler.Site, ref schedul
 }
 
 // systemctl runs `systemctl --user args...` and says what it printed when it
-// fails.
+// fails, without the newline it ends with, so what Load adds to the error
+// stays on its line.
 func (s Scheduler) systemctl(ctx context.Context, args ...string) error {
 	output, err := s.Run(ctx, "systemctl", append([]string{"--user"}, args...)...)
 	if err != nil {
-		return fmt.Errorf("systemctl %s: %w: %s", args[0], err, output)
+		return fmt.Errorf("systemctl %s: %w: %s", args[0], err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
