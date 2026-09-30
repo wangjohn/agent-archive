@@ -46,12 +46,6 @@ The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
 To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
 Then run agent-archive setup to review your settings.
 
-## an earlier collector's label runs from another plist (exit 1)
-Setup incomplete: cannot recover the interrupted setup: launchd runs the background collector installed under an earlier label's label from another plist now, so it cannot be restarted from @USER_HOME@/Library/LaunchAgents/com.agent-archive.collector.223bda05f72f.plist
-The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
-To keep every file as it is now and discard that record, run: agent-archive setup --abandon-recovery
-Then run agent-archive setup to review your settings.
-
 ## the prototype's state is unknown (exit 1)
 Setup incomplete: cannot recover the interrupted setup: the state of the legacy upload job is unknown; restore access to launchctl and rerun setup
 The interrupted setup is recorded in @DATA_HOME@/setup-transaction.json.
