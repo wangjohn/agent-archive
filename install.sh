@@ -8,7 +8,12 @@
 # a damaged download, not a tampered release, since both come from the same
 # place), checks that it is signed with this project's Developer ID (which
 # does catch a binary someone else built), and installs it as
-# `agent-archive`. It never runs setup and never needs sudo.
+# `agent-archive`. It never runs setup and never needs sudo. On a Mac that
+# is already set up (a config.json in the data directory) it then runs
+# `agent-archive setup --refresh`, which asks nothing and changes only the
+# hooks, the background collector's plist, and the skill files, so they name
+# the new binary; if that fails, or this runs as root, the install still
+# succeeds.
 #
 # The script also recognises Linux release assets (linux-amd64, linux-arm64).
 # Linux is not yet a supported platform. Those binaries are not signed, so
@@ -21,6 +26,8 @@
 #   AGENT_ARCHIVE_INSTALL_DIR  directory to install into (default: where
 #                              agent-archive already is, else /usr/local/bin
 #                              if writable, else ~/.local/bin)
+#   AGENT_ARCHIVE_HOME         data directory of the installation to refresh
+#                              (default: ~/.local/share/agent-archive)
 #   AGENT_ARCHIVE_DOWNLOAD_URL release download base, for testing only
 #
 # The whole script is one function called on the last line, so a download
@@ -140,6 +147,15 @@ main() {
     say "  gh attestation verify $(shell_quote "$target") --repo wangjohn/agent-archive"
   fi
 
+  # An upgrade of a set-up Mac: the app hooks, the background collector, and
+  # the skills name this binary, so bring them up to date. A fresh install
+  # runs nothing.
+  configured=0
+  if existing_installation; then
+    configured=1
+    refresh_installation
+  fi
+
   case ":${PATH}:" in
     *":${install_dir}:"*) ;;
     *)
@@ -163,10 +179,46 @@ main() {
       say "Open a new terminal after updating your profile."
       ;;
   esac
+  if [ "$configured" = 0 ]; then
+    say ""
+    say "To get started, run:"
+    say ""
+    say "agent-archive setup"
+  fi
+}
+
+# existing_installation succeeds when this Mac already has a completed
+# setup: a settings file in the data directory, AGENT_ARCHIVE_HOME or the
+# default one.
+existing_installation() {
+  [ -f "${AGENT_ARCHIVE_HOME:-${HOME}/.local/share/agent-archive}/config.json" ]
+}
+
+# refresh_installation runs the new binary's `setup --refresh`, which asks
+# nothing, needs no terminal, and changes only the hook files, the collector's
+# plist, and the skill files, and prints what it did. It never runs setup
+# itself, and a failed refresh never fails the install: the binary is
+# installed either way, so it says why, and both ways on: refresh again when
+# the reason was temporary, setup when there is nothing installed to refresh.
+refresh_installation() {
   say ""
-  say "To get started, run:"
-  say ""
-  say "agent-archive setup"
+  # Under sudo, HOME can still be the person's, and the refresh would leave
+  # root-owned files in their app settings and LaunchAgents, which their apps
+  # then cannot read or change. The installer never needs sudo.
+  if [ "$(id -u)" = 0 ]; then
+    say "Not bringing your existing setup up to date: this is running as root, and the refresh would leave"
+    say "root-owned files in your home directory. As yourself, without sudo, run: ${target} setup --refresh"
+    return 0
+  fi
+  if output="$("$target" setup --refresh </dev/null 2>&1)"; then
+    say "Bringing your existing setup up to date (agent-archive setup --refresh):"
+    printf '%s\n' "$output" | sed 's/^/  /'
+  else
+    printf 'agent-archive install: could not refresh the hooks and skills of your existing setup: %s\n' "$output" >&2
+    printf 'The new agent-archive is installed, but your hooks and skills were not brought up to date.\n' >&2
+    printf 'If the reason above is temporary, try again with: %s setup --refresh\n' "$target" >&2
+    printf 'If it says to run setup (you uninstalled, or setup never finished), run: %s setup\n' "$target" >&2
+  fi
 }
 
 cleanup() {

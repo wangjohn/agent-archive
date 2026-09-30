@@ -36,14 +36,29 @@ Apply rechecks remote metadata before each deletion and writes a resumable
 report next to the plan. A plan expires five minutes after creation.
 `,
 	"setup": `Usage: agent-archive setup [--abandon-recovery] [--verbose]
+               [--no-skills | --skills]
        agent-archive setup --yes [--provider r2|s3 ...] [--project DIR ...]
-               [--skill-evidence none|metadata|body]
+               [--skill-evidence none|metadata|body] [--no-skills | --skills]
+       agent-archive setup --refresh [--verbose]
 
 Choose apps and projects, connect storage, then review and enable capture.
 Run again to continue saved setup or edit capture, storage, or retention.
 Credentials are entered privately; never pass them as command arguments.
 Setup asks questions, so it needs a terminal, unless --yes is given.
 An interrupted setup is recovered on the next run.
+  --refresh             After upgrading agent-archive: bring the app hooks, the
+                        background collector's plist, and the skill files up to
+                        date for the saved settings and this executable, and
+                        change nothing else. Asks nothing and needs no
+                        terminal; the installer runs it. Prints "nothing to
+                        refresh" when all is current. It refuses, changing
+                        nothing, before setup has finished, while a setup
+                        needs recovery, after uninstall, when another
+                        installation's hooks are in the way, or when this
+                        executable is a temporary build. It points the hooks
+                        at the executable now running, which repairs hooks
+                        left pointing at one that moved or was deleted. Takes
+                        no other flag than --verbose (which lists the files)
   --abandon-recovery    If recovery stops because a file it changed was
                         edited since, keep every file as it is now and
                         discard the interrupted setup; then run setup again
@@ -65,6 +80,10 @@ An interrupted setup is recovered on the next run.
   --apps LIST           Apps to capture: codex,claude,cursor (default: the
                         saved apps, else those found on this Mac). It must
                         name every app set up now: --yes never removes one
+  --no-skills           Install no agent skills (such as /handoff), and
+                        remove those setup wrote. Later setup runs keep
+                        them off until --skills
+  --skills              Turn the agent skills back on and install them
   --skill-evidence MODE none: no filesystem skill evidence; metadata: names
                         and filtered hashes; body: filtered SKILL.md text.
                         Fresh setup defaults to metadata; earlier configs
@@ -254,7 +273,7 @@ paged through $PAGER unless --no-pager. Not a terminal: no color, full layout.
 Example: agent-archive stats --since 2026-09-01 --by project
 Example: agent-archive stats --html --output stats.html
 `,
-	"handoff": `Usage: agent-archive handoff [SESSION_ID|--latest|--file PATH] [options]
+	"handoff": `Usage: agent-archive handoff [SESSION_ID|TITLE|--latest|--file PATH] [options]
 
 Continue a session in another coding agent. On a terminal, pick a session
 (this Mac's, including ones not yet uploaded, and archived ones), then pick
@@ -267,9 +286,16 @@ The session is filtered as it is for the archive: injected instructions and
 credentials removed, tool output trimmed, edit bodies left out. A session on
 this Mac is read from its transcript now; otherwise it is downloaded from
 the archive. Piped, or with --output, --format json, or --no-preamble, it
-prints without asking. Without a terminal, give a SESSION_ID, --latest, or
---file PATH (or --to, from inside an agent). Inside a coding agent, or with
-AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a terminal.
+prints without asking. Without a terminal, give a SESSION_ID or TITLE,
+--latest, or --file PATH (or --to, from inside an agent). Inside a coding
+agent, or with AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a
+terminal.
+A TITLE substring or short SESSION_ID matches as it does for show, in this
+Mac's sessions first (no network), then the archive's; a full SESSION_ID
+wins. Quote a title of several words. Several matches on a terminal open the
+picker on them; without one, or inside a coding agent, they are listed on
+stderr and the command exits 1, never guessing. A title skips the agent
+session running the command, unless --to is given.
   --latest              The most recent session for the project
   --project DIR         Project for --latest, and where the agent starts
                         (default: current directory)
@@ -310,6 +336,7 @@ AGENT_ARCHIVE_NONINTERACTIVE=1, it never asks, even on a terminal.
                         any arguments set in config.json's handoff.args
 Example: agent-archive handoff
 Example: agent-archive handoff --to codex
+Example: agent-archive handoff "fix the auth bug" --harness codex --to claude
 Example: codex "$(agent-archive handoff --latest --harness claude)"
 Example: claude "$(agent-archive handoff --latest --harness codex)"
 Example: agent-archive handoff SESSION_ID --to claude --worktree

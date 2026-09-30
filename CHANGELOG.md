@@ -8,6 +8,16 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `agent-archive stats --json` carries more of what the screen is built from:
+  each day's estimated cost (`daily[].cost`, adding up to the overview's) and
+  the dearest day (`peak_spend`), the share of tokens that were cache reads
+  (`overview.cache_share`), up to three prioritized `heads_up` notes as data
+  (subagents using a quarter or more of the tokens, one session costing a
+  tenth or more of the spend, sessions without token data, a low cache-hit
+  rate), and `display_skills`, which lists a plugin's skill once under its
+  bare name, with `total_skills`, `total_display_skills` and
+  `mcp.total_servers` counting every row. Existing fields and the screen and
+  page are unchanged. See [JSON output](docs/reference/json-output.md#stats---json).
 - **Handoff without copying.** Continuing a session in another coding agent
   is one step: inside Claude Code, `/handoff codex` opens Codex in a new
   terminal tab or window with the session as its context (in Codex, ask for
@@ -29,7 +39,30 @@ follow [Semantic Versioning](https://semver.org/).
   (`~/.agents/skills/handoff/SKILL.md`). It runs
   `agent-archive handoff --to <agent>`, defaulting to another agent than the
   one you are in. Setup leaves a file it did not write, uninstall removes
-  only its own, and `status --json` lists them in `agent_commands`.
+  only its own, and `status --json` lists them in `agent_skills`. After an
+  upgrade, `status` warns about a skill file an earlier release wrote and lists
+  it in `agent_skills_out_of_date`; `agent-archive setup --refresh` refreshes it.
+- `agent-archive setup --refresh` brings the app hooks, the background
+  collector's plist, and the skill files up to date for the saved settings and
+  the binary you run it from, and changes nothing else. It asks nothing and
+  needs no terminal, prints `nothing to refresh` or what it refreshed, and
+  refuses (exit 1) before setup has finished, while a setup needs recovery,
+  after uninstall, or when another installation's hooks are in the way. It
+  also repairs hooks left pointing at a binary that moved. `install.sh` runs it
+  when it finds a set-up Mac, so upgrading the binary upgrades the hooks and
+  skills; if it fails, or the installer runs as root (which would leave
+  root-owned files in your home directory), the install still succeeds and
+  says how to run it. It waits up to ten seconds for a running collection
+  pass, and finishes once it starts writing even if you press Ctrl-C. Run as
+  root in another user's home directory, it refuses, changing nothing.
+  `status` names it where it reports out-of-date skills, hooks that are
+  missing, or a moved binary.
+- `agent-archive setup --no-skills` (also with `--yes`) installs no agent
+  skills and removes the ones setup wrote; a file that is not setup's is left
+  alone and named. It is saved, so later setup runs keep the skills off, and
+  `agent-archive setup --skills` turns them back on. `status` says when they
+  are turned off (`agent_skills_disabled` in `--json`). Setup now says in one
+  line how to opt out.
 - On a build without a Keychain (Linux), an R2 key is kept in a file with mode
   0600 in a `credentials` folder (mode 0700) of the data directory, and
   agent-archive refuses to read it, or save into the folder, when it is open
@@ -53,9 +86,16 @@ follow [Semantic Versioning](https://semver.org/).
   flagged, and what an agent does not record (Cursor's tokens) reads
   "unknown", never zero. See [stats](docs/guides/stats.md).
 - `agent-archive stats --html` writes the same numbers as one self-contained
-  web page: a chart of tokens by day with its peak, overview cards, agents,
-  cost by model, top projects, a donut of what used your tokens, highlights,
-  and the scope, coverage and price-table notes. It is a single file with
+  web page shaped like the terminal's default view: spend, sessions and
+  tokens (with the cache share) at the top, the agents as one bar, a chart of
+  daily spend with its dearest day (days that could not be priced are marked,
+  not drawn as zero), where the spend went by project and by model in the
+  agents', model families' and projects' colors, the skills and MCP servers
+  used most, up to three "heads up" notes, and, under a divider, the agents'
+  table, a donut of what used your tokens, facts (days active, busiest day,
+  tool errors, month rank) and the scope, coverage and price-table notes. The
+  change from the previous period is shown only when there was a previous
+  period, and subagents are counted as runs, not sessions. It is a single file with
   inline styles and SVG, no script and no request to anything else; it
   follows your light or dark setting, prints, and reads on a phone. Give
   `--output FILE` to save it (mode 0600; an existing file is kept unless
@@ -190,6 +230,18 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- `handoff` takes a title as well as a session ID: `handoff "fix the auth
+  bug" --harness codex`. It matches as `show` does (a title substring or a
+  short session ID; a full ID wins), in this Mac's sessions first, with no
+  network, then in the archive. Only the title (the first prompt) is
+  matched, never the rest of the conversation; a session on this Mac has its
+  title read from its transcript file, which stays on the Mac. Several
+  matches (the newest 20 are shown) open the picker on them on a terminal;
+  without one they are listed on stderr with exit code 1 instead of
+  guessing. Run from inside a Claude Code or Codex session, a title never
+  matches that session itself (as `--latest` skips it).
+  `handoff` no longer rejects an argument that is not shaped like a session
+  ID up front; one that matches nothing says so and points to `list`.
 - The `handoff` picker also lists this Mac's sessions, including ones not
   yet uploaded (marked so), newest activity first, and still works when the
   archive cannot be read. Sessions with no prompt yet are left out.
