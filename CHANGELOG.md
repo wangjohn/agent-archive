@@ -41,9 +41,16 @@ follow [Semantic Versioning](https://semver.org/).
   flagged, and what an agent does not record (Cursor's tokens) reads
   "unknown", never zero. See [stats](docs/guides/stats.md).
 - `agent-archive stats --html` writes the same numbers as one self-contained
-  web page: a chart of tokens by day with its peak, overview cards, agents,
-  cost by model, top projects, a donut of what used your tokens, highlights,
-  and the scope, coverage and price-table notes. It is a single file with
+  web page shaped like the terminal's default view: spend, sessions and
+  tokens (with the cache share) at the top, the agents as one bar, a chart of
+  daily spend with its dearest day (days that could not be priced are marked,
+  not drawn as zero), where the spend went by project and by model in the
+  agents', model families' and projects' colors, the skills and MCP servers
+  used most, up to three "heads up" notes, and, under a divider, the agents'
+  table, a donut of what used your tokens, facts (days active, busiest day,
+  tool errors, month rank) and the scope, coverage and price-table notes. The
+  change from the previous period is shown only when there was a previous
+  period, and subagents are counted as runs, not sessions. It is a single file with
   inline styles and SVG, no script and no request to anything else; it
   follows your light or dark setting, prints, and reads on a phone. Give
   `--output FILE` to save it (mode 0600; an existing file is kept unless

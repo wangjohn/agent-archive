@@ -11,12 +11,20 @@
 // that came from a transcript (project, model, skill, MCP server) is cleaned
 // of control characters and escaped for HTML by the template, which is the
 // only way text reaches the page.
+//
+// The page has the shape of the terminal's default view: the headline trio
+// (spend, sessions, tokens), the agents, daily spend, where it went, what was
+// used most and what deserves a second look, with the detail under a
+// divider.
 package statshtml
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"html/template"
+	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -121,6 +129,9 @@ type builder struct {
 	cost       costFlags
 }
 
+// page builds the sections in the order the page shows them, which is also the
+// order a stand-in letter is handed out in: "project A" is the first project
+// the page names.
 func (b *builder) page() page {
 	s := b.s
 	window := fmt.Sprintf("Last %d days", s.Window.Days)
@@ -141,13 +152,16 @@ func (b *builder) page() page {
 		b.footer(&p)
 		return p
 	}
-	p.Daily, p.NoTokens = b.daily()
-	p.Cards, p.CardsVs = b.overview()
-	p.Agents = b.agents()
-	p.Models = b.models()
+	p.Hero = b.hero()
+	p.AgentBar = b.agentBar()
+	p.Daily, p.NoSpend = b.daily()
 	p.Projects = b.projects()
+	p.Models = b.models()
+	p.MostUsed = b.mostUsed()
+	p.HeadsUp = b.headsUp()
+	p.Agents = b.agents()
 	p.Tokens = b.tokens()
-	p.Highlights = b.highlights()
+	p.Facts = b.facts()
 	p.Groups = b.groups()
 	b.footer(&p)
 	return p
@@ -160,14 +174,7 @@ func (b *builder) header(p *page, window string) {
 	if s.Coverage.Agents != 1 {
 		agents = fmt.Sprintf("%d agents", s.Coverage.Agents)
 	}
-	sessions := plural(s.Coverage.Sessions, "session")
-	if s.Coverage.Sessions != 1 {
-		sessions = statsfmt.CommaInt(int64(s.Coverage.Sessions)) + " sessions"
-	}
-	if s.Coverage.SessionsWithTokens != s.Coverage.Sessions {
-		sessions += fmt.Sprintf(" (%s with token data)", statsfmt.CommaInt(int64(s.Coverage.SessionsWithTokens)))
-	}
-	p.Subtitle = []string{window, plain(s.Window.FirstDay) + " to " + plain(s.Window.LastDay), agents, sessions}
+	p.Subtitle = []string{window, plain(s.Window.FirstDay) + " to " + plain(s.Window.LastDay), agents}
 	f := b.opts.Filters
 	var parts []string
 	if f.Harness != "" {
@@ -188,69 +195,83 @@ func (b *builder) header(p *page, window string) {
 	}
 }
 
-func (b *builder) overview() ([]card, string) {
+// hero is the headline trio: spend, sessions and tokens, each with what makes
+// the number readable under it. The change against the previous period is
+// spend's alone, and only when there was a previous period.
+func (b *builder) hero() []heroStat {
 	o := b.s.Overview
-	cost := "n/a"
+	value := "n/a"
 	if o.Tokens.Value != nil {
-		cost = b.cost.costText(b.s.Prices.Currency, o.Cost.Value, o.Cost.Approximate, o.Cost.Partial, false)
+		value = b.cost.costText(b.s.Prices.Currency, o.Cost.Value, o.Cost.Approximate, o.Cost.Partial, false)
 	}
-	activeDays := 0
-	if o.ActiveDays.Value != nil && finite(*o.ActiveDays.Value) {
-		activeDays = int(*o.ActiveDays.Value + 0.5)
-	}
-	streak := ""
-	switch {
-	case o.CurrentStreak > 0:
-		streak = fmt.Sprintf("streak %s (best %d)", plural(o.CurrentStreak, "day"), o.BestStreak)
-	case o.BestStreak > 0:
-		streak = fmt.Sprintf("no current streak (best %d)", o.BestStreak)
-	}
-	cards := []card{
-		{Label: "Sessions", Value: measureCount(o.Sessions)},
-		{Label: "Prompts", Value: measureCount(o.Prompts)},
-		{Label: "Tokens", Value: measureTokens(o.Tokens)},
-		{Label: "Est. cost", Value: cost, Note: costNote(b.s.Prices.AsOf)},
-		{Label: "Active days", Value: fmt.Sprintf("%d/%d", activeDays, o.DaysInWindow), Note: streak},
-	}
-	measures := []stats.Measure{o.Sessions, o.Prompts, o.Tokens, o.Cost.Measure}
+	glyph, spoken, dir := deltaText(o.Cost.Measure)
 	vs := ""
-	for i, m := range measures {
-		cards[i].Delta, cards[i].DeltaSpoken = deltaText(m)
-		if cards[i].Delta != "" {
-			vs = fmt.Sprintf("vs the previous %d days", b.s.Window.Days)
-			if b.s.Window.Days == 1 {
-				vs = "vs the day before"
-			}
-		}
+	switch {
+	case glyph == "":
+	case b.s.Window.Days == 1:
+		vs = "vs the day before"
+	default:
+		vs = fmt.Sprintf("vs prior %d days", b.s.Window.Days)
 	}
-	return cards, vs
-}
-
-// costNote says what the estimated cost rests on, where it is read: list
-// prices, and how old they are.
-func costNote(asOf string) string {
-	if asOf == "" {
-		return "at list price"
+	spend := heroStat{
+		Label: "Spend", Value: value, Delta: glyph, DeltaSpoken: spoken, DeltaDir: dir, DeltaVs: vs,
+		Lines: []string{"estimated at list price"},
 	}
-	return "at list price, prices as of " + plain(asOf)
+	var prompts []string
+	if o.Prompts.Value != nil && finite(*o.Prompts.Value) {
+		prompts = []string{plural(int(math.Round(*o.Prompts.Value)), "prompt")}
+	}
+	var cache []string
+	switch {
+	case o.Tokens.Value == nil:
+		cache = []string{"no session reports token counts"}
+	case o.CacheShare != nil && finite(*o.CacheShare):
+		cache = []string{statsfmt.Percent(*o.CacheShare) + " served from cache"}
+	}
+	return []heroStat{
+		spend,
+		{Label: "Sessions", Value: measureCount(o.Sessions), Lines: prompts},
+		{Label: "Tokens", Value: measureTokens(o.Tokens), Lines: cache},
+	}
 }
 
 func (b *builder) agents() *barTable {
-	t := &barTable{ID: "agents", Title: "Agents", Heading: "Agent", HasBars: true,
-		Cols: []string{"Sessions", "Tokens", "Est. cost"}}
+	t := &barTable{ID: "agents", Title: "Agents", Heading: "Agent",
+		Cols: []string{"Sessions", "Tokens", "Spend", "Cache hit"}}
 	for _, a := range b.s.Agents {
-		tokens, cost := "unknown", "n/a"
+		tokens, cost, cache := "unknown", "n/a", "unknown"
 		if a.Tokens != nil {
 			tokens = statsfmt.TokenCount(*a.Tokens)
 			cost = b.cost.costText(b.s.Prices.Currency, a.Cost.USD, a.Cost.Approximate, a.Cost.Partial, false)
+			cache = "n/a"
+			if a.CacheHitRate != nil {
+				cache = statsfmt.Percent(*a.CacheHitRate)
+			}
 		}
 		t.Rows = append(t.Rows, barRow{
-			Label: clean(a.Label), Pct: pct(a.SessionShare),
-			Cells: []string{statsfmt.CommaInt(int64(a.Sessions)) + " (" + statsfmt.Percent(a.SessionShare) + ")", tokens, cost},
+			Label: clean(a.Label),
+			Cells: []string{statsfmt.CommaInt(int64(a.Sessions)) + " (" + statsfmt.Percent(a.SessionShare) + ")", tokens, cost, cache},
 		})
 	}
-	t.BarNote = "Bars show each agent's share of sessions."
 	return t
+}
+
+// spendShares are the bar lengths of rows by their estimated cost, each as a
+// share of the dearest row; a row with no cost gets none.
+func spendShares(costs []stats.Cost) []float64 {
+	top := 0.0
+	for _, c := range costs {
+		if v, ok := spendOf(c); ok {
+			top = math.Max(top, v)
+		}
+	}
+	out := make([]float64, len(costs))
+	for i, c := range costs {
+		if v, ok := spendOf(c); ok && top > 0 {
+			out[i] = v / top
+		}
+	}
+	return out
 }
 
 func (b *builder) models() *barTable {
@@ -258,17 +279,24 @@ func (b *builder) models() *barTable {
 	if len(rows) == 0 {
 		return nil
 	}
-	t := &barTable{ID: "models", Title: "Cost by model", Heading: "Model", HasBars: true,
-		Cols: []string{"Est. cost", "Share"}}
+	t := &barTable{ID: "models", Title: "By model", Heading: "Model", HasBars: true,
+		Cols: []string{"Spend", "Share"}}
 	more := 0
 	if len(rows) > maxModelRows {
 		more = len(rows) - maxModelRows
 		rows = rows[:maxModelRows]
 	}
-	for _, r := range rows {
-		t.Rows = append(t.Rows, b.modelRow(r))
+	costs := make([]stats.Cost, len(rows))
+	for i, r := range rows {
+		if r.Priced {
+			costs[i] = r.Cost
+		}
 	}
-	t.BarNote = "Bars show each model's share of the estimated cost."
+	shares := spendShares(costs)
+	for i, r := range rows {
+		t.Rows = append(t.Rows, b.modelRow(r, shares[i]))
+	}
+	t.BarNote = "Bars show estimated cost, each against the dearest model."
 	if more > 0 {
 		t.Notes = append(t.Notes, fmt.Sprintf("and %d more models", more))
 	}
@@ -278,49 +306,61 @@ func (b *builder) models() *barTable {
 	return t
 }
 
-// modelRow is a model's row: its cost and share, or, for a model the price
-// table does not list, its tokens and an empty bar (it has no share of the
-// cost to draw).
-func (b *builder) modelRow(r stats.ModelRow) barRow {
+// modelRow is a model's row: its cost and share of the cost, or, for a model
+// the price table does not list, its tokens and no bar (it has no cost to
+// draw). bar is the row's bar length, 0 to 1.
+func (b *builder) modelRow(r stats.ModelRow, bar float64) barRow {
 	label := b.modelNames.label(r.Label)
+	class := b.modelNames.class(r.Label)
 	if !r.Priced || r.Cost.USD == nil {
-		return barRow{Label: label, Pct: "0%", Cells: []string{"unpriced", statsfmt.TokenCount(r.Tokens) + " tokens"}}
+		return barRow{Label: label, Class: class, Pct: "0%", Cells: []string{"unpriced", statsfmt.TokenCount(r.Tokens) + " tokens"}}
 	}
 	share := 0.0
 	if r.CostShare != nil {
 		share = *r.CostShare
 	}
 	cost := b.cost.costText(b.s.Prices.Currency, r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false)
-	return barRow{Label: label, Pct: pct(share), Cells: []string{cost, statsfmt.Percent(share)}}
+	return barRow{Label: label, Class: class, Pct: pct(bar), Cells: []string{cost, statsfmt.Percent(share)}}
 }
 
+// projects is where the spend went by project, dearest first (the engine keeps
+// the top projects by tokens; a project it could not price goes last).
 func (b *builder) projects() *barTable {
-	rows := b.s.Projects
+	rows := slices.Clone(b.s.Projects)
 	if len(rows) == 0 {
 		return nil
 	}
-	t := &barTable{ID: "projects", Title: "Top projects", Heading: "Project", HasBars: true,
-		Cols: []string{"Sessions", "Tokens", "Est. cost"}}
-	top := 0
-	for _, r := range rows {
-		top = max(top, r.Sessions)
-	}
-	for _, r := range rows {
-		share := 0.0
-		if top > 0 {
-			share = float64(r.Sessions) / float64(top)
+	slices.SortStableFunc(rows, func(a, c stats.Project) int {
+		av, aok := spendOf(a.Cost)
+		cv, cok := spendOf(c.Cost)
+		switch {
+		case aok && cok:
+			return cmp.Compare(cv, av)
+		case aok:
+			return -1
+		case cok:
+			return 1
 		}
-		tokens, cost := "unknown", "n/a"
+		return 0
+	})
+	t := &barTable{ID: "projects", Title: "By project", Heading: "Project", HasBars: true,
+		Cols: []string{"Spend", "Sessions"}}
+	costs := make([]stats.Cost, len(rows))
+	for i, r := range rows {
+		costs[i] = r.Cost
+	}
+	shares := spendShares(costs)
+	for i, r := range rows {
+		cost := "n/a"
 		if r.Tokens != nil {
-			tokens = statsfmt.TokenCount(*r.Tokens)
 			cost = b.cost.costText(b.s.Prices.Currency, r.Cost.USD, r.Cost.Approximate, r.Cost.Partial, false)
 		}
 		t.Rows = append(t.Rows, barRow{
-			Label: b.names.project(r.Name), Pct: pct(share),
-			Cells: []string{statsfmt.CommaInt(int64(r.Sessions)), tokens, cost},
+			Label: b.names.project(r.Name), Class: "project", Pct: pct(shares[i]),
+			Cells: []string{cost, statsfmt.CommaInt(int64(r.Sessions))},
 		})
 	}
-	t.BarNote = "Bars show sessions."
+	t.BarNote = "Bars show estimated cost, each against the dearest project."
 	if more := b.s.TotalProjects - len(rows); more > 0 {
 		t.Notes = append(t.Notes, fmt.Sprintf("and %d more projects", more))
 	}
@@ -328,6 +368,123 @@ func (b *builder) projects() *barTable {
 		t.Notes = append(t.Notes, "Project names are replaced by letters in this file.")
 	}
 	return t
+}
+
+// mostUsed is the skills used in the most sessions and the MCP servers called
+// most. A plugin's skill is listed under its bare name (the engine merges the
+// spellings). It is nil when neither was used.
+func (b *builder) mostUsed() *mostUsed {
+	m := &mostUsed{}
+	for _, sk := range b.s.DisplaySkills {
+		m.Skills = append(m.Skills, nameCount{Name: b.skills.name(sk.Name), Count: plural(sk.Sessions, "session")})
+	}
+	if c := b.s.MCP; c != nil {
+		for _, srv := range c.Servers {
+			m.MCP = append(m.MCP, nameCount{Name: b.servers.name(srv.Name), Count: callCount(srv.Calls)})
+		}
+	}
+	if len(m.Skills)+len(m.MCP) == 0 {
+		return nil
+	}
+	switch {
+	case len(m.Skills) > 0 && len(m.MCP) > 0:
+		m.Notes = append(m.Notes, "Skills count the sessions that used each one; MCP counts calls.")
+	case len(m.Skills) > 0:
+		m.Notes = append(m.Notes, "Skills count the sessions that used each one.")
+	default:
+		m.Notes = append(m.Notes, "MCP counts calls.")
+	}
+	if more := b.s.TotalDisplaySkills - len(m.Skills); more > 0 && len(m.Skills) > 0 {
+		m.Notes = append(m.Notes, fmt.Sprintf("and %d more skills", more))
+	}
+	if c := b.s.MCP; c != nil && len(m.MCP) > 0 {
+		if more := c.TotalServers - len(m.MCP); more > 0 {
+			m.Notes = append(m.Notes, fmt.Sprintf("and %d more MCP servers", more))
+		}
+		m.Notes = append(m.Notes, "MCP: "+plain(c.Scope))
+	}
+	if !b.opts.IncludeNames {
+		m.Notes = append(m.Notes, "Skill and MCP server names are replaced by letters in this file.")
+	}
+	return m
+}
+
+// headsUp is the engine's notes as sentences, in its order. The engine sends
+// data only and the words are here; a note with a number missing is left out
+// rather than worded around it. Subagent runs are runs, never sessions.
+func (b *builder) headsUp() []string {
+	var out []string
+	for _, n := range b.s.HeadsUp {
+		var text string
+		switch n.Kind {
+		case stats.NoteSubagentShare:
+			text = b.subagentNote(n)
+		case stats.NoteCostliestSession:
+			text = b.costliestNote(n)
+		case stats.NoteUnmeteredSessions:
+			text = unmeteredNote(n)
+		case stats.NoteLowCacheHit:
+			text = lowCacheNote(n)
+		}
+		if text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func (b *builder) subagentNote(n stats.Note) string {
+	if n.Share == nil || n.Runs == nil {
+		return ""
+	}
+	return statsfmt.Percent(*n.Share) + " of tokens came from subagents (" + plural(*n.Runs, "run") + ")"
+}
+
+func (b *builder) costliestNote(n stats.Note) string {
+	if n.Cost == nil || n.Cost.USD == nil {
+		return ""
+	}
+	text := "Costliest session " + b.cost.costText(b.s.Prices.Currency, n.Cost.USD, n.Cost.Approximate, n.Cost.Partial, true)
+	if n.Project != "" {
+		text += " · " + b.names.project(n.Project)
+	}
+	subagents := 0
+	if n.Subagents != nil {
+		subagents = *n.Subagents
+	}
+	var hit *float64
+	if c := b.s.Highlights.CostliestSession; c != nil {
+		hit = c.CacheHitRate
+	}
+	if drivers := driversText(n.Drivers, subagents, hit); drivers != "" {
+		text += " · " + drivers
+	}
+	return text
+}
+
+func unmeteredNote(n stats.Note) string {
+	if n.Sessions == nil {
+		return ""
+	}
+	text := plural(*n.Sessions, "session") + " have no token data"
+	if *n.Sessions == 1 {
+		text = "1 session has no token data"
+	}
+	var by []string
+	for _, a := range n.ByAgent {
+		by = append(by, clean(a.Label)+" "+statsfmt.CommaInt(int64(a.Sessions)))
+	}
+	if len(by) > 0 {
+		text += " (" + strings.Join(by, ", ") + ")"
+	}
+	return text
+}
+
+func lowCacheNote(n stats.Note) string {
+	if n.HitRate == nil || n.InputTokens == nil {
+		return ""
+	}
+	return "Cache hit rate is " + statsfmt.Percent(*n.HitRate) + " over " + statsfmt.TokenCount(*n.InputTokens) + " input-side tokens, which is low"
 }
 
 func (b *builder) groups() *barTable {
@@ -350,7 +507,7 @@ func (b *builder) groups() *barTable {
 		limit = maxProjectRows
 	}
 	t := &barTable{ID: "groups", Title: title, Heading: heading,
-		Cols: []string{"Sessions", "Prompts", "Tokens", "Est. cost"}}
+		Cols: []string{"Sessions", "Prompts", "Tokens", "Spend"}}
 	if len(rows) > limit {
 		if g.By == stats.GroupProject {
 			t.Notes = append(t.Notes, fmt.Sprintf("and %d more projects", len(rows)-limit))
@@ -379,9 +536,22 @@ func (b *builder) groups() *barTable {
 	return t
 }
 
-func (b *builder) highlights() []highlight {
+// facts are the single facts of the detail: the days active with their
+// streaks, and the highlights the engine found.
+func (b *builder) facts() []highlight {
+	o := b.s.Overview
 	h := b.s.Highlights
 	var out []highlight
+	if o.ActiveDays.Value != nil && finite(*o.ActiveDays.Value) {
+		text := fmt.Sprintf("%d of %d days", int(*o.ActiveDays.Value+0.5), o.DaysInWindow)
+		switch {
+		case o.CurrentStreak > 0:
+			text += fmt.Sprintf(" · streak %s (best %d)", plural(o.CurrentStreak, "day"), o.BestStreak)
+		case o.BestStreak > 0:
+			text += fmt.Sprintf(" · no current streak (best %d)", o.BestStreak)
+		}
+		out = append(out, highlight{"Days active", text})
+	}
 	if h.BusiestDay != nil {
 		out = append(out, highlight{"Busiest day", fmt.Sprintf("%s (%s)", dayLabel(h.BusiestDay.Date, b.s.Window.Days), plural(h.BusiestDay.Sessions, "session"))})
 	}
@@ -397,7 +567,7 @@ func (b *builder) highlights() []highlight {
 		if c.Project != "" {
 			text += " · " + b.names.project(c.Project)
 		}
-		if drivers := driversText(c); drivers != "" {
+		if drivers := driversText(c.Drivers, c.Subagents, c.CacheHitRate); drivers != "" {
 			text += " (" + drivers + ")"
 		}
 		out = append(out, highlight{"Costliest session", text})
@@ -470,7 +640,7 @@ func subagentNote(c stats.Coverage) string {
 	if c.SubagentSessions == 0 {
 		return ""
 	}
-	note := plural(c.SubagentSessions, "subagent session") + " counted with their parent sessions."
+	note := plural(c.SubagentSessions, "subagent run") + " counted with their parent sessions."
 	if c.OrphanSubagents > 0 {
 		note += fmt.Sprintf(" %d of them have no parent in the archive and count as sessions of their own.", c.OrphanSubagents)
 	}

@@ -21,7 +21,7 @@ func TestStatsHTMLToStdoutIsJustThePage(t *testing.T) {
 	if !strings.HasPrefix(out, "<!DOCTYPE html>") || !strings.HasSuffix(strings.TrimSpace(out), "</html>") {
 		t.Fatalf("stdout is not just a page:\n%.300s", out)
 	}
-	for _, want := range []string{"Tokens by day", "Cost by model", "project A", "Generated 2026-09-29 12:00 UTC"} {
+	for _, want := range []string{"Daily spend", "By model", "Where it went", "project A", "Generated 2026-09-29 12:00 UTC"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the page lacks %q", want)
 		}

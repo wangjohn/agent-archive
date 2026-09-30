@@ -271,80 +271,78 @@ ul.alerts li::before {
 <header class="head">
 <h1>agent-archive stats</h1>
 <p class="sub"><span class="nb">Last 30 days</span> · <span class="nb">2026-08-31 to 2026-09-29</span> · <span class="nb">3 agents</span></p>
-<p class="sub">Filtered to harness claude, hook-captured sessions.</p>
 </header>
 <section class="card hero" aria-labelledby="h-headline">
 <h2 id="h-headline" class="sr">Headline numbers</h2>
 <div class="stats">
 <div class="stat">
 <div class="label">Spend</div>
-<div class="value">$163&#43;</div>
-<div class="delta up"><span aria-hidden="true">▲ 486%</span><span class="sr">up 486 percent</span> <span class="vs">vs prior 30 days</span></div>
+<div class="value">$5,441</div>
 <div class="note">estimated at list price</div>
 </div>
 <div class="stat">
 <div class="label">Sessions</div>
-<div class="value">22</div>
-<div class="note">246 prompts</div>
+<div class="value">93</div>
+<div class="note">872 prompts</div>
 </div>
 <div class="stat">
 <div class="label">Tokens</div>
-<div class="value">88M</div>
-<div class="note">81% served from cache</div>
+<div class="value">10B</div>
+<div class="note">94% served from cache</div>
 </div>
 </div>
 </section>
 <section class="card" aria-labelledby="h-agentbar">
 <h2 id="h-agentbar">Agents</h2>
-<svg class="stack" width="100%" height="28" role="img" aria-label="Sessions by agent: Claude Code 59%, Codex 27%, Cursor 14%.">
-<rect class="fill-agent-claude" x="0%" width="59.09%" y="0" height="28" rx="4"><title>Claude Code · 13 sessions · 59%</title></rect>
-<rect class="fill-agent-codex" x="59.09%" width="27.27%" y="0" height="28" rx="4"><title>Codex · 6 sessions · 27%</title></rect>
-<rect class="fill-agent-cursor" x="86.36%" width="13.64%" y="0" height="28" rx="4"><title>Cursor · 3 sessions · 14%</title></rect>
+<svg class="stack" width="100%" height="28" role="img" aria-label="Sessions by agent: Claude Code 90%, Cursor 9%, Codex 1%.">
+<rect class="fill-agent-claude" x="0%" width="90.32%" y="0" height="28" rx="4"><title>Claude Code · 84 sessions · 90%</title></rect>
+<rect class="fill-agent-cursor" x="90.32%" width="8.6%" y="0" height="28" rx="4"><title>Cursor · 8 sessions · 9%</title></rect>
+<rect class="fill-agent-codex" x="98.92%" width="1.08%" y="0" height="28" rx="4"><title>Codex · 1 session · 1%</title></rect>
 </svg>
 <ul class="key">
-<li><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="fill-agent-claude" width="14" height="14" rx="3" /></svg>Claude Code <span class="pct">59%</span></li>
-<li><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="fill-agent-codex" width="14" height="14" rx="3" /></svg>Codex <span class="pct">27%</span></li>
-<li><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="fill-agent-cursor" width="14" height="14" rx="3" /></svg>Cursor <span class="pct">14%</span></li>
+<li><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="fill-agent-claude" width="14" height="14" rx="3" /></svg>Claude Code <span class="pct">90%</span></li>
+<li><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="fill-agent-cursor" width="14" height="14" rx="3" /></svg>Cursor <span class="pct">9%</span></li>
+<li><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="fill-agent-codex" width="14" height="14" rx="3" /></svg>Codex <span class="pct">1%</span></li>
 <li class="of">of sessions</li>
 </ul>
 </section>
 <section class="card" aria-labelledby="h-daily">
 <h2 id="h-daily">Daily spend</h2>
 <div class="chart" style="max-width:1020px">
-<svg class="daily" width="100%" height="196" role="img" aria-label="Spend by day, Aug 31 to Sep 29. Peak $66 on Sep 17.">
+<svg class="daily" width="100%" height="196" role="img" aria-label="Spend by day, Aug 31 to Sep 29. Peak $3,632 on Sep 27.">
 <line class="grid" x1="0" x2="100%" y1="30" y2="30" />
 <line class="axis" x1="0" x2="100%" y1="168" y2="168" />
 <g class="slot"><title>Aug 31 · no sessions</title><rect class="hit" x="0%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="0.47%" width="2.4%" y="167" height="1" rx="2" /></g>
 <g class="slot"><title>Sep 1 · no sessions</title><rect class="hit" x="3.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="3.8%" width="2.4%" y="167" height="1" rx="2" /></g>
-<g class="slot"><title>Sep 2 · $7.40 · 1 session</title><rect class="hit" x="6.67%" width="3.33%" y="0" height="196" /><rect class="bar day" x="7.13%" width="2.4%" y="152.59" height="15.41" rx="2" /></g>
+<g class="slot"><title>Sep 2 · no sessions</title><rect class="hit" x="6.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="7.13%" width="2.4%" y="167" height="1" rx="2" /></g>
 <g class="slot"><title>Sep 3 · no sessions</title><rect class="hit" x="10%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="10.47%" width="2.4%" y="167" height="1" rx="2" /></g>
-<g class="slot"><title>Sep 4 · $7.46 · 1 session</title><rect class="hit" x="13.33%" width="3.33%" y="0" height="196" /><rect class="bar day" x="13.8%" width="2.4%" y="152.47" height="15.53" rx="2" /></g>
-<g class="slot"><title>Sep 5 · $1.14 · 1 session</title><rect class="hit" x="16.67%" width="3.33%" y="0" height="196" /><rect class="bar day" x="17.13%" width="2.4%" y="165.63" height="2.37" rx="2" /></g>
-<g class="slot"><title>Sep 6 · $7.52 · 1 session</title><rect class="hit" x="20%" width="3.33%" y="0" height="196" /><rect class="bar day" x="20.47%" width="2.4%" y="152.34" height="15.66" rx="2" /></g>
+<g class="slot"><title>Sep 4 · no sessions</title><rect class="hit" x="13.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="13.8%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 5 · no sessions</title><rect class="hit" x="16.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="17.13%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 6 · no sessions</title><rect class="hit" x="20%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="20.47%" width="2.4%" y="167" height="1" rx="2" /></g>
 <g class="slot"><title>Sep 7 · no sessions</title><rect class="hit" x="23.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="23.8%" width="2.4%" y="167" height="1" rx="2" /></g>
-<g class="slot"><title>Sep 8 · $7.58 · 1 session</title><rect class="hit" x="26.67%" width="3.33%" y="0" height="196" /><rect class="bar day" x="27.13%" width="2.4%" y="152.22" height="15.78" rx="2" /></g>
-<g class="slot"><title>Sep 9 · $1.14 · 1 session</title><rect class="hit" x="30%" width="3.33%" y="0" height="196" /><rect class="bar day" x="30.47%" width="2.4%" y="165.63" height="2.37" rx="2" /></g>
-<g class="slot"><title>Sep 10 · $7.64 · 2 sessions</title><rect class="hit" x="33.33%" width="3.33%" y="0" height="196" /><rect class="bar day" x="33.8%" width="2.4%" y="152.09" height="15.91" rx="2" /></g>
+<g class="slot"><title>Sep 8 · no sessions</title><rect class="hit" x="26.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="27.13%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 9 · no sessions</title><rect class="hit" x="30%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="30.47%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 10 · no sessions</title><rect class="hit" x="33.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="33.8%" width="2.4%" y="167" height="1" rx="2" /></g>
 <g class="slot"><title>Sep 11 · no sessions</title><rect class="hit" x="36.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="37.13%" width="2.4%" y="167" height="1" rx="2" /></g>
-<g class="slot"><title>Sep 12 · $7.70 · 1 session</title><rect class="hit" x="40%" width="3.33%" y="0" height="196" /><rect class="bar day" x="40.47%" width="2.4%" y="151.97" height="16.03" rx="2" /></g>
-<g class="slot"><title>Sep 13 · $1.14 · 1 session</title><rect class="hit" x="43.33%" width="3.33%" y="0" height="196" /><rect class="bar day" x="43.8%" width="2.4%" y="165.63" height="2.37" rx="2" /></g>
-<g class="slot"><title>Sep 14 · $7.75 · 1 session</title><rect class="hit" x="46.67%" width="3.33%" y="0" height="196" /><rect class="bar day" x="47.13%" width="2.4%" y="151.84" height="16.16" rx="2" /></g>
-<g class="slot"><title>Sep 15 · 1 session · cost unknown</title><rect class="hit" x="50%" width="3.33%" y="0" height="196" /><rect class="bar unknown" x="50.47%" width="2.4%" y="163" height="5" rx="2" /></g>
-<g class="slot"><title>Sep 16 · $7.82 · 1 session</title><rect class="hit" x="53.33%" width="3.33%" y="0" height="196" /><rect class="bar day" x="53.8%" width="2.4%" y="151.72" height="16.28" rx="2" /></g>
-<g class="slot"><title>Sep 17 · $66 · 2 sessions</title><rect class="hit" x="56.67%" width="3.33%" y="0" height="196" /><rect class="bar day peak" x="57.13%" width="2.4%" y="30" height="138" rx="2" /></g>
-<g class="slot"><title>Sep 18 · $7.88 · 1 session</title><rect class="hit" x="60%" width="3.33%" y="0" height="196" /><rect class="bar day" x="60.47%" width="2.4%" y="151.59" height="16.41" rx="2" /></g>
+<g class="slot"><title>Sep 12 · no sessions</title><rect class="hit" x="40%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="40.47%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 13 · no sessions</title><rect class="hit" x="43.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="43.8%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 14 · no sessions</title><rect class="hit" x="46.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="47.13%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 15 · no sessions</title><rect class="hit" x="50%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="50.47%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 16 · no sessions</title><rect class="hit" x="53.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="53.8%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 17 · no sessions</title><rect class="hit" x="56.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="57.13%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 18 · no sessions</title><rect class="hit" x="60%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="60.47%" width="2.4%" y="167" height="1" rx="2" /></g>
 <g class="slot"><title>Sep 19 · no sessions</title><rect class="hit" x="63.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="63.8%" width="2.4%" y="167" height="1" rx="2" /></g>
-<g class="slot"><title>Sep 20 · $7.94 · 2 sessions</title><rect class="hit" x="66.67%" width="3.33%" y="0" height="196" /><rect class="bar day" x="67.13%" width="2.4%" y="151.47" height="16.53" rx="2" /></g>
-<g class="slot"><title>Sep 21 · $1.14 · 1 session</title><rect class="hit" x="70%" width="3.33%" y="0" height="196" /><rect class="bar day" x="70.47%" width="2.4%" y="165.63" height="2.37" rx="2" /></g>
-<g class="slot"><title>Sep 22 · $8.00 · 1 session</title><rect class="hit" x="73.33%" width="3.33%" y="0" height="196" /><rect class="bar day" x="73.8%" width="2.4%" y="151.34" height="16.66" rx="2" /></g>
+<g class="slot"><title>Sep 20 · $345 · 6 sessions</title><rect class="hit" x="66.67%" width="3.33%" y="0" height="196" /><rect class="bar day" x="67.13%" width="2.4%" y="154.9" height="13.1" rx="2" /></g>
+<g class="slot"><title>Sep 21 · no sessions</title><rect class="hit" x="70%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="70.47%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 22 · no sessions</title><rect class="hit" x="73.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="73.8%" width="2.4%" y="167" height="1" rx="2" /></g>
 <g class="slot"><title>Sep 23 · no sessions</title><rect class="hit" x="76.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="77.13%" width="2.4%" y="167" height="1" rx="2" /></g>
-<g class="slot"><title>Sep 24 · $8.05&#43; · 2 sessions</title><rect class="hit" x="80%" width="3.33%" y="0" height="196" /><rect class="bar day" x="80.47%" width="2.4%" y="151.22" height="16.78" rx="2" /></g>
-<g class="slot"><title>Sep 25 · no sessions</title><rect class="hit" x="83.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="83.8%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 24 · no sessions</title><rect class="hit" x="80%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="80.47%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 25 · $1,465 · 12 sessions</title><rect class="hit" x="83.33%" width="3.33%" y="0" height="196" /><rect class="bar day" x="83.8%" width="2.4%" y="112.35" height="55.65" rx="2" /></g>
 <g class="slot"><title>Sep 26 · no sessions</title><rect class="hit" x="86.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="87.13%" width="2.4%" y="167" height="1" rx="2" /></g>
-<g class="slot"><title>Sep 27 · no sessions</title><rect class="hit" x="90%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="90.47%" width="2.4%" y="167" height="1" rx="2" /></g>
+<g class="slot"><title>Sep 27 · $3,632 · 75 sessions</title><rect class="hit" x="90%" width="3.33%" y="0" height="196" /><rect class="bar day peak" x="90.47%" width="2.4%" y="30" height="138" rx="2" /></g>
 <g class="slot"><title>Sep 28 · no sessions</title><rect class="hit" x="93.33%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="93.8%" width="2.4%" y="167" height="1" rx="2" /></g>
 <g class="slot"><title>Sep 29 · no sessions</title><rect class="hit" x="96.67%" width="3.33%" y="0" height="196" /><rect class="bar zero" x="97.13%" width="2.4%" y="167" height="1" rx="2" /></g>
-<text class="peak-label" x="58.33%" y="22" text-anchor="middle">Peak $66 · Sep 17</text>
+<text class="peak-label" x="93.33%" y="22" text-anchor="end">Peak $3,632 · Sep 27</text>
 <text class="tick" x="0" y="188" text-anchor="start">Aug 31</text>
 <text class="tick" x="35%" y="188" text-anchor="middle">Sep 10</text>
 <text class="tick" x="68.33%" y="188" text-anchor="middle">Sep 20</text>
@@ -359,32 +357,32 @@ ul.alerts li::before {
 <tbody>
 <tr><th scope="row">Aug 31</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
 <tr><th scope="row">Sep 1</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
-<tr><th scope="row">Sep 2</th><td class="num">1</td><td class="num">$7.40</td><td class="num">4M</td></tr>
+<tr><th scope="row">Sep 2</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
 <tr><th scope="row">Sep 3</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
-<tr><th scope="row">Sep 4</th><td class="num">1</td><td class="num">$7.46</td><td class="num">4.1M</td></tr>
-<tr><th scope="row">Sep 5</th><td class="num">1</td><td class="num">$1.14</td><td class="num">980K</td></tr>
-<tr><th scope="row">Sep 6</th><td class="num">1</td><td class="num">$7.52</td><td class="num">4.2M</td></tr>
+<tr><th scope="row">Sep 4</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 5</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 6</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
 <tr><th scope="row">Sep 7</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
-<tr><th scope="row">Sep 8</th><td class="num">1</td><td class="num">$7.58</td><td class="num">4.3M</td></tr>
-<tr><th scope="row">Sep 9</th><td class="num">1</td><td class="num">$1.14</td><td class="num">980K</td></tr>
-<tr><th scope="row">Sep 10</th><td class="num">2</td><td class="num">$7.64</td><td class="num">4.4M</td></tr>
+<tr><th scope="row">Sep 8</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 9</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 10</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
 <tr><th scope="row">Sep 11</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
-<tr><th scope="row">Sep 12</th><td class="num">1</td><td class="num">$7.70</td><td class="num">4.5M</td></tr>
-<tr><th scope="row">Sep 13</th><td class="num">1</td><td class="num">$1.14</td><td class="num">980K</td></tr>
-<tr><th scope="row">Sep 14</th><td class="num">1</td><td class="num">$7.75</td><td class="num">4.7M</td></tr>
-<tr><th scope="row">Sep 15</th><td class="num">1</td><td class="num">n/a</td><td class="num">unknown</td></tr>
-<tr><th scope="row">Sep 16</th><td class="num">1</td><td class="num">$7.82</td><td class="num">4.8M</td></tr>
-<tr><th scope="row">Sep 17</th><td class="num">2</td><td class="num">$66</td><td class="num">29M</td></tr>
-<tr><th scope="row">Sep 18</th><td class="num">1</td><td class="num">$7.88</td><td class="num">4.9M</td></tr>
+<tr><th scope="row">Sep 12</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 13</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 14</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 15</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 16</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 17</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 18</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
 <tr><th scope="row">Sep 19</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
-<tr><th scope="row">Sep 20</th><td class="num">2</td><td class="num">$7.94</td><td class="num">5M</td></tr>
-<tr><th scope="row">Sep 21</th><td class="num">1</td><td class="num">$1.14</td><td class="num">980K</td></tr>
-<tr><th scope="row">Sep 22</th><td class="num">1</td><td class="num">$8.00</td><td class="num">5.1M</td></tr>
+<tr><th scope="row">Sep 20</th><td class="num">6</td><td class="num">$345</td><td class="num">693M</td></tr>
+<tr><th scope="row">Sep 21</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 22</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
 <tr><th scope="row">Sep 23</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
-<tr><th scope="row">Sep 24</th><td class="num">2</td><td class="num">$8.05&#43;</td><td class="num">5.3M</td></tr>
-<tr><th scope="row">Sep 25</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 24</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 25</th><td class="num">12</td><td class="num">$1,465</td><td class="num">2.5B</td></tr>
 <tr><th scope="row">Sep 26</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
-<tr><th scope="row">Sep 27</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+<tr><th scope="row">Sep 27</th><td class="num">75</td><td class="num">$3,632</td><td class="num">7.1B</td></tr>
 <tr><th scope="row">Sep 28</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
 <tr><th scope="row">Sep 29</th><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
 </tbody>
@@ -399,13 +397,17 @@ ul.alerts li::before {
 <table class="rows">
 <thead><tr><th scope="col">Project</th><th scope="col" class="barcol"><span class="sr">Bar</span></th><th scope="col" class="num">Spend</th><th scope="col" class="num">Sessions</th></tr></thead>
 <tbody>
-<tr><th scope="row">proj-api</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-project" width="100%" height="10" rx="4" /></svg></td><td class="num">$96</td><td class="num">5</td></tr>
-<tr><th scope="row">agent-archive</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-project" width="64.79%" height="10" rx="4" /></svg></td><td class="num">$62</td><td class="num">11</td></tr>
-<tr><th scope="row">dotfiles</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-project" width="5.94%" height="10" rx="4" /></svg></td><td class="num">$5.69&#43;</td><td class="num">6</td></tr>
+<tr><th scope="row">project A</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-project" width="100%" height="10" rx="4" /></svg></td><td class="num">$1,966</td><td class="num">42</td></tr>
+<tr><th scope="row">project B</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-project" width="64.99%" height="10" rx="4" /></svg></td><td class="num">$1,278</td><td class="num">8</td></tr>
+<tr><th scope="row">project C</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-project" width="42.22%" height="10" rx="4" /></svg></td><td class="num">$830</td><td class="num">15</td></tr>
+<tr><th scope="row">project D</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-project" width="24.58%" height="10" rx="4" /></svg></td><td class="num">$483</td><td class="num">8</td></tr>
+<tr><th scope="row">project E</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-project" width="16.89%" height="10" rx="4" /></svg></td><td class="num">$332</td><td class="num">6</td></tr>
 </tbody>
 </table>
 </div>
 <p class="note barnote">Bars show estimated cost, each against the dearest project.</p>
+<p class="note">and 7 more projects</p>
+<p class="note">Project names are replaced by letters in this file.</p>
 </section>
 <section class="card" aria-labelledby="h-models">
 <h3 id="h-models">By model</h3>
@@ -413,10 +415,11 @@ ul.alerts li::before {
 <table class="rows">
 <thead><tr><th scope="col">Model</th><th scope="col" class="barcol"><span class="sr">Bar</span></th><th scope="col" class="num">Spend</th><th scope="col" class="num">Share</th></tr></thead>
 <tbody>
-<tr><th scope="row">opus</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-opus" width="100%" height="10" rx="4" /></svg></td><td class="num">$136</td><td class="num">83%</td></tr>
-<tr><th scope="row">sonnet</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-sonnet" width="16.15%" height="10" rx="4" /></svg></td><td class="num">$22</td><td class="num">13%</td></tr>
-<tr><th scope="row">gpt-5</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-gpt" width="4.19%" height="10" rx="4" /></svg></td><td class="num">$5.69</td><td class="num">3%</td></tr>
-<tr><th scope="row">codex-auto-review</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-gpt" width="0%" height="10" rx="4" /></svg></td><td class="num">unpriced</td><td class="num">110K tokens</td></tr>
+<tr><th scope="row">sonnet</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-sonnet" width="100%" height="10" rx="4" /></svg></td><td class="num">$3,131</td><td class="num">58%</td></tr>
+<tr><th scope="row">opus</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-opus" width="61.62%" height="10" rx="4" /></svg></td><td class="num">$1,929</td><td class="num">35%</td></tr>
+<tr><th scope="row">fable</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-fable" width="11.37%" height="10" rx="4" /></svg></td><td class="num">$356</td><td class="num">7%</td></tr>
+<tr><th scope="row">haiku</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-haiku" width="0.76%" height="10" rx="4" /></svg></td><td class="num">$24</td><td class="num">&lt;1%</td></tr>
+<tr><th scope="row">gpt-5.6</th><td class="barcol"><svg class="bar" aria-hidden="true" focusable="false" width="100%" height="10"><rect class="fill-gpt" width="0.04%" height="10" rx="4" /></svg></td><td class="num">$1.14</td><td class="num">&lt;1%</td></tr>
 </tbody>
 </table>
 </div>
@@ -428,25 +431,29 @@ ul.alerts li::before {
 <div class="row">
 <div class="row-label">Skills</div>
 <ul class="chips">
-<li><span class="chip-name">review-pr</span> <span class="chip-count">13 sessions</span></li>
-<li><span class="chip-name">create-skill</span> <span class="chip-count">1 session</span></li>
+<li><span class="chip-name">skill A</span> <span class="chip-count">15 sessions</span></li>
+<li><span class="chip-name">skill B</span> <span class="chip-count">4 sessions</span></li>
+<li><span class="chip-name">skill C</span> <span class="chip-count">2 sessions</span></li>
+<li><span class="chip-name">skill D</span> <span class="chip-count">2 sessions</span></li>
 </ul>
 </div>
 <div class="row">
 <div class="row-label">MCP</div>
 <ul class="chips">
-<li><span class="chip-name">github</span> <span class="chip-count">102 calls</span></li>
-<li><span class="chip-name">linear</span> <span class="chip-count">12 calls</span></li>
+<li><span class="chip-name">MCP server A</span> <span class="chip-count">81 calls</span></li>
+<li><span class="chip-name">MCP server B</span> <span class="chip-count">12 calls</span></li>
 </ul>
 </div>
 <p class="note">Skills count the sessions that used each one; MCP counts calls.</p>
 <p class="note">MCP: Claude Code and Cursor only; Codex MCP calls are not recorded.</p>
+<p class="note">Skill and MCP server names are replaced by letters in this file.</p>
 </section>
 <section class="card" aria-labelledby="h-heads">
 <h2 id="h-heads">Heads up</h2>
 <ul class="alerts">
-<li>Costliest session $65.10 · proj-api · long context, 2 subagents</li>
-<li>3 sessions have no token data (Cursor 3)</li>
+<li>82% of tokens came from subagents (497 runs)</li>
+<li>Costliest session $869.40 · project B · long context, 38 subagents</li>
+<li>10 sessions have no token data (Cursor 8, Claude Code 2)</li>
 </ul>
 </section>
 <h2 class="divider" id="h-detail">Details</h2>
@@ -456,9 +463,9 @@ ul.alerts li::before {
 <table class="rows">
 <thead><tr><th scope="col">Agent</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Spend</th><th scope="col" class="num">Cache hit</th></tr></thead>
 <tbody>
-<tr><th scope="row">Claude Code</th><td class="num">13 (59%)</td><td class="num">83M</td><td class="num">$158</td><td class="num">85%</td></tr>
-<tr><th scope="row">Codex</th><td class="num">6 (27%)</td><td class="num">5M</td><td class="num">$5.69&#43;</td><td class="num">77%</td></tr>
-<tr><th scope="row">Cursor</th><td class="num">3 (14%)</td><td class="num">unknown</td><td class="num">n/a</td><td class="num">unknown</td></tr>
+<tr><th scope="row">Claude Code</th><td class="num">84 (90%)</td><td class="num">10B</td><td class="num">$5,440</td><td class="num">95%</td></tr>
+<tr><th scope="row">Cursor</th><td class="num">8 (9%)</td><td class="num">unknown</td><td class="num">n/a</td><td class="num">unknown</td></tr>
+<tr><th scope="row">Codex</th><td class="num">1 (1%)</td><td class="num">980K</td><td class="num">$1.14</td><td class="num">78%</td></tr>
 </tbody>
 </table>
 </div>
@@ -466,60 +473,44 @@ ul.alerts li::before {
 <section class="card" aria-labelledby="h-tokens">
 <h3 id="h-tokens">What used your tokens</h3>
 <div class="donut-wrap">
-<svg class="donut" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Token composition. Cache read: 71M, 81% of tokens. Cache write: 7.4M, 8% of tokens. Input: 5.9M, 7% of tokens. Output: 3.9M, 4% of tokens. ">
+<svg class="donut" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Token composition. Cache read: 9.6B, 94% of tokens. Cache write: 411M, 4% of tokens. Input: 128M, 1% of tokens. Output: 82M, 1% of tokens. ">
 <g transform="rotate(-90 100 100)">
-<circle class="ring seg1" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="341 86.26" stroke-dashoffset="-1.5"><title>Cache read: 71M, 81% of tokens</title></circle>
-<circle class="ring seg2" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="32.88 394.38" stroke-dashoffset="-345.5"><title>Cache write: 7.4M, 8% of tokens</title></circle>
-<circle class="ring seg3" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="25.62 401.64" stroke-dashoffset="-381.38"><title>Input: 5.9M, 7% of tokens</title></circle>
-<circle class="ring seg4" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="15.76 411.49" stroke-dashoffset="-409.99"><title>Output: 3.9M, 4% of tokens</title></circle>
+<circle class="ring seg1" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="398.29 28.96" stroke-dashoffset="-1.5"><title>Cache read: 9.6B, 94% of tokens</title></circle>
+<circle class="ring seg2" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="14.19 413.07" stroke-dashoffset="-402.79"><title>Cache write: 411M, 4% of tokens</title></circle>
+<circle class="ring seg3" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="2.35 424.91" stroke-dashoffset="-419.98"><title>Input: 128M, 1% of tokens</title></circle>
+<circle class="ring seg4" cx="100" cy="100" r="68" fill="none" stroke-width="34" stroke-dasharray="1 426.26" stroke-dashoffset="-425.04"><title>Output: 82M, 1% of tokens</title></circle>
 </g>
-<text class="seg-label" x="139.08" y="155.65" text-anchor="middle" dominant-baseline="central">81%</text>
-<text class="seg-label" x="44.27" y="61.03" text-anchor="middle" dominant-baseline="central">8%</text>
-<text class="donut-total" x="100" y="96" text-anchor="middle">88M</text>
+<text class="seg-label" x="112.9" y="166.76" text-anchor="middle" dominant-baseline="central">94%</text>
+<text class="donut-total" x="100" y="96" text-anchor="middle">10B</text>
 <text class="donut-unit" x="100" y="116" text-anchor="middle">tokens</text>
 </svg>
 <table class="legend">
 <thead><tr><th scope="col">Type</th><th scope="col" class="num">Share</th><th scope="col" class="num">Tokens</th></tr></thead>
 <tbody>
-<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg1" width="14" height="14" rx="3" /></svg>Cache read</th><td class="num">81%</td><td class="num">71M</td></tr>
-<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg2" width="14" height="14" rx="3" /></svg>Cache write</th><td class="num">8%</td><td class="num">7.4M</td></tr>
-<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg3" width="14" height="14" rx="3" /></svg>Input</th><td class="num">7%</td><td class="num">5.9M</td></tr>
-<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg4" width="14" height="14" rx="3" /></svg>Output</th><td class="num">4%</td><td class="num">3.9M</td></tr>
+<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg1" width="14" height="14" rx="3" /></svg>Cache read</th><td class="num">94%</td><td class="num">9.6B</td></tr>
+<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg2" width="14" height="14" rx="3" /></svg>Cache write</th><td class="num">4%</td><td class="num">411M</td></tr>
+<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg3" width="14" height="14" rx="3" /></svg>Input</th><td class="num">1%</td><td class="num">128M</td></tr>
+<tr><th scope="row"><svg class="swatch" width="14" height="14" aria-hidden="true" focusable="false"><rect class="ring-fill seg4" width="14" height="14" rx="3" /></svg>Output</th><td class="num">1%</td><td class="num">82M</td></tr>
 </tbody>
 </table>
 </div>
-<p class="note">Subagents used 11% of tokens (10M) in 2 runs.</p>
+<p class="note">Subagents used 82% of tokens (8.4B) in 497 runs.</p>
 </section>
 <section class="card" aria-labelledby="h-facts">
 <h3 id="h-facts">At a glance</h3>
 <dl class="facts">
-<div><dt>Days active</dt><dd>18 of 30 days · no current streak (best 7)</dd></div>
-<div><dt>Busiest day</dt><dd>Sep 17 (2 sessions)</dd></div>
-<div><dt>Favorite model</dt><dd>opus</dd></div>
-<div><dt>Costliest session</dt><dd>$65.10 · proj-api (long context, 2 subagents)</dd></div>
-<div><dt>Tool errors</dt><dd>5.5% of 1,700 tool results flagged as errors, 13 sessions measured (9 do not record them)</dd></div>
-<div><dt>Month rank</dt><dd>This month so far is your heaviest of the last 6 months</dd></div>
+<div><dt>Days active</dt><dd>3 of 30 days · no current streak (best 1)</dd></div>
+<div><dt>Busiest day</dt><dd>Sep 27 (75 sessions)</dd></div>
+<div><dt>Favorite model</dt><dd>sonnet</dd></div>
+<div><dt>Costliest session</dt><dd>$869.40 · project B (long context, 38 subagents)</dd></div>
+<div><dt>Tool errors</dt><dd>2.9% of 29,960 tool results flagged as errors, 84 sessions measured (9 do not record them)</dd></div>
 </dl>
 </section>
-<section class="card" aria-labelledby="h-groups">
-<h3 id="h-groups">By project</h3>
-<div class="scroll" role="region" tabindex="0" aria-labelledby="h-groups">
-<table class="rows">
-<thead><tr><th scope="col">Project</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">Prompts</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Spend</th></tr></thead>
-<tbody>
-<tr><th scope="row">proj-api</th><td class="num">5</td><td class="num">90</td><td class="num">46M</td><td class="num">$96</td></tr>
-<tr><th scope="row">agent-archive</th><td class="num">11</td><td class="num">124</td><td class="num">37M</td><td class="num">$62</td></tr>
-<tr><th scope="row">dotfiles</th><td class="num">6</td><td class="num">32</td><td class="num">5M</td><td class="num">$5.69&#43;</td></tr>
-</tbody>
-</table>
-</div>
-</section>
 <footer class="foot">
-<p>Scope: this archive only. Sessions with no token data are left out of token and cost totals (Cursor: 3).</p>
-<p>Token data: 19 of 22 sessions. 2 subagent runs counted with their parent sessions. Days are counted in UTC; sessions are placed by when they were captured.</p>
-<p>Cost is an estimate at list price, not a bill. Prices golden-1, as of 2026-09-29.</p>
-<p>&#43; leaves out tokens of models the price table does not list (codex-auto-review).</p>
-<p>This page holds counts and names only: no prompts, transcript text, file paths or session IDs.</p>
+<p>Scope: this archive only. Sessions with no token data are left out of token and cost totals (Claude Code: 2, Cursor: 8).</p>
+<p>Token data: 83 of 93 sessions. 497 subagent runs counted with their parent sessions. Days are counted in UTC; sessions are placed by when they were captured.</p>
+<p>Cost is an estimate at list price, not a bill. Prices golden-2, as of 2026-09-29.</p>
+<p>This page holds counts and names only: no prompts, transcript text, file paths or session IDs. Project, skill, MCP server and unrecognized model names are replaced by letters; run with --include-names to show them.</p>
 <p>Generated 2026-09-29 12:00 UTC by agent-archive stats --html.</p>
 </footer>
 </main>
