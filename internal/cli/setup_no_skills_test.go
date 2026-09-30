@@ -6,10 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/wangjohn/agent-archive/internal/agentskills"
 	"github.com/wangjohn/agent-archive/internal/config"
 	"github.com/wangjohn/agent-archive/internal/local"
 	"github.com/wangjohn/agent-archive/internal/setupjournal"
@@ -58,7 +60,7 @@ func TestSetupNamesTheOptOutWhenItInstallsSkills(t *testing.T) {
 	home, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
 	env := setupTestEnv(t, home, userHome, newFakeKeychain(), time.Now())
 	output := setupRun(t, env, s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, project), 0)
-	if !strings.Contains(output, "Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md\nTo remove the agent skills and keep them off, run agent-archive setup --no-skills.\n") {
+	if !strings.Contains(output, "Installed /handoff, which continues a session in another agent: ~/.claude/skills/handoff/SKILL.md, ~/.agents/skills/handoff/SKILL.md\nInstalled the agent-archive skill, which lets your agents look up and pull in past sessions: ~/.claude/skills/agent-archive/SKILL.md, ~/.agents/skills/agent-archive/SKILL.md\nTo remove the agent skills and keep them off, run agent-archive setup --no-skills.\n") {
 		t.Fatalf("setup did not name the opt-out after the installed skills:\n%s", output)
 	}
 	if strings.Contains(output, "turned off") {
@@ -444,8 +446,8 @@ func TestInterruptedNoSkillsSetupRecoversAndConverges(t *testing.T) {
 				removals++
 			}
 		}
-		if removals != 2 {
-			t.Fatalf("the opt-out plans %d removals, want 2: %+v", removals, journal.Changes)
+		if removals != 2*len(agentskills.Registry) {
+			t.Fatalf("the opt-out plans %d removals, want %d: %+v", removals, 2*len(agentskills.Registry), journal.Changes)
 		}
 		must(t, local.Write(setupjournal.JournalPath(home), journal))
 		// The crash came after the Claude Code file was removed.
@@ -534,7 +536,7 @@ func TestPlanAgentSkillsHonorsNoSkillsWithoutAsking(t *testing.T) {
 	dataHome := env.installation(home, userHome).commandDataHome()
 	changes, kept, err := planAgentSkills(userHome, claudeDir, claudeDir, cfg, "/moved/agent-archive", dataHome)
 	must(t, err)
-	if len(changes) != 2 || len(kept) != 0 {
+	if len(changes) != 2*len(agentskills.Registry) || len(kept) != 0 {
 		t.Fatalf("with skills on and a moved executable: changes %+v kept %v", changes, kept)
 	}
 	for _, c := range changes {
@@ -546,13 +548,23 @@ func TestPlanAgentSkillsHonorsNoSkillsWithoutAsking(t *testing.T) {
 	must(t, os.WriteFile(agentsSkillPath(userHome), []byte("mine\n"), 0600))
 	changes, kept, err = planAgentSkills(userHome, claudeDir, claudeDir, cfg, "/moved/agent-archive", dataHome)
 	must(t, err)
-	if len(changes) != 1 || !changes[0].Delete || changes[0].Path != claudeSkillPath(userHome) {
-		t.Fatalf("with NoSkills: changes %+v", changes)
+	// Every file of setup's goes, whichever skill it is; the person's own stays.
+	var removed []string
+	for _, c := range changes {
+		if !c.Delete {
+			t.Fatalf("with NoSkills, a change writes %s", c.Path)
+		}
+		removed = append(removed, c.Path)
+	}
+	if want := append([]string{claudeSkillPath(userHome)}, archiveSkillPaths(userHome)...); !slices.Equal(removed, want) {
+		t.Fatalf("with NoSkills: removes %v, want %v", removed, want)
 	}
 	if len(kept) != 1 || kept[0] != agentsSkillPath(userHome) {
 		t.Fatalf("with NoSkills: kept %v", kept)
 	}
-	must(t, os.Remove(claudeSkillPath(userHome)))
+	for _, path := range removed {
+		must(t, os.Remove(path))
+	}
 	if changes, _, err = planAgentSkills(userHome, claudeDir, claudeDir, cfg, "/moved/agent-archive", dataHome); err != nil || len(changes) != 0 {
 		t.Fatalf("with NoSkills and no owned file: %+v %v", changes, err)
 	}

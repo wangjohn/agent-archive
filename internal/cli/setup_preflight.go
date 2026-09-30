@@ -214,12 +214,12 @@ func keychainCheck(env keychainOpener, ref string) preflightCheck {
 	}
 	if err != nil {
 		return preflightCheck{
-			Label:  credentialCheckLabel(credentialGOOS),
+			Label:  credentialCheckLabel(credentialOS),
 			Detail: "cannot be opened, so an R2 key cannot be kept (" + strings.TrimSuffix(err.Error(), ".") + ")",
-			Fix:    credentialCheckFix(credentialGOOS, errors.Is(err, credentials.ErrKeychainLocked)),
+			Fix:    credentialCheckFix(credentialOS, errors.Is(err, credentials.ErrKeychainLocked)),
 		}
 	}
-	return preflightCheck{Label: credentialCheckLabel(credentialGOOS), Detail: "opens (for the R2 key)", OK: true}
+	return preflightCheck{Label: credentialCheckLabel(credentialOS), Detail: "opens (for the R2 key)", OK: true}
 }
 
 // preflightApps are the apps whose hook files interactive setup checks

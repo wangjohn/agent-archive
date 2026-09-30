@@ -251,6 +251,42 @@ func TestRefreshReplacesAStaleSkillAndLeavesAForeignOne(t *testing.T) {
 	}
 }
 
+// Every skill in the registry is refreshed together, and removed together by
+// the opt-out: an out-of-date agent-archive skill (what install.sh leaves after
+// an upgrade) is refreshed as /handoff's is, and --no-skills takes both away.
+func TestRefreshRefreshesAndRemovesEverySkill(t *testing.T) {
+	t.Parallel()
+	_, userHome, env := installedFixture(t, newFakeKeychain(), s3SetupInput("test-bucket", "us-east-1", "profile", true, true, false, t.TempDir()))
+	launchd := recordLaunchd(&env, "loaded")
+	all := append([]string{claudeSkillPath(userHome), agentsSkillPath(userHome)}, archiveSkillPaths(userHome)...)
+	current := map[string]string{}
+	for _, path := range all {
+		current[path] = readText(t, path)
+		older := strings.Replace(current[path], "The person", "A person", 1)
+		if older == current[path] {
+			t.Fatalf("%s has no wording to age", path)
+		}
+		must(t, os.WriteFile(path, []byte(older), 0600))
+	}
+	code, stdout, stderr := refreshRun(t, env)
+	if code != 0 || stdout != "refreshed 4 skill files\n" || stderr != "" {
+		t.Fatalf("exit %d\n%q\n%q", code, stdout, stderr)
+	}
+	for _, path := range all {
+		if readText(t, path) != current[path] {
+			t.Errorf("refresh did not restore %s", path)
+		}
+	}
+	if code, stdout, _ := refreshRun(t, env); code != 0 || stdout != "nothing to refresh\n" {
+		t.Fatalf("second run: %d %q", code, stdout)
+	}
+	if calls := launchd.all(); len(calls) != 0 {
+		t.Errorf("refresh asked launchd: %v", calls)
+	}
+	setupYes(t, env, "", 0, "--yes", "--no-skills")
+	wantSkillFiles(t, nil, all)
+}
+
 // With nothing to change, refresh says so in one line, exits 0, writes no
 // journal, and never asks launchd anything.
 func TestRefreshOfACurrentInstallationSaysNothingToRefresh(t *testing.T) {
@@ -331,7 +367,7 @@ func TestRefreshRepairsHooksLeftPointingAtAMovedExecutable(t *testing.T) {
 	if code != 0 || stderr != "" {
 		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
 	}
-	want := "refreshed Codex and Claude Code hooks, the background collector (restarted), and 2 skill files; agent-archive now runs from " + f.newExe + " (it was " + f.oldExe + ")\n" +
+	want := "refreshed Codex and Claude Code hooks, the background collector (restarted), and 4 skill files; agent-archive now runs from " + f.newExe + " (it was " + f.oldExe + ")\n" +
 		hookNextStep["codex"] + "\n"
 	if stdout != want {
 		t.Fatalf("output\n%q\nwant\n%q", stdout, want)
@@ -382,7 +418,7 @@ func TestRefreshLeavesAnUnloadedJobUnloaded(t *testing.T) {
 	t.Parallel()
 	f := newRefreshFixture(t, "missing")
 	code, stdout, stderr := refreshRun(t, f.env)
-	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "refreshed Codex and Claude Code hooks, the background collector's plist (its job is not loaded, and was left so), and 2 skill files;") {
+	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "refreshed Codex and Claude Code hooks, the background collector's plist (its job is not loaded, and was left so), and 4 skill files;") {
 		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
 	}
 	f.wantRunning(t, f.newExe)
@@ -398,7 +434,7 @@ func TestRefreshDoesNotCreateAMissingPlist(t *testing.T) {
 	f := newRefreshFixture(t, "missing")
 	must(t, os.Remove(f.plist()))
 	code, stdout, stderr := refreshRun(t, f.env)
-	if code != 0 || stderr != "" || strings.Contains(stdout, "collector") || !strings.HasPrefix(stdout, "refreshed Codex and Claude Code hooks and 2 skill files;") {
+	if code != 0 || stderr != "" || strings.Contains(stdout, "collector") || !strings.HasPrefix(stdout, "refreshed Codex and Claude Code hooks and 4 skill files;") {
 		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
 	}
 	if _, err := os.Stat(f.plist()); !os.IsNotExist(err) {
@@ -736,7 +772,7 @@ func TestRefreshOfOneInstallationLeavesTheOthersFilesAlone(t *testing.T) {
 	settingsBefore, skillBefore := readText(t, claudeSettings), readText(t, claudeSkillPath(userHome))
 
 	code, stdout, stderr := refreshRun(t, secondary)
-	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "refreshed Codex hooks, the background collector (restarted), and 1 skill file;") {
+	if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "refreshed Codex hooks, the background collector (restarted), and 2 skill files;") {
 		t.Fatalf("exit %d\n%s\n%s", code, stdout, stderr)
 	}
 	if readText(t, claudeSettings) != settingsBefore || readText(t, claudeSkillPath(userHome)) != skillBefore {
@@ -956,6 +992,8 @@ func TestRefreshChangesOnlyHooksPlistSkillsAndTheRecordedExecutable(t *testing.T
 				f.plist(),
 				claudeSkillPath(f.userHome),
 				agentsSkillPath(f.userHome),
+				archiveSkillPaths(f.userHome)[0],
+				archiveSkillPaths(f.userHome)[1],
 				filepath.Join(f.home, "config.json"),
 			}
 			scratch := []string{"setup.lock", "hooks.lock", "collector.lock", collectorLockRecordName, "setup-transaction.json"}
