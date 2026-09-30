@@ -75,7 +75,7 @@ default budget; `--max-bytes 0` includes all filtered content.
 
 ## Where it goes
 
-On a terminal, with no `--to`, `--output`, or `--format json`, `handoff` asks
+On a terminal, with no `--to`, `--output`, `--format json`, or `--no-preamble`, `handoff` asks
 where to continue once the session is chosen:
 
 ```text

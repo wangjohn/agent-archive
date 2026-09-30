@@ -23,7 +23,7 @@ follow [Semantic Versioning](https://semver.org/).
 - On a terminal, `handoff` asks where to continue: an installed agent
   (default: another agent than the session's, or `handoff.default_to`),
   print (paged when long), copy to the clipboard, or write to a file. Pipes,
-  `--output`, and `--format json` print as before.
+  `--output`, `--format json`, and `--no-preamble` print as before.
 - Without a terminal, as when an agent runs it, `handoff --to` opens the
   agent in a new tmux window or iTerm2, Ghostty, or Terminal tab and returns;
   `--here` and `--new-window` choose explicitly. Where no window can be
