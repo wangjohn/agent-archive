@@ -8,39 +8,47 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Setup installs a `/handoff` skill for Claude Code
+- **Handoff without copying.** Continuing a session in another coding agent
+  is one step: inside Claude Code, `/handoff codex` opens Codex in a new
+  terminal tab with the session as its context (in Codex, ask for
+  `$handoff`); on a terminal, `agent-archive handoff` picks a session, asks
+  where to continue, and starts the agent there. See the
+  [handoff guide](docs/guides/handoff.md).
+- Setup installs the `handoff` skill for Claude Code
   (`~/.claude/skills/handoff/SKILL.md`) and for Codex and Cursor
-  (`~/.agents/skills/handoff/SKILL.md`) that runs
-  `agent-archive handoff --to <agent>` from inside the agent. Setup leaves a
-  file it did not write, uninstall removes only its own, and
-  `status --json` lists them in `agent_commands`.
-- `handoff --to claude|codex|cursor` launches a local coding agent with the
-  filtered session record. The session can be local or archived. With no
-  session named, run inside Claude Code, Codex, or Cursor, it hands off that
-  agent's own session; otherwise a terminal gets the picker. The receiving
-  agent is told how to inspect the archived or current local record with
-  Agent Archive. The record is kept in the data directory's `handoffs/` for 7
-  days, so a resumed session can read it again (before setup, in a private
-  temporary folder the system clears). Each launch's copy has a folder of its
-  own, which is all Claude Code gets with `--add-dir`; Codex and Cursor get
-  the checkout with `--cd` and `--workspace`. Cursor's `agent` CLI is tried
-  before `cursor-agent`. The launched agent does not inherit the calling
-  agent's session variables.
-- On a terminal, `handoff` asks where to continue: an installed agent
-  (default: another agent than the session's, or `handoff.default_to`),
-  print (paged when long), copy to the clipboard, or write to a file. Pipes,
-  `--output`, `--format json`, and `--no-preamble` print as before.
-- Without a terminal, as when an agent runs it, `handoff --to` opens the
-  agent in a new tmux window or iTerm2, Ghostty, or Terminal tab and returns;
-  `--here` and `--new-window` choose explicitly. Where no window can be
-  opened it prints the command to run instead.
-- Arguments after `--` go to the agent `handoff --to` launches, and
-  `config.json` may set per-agent arguments (`handoff.args`) and a default
-  destination per source harness (`handoff.default_to`).
-- `handoff --to NAME --worktree` launches the agent in a new git worktree
-  beside the checkout, on a new branch (`handoff/<id>`, or `--branch NAME`),
-  with your uncommitted changes (staged ones arrive unstaged) and untracked,
-  not ignored, files carried over. Your checkout and stash list are left as
+  (`~/.agents/skills/handoff/SKILL.md`). It runs
+  `agent-archive handoff --to <agent>`, defaulting to another agent than the
+  one you are in. Setup leaves a file it did not write, uninstall removes
+  only its own, and `status --json` lists them in `agent_commands`.
+- On a terminal, `handoff` asks where to continue once the session is
+  chosen: an installed agent (default: `handoff.default_to` in `config.json`,
+  else another agent than the session's), print (paged when long), copy to
+  the clipboard, or write to a file. Pipes, `--output`, `--format json`, and
+  `--no-preamble` print as before, so `codex "$(agent-archive handoff
+  --latest)"` still works.
+- `handoff --to claude|codex|cursor` starts that agent without asking, with
+  the filtered session record, local or archived. With no session named, run
+  inside Claude Code, Codex, or Cursor, it hands off that agent's own
+  session; otherwise a terminal gets the picker. The agent reads the record
+  from a private file kept 7 days in the data directory's `handoffs/`, so a
+  resumed session can read it again (before setup, in a temporary folder the
+  system clears), and is told how to get more context with Agent Archive.
+  Claude Code gets only that file's folder with `--add-dir`; Codex and
+  Cursor get the checkout with `--cd` and `--workspace`. Cursor's `agent`
+  CLI is tried before `cursor-agent`. The launched agent does not inherit
+  the calling agent's session variables.
+- On a terminal the agent runs there. Without one, as when an agent runs
+  `handoff --to`, it opens in a new tmux window, iTerm2 or Ghostty tab, or
+  Terminal window, and `handoff` returns; `--here` and `--new-window` choose
+  explicitly. Where no window can be opened it prints the command to run
+  instead.
+- Arguments after `--` go to the launched agent, and `config.json` may set
+  per-agent arguments (`handoff.args`) and a default destination per source
+  harness (`handoff.default_to`).
+- `handoff --worktree` starts the agent in a new git worktree beside the
+  checkout, on a new branch (`handoff/<id>`, or `--branch NAME`), with your
+  uncommitted changes (staged ones arrive unstaged) and untracked, not
+  ignored, files carried over. Your checkout and stash list are left as
   they were. Without `--worktree`, handing off a session active in the last
   2 minutes in the same checkout asks on a terminal whether to continue
   there, cancel, or use a worktree, and warns otherwise.

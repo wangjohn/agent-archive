@@ -188,21 +188,22 @@ Example: agent-archive show SESSION_ID --transcript
 `,
 	"handoff": `Usage: agent-archive handoff [SESSION_ID|--latest|--file PATH] [options]
 
-Print a session as a prompt another coding agent can continue from. This
-prints conversation content, filtered as it is for the archive: injected
-instructions and credentials removed, tool output trimmed, edit bodies left
-out. A session on this machine is read from its transcript now, without
-waiting for a sync; otherwise it is downloaded from the archive.
-With no selector on a terminal, pick a session from a numbered list of this
-Mac's sessions (including ones not yet uploaded) and archived ones, newest
-first. Without a terminal, give a SESSION_ID, --latest, or --file PATH.
-On a terminal without --to, --output, or --format json, it then asks where
-to continue: an installed agent (default: handoff.default_to in
-config.json, else Codex for a Claude Code session and Claude Code for the
-others), or print, copy to the clipboard, or write to a file. Piped, it
-prints the handoff as it always has.
+Continue a session in another coding agent. On a terminal, pick a session
+(this Mac's, including ones not yet uploaded, and archived ones), then pick
+where to continue: an installed agent starts in this terminal with the
+session as its context (Enter takes handoff.default_to in config.json, else
+Codex for a Claude Code session and Claude Code for the others), or print,
+copy to the clipboard, or write to a file. Inside Claude Code, /handoff codex
+runs handoff --to codex, which opens Codex in a new terminal tab.
+The session is filtered as it is for the archive: injected instructions and
+credentials removed, tool output trimmed, edit bodies left out. A session on
+this Mac is read from its transcript now; otherwise it is downloaded from
+the archive. Piped, or with --output, --format json, or --no-preamble, it
+prints without asking. Without a terminal, give a SESSION_ID, --latest, or
+--file PATH (or --to, from inside an agent).
   --latest              The most recent session for the project
-  --project DIR         Project for --latest (default: current directory)
+  --project DIR         Project for --latest, and where the agent starts
+                        (default: current directory)
   --harness NAME        claude, codex, or cursor
   --file PATH           Render a native transcript directly (needs --harness);
                         works for sessions the archive never captured
@@ -211,44 +212,38 @@ prints the handoff as it always has.
                         this Mac's transcript when there is one, else the
                         archive; local or archive uses only that one
   --max-bytes N         Output limit, default 120000 (about 30k tokens); 0 for
-                        no limit. When trimmed, the full version is saved in
-                        the data directory for 7 days and its path is named
-                        at the end
+                        no limit. When trimmed, the full version is saved for
+                        7 days and its path is named at the end
   --format markdown|json
                         markdown (default) prints the prompt; json prints
                         the structured handoff document it is rendered from
   --output FILE         Write to FILE (mode 0600) instead of printing it
   --force               With --output, replace FILE if it exists
   --no-preamble         Omit the note addressed to the receiving agent
-  --to NAME             Launch local claude, codex, or cursor with the handoff.
-                        The agent reads a copy kept in the data directory for
-                        7 days (before setup, in a private temporary folder);
-                        needs the agent's CLI (claude, codex, or agent) on
-                        PATH. With no selector, hands off the Claude Code,
-                        Codex, or Cursor session it runs in, or picks one on
+  --to NAME             Start claude, codex, or cursor without asking (its
+                        CLI must be on PATH). It reads a private copy of the
+                        handoff, kept 7 days. With no session named, hands
+                        off the agent session it runs in, else picks one on
                         a terminal. On a terminal the agent runs there;
-                        otherwise it opens in a new tmux window, or a new
-                        iTerm2, Ghostty, or Terminal tab, and the command
-                        returns. If the source session was active in the
-                        last 2 minutes in this checkout, a terminal is asked
-                        whether to continue here, cancel, or use a worktree
+                        otherwise it opens in a new tmux window, iTerm2 or
+                        Ghostty tab, or Terminal window, and the command
+                        returns. If the session was active in this checkout
+                        in the last 2 minutes, a terminal asks first
   --here                Run the launched agent in this terminal
   --new-window          Open the launched agent in a new window or tab
-  --worktree            Launch in a new git worktree beside the checkout
-                        (its directory name plus -handoff- and the first 8
-                        characters of SESSION_ID), on a new branch at HEAD,
-                        with uncommitted changes and untracked (not ignored)
-                        files copied in
+  --worktree            Start the agent in a new git worktree beside the
+                        checkout, on a new branch at HEAD, carrying
+                        uncommitted changes and untracked (not ignored) files
   --branch NAME         With --worktree, the new branch (default: handoff/
                         and the first 8 characters of SESSION_ID)
   -- ARGS               Everything after -- goes to the launched agent, after
                         any arguments set in config.json's handoff.args
 Example: agent-archive handoff
-Example: claude "$(agent-archive handoff --latest --harness codex)"
+Example: agent-archive handoff --to codex
 Example: codex "$(agent-archive handoff --latest --harness claude)"
-Example: agent-archive handoff --latest --harness claude --to codex
-Example: agent-archive handoff SESSION_ID --to claude -- --model opus
-Example: agent-archive handoff SESSION_ID --to codex --worktree
+Example: claude "$(agent-archive handoff --latest --harness codex)"
+Example: agent-archive handoff SESSION_ID --to claude --worktree
+Example: agent-archive handoff SESSION_ID --to codex -- --model o3
 `,
 	"backfill": `Usage: agent-archive backfill [options]
        agent-archive backfill history
