@@ -155,7 +155,7 @@ func TestSetupStopsBeforeAnyQuestionWhenLaunchctlCannotTell(t *testing.T) {
 func TestSetupStopsBeforeAnyQuestionWhenTheKeychainDoesNotOpen(t *testing.T) {
 	t.Parallel()
 	env, home, userHome := preflightEnv(t)
-	env.Keychain = func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
+	env.Credentials = func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
 	output, _, in := runUnanswered(t, env)
 	if in.reads == 0 || strings.Contains(output, "Keychain") {
 		t.Fatalf("a first setup did not reach its first question without checking the Keychain: %d reads\n%s", in.reads, output)
@@ -196,7 +196,7 @@ func TestSetupChecksTheKeychainForASavedR2Configuration(t *testing.T) {
 	if !strings.Contains(output, "✓ Keychain: opens") {
 		t.Fatalf("setup did not check the Keychain for a saved R2 configuration:\n%s", output)
 	}
-	env.Keychain = func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
+	env.Credentials = func() (credentials.CredentialStore, error) { return nil, credentials.ErrUnavailable }
 	output, code, in := runUnanswered(t, env)
 	if code != 1 || in.reads != 0 || !strings.Contains(output, "✗ Keychain: cannot be opened") {
 		t.Fatalf("exit %d after %d reads\n%s", code, in.reads, output)
@@ -304,12 +304,12 @@ func TestSetupStopsBeforeAnyQuestionWhenTheKeychainIsLocked(t *testing.T) {
 	t.Parallel()
 	env, home, _ := preflightEnv(t)
 	must(t, config.Save(home, config.Config{Harnesses: []string{"claude"}, Storage: credentials.Config{Provider: credentials.ProviderR2, Bucket: "b", R2CredentialRef: "saved"}}))
-	env.Keychain = func() (credentials.CredentialStore, error) { return lockedKeychain{newFakeKeychain()}, nil }
+	env.Credentials = func() (credentials.CredentialStore, error) { return lockedKeychain{newFakeKeychain()}, nil }
 	output, code, in := runUnanswered(t, env)
 	if code != 1 || in.reads != 0 || !strings.Contains(output, "✗ Keychain: cannot be opened") || !strings.Contains(output, "Unlock the login Keychain") {
 		t.Fatalf("locked: exit %d after %d reads\n%s", code, in.reads, output)
 	}
-	env.Keychain = func() (credentials.CredentialStore, error) { return newFakeKeychain(), nil }
+	env.Credentials = func() (credentials.CredentialStore, error) { return newFakeKeychain(), nil }
 	if output, _, _ = runUnanswered(t, env); !strings.Contains(output, "✓ Keychain: opens") {
 		t.Fatalf("a missing saved key failed the Keychain check:\n%s", output)
 	}

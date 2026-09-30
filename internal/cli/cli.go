@@ -3,11 +3,11 @@
 // and LaunchAgent invoke, and the user-facing
 // setup/status/sync/pause/resume/uninstall, read-only list/show, and
 // handoff commands. Process-level state (args, stdio, the clock, the home
-// directory, launchctl, the Keychain) reaches commands through Env, so a test
+// directory, launchctl, the credential store) reaches commands through Env, so a test
 // can substitute every piece of it; a nil Env field means the real thing.
 // A few lower packages still read the process directly: local resolves the
 // data directory from AGENT_ARCHIVE_HOME and $HOME, credentials reads the AWS
-// configuration files and the Keychain, and cursorstore asks getconf for the
+// configuration files and the environment, and cursorstore asks getconf for the
 // user's temporary directory.
 package cli
 
@@ -164,11 +164,11 @@ type Env struct {
 	// already loaded, and stops the collector during uninstall. Defaults to
 	// shelling out to launchctl, like LoadLaunchAgent.
 	UnloadLaunchAgent func(plistPath string) error
-	// Keychain opens the credential store setup saves R2 secrets to and
-	// uninstall deletes them from.
-	// Defaults to credentials.NewKeychainStore, which is only available on
-	// a darwin+cgo build.
-	Keychain func() (credentials.CredentialStore, error)
+	// Credentials opens the credential store setup saves R2 secrets to and
+	// uninstall deletes them from. Defaults to credentials.OpenDefault: the
+	// Keychain on macOS (which needs a cgo build), a private file under the
+	// data directory elsewhere.
+	Credentials func() (credentials.CredentialStore, error)
 	// LookupEnv reads the process environment. `handoff --latest` uses it to
 	// recognize the agent session it is running inside. Defaults to
 	// os.LookupEnv.
@@ -251,14 +251,14 @@ func (e Env) openStore(cfg config.Config) (storage.ObjectStore, error) {
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
-	return openConfiguredStore(cfg, e.keychain)
+	return openConfiguredStore(cfg, e.credentialStore)
 }
 
 func (e Env) openStoreContext(ctx context.Context, cfg config.Config) (storage.ObjectStore, error) {
 	if e.OpenStore != nil {
 		return e.OpenStore(cfg)
 	}
-	return openConfiguredStoreContext(ctx, cfg, e.keychain)
+	return openConfiguredStoreContext(ctx, cfg, e.credentialStore)
 }
 
 func (e Env) executable() (string, error) {
@@ -355,23 +355,34 @@ func (e Env) unloadLaunchAgent(plistPath string) error {
 	return unloadLaunchAgent(plistPath)
 }
 
-func (e Env) keychain() (credentials.CredentialStore, error) {
-	if e.Keychain != nil {
-		return e.Keychain()
+func (e Env) credentialStore() (credentials.CredentialStore, error) {
+	if e.Credentials != nil {
+		return e.Credentials()
 	}
-	return openKeychain()
+	return openCredentialStore()
 }
 
-// openKeychain opens the login Keychain's agent-archive items: Env.Keychain's
-// default. The package's tests replace it with one that fails the test, so a
-// test that forgets to set Env.Keychain can never reach the real Keychain.
-var openKeychain = func() (credentials.CredentialStore, error) {
-	store, err := credentials.NewKeychainStore(credentials.KeychainService)
-	if err != nil {
-		// Never a non-nil interface holding a nil store.
-		return nil, err
-	}
-	return store, nil
+// credentialGOOS is the platform whose credential store is opened and named:
+// runtime.GOOS. It is a variable so a test can see both platforms' wording
+// and choices (credentialWords, credentials.OpenDefault) on any OS.
+var credentialGOOS = runtime.GOOS
+
+// openCredentialStore opens the platform's credential store (see
+// credentials.OpenDefault): Env.Credentials's default. The package's tests
+// replace it with one that fails the test, so a test that forgets to set
+// Env.Credentials can never reach the real Keychain or write a credentials
+// file into a real data directory.
+var openCredentialStore = func() (credentials.CredentialStore, error) {
+	return credentials.OpenDefault(credentials.OpenOptions{
+		GOOS: credentialGOOS,
+		Dir: func() (string, error) {
+			home, err := local.ReadHome()
+			if err != nil {
+				return "", err
+			}
+			return credentials.FileStoreDir(home), nil
+		},
+	})
 }
 
 // notSetUp reports whether this Mac is not archiving: it has no saved

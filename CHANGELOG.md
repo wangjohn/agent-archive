@@ -8,6 +8,15 @@ follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- On a build without a Keychain (Linux), an R2 key is kept in a file with mode
+  0600 in a `credentials` folder (mode 0700) of the data directory, and
+  agent-archive refuses to read it, or save into the folder, when it is open
+  to other users, is a symbolic link, or is not yours, naming the `chmod` that
+  fixes it. Where no such file exists, `AGENT_ARCHIVE_R2_ACCESS_KEY_ID` and
+  `AGENT_ARCHIVE_R2_SECRET_ACCESS_KEY` are read as a read-only fallback. On
+  macOS nothing changes: the key stays in the Keychain. An S3 profile keeps
+  no secret of its own and is the better choice where you can use one. See
+  [privacy](docs/security/privacy.md#where-credentials-are-kept).
 - `agent-archive stats` shows how you use your coding agents over the last 30
   days (`--days`, or `--since` for a start day): tokens by day, sessions,
   prompts, estimated cost and active days with their change from the
